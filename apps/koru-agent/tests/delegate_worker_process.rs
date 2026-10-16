@@ -477,6 +477,13 @@ impl Agent {
                     eprintln!("{line}");
                 }
             }
+            // What the provider itself saw, with the fixture's clock lines:
+            // a start that times out says here whether PowerShell was slow
+            // to run or the request was slow to arrive.
+            let trace = std::fs::read_to_string(self.root().join("codex-fixture.trace"))
+                .unwrap_or_else(|_| "(the fixture was never invoked)".into());
+            eprintln!("---- codex-fixture.trace ----");
+            eprintln!("{trace}");
             std::panic::resume_unwind(panic);
         }
     }

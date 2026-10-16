@@ -5,6 +5,10 @@ function Trace-Fixture([string]$value) {
         Add-Content -LiteralPath $env:CODEX_FIXTURE_TRACE -Value $value
     }
 }
+function Trace-Clock([string]$what) {
+    Trace-Fixture ("clock:" + $what + " " + [DateTime]::Now.ToString('HH:mm:ss.ff'))
+}
+Trace-Clock 'script'
 Trace-Fixture ("args:" + ($FixtureArgs -join ','))
 Trace-Fixture ("pid:" + $PID)
 # The bearer never rides argv (ADR-341): the launch names the variable and
@@ -61,6 +65,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     switch ($message.method) {
         'initialize' {
             Send-Frame @{ id=$message.id; result=@{ userAgent='koru_terminal/0.150.1 (fixture)'; codexHome='fixture'; platformFamily='windows'; platformOs='windows' } }
+            Trace-Clock 'initialized'
         }
         'initialized' {}
         'model/list' {
