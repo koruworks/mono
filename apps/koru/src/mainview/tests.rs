@@ -4006,6 +4006,45 @@ fn a_card_slides_to_the_accounts_page_and_the_chip_still_closes_and_reopens() {
     assert_eq!(first(&v), Some(PopoverRow::Back));
 }
 
+/// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
+/// Socials each own everything below the heading in their mode, and the
+/// floor asked after them was unreachable there: the chip and the `?`
+/// worked on Files and did nothing on Home (the CTO's second note). Every
+/// app the build shows gets both pressed.
+#[test]
+fn the_chip_and_the_help_open_whichever_app_is_showing() {
+    use crate::mainview::context_menu::MenuSubject;
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, mut w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    for mode in NavigatorMode::visible() {
+        v.show_navigator(mode);
+        // Read after the switch: a mode that opens a tab can relay out the
+        // pane, and the floor moves with it.
+        let floor = crate::panes::sidebar::floor::solve(v.regions.sidebar);
+        let (cx, cy) = floor.chip.centre();
+        let (hx, hy) = floor.help.centre();
+        v.mouse_down(&mut w.ws, cx, cy, false);
+        assert!(
+            v.explore.popover_open(),
+            "the chip opens the switcher on {mode:?}"
+        );
+        v.mouse_down(&mut w.ws, cx, cy, false);
+        assert!(!v.explore.popover_open(), "and shuts it on {mode:?}");
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        v.mouse_down(&mut w.ws, hx, hy, false);
+        assert_eq!(
+            v.menu.as_ref().map(|m| m.subject.clone()),
+            Some(MenuSubject::Help),
+            "the ? opens the help popover on {mode:?}"
+        );
+        v.menu = None;
+    }
+}
+
 // ------------------------------------------------------------------- drafts
 
 /// How many things are in the library. A draft must not add to it.

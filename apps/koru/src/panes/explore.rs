@@ -4532,6 +4532,31 @@ impl ExploreView {
             };
         }
 
+        // The floor, **before any mode's own surface**: the chip opens the
+        // who/where switcher in place, telling the container nothing (the
+        // header's precedent); the `?` asks the container for the help
+        // popover, which is the window's. Tasks, Home, Artifacts, Chats and
+        // Socials each claim every press below the heading, and the floor
+        // asked after them was unreachable in those modes — the chip and
+        // the `?` worked on Files and did nothing on Home.
+        match floor::hit(area, x, y) {
+            Some(floor::Hit::Chip) => {
+                // One control, one popover: a press while it shows any page
+                // shuts it (QUESTIONS.md E2); otherwise View 1 opens.
+                if self
+                    .live()
+                    .is_some_and(|p| p.kind != PopoverKind::LibraryActions)
+                {
+                    self.close_popover();
+                } else {
+                    self.toggle_popover(PopoverKind::Summary);
+                }
+                return Outcome::Consumed;
+            }
+            Some(floor::Hit::Help) => return Outcome::OpenHelp,
+            None => {}
+        }
+
         if self.actions_at(area, x, y) {
             self.toggle_popover(PopoverKind::LibraryActions);
             return Outcome::Consumed;
@@ -4582,26 +4607,6 @@ impl ExploreView {
         if koru_features::cloud_sync() && self.empty_subscribe.is_some_and(|cta| cta.contains(x, y))
         {
             return Outcome::SubscribeCloud;
-        }
-        // The floor: the chip opens the who/where switcher in place, telling
-        // the container nothing (the header's precedent); the `?` asks the
-        // container for the help popover, which is the window's.
-        match floor::hit(area, x, y) {
-            Some(floor::Hit::Chip) => {
-                // One control, one popover: a press while it shows any page
-                // shuts it (QUESTIONS.md E2); otherwise View 1 opens.
-                if self
-                    .live()
-                    .is_some_and(|p| p.kind != PopoverKind::LibraryActions)
-                {
-                    self.close_popover();
-                } else {
-                    self.toggle_popover(PopoverKind::Summary);
-                }
-                return Outcome::Consumed;
-            }
-            Some(floor::Hit::Help) => return Outcome::OpenHelp,
-            None => {}
         }
         // The pinned rows, before `row_at` because they sit below the library's
         // band and are not part of it. A collapsed column offers none, so the
