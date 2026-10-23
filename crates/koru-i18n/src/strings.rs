@@ -2390,13 +2390,21 @@ pub enum Key {
     UpdateAvailable,
     UpdateReady,
     UpdateChecking,
+    /// The who/where popover's rows (workspace foundation, rung 2).
+    SettingsTab,
+    Subscribe,
+    InvitePeople,
+    SharingNotAvailable,
+    ActivateThisProfile,
+    ActiveNow,
+    AddAccount,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1631] = [
+    pub const ALL: [Key; 1638] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4028,6 +4036,13 @@ impl Key {
         Key::UpdateAvailable,
         Key::UpdateReady,
         Key::UpdateChecking,
+        Key::SettingsTab,
+        Key::Subscribe,
+        Key::InvitePeople,
+        Key::SharingNotAvailable,
+        Key::ActivateThisProfile,
+        Key::ActiveNow,
+        Key::AddAccount,
     ];
 }
 
@@ -12427,4 +12442,11 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::UpdateAvailable, en: "update available", es: "actualización disponible", pt_br: "atualização disponível", de: "Update verfügbar", fr: "mise à jour disponible", ar: "يتوفر تحديث", zh_hans: "有可用更新", ja: "アップデートがあります" },
     Row { key: Key::UpdateReady, en: "update ready — restart", es: "actualización lista: reinicia", pt_br: "atualização pronta — reinicie", de: "Update bereit – neu starten", fr: "mise à jour prête — redémarrer", ar: "التحديث جاهز — أعد التشغيل", zh_hans: "更新已就绪 — 请重启", ja: "アップデート準備完了 — 再起動してください" },
     Row { key: Key::UpdateChecking, en: "checking", es: "comprobando", pt_br: "verificando", de: "wird geprüft", fr: "vérification", ar: "جارٍ التحقق", zh_hans: "正在检查", ja: "確認中" },
+    Row { key: Key::SettingsTab, en: "Settings", es: "Ajustes", pt_br: "Configurações", de: "Einstellungen", fr: "Réglages", ar: "الإعدادات", zh_hans: "设置", ja: "設定" },
+    Row { key: Key::Subscribe, en: "Subscribe", es: "Suscribirse", pt_br: "Assinar", de: "Abonnieren", fr: "S'abonner", ar: "اشترك", zh_hans: "订阅", ja: "登録" },
+    Row { key: Key::InvitePeople, en: "Invite people", es: "Invitar a personas", pt_br: "Convidar pessoas", de: "Personen einladen", fr: "Inviter des personnes", ar: "دعوة أشخاص", zh_hans: "邀请成员", ja: "メンバーを招待" },
+    Row { key: Key::SharingNotAvailable, en: "Sharing is not available yet", es: "Compartir aún no está disponible", pt_br: "O compartilhamento ainda não está disponível", de: "Teilen ist noch nicht verfügbar", fr: "Le partage n'est pas encore disponible", ar: "المشاركة غير متاحة بعد", zh_hans: "共享功能尚未提供", ja: "共有はまだ利用できません" },
+    Row { key: Key::ActivateThisProfile, en: "Activate this profile", es: "Activar este perfil", pt_br: "Ativar este perfil", de: "Dieses Profil aktivieren", fr: "Activer ce profil", ar: "تفعيل هذا الملف الشخصي", zh_hans: "启用此配置文件", ja: "このプロファイルを有効にする" },
+    Row { key: Key::ActiveNow, en: "active", es: "activo", pt_br: "ativo", de: "aktiv", fr: "actif", ar: "نشط", zh_hans: "已启用", ja: "有効" },
+    Row { key: Key::AddAccount, en: "Add account", es: "Añadir cuenta", pt_br: "Adicionar conta", de: "Konto hinzufügen", fr: "Ajouter un compte", ar: "إضافة حساب", zh_hans: "添加账户", ja: "アカウントを追加" },
 ];

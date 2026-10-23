@@ -188,6 +188,7 @@ impl ExploreView {
             Some(popover) => {
                 rev.byte(1);
                 rev.str(match popover.kind {
+                    PopoverKind::Summary => "summary",
                     PopoverKind::Workspaces => "workspaces",
                     PopoverKind::Profiles => "profiles",
                     PopoverKind::LibraryActions => "library",
@@ -589,6 +590,8 @@ impl ExploreView {
             SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::Menu)
                 .with_size_of_set(selectable)
                 .with_label(match popover.kind {
+                    // The chip's popover is the chip's name: who and where.
+                    PopoverKind::Summary => t(cx.lang, Key::FloorChipAction),
                     PopoverKind::Workspaces => t(cx.lang, Key::TerminalSwitchWorkspace),
                     PopoverKind::Profiles => t(cx.lang, Key::TerminalSwitchProfile),
                     PopoverKind::LibraryActions => t(cx.lang, Key::A11yMoreActions),
@@ -620,8 +623,13 @@ impl ExploreView {
             PopoverRow::ManageWorkspaces => cx.surface(POPOVER, parts::MANAGE_WORKSPACES),
             PopoverRow::ManageProfiles => cx.surface(POPOVER, parts::MANAGE_PROFILES),
             PopoverRow::LinkDevice => cx.surface(POPOVER, parts::LINK_DEVICE),
-            PopoverRow::AddAccount => cx.surface(POPOVER, ControlPart::new("add-account")),
-            PopoverRow::OpenProfile => cx.surface(POPOVER, ControlPart::new("open-profile")),
+            PopoverRow::PersonCard => cx.surface(POPOVER, ControlPart::new("person")),
+            PopoverRow::WorkspaceCard => cx.surface(POPOVER, ControlPart::new("workspace-card")),
+            PopoverRow::Settings => cx.surface(POPOVER, ControlPart::new("settings")),
+            PopoverRow::Cloud => cx.surface(POPOVER, ControlPart::new("cloud")),
+            PopoverRow::InvitePeople => cx.surface(POPOVER, ControlPart::new("invite")),
+            PopoverRow::ActivateProfile => cx.surface(POPOVER, ControlPart::new("activate")),
+            PopoverRow::HeadDivider => cx.surface(POPOVER, parts::POPOVER),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
@@ -645,14 +653,32 @@ impl ExploreView {
                 .unwrap_or_default(),
             PopoverRow::NewWorkspace => t(lang, Key::CreateWorkspace).to_string(),
             PopoverRow::Back => t(lang, Key::Back).to_string(),
-            PopoverRow::NewProfile => "New profile".to_string(),
+            PopoverRow::NewProfile => {
+                if self
+                    .popover
+                    .as_ref()
+                    .is_some_and(|p| p.kind == PopoverKind::Summary)
+                {
+                    t(lang, Key::AddAccount).to_string()
+                } else {
+                    "New profile".to_string()
+                }
+            }
+            PopoverRow::PersonCard => self.profile().map(|p| p.name.clone()).unwrap_or_default(),
+            PopoverRow::WorkspaceCard => self
+                .current
+                .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
+                .map(|w| w.name.clone())
+                .unwrap_or_default(),
+            PopoverRow::Settings => t(lang, Key::SettingsTab).to_string(),
+            PopoverRow::Cloud => t(lang, Key::CloudTitle).to_string(),
+            PopoverRow::InvitePeople => t(lang, Key::InvitePeople).to_string(),
+            PopoverRow::ActivateProfile => t(lang, Key::ActivateThisProfile).to_string(),
+            PopoverRow::HeadDivider => String::new(),
             PopoverRow::ImportContent => t(lang, Key::WorkspacesImport).to_string(),
             PopoverRow::ManageWorkspaces => "Manage workspaces".to_string(),
             PopoverRow::ManageProfiles => t(lang, Key::WorkspacesProfiles).to_string(),
             PopoverRow::LinkDevice => t(lang, Key::TerminalLinkDevice).to_string(),
-            PopoverRow::AddAccount | PopoverRow::OpenProfile => {
-                t(lang, Key::ProfileChooserOpen).to_string()
-            }
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }

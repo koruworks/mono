@@ -6851,9 +6851,9 @@ impl MainView {
             Outcome::ImportContent => self.open_import_menu(),
             Outcome::ManageWorkspaces(profile) => self.open_manage_workspaces(profile),
             Outcome::ManageProfiles => self.open_manage_profiles(),
-            Outcome::AddProfile => self.ask_pane(PaneRequest::AddProfile),
-            Outcome::OpenProfile => self.ask_pane(PaneRequest::OpenProfile),
             Outcome::LinkDevice => self.open_link_device(),
+            Outcome::OpenSettings => self.open_settings_tab(),
+            Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
             Outcome::NodeMenu {
                 nodes,
                 at,

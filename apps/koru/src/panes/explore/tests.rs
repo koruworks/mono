@@ -849,24 +849,77 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let chip = crate::panes::sidebar::floor::solve(a).chip;
     let (cx, cy) = chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
+    // View 1: the cards, then the window's destinations.
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Summary)
+    );
+    assert!(v.popover_open());
+    let rows = v.popover_rows();
+    assert_eq!(rows[0], PopoverRow::PersonCard);
+    assert_eq!(rows[1], PopoverRow::WorkspaceCard);
+    assert!(rows.contains(&PopoverRow::Settings));
+    assert!(rows.contains(&PopoverRow::LinkDevice));
+    assert_eq!(rows.last(), Some(&PopoverRow::NewProfile), "Add account");
+    // A card drills into the open account's page — View 2 — which slides
+    // in; the open Profile's actions lead its workspaces.
+    assert_eq!(v.choose(PopoverRow::PersonCard), Outcome::Consumed);
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Workspaces)
-    );
-    assert!(v.popover_open());
-    // The Profiles page is one `back` away, as before.
-    v.back();
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Profiles)
     );
     assert!(
         v.popover.as_ref().is_some_and(|p| p.slide.is_some()),
         "it slides between pages rather than fading"
     );
-    // Pressing the chip while it is open shuts it.
+    let rows = v.popover_rows();
+    assert_eq!(rows[0], PopoverRow::Back);
+    assert_eq!(rows[1], PopoverRow::Settings);
+    assert_eq!(rows[2], PopoverRow::InvitePeople);
+    assert!(
+        !PopoverRow::InvitePeople.selectable(),
+        "dimmed: no sharing yet"
+    );
+    assert_eq!(rows[3], PopoverRow::ImportContent);
+    assert_eq!(rows[4], PopoverRow::ActivateProfile);
+    assert!(rows.contains(&PopoverRow::WorkspacesHeading));
+    assert!(v.browsing_other().is_none());
+    // Back returns to the summary, not the Profiles page.
+    v.back();
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Summary)
+    );
+    // Pressing the chip while it is open shuts it, on any page.
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     assert!(!v.popover_open());
+}
+
+/// The chords keep their pages: `Ctrl+Alt+W` opens the open Profile's
+/// workspaces with the Profiles page one `←` away, as before the summary
+/// existed. Another Profile's page stays a list and a way back — its
+/// actions are not this window's to offer.
+#[test]
+fn the_chords_still_slide_between_profiles_and_workspaces() {
+    let (mut v, _, _) = with_context(0);
+    assert!(v.open_popover(PopoverKind::Workspaces));
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Workspaces)
+    );
+    let rows = v.popover_rows();
+    assert_eq!(rows[1], PopoverRow::Settings, "View 2 for the open Profile");
+    v.back();
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Profiles)
+    );
+    // The Summary never shows from a chord.
+    assert!(
+        v.popover
+            .as_ref()
+            .is_some_and(|p| p.left == PopoverKind::Profiles)
+    );
 }
 
 /// Both pages hang from the same corner — the floor chip's — so a slide
@@ -1540,16 +1593,21 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
         ]
     );
     v.toggle_popover(PopoverKind::Workspaces);
+    // The open Profile's page is View 2: its actions ahead of the list.
     assert_eq!(
         v.popover_rows(),
         vec![
             PopoverRow::Back,
+            PopoverRow::Settings,
+            PopoverRow::InvitePeople,
+            PopoverRow::ImportContent,
+            PopoverRow::ActivateProfile,
+            PopoverRow::HeadDivider,
             PopoverRow::WorkspacesHeading,
             PopoverRow::Workspace(0),
             PopoverRow::Workspace(1),
             PopoverRow::NewWorkspace,
             PopoverRow::Divider,
-            PopoverRow::ImportContent,
             PopoverRow::ManageWorkspaces,
         ]
     );
@@ -1694,9 +1752,11 @@ fn enter_runs_the_highlighted_row() {
     let (mut v, _, list) = with_context(0);
     v.toggle_popover(PopoverKind::Workspaces);
     // Down once from nothing lands on the first selectable row, the back row;
-    // the heading is skipped, so the second Down is the first workspace.
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    // then Settings and Import content. The dimmed rows, the rule and the
+    // heading are skipped, so the fourth Down is the first workspace.
+    for _ in 0..4 {
+        v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    }
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
         Some(Outcome::SwitchWorkspace(list[0].id))
@@ -1780,8 +1840,6 @@ fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
     v.toggle_popover(PopoverKind::Profiles);
     let rows = v.popover_rows();
-    assert!(!rows.contains(&PopoverRow::AddAccount));
-    assert!(!rows.contains(&PopoverRow::OpenProfile));
     assert_eq!(rows.last(), Some(&PopoverRow::LinkDevice));
 }
 

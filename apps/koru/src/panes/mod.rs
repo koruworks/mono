@@ -291,17 +291,15 @@ pub enum Outcome {
     SubscribeCloud,
     /// Import documents into the open workspace.
     ImportContent,
-    /// "Add Profile" — a folder picker, then a window on whatever it returns.
-    AddProfile,
-    /// "Open a profile folder" — the same picker, but it insists the folder
-    /// already holds a profile. What makes a profile the list has forgotten
-    /// reachable without a command line.
-    OpenProfile,
     /// Open the singleton Profile/account management tab.
     ManageProfiles,
     /// Open the global device-linking modal. Linked devices receive every
     /// current and future profile and workspace in the MVP.
     LinkDevice,
+    /// The who/where popover's Settings row: the Settings tab.
+    OpenSettings,
+    /// Its Koru Cloud row: Manage's Koru Cloud page.
+    ManageCloud,
     /// "Manage workspaces…" — the Manage tab, on the page of the Profile the
     /// switcher is listing (`None`: the open one), scrolled to its
     /// Workspaces.
