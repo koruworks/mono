@@ -12452,3 +12452,70 @@ fn workspace_verbs_find_a_workspace_of_a_profile_that_is_not_open() {
 
     assert!(!view.start_workspace_icon(WorkspaceId::new()));
 }
+
+// ------------------------------------------------------- the help popover
+
+/// The floor's `?` opens the help popover above itself: WHAT'S NEW with up
+/// to three of this build's sections, the changelog, the rows that wait on
+/// later phases (dimmed, never hidden), feedback and support, and a foot
+/// that is a readout rather than a row.
+#[test]
+fn the_help_popover_rises_from_the_floor_with_this_builds_sections() {
+    use crate::mainview::context_menu::MenuAction;
+    let (mut v, mut workspace) = container();
+    v.toggle_sidebar();
+    v.help_headlines_rx = None;
+    v.help_headlines = Some(vec![
+        "Welcome".to_owned(),
+        "Sync".to_owned(),
+        "Agents".to_owned(),
+        "A fourth that does not show".to_owned(),
+    ]);
+    let help = v.explore.floor_rects(v.regions.sidebar).help;
+    let (x, y) = help.centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    let menu = v.menu.as_ref().expect("the help popover opened");
+    let items = menu.items();
+    assert_eq!(items[0], MenuAction::HelpWhatsNewHeading);
+    assert_eq!(
+        &items[1..4],
+        &[
+            MenuAction::HelpHeadline(0),
+            MenuAction::HelpHeadline(1),
+            MenuAction::HelpHeadline(2)
+        ],
+        "three sections at most"
+    );
+    assert_eq!(items[4], MenuAction::HelpFullChangelog);
+    assert_eq!(*items.last().unwrap(), MenuAction::HelpFoot);
+    assert!(!MenuAction::HelpFoot.selectable(), "the foot is a readout");
+    assert!(!MenuAction::HelpWhatsNewHeading.selectable());
+    let panel = menu.panel(v.viewport);
+    assert!(
+        panel.y + panel.h <= help.y + 0.5,
+        "the popover sits above the ?: {panel:?} vs {help:?}"
+    );
+    assert!(panel.y >= 0.0);
+    // The rows waiting on later phases are dimmed, with a reason.
+    let enabled = v.enabled_items(menu);
+    let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();
+    assert!(!enabled[at(MenuAction::HelpShortcuts)]);
+    assert!(!enabled[at(MenuAction::HelpAsk)]);
+    assert!(!enabled[at(MenuAction::HelpAbout)]);
+    assert!(enabled[at(MenuAction::HelpHeadline(0))]);
+    assert!(enabled[at(MenuAction::HelpFullChangelog)]);
+    assert!(enabled[at(MenuAction::HeaderFeedback)]);
+    assert!(
+        koru_ui::MenuItem::disabled_reason(&MenuAction::HelpShortcuts).is_some(),
+        "a dimmed row explains itself"
+    );
+    // Without notes the changelog is dimmed too, and says what is missing.
+    v.menu = None;
+    v.help_headlines = None;
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    let menu = v.menu.as_ref().expect("opens without notes too");
+    let items = menu.items();
+    assert_eq!(items[1], MenuAction::HelpFullChangelog, "no sections");
+    let enabled = v.enabled_items(menu);
+    assert!(!enabled[1]);
+}

@@ -553,7 +553,8 @@ impl ExploreView {
                 .with_action(Action::Click),
             SemanticNode::new(cx.surface(EXPLORE, parts::HELP), Role::Button)
                 .with_label(t(cx.lang, Key::Help))
-                .with_bounds(r.help),
+                .with_bounds(r.help)
+                .with_action(Action::Click),
         ]
     }
 
@@ -754,6 +755,7 @@ impl ExploreView {
                     self.toggle_popover(PopoverKind::Workspaces);
                     Some(Outcome::Consumed)
                 }
+                p if p == parts::HELP => Some(Outcome::OpenHelp),
                 p if p == parts::ACTIONS => {
                     self.toggle_popover(PopoverKind::LibraryActions);
                     Some(Outcome::Consumed)

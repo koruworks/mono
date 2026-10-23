@@ -88,5 +88,37 @@ pub fn blocks(version: &str, notes: Option<&str>) -> Vec<RichBlock> {
     blocks
 }
 
+/// The notes' section headings, in order — the `## ` lines of the shipped
+/// body. The help popover shows the first three as *What's new*
+/// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.10): the
+/// shipped file is one version's notes with no dates and no earlier
+/// versions, so its sections are the honest list.
+pub fn headlines(notes: &str) -> Vec<String> {
+    notes
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_end();
+            let rest = line.strip_prefix("## ")?;
+            let rest = rest.trim();
+            (!rest.is_empty()).then(|| rest.to_owned())
+        })
+        .collect()
+}
+
+/// Read the shipped notes **off the event thread**, once, and hand back
+/// their headlines — `None` when no notes shipped beside this build. The
+/// window keeps the answer; the `?` never reads the disk.
+pub fn read_headlines_async() -> std::sync::mpsc::Receiver<Option<Vec<String>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("koru-whatsnew-headlines".into())
+        .spawn(move || {
+            let answer = notes_beside_the_exe().map(|notes| headlines(&notes));
+            let _ = tx.send(answer);
+        })
+        .ok();
+    rx
+}
+
 #[cfg(test)]
 mod tests;

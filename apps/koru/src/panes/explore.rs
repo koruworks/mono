@@ -4421,15 +4421,14 @@ impl ExploreView {
             return Outcome::SubscribeCloud;
         }
         // The floor: the chip opens the who/where switcher in place, telling
-        // the container nothing (the header's precedent); the `?` is drawn
-        // dimmed until the help popover lands (PLAN.final P5) and swallows
-        // the press so it does not fall through to the pane.
+        // the container nothing (the header's precedent); the `?` asks the
+        // container for the help popover, which is the window's.
         match floor::hit(area, x, y) {
             Some(floor::Hit::Chip) => {
                 self.toggle_popover(PopoverKind::Workspaces);
                 return Outcome::Consumed;
             }
-            Some(floor::Hit::Help) => return Outcome::Consumed,
+            Some(floor::Hit::Help) => return Outcome::OpenHelp,
             None => {}
         }
         // The pinned rows, before `row_at` because they sit below the library's
@@ -6444,7 +6443,7 @@ impl ExploreView {
                 koru_ui::icon_button::State {
                     hovered: self.floor_hover == Some(floor::Hit::Help),
                     active: false,
-                    disabled: true,
+                    disabled: false,
                 },
                 koru_ui::icon_button::Metrics::COMPACT,
             );

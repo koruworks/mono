@@ -74,6 +74,8 @@ pub enum Outcome {
     NewTab,
     /// Open the workspace-scoped search surface.
     Search,
+    /// The floor's `?`: the container opens the help popover above it.
+    OpenHelp,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.

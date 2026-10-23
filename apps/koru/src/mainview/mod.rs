@@ -1131,6 +1131,11 @@ pub struct MainView {
     /// holds a feed that reports nothing rather than a `None` every call site
     /// has to unwrap.
     updates: crate::agent::UpdateFeed,
+    /// This build's release-notes headlines, read once off the event thread
+    /// at construction (`whatsnew::read_headlines_async`) and kept for the
+    /// help popover. `None` until the read lands or when no notes shipped.
+    help_headlines: Option<Vec<String>>,
+    help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
     /// Shared control-plane connection used by the device-linking modal.
     agent: crate::agent::AgentLink,
     reminder_preferences: crate::reminder_settings::Controller,
@@ -1815,6 +1820,8 @@ impl MainView {
             nested: None,
             toggle_tip_muted: false,
             chrome_focus: None,
+            help_headlines: None,
+            help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
             tooltip: Tooltip::default(),
             recents: Vec::new(),
             recent_documents: Vec::new(),
@@ -4086,6 +4093,13 @@ impl MainView {
             // this window's state when the menu opened, and a window can always
             // be minimised, resized and closed.
             MenuSubject::Window => match action {
+                // The help popover's rows: the notes' sections and the
+                // changelog only when notes shipped; the rest wait on their
+                // phases and say so.
+                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
+                    self.help_headlines.is_some()
+                }
+                MenuAction::HelpShortcuts | MenuAction::HelpAsk | MenuAction::HelpAbout => false,
                 // Dim while *another* window holds the process's one
                 // recording — the flag is the enforcement's visible half.
                 MenuAction::HeaderStartRecording => {
@@ -4557,6 +4571,17 @@ impl MainView {
                     self.ask_pane(PaneRequest::Zoom(ZoomIntent::ActualSize))
                 }
                 MenuAction::HeaderSettings => self.open_settings_tab(),
+                // A What's new section opens the tab; revealing the section
+                // itself waits on a heading lookup (QUESTIONS.md), so every
+                // row opens from the top for now.
+                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
+                    self.open_whats_new(env!("CARGO_PKG_VERSION"))
+                }
+                MenuAction::HelpWhatsNewHeading
+                | MenuAction::HelpShortcuts
+                | MenuAction::HelpAsk
+                | MenuAction::HelpAbout
+                | MenuAction::HelpFoot => false,
                 MenuAction::HeaderFeedback => self.open_send_feedback_tab(),
                 MenuAction::HeaderSupport => {
                     self.ask_pane(PaneRequest::OpenSupport);
@@ -4615,6 +4640,54 @@ impl MainView {
         m.step(&enabled, 1);
         self.menu = Some(m);
         true
+    }
+
+    /// The help popover, rising from the floor's `?`
+    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.10): a
+    /// menu like the ⋯ menu's, anchored so its foot sits just above the
+    /// button and its right edge on the button's.
+    pub(super) fn open_help_menu(&mut self, button: Rect) -> bool {
+        if self.support_only || button.w <= 0.0 {
+            return false;
+        }
+        let foot = self.help_foot();
+        let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
+        let mut m = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::Window,
+            (button.x + button.w, button.y),
+            items,
+            MenuAnchor::ButtonRight,
+        );
+        let gap = koru_app_shell::popover::GAP;
+        let height = m.height();
+        m.set_anchor((button.x + button.w, (button.y - gap - height).max(0.0)));
+        let enabled = self.enabled_items(&m);
+        m.step(&enabled, 1);
+        self.menu = Some(m);
+        true
+    }
+
+    /// The foot of the help popover: the build's label and what the Agent
+    /// says about updates.
+    fn help_foot(&self) -> String {
+        use koru_agent_wire::UpdateStage;
+        let lang = crate::format::lang();
+        let build = koru_channel::build_info().build_label();
+        let state = match self.updates.report().map(|r| r.stage) {
+            Some(UpdateStage::Checking) => koru_i18n::t(lang, koru_i18n::Key::UpdateChecking),
+            Some(UpdateStage::Available | UpdateStage::Downloading | UpdateStage::Verifying) => {
+                koru_i18n::t(lang, koru_i18n::Key::UpdateAvailable)
+            }
+            Some(UpdateStage::Ready) => koru_i18n::t(lang, koru_i18n::Key::UpdateReady),
+            Some(UpdateStage::UpToDate) => koru_i18n::t(lang, koru_i18n::Key::UpToDate),
+            _ => "",
+        };
+        if state.is_empty() {
+            format!("Koru {build}")
+        } else {
+            format!("Koru {build} · {state}")
+        }
     }
 
     /// Keep an open window menu hanging off its `⋯` button after a zoom step.
@@ -6662,6 +6735,10 @@ impl MainView {
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
             Outcome::NewTab => self.open_new_tab_menu(),
             Outcome::Search => self.open_search(),
+            Outcome::OpenHelp => {
+                let help = self.explore.floor_rects(self.regions.sidebar).help;
+                self.open_help_menu(help)
+            }
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -15198,7 +15275,7 @@ impl MainView {
                 Some(TooltipContent::new(
                     6,
                     floor.help,
-                    koru_i18n::t(lang, koru_i18n::Key::ComingLater),
+                    koru_i18n::t(lang, koru_i18n::Key::Help),
                 ))
             } else {
                 let manage = self.explore.manage_button(self.regions.sidebar);

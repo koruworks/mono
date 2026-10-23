@@ -225,7 +225,8 @@ impl MainView {
                 }
             }
             ChromeStop::Floor(FloorControl::Help) => {
-                // Dimmed until the help popover lands (PLAN.final P5).
+                let help = self.explore.floor_rects(self.regions.sidebar).help;
+                self.open_help_menu(help);
             }
         }
         let _ = ws;

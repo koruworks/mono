@@ -2379,13 +2379,24 @@ pub enum Key {
     SearchOrTypeACommand,
     /// The lane's accessibility group.
     SidebarControls,
+    /// The help popover's rows and foot (workspace foundation).
+    WhatsNew,
+    FullChangelog,
+    KeyboardShortcuts,
+    AskAboutKoru,
+    About,
+    NotShippedWithThisBuild,
+    UpToDate,
+    UpdateAvailable,
+    UpdateReady,
+    UpdateChecking,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1621] = [
+    pub const ALL: [Key; 1631] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4007,6 +4018,16 @@ impl Key {
         Key::ShowSidebar,
         Key::SearchOrTypeACommand,
         Key::SidebarControls,
+        Key::WhatsNew,
+        Key::FullChangelog,
+        Key::KeyboardShortcuts,
+        Key::AskAboutKoru,
+        Key::About,
+        Key::NotShippedWithThisBuild,
+        Key::UpToDate,
+        Key::UpdateAvailable,
+        Key::UpdateReady,
+        Key::UpdateChecking,
     ];
 }
 
@@ -12396,4 +12417,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ShowSidebar, en: "Show sidebar", es: "Mostrar la barra lateral", pt_br: "Mostrar a barra lateral", de: "Seitenleiste einblenden", fr: "Afficher la barre latérale", ar: "إظهار الشريط الجانبي", zh_hans: "显示侧边栏", ja: "サイドバーを表示" },
     Row { key: Key::SearchOrTypeACommand, en: "Search or type a command", es: "Buscar o escribir un comando", pt_br: "Pesquisar ou digitar um comando", de: "Suchen oder einen Befehl eingeben", fr: "Rechercher ou saisir une commande", ar: "ابحث أو اكتب أمرًا", zh_hans: "搜索或输入命令", ja: "検索またはコマンドを入力" },
     Row { key: Key::SidebarControls, en: "Sidebar controls", es: "Controles de la barra lateral", pt_br: "Controles da barra lateral", de: "Steuerelemente der Seitenleiste", fr: "Commandes de la barre latérale", ar: "عناصر تحكم الشريط الجانبي", zh_hans: "侧边栏控件", ja: "サイドバーのコントロール" },
+    Row { key: Key::WhatsNew, en: "What's new", es: "Novedades", pt_br: "Novidades", de: "Was ist neu", fr: "Nouveautés", ar: "ما الجديد", zh_hans: "新功能", ja: "新機能" },
+    Row { key: Key::FullChangelog, en: "Full changelog", es: "Registro de cambios completo", pt_br: "Registro de alterações completo", de: "Vollständiges Änderungsprotokoll", fr: "Journal des modifications complet", ar: "سجل التغييرات الكامل", zh_hans: "完整更新日志", ja: "変更履歴をすべて表示" },
+    Row { key: Key::KeyboardShortcuts, en: "Keyboard shortcuts", es: "Atajos de teclado", pt_br: "Atalhos de teclado", de: "Tastenkürzel", fr: "Raccourcis clavier", ar: "اختصارات لوحة المفاتيح", zh_hans: "键盘快捷键", ja: "キーボードショートカット" },
+    Row { key: Key::AskAboutKoru, en: "Ask about Koru…", es: "Preguntar sobre Koru…", pt_br: "Perguntar sobre o Koru…", de: "Fragen zu Koru…", fr: "Poser une question sur Koru…", ar: "اسأل عن Koru…", zh_hans: "询问 Koru…", ja: "Koru について質問…" },
+    Row { key: Key::About, en: "About", es: "Acerca de", pt_br: "Sobre", de: "Info", fr: "À propos", ar: "حول", zh_hans: "关于", ja: "情報" },
+    Row { key: Key::NotShippedWithThisBuild, en: "Not shipped with this build", es: "No incluido en esta versión", pt_br: "Não incluído nesta versão", de: "Nicht in dieser Version enthalten", fr: "Non fourni avec cette version", ar: "غير مضمّن في هذا الإصدار", zh_hans: "此版本未包含", ja: "このビルドには含まれていません" },
+    Row { key: Key::UpToDate, en: "up to date", es: "actualizado", pt_br: "atualizado", de: "auf dem neuesten Stand", fr: "à jour", ar: "محدّث", zh_hans: "已是最新", ja: "最新です" },
+    Row { key: Key::UpdateAvailable, en: "update available", es: "actualización disponible", pt_br: "atualização disponível", de: "Update verfügbar", fr: "mise à jour disponible", ar: "يتوفر تحديث", zh_hans: "有可用更新", ja: "アップデートがあります" },
+    Row { key: Key::UpdateReady, en: "update ready — restart", es: "actualización lista: reinicia", pt_br: "atualização pronta — reinicie", de: "Update bereit – neu starten", fr: "mise à jour prête — redémarrer", ar: "التحديث جاهز — أعد التشغيل", zh_hans: "更新已就绪 — 请重启", ja: "アップデート準備完了 — 再起動してください" },
+    Row { key: Key::UpdateChecking, en: "checking", es: "comprobando", pt_br: "verificando", de: "wird geprüft", fr: "vérification", ar: "جارٍ التحقق", zh_hans: "正在检查", ja: "確認中" },
 ];

@@ -493,6 +493,21 @@ pub enum MenuAction {
     HeaderFeedback,
     HeaderShortcuts,
     HeaderMobile,
+    // ------------------------------------------------------------ help
+    /// The *What's new* heading over the shipped notes' sections.
+    HelpWhatsNewHeading,
+    /// One section of this build's notes; opens the What's new tab.
+    HelpHeadline(usize),
+    /// The whole What's new tab.
+    HelpFullChangelog,
+    /// Dimmed until the shortcuts page lands (PLAN.final rung 7).
+    HelpShortcuts,
+    /// Dimmed until the command bar's help scope lands.
+    HelpAsk,
+    /// Dimmed until there is a destination.
+    HelpAbout,
+    /// The version and the update state: a readout, never chosen.
+    HelpFoot,
     /// The internal session recorder: opens the setup modal
     /// (the internal session-recorder design). Only ever *built* behind the
     /// internal-and-Windows gate in [`window_items`]; a public build matches
@@ -1042,6 +1057,21 @@ impl MenuAction {
             MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
+            MenuAction::HelpWhatsNewHeading => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew)
+            }
+            MenuAction::HelpHeadline(i) => return Cow::Owned(help_headline(i)),
+            MenuAction::HelpFullChangelog => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
+            }
+            MenuAction::HelpShortcuts => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::KeyboardShortcuts)
+            }
+            MenuAction::HelpAsk => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AskAboutKoru)
+            }
+            MenuAction::HelpAbout => koru_i18n::t(crate::format::lang(), koru_i18n::Key::About),
+            MenuAction::HelpFoot => return Cow::Owned(help_foot()),
             MenuAction::HeaderStartRecording => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::RecordingMenuStart)
             }
@@ -1236,7 +1266,11 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
+            MenuAction::Divider
+                | MenuAction::SelectionHeader(_)
+                | MenuAction::HeaderZoom
+                | MenuAction::HelpWhatsNewHeading
+                | MenuAction::HelpFoot
         )
     }
 
@@ -1305,7 +1339,7 @@ impl koru_ui::MenuItem for MenuAction {
     fn height(&self) -> f32 {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
-            MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
+            MenuAction::SelectionHeader(_) | MenuAction::HelpWhatsNewHeading => theme::ROW_H - 4.0,
             MenuAction::Divider => 8.0,
             _ => theme::ROW_H,
         }
@@ -1342,6 +1376,19 @@ impl koru_ui::MenuItem for MenuAction {
             return Some(Cow::Owned(reason));
         }
         match self {
+            // The help popover's rows that wait on a later phase say so
+            // (disabled, never hidden); the changelog without notes says
+            // what is missing.
+            MenuAction::HelpShortcuts | MenuAction::HelpAsk | MenuAction::HelpAbout => {
+                Some(Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ComingLater,
+                )))
+            }
+            MenuAction::HelpFullChangelog => Some(Cow::Borrowed(koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::NotShippedWithThisBuild,
+            ))),
             MenuAction::Open | MenuAction::OpenInNewWindow => {
                 Some(Cow::Borrowed("This workspace is already open"))
             }
@@ -2013,6 +2060,53 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
             });
         }
     }
+    items
+}
+
+thread_local! {
+    /// This window's What's new headlines, set when the help popover opens
+    /// — the same arrangement the `+` menu's recent titles use, because a
+    /// row's label is read from the action alone.
+    static HELP_HEADLINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The foot's readout: the version and the update state.
+    static HELP_FOOT: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn help_headline(i: usize) -> String {
+    HELP_HEADLINES.with(|h| h.borrow().get(i).cloned().unwrap_or_default())
+}
+
+fn help_foot() -> String {
+    HELP_FOOT.with(|f| f.borrow().clone())
+}
+
+/// The help popover's rows (`docs/features/workspace-foundation/TECHNICAL.final.md`
+/// §5.10): WHAT'S NEW with up to three of this build's sections, the full
+/// changelog, then the shortcuts and *Ask about Koru…* (dimmed until their
+/// phases land), then feedback and support, and a foot with the version and
+/// the update state. `headlines` is `None` when no notes shipped beside this
+/// build; the foot then says *dev build*.
+pub fn help_items(headlines: Option<&[String]>, foot: String) -> Vec<MenuAction> {
+    let shown: Vec<String> = headlines
+        .map(|h| h.iter().take(3).cloned().collect())
+        .unwrap_or_default();
+    let count = shown.len();
+    HELP_HEADLINES.with(|h| *h.borrow_mut() = shown);
+    HELP_FOOT.with(|f| *f.borrow_mut() = foot);
+    let mut items = vec![MenuAction::HelpWhatsNewHeading];
+    items.extend((0..count).map(MenuAction::HelpHeadline));
+    items.extend([
+        MenuAction::HelpFullChangelog,
+        MenuAction::Divider,
+        MenuAction::HelpShortcuts,
+        MenuAction::HelpAsk,
+        MenuAction::Divider,
+        MenuAction::HeaderFeedback,
+        MenuAction::HeaderSupport,
+        MenuAction::Divider,
+        MenuAction::HelpAbout,
+        MenuAction::HelpFoot,
+    ]);
     items
 }
 
