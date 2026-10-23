@@ -398,8 +398,13 @@ fn context_has_sections() -> bool {
     !crate::panes::context::Section::visible().is_empty()
 }
 
-const SEARCH_MODAL_W: f32 = 620.0;
+/// The command bar's place (workspace foundation frame 2): 640 wide, up to
+/// 400 tall, hung 96 px from the top rather than centred — a bar that opens
+/// where the eye already is, under the caption, not in the middle of the
+/// page it is about to leave.
+const SEARCH_MODAL_W: f32 = 640.0;
 const SEARCH_MODAL_H: f32 = 400.0;
+const SEARCH_MODAL_TOP: f32 = 96.0;
 const SEARCH_MODAL_MARGIN: f32 = 16.0;
 const MOVE_TO_MODAL_W: f32 = 420.0;
 const MOVE_TO_MODAL_H: f32 = 360.0;
@@ -407,7 +412,9 @@ const MOVE_TO_MODAL_H: f32 = 360.0;
 fn search_modal_bounds(viewport: (f32, f32)) -> Rect {
     let w = SEARCH_MODAL_W.min((viewport.0 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
     let h = SEARCH_MODAL_H.min((viewport.1 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
-    Rect::new((viewport.0 - w) * 0.5, (viewport.1 - h) * 0.5, w, h)
+    // 96 px down, or as high as the margin allows in a short window.
+    let y = SEARCH_MODAL_TOP.min((viewport.1 - h - SEARCH_MODAL_MARGIN).max(SEARCH_MODAL_MARGIN));
+    Rect::new((viewport.0 - w) * 0.5, y, w, h)
 }
 
 fn move_to_modal_bounds(viewport: (f32, f32)) -> Rect {
@@ -2415,6 +2422,11 @@ impl MainView {
         };
         let bounds = self.search_bounds();
         View::set_viewport(&mut search, bounds.w, bounds.h);
+        search.make_command_bar(
+            self.command_bar_rows(),
+            Self::command_bar_chips(),
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand).to_owned(),
+        );
         self.search = Some(search);
         // The observation, not the work: one channel send, a no-op under
         // `cargo test` (nothing starts the host there).
@@ -2422,6 +2434,114 @@ impl MainView {
             koru_workspace_host::events_host::SearchSurface::InApp,
         );
         true
+    }
+
+    /// **The CREATE rows this host offers** (TECHNICAL.final §5.9): *New
+    /// task "…"* — undated and unlisted, which the model files in Later — and
+    /// *New document "…"*, landing where the `+` menu's *New document* lands
+    /// today. The rows are built when the bar opens, so the subtitle names
+    /// this workspace; `apply_create` answers them by index.
+    fn command_bar_rows(&self) -> Vec<koru_search_ui::CreateRow> {
+        use koru_i18n::{Key, t};
+        let lang = crate::format::lang();
+        let mut rows = Vec::new();
+        if koru_features::tasks() {
+            rows.push(koru_search_ui::CreateRow {
+                icon: koru_draw::icons::CHECK_SQUARE,
+                title: t(lang, Key::NewTask).to_owned(),
+                subtitle: format!(
+                    "{} · {}",
+                    t(lang, Key::A11yTasksHeading),
+                    t(lang, Key::A11yTaskBucketLater)
+                ),
+            });
+        }
+        let workspace = self
+            .pane_context
+            .as_ref()
+            .and_then(|(_, _, workspaces, current)| {
+                let current = (*current)?;
+                workspaces
+                    .iter()
+                    .find(|w| w.id == current)
+                    .map(|w| w.name.clone())
+            });
+        rows.push(koru_search_ui::CreateRow {
+            icon: koru_draw::icons::DOCUMENT,
+            title: t(lang, Key::NewDocument).to_owned(),
+            subtitle: match workspace {
+                Some(name) => format!("{} · {name}", t(lang, Key::DocumentsHeading)),
+                None => t(lang, Key::DocumentsHeading).to_owned(),
+            },
+        });
+        rows
+    }
+
+    /// The footer's chips: ↑↓ move · ↵ open · Ctrl+↵ open in window. The `/`
+    /// and `@` chips of the canvas wait for the keys they name (rung 7).
+    fn command_bar_chips() -> Vec<koru_search_ui::FooterChip> {
+        use koru_i18n::{Key, t};
+        let lang = crate::format::lang();
+        let chord = |id| koru_keys::show_hint(id, koru_keys::Section::Tooltip).unwrap_or_default();
+        vec![
+            koru_search_ui::FooterChip {
+                key: "\u{2191}\u{2193}".to_owned(),
+                label: t(lang, Key::ChipMove).to_owned(),
+            },
+            koru_search_ui::FooterChip {
+                key: "\u{21b5}".to_owned(),
+                label: t(lang, Key::ChipOpen).to_owned(),
+            },
+            koru_search_ui::FooterChip {
+                key: {
+                    let open = chord(koru_keys::ShortcutId::NewTab);
+                    // The registry prints the platform's primary modifier
+                    // for any container chord; the window's enter is that
+                    // modifier with ↵.
+                    let primary = open.split('+').next().unwrap_or("Ctrl").to_owned();
+                    format!("{primary}+\u{21b5}")
+                },
+                label: t(lang, Key::ChipOpenInWindow).to_owned(),
+            },
+        ]
+    }
+
+    /// Answer a CREATE row: make the thing and open it (`↵` creates *and*
+    /// opens, Q-B). The surface closes the way it does for a chosen result.
+    fn apply_create(&mut self, create: koru_search_ui::Create) -> bool {
+        let tasks = koru_features::tasks();
+        let row = if tasks { create.row } else { create.row + 1 };
+        chrome_debug::chrome_debug!("command bar create row {} for {:?}", row, create.query);
+        match row {
+            0 => {
+                if create.query.is_empty() {
+                    return false;
+                }
+                self.queue_task_command(
+                    koru_workspace_host::tasks::TaskCommand::Create {
+                        title: create.query,
+                        due: None,
+                        list: None,
+                        priority: None,
+                    },
+                    false,
+                );
+                // Where it landed: the Tasks page on Later (Q3).
+                self.open_tasks_tab(
+                    crate::panes::explore::rail::RailTarget::Bucket(
+                        koru_core::tasks::Bucket::Later,
+                    ),
+                    create.disposition == koru_search_ui::Disposition::NewWindow,
+                );
+                true
+            }
+            _ => {
+                self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
+                    create.query,
+                ));
+                true
+            }
+        }
     }
 
     fn service_search_outputs(&mut self) {
@@ -2434,7 +2554,15 @@ impl MainView {
         while let Some(request) = View::take_pane_request(search) {
             requests.push(request);
         }
+        let create = search.take_create();
         let window_request = View::take_window_request(search);
+        if let Some(create) = create {
+            // A CREATE row is a destination like a result: the bar closes
+            // and the thing opens.
+            self.search = None;
+            self.apply_create(create);
+            return;
+        }
         // Forwarded rather than replacing: the search panel's ask joins
         // whatever this view has already queued. A same-window target records
         // *here* — the shell landing that follows must not, or a workspace

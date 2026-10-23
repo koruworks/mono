@@ -2401,13 +2401,17 @@ pub enum Key {
     /// The lane's New square, per app (workspace foundation, rung 3).
     NewDocument,
     NewTask,
+    /// The command bar's footer chips (workspace foundation, rung 4).
+    ChipMove,
+    ChipOpen,
+    ChipOpenInWindow,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1640] = [
+    pub const ALL: [Key; 1643] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4048,6 +4052,9 @@ impl Key {
         Key::AddAccount,
         Key::NewDocument,
         Key::NewTask,
+        Key::ChipMove,
+        Key::ChipOpen,
+        Key::ChipOpenInWindow,
     ];
 }
 
@@ -12456,4 +12463,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::AddAccount, en: "Add account", es: "Añadir cuenta", pt_br: "Adicionar conta", de: "Konto hinzufügen", fr: "Ajouter un compte", ar: "إضافة حساب", zh_hans: "添加账户", ja: "アカウントを追加" },
     Row { key: Key::NewDocument, en: "New document", es: "Nuevo documento", pt_br: "Novo documento", de: "Neues Dokument", fr: "Nouveau document", ar: "مستند جديد", zh_hans: "新建文档", ja: "新規ドキュメント" },
     Row { key: Key::NewTask, en: "New task", es: "Nueva tarea", pt_br: "Nova tarefa", de: "Neue Aufgabe", fr: "Nouvelle tâche", ar: "مهمة جديدة", zh_hans: "新建任务", ja: "新規タスク" },
+    Row { key: Key::ChipMove, en: "move", es: "mover", pt_br: "mover", de: "bewegen", fr: "déplacer", ar: "تنقل", zh_hans: "移动", ja: "移動" },
+    Row { key: Key::ChipOpen, en: "open", es: "abrir", pt_br: "abrir", de: "öffnen", fr: "ouvrir", ar: "فتح", zh_hans: "打开", ja: "開く" },
+    Row { key: Key::ChipOpenInWindow, en: "open in window", es: "abrir en ventana", pt_br: "abrir em janela", de: "im Fenster öffnen", fr: "ouvrir dans une fenêtre", ar: "فتح في نافذة", zh_hans: "在窗口中打开", ja: "ウィンドウで開く" },
 ];

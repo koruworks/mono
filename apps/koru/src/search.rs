@@ -85,6 +85,26 @@ impl SearchSurface {
         self.0.resume();
     }
 
+    /// **This host's command bar** (PLAN.final P13): the CREATE rows the
+    /// typed text could become, the footer's chips and the box's words. The
+    /// surface draws them; what a row makes is answered in `mainview` when
+    /// the surface hands back a `Create`.
+    pub(crate) fn make_command_bar(
+        &mut self,
+        rows: Vec<koru_search_ui::CreateRow>,
+        chips: Vec<koru_search_ui::FooterChip>,
+        placeholder: String,
+    ) {
+        self.0.set_create_rows(rows);
+        self.0.set_footer_chips(chips);
+        self.0.set_placeholder(Some(placeholder));
+    }
+
+    /// What `↵` on a CREATE row asked for, once.
+    pub(crate) fn take_create(&mut self) -> Option<koru_search_ui::Create> {
+        self.0.take_create()
+    }
+
     pub(crate) fn resume_in_workspace(
         &mut self,
         profile: ProfileId,

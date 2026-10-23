@@ -7343,16 +7343,135 @@ fn following_a_link_in_place_is_recorded_in_the_history() {
     assert_eq!(v.document_root(), Some(a));
 }
 
+/// The command bar: 640 wide, 400 tall, 96 px from the top (frame 2).
 #[test]
-fn search_modal_is_620_by_400_and_centered() {
+fn search_modal_is_640_by_400_and_hangs_96_from_the_top() {
     let bounds = search_modal_bounds((1200.0, 700.0));
-    assert_eq!(bounds, Rect::new(290.0, 150.0, 620.0, 400.0));
+    assert_eq!(bounds, Rect::new(280.0, 96.0, 640.0, 400.0));
 }
 
 #[test]
 fn search_modal_keeps_a_margin_in_a_small_window() {
     let bounds = search_modal_bounds((500.0, 300.0));
     assert_eq!(bounds, Rect::new(16.0, 16.0, 468.0, 268.0));
+}
+
+/// **What the typed text could become** leads the bar: *New task "…"* and
+/// *New document "…"*. Enter on the task row queues the undated, unlisted
+/// task the model files in Later and closes the bar; the document row asks
+/// the shell for a document of that name, where the `+` menu's lands.
+#[test]
+fn the_command_bar_offers_new_task_and_new_document_from_the_typed_text() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let (mut view, mut workspace) = container();
+    assert!(view.open_search());
+    {
+        let search = view.search.as_mut().expect("open");
+        for ch in "fix login".chars() {
+            let s = ch.to_string();
+            View::key(
+                search,
+                &mut workspace.ws,
+                &Key::Character(s.clone().into()),
+                Some(&s),
+                ModifiersState::empty(),
+            );
+        }
+        // Up from the (empty) hits: the last CREATE row, New document; Up
+        // again: New task.
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+    }
+    view.service_search_outputs();
+    assert!(
+        view.search.is_none(),
+        "a CREATE row is a destination: the bar closes"
+    );
+    let commands = view.take_wants_task_commands();
+    let created = commands.iter().find_map(|c| match c {
+        koru_workspace_host::tasks::TaskCommand::Create {
+            title,
+            due,
+            list,
+            priority,
+        } => Some((
+            title.clone(),
+            due.is_none(),
+            list.is_none(),
+            priority.is_none(),
+        )),
+        _ => None,
+    });
+    assert_eq!(
+        created,
+        Some(("fix login".to_owned(), true, true, true)),
+        "an undated, unlisted task of the typed text"
+    );
+
+    // The document row: the shell is asked for a document of that name.
+    assert!(view.open_search());
+    {
+        let search = view.search.as_mut().expect("open");
+        // The bar keeps its text across a reopen; clear it the way a person
+        // would before typing the next thing.
+        for _ in 0.."fix login".len() {
+            View::key(
+                search,
+                &mut workspace.ws,
+                &Key::Named(NamedKey::Backspace),
+                None,
+                ModifiersState::empty(),
+            );
+        }
+        for ch in "notes".chars() {
+            let s = ch.to_string();
+            View::key(
+                search,
+                &mut workspace.ws,
+                &Key::Character(s.clone().into()),
+                Some(&s),
+                ModifiersState::empty(),
+            );
+        }
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        View::key(
+            search,
+            &mut workspace.ws,
+            &Key::Named(NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+    }
+    view.service_search_outputs();
+    assert!(view.search.is_none());
+    let asked = std::iter::from_fn(|| View::take_pane_request(&mut view))
+        .any(|r| matches!(r, koru_workspace_host::PaneRequest::CreateDocument(t) if t == "notes"));
+    assert!(asked, "New document \"notes\" went to the shell");
 }
 
 #[test]

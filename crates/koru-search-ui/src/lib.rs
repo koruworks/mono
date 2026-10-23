@@ -418,6 +418,8 @@ pub struct SearchSurface {
     hover_create: Option<usize>,
     /// What `↵` on a CREATE row asked for, until the host takes it.
     create: Option<Create>,
+    /// The host's words in the empty box, over the surface's own.
+    placeholder: Option<String>,
     tooltip: Tooltip,
     exiting: ExitList<String>,
     exiting_hits: Vec<(usize, SearchHit)>,
@@ -633,6 +635,7 @@ impl SearchSurface {
             selected_create: None,
             hover_create: None,
             create: None,
+            placeholder: None,
             tooltip: Tooltip::default(),
             exiting: ExitList::new(),
             exiting_hits: Vec::new(),
@@ -1899,6 +1902,12 @@ impl SearchSurface {
         self.footer_chips = chips;
     }
 
+    /// The host's words in the empty box (*Search or type a command*), in
+    /// place of the surface's scope-shaped ones.
+    pub fn set_placeholder(&mut self, placeholder: Option<String>) {
+        self.placeholder = placeholder;
+    }
+
     /// What `↵` on a CREATE row asked for, once. The host answers it the way
     /// it answers a `Target`: by making the thing and closing the surface.
     pub fn take_create(&mut self) -> Option<Create> {
@@ -3153,10 +3162,12 @@ impl SearchSurface {
             Some(p.text_dim),
         );
         let query_rect = self.query_rect();
-        let placeholder = match &self.scope {
-            SearchScope::Global => "Search pages, tasks, comments, and workspaces",
-            SearchScope::Workspace { .. } => "Search this workspace",
+        let placeholder = match (&self.placeholder, &self.scope) {
+            (Some(words), _) => words.as_str(),
+            (None, SearchScope::Global) => "Search pages, tasks, comments, and workspaces",
+            (None, SearchScope::Workspace { .. }) => "Search this workspace",
         };
+        let placeholder = placeholder.to_owned();
         self.query.draw(
             canvas,
             root,
@@ -3166,7 +3177,7 @@ impl SearchSurface {
             // Baseline-clamping this field silently replaced the configured
             // caret height, so one preference produced two different carets.
             InputStyle::bare(theme::role::row()),
-            Some(placeholder),
+            Some(placeholder.as_str()),
             caret_on,
         );
         self.paint_header_controls(canvas, root);
