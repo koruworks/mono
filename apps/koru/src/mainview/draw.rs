@@ -399,6 +399,10 @@ impl MainView {
                 .avatar_hash()
                 .and_then(|h| images.get(h))
                 .map(|a| a.as_ref());
+            // The ring a chrome stop wears is drawn by whoever draws the
+            // control: the column for its chips and floor, the window for
+            // the lane.
+            self.explore.set_chrome_focus(self.explore_chrome_focus());
             self.explore.draw(scene, root, &mut self.engine, sb, avatar);
             // The lane, over the pane's top band: window chrome, so it is the
             // window that draws it.
@@ -908,6 +912,26 @@ impl MainView {
                     active: false,
                     disabled: false,
                 },
+            );
+        }
+        // `F6`'s ring on the focused lane control, around the hover chip.
+        let focused = match self.lane_chrome_focus() {
+            Some(super::chrome_focus::LaneControl::Toggle) if rects.toggle.w > 0.0 => {
+                Some(rects.toggle)
+            }
+            Some(super::chrome_focus::LaneControl::Search) if rects.search.w > 0.0 => {
+                Some(rects.search)
+            }
+            _ => None,
+        };
+        if let Some(slot) = focused {
+            let chip = koru_ui::icon_button::hover_chip(slot);
+            scene::stroke(
+                scene,
+                root,
+                p.focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(chip.x - 1.0, chip.y - 1.0, chip.w + 2.0, chip.h + 2.0, 7.0),
             );
         }
     }

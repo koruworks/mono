@@ -82,6 +82,7 @@ pub(crate) mod parts {
     /// The pinned floor row.
     pub const TRASH: ControlPart = ControlPart::new("trash");
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
+    pub const MANAGE_APPS: ControlPart = ControlPart::new("manage-apps");
     pub const HELP: ControlPart = ControlPart::new("help");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
@@ -503,6 +504,26 @@ impl ExploreView {
                     .with_action(Action::Click)
             })
             .collect()
+    }
+
+    /// The occurrence of a chrome control `F6` has the keyboard on, for the
+    /// window's `accessibility_focus`: a chip by its mode's token, the rest by
+    /// their parts.
+    pub(crate) fn chrome_focus_occurrence(
+        &self,
+        cx: &Context,
+        focus: super::ExploreChromeFocus,
+    ) -> Option<Occurrence> {
+        use super::ExploreChromeFocus;
+        Some(match focus {
+            ExploreChromeFocus::App(i) => {
+                let mode = *NavigatorMode::visible().get(i)?;
+                cx.surface(MODE, ControlPart::new(mode.token()))
+            }
+            ExploreChromeFocus::Manage => cx.surface(EXPLORE, parts::MANAGE_APPS),
+            ExploreChromeFocus::FloorChip => cx.surface(EXPLORE, parts::FLOOR_CHIP),
+            ExploreChromeFocus::FloorHelp => cx.surface(EXPLORE, parts::HELP),
+        })
     }
 
     /// The floor: the who/where chip, named by where and who, with its

@@ -63,6 +63,7 @@ pub(crate) mod accessibility;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
+mod chrome_focus;
 pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
 mod delegate;
@@ -1069,6 +1070,9 @@ pub struct MainView {
     /// the opposite verb while you are still looking at it. Cleared the moment
     /// the pointer moves off the button, so pointing at it again asks again.
     toggle_tip_muted: bool,
+    /// Where `F6` has put the keyboard on the sidebar's chrome, if anywhere
+    /// (`chrome_focus.rs`).
+    chrome_focus: Option<chrome_focus::ChromeStop>,
     /// Shared timing for the adjacent icon controls in the caption.
     tooltip: Tooltip,
     /// Recently opened documents, most recent first.
@@ -1810,6 +1814,7 @@ impl MainView {
             submenu: None,
             nested: None,
             toggle_tip_muted: false,
+            chrome_focus: None,
             tooltip: Tooltip::default(),
             recents: Vec::new(),
             recent_documents: Vec::new(),
@@ -8311,6 +8316,8 @@ impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.tooltip.clear();
         self.pointer = (x, y);
+        // A press anywhere moves the keyboard off the chrome stop it was on.
+        self.chrome_focus = None;
         // Keyboard focus also decides which surface receives the matching
         // release. Opening the AI pane gives it focus, but a later press in
         // Explore used to leave that bit set: Explore seeded a latent row drag
@@ -13050,6 +13057,12 @@ impl MainView {
         if handled {
             return true;
         }
+        // A sidebar chrome stop `F6` has landed on — lane, apps row or floor —
+        // answers the arrows, an activation and Escape, and lets everything
+        // else through, the way the bell does (`chrome_focus.rs`).
+        if self.chrome_focus.is_some() && self.chrome_focus_key(ws, key) {
+            return true;
+        }
         // An open popover takes Esc, the arrows and Enter — and **lets
         // everything else through**. A panel hanging off a column is not a
         // modal over the document, so Ctrl+E must still shut the pane under it
@@ -13440,49 +13453,6 @@ impl MainView {
             .reminder_creation
             .key(&mut self.engine, key, text, mods);
         self.settle_reminder_creation(ws, outcome)
-    }
-
-    /// **`F6` — move the keyboard into window chrome**, one stop per press.
-    ///
-    /// It has always meant this and has always had one stop: the reminder bell
-    /// (`Shell::focus_bell`). It is a *rotation* now because a second surface
-    /// needed reaching and the alternative was a chord of its own — a shortcut
-    /// nobody discovers for a state that is rare. So the recovery pill a
-    /// refused reminder save leaves floating joins the convention rather than
-    /// inventing a rule for surfaces that own no keyboard (Q-R1, the maintainers'
-    /// answer on 2026-09-11).
-    ///
-    /// **The rotation is what is standing, never a fixed list.** A pill is a
-    /// stop only while there is one — `Surface::has_failed_pill` reads the same
-    /// geometry that draws it — so with nothing failed this is exactly what it
-    /// was before: `F6` lands on the bell, and a second `F6` leaves it there
-    /// (`focus_bell` answers `false` and the key falls through, claiming
-    /// nothing). A stop that is not there is never a dead press.
-    ///
-    /// **The pill comes first** because it is the transient one: it is standing
-    /// because something a person asked for did not happen, and the bell will
-    /// still be there on the next press. From the pill, `F6` moves on to the
-    /// bell; from the bell it wraps round to the pill if one is still standing.
-    /// Escape on the pill leaves chrome outright, which
-    /// `accessibility_focus` reads as the content region — the same place a
-    /// character would go.
-    ///
-    /// Whichever stop is taken, the other is cleared, so two rings can never be
-    /// painted at once.
-    fn focus_chrome(&mut self) -> bool {
-        // Both stops are reminder chrome; with reminders hidden F6 has
-        // nowhere to land and falls through (koru-features).
-        if !koru_features::reminders() {
-            return false;
-        }
-        // Anywhere but the pill goes to the pill, if one is standing; the pill
-        // goes on to the bell. Two stops, so the whole rotation is this line.
-        if self.reminder_creation.has_failed_pill() && !self.reminder_creation.pill_focused() {
-            let moved = self.reminder_creation.focus_first_failed_pill();
-            return self.reminder_shell.blur_bell() || moved;
-        }
-        let moved = self.reminder_shell.focus_bell();
-        self.reminder_creation.blur_pill() || moved
     }
 
     fn drain_reminder_management_request(&mut self, ws: &WorkspaceDoc) -> bool {

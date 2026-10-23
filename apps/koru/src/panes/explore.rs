@@ -492,6 +492,17 @@ struct RowDrag {
     spring: Option<(NodeId, Instant)>,
 }
 
+/// The part of `F6`'s focus the column draws a ring for: an apps-row chip,
+/// *Manage apps*, or a floor control (`mainview/chrome_focus.rs`). The
+/// window decides where the keyboard is; the column only paints it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ExploreChromeFocus {
+    App(usize),
+    Manage,
+    FloorChip,
+    FloorHelp,
+}
+
 /// Every rect in a workspace row of the switcher, derived from the row alone.
 ///
 /// See [`ExploreView::workspace_row_parts`], which is the only thing that
@@ -566,6 +577,9 @@ pub struct ExploreView {
     manage_hover: bool,
     /// Which floor control the pointer is on, if any.
     floor_hover: Option<floor::Hit>,
+    /// Which chrome control `F6` has the keyboard on, as the window tells it
+    /// before each frame.
+    chrome_focus: Option<ExploreChromeFocus>,
     /// The tasks mode's content. Composed rather than a second view, because
     /// the header, the mode row and the column's own fill are the same in all
     /// three modes — a sibling would have to be handed all of them.
@@ -2963,6 +2977,16 @@ impl ExploreView {
         true
     }
 
+    /// How far open `kind` is, 0 to 1 — and 0 for a kind that is not the one
+    /// showing. The header's chevron read this; the tests still do.
+    #[cfg(test)]
+    pub fn popover_progress(&self, kind: PopoverKind) -> f32 {
+        match self.popover.as_ref() {
+            Some(p) if p.kind == kind => p.progress,
+            _ => 0.0,
+        }
+    }
+
     /// Advance the fade and the slide between pages. Returns whether anything
     /// moved.
     ///
@@ -3770,6 +3794,16 @@ impl ExploreView {
         )
     }
 
+    /// Where `F6` has the keyboard, for the ring. The window owns the focus;
+    /// this is told, not asked.
+    pub fn set_chrome_focus(&mut self, focus: Option<ExploreChromeFocus>) -> bool {
+        if self.chrome_focus == focus {
+            return false;
+        }
+        self.chrome_focus = focus;
+        true
+    }
+
     /// The *Manage apps* square at the row's end — dimmed and inert until
     /// the apps manager lands (PLAN.final P11).
     pub fn manage_button(&self, area: Rect) -> Rect {
@@ -3991,6 +4025,15 @@ impl ExploreView {
                 },
                 koru_ui::icon_button::Metrics::COMPACT,
             );
+        }
+        // `F6`'s ring on the focused chip or on *Manage apps*.
+        let ring = match self.chrome_focus {
+            Some(ExploreChromeFocus::App(i)) => layout.chips.get(i).map(|c| c.rect),
+            Some(ExploreChromeFocus::Manage) if m.w > 0.0 => Some(m),
+            _ => None,
+        };
+        if let Some(r) = ring {
+            draw_focus_ring(scene, root, r, p);
         }
     }
 
@@ -6406,6 +6449,14 @@ impl ExploreView {
                 koru_ui::icon_button::Metrics::COMPACT,
             );
         }
+        let ring = match self.chrome_focus {
+            Some(ExploreChromeFocus::FloorChip) if r.chip.w > 0.0 => Some(r.chip),
+            Some(ExploreChromeFocus::FloorHelp) if r.help.w > 0.0 => Some(r.help),
+            _ => None,
+        };
+        if let Some(rect) = ring {
+            draw_focus_ring(scene, root, rect, p);
+        }
     }
 
     /// The nodes band — the one section of the shell that changes between
@@ -7565,6 +7616,19 @@ impl ExploreView {
             style,
         );
     }
+}
+
+/// The keyboard's ring around a chrome control: `focus_ring`, two borders
+/// wide, one pixel outside the control — the bell's ring, so every stop of
+/// `F6`'s rotation wears the same one.
+fn draw_focus_ring(scene: &mut Scene, root: Affine, r: Rect, p: &theme::Palette) {
+    scene::stroke(
+        scene,
+        root,
+        p.focus_ring,
+        theme::BORDER_W * 2.0,
+        &scene::rrect(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, 7.0),
+    );
 }
 
 /// Vertically centre one line of text in `at`, truncated to its width.

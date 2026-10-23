@@ -317,6 +317,29 @@ impl MainView {
         {
             return Some(occurrence);
         }
+        // A sidebar chrome stop `F6` has landed on (`chrome_focus.rs`): the
+        // lane's controls are the window's nodes, the apps row and the floor
+        // the explore column's.
+        if let Some(stop) = self.chrome_focus {
+            use crate::mainview::chrome_focus::{ChromeStop, LaneControl};
+            match stop {
+                ChromeStop::Lane(LaneControl::Toggle) => {
+                    return Some(cx.surface(SHELL, parts::TOGGLE_EXPLORE));
+                }
+                ChromeStop::Lane(LaneControl::Search) => {
+                    return Some(cx.surface(SHELL, parts::SEARCH));
+                }
+                _ => {
+                    if let Some(focus) = self.explore_chrome_focus()
+                        && let Some(occurrence) = self
+                            .explore
+                            .chrome_focus_occurrence(&self.explore_context(&cx), focus)
+                    {
+                        return Some(occurrence);
+                    }
+                }
+            }
+        }
         // The AI composer, which sits below every chord and above the tab —
         // the same place `MainView::key` routes it and the same pair
         // `editable_target` asks.

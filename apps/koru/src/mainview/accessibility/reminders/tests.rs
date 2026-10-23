@@ -864,9 +864,19 @@ fn f6_lands_on_a_standing_recovery_pill_and_the_published_focus_follows() {
     assert!(!v.reminder_creation.pill_focused());
     assert!(v.reminder_shell.bell_is_focused());
 
-    // …and round again, because the pill is still standing.
+    // …then on to the sidebar's own stops — the lane, and the apps row and
+    // floor while the pane is open — and round again to the pill, because it
+    // is still standing (`chrome_focus.rs`).
     assert!(f6(&mut v, &mut w));
-    assert!(v.reminder_creation.pill_focused());
+    assert!(!v.reminder_shell.bell_is_focused(), "the bell let go");
+    assert!(v.chrome_focus.is_some(), "the lane took the keyboard");
+    let mut rounds = 0;
+    while !v.reminder_creation.pill_focused() {
+        assert!(f6(&mut v, &mut w));
+        rounds += 1;
+        assert!(rounds <= 4, "the rotation must come round to the pill");
+    }
+    assert!(v.chrome_focus.is_none(), "and the lane let go");
 }
 
 /// **Escape leaves the pill and focus lands somewhere valid**, rather than on a
