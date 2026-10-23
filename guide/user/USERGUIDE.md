@@ -1832,6 +1832,17 @@ copied, exactly where they were in the text.
 Inside Koru you get everything back exactly. Leaving through the system
 clipboard, plain text is the universal half; documents also write HTML Format
 so Word, OneNote and Google Docs keep headings, marks and embedded pictures.
+
+A **code block** leaves whole. In the plain text it is a fenced Markdown block
+— three backticks and its language on one line, every line of the block as
+written, three backticks again — so the next editor reads a code block rather
+than loose lines, and pasting that text back into Koru gives the same block
+with the same language. A block that itself contains three backticks gets a
+longer fence, so it still ends where it should. Where Koru writes HTML Format,
+the block is a `<pre><code>` element naming the language. Inside Koru, a copied
+code block keeps its language wherever it lands, alone or in the middle of a
+selection of paragraphs.
+
 Ordinary `Ctrl+V` also reads that rich HTML on the way in: semantic bold,
 italic, underline, strikethrough and inline-code spans become Koru marks, while
 headings, lists and quotes keep their block structure. Semantic HTML links
@@ -4019,6 +4030,58 @@ The dropdown opens with the chip's current value already
 active, entries highlight as the pointer crosses them, and `Enter` confirms
 the active one. Syntax color is derived from the text and the language;
 it is never stored, so it follows the theme and never bloats a sync.
+
+### Diagrams
+
+A code block whose language is **Mermaid** is a diagram: Koru draws it in
+place of the text. Write a flowchart or a sequence diagram in
+[Mermaid](https://mermaid.js.org) notation inside a fence that opens with
+`` ```mermaid `` — or paste a Markdown document that holds one, or let an
+agent write one over MCP — and the page shows the drawing, in the page's own
+colors and font, in light and dark alike. The text is the truth and the
+drawing is derived from it: it is never stored or synced, so every device
+draws its own, and a page with a diagram opens as fast as one with a picture.
+
+Koru draws **flowcharts** (`flowchart` or `graph`, every direction, groups
+included) and **sequence diagrams** (participants, actors, every arrow style,
+notes, activations, and the `loop`, `alt`/`else` and `opt` frames). Every
+other Mermaid kind keeps its text and says so beneath it: *Koru does not draw
+this kind of diagram yet*. Styling and interaction lines in the text —
+`%%{init}`, `classDef`, `style`, `click` — are kept exactly as written and
+ignored for drawing; the theme decides how a diagram looks.
+
+**Editing.** Click a drawing to select it, like a picture; arrow onto it and
+the *Edit text* control appears at its corner. Press `Enter` (or click the
+control, or choose *Edit text* from the right-click menu) and the text opens
+above the drawing, which follows every keystroke. When a line cannot be read,
+the block says which one — *Line 7: this line could not be read* — and keeps
+the last drawing that worked beneath, labelled as such, until the text draws
+again. `Esc` closes the text; `Ctrl+Enter` leaves to a paragraph below. A
+block that does not draw shows its text with the reason under it, never a
+stale drawing. A very large diagram shows its text with *Too large to draw:
+N boxes* (or *N messages*) rather than slow the page. An empty block shows
+*Describe a flowchart or a sequence diagram here*.
+
+**Copying and saving.** Copy on a selected drawing copies the whole block;
+it arrives as a diagram wherever it is pasted in Koru, and as a fenced
+`mermaid` block in other applications. Right-click a drawing and choose
+*Save as…* — or press `Ctrl+Shift+X` on it — to save the picture as **PNG**
+(at twice the screen size) or **SVG**; both look like the drawing on screen
+on any machine, and the SVG needs no font. On Windows the dialog offers the
+two types; on macOS the extension you type decides (`.svg` for SVG,
+anything else for PNG).
+
+**Screen readers** hear a drawn diagram as a picture named with what it
+shows: the title and description the text declares (`accTitle`, `accDescr`),
+then *Diagram, flowchart, 10 boxes, 12 arrows* and every arrow as a sentence,
+or *Diagram, sequence, 4 participants: …; 12 messages* and every message. A
+block that does not draw is announced as *Diagram, not drawn:* with the
+reason, and its text is read as usual.
+
+Agents connected over MCP learn how to write a diagram and whether it drew
+from the model document (`koru://docs/model`, section *Diagrams*): every
+read of a Mermaid block carries a `diagram` status with the same reason a
+person sees.
 
 ### Inline code
 

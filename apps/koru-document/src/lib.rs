@@ -24,6 +24,7 @@ pub mod blockmenu;
 pub mod bubble;
 pub mod caption;
 pub mod context_menu;
+pub mod diagrams;
 pub mod docview;
 pub mod draw;
 pub mod menu;
@@ -198,6 +199,9 @@ pub struct BuiltInDocument {
     /// at open (D13) so the menu never relabels under the pointer. Assigned —
     /// to a snapshot or to `None` — on every context-menu open.
     context_spelling: Option<spelling::SpellSnapshot>,
+    /// The line to the shell's diagram worker: the editor's layout requests
+    /// go out and the drawings come back through it, once per `maintain`.
+    diagrams: diagrams::Diagrams,
 }
 
 /// The three pieces of work this view's `adopt` arranges, counted.
@@ -390,6 +394,7 @@ impl BuiltInDocument {
                     dictation: None,
                     spelling: spelling::SpellCheck::new(),
                     context_spelling: None,
+                    diagrams: diagrams::Diagrams::new(),
                 }
             }
         }
@@ -463,6 +468,7 @@ impl BuiltInDocument {
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
+            diagrams: diagrams::Diagrams::new(),
         }
     }
 
@@ -505,6 +511,7 @@ impl BuiltInDocument {
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
+            diagrams: diagrams::Diagrams::new(),
         }
     }
 
@@ -616,6 +623,7 @@ impl BuiltInDocument {
             self.focused_task_context(),
             self.context_reminder_node.is_some(),
             None,
+            None,
             self.context_pill_kind(),
             self.context_spell().as_ref(),
             koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
@@ -665,6 +673,85 @@ impl BuiltInDocument {
             source_visible: self.editor.view.table_source == Some(focused.id)
                 || visual.grid.is_none(),
         })
+    }
+
+    /// The focused row as a diagram, for the menu's diagram group: `None` on
+    /// every row that is not a `mermaid` code block. `drawn` reads this
+    /// view's entry, which is where the drawing lives, so *Save as…* is
+    /// offered exactly when there is a picture to save.
+    fn focused_diagram_context(&self) -> Option<context_menu::DiagramContext> {
+        let focused = self.editor.body.focused()?;
+        if !koru_editor::diagram::is_diagram_row(focused) {
+            return None;
+        }
+        let drawn = matches!(
+            self.editor
+                .view
+                .diagrams
+                .get(&focused.id)
+                .map(|entry| &entry.state),
+            Some(koru_editor::DiagramState::Drawn(_))
+        );
+        Some(context_menu::DiagramContext {
+            node: focused.id,
+            drawn,
+        })
+    }
+
+    // ------------------------------------------------------------- diagrams
+    //
+    // The host's side of a drawn `mermaid` block, passed straight through to
+    // the editor (`koru_editor::diagram`): the editor asks for every layout and
+    // never computes one, and the shell answers from a worker it owns.
+
+    /// The layouts the editor is waiting for, taken off its queue. Drained by
+    /// the shell's maintenance, handed to its layout worker.
+    pub fn take_diagram_requests(&mut self) -> Vec<koru_editor::DiagramRequest> {
+        self.editor.take_diagram_requests()
+    }
+
+    /// The worker's answer for one request: the prepared drawing, or the
+    /// status that says why there is none. `true` when the view changed and a
+    /// redraw is owed — the shell returns it from `maintain`.
+    pub fn diagram_result(
+        &mut self,
+        node: NodeId,
+        text_hash: u64,
+        result: Result<
+            std::sync::Arc<koru_draw::diagram::PreparedDiagram>,
+            koru_editor::diagram::Status,
+        >,
+    ) -> bool {
+        self.editor.diagram_result(node, text_hash, result)
+    }
+
+    /// *Save as…* asked on a drawn diagram, if it was — the way
+    /// `take_wants_file_action` surfaces a file action. The shell owns the
+    /// save dialog, the raster and the write; this view only names the block.
+    /// `View::take_wants_save_diagram_as` drains it, pairing the node with
+    /// its drawing and the page's title for the shell.
+    pub fn take_wants_save_diagram_as(&mut self) -> Option<koru_editor::SaveDiagramAs> {
+        self.editor.view.wants_save_diagram_as.take()
+    }
+
+    /// The drawing `node` shows right now, if it is a diagram in its `Drawn`
+    /// state — what *Save as…* saves. `None` for a placeholder, a block that
+    /// does not draw, or any other row: the menu offers the row only when
+    /// this answers, and a request that races a keystroke is simply dropped.
+    pub fn drawn_diagram(
+        &self,
+        node: NodeId,
+    ) -> Option<std::sync::Arc<koru_draw::diagram::PreparedDiagram>> {
+        match self
+            .editor
+            .view
+            .diagrams
+            .get(&node)
+            .map(|entry| &entry.state)
+        {
+            Some(koru_editor::DiagramState::Drawn(prepared)) => Some(prepared.clone()),
+            _ => None,
+        }
     }
 
     /// Decide whether there is a bubble this frame and, if there is, **pin it**.
@@ -1802,6 +1889,7 @@ impl BuiltInDocument {
                 self.focused_task_context(),
                 self.context_reminder_node.is_some(),
                 self.focused_table_context(),
+                self.focused_diagram_context(),
                 self.context_pill_kind(),
                 self.context_spell().as_ref(),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
@@ -1928,6 +2016,7 @@ impl BuiltInDocument {
                 self.focused_task_context(),
                 self.context_reminder_node.is_some(),
                 self.focused_table_context(),
+                self.focused_diagram_context(),
                 self.context_pill_kind(),
                 self.context_spell().as_ref(),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
@@ -2081,7 +2170,12 @@ impl BuiltInDocument {
                 let on_doc = self.context_document_pill;
                 let on_file = self.context_attachment_pill;
                 let pill_kind = context_pill;
-                let choice = context_menu::choice_at(i, pill_kind, self.context_spell().as_ref());
+                let choice = context_menu::choice_at(
+                    i,
+                    pill_kind,
+                    self.context_spell().as_ref(),
+                    self.focused_diagram_context(),
+                );
                 koru_workspace_host::attach_debug!(
                     "document choose_menu i={i} pill_kind={pill_kind:?} choice={choice:?} on_file={:?}",
                     on_file.map(|(row, attr, file, trashed, dangling)| {
@@ -2392,6 +2486,26 @@ impl BuiltInDocument {
                         self.editor.edit_table(ws, edit);
                         None
                     }
+                    // The same thing Enter on the selected drawing does; on a
+                    // block that does not draw, the caret lands on the line
+                    // its reason names.
+                    Some(context_menu::Choice::DiagramEditText) => {
+                        if let Some(diagram) = self.focused_diagram_context() {
+                            self.editor.open_diagram_text(diagram.node);
+                        }
+                        None
+                    }
+                    // The view only asks: the save dialog, the raster and the
+                    // file are the shell's. Drained by
+                    // `View::take_wants_save_diagram_as` on the next
+                    // maintenance pass, with the drawing and the page's title.
+                    Some(context_menu::Choice::SaveDiagramAs) => {
+                        if let Some(diagram) = self.focused_diagram_context().filter(|d| d.drawn) {
+                            self.editor.view.wants_save_diagram_as =
+                                Some(koru_editor::SaveDiagramAs { node: diagram.node });
+                        }
+                        None
+                    }
                     None => None,
                 };
                 if let Some(action) = action {
@@ -2448,19 +2562,25 @@ impl BuiltInDocument {
         if !self.window_chrome {
             return;
         }
-        let name = self
-            .editor
-            .body
-            .root
-            .and_then(|root| ws.read(root).ok())
-            .and_then(|n| n.content.as_text().map(str::to_string))
-            .map(|t| t.trim().to_string())
-            .unwrap_or_default();
+        let name = self.page_name(ws);
         self.title = if name.is_empty() {
             "Untitled".to_string()
         } else {
             name
         };
+    }
+
+    /// The page's name: the root's text, trimmed. Empty when the page has
+    /// none — the caption says *Untitled* for that, and a saved diagram's
+    /// default file name says *Diagram*.
+    pub fn page_name(&self, ws: &WorkspaceDoc) -> String {
+        self.editor
+            .body
+            .root
+            .and_then(|root| ws.read(root).ok())
+            .and_then(|n| n.content.as_text().map(str::to_string))
+            .map(|t| t.trim().to_string())
+            .unwrap_or_default()
     }
 
     /// Whether the caption's window-menu button is currently showing its menu.
@@ -2543,6 +2663,7 @@ impl BuiltInDocument {
                 view.focused_task_context(),
                 view.context_reminder_node.is_some(),
                 view.focused_table_context(),
+                view.focused_diagram_context(),
                 view.context_pill_kind(),
                 spell,
                 lang,
@@ -2764,6 +2885,7 @@ impl BuiltInDocument {
             self.focused_task_context(),
             self.context_reminder_node.is_some(),
             self.focused_table_context(),
+            self.focused_diagram_context(),
             pill,
             spell.as_ref(),
             lang,

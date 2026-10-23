@@ -380,14 +380,13 @@ fn emit_node(
         Kind::Code => {
             let lang = node.meta.language.as_deref().unwrap_or("");
             let body = node.content.as_text().unwrap_or("");
-            out.push_str("```");
-            out.push_str(lang);
-            out.push('\n');
-            out.push_str(body);
-            if !body.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str("```\n\n");
+            // The model spells the fence, and the clipboard's plain-text
+            // flavor spells it the same way, so a block exported and a block
+            // copied read alike elsewhere. It lengthens past any backtick run
+            // the body holds; three was once written unconditionally, and a
+            // body quoting a fence ended the block early.
+            out.push_str(&koru_core::markdown::fenced_code(lang, body));
+            out.push_str("\n\n");
         }
         Kind::Table => {
             let body = node.content.as_text().unwrap_or("").trim_end();
@@ -638,7 +637,13 @@ fn write_text_atomic(path: &Path, text: &str) -> Result<(), ExportError> {
     write_bytes_atomic(path, text.as_bytes())
 }
 
-fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), ExportError> {
+/// Write `bytes` to `path` so that the file is either the old one or the
+/// whole new one: into a `.part` beside it, synced, then renamed over.
+///
+/// Public because it is the one atomic file write in the tree that a save
+/// from the shell can share — a diagram saved as a PNG or an SVG goes
+/// through it, so a full disk leaves no half-written picture.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), ExportError> {
     let part = part_path(path);
     let result = (|| -> Result<(), ExportError> {
         let mut file = fs::File::create(&part).map_err(|e| ExportError::new(e.to_string()))?;

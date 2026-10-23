@@ -1975,6 +1975,38 @@ pub enum Key {
     /// storage. The failures reuse `ReminderError*`, which already say exactly
     /// the right thing.
     A11yReminderNewsSaved,
+    // ------------------------------------------------------- a11y: diagrams
+    // What a screen reader hears on a `mermaid` block: a drawing has no text
+    // to read, so the block is one control named with its narration. The
+    // counts are One/Many pairs the caller chooses and fills with digits; the
+    // phrases take the filled fragments; the narration is the sentences
+    // joined. **A composition**, which is a known limit: it is right where a
+    // count fragment agrees on its own, and a language whose agreement
+    // reaches past the fragment (a dual, a case the phrase would govern) is
+    // approximated rather than modelled.
+    A11yDiagramBoxesOne,
+    A11yDiagramBoxesMany,
+    A11yDiagramArrowsOne,
+    A11yDiagramArrowsMany,
+    A11yDiagramParticipantsOne,
+    A11yDiagramParticipantsMany,
+    A11yDiagramMessagesOne,
+    A11yDiagramMessagesMany,
+    /// *Diagram, flowchart, {boxes}, {arrows}* — the two filled fragments.
+    A11yDiagramFlowchart,
+    /// *Diagram, sequence, {participants}: {names}; {messages}* — the names
+    /// are the participants' labels joined with a comma, in order.
+    A11yDiagramSequence,
+    /// One arrow as prose: *{from}, arrow "{label}", to {to}*.
+    A11yDiagramArrow,
+    /// An arrow with no label: *{from}, arrow to {to}*.
+    A11yDiagramArrowUnlabelled,
+    /// One message as prose: *{from}, message "{text}", to {to}*.
+    A11yDiagramMessage,
+    /// *Diagram, not drawn: {reason}* — the reason line the block shows.
+    A11yDiagramNotDrawn,
+    /// The placeholder, while the first layout of a text is in flight.
+    A11yDiagramPending,
     TrashDeleteFailedTitle,
     TrashDeleteFailedBody,
     TrashDeletePartial,
@@ -2364,13 +2396,40 @@ pub enum Key {
     TelemetryConsentBody,
     TelemetryConsentAccept,
     TelemetryConsentDecline,
+
+    // ------------------------------------------ the document's context menu
+    // The two rows a code block's menu shares with every other block. The
+    // menu's other rows (*Cut*, *Paste*, …) are still English literals and
+    // come here as they are touched.
+    MenuCopy,
+    MenuSaveAs,
+
+    // ------------------------------------------------------------ diagrams
+    // A `mermaid` code block drawn in place. The control that opens its text,
+    // the chip's display name for that one token, the label over a retained
+    // drawing while the text is being edited, the four reasons a block is not
+    // drawn (Koru's words, never the engine's), and the hint in an empty block.
+    DiagramEditText,
+    DiagramChipMermaid,
+    DiagramLastGood,
+    DiagramLineUnreadable,
+    DiagramKindNotDrawn,
+    DiagramTooLargeBoxesOne,
+    DiagramTooLargeBoxesMany,
+    DiagramTooLargeMessagesOne,
+    DiagramTooLargeMessagesMany,
+    /// *Too large to draw* with no count: shown when the engine refused the
+    /// text before anything could be counted — a source over its size budget —
+    /// so there is no number of boxes or messages to name.
+    DiagramTooLargeUncounted,
+    DiagramEmptyHint,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1613] = [
+    pub const ALL: [Key; 1641] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3674,6 +3733,21 @@ impl Key {
         Key::A11yReminderOnThisItem,
         Key::A11yReminderUnconfirmed,
         Key::A11yReminderNewsSaved,
+        Key::A11yDiagramBoxesOne,
+        Key::A11yDiagramBoxesMany,
+        Key::A11yDiagramArrowsOne,
+        Key::A11yDiagramArrowsMany,
+        Key::A11yDiagramParticipantsOne,
+        Key::A11yDiagramParticipantsMany,
+        Key::A11yDiagramMessagesOne,
+        Key::A11yDiagramMessagesMany,
+        Key::A11yDiagramFlowchart,
+        Key::A11yDiagramSequence,
+        Key::A11yDiagramArrow,
+        Key::A11yDiagramArrowUnlabelled,
+        Key::A11yDiagramMessage,
+        Key::A11yDiagramNotDrawn,
+        Key::A11yDiagramPending,
         Key::TrashDeleteFailedTitle,
         Key::TrashDeleteFailedBody,
         Key::TrashDeletePartial,
@@ -3984,6 +4058,19 @@ impl Key {
         Key::TelemetryConsentBody,
         Key::TelemetryConsentAccept,
         Key::TelemetryConsentDecline,
+        Key::MenuCopy,
+        Key::MenuSaveAs,
+        Key::DiagramEditText,
+        Key::DiagramChipMermaid,
+        Key::DiagramLastGood,
+        Key::DiagramLineUnreadable,
+        Key::DiagramKindNotDrawn,
+        Key::DiagramTooLargeBoxesOne,
+        Key::DiagramTooLargeBoxesMany,
+        Key::DiagramTooLargeMessagesOne,
+        Key::DiagramTooLargeMessagesMany,
+        Key::DiagramTooLargeUncounted,
+        Key::DiagramEmptyHint,
     ];
 }
 
@@ -12015,6 +12102,24 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::A11yReminderOnThisItem, en: "Reminders on this item", es: "Recordatorios de este elemento", pt_br: "Lembretes deste item", de: "Erinnerungen zu diesem Eintrag", fr: "Rappels sur cet élément", ar: "التذكيرات على هذا العنصر", zh_hans: "此条目的提醒", ja: "この項目のリマインダー" },
     Row { key: Key::A11yReminderUnconfirmed, en: "Not confirmed by storage yet", es: "Aún no confirmado por el almacenamiento", pt_br: "Ainda não confirmado pelo armazenamento", de: "Vom Speicher noch nicht bestätigt", fr: "Pas encore confirmé par le stockage", ar: "لم يؤكِّده التخزين بعد", zh_hans: "存储尚未确认", ja: "ストレージがまだ確認していません" },
     Row { key: Key::A11yReminderNewsSaved, en: "Reminder saved.", es: "Recordatorio guardado.", pt_br: "Lembrete salvo.", de: "Erinnerung gespeichert.", fr: "Rappel enregistré.", ar: "تم حفظ التذكير.", zh_hans: "提醒已保存。", ja: "リマインダーを保存しました。" },
+    // The count fragments a diagram's narration is built from, filled with
+    // digits, and the phrases that take them. See the `Key` block's note on
+    // what composing them can and cannot get right.
+    Row { key: Key::A11yDiagramBoxesOne, en: "{} box", es: "{} caja", pt_br: "{} caixa", de: "{} Kasten", fr: "{} boîte", ar: "{} مربع", zh_hans: "{} 个框", ja: "{} 個のボックス" },
+    Row { key: Key::A11yDiagramBoxesMany, en: "{} boxes", es: "{} cajas", pt_br: "{} caixas", de: "{} Kästen", fr: "{} boîtes", ar: "{} مربعًا", zh_hans: "{} 个框", ja: "{} 個のボックス" },
+    Row { key: Key::A11yDiagramArrowsOne, en: "{} arrow", es: "{} flecha", pt_br: "{} seta", de: "{} Pfeil", fr: "{} flèche", ar: "{} سهم", zh_hans: "{} 个箭头", ja: "{} 本の矢印" },
+    Row { key: Key::A11yDiagramArrowsMany, en: "{} arrows", es: "{} flechas", pt_br: "{} setas", de: "{} Pfeile", fr: "{} flèches", ar: "{} سهمًا", zh_hans: "{} 个箭头", ja: "{} 本の矢印" },
+    Row { key: Key::A11yDiagramParticipantsOne, en: "{} participant", es: "{} participante", pt_br: "{} participante", de: "{} Teilnehmer", fr: "{} participant", ar: "{} مشارك", zh_hans: "{} 个参与者", ja: "{} 個の参加者" },
+    Row { key: Key::A11yDiagramParticipantsMany, en: "{} participants", es: "{} participantes", pt_br: "{} participantes", de: "{} Teilnehmer", fr: "{} participants", ar: "{} مشاركًا", zh_hans: "{} 个参与者", ja: "{} 個の参加者" },
+    Row { key: Key::A11yDiagramMessagesOne, en: "{} message", es: "{} mensaje", pt_br: "{} mensagem", de: "{} Nachricht", fr: "{} message", ar: "{} رسالة", zh_hans: "{} 条消息", ja: "{} 件のメッセージ" },
+    Row { key: Key::A11yDiagramMessagesMany, en: "{} messages", es: "{} mensajes", pt_br: "{} mensagens", de: "{} Nachrichten", fr: "{} messages", ar: "{} رسالة", zh_hans: "{} 条消息", ja: "{} 件のメッセージ" },
+    Row { key: Key::A11yDiagramFlowchart, en: "Diagram, flowchart, {}, {}", es: "Diagrama, diagrama de flujo, {}, {}", pt_br: "Diagrama, fluxograma, {}, {}", de: "Diagramm, Flussdiagramm, {}, {}", fr: "Diagramme, organigramme, {}, {}", ar: "مخطط، مخطط انسيابي، {}، {}", zh_hans: "图表，流程图，{}，{}", ja: "図、フローチャート、{}、{}" },
+    Row { key: Key::A11yDiagramSequence, en: "Diagram, sequence, {}: {}; {}", es: "Diagrama, secuencia, {}: {}; {}", pt_br: "Diagrama, sequência, {}: {}; {}", de: "Diagramm, Sequenz, {}: {}; {}", fr: "Diagramme, séquence, {} : {} ; {}", ar: "مخطط، تسلسل، {}: {}؛ {}", zh_hans: "图表，时序图，{}：{}；{}", ja: "図、シーケンス、{}: {}; {}" },
+    Row { key: Key::A11yDiagramArrow, en: "{}, arrow \"{}\", to {}", es: "{}, flecha «{}», hacia {}", pt_br: "{}, seta “{}”, para {}", de: "{}, Pfeil „{}“, nach {}", fr: "{}, flèche « {} », vers {}", ar: "{}، سهم \"{}\"، إلى {}", zh_hans: "{}，箭头“{}”，到 {}", ja: "{}、矢印「{}」、{} へ" },
+    Row { key: Key::A11yDiagramArrowUnlabelled, en: "{}, arrow to {}", es: "{}, flecha hacia {}", pt_br: "{}, seta para {}", de: "{}, Pfeil nach {}", fr: "{}, flèche vers {}", ar: "{}، سهم إلى {}", zh_hans: "{}，箭头到 {}", ja: "{}、{} への矢印" },
+    Row { key: Key::A11yDiagramMessage, en: "{}, message \"{}\", to {}", es: "{}, mensaje «{}», a {}", pt_br: "{}, mensagem “{}”, para {}", de: "{}, Nachricht „{}“, an {}", fr: "{}, message « {} », à {}", ar: "{}، رسالة \"{}\"، إلى {}", zh_hans: "{}，消息“{}”，发给 {}", ja: "{}、メッセージ「{}」、{} へ" },
+    Row { key: Key::A11yDiagramNotDrawn, en: "Diagram, not drawn: {}", es: "Diagrama, no dibujado: {}", pt_br: "Diagrama, não desenhado: {}", de: "Diagramm, nicht gezeichnet: {}", fr: "Diagramme, non dessiné : {}", ar: "مخطط، غير مرسوم: {}", zh_hans: "图表，未绘制：{}", ja: "図、未描画: {}" },
+    Row { key: Key::A11yDiagramPending, en: "Diagram, drawing", es: "Diagrama, dibujando", pt_br: "Diagrama, desenhando", de: "Diagramm, wird gezeichnet", fr: "Diagramme, en cours de dessin", ar: "مخطط، قيد الرسم", zh_hans: "图表，正在绘制", ja: "図、描画中" },
     Row {
         key: Key::TrashDeleteFailedTitle,
         en: "Could not delete all selected items",
@@ -12365,4 +12470,22 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TelemetryConsentBody, en: "Koru can send anonymous usage data from this device: which features are used, how well the app runs, and basic facts about this computer such as its operating system and screen size. It's similar to what most websites collect when you visit them, and it never includes your documents, their names or anything you type.\n\nKoru is a desktop app that respects your privacy, so nothing is sent unless you say yes. If you like Koru, please consider turning it on: it shows us what matters most to you, so we can focus there. You can change this at any time in Settings.", es: "Koru puede enviar datos de uso anónimos desde este dispositivo: qué funciones se usan, cómo funciona la aplicación y datos básicos del equipo, como su sistema operativo y el tamaño de pantalla. Es parecido a lo que recopilan la mayoría de los sitios web cuando los visitas, y nunca incluye tus documentos, sus nombres ni nada de lo que escribes.\n\nKoru es una aplicación de escritorio que respeta tu privacidad, así que no se envía nada a menos que digas que sí. Si te gusta Koru, considera activarlo: nos muestra lo que más te importa para que podamos centrarnos en ello. Puedes cambiarlo en cualquier momento en Ajustes.", pt_br: "O Koru pode enviar dados de uso anônimos deste dispositivo: quais recursos são usados, como o aplicativo funciona e informações básicas do computador, como o sistema operacional e o tamanho da tela. É parecido com o que a maioria dos sites coleta quando você os visita, e nunca inclui seus documentos, os nomes deles nem nada que você digita.\n\nO Koru é um aplicativo para desktop que respeita sua privacidade, então nada é enviado a menos que você diga sim. Se você gosta do Koru, considere ativar: isso nos mostra o que mais importa para você, para que possamos focar nisso. Você pode mudar isso a qualquer momento em Configurações.", de: "Koru kann anonyme Nutzungsdaten von diesem Gerät senden: welche Funktionen genutzt werden, wie gut die App läuft und grundlegende Angaben zu diesem Computer wie Betriebssystem und Bildschirmgröße. Das ähnelt dem, was die meisten Websites bei einem Besuch erfassen, und Ihre Dokumente, deren Namen oder etwas, das Sie eingeben, sind niemals enthalten.\n\nKoru ist eine Desktop-App, die Ihre Privatsphäre respektiert, daher wird nichts gesendet, solange Sie nicht zustimmen. Wenn Ihnen Koru gefällt, schalten Sie es bitte ein: So sehen wir, was Ihnen am wichtigsten ist, und können uns darauf konzentrieren. Sie können das jederzeit in den Einstellungen ändern.", fr: "Koru peut envoyer des données d'utilisation anonymes depuis cet appareil : les fonctions utilisées, le bon fonctionnement de l'application et des informations de base sur cet ordinateur, comme son système d'exploitation et la taille de l'écran. C'est comparable à ce que collectent la plupart des sites web lors d'une visite, et cela n'inclut jamais vos documents, leurs noms ni ce que vous tapez.\n\nKoru est une application de bureau qui respecte votre vie privée : rien n'est envoyé sans votre accord. Si vous aimez Koru, pensez à l'activer : cela nous montre ce qui compte le plus pour vous, pour que nous puissions nous y consacrer. Vous pouvez changer d'avis à tout moment dans les Réglages.", ar: "يمكن لـ Koru إرسال بيانات استخدام مجهولة من هذا الجهاز: الميزات المستخدمة، ومدى جودة عمل التطبيق، ومعلومات أساسية عن هذا الكمبيوتر مثل نظام التشغيل وحجم الشاشة. وهي مشابهة لما تجمعه معظم المواقع الإلكترونية عند زيارتها، ولا تتضمن أبدًا مستنداتك أو أسماءها أو أي شيء تكتبه.\n\nKoru تطبيق لسطح المكتب يحترم خصوصيتك، لذلك لا يُرسل أي شيء ما لم توافق. إذا أعجبك Koru، فننصحك بتفعيل هذا الخيار: فهو يُظهر لنا ما يهمك أكثر حتى نركز عليه. يمكنك تغيير ذلك في أي وقت من الإعدادات.", zh_hans: "Koru 可以从此设备发送匿名使用数据：使用了哪些功能、应用的运行情况，以及这台电脑的基本信息，例如操作系统和屏幕尺寸。这与大多数网站在你访问时收集的数据类似，绝不包含你的文档、文档名称或你输入的任何内容。\n\nKoru 是一款尊重你隐私的桌面应用，因此除非你同意，否则不会发送任何数据。如果你喜欢 Koru，欢迎开启此选项：它能让我们了解你最看重什么，从而专注于此。你可以随时在设置中更改。", ja: "Koru はこの端末から匿名の使用状況データを送信できます。使われている機能、アプリの動作状況、OS や画面サイズなどこのコンピューターの基本情報です。多くのウェブサイトが訪問時に収集するものと同程度で、文書やその名前、入力した内容は一切含みません。\n\nKoru はプライバシーを尊重するデスクトップアプリなので、同意しない限り何も送信されません。Koru を気に入っていただけたら、ぜひオンにしてください。あなたにとって何が大切かがわかり、そこに力を注げます。設定でいつでも変更できます。" },
     Row { key: Key::TelemetryConsentAccept, en: "Share usage data", es: "Compartir datos de uso", pt_br: "Compartilhar dados de uso", de: "Nutzungsdaten teilen", fr: "Partager les données", ar: "مشاركة بيانات الاستخدام", zh_hans: "共享使用数据", ja: "使用状況データを共有" },
     Row { key: Key::TelemetryConsentDecline, en: "Don't share", es: "No compartir", pt_br: "Não compartilhar", de: "Nicht teilen", fr: "Ne pas partager", ar: "عدم المشاركة", zh_hans: "不共享", ja: "共有しない" },
+    // ------------------------------------------ the document's context menu
+    Row { key: Key::MenuCopy, en: "Copy", es: "Copiar", pt_br: "Copiar", de: "Kopieren", fr: "Copier", ar: "نسخ", zh_hans: "复制", ja: "コピー" },
+    Row { key: Key::MenuSaveAs, en: "Save as…", es: "Guardar como…", pt_br: "Salvar como…", de: "Speichern unter…", fr: "Enregistrer sous…", ar: "حفظ باسم…", zh_hans: "另存为…", ja: "名前を付けて保存…" },
+    // ------------------------------------------------------------ diagrams
+    Row { key: Key::DiagramEditText, en: "Edit text", es: "Editar texto", pt_br: "Editar texto", de: "Text bearbeiten", fr: "Modifier le texte", ar: "تحرير النص", zh_hans: "编辑文本", ja: "テキストを編集" },
+    // The notation's own name, kept as it is written everywhere.
+    Row { key: Key::DiagramChipMermaid, en: "Mermaid", es: "Mermaid", pt_br: "Mermaid", de: "Mermaid", fr: "Mermaid", ar: "Mermaid", zh_hans: "Mermaid", ja: "Mermaid" },
+    Row { key: Key::DiagramLastGood, en: "Showing the last drawing that worked", es: "Se muestra el último dibujo que funcionó", pt_br: "Mostrando o último desenho que funcionou", de: "Zeigt die letzte Zeichnung, die funktioniert hat", fr: "Affichage du dernier dessin qui a fonctionné", ar: "يعرض آخر رسم نجح", zh_hans: "显示上一次成功的绘图", ja: "最後に描けた図を表示しています" },
+    Row { key: Key::DiagramLineUnreadable, en: "Line {}: this line could not be read", es: "Línea {}: no se pudo leer esta línea", pt_br: "Linha {}: não foi possível ler esta linha", de: "Zeile {}: Diese Zeile konnte nicht gelesen werden", fr: "Ligne {} : cette ligne n’a pas pu être lue", ar: "السطر {}: تعذّرت قراءة هذا السطر", zh_hans: "第 {} 行：无法读取此行", ja: "{} 行目: この行を読み取れませんでした" },
+    Row { key: Key::DiagramKindNotDrawn, en: "Koru does not draw this kind of diagram yet", es: "Koru aún no dibuja este tipo de diagrama", pt_br: "O Koru ainda não desenha este tipo de diagrama", de: "Koru zeichnet diese Art von Diagramm noch nicht", fr: "Koru ne dessine pas encore ce type de diagramme", ar: "لا يرسم Koru هذا النوع من المخططات بعد", zh_hans: "Koru 尚不绘制这种图表", ja: "Koru はこの種類の図をまだ描けません" },
+    Row { key: Key::DiagramTooLargeBoxesOne, en: "Too large to draw: {} box", es: "Demasiado grande para dibujar: {} caja", pt_br: "Grande demais para desenhar: {} caixa", de: "Zu groß zum Zeichnen: {} Kasten", fr: "Trop grand pour être dessiné : {} boîte", ar: "أكبر من أن يُرسم: {} مربع", zh_hans: "太大，无法绘制：{} 个框", ja: "大きすぎて描けません: {} 個のボックス" },
+    Row { key: Key::DiagramTooLargeBoxesMany, en: "Too large to draw: {} boxes", es: "Demasiado grande para dibujar: {} cajas", pt_br: "Grande demais para desenhar: {} caixas", de: "Zu groß zum Zeichnen: {} Kästen", fr: "Trop grand pour être dessiné : {} boîtes", ar: "أكبر من أن يُرسم: {} مربعًا", zh_hans: "太大，无法绘制：{} 个框", ja: "大きすぎて描けません: {} 個のボックス" },
+    Row { key: Key::DiagramTooLargeMessagesOne, en: "Too large to draw: {} message", es: "Demasiado grande para dibujar: {} mensaje", pt_br: "Grande demais para desenhar: {} mensagem", de: "Zu groß zum Zeichnen: {} Nachricht", fr: "Trop grand pour être dessiné : {} message", ar: "أكبر من أن يُرسم: {} رسالة", zh_hans: "太大，无法绘制：{} 条消息", ja: "大きすぎて描けません: {} 件のメッセージ" },
+    Row { key: Key::DiagramTooLargeMessagesMany, en: "Too large to draw: {} messages", es: "Demasiado grande para dibujar: {} mensajes", pt_br: "Grande demais para desenhar: {} mensagens", de: "Zu groß zum Zeichnen: {} Nachrichten", fr: "Trop grand pour être dessiné : {} messages", ar: "أكبر من أن يُرسم: {} رسالة", zh_hans: "太大，无法绘制：{} 条消息", ja: "大きすぎて描けません: {} 件のメッセージ" },
+    // Shown when the engine refused the text before it could count anything
+    // (a source over its size budget), so there is no number to name.
+    Row { key: Key::DiagramTooLargeUncounted, en: "Too large to draw", es: "Demasiado grande para dibujar", pt_br: "Grande demais para desenhar", de: "Zu groß zum Zeichnen", fr: "Trop grand pour être dessiné", ar: "أكبر من أن يُرسم", zh_hans: "太大，无法绘制", ja: "大きすぎて描けません" },
+    Row { key: Key::DiagramEmptyHint, en: "Describe a flowchart or a sequence diagram here", es: "Describe aquí un diagrama de flujo o un diagrama de secuencia", pt_br: "Descreva aqui um fluxograma ou um diagrama de sequência", de: "Beschreiben Sie hier ein Flussdiagramm oder ein Sequenzdiagramm", fr: "Décrivez ici un organigramme ou un diagramme de séquence", ar: "صِف هنا مخططًا انسيابيًا أو مخططًا تسلسليًا", zh_hans: "在此描述流程图或时序图", ja: "ここにフローチャートまたはシーケンス図を記述してください" },
 ];
