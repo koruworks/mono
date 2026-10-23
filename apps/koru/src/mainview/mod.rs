@@ -7184,9 +7184,15 @@ impl MainView {
             // press rather than opening an empty column.
             Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
-            // Nothing offers the lane's New yet (`leading()`); when the apps
-            // manager lands it runs the active app's primary create.
-            Hit::New => Outcome::Ignored,
+            // The lane's New: the active app's primary create, the same thing
+            // the `+` menu's row of that name does.
+            Hit::New => {
+                return if self.run_primary_create() {
+                    Outcome::Consumed
+                } else {
+                    Outcome::Ignored
+                };
+            }
             Hit::Search => {
                 return if self.open_search() {
                     Outcome::Consumed
@@ -14760,8 +14766,36 @@ impl MainView {
         koru_shell_chrome::lane::Leading {
             mark: koru_shell_chrome::lane::Mark::Mark,
             search: true,
-            new: false,
+            // New comes and goes with the active app (PLAN.final P9).
+            new: self.explore.navigator_mode().primary_create().is_some(),
             folded: !self.sidebar.is_open(),
+        }
+    }
+
+    /// Run the active app's primary create — what the lane's New does, and
+    /// what `F6` → New → Enter does. Each arm is the `+` menu's row of the
+    /// same name, so there is one place a new document comes from; *New
+    /// task* opens the Tasks page on Today and puts the caret in its
+    /// *Add a task…* row, which is where a task is typed today.
+    pub(crate) fn run_primary_create(&mut self) -> bool {
+        use crate::panes::explore::Create;
+        match self.explore.navigator_mode().primary_create() {
+            Some(Create::Document) => self.new_tab(),
+            Some(Create::Canvas) => self.new_canvas(),
+            Some(Create::Chat) => self.open_ai_chat_tab(),
+            Some(Create::Task) => {
+                let opened = self.open_tasks_tab(
+                    crate::panes::explore::rail::RailTarget::Bucket(
+                        koru_core::tasks::Bucket::Today,
+                    ),
+                    false,
+                );
+                if let TabView::Tasks(tasks) = self.active_view() {
+                    tasks.begin_capture();
+                }
+                opened
+            }
+            None => false,
         }
     }
 
@@ -14835,6 +14869,17 @@ impl MainView {
                 )
                 .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),
             ),
+            Hit::New => self
+                .explore
+                .navigator_mode()
+                .primary_create()
+                .map(|create| {
+                    TooltipContent::new(
+                        5,
+                        self.lane_controls().new,
+                        create.label_in(crate::format::lang()),
+                    )
+                }),
             Hit::HostAction if reminder_bell() => Some(TooltipContent::new(
                 6,
                 koru_shell_chrome::caption::host_action_with_context(

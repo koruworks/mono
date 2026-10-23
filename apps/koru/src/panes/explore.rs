@@ -169,6 +169,29 @@ pub enum NavigatorMode {
     Socials,
 }
 
+/// What an app's primary create makes. The container runs it the way the
+/// `+` menu's row of the same name runs today; this names the thing.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Create {
+    Document,
+    Task,
+    Canvas,
+    Chat,
+}
+
+impl Create {
+    /// The square's tooltip and spoken name: *New document*, *New task*…
+    pub fn label_in(self, lang: koru_i18n::Lang) -> &'static str {
+        use koru_i18n::{Key, t};
+        match self {
+            Self::Document => t(lang, Key::NewDocument),
+            Self::Task => t(lang, Key::NewTask),
+            Self::Canvas => t(lang, Key::CanvasNew),
+            Self::Chat => t(lang, Key::ChatsNew),
+        }
+    }
+}
+
 impl NavigatorMode {
     /// The manifest kind this mode filters by — for the two manifest-backed
     /// modes. `None` for Tasks, whose rows are a queue over the workspace, and
@@ -204,6 +227,21 @@ impl NavigatorMode {
     /// sheet agree. In the window's language.
     pub fn label(self) -> &'static str {
         self.label_in(crate::format::lang())
+    }
+
+    /// **The one thing this app makes**, or nothing. The lane's New square
+    /// appears and disappears with it (TECHNICAL.final §5.2): Documents,
+    /// Tasks, Canvases and Chats each have one; Files, Agents, Artifacts and
+    /// Socials have no create of their own. An `Option`, not a list — the
+    /// list is New's ▾, which is rung 7.
+    pub fn primary_create(self) -> Option<Create> {
+        match self {
+            Self::Documents => Some(Create::Document),
+            Self::Tasks => Some(Create::Task),
+            Self::Canvases => Some(Create::Canvas),
+            Self::Chats => Some(Create::Chat),
+            Self::Files | Self::Agents | Self::Artifacts | Self::Socials => None,
+        }
     }
 
     /// The same word in `lang`. **Every mode keyed**: the four that were

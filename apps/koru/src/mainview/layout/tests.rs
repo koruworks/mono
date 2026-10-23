@@ -550,6 +550,39 @@ fn the_toggle_still_works_from_its_new_place() {
     assert!(!v.sidebar.is_open(), "clicking it closed the pane again");
 }
 
+/// **New comes and goes with the active app** (PLAN.final P9). Documents
+/// has a primary create, so the lane offers the square; Files has none, so
+/// the square is gone and the controls close up; pressing it with Documents
+/// active does what the `+` menu's *New* does: a new tab.
+#[test]
+fn the_lanes_new_follows_the_active_apps_primary_create() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, mut workspace) = container();
+    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
+    assert!(v.sidebar.is_open());
+    assert_eq!(v.explore.navigator_mode(), NavigatorMode::Documents);
+    let lane = v.settled_lane_controls();
+    assert!(lane.new.w > 0.0, "Documents offers New");
+    assert!(
+        lane.search.x < lane.new.x && lane.new.x < lane.toggle.x,
+        "Search, New, toggle, left to right"
+    );
+
+    v.show_navigator(NavigatorMode::Files);
+    let lane = v.settled_lane_controls();
+    assert_eq!(lane.new.w, 0.0, "Files has no primary create");
+    assert!(
+        lane.search.x + lane.search.w <= lane.toggle.x + 0.5,
+        "and nothing is left behind"
+    );
+
+    v.show_navigator(NavigatorMode::Documents);
+    let before = v.tabs().len();
+    let (x, y) = v.settled_lane_controls().new.centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    assert_eq!(v.tabs().len(), before + 1, "New document opened a tab");
+}
+
 /// ADR-26: the slide costs frames only while it is running, and stops asking
 /// the moment it settles.
 #[test]

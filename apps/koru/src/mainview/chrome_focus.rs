@@ -35,6 +35,8 @@ pub(super) enum ChromeStop {
 pub(super) enum LaneControl {
     Toggle,
     Search,
+    /// The active app's primary create; a stop only while the app has one.
+    New,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -160,21 +162,21 @@ impl MainView {
     fn step_within(&self, stop: ChromeStop, forward: bool) -> ChromeStop {
         match stop {
             ChromeStop::Lane(control) => {
-                // Left to right as drawn: in the chain the toggle leads, in
-                // the lane Search does; with two controls a step is a swap.
+                // Left to right as drawn: in the lane Search · New · toggle,
+                // in the chain the toggle leads. Sorted by where each sits
+                // rather than by a second copy of either order.
                 let lane = self.lane_controls();
-                let order = if lane.toggle.x <= lane.search.x || lane.search.w <= 0.0 {
-                    [LaneControl::Toggle, LaneControl::Search]
-                } else {
-                    [LaneControl::Search, LaneControl::Toggle]
-                };
-                let shown: Vec<LaneControl> = order
-                    .into_iter()
-                    .filter(|c| match c {
-                        LaneControl::Toggle => lane.toggle.w > 0.0,
-                        LaneControl::Search => lane.search.w > 0.0,
-                    })
-                    .collect();
+                let mut shown: Vec<(f32, LaneControl)> = [
+                    (lane.toggle, LaneControl::Toggle),
+                    (lane.search, LaneControl::Search),
+                    (lane.new, LaneControl::New),
+                ]
+                .into_iter()
+                .filter(|(r, _)| r.w > 0.0)
+                .map(|(r, c)| (r.x, c))
+                .collect();
+                shown.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let shown: Vec<LaneControl> = shown.into_iter().map(|(_, c)| c).collect();
                 let i = shown.iter().position(|c| *c == control).unwrap_or(0);
                 let n = shown.len().max(1);
                 let j = if forward {
@@ -209,6 +211,9 @@ impl MainView {
             }
             ChromeStop::Lane(LaneControl::Search) => {
                 self.open_search();
+            }
+            ChromeStop::Lane(LaneControl::New) => {
+                self.run_primary_create();
             }
             ChromeStop::Apps(i) => {
                 if let Some(mode) = NavigatorMode::visible().get(i).copied() {

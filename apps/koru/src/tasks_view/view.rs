@@ -1853,7 +1853,7 @@ impl TasksView {
         self.parts(r).text
     }
 
-    pub(super) fn begin_capture(&mut self) {
+    pub(crate) fn begin_capture(&mut self) {
         if self.capture.is_none() {
             let mut capture = Capture::new(&mut self.engine);
             capture.set_anchor(self.capture_anchor());

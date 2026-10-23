@@ -138,6 +138,16 @@ impl MainView {
                     .with_action(Action::Click),
             );
         }
+        if lane.new.w > 0.0
+            && let Some(create) = self.explore.navigator_mode().primary_create()
+        {
+            out.push(
+                SemanticNode::new(cx.surface(SHELL, parts::NEW), Role::Button)
+                    .with_label(create.label_in(cx.lang))
+                    .with_bounds(lane.new)
+                    .with_action(Action::Click),
+            );
+        }
         let _ = caption;
         if crate::mainview::WINDOW_BUTTONS
             && let Some(control) = koru_ui::caption::controls(caption)
@@ -199,6 +209,9 @@ pub(super) fn action(
             return true;
         }
         p if p == parts::SEARCH => Outcome::Search,
+        p if p == parts::NEW => {
+            return view.run_primary_create();
+        }
         p if p == parts::WINDOW_MENU => {
             let Some(button) = view.window_menu_button() else {
                 return false;

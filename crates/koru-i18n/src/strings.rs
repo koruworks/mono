@@ -2398,13 +2398,16 @@ pub enum Key {
     ActivateThisProfile,
     ActiveNow,
     AddAccount,
+    /// The lane's New square, per app (workspace foundation, rung 3).
+    NewDocument,
+    NewTask,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1638] = [
+    pub const ALL: [Key; 1640] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4043,6 +4046,8 @@ impl Key {
         Key::ActivateThisProfile,
         Key::ActiveNow,
         Key::AddAccount,
+        Key::NewDocument,
+        Key::NewTask,
     ];
 }
 
@@ -12449,4 +12454,6 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ActivateThisProfile, en: "Activate this profile", es: "Activar este perfil", pt_br: "Ativar este perfil", de: "Dieses Profil aktivieren", fr: "Activer ce profil", ar: "تفعيل هذا الملف الشخصي", zh_hans: "启用此配置文件", ja: "このプロファイルを有効にする" },
     Row { key: Key::ActiveNow, en: "active", es: "activo", pt_br: "ativo", de: "aktiv", fr: "actif", ar: "نشط", zh_hans: "已启用", ja: "有効" },
     Row { key: Key::AddAccount, en: "Add account", es: "Añadir cuenta", pt_br: "Adicionar conta", de: "Konto hinzufügen", fr: "Ajouter un compte", ar: "إضافة حساب", zh_hans: "添加账户", ja: "アカウントを追加" },
+    Row { key: Key::NewDocument, en: "New document", es: "Nuevo documento", pt_br: "Novo documento", de: "Neues Dokument", fr: "Nouveau document", ar: "مستند جديد", zh_hans: "新建文档", ja: "新規ドキュメント" },
+    Row { key: Key::NewTask, en: "New task", es: "Nueva tarea", pt_br: "Nova tarefa", de: "Neue Aufgabe", fr: "Nouvelle tâche", ar: "مهمة جديدة", zh_hans: "新建任务", ja: "新規タスク" },
 ];

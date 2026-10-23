@@ -114,6 +114,8 @@ pub(crate) mod parts {
     pub const WINDOW_MENU: ControlPart = ControlPart::new("window-menu");
     pub const TOGGLE_EXPLORE: ControlPart = ControlPart::new("toggle-explore");
     pub const SEARCH: ControlPart = ControlPart::new("search");
+    /// The lane's New, beside Search: the active app's primary create.
+    pub const NEW: ControlPart = ControlPart::new("new");
     /// The region the active tab draws into.
     pub const CONTENT: ControlPart = ControlPart::new("content");
     /// The Koru AI column. Named, and empty: its contents are `koru-ai-ui`'s
@@ -328,6 +330,9 @@ impl MainView {
                 }
                 ChromeStop::Lane(LaneControl::Search) => {
                     return Some(cx.surface(SHELL, parts::SEARCH));
+                }
+                ChromeStop::Lane(LaneControl::New) => {
+                    return Some(cx.surface(SHELL, parts::NEW));
                 }
                 _ => {
                     if let Some(focus) = self.explore_chrome_focus()

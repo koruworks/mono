@@ -776,6 +776,7 @@ impl MainView {
                 },
                 hovered(Hit::ToggleSidebar),
                 hovered(Hit::Search),
+                hovered(Hit::New),
             );
             if chain.divider.w > 0.0 {
                 let p = theme::p();
@@ -870,6 +871,7 @@ impl MainView {
             rects,
             hovered(Hit::ToggleSidebar),
             hovered(Hit::Search),
+            hovered(Hit::New),
         );
     }
 
@@ -884,6 +886,7 @@ impl MainView {
         rects: koru_shell_chrome::lane::LaneRects,
         toggle_hot: bool,
         search_hot: bool,
+        new_hot: bool,
     ) {
         let p = theme::p();
         if rects.leading.w > 0.0 {
@@ -905,6 +908,21 @@ impl MainView {
                 koru_ui::icon_button::State {
                     hovered: search_hot,
                     active: self.search.is_some(),
+                    disabled: false,
+                },
+            );
+        }
+        // New: the active app's primary create (zero-width when it has none).
+        if rects.new.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.new,
+                icons::PLUS,
+                koru_ui::icon_button::State {
+                    hovered: new_hot,
+                    active: false,
                     disabled: false,
                 },
             );
@@ -931,6 +949,7 @@ impl MainView {
             Some(super::chrome_focus::LaneControl::Search) if rects.search.w > 0.0 => {
                 Some(rects.search)
             }
+            Some(super::chrome_focus::LaneControl::New) if rects.new.w > 0.0 => Some(rects.new),
             _ => None,
         };
         if let Some(slot) = focused {
