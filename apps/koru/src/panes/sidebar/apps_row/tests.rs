@@ -89,8 +89,8 @@ fn from_four_hundred_every_app_is_labelled_when_the_labels_fit() {
 /// clipped, and the manage square ends the last line.
 #[test]
 fn a_row_that_does_not_fit_wraps_and_clips_nothing() {
-    // 8 squares + manage at 256 px: (9 × 28 + 8 × 2) = 268 > 240 → two lines.
-    let l = solve(band(256.0), &items(8, 0.0), NavigatorMode::Documents, false);
+    // 9 squares + manage at 256 px: (10 × 28 + 9 × 2) = 298 > 240 → two lines.
+    let l = solve(band(256.0), &items(9, 0.0), NavigatorMode::Documents, false);
     assert_eq!(l.lines, 2);
     assert_eq!(l.height, SQUARE * 2.0 + GAP);
     let right = band(256.0).x + band(256.0).w;
@@ -102,7 +102,7 @@ fn a_row_that_does_not_fit_wraps_and_clips_nothing() {
     assert_eq!(l.manage.y, second_line_y, "manage ends the last line");
     assert!(l.manage.x + l.manage.w <= right);
     // A labelled active chip wraps whole too.
-    let l = solve(band(256.0), &items(8, 60.0), NavigatorMode::Socials, false);
+    let l = solve(band(256.0), &items(9, 60.0), NavigatorMode::Socials, false);
     let socials = l
         .chips
         .iter()

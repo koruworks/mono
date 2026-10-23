@@ -5227,7 +5227,7 @@ fn the_artifacts_mode_is_reached_by_its_icon_and_owns_the_column() {
     );
     assert_eq!(
         NavigatorMode::Artifacts.shortcut(),
-        koru_keys::ShortcutId::ShowArtifacts
+        Some(koru_keys::ShortcutId::ShowArtifacts)
     );
 }
 
@@ -6247,6 +6247,7 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     assert_eq!(
         NavigatorMode::ALL,
         [
+            NavigatorMode::Home,
             NavigatorMode::Documents,
             NavigatorMode::Files,
             NavigatorMode::Tasks,
@@ -6259,7 +6260,7 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     );
     let mut view = ExploreView::new();
     let a = area();
-    let (_, chats) = view.navigator_mode_rects(a)[3];
+    let (_, chats) = view.navigator_mode_rects(a)[4];
     let (x, y) = chats.centre();
     assert_eq!(
         view.mouse_down(a, (1200.0, 800.0), x, y, false),
@@ -6272,7 +6273,7 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     assert_eq!(NavigatorMode::parse("chats"), Some(NavigatorMode::Chats));
     assert_eq!(
         NavigatorMode::Chats.shortcut(),
-        koru_keys::ShortcutId::ShowChats
+        Some(koru_keys::ShortcutId::ShowChats)
     );
     assert_eq!(
         ExploreView::navigator_mode_icon(NavigatorMode::Chats),
@@ -6305,7 +6306,7 @@ fn socials_mode_requests_its_shared_tab_and_has_no_library_footer() {
     );
     assert_eq!(
         NavigatorMode::Socials.shortcut(),
-        koru_keys::ShortcutId::ShowSocials
+        Some(koru_keys::ShortcutId::ShowSocials)
     );
     assert_eq!(
         ExploreView::navigator_mode_icon(NavigatorMode::Socials),
@@ -6358,7 +6359,7 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
         ai: true,
         ..Features::ALL_OFF
     };
-    for (features, shown) in [(Features::ALL_OFF, 2), (four, 4)] {
+    for (features, shown) in [(Features::ALL_OFF, 3), (four, 5)] {
         koru_features::testing::with(features, || {
             let view = ExploreView::new();
             let rects = view.navigator_mode_rects(a);
@@ -6366,7 +6367,7 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
             for &(mode, r) in &rects {
                 assert_eq!(r.w, apps_row::SQUARE, "{mode:?} at {shown} shown");
             }
-            assert_eq!(rects[1].0, NavigatorMode::Files);
+            assert_eq!(rects[2].0, NavigatorMode::Files);
             assert!(view.actions_button(a).w > 0.);
         });
     }
@@ -6535,18 +6536,25 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
         let a = area();
         let rects = view.navigator_mode_rects(a);
         let modes: Vec<NavigatorMode> = rects.iter().map(|(mode, _)| *mode).collect();
-        assert_eq!(modes, [NavigatorMode::Documents, NavigatorMode::Files]);
-        // Files keeps its place within the build: second, one gap after
+        assert_eq!(
+            modes,
+            [
+                NavigatorMode::Home,
+                NavigatorMode::Documents,
+                NavigatorMode::Files
+            ]
+        );
+        // Files keeps its place within the build: third, one gap after
         // Documents, on every call.
         assert_eq!(rects, view.navigator_mode_rects(a), "Files keeps its place");
-        assert_eq!(rects[1].1.x, rects[0].1.x + rects[0].1.w + 2.);
+        assert_eq!(rects[2].1.x, rects[1].1.x + rects[1].1.w + 2.);
         for &(mode, r) in &rects {
             let (x, y) = r.centre();
             assert_eq!(view.navigator_mode_at(a, x, y), Some(mode));
         }
         // Past Files there is nothing: the hidden icons leave no gap and no
         // target where Tasks' icon would be.
-        let files = rects[1].1;
+        let files = rects[2].1;
         let (x, y) = (
             files.x + files.w + 2. + files.w / 2.,
             files.y + files.h / 2.,

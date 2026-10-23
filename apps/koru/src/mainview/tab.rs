@@ -34,6 +34,8 @@ use crate::welcome::WelcomeView;
 #[allow(clippy::large_enum_variant)]
 pub enum TabView {
     Welcome(WelcomeView),
+    /// Home's Today page (workspace foundation, rung 5); a singleton.
+    Home(crate::panes::home::HomePage),
     /// The Trash. A fourth arm rather than something inside [`Leaf`], for the
     /// reason the module docs give: it has no rows, so `Editing::parts` would
     /// have to be `unreachable!()`.
@@ -121,6 +123,7 @@ impl TabView {
             // sort of thing a typed seam should be able to say without a panic.
             Self::Welcome(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
             | Self::Trash(_)
@@ -202,7 +205,7 @@ impl TabView {
             // nothing under it can have changed.
             Self::Reminders(_) => {}
             // Settings names no document, so nothing under it can have changed.
-            Self::Settings(_) | Self::Feedback(_) => {}
+            Self::Settings(_) | Self::Feedback(_) | Self::Home(_) => {}
             // A diff is over two retained snapshots; the live document
             // changing does not change what was compared.
             Self::Diff(_) => {}
@@ -260,6 +263,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Diff(_)
             | Self::AiChat(_)
             | Self::Socials(_)
@@ -304,6 +308,7 @@ impl TabView {
             Self::Tasks(t) => koru_workspace_host::View::reseat(t, ws),
             Self::Reminders(r) => koru_workspace_host::View::reseat(r, ws),
             Self::Settings(s) => koru_workspace_host::View::reseat(s, ws),
+            Self::Home(h) => koru_workspace_host::View::reseat(h, ws),
             Self::Feedback(f) => koru_workspace_host::View::reseat(f, ws),
             Self::Diff(d) => koru_workspace_host::View::reseat(d, ws),
             Self::AiChat(a) => koru_workspace_host::View::reseat(a, ws),
@@ -324,6 +329,7 @@ impl TabView {
     pub fn icon(&self) -> Option<char> {
         match self {
             Self::Trash(_) => Some(koru_draw::icons::TRASH),
+            Self::Home(_) => Some(koru_draw::icons::HOUSE),
             Self::Tasks(_) => Some(koru_draw::icons::LIST_CHECKS),
             Self::Reminders(_) => Some(koru_draw::icons::BELL),
             Self::Feedback(_) => Some(koru_draw::icons::USER_SOUND),
@@ -369,6 +375,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -396,6 +403,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -418,6 +426,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -439,6 +448,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -461,6 +471,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -483,6 +494,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -513,6 +525,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -544,6 +557,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -571,6 +585,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -594,6 +609,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -628,6 +644,7 @@ impl TabView {
             // channel: their asks go out as their own `Request` types.
             Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Diff(_)
             | Self::Tasks(_)
@@ -649,6 +666,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -692,6 +710,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -718,6 +737,8 @@ impl TabView {
             // deadline of its own — an idle run costs no wake.
             | Self::Run(_)
             | Self::Result(_)
+            // Home's panel is driven by the frame, as the Tasks page's is.
+            | Self::Home(_)
             | Self::Tasks(_) => None,
             // **Only while a transport-mode write it started is unanswered.**
             // This view sat in the group above until B10 gave it background
@@ -749,6 +770,7 @@ impl TabView {
             | Self::Diff(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Home(_)
             | Self::Tasks(_) => false,
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
@@ -953,6 +975,16 @@ impl Tab {
         let mut tab = Self::welcome();
         tab.view = TabView::Settings(crate::settings_view::SettingsView::new());
         tab.label = "Settings".to_string();
+        tab
+    }
+
+    /// The Home tab: Today. A singleton, like Settings; `open_home_tab`
+    /// reuses the one that is open.
+    pub fn home() -> Self {
+        let mut tab = Self::welcome();
+        tab.view = TabView::Home(crate::panes::home::HomePage::new());
+        tab.label =
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::A11yTaskBucketToday).to_owned();
         tab
     }
 
@@ -1464,6 +1496,7 @@ impl Tab {
             TabView::Reminders(v) => v.set_viewport(w, h),
             TabView::Diff(v) => View::set_viewport(v, w, h),
             TabView::Settings(v) => View::set_viewport(v, w, h),
+            TabView::Home(v) => View::set_viewport(v, w, h),
             TabView::AiChat(a) => View::set_viewport(a, w, h),
             TabView::Socials(a) => View::set_viewport(a, w, h),
             TabView::Session(s) => View::set_viewport(s, w, h),

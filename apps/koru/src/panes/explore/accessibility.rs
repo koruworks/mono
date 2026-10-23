@@ -138,7 +138,9 @@ impl ExploreView {
         let mut children = Vec::new();
         children.push(self.modes_semantics(cx));
         children.extend(self.heading_semantics(cx));
-        if self.showing_tasks() {
+        if self.showing_home() {
+            children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
+        } else if self.showing_tasks() {
             children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_chats() {
             // The Chats view replaces the tree, on the rail's model: a list
@@ -255,6 +257,14 @@ impl ExploreView {
         if self.showing_tasks() {
             let top = self.rows_top(area);
             return self.rail.queue_action(area, top, target, action);
+        }
+        // Home's nav replaces the tree the same way; a press is the row's.
+        if self.showing_home() {
+            return match action {
+                Action::Click => self.home_nav.accessibility_press(target),
+                Action::Focus | Action::ScrollIntoView => Some(Outcome::Consumed),
+                _ => None,
+            };
         }
         // Chats replaces the tree the same way, and a request for a hidden
         // document row must not reach the library behind it either.
@@ -475,6 +485,7 @@ impl ExploreView {
     /// the same three cases in the same order.
     fn empty_accessible_names(&self, lang: Lang) -> (&'static str, Option<Key>) {
         match self.mode {
+            NavigatorMode::Home => (t(lang, Key::HomeTitle), None),
             NavigatorMode::Tasks | NavigatorMode::Agents => (t(lang, Key::A11yEmptySessions), None),
             NavigatorMode::Artifacts => (t(lang, Key::ArtifactsEmpty), None),
             NavigatorMode::Chats => (t(lang, Key::ChatsEmpty), None),

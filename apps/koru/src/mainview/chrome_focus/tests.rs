@@ -64,22 +64,31 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         let shown = NavigatorMode::visible();
+        // Home leads the row; Documents, the active app, is second.
+        let documents = shown
+            .iter()
+            .position(|m| *m == NavigatorMode::Documents)
+            .expect("Documents is shown");
         assert_eq!(
             v.chrome_focus,
-            Some(ChromeStop::Apps(0)),
+            Some(ChromeStop::Apps(documents)),
             "lands on the active app"
         );
         assert!(press(&mut v, &mut workspace.ws, NamedKey::ArrowRight));
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(documents + 1)));
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert_eq!(v.explore.navigator_mode(), shown[1], "Enter shows the app");
+        assert_eq!(
+            v.explore.navigator_mode(),
+            shown[documents + 1],
+            "Enter shows the app"
+        );
         // Past the last app is Manage apps, then it wraps.
         for _ in 0..shown.len() {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowRight);
         }
         assert_eq!(
             v.chrome_focus,
-            Some(ChromeStop::Apps(0)),
+            Some(ChromeStop::Apps(documents)),
             "wrapped past Manage apps"
         );
         // Floor: chip ↔ help; Enter on the chip opens the switcher.

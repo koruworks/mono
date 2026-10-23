@@ -7343,6 +7343,28 @@ fn following_a_link_in_place_is_recorded_in_the_history() {
     assert_eq!(v.document_root(), Some(a));
 }
 
+/// **Home is one tab**, opened from the nav's Today row and reused after
+/// that: the Settings tab's rule. Home leads the apps row, with no chord.
+#[test]
+fn the_home_tab_is_a_singleton_opened_from_the_nav() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut view, mut workspace) = container();
+    assert_eq!(NavigatorMode::visible()[0], NavigatorMode::Home);
+    assert_eq!(NavigatorMode::Home.shortcut(), None);
+    let before = view.tabs().len();
+    assert!(view.apply(&mut workspace.ws, Outcome::OpenHome));
+    assert_eq!(view.tabs().len(), before + 1);
+    assert!(matches!(view.tabs().active_tab().view, TabView::Home(_)));
+    assert!(view.apply(&mut workspace.ws, Outcome::OpenHome));
+    assert_eq!(view.tabs().len(), before + 1, "the one Home tab is reused");
+    let homes = view
+        .tabs()
+        .iter()
+        .filter(|t| matches!(t.view, TabView::Home(_)))
+        .count();
+    assert_eq!(homes, 1);
+}
+
 /// The command bar: 640 wide, 400 tall, 96 px from the top (frame 2).
 #[test]
 fn search_modal_is_640_by_400_and_hangs_96_from_the_top() {
@@ -8098,15 +8120,17 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
             .navigator_mode_tooltip(x, y)
             .unwrap_or_else(|| panic!("{mode:?} has a tooltip"));
         assert_eq!(tip.label, mode.label());
+        // Home has no chord (Q-C); every other app teaches the one the
+        // registry binds.
         assert_eq!(
             tip.shortcut,
-            Some(koru_keys::label_of(mode.shortcut())),
+            mode.shortcut().map(koru_keys::label_of),
             "{mode:?} teaches the chord the registry binds"
         );
         assert_eq!(tip.anchor, mode_icon(&v, mode), "anchored on its own icon");
     }
     assert_eq!(
-        koru_keys::label_of(NavigatorMode::Tasks.shortcut()),
+        koru_keys::label_of(NavigatorMode::Tasks.shortcut().expect("Tasks has a chord")),
         // The registry's label, in the platform's own spelling.
         // ⌃⌘ on a Mac, where ⌥digit types a character (M42).
         if cfg!(target_os = "macos") {

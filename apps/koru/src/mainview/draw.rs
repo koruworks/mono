@@ -231,6 +231,12 @@ impl MainView {
                 TabView::Tasks(t) => {
                     View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                 }
+                TabView::Home(h) => {
+                    // The Due today panel's client, as the Tasks page's: the
+                    // discovered client cloned, no request on this thread.
+                    h.panel_mut().set_client(workspace.store_client());
+                    View::draw(h, scene, workspace, images, leaf_root, caret_on, local)
+                }
                 TabView::Reminders(r) => {
                     View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
                 }

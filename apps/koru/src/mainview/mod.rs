@@ -6997,6 +6997,8 @@ impl MainView {
             Outcome::ManageProfiles => self.open_manage_profiles(),
             Outcome::LinkDevice => self.open_link_device(),
             Outcome::OpenSettings => self.open_settings_tab(),
+            Outcome::OpenHome => self.open_home_tab(),
+            Outcome::OpenRecentDocument(id) => self.open_recent_document(id),
             Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
             Outcome::NodeMenu {
                 nodes,
@@ -8965,6 +8967,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_down(t, doc, lx, ly, ctrl),
             TabView::Reminders(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Settings(s) => View::mouse_down(s, doc, lx, ly, ctrl),
+            TabView::Home(h) => View::mouse_down(h, doc, lx, ly, ctrl),
             TabView::Feedback(f) => View::mouse_down(f, doc, lx, ly, ctrl),
             TabView::Diff(d) => View::mouse_down(d, doc, lx, ly, ctrl),
             TabView::AiChat(a) => View::mouse_down(a, doc, lx, ly, ctrl),
@@ -8997,6 +9000,7 @@ impl MainView {
         let asked = self.drain_manage_profiles_request();
         let binned = self.drain_trash_all(ws);
         self.drain_welcome();
+        self.drain_home();
         self.drain_settings_requests();
         self.drain_feedback();
         handled || opened || toasted || asked || binned || entity_changed
@@ -9167,6 +9171,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_up(t, doc),
             TabView::Reminders(r) => View::mouse_up(r, doc),
             TabView::Settings(s) => View::mouse_up(s, doc),
+            TabView::Home(h) => View::mouse_up(h, doc),
             TabView::Feedback(f) => View::mouse_up(f, doc),
             TabView::Diff(d) => View::mouse_up(d, doc),
             TabView::AiChat(a) => View::mouse_up(a, doc),
@@ -9579,7 +9584,7 @@ impl View for MainView {
                     TabView::Welcome(_) => false,
                     TabView::Manage(w) => View::context_menu(w, doc, lx, ly),
                     // Settings opens no context menu: every row is one press.
-                    TabView::Settings(_) | TabView::Feedback(_) => false,
+                    TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => false,
                     TabView::Diff(_) => false,
                     // The AI surface draws and handles its own popovers.
                     TabView::AiChat(_) => false,
@@ -9800,6 +9805,7 @@ impl View for MainView {
             TabView::Tasks(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::Reminders(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Settings(s) => View::mouse_double_click(s, doc, lx, ly),
+            TabView::Home(h) => View::mouse_double_click(h, doc, lx, ly),
             TabView::Feedback(f) => View::mouse_double_click(f, doc, lx, ly),
             TabView::Diff(d) => View::mouse_double_click(d, doc, lx, ly),
             TabView::AiChat(a) => View::mouse_double_click(a, doc, lx, ly),
@@ -9962,6 +9968,7 @@ impl View for MainView {
             TabView::Tasks(t) => View::scroll_by(t, delta),
             TabView::Reminders(r) => View::scroll_by(r, delta),
             TabView::Settings(s) => View::scroll_by(s, delta),
+            TabView::Home(h) => View::scroll_by(h, delta),
             TabView::Feedback(f) => View::scroll_by(f, delta),
             TabView::Diff(d) => View::scroll_by(d, delta),
             TabView::AiChat(a) => View::scroll_by(a, delta),
@@ -10198,6 +10205,7 @@ impl View for MainView {
                 TabView::Tasks(t) => View::cursor_icon(t),
                 TabView::Reminders(r) => View::cursor_icon(r),
                 TabView::Settings(s) => View::cursor_icon(s),
+                TabView::Home(h) => View::cursor_icon(h),
                 TabView::Feedback(f) => View::cursor_icon(f),
                 TabView::Diff(d) => View::cursor_icon(d),
                 TabView::AiChat(a) => View::cursor_icon(a),
@@ -10404,6 +10412,7 @@ impl View for MainView {
                 TabView::Tasks(t) => View::invalidate(t),
                 TabView::Reminders(r) => View::invalidate(r),
                 TabView::Settings(s) => View::invalidate(s),
+                TabView::Home(h) => View::invalidate(h),
                 TabView::Feedback(f) => View::invalidate(f),
                 TabView::Diff(d) => View::invalidate(d),
                 TabView::AiChat(a) => View::invalidate(a),
@@ -12544,6 +12553,7 @@ impl View for MainView {
         // A token, so a third mode is a name rather than a second flag. One
         // this build does not know reopens on Documents.
         match crate::panes::explore::NavigatorMode::parse(&settings.navigator_mode) {
+            Some(crate::panes::explore::NavigatorMode::Home) => self.explore.show_home(),
             Some(crate::panes::explore::NavigatorMode::Files) => self.explore.show_files(),
             Some(crate::panes::explore::NavigatorMode::Tasks) => self.explore.show_tasks(),
             Some(crate::panes::explore::NavigatorMode::Artifacts) => self.explore.show_artifacts(),
@@ -12873,6 +12883,50 @@ impl View for MainView {
                     }
                 }
             }
+        }
+        // Home's Today page, fed the same way: its panel asks only while the
+        // tab is in front, and the facts it draws from are compared before
+        // they are stored, so a frame with nothing new costs the compares.
+        let home_recents = self.recent_documents();
+        let home_runs: Vec<koru_runs_ui::RunRow> = if koru_features::agent_views() {
+            self.run_index.rows().to_vec()
+        } else {
+            Vec::new()
+        };
+        let home_name = self
+            .explore
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let home_offline = self.store_trouble.is_some();
+        let home_showing = matches!(self.tabs().active_tab().view, TabView::Home(_));
+        for (path, group) in self.panes.iter_groups_mut() {
+            let group_active = group.active();
+            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
+                if let TabView::Home(page) = &mut tab.view {
+                    let in_front = home_showing && path == active_path && i == group_active;
+                    if page.feed(
+                        &home_name,
+                        home_recents.clone(),
+                        home_runs.clone(),
+                        home_offline,
+                    ) {
+                        page_changed = true;
+                    }
+                    let today = crate::panes::explore::rail::RailTarget::Bucket(
+                        koru_core::tasks::Bucket::Today,
+                    );
+                    if page
+                        .panel_mut()
+                        .maintain(workspace, Some(today), in_front, now)
+                    {
+                        page_changed = true;
+                    }
+                }
+            }
+        }
+        if self.explore.home_nav_mut().set_recents(home_recents) {
+            page_changed = true;
         }
         // A finished comparison opens (or refreshes) the diff tab, once.
         let mut history_extras = false;
@@ -13445,6 +13499,7 @@ impl MainView {
             TabView::Tasks(t) => View::key(t, doc, key, text, mods),
             TabView::Reminders(r) => View::key(r, doc, key, text, mods),
             TabView::Settings(s) => View::key(s, doc, key, text, mods),
+            TabView::Home(h) => View::key(h, doc, key, text, mods),
             TabView::Feedback(f) => View::key(f, doc, key, text, mods),
             TabView::Diff(d) => View::key(d, doc, key, text, mods),
             TabView::AiChat(a) => View::key(a, doc, key, text, mods),
@@ -13474,6 +13529,7 @@ impl MainView {
             self.drain_manage_profiles_request();
             self.drain_trash_all(ws);
             self.drain_welcome();
+            self.drain_home();
             self.drain_settings_requests();
             self.drain_feedback();
             return handled || entity_changed;
@@ -14927,19 +14983,69 @@ impl MainView {
             Some(Create::Document) => self.new_tab(),
             Some(Create::Canvas) => self.new_canvas(),
             Some(Create::Chat) => self.open_ai_chat_tab(),
-            Some(Create::Task) => {
-                let opened = self.open_tasks_tab(
-                    crate::panes::explore::rail::RailTarget::Bucket(
-                        koru_core::tasks::Bucket::Today,
-                    ),
-                    false,
-                );
-                if let TabView::Tasks(tasks) = self.active_view() {
-                    tasks.begin_capture();
-                }
-                opened
-            }
+            Some(Create::Task) => self.open_task_capture(),
             None => false,
+        }
+    }
+
+    /// The Tasks page on Today with the caret in its *Add a task…* row —
+    /// where a task is typed today. The lane's New and Home's *Add task*.
+    pub(crate) fn open_task_capture(&mut self) -> bool {
+        let opened = self.open_tasks_tab(
+            crate::panes::explore::rail::RailTarget::Bucket(koru_core::tasks::Bucket::Today),
+            false,
+        );
+        if let TabView::Tasks(tasks) = self.active_view() {
+            tasks.begin_capture();
+        }
+        opened
+    }
+
+    /// The Home tab — Today — as a singleton, on the Settings tab's pattern.
+    pub(super) fn open_home_tab(&mut self) -> bool {
+        let existing = self
+            .tabs()
+            .iter()
+            .position(|t| matches!(&t.view, TabView::Home(_)) && t.draft.is_none());
+        if let Some(i) = existing {
+            // Handled either way: a press on Today with Today in front is
+            // not a press that fell through.
+            self.select(i);
+            return true;
+        }
+        self.record_jump();
+        self.tabs_mut().push(Tab::home());
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
+        chrome_debug::chrome_debug!("home tab opened");
+        true
+    }
+
+    /// Perform what the Home page asked for. Every want is an existing
+    /// command; the page only names it.
+    fn drain_home(&mut self) {
+        let wants = match &mut self.tabs_mut().active_mut().view {
+            TabView::Home(page) => page.take_wants(),
+            _ => return,
+        };
+        use crate::panes::home::HomeWant;
+        for want in wants {
+            match want {
+                HomeWant::AddTask => {
+                    self.open_task_capture();
+                }
+                HomeWant::OpenDocument(id) => {
+                    self.open_recent_document(id);
+                }
+                HomeWant::OpenTask { document, node } => {
+                    self.open_document_at(document, node);
+                }
+                HomeWant::OpenRun(run) => {
+                    self.open_run_tab(run);
+                }
+            }
         }
     }
 
@@ -15066,7 +15172,8 @@ impl MainView {
             .find(|(_, (_, rect))| rect.w > 0.0 && rect.contains(x, y))
             .map(|(i, (mode, rect))| {
                 TooltipContent::new(40 + i as u64, rect, mode.label()).with_optional_shortcut(
-                    koru_keys::show_hint(mode.shortcut(), koru_keys::Section::Tooltip),
+                    mode.shortcut()
+                        .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
                 )
             })
     }
@@ -15091,6 +15198,7 @@ impl MainView {
                 self.explore.show_chats();
                 self.explore.focus_tree(self.regions.sidebar);
             }
+            crate::panes::explore::NavigatorMode::Home => self.explore.show_home(),
             crate::panes::explore::NavigatorMode::Agents => self.explore.show_agents(),
             crate::panes::explore::NavigatorMode::Artifacts => self.explore.show_artifacts(),
             crate::panes::explore::NavigatorMode::Canvases => self.explore.show_canvases(),
@@ -15527,6 +15635,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_move(t, lx, ly),
             TabView::Reminders(r) => View::mouse_move(r, lx, ly),
             TabView::Settings(s) => View::mouse_move(s, lx, ly),
+            TabView::Home(h) => View::mouse_move(h, lx, ly),
             TabView::Feedback(f) => View::mouse_move(f, lx, ly),
             TabView::Diff(d) => View::mouse_move(d, lx, ly),
             TabView::AiChat(a) => View::mouse_move(a, lx, ly),

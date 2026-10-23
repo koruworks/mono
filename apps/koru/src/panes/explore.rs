@@ -136,6 +136,9 @@ pub struct Row {
 /// ADR-264).
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub enum NavigatorMode {
+    /// **Home**: Today, with Inbox and Upcoming to come (workspace
+    /// foundation, rung 5). First in the row; it has no chord (Q-C).
+    Home,
     #[default]
     Documents,
     Files,
@@ -202,7 +205,12 @@ impl NavigatorMode {
             Self::Documents => Some(KIND_DOCUMENT),
             Self::Files => Some(KIND_FILE),
             Self::Canvases => Some(KIND_CANVAS),
-            Self::Tasks | Self::Chats | Self::Agents | Self::Artifacts | Self::Socials => None,
+            Self::Home
+            | Self::Tasks
+            | Self::Chats
+            | Self::Agents
+            | Self::Artifacts
+            | Self::Socials => None,
         }
     }
 
@@ -211,6 +219,7 @@ impl NavigatorMode {
     /// and a third mode is exactly what a flag cannot carry.
     pub fn token(self) -> &'static str {
         match self {
+            Self::Home => "home",
             Self::Documents => "documents",
             Self::Files => "files",
             Self::Tasks => "tasks",
@@ -240,7 +249,7 @@ impl NavigatorMode {
             Self::Tasks => Some(Create::Task),
             Self::Canvases => Some(Create::Canvas),
             Self::Chats => Some(Create::Chat),
-            Self::Files | Self::Agents | Self::Artifacts | Self::Socials => None,
+            Self::Home | Self::Files | Self::Agents | Self::Artifacts | Self::Socials => None,
         }
     }
 
@@ -250,6 +259,7 @@ impl NavigatorMode {
     pub fn label_in(self, lang: koru_i18n::Lang) -> &'static str {
         use koru_i18n::{Key, t};
         match self {
+            Self::Home => t(lang, Key::HomeTitle),
             Self::Documents => t(lang, Key::DocumentsHeading),
             Self::Files => t(lang, Key::A11yFilesHeading),
             Self::Tasks => t(lang, Key::A11yTasksHeading),
@@ -262,8 +272,10 @@ impl NavigatorMode {
     }
 
     /// The chord that shows this view, by its registry id.
-    pub fn shortcut(self) -> koru_keys::ShortcutId {
-        match self {
+    pub fn shortcut(self) -> Option<koru_keys::ShortcutId> {
+        Some(match self {
+            // No digit: `Alt+0` is free and stays free (QUESTIONS.md Q-C).
+            Self::Home => return None,
             Self::Documents => koru_keys::ShortcutId::ShowDocuments,
             Self::Files => koru_keys::ShortcutId::ShowFiles,
             Self::Tasks => koru_keys::ShortcutId::ShowTasks,
@@ -272,13 +284,14 @@ impl NavigatorMode {
             Self::Artifacts => koru_keys::ShortcutId::ShowArtifacts,
             Self::Canvases => koru_keys::ShortcutId::ShowCanvases,
             Self::Socials => koru_keys::ShortcutId::ShowSocials,
-        }
+        })
     }
 
     /// Every mode, in the order the icons sit and the digits count. The rects,
     /// the hit test and [`ExploreView::modes_right`] all read this, so adding a
     /// mode is one entry here rather than four widths to keep in step.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
+        Self::Home,
         Self::Documents,
         Self::Files,
         Self::Tasks,
@@ -295,7 +308,7 @@ impl NavigatorMode {
     /// socials. Documents and Files always.
     pub fn shown_in_product(self) -> bool {
         match self {
-            Self::Documents | Self::Files => true,
+            Self::Home | Self::Documents | Self::Files => true,
             Self::Tasks => koru_features::tasks(),
             Self::Chats => koru_features::ai(),
             Self::Agents | Self::Artifacts => koru_features::agent_views(),
@@ -320,6 +333,7 @@ impl NavigatorMode {
     /// reopens on Documents rather than guessing.
     pub fn parse(token: &str) -> Option<Self> {
         match token {
+            "home" => Some(Self::Home),
             "documents" => Some(Self::Documents),
             "files" => Some(Self::Files),
             "tasks" => Some(Self::Tasks),
@@ -653,6 +667,8 @@ pub struct ExploreView {
     /// Whether the Agent reports a Profile Cloud holds — the summary's Koru
     /// Cloud row's state.
     cloud_subscribed: bool,
+    /// Home's nav: Inbox, Today, Upcoming and the recents (`home_nav.rs`).
+    home_nav: home_nav::HomeNav,
     /// The tasks mode's content. Composed rather than a second view, because
     /// the header, the mode row and the column's own fill are the same in all
     /// three modes — a sibling would have to be handed all of them.
@@ -908,6 +924,14 @@ impl ExploreView {
         self.set_navigator_mode(NavigatorMode::Tasks);
     }
 
+    pub fn show_home(&mut self) {
+        self.set_navigator_mode(NavigatorMode::Home);
+    }
+
+    pub fn home_nav_mut(&mut self) -> &mut home_nav::HomeNav {
+        &mut self.home_nav
+    }
+
     pub fn show_artifacts(&mut self) {
         self.set_navigator_mode(NavigatorMode::Artifacts);
     }
@@ -1074,6 +1098,10 @@ impl ExploreView {
         self.mode == NavigatorMode::Tasks
     }
 
+    pub fn showing_home(&self) -> bool {
+        self.mode == NavigatorMode::Home
+    }
+
     /// Where the rail's rows begin — the same floor the library's rows use, so
     /// the two modes start on the same line under the mode row.
     pub fn rail_top(&self, area: Rect) -> f32 {
@@ -1207,6 +1235,7 @@ impl ExploreView {
             | NavigatorMode::Chats
             | NavigatorMode::Artifacts
             | NavigatorMode::Canvases
+            | NavigatorMode::Home
             | NavigatorMode::Socials => &mut self.collapsed,
         }
     }
@@ -1221,6 +1250,7 @@ impl ExploreView {
             | NavigatorMode::Chats
             | NavigatorMode::Artifacts
             | NavigatorMode::Canvases
+            | NavigatorMode::Home
             | NavigatorMode::Socials => &self.collapsed,
         }
     }
@@ -3804,6 +3834,7 @@ impl ExploreView {
                 | NavigatorMode::Agents
                 | NavigatorMode::Artifacts
                 | NavigatorMode::Canvases
+                | NavigatorMode::Home
                 | NavigatorMode::Socials => Outcome::Consumed,
             },
             actions::Action::CollapseAll => {
@@ -4055,6 +4086,7 @@ impl ExploreView {
             NavigatorMode::Chats => koru_chats_ui::MODE_ICON,
             NavigatorMode::Canvases => icons::CANVAS,
             NavigatorMode::Socials => icons::MEGAPHONE,
+            NavigatorMode::Home => icons::HOUSE,
         }
     }
 
@@ -4543,6 +4575,12 @@ impl ExploreView {
                 Some(request) => Outcome::Tasks(request),
                 None => Outcome::Consumed,
             };
+        }
+        // Home's nav owns everything below the heading in its mode, on the
+        // rail's terms.
+        if self.mode == NavigatorMode::Home {
+            let top = self.rows_top(area);
+            return self.home_nav.mouse_down(area, top, x, y);
         }
         // The artifacts surface owns everything below the heading in its
         // mode, on the rail's terms and for the rail's reason — and reports
@@ -5260,20 +5298,31 @@ impl ExploreView {
         } else {
             false
         };
-        let rail_moved = if self.mode == NavigatorMode::Tasks {
+        let home_moved = if self.mode == NavigatorMode::Home {
             let top = self.rows_top(area);
-            // A live drag follows the pointer wherever it went, including over
-            // the header — the same rule the library's own drag keeps.
-            if !self.rail.dragging()
-                && (header.is_some() || popover.is_some() || actions || mode.is_some())
-            {
-                self.rail.clear_hover()
+            if header.is_some() || popover.is_some() || actions || mode.is_some() {
+                self.home_nav.clear_hover()
             } else {
-                self.rail.mouse_move(area, top, x, y)
+                self.home_nav.mouse_move(area, top, x, y)
             }
         } else {
             false
         };
+        let rail_moved = home_moved
+            | if self.mode == NavigatorMode::Tasks {
+                let top = self.rows_top(area);
+                // A live drag follows the pointer wherever it went, including over
+                // the header — the same rule the library's own drag keeps.
+                if !self.rail.dragging()
+                    && (header.is_some() || popover.is_some() || actions || mode.is_some())
+                {
+                    self.rail.clear_hover()
+                } else {
+                    self.rail.mouse_move(area, top, x, y)
+                }
+            } else {
+                false
+            };
         let socials_moved = self.showing_socials()
             && self.socials.as_ref().is_some_and(|surface| {
                 let blocked = header.is_some() || popover.is_some() || actions || mode.is_some();
@@ -6335,7 +6384,8 @@ impl ExploreView {
     fn empty_state(&self) -> (&'static str, &'static str, Outcome) {
         if matches!(
             self.mode,
-            NavigatorMode::Tasks
+            NavigatorMode::Home
+                | NavigatorMode::Tasks
                 | NavigatorMode::Chats
                 | NavigatorMode::Agents
                 | NavigatorMode::Socials
@@ -6384,7 +6434,8 @@ impl ExploreView {
                 Outcome::ImportFiles,
             ),
             NavigatorMode::Canvases => canvases::empty_state(),
-            NavigatorMode::Tasks
+            NavigatorMode::Home
+            | NavigatorMode::Tasks
             | NavigatorMode::Chats
             | NavigatorMode::Agents
             | NavigatorMode::Socials
@@ -6661,6 +6712,13 @@ impl ExploreView {
             self.empty_cta = None;
             self.empty_subscribe = None;
             self.rail.draw(scene, root, engine, area, top);
+            return false;
+        }
+        // Home's nav, for the rail's reason: its rows are never in `self.rows`.
+        if self.mode == NavigatorMode::Home {
+            self.empty_cta = None;
+            self.empty_subscribe = None;
+            self.home_nav.draw(scene, root, engine, area, top);
             return false;
         }
         // The artifacts mode's whole content, before the empty-state branch
@@ -8308,6 +8366,7 @@ fn icon_for(kind: Kind) -> char {
 pub(crate) mod accessibility;
 pub mod actions;
 mod canvases;
+pub mod home_nav;
 pub mod rail;
 mod slides;
 

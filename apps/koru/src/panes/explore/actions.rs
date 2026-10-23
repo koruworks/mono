@@ -37,6 +37,8 @@ pub(super) fn available(mode: NavigatorMode) -> &'static [Action] {
         // The artifacts column offers nothing at the workspace level: what
         // it can do is on its rows, and a menu of nothing is a dead end.
         NavigatorMode::Artifacts => &[],
+        // Home's nav has no folds and nothing imports into it.
+        NavigatorMode::Home => &[],
         // Nor does the Chats view: *New chat* heads its own list, and a menu
         // holding it a second time would be two doors to one room.
         NavigatorMode::Chats | NavigatorMode::Socials => &[],
@@ -97,6 +99,7 @@ pub(super) fn label(action: Action, mode: NavigatorMode) -> &'static str {
         (Action::Import, NavigatorMode::Chats) => "Import files…",
         (Action::Import, NavigatorMode::Canvases) => "Import content…",
         (Action::Import, NavigatorMode::Socials) => "Import files…",
+        (Action::Import, NavigatorMode::Home) => "Import content…",
         (Action::CollapseAll, _) => "Collapse all",
         (Action::ExpandAll, _) => "Expand all",
     }

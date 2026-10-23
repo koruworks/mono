@@ -14,6 +14,7 @@
 pub mod context;
 pub mod explore;
 pub mod fold;
+pub mod home;
 pub mod sidebar;
 
 use koru_core::{NodeId, ProfileId, WorkspaceId};
@@ -296,6 +297,10 @@ pub enum Outcome {
     /// Open the global device-linking modal. Linked devices receive every
     /// current and future profile and workspace in the MVP.
     LinkDevice,
+    /// Home's Today row: the Home tab, a singleton.
+    OpenHome,
+    /// A recent document, from Home's nav.
+    OpenRecentDocument(koru_core::DocumentId),
     /// The who/where popover's Settings row: the Settings tab.
     OpenSettings,
     /// Its Koru Cloud row: Manage's Koru Cloud page.
