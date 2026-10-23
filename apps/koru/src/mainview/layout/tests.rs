@@ -583,6 +583,68 @@ fn the_lanes_new_follows_the_active_apps_primary_create() {
     assert_eq!(v.tabs().len(), before + 1, "New document opened a tab");
 }
 
+/// **The fold reflows once, at the toggle** (ANIMATION.md, "The pane
+/// fold"): the layout takes the final width the moment the pane is toggled
+/// and nothing re-cuts the window while it slides. The contents fade as the
+/// recipe says, the chain is drawn through the fold, and the fold's clock
+/// stops with the slide.
+#[test]
+fn the_fold_reflows_once_and_settles_with_the_slide() {
+    use std::time::Duration;
+    let (mut v, mut workspace) = container();
+    assert!(!v.sidebar.is_open());
+    assert!(v.chain_drawn(), "shut: the chain is there");
+    let before = v.relayouts;
+    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
+    assert_eq!(v.relayouts, before + 1, "one reflow at the toggle");
+    assert!(v.sidebar.animating());
+    assert!(v.fold.is_some_and(|(_, opening)| opening));
+    assert!(v.chain_drawn(), "opening: the chain rides the edge");
+    assert_eq!(
+        v.fold_content_alpha(),
+        0.0,
+        "and the contents are not there yet"
+    );
+
+    // The slide, frame by frame: nothing re-cuts the window.
+    let t0 = Instant::now();
+    for ms in [20, 60, 100] {
+        v.sidebar.advance(t0 + Duration::from_millis(ms));
+        v.settle_fold();
+        assert!(v.sidebar.animating(), "{ms} ms: still sliding");
+        assert!(v.fold.is_some());
+    }
+    assert_eq!(v.relayouts, before + 1, "a frame paid a reflow mid-slide");
+
+    v.sidebar.advance(t0 + Duration::from_secs(1));
+    v.settle_fold();
+    assert!(!v.sidebar.animating());
+    assert_eq!(v.fold, None, "the fold's clock stops with the slide");
+    assert!(
+        !v.chain_drawn(),
+        "open and at rest: the lane has the controls"
+    );
+    assert_eq!(v.fold_content_alpha(), 1.0);
+}
+
+/// Under reduced motion the fold lands at once: no slide, no fade, no frame
+/// asked for — the OS said so, and the panel's other door answers it.
+#[test]
+fn reduced_motion_lands_the_fold_at_once() {
+    let (mut v, mut workspace) = container();
+    v.reduced_motion = true;
+    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
+    assert!(v.sidebar.is_open());
+    assert!(!v.sidebar.animating(), "no slide");
+    assert_eq!(v.sidebar.progress(), 1.0, "and already flush");
+    assert_eq!(v.fold, None);
+    assert!(!v.chain_drawn());
+    assert_eq!(v.fold_content_alpha(), 1.0);
+    assert!(v.toggle_sidebar() == false || !v.sidebar.is_open());
+    assert_eq!(v.sidebar.progress(), 0.0);
+    assert!(!v.sidebar.animating());
+}
+
 /// ADR-26: the slide costs frames only while it is running, and stops asking
 /// the moment it settles.
 #[test]

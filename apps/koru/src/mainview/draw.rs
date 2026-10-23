@@ -410,10 +410,20 @@ impl MainView {
             // control: the column for its chips and floor, the window for
             // the lane.
             self.explore.set_chrome_focus(self.explore_chrome_focus());
+            // Mid-fold the contents fade as one group — lane, apps row, nav
+            // and floor together — rather than each at its own rate.
+            let alpha = self.fold_content_alpha();
+            let fading = alpha < 1.0;
+            if fading {
+                scene::fade_layer(scene, root, alpha, &scene::rect(sb.x, sb.y, sb.w, sb.h));
+            }
             self.explore.draw(scene, root, &mut self.engine, sb, avatar);
             // The lane, over the pane's top band: window chrome, so it is the
             // window that draws it.
             self.draw_lane(scene, root, sb);
+            if fading {
+                scene.pop_layer();
+            }
         }
         let ai = self.ai_rect();
         if ai.w > 0.0 {
@@ -762,8 +772,12 @@ impl MainView {
         // **The leading chain**: the lane's controls, folded into the
         // caption's left end while the pane is shut (frame 9). While it is
         // open the chain is empty and the lane draws them (`draw_lane`).
-        let leading = self.leading();
-        if leading.folded {
+        // Through the fold it is drawn either way, at the drawn caption's
+        // left edge, so it rides the pane's edge out and back
+        // (`theme::motion::pane_fold`).
+        let mut leading = self.leading();
+        if self.chain_drawn() {
+            leading.folded = true;
             let chain = caption::leading_chain(cap, leading);
             self.draw_lane_controls(
                 scene,

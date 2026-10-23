@@ -1083,6 +1083,18 @@ pub struct MainView {
     /// Where `F6` has put the keyboard on the sidebar's chrome, if anywhere
     /// (`chrome_focus.rs`).
     chrome_focus: Option<chrome_focus::ChromeStop>,
+    /// The sidebar's fold in flight: when it began and whether it is
+    /// opening. `None` at rest. The slide itself is the panel's; this is the
+    /// clock the fade and the riding chain read (`theme::motion::pane_fold`).
+    fold: Option<(Instant, bool)>,
+    /// The OS's reduced-motion setting, read once at construction: under it
+    /// the fold lands at once and the fade is skipped. No preference of our
+    /// own yet (QUESTIONS.md Q8).
+    pub(super) reduced_motion: bool,
+    /// How many times the window has been re-cut. The fold's contract is one
+    /// reflow per toggle, and the layout tests count.
+    #[cfg(test)]
+    pub(super) relayouts: usize,
     /// Shared timing for the adjacent icon controls in the caption.
     tooltip: Tooltip,
     /// Recently opened documents, most recent first.
@@ -1830,6 +1842,10 @@ impl MainView {
             nested: None,
             toggle_tip_muted: false,
             chrome_focus: None,
+            fold: None,
+            reduced_motion: koru_workspace_host::environment::reduced_motion().unwrap_or(false),
+            #[cfg(test)]
+            relayouts: 0,
             help_headlines: None,
             help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
             tooltip: Tooltip::default(),

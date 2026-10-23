@@ -401,6 +401,10 @@ impl MainView {
     /// O(tabs) — `reflow` is parley over every row, and a live resize drag would
     /// otherwise pay it once per tab per frame.
     pub(super) fn relayout(&mut self) {
+        #[cfg(test)]
+        {
+            self.relayouts += 1;
+        }
         self.resolve_regions();
         let content = self.content();
         let rects = self.panes.leaf_rects(content);
@@ -650,11 +654,31 @@ impl MainView {
 
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
-        let open = self.sidebar.toggle(Instant::now());
+        let now = Instant::now();
+        // **The fold** (`theme::motion::pane_fold`): the panel's own slide,
+        // reversed from where it is on interrupt, with the contents' fade
+        // and the chain's ride clocked from here. Under reduced motion both
+        // states land at once — the panel has no zero-duration path, so the
+        // host takes the other door it already has.
+        let open = if self.reduced_motion {
+            let open = !self.sidebar.is_open();
+            self.sidebar.set_immediately(open);
+            self.fold = None;
+            open
+        } else {
+            let open = self.sidebar.toggle(now);
+            self.fold = Some((now, open));
+            open
+        };
         super::chrome_debug::chrome_debug!(
-            "pane {} (width {})",
+            "pane {} (width {}{})",
             if open { "opening" } else { "closing" },
-            self.sidebar.full()
+            self.sidebar.full(),
+            if self.reduced_motion {
+                ", reduced motion"
+            } else {
+                ""
+            }
         );
         // Closing the pane closes what was hanging off it: a popover left
         // floating over the content with nothing to anchor it to is a panel
@@ -671,6 +695,40 @@ impl MainView {
             self.explore.clear_focus();
         }
         true
+    }
+
+    /// The fold's clock stops when the panel's slide does. Separate from the
+    /// tick so a test can drive the panel by hand and still see it settle.
+    pub(super) fn settle_fold(&mut self) {
+        if self.fold.is_some() && !self.sidebar.animating() {
+            super::chrome_debug::chrome_debug!(
+                "pane fold settled {}",
+                if self.sidebar.is_open() {
+                    "open"
+                } else {
+                    "shut"
+                }
+            );
+            self.fold = None;
+        }
+    }
+
+    /// How opaque the pane's contents are this frame: 1 at rest, fading out
+    /// over a collapse's first 90 ms and in over an expand's last 90 ms.
+    pub(super) fn fold_content_alpha(&self) -> f32 {
+        match self.fold {
+            Some((started, opening)) if self.sidebar.animating() => {
+                theme::motion::pane_fold().content_alpha(started.elapsed(), opening)
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Whether the caption's leading chain is drawn this frame: while the
+    /// pane is shut, and through the fold either way — it rides the drawn
+    /// pane's edge out to the corner and back (frame 9's blue note).
+    pub(super) fn chain_drawn(&self) -> bool {
+        !self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating())
     }
 
     /// Show the workspaces switcher without changing the Explore pane.
@@ -1186,6 +1244,7 @@ impl MainView {
     pub(super) fn advance_panels(&mut self, ws: &WorkspaceDoc) {
         let now = Instant::now();
         self.sidebar.advance(now);
+        self.settle_fold();
         self.ai_panel.advance(now);
         self.context.advance(now);
         self.slides_mut().advance(now);
