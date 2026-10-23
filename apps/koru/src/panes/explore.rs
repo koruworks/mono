@@ -492,19 +492,6 @@ struct RowDrag {
     spring: Option<(NodeId, Instant)>,
 }
 
-/// Which part of the pane's header, if any.
-///
-/// The header is two targets, not one: the avatar answers for *who*, and the
-/// name and chevron for *where*. Being an enum from the start is what made
-/// adding the second a variant rather than a rewrite of every caller.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum HeaderPart {
-    /// The avatar — opens the profiles.
-    Avatar,
-    /// The name and the chevron — open the workspaces.
-    Workspace,
-}
-
 /// Every rect in a workspace row of the switcher, derived from the row alone.
 ///
 /// See [`ExploreView::workspace_row_parts`], which is the only thing that
@@ -518,30 +505,6 @@ pub struct WorkspaceRowParts {
     /// Where a pinned workspace's pin mark sits. A mark, not a control: pin
     /// and unpin live in the workspace manager.
     pub pin: Rect,
-}
-
-/// Every rect in the pane's header, derived from the pane's rect alone.
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub struct HeaderRects {
-    /// The whole band. Drawing uses it; hit-testing splits it in two.
-    pub row: Rect,
-    /// The avatar chip or picture, square, centred in `row`.
-    pub avatar: Rect,
-    /// What a press on the avatar answers for — the circle plus the padding
-    /// around it, because a 22px target is a small thing to have to hit.
-    pub avatar_hit: Rect,
-    /// What is left for the workspace name, inside [`name_hit`].
-    ///
-    /// [`name_hit`]: HeaderRects::name_hit
-    pub name: Rect,
-    /// The workspace half's own box — everything after the gap. Its own control,
-    /// which is why it has its own rect rather than being "the row minus the
-    /// avatar".
-    pub name_hit: Rect,
-    /// The chevron at the right end, which is what says the row is clickable.
-    pub chevron: Rect,
-    /// The hairline under the band.
-    pub divider: Rect,
 }
 
 /// A row pinned to the floor of the column, below the library.
@@ -752,7 +715,6 @@ pub struct ExploreView {
     pending_fold: Option<fold::Fold>,
     /// Whether the library heading's `…` actions button is under the pointer.
     actions_hover: bool,
-    search_hover: bool,
     /// The row the active tab is showing, so the tree says where you are.
     selected: Option<NodeId>,
     /// The row the **keyboard** is on, which is not the same thing.
@@ -794,7 +756,6 @@ pub struct ExploreView {
     /// to redraw for.
     turns: Vec<Turn>,
     /// Which half of the header the pointer is on, if either.
-    header_hover: Option<HeaderPart>,
 
     // ------------------------------------------------------------- drag-to-move
     /// Documents chosen with Ctrl+click or Shift+click. The same set is drawn,
@@ -3002,16 +2963,6 @@ impl ExploreView {
         true
     }
 
-    /// How far open `kind` is, 0 to 1 — and 0 for a kind that is not the one
-    /// showing. The chevron reads this, so it turns in step with the panel
-    /// rather than keeping a clock of its own.
-    pub fn popover_progress(&self, kind: PopoverKind) -> f32 {
-        match self.popover.as_ref() {
-            Some(p) if p.kind == kind => p.progress,
-            _ => 0.0,
-        }
-    }
-
     /// Advance the fade and the slide between pages. Returns whether anything
     /// moved.
     ///
@@ -3758,90 +3709,6 @@ impl ExploreView {
         }
     }
 
-    /// The one function that owns the header's geometry. Drawing and
-    /// hit-testing both come here, so the chevron can never be clickable
-    /// somewhere other than where it is drawn. Font-free, like every other rect
-    /// in this crate.
-    pub fn header_rects(area: Rect) -> HeaderRects {
-        // **The band is a tab pill in another column, and shares its insets.**
-        // It had its own, three pixels taller and half a pixel lower, which is
-        // visible the moment a tab sits beside it across the divide. Taking
-        // `theme::TAB_INSET_*` is what stops the two drifting apart again.
-        let inset_top = theme::TAB_INSET_TOP;
-        let inset_bottom = theme::TAB_INSET_BOTTOM;
-        // Mid-slide the pane is narrower than its own padding, and a row inset
-        // by 8 into a 1px column would start outside the pane it lives in — and
-        // `Rect::contains` being inclusive, would then answer for a click on the
-        // view beside it.
-        let row = Rect::new(
-            (area.x + theme::NAV_PAD).min(area.x + area.w),
-            area.y + inset_top,
-            (area.w - theme::NAV_PAD * 2.0).max(0.0),
-            (WORKSPACE_ROW_H - inset_top - inset_bottom).max(0.0),
-        );
-        // **Two controls with a gap between them**, not one row split down the
-        // middle. The avatar opens the profiles and the name opens the
-        // workspaces, and a hover fill that ran from one straight into the
-        // other would say they were the same button.
-        let avatar_hit = Rect::new(row.x, row.y, row.h.min(row.w), row.h);
-        let avatar = Rect::new(
-            avatar_hit.x + (avatar_hit.w - AVATAR).max(0.0) * 0.5,
-            avatar_hit.y + (avatar_hit.h - AVATAR).max(0.0) * 0.5,
-            AVATAR.min(avatar_hit.w),
-            AVATAR.min(avatar_hit.h),
-        );
-        let name_x = (avatar_hit.x + avatar_hit.w + AVATAR_GAP).min(row.x + row.w);
-        let name_hit = Rect::new(name_x, row.y, (row.x + row.w - name_x).max(0.0), row.h);
-        let chevron = Rect::new(
-            (name_hit.x + name_hit.w - CHEVRON_W - CHEVRON_PAD).max(name_hit.x),
-            row.y,
-            CHEVRON_W.min(name_hit.w),
-            row.h,
-        );
-        let name = Rect::new(
-            (name_hit.x + NAME_PAD).min(name_hit.x + name_hit.w),
-            row.y,
-            (chevron.x - name_hit.x - NAME_PAD - 4.0).max(0.0),
-            row.h,
-        );
-        HeaderRects {
-            row,
-            avatar,
-            avatar_hit,
-            name,
-            name_hit,
-            chevron,
-            // **Inside the band**, exactly as the caption draws its own rule at
-            // `cap.y + cap.h - 1`. One pixel lower and the pane reads as the
-            // taller of the two.
-            divider: Rect::new(area.x, area.y + WORKSPACE_ROW_H - 1.0, area.w, 1.0),
-        }
-    }
-
-    /// Which part of the header a point is on.
-    ///
-    /// `None` in a collapsed column, the same guard `row_rects` uses and for the
-    /// same reason: `contains` is inclusive on every edge, so a zero-width
-    /// header would answer for the view beside it.
-    pub fn header_at(area: Rect, x: f32, y: f32) -> Option<HeaderPart> {
-        if area.w <= 0.0 {
-            return None;
-        }
-        let h = Self::header_rects(area);
-        if !h.row.contains(x, y) {
-            return None;
-        }
-        // The avatar first: it sits inside the band, so the band would
-        // otherwise claim it, exactly as a tab's close box would be swallowed
-        // by the tab it is drawn in.
-        if h.avatar_hit.contains(x, y) {
-            return Some(HeaderPart::Avatar);
-        }
-        // The gap between the two belongs to neither — pressing it should do
-        // nothing rather than open whichever control happens to be adjacent.
-        h.name_hit.contains(x, y).then_some(HeaderPart::Workspace)
-    }
-
     /// Where the first library row sits.
     ///
     /// Everything above it — the workspace row, the divider, the section gap,
@@ -3964,22 +3831,6 @@ impl ExploreView {
 
     fn actions_at(&self, area: Rect, x: f32, y: f32) -> bool {
         let button = self.actions_button(area);
-        button.w > 0.0 && button.contains(x, y)
-    }
-
-    pub fn search_button(&self, area: Rect) -> Rect {
-        let band = self.heading_band(area);
-        let menu = self.actions_button(area);
-        let modes_right = self.modes_right(area);
-        let w = menu.h;
-        if band.w <= 0.0 || menu.x - modes_right < w {
-            return Rect::new(menu.x, menu.y, 0.0, menu.h);
-        }
-        Rect::new(menu.x - w, menu.y, w, menu.h)
-    }
-
-    fn search_at(&self, area: Rect, x: f32, y: f32) -> bool {
-        let button = self.search_button(area);
         button.w > 0.0 && button.contains(x, y)
     }
 
@@ -4446,22 +4297,14 @@ impl ExploreView {
                 }
                 return self.choose(row);
             }
-            // The floor chip shuts the switcher it opened; falling through
-            // would reopen it on the same press.
+            // The floor chip shuts the switcher it opened — whichever page is
+            // showing; falling through would reopen it on the same press.
             if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
-                self.toggle_popover(PopoverKind::Workspaces);
+                self.close_popover();
                 return Outcome::Consumed;
             }
-            // The header's halves move the switcher between its pages, or shut
-            // the page already showing. Anywhere else shuts it; falling through
-            // to the header below would immediately reopen it.
-            match Self::header_at(area, x, y) {
-                Some(HeaderPart::Avatar) => self.toggle_popover(PopoverKind::Profiles),
-                Some(HeaderPart::Workspace) => self.toggle_popover(PopoverKind::Workspaces),
-                None => {
-                    self.close_popover();
-                }
-            }
+            // Anywhere else shuts it.
+            self.close_popover();
             return Outcome::Consumed;
         }
         // Match the document scrollbar: the wider invisible gutter claims the
@@ -4480,22 +4323,6 @@ impl ExploreView {
             return Outcome::Consumed;
         }
 
-        // Each half of the header opens its own list, in place, telling the
-        // container nothing. That is the caret precedent: this view already
-        // mutates `collapsed` without asking, because where its own furniture is
-        // open is its own business.
-        match Self::header_at(area, x, y) {
-            Some(HeaderPart::Avatar) => {
-                self.toggle_popover(PopoverKind::Profiles);
-                return Outcome::Consumed;
-            }
-            Some(HeaderPart::Workspace) => {
-                self.toggle_popover(PopoverKind::Workspaces);
-                return Outcome::Consumed;
-            }
-            None => {}
-        }
-
         if let Some(mode) = self.navigator_mode_at(area, x, y) {
             self.set_navigator_mode(mode);
             return if mode == NavigatorMode::Socials {
@@ -4508,9 +4335,6 @@ impl ExploreView {
         if self.actions_at(area, x, y) {
             self.toggle_popover(PopoverKind::LibraryActions);
             return Outcome::Consumed;
-        }
-        if self.search_at(area, x, y) {
-            return Outcome::Search;
         }
 
         // The rail owns everything below the heading in tasks mode — including
@@ -5115,8 +4939,7 @@ impl ExploreView {
         // The header and the popover acted on the first click. Without this,
         // the second click of a double-click would re-toggle the popover and it
         // would appear to ignore every other press.
-        if Self::header_at(area, x, y).is_some() || self.popover_at(area, viewport, x, y).is_some()
-        {
+        if floor::hit(area, x, y).is_some() || self.popover_at(area, viewport, x, y).is_some() {
             return Outcome::Consumed;
         }
         let Some(i) = self.row_at(area, x, y) else {
@@ -5174,21 +4997,19 @@ impl ExploreView {
             return true;
         }
 
-        let header = Self::header_at(area, x, y);
         let popover = self.popover_at(area, viewport, x, y).map(|(i, _)| i);
+        let header = if popover.is_none() {
+            floor::hit(area, x, y)
+        } else {
+            None
+        };
         let actions = popover.is_none() && self.actions_at(area, x, y);
-        let search = popover.is_none() && self.search_at(area, x, y);
         let mode = if popover.is_none() {
             self.navigator_mode_at(area, x, y)
         } else {
             None
         };
         let manage = popover.is_none() && self.manage_at(area, x, y);
-        let on_floor = if popover.is_none() {
-            floor::hit(area, x, y)
-        } else {
-            None
-        };
         let on_footer = if popover.is_some() {
             None
         } else {
@@ -5202,7 +5023,6 @@ impl ExploreView {
         let hover = if header.is_some()
             || popover.is_some()
             || actions
-            || search
             || mode.is_some()
             || on_footer.is_some()
             || scrollbar
@@ -5217,7 +5037,7 @@ impl ExploreView {
         // outrank it.
         let artifacts_moved = if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions || search || mode.is_some() {
+            if header.is_some() || popover.is_some() || actions || mode.is_some() {
                 self.artifacts.clear_hover()
             } else {
                 self.artifacts.mouse_move(area, top, x, y)
@@ -5227,7 +5047,7 @@ impl ExploreView {
         };
         let chats_moved = if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions || search || mode.is_some() {
+            if header.is_some() || popover.is_some() || actions || mode.is_some() {
                 self.chats.clear_hover()
             } else {
                 self.chats.mouse_move(area, top, x, y)
@@ -5240,7 +5060,7 @@ impl ExploreView {
             // A live drag follows the pointer wherever it went, including over
             // the header — the same rule the library's own drag keeps.
             if !self.rail.dragging()
-                && (header.is_some() || popover.is_some() || actions || search || mode.is_some())
+                && (header.is_some() || popover.is_some() || actions || mode.is_some())
             {
                 self.rail.clear_hover()
             } else {
@@ -5251,8 +5071,7 @@ impl ExploreView {
         };
         let socials_moved = self.showing_socials()
             && self.socials.as_ref().is_some_and(|surface| {
-                let blocked =
-                    header.is_some() || popover.is_some() || actions || search || mode.is_some();
+                let blocked = header.is_some() || popover.is_some() || actions || mode.is_some();
                 surface.borrow_mut().navigation_mouse_move(
                     if blocked { -1. } else { x },
                     if blocked { -1. } else { y },
@@ -5263,23 +5082,19 @@ impl ExploreView {
             || artifacts_moved
             || chats_moved
             || hover != self.hover
-            || header != self.header_hover
+            || header != self.floor_hover
             || actions != self.actions_hover
-            || search != self.search_hover
             || mode != self.mode_hover
             || manage != self.manage_hover
-            || on_floor != self.floor_hover
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
             || on_subscribe != self.subscribe_hover
             || scrollbar != self.scrollbar_hover;
         self.hover = hover;
-        self.header_hover = header;
+        self.floor_hover = header;
         self.actions_hover = actions;
-        self.search_hover = search;
         self.mode_hover = mode;
         self.manage_hover = manage;
-        self.floor_hover = on_floor;
         self.footer_hover = on_footer;
         self.cta_hover = on_cta;
         self.subscribe_hover = on_subscribe;
@@ -6153,17 +5968,15 @@ impl ExploreView {
     pub fn clear_hover(&mut self) -> bool {
         let had = self.rail.clear_hover()
             || self.hover.is_some()
-            || self.header_hover.is_some()
+            || self.floor_hover.is_some()
             || self.actions_hover
-            || self.search_hover
             || self.footer_hover.is_some()
             || self.cta_hover
             || self.subscribe_hover
             || self.scrollbar_hover;
         self.hover = None;
-        self.header_hover = None;
+        self.floor_hover = None;
         self.actions_hover = false;
-        self.search_hover = false;
         self.footer_hover = None;
         self.cta_hover = false;
         self.subscribe_hover = false;
@@ -6267,9 +6080,8 @@ impl ExploreView {
         // still has to be right — the row's own hover background is what says
         // it can be pressed.
         if self.hover.is_some()
-            || self.header_hover.is_some()
+            || self.floor_hover.is_some()
             || self.actions_hover
-            || self.search_hover
             || self.cta_hover
             || self.subscribe_hover
             || self.footer_hover.is_some()
@@ -6410,14 +6222,19 @@ impl ExploreView {
         // the pinned footer rows answer to the shell, not to the nodes band
         // they sit below.
         {
+            // **The lane.** The window's own band at the top of the pane —
+            // the mark, Search and the toggle — is window chrome, drawn and
+            // hit-tested by the container over this band
+            // (`MainView::draw_lane`); the column only keeps its room.
             let _section = koru_draw::inspect::scope(
-                "ExploreHeader",
+                "KoruLane",
                 "container",
                 root,
                 scene::rect(area.x, area.y, area.w.max(0.0), WORKSPACE_ROW_H.max(0.0)),
-                |_| {},
+                |r| {
+                    r.property("drawn by", "MainView::draw_lane", "window chrome");
+                },
             );
-            self.draw_header(scene, root, engine, area, avatar);
         }
         // The gaps between the shell's sections are the stack's geometry, not
         // a margin any one section owns — named, so the spacing between the
@@ -6431,7 +6248,7 @@ impl ExploreView {
                 scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, theme::NAV_PAD),
                 |r| {
                     r.property("height", theme::NAV_PAD, "shell section gap");
-                    r.property("separates", "ExploreHeader / KoruAppsRow", "shell stack");
+                    r.property("separates", "KoruLane / KoruAppsRow", "shell stack");
                 },
             );
         }
@@ -6458,13 +6275,6 @@ impl ExploreView {
                 root,
                 scene::rect(band.x, band.y, band.w, band.h),
                 |_| {},
-            );
-            actions::draw_search_button(
-                scene,
-                root,
-                engine,
-                self.search_button(area),
-                self.search_hover,
             );
             actions::draw_button(scene, root, self.actions_button(area), self.actions_hover);
         }
@@ -7243,120 +7053,6 @@ impl ExploreView {
         }
     }
 
-    fn draw_header(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        area: Rect,
-        avatar: Option<&peniko::ImageBrush>,
-    ) {
-        let p = theme::p();
-        let h = Self::header_rects(area);
-        if h.row.w <= 0.0 {
-            return;
-        }
-        // Each half lights on its own, because each opens its own list. A
-        // popover mid-fade still counts as open here, so the half it belongs to
-        // stays lit for exactly as long as it is on screen.
-        let open = self.popover.as_ref().map(|x| x.kind);
-        let avatar_hot =
-            self.header_hover == Some(HeaderPart::Avatar) || open == Some(PopoverKind::Profiles);
-        let name_hot = self.header_hover == Some(HeaderPart::Workspace)
-            || open == Some(PopoverKind::Workspaces);
-        if avatar_hot {
-            let a = h.avatar_hit;
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(a.x, a.y, a.w, a.h, 6.0),
-            );
-        }
-        if name_hot {
-            let n = h.name_hit;
-            scene::fill(
-                scene,
-                root,
-                p.hover_tint,
-                &scene::rrect(n.x, n.y, n.w, n.h, 6.0),
-            );
-        }
-        self.draw_avatar(scene, root, engine, h.avatar, avatar, theme::role::hint());
-
-        // **The same tile the switcher's rows wear**, in front of the name. The
-        // header says *where you are*, and it should say it the way the list you
-        // chose from says it — a name alone made the two read as different
-        // things. One component, one size argument.
-        let entry = self
-            .current
-            .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
-        let mut name = h.name;
-
-        if let Some(w) = entry {
-            let chip = Rect::new(
-                name.x,
-                name.y + (name.h - HEADER_CHIP) * 0.5,
-                HEADER_CHIP,
-                HEADER_CHIP,
-            );
-            koru_draw::tile::Tile {
-                icon: w.icon.as_deref(),
-                color: w.color.as_deref(),
-                name: &w.name,
-            }
-            .draw(scene, root, engine, chip);
-            let shift = HEADER_CHIP + 7.0;
-            name = Rect::new(name.x + shift, name.y, (name.w - shift).max(1.0), name.h);
-        }
-        let label = entry.map(|w| w.name.as_str()).unwrap_or("Workspace");
-        draw_middle(
-            scene,
-            root,
-            engine,
-            &label_fit(label),
-            name,
-            theme::role::row(),
-            p.text,
-        );
-
-        // **The chevron turns over**, so the header says open or shut rather
-        // than leaving it to be inferred. `ph-caret-up` is not in `icons.rs` and
-        // those codepoints are lifted from the pinned stylesheet rather than
-        // guessed — so the open state is `CARET_DOWN` mirrored about its own
-        // centre, the same `Affine` trick the logo's turn uses.
-        //
-        // **It turns rather than snapping**, off the popover's own progress
-        // rather than a clock of its own — so it cannot drift out of step with
-        // the panel, and it adds nothing to `animating`. Scaling y from +1 to −1
-        // passes through 0 at the halfway point, which is the glyph seen
-        // edge-on: the same silhouette a real flip has, and why this needs no
-        // second icon.
-        let (cx, cy) = h.chevron.centre();
-        let turn = self.popover_progress(PopoverKind::Workspaces);
-        let chevron_root = if turn > 0.0 {
-            root * Affine::translate((cx as f64, cy as f64))
-                * Affine::scale_non_uniform(1.0, (1.0 - 2.0 * turn) as f64)
-                * Affine::translate((-(cx as f64), -(cy as f64)))
-        } else {
-            root
-        };
-        draw_icon(
-            scene,
-            chevron_root,
-            engine,
-            icons::CARET_DOWN,
-            h.chevron,
-            if name_hot { p.text } else { p.text_dim },
-        );
-        scene::fill(
-            scene,
-            root,
-            p.panel_border,
-            &scene::rect(h.divider.x, h.divider.y, h.divider.w, h.divider.h),
-        );
-    }
-
     /// The floating panel and its rows.
     ///
     /// Drawn by its **own call**, after both columns, rather than from inside
@@ -7981,25 +7677,13 @@ fn next_selectable(rows: &[PopoverRow], from: Option<usize>, forward: bool) -> O
 /// Room above the first row, for the column's own heading.
 const HEADER_H: f32 = 24.0;
 
-/// The workspace band at the top of the pane. `CAPTION_H` tall so the avatar and
-/// the workspace name sit on the same optical line as the logo and the tabs
-/// across the divide.
+/// The lane's band at the top of the pane: `CAPTION_H` tall, one row with the
+/// caption across the divide, drawn by the window (`MainView::draw_lane`).
 const WORKSPACE_ROW_H: f32 = theme::CAPTION_H;
 /// A tree row's disclosure caret, at **half** `CAPTION_ICON`. It is
 /// punctuation on the row rather than a command, and at command size it
 /// competed with the file icon beside it.
 const CARET_SIZE: f32 = theme::CAPTION_ICON * 0.5;
-
-const AVATAR: f32 = 22.0;
-/// The chip's corner. Boxy rather than round, so it does not read as a bubble
-/// sitting inside the hover box behind it.
-/// The space **between** the avatar's control and the workspace's, so the two
-/// read as two things.
-const AVATAR_GAP: f32 = 6.0;
-/// The workspace name's inset inside its own box.
-const NAME_PAD: f32 = 8.0;
-const CHEVRON_W: f32 = 18.0;
-const CHEVRON_PAD: f32 = 5.0;
 
 /// Heights of a popover's rows.
 const SECTION_H: f32 = 20.0;
@@ -8012,9 +7696,6 @@ const SWITCHER_MAX_H: f32 = 420.0;
 /// The rounded tile at the left of a workspace row, carrying its colour and its
 /// emoji. Square.
 const WORKSPACE_CHIP: f32 = 20.0;
-/// The same tile in the pane's header, in front of the workspace's name. The
-/// glyph inside it is derived from this — see `koru_draw::tile`.
-const HEADER_CHIP: f32 = 18.0;
 /// The `…` between the name and the tick.
 /// Where a row's icon sits, given its depth and whether the row carries the
 /// caret lane.

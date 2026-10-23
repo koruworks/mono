@@ -42,11 +42,21 @@ fn at_wb(r: &Regions, n: usize, window_buttons: bool, context: bool, x: f32, y: 
     )
 }
 
+/// The workspace window's lane controls, with the pane open (unfolded).
 fn all_leading() -> lane::Leading {
     lane::Leading {
         mark: lane::Mark::Mark,
         search: true,
         new: true,
+        folded: false,
+    }
+}
+
+/// The same controls with the pane shut: folded into the caption.
+fn all_folded() -> lane::Leading {
+    lane::Leading {
+        folded: true,
+        ..all_leading()
     }
 }
 
@@ -94,7 +104,7 @@ fn the_lane_owns_its_squares_and_drags_by_the_rest() {
 fn the_shut_caption_folds_the_lane_into_its_leading_chain() {
     let r = shut();
     assert_eq!(r.lane.w, 0.0, "a shut pane has no lane");
-    let chain = caption::leading_chain(r.caption, all_leading());
+    let chain = caption::leading_chain(r.caption, all_folded());
     assert_eq!(chain.leading.x, r.caption.x);
     assert_eq!(chain.toggle.x, chain.leading.x + chain.leading.w);
     assert_eq!(chain.search.x, chain.toggle.x + chain.toggle.w);
@@ -102,23 +112,56 @@ fn the_shut_caption_folds_the_lane_into_its_leading_chain() {
     assert_eq!(chain.divider.x, chain.new.x + chain.new.w);
     assert_eq!(chain.end, chain.divider.x + chain.divider.w);
     let (x, y) = chain.toggle.centre();
-    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::ToggleSidebar);
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::ToggleSidebar);
     let (x, y) = chain.search.centre();
-    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::Search);
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::Search);
     let (x, y) = chain.new.centre();
-    assert_eq!(at_leading(&r, 3, all_leading(), x, y), Hit::New);
+    assert_eq!(at_leading(&r, 3, all_folded(), x, y), Hit::New);
     let (x, y) = chain.leading.centre();
     assert_eq!(
-        at_leading(&r, 3, all_leading(), x, y),
+        at_leading(&r, 3, all_folded(), x, y),
         Hit::Caption,
         "the mark drags"
     );
-    let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_leading());
+    let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_folded());
     assert_eq!(strip.x, chain.end, "the tabs begin after the divider");
     let first = tabs::layout(strip, &widths(3), 0.0)[0].body;
     assert_eq!(
-        at_leading(&r, 3, all_leading(), first.x + 4.0, first.centre().1),
+        at_leading(&r, 3, all_folded(), first.x + 4.0, first.centre().1),
         Hit::Tab(0)
+    );
+}
+
+/// **The open caption's left end is bare.** With the pane open the lane holds
+/// the controls, the chain is empty, and the tabs begin at the caption's
+/// edge; the pane's lane answers for the controls instead.
+#[test]
+fn an_open_pane_leaves_the_captions_left_end_bare() {
+    let r = open();
+    let chain = caption::leading_chain(r.caption, all_leading());
+    for rect in [
+        chain.leading,
+        chain.toggle,
+        chain.search,
+        chain.new,
+        chain.divider,
+    ] {
+        assert_eq!(rect.w, 0.0);
+        assert_eq!(rect.x, r.caption.x);
+    }
+    assert_eq!(chain.end, r.caption.x);
+    let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_leading());
+    assert_eq!(strip.x, r.caption.x, "the tabs begin at the caption's edge");
+    assert_eq!(
+        at_leading(
+            &r,
+            3,
+            all_leading(),
+            r.caption.x + 4.0,
+            r.caption.centre().1
+        ),
+        Hit::Tab(0),
+        "no toggle at the caption's left when the pane is open"
     );
 }
 

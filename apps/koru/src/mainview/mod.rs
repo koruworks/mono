@@ -332,15 +332,6 @@ const WINDOW_BUTTONS: bool = true;
 /// The reminder-attention bell owns the optional product caption slot —
 /// when this build shows reminders (koru-features). With them hidden the slot
 /// is empty and the tab strip takes the room back.
-/// Which lane controls this window offers. **None yet**: the lane and its
-/// chain land with the sidebar's composition
-/// (`docs/features/workspace-foundation/PLAN.final.md`, P4); until then the
-/// caption is the toggle alone, to the pixel, which is what every existing
-/// chrome test asserts.
-pub(crate) fn leading() -> koru_shell_chrome::lane::Leading {
-    koru_shell_chrome::lane::Leading::NONE
-}
-
 fn reminder_bell() -> bool {
     koru_features::reminders()
 }
@@ -14699,6 +14690,50 @@ impl MainView {
     /// mistake the document's menus had already been swept for: on macOS all
     /// four taught a modifier this app does not use. Going through the seam also
     /// means tooltips can stop teaching chords without touching these rows.
+    /// Which lane controls this window offers, and where they are right now:
+    /// in the lane while the pane is open, folded into the caption's left end
+    /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
+    /// §5.1). The mark leads on every platform until the Mac catch-up swaps
+    /// it for the lights' reserve; New joins with the apps manager (plan P9).
+    pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
+        koru_shell_chrome::lane::Leading {
+            mark: koru_shell_chrome::lane::Mark::Mark,
+            search: true,
+            new: false,
+            folded: !self.sidebar.is_open(),
+        }
+    }
+
+    /// The lane's controls where they are **drawn** this frame: in the drawn
+    /// pane's top band, or in the drawn caption's leading chain. At rest the
+    /// drawn rects are the settled ones, which is what the hit test reads.
+    pub(crate) fn lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
+        self.lane_controls_in(self.drawn_caption(), self.sidebar_rect())
+    }
+
+    /// The same controls on the **settled** rects — where the hit test reads
+    /// them, and what a test asks mid-slide.
+    #[cfg(test)]
+    pub(crate) fn settled_lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
+        self.lane_controls_in(self.regions.caption, self.regions.sidebar)
+    }
+
+    fn lane_controls_in(&self, caption: Rect, pane: Rect) -> koru_shell_chrome::lane::LaneRects {
+        let leading = self.leading();
+        if leading.folded {
+            let chain = koru_shell_chrome::caption::leading_chain(caption, leading);
+            koru_shell_chrome::lane::LaneRects {
+                leading: chain.leading,
+                search: chain.search,
+                new: chain.new,
+                toggle: chain.toggle,
+            }
+        } else {
+            let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
+            koru_shell_chrome::lane::solve(lane, leading)
+        }
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.group_drag().is_some() || self.sidebar.animating() {
             return None;
@@ -14707,13 +14742,14 @@ impl MainView {
         let hint = |id| koru_keys::show_hint(id, koru_keys::Section::Tooltip);
         match hit {
             Hit::ToggleSidebar if !self.toggle_tip_muted => {
+                let lang = crate::format::lang();
                 let label = if self.sidebar.is_open() {
-                    "Hide sidebar"
+                    koru_i18n::t(lang, koru_i18n::Key::HideSidebar)
                 } else {
-                    "Show sidebar"
+                    koru_i18n::t(lang, koru_i18n::Key::ShowSidebar)
                 };
                 Some(
-                    TooltipContent::new(1, koru_shell_chrome::caption::sidebar_toggle(cap), label)
+                    TooltipContent::new(1, self.lane_controls().toggle, label)
                         .with_optional_shortcut(hint(koru_keys::ShortcutId::ToggleExplore)),
                 )
             }
@@ -14733,8 +14769,8 @@ impl MainView {
             Hit::Search => Some(
                 TooltipContent::new(
                     3,
-                    koru_shell_chrome::caption::leading_chain(cap, leading()).search,
-                    "Search",
+                    self.lane_controls().search,
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand),
                 )
                 .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),
             ),
@@ -15177,22 +15213,34 @@ impl MainView {
         } else if let Some(content) = self.document_context_tooltip() {
             Some(content)
         } else if hit == Hit::Sidebar {
-            // The Explore header's search button, and the three view icons
-            // beside it — icon-only controls, so each carries its name and
-            // the chord that does the same (`DESIGN.md` §8: one interaction
-            // clock, flat chip).
-            let button = self.explore.search_button(self.regions.sidebar);
-            if button.w > 0.0 && button.contains(x, y) {
-                Some(
-                    TooltipContent::new(3, button, "Search").with_optional_shortcut(
-                        koru_keys::show_hint(
-                            koru_keys::ShortcutId::Search,
-                            koru_keys::Section::Tooltip,
-                        ),
-                    ),
-                )
+            // The floor's chip and `?`, then the apps row — icon-only and
+            // chip controls, so each carries its name (`DESIGN.md`: one
+            // interaction clock, flat chip).
+            let floor = self.explore.floor_rects(self.regions.sidebar);
+            let lang = crate::format::lang();
+            if floor.chip.w > 0.0 && floor.chip.contains(x, y) {
+                Some(TooltipContent::new(
+                    5,
+                    floor.chip,
+                    koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
+                ))
+            } else if floor.help.w > 0.0 && floor.help.contains(x, y) {
+                Some(TooltipContent::new(
+                    6,
+                    floor.help,
+                    koru_i18n::t(lang, koru_i18n::Key::ComingLater),
+                ))
             } else {
-                self.navigator_mode_tooltip(x, y)
+                let manage = self.explore.manage_button(self.regions.sidebar);
+                if manage.w > 0.0 && manage.contains(x, y) {
+                    Some(TooltipContent::new(
+                        7,
+                        manage,
+                        koru_i18n::t(lang, koru_i18n::Key::ComingLater),
+                    ))
+                } else {
+                    self.navigator_mode_tooltip(x, y)
+                }
             }
         } else {
             self.caption_tooltip(hit)

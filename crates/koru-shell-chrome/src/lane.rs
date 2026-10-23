@@ -58,6 +58,14 @@ pub struct Leading {
     pub mark: Mark,
     pub search: bool,
     pub new: bool,
+    /// Whether the controls are folded into the caption's leading chain.
+    /// **True while the pane is shut** — the lane is gone and its controls
+    /// live at the caption's left end — and false while it is open, when the
+    /// lane holds them and the caption's left end is bare, the tabs beginning
+    /// at its edge (frames 1 and 9). A window with no lane at all (the
+    /// Terminal shell) is always folded: its toggle has always been in the
+    /// caption.
+    pub folded: bool,
 }
 
 impl Leading {
@@ -67,6 +75,7 @@ impl Leading {
         mark: Mark::None,
         search: false,
         new: false,
+        folded: true,
     };
 }
 

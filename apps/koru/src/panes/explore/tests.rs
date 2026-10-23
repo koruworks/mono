@@ -735,84 +735,13 @@ fn with_context(rows: usize) -> (ExploreView, Vec<ProfileSummary>, Vec<Workspace
     (v, profiles, list)
 }
 
-/// The rule `DESIGN.md` demands of every piece of chrome, applied to the header.
-#[test]
-fn every_header_element_hit_tests_back_to_itself() {
-    let a = area();
-    let h = ExploreView::header_rects(a);
-    // The avatar answers for *who*; the name and the chevron for *where*.
-    let (x, y) = h.avatar.centre();
-    assert_eq!(
-        ExploreView::header_at(a, x, y),
-        Some(HeaderPart::Avatar),
-        "the avatar"
-    );
-    for (name, r) in [("name", h.name), ("chevron", h.chevron)] {
-        let (x, y) = r.centre();
-        assert_eq!(
-            ExploreView::header_at(a, x, y),
-            Some(HeaderPart::Workspace),
-            "{name}"
-        );
-    }
-}
-
-/// **The alignment.** The pane's band and a tab pill sit either side of one
-/// divide, so they have to be the same band — asserted against the tab's own
-/// geometry rather than against literals, which is what stops the two drifting.
-#[test]
-fn the_pane_header_and_a_tab_pill_are_the_same_band() {
-    let pane = Rect::new(0.0, 0.0, theme::SIDEBAR_W, 700.0);
-    let caption = Rect::new(
-        theme::SIDEBAR_W,
-        0.0,
-        1200.0 - theme::SIDEBAR_W,
-        theme::CAPTION_H,
-    );
-
-    let h = ExploreView::header_rects(pane);
-    let strip = koru_shell_chrome::caption::tab_strip(caption, true, false);
-    let tab = koru_shell_chrome::tabs::layout(strip, &[theme::TAB_MIN_W; 2], 0.0)
-        .into_iter()
-        .next()
-        .expect("a tab");
-
-    assert_eq!(h.row.y, tab.pill.y, "same top");
-    assert_eq!(h.row.h, tab.pill.h, "same height");
-    assert_eq!(h.row.centre().1, tab.pill.centre().1, "same optical line");
-    // And the rule under each lands on the same pixel: the caption draws its own
-    // inside its height, at `cap.y + cap.h - 1`.
-    assert_eq!(h.divider.y, caption.y + caption.h - 1.0);
-}
-
-#[test]
-fn the_header_never_leaves_the_pane() {
-    for w in [0.0, 1.0, 40.0, theme::SIDEBAR_W, 400.0] {
-        let a = Rect::new(0.0, 0.0, w, 600.0);
-        let h = ExploreView::header_rects(a);
-        for (name, r) in [
-            ("row", h.row),
-            ("avatar", h.avatar),
-            ("avatar_hit", h.avatar_hit),
-            ("name", h.name),
-            ("chevron", h.chevron),
-        ] {
-            assert!(r.w >= 0.0 && r.h >= 0.0, "{name} inside out at w={w}");
-            assert!(
-                r.x >= a.x && r.x + r.w <= a.x + a.w + 0.01,
-                "{name} leaves the pane at w={w}: {r:?}"
-            );
-        }
-    }
-}
-
-/// `Rect::contains` is inclusive on every edge, so a zero-width header would
+/// `Rect::contains` is inclusive on every edge, so a zero-width floor would
 /// answer for clicks meant for the view beside it.
 #[test]
-fn nothing_in_the_header_is_hit_in_a_collapsed_column() {
+fn nothing_in_the_floor_is_hit_in_a_collapsed_column() {
     let (v, _, _) = with_context(4);
     let shut = Rect::new(0.0, 0.0, 0.0, 600.0);
-    assert_eq!(ExploreView::header_at(shut, 0.0, 10.0), None);
+    assert_eq!(crate::panes::sidebar::floor::hit(shut, 0.0, 580.0), None);
     assert_eq!(v.popover_panel(shut, VIEW), None);
     assert!(v.popover_rects(shut, VIEW).is_empty());
     assert!(v.row_rects(shut).is_empty());
@@ -911,53 +840,32 @@ fn a_scrolled_row_never_rides_up_under_the_header() {
     }
 }
 
+/// The floor chip opens the switcher on its Workspaces page, and pressing it
+/// again shuts it — one control, one popover, two pages behind it.
 #[test]
-fn the_avatar_and_the_name_open_different_popovers() {
+fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let h = ExploreView::header_rects(a);
-
-    let (ax, ay) = h.avatar.centre();
-    assert_eq!(v.mouse_down(a, VIEW, ax, ay, false), Outcome::Consumed);
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Profiles)
-    );
-
-    // The other half slides to the other page rather than closing — one
-    // control, two halves; one panel, two pages.
-    let (nx, ny) = h.name.centre();
-    assert_eq!(v.mouse_down(a, VIEW, nx, ny, false), Outcome::Consumed);
+    let chip = crate::panes::sidebar::floor::solve(a).chip;
+    let (cx, cy) = chip.centre();
+    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Workspaces)
     );
-    assert!(v.popover_open(), "still open");
+    assert!(v.popover_open());
+    // The Profiles page is one `back` away, as before.
+    v.back();
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Profiles)
+    );
     assert!(
         v.popover.as_ref().is_some_and(|p| p.slide.is_some()),
         "it slides between pages rather than fading"
     );
-
-    // And back again with the avatar.
-    assert_eq!(v.mouse_down(a, VIEW, ax, ay, false), Outcome::Consumed);
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Profiles)
-    );
-    assert!(v.popover_open());
-
-    // Pressing the half whose page is showing shuts it.
-    assert_eq!(v.mouse_down(a, VIEW, ax, ay, false), Outcome::Consumed);
-    assert!(!v.popover_open());
-
-    // The same for the name.
-    let (mut v, _, _) = with_context(0);
-    assert_eq!(v.mouse_down(a, VIEW, nx, ny, false), Outcome::Consumed);
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Workspaces)
-    );
-    assert_eq!(v.mouse_down(a, VIEW, nx, ny, false), Outcome::Consumed);
+    // Pressing the chip while it is open shuts it.
+    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     assert!(!v.popover_open());
 }
 
@@ -1484,30 +1392,31 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
 /// After Back, the avatar is the half whose page is showing, so it shuts —
 /// it must not need a second press because a Profile was browsed.
 #[test]
-fn the_avatar_closes_the_profiles_page_reached_by_back() {
+fn the_chip_closes_the_profiles_page_reached_by_back() {
     let (mut v, profiles, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Profiles);
     v.drill(profiles[2].id);
     v.back();
-    let (x, y) = ExploreView::header_rects(a).avatar.centre();
+    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert!(!v.popover_open());
 }
 
-/// The header's name while another Profile's workspaces are showing slides to
-/// the **open** Profile's rather than closing.
+/// The chip while another Profile's workspaces are showing shuts the
+/// switcher; reopening it shows the **open** Profile's workspaces.
 #[test]
-fn the_name_while_browsing_another_profile_shows_the_open_one() {
+fn reopening_from_the_chip_shows_the_open_profiles_workspaces() {
     let (mut v, profiles, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Profiles);
     v.drill(profiles[2].id);
-    let (x, y) = ExploreView::header_rects(a).name.centre();
+    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    assert!(!v.popover_open());
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert!(v.popover_open());
     assert_eq!(v.browsed_profile(), Some(profiles[1].id));
-    assert!(!v.open_popover(PopoverKind::Workspaces), "already there");
 }
 
 /// The slide between pages asks for frames while it runs, and stops.
@@ -1698,13 +1607,13 @@ fn pressing_furniture_only_closes_the_popover() {
     }
 }
 
-/// Without this the second click of a double-click re-toggles, and the header
+/// Without this the second click of a double-click re-toggles, and the chip
 /// looks like it is ignoring every other press.
 #[test]
-fn double_clicking_the_header_does_nothing_extra() {
+fn double_clicking_the_floor_chip_does_nothing_extra() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let (x, y) = ExploreView::header_rects(a).name.centre();
+    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
     v.toggle_popover(PopoverKind::Workspaces);
     assert_eq!(v.mouse_double_click(a, VIEW, x, y), Outcome::Consumed);
     assert!(v.popover_open(), "and it was left alone");
@@ -3748,26 +3657,20 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
         } else {
             assert_eq!(layout.lines, 1);
         }
-        // The heading band sits under the whole row, and its actions keep
-        // their band.
+        // The heading band sits under the whole row, and its `…` keeps its
+        // band.
         let last = rects.last().unwrap().1;
-        assert!(view.search_button(a).y >= last.y + last.h);
         assert!(view.actions_button(a).y >= last.y + last.h);
         for (mode, r) in rects {
             let (x, y) = r.centre();
             assert!(!view.actions_at(a, x, y), "{mode:?} is not the ... button");
-            assert!(
-                !view.search_at(a, x, y),
-                "{mode:?} is not the search button"
-            );
         }
     }
     let a = area();
     assert!(
-        view.search_button(a).w > 0.0,
-        "the search button shows at the default width"
+        view.actions_button(a).w > 0.0,
+        "the `…` shows at the default width"
     );
-    assert!(view.actions_button(a).w > 0.0, "and so does the `…`");
 }
 
 /// Tasks is a mode of this column, not a tab: pressing its icon swaps what the
@@ -3887,19 +3790,15 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
     draw_once(&mut v, Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0));
 }
 
-/// Tasks has no library actions, so it draws no `…` — and the search icon
-/// takes the room back rather than leaving a gap where a button used to be.
+/// Tasks has no library actions, so it draws no `…`: a zero-width rect, the
+/// idiom a hidden control uses, rather than a button that does nothing.
 #[test]
-fn the_tasks_mode_offers_no_library_actions_and_search_takes_the_room() {
+fn the_tasks_mode_offers_no_library_actions() {
     let mut view = ExploreView::new();
     let a = area();
-    let with_menu = view.search_button(a);
     assert!(view.actions_button(a).w > 0.0);
     view.show_tasks();
     assert_eq!(view.actions_button(a).w, 0.0);
-    let alone = view.search_button(a);
-    assert!(alone.w > 0.0);
-    assert!(alone.x > with_menu.x, "it moved into the vacated lane");
 }
 
 /// Files are appended as they arrive, so tree order is oldest first. The Files
@@ -6093,7 +5992,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         v.draw(&mut scene, root, &mut engine, a, None);
         let records = capture.finish().records;
 
-        for name in ["ExploreHeader", "ExploreTabs", "ExploreNodes"] {
+        for name in ["KoruLane", "KoruAppsRow", "ExploreTabs", "ExploreNodes"] {
             assert_eq!(
                 records.iter().filter(|r| r.name == name).count(),
                 1,
@@ -6101,7 +6000,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
             );
         }
         let at = |name| records.iter().position(|r| r.name == name).unwrap();
-        let header = records[at("ExploreHeader")].rect();
+        let header = records[at("KoruLane")].rect();
         let apps = records[at("KoruAppsRow")].rect();
         let tabs = records[at("ExploreTabs")].rect();
         let nodes = at("ExploreNodes");
@@ -6404,7 +6303,7 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
                 assert_eq!(r.w, apps_row::SQUARE, "{mode:?} at {shown} shown");
             }
             assert_eq!(rects[1].0, NavigatorMode::Files);
-            assert!(view.search_button(a).w > 0. && view.actions_button(a).w > 0.);
+            assert!(view.actions_button(a).w > 0.);
         });
     }
     let view = ExploreView::new();
@@ -6432,10 +6331,9 @@ fn eight_modes_fit_narrow_sidebars_and_leave_actions_room_when_wide() {
             .map(|(_, r)| r.y + r.h)
             .fold(0.0_f32, f32::max)
             .max(manage.y + manage.h);
-        let search = view.search_button(a);
         let actions = view.actions_button(a);
-        assert!(search.w > 0. && actions.w > 0.);
-        for action in [search, actions] {
+        assert!(actions.w > 0.);
+        for action in [actions] {
             assert!(
                 action.y >= bottom,
                 "the heading band is under the row at {width}"

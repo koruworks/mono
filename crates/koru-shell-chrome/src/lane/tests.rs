@@ -11,6 +11,7 @@ fn all() -> Leading {
         mark: Mark::Mark,
         search: true,
         new: true,
+        folded: false,
     }
 }
 

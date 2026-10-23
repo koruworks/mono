@@ -211,6 +211,20 @@ pub fn leading_chain(caption: Rect, leading: lane::Leading) -> Chain {
     let s = toggle_w(caption);
     let right = caption.x + caption.w;
     let mut x = caption.x;
+    // **Unfolded: the lane holds the controls and the caption's left end is
+    // bare.** Every link is zero-width at `caption.x`, so a caller does one
+    // arithmetic either way and the tabs begin at the caption's edge.
+    if !leading.folded {
+        let z = Rect::new(x, caption.y, 0.0, caption.h);
+        return Chain {
+            leading: z,
+            toggle: z,
+            search: z,
+            new: z,
+            divider: z,
+            end: x,
+        };
+    }
     let mut take = |w: f32| {
         let w = w.min((right - x).max(0.0));
         let r = Rect::new(x, caption.y, w, caption.h);

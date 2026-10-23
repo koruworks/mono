@@ -529,16 +529,23 @@ fn the_window_buttons_stay_in_the_corner_when_the_pane_opens() {
     assert_eq!(last.rect.x + last.rect.w, v.viewport.0);
 }
 
-/// It is still the toggle after it has moved — the rect follows `caption.x`,
-/// and the hit test has to follow it too.
+/// It is still the toggle after it has moved — into the lane at the top of
+/// the open pane, where the hit test has to follow it too; and the caption's
+/// left end is bare while it is there.
 #[test]
 fn the_toggle_still_works_from_its_new_place() {
     let (mut v, mut workspace) = container();
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
 
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
-    assert!(x > theme::SIDEBAR_W, "it really did move: {x}");
+    // Settled rects: the pane is still sliding open, and the hit test reads
+    // the settled lane, not the drawn one.
+    let toggle = v.settled_lane_controls().toggle;
+    let (x, y) = toggle.centre();
+    assert!(x < theme::SIDEBAR_W, "it really is in the lane: {x}");
+    assert!(y < theme::CAPTION_H);
+    let chain = koru_shell_chrome::caption::leading_chain(v.regions.caption, v.leading());
+    assert_eq!(chain.toggle.w, 0.0, "and not in the caption");
     v.mouse_down(&mut workspace.ws, x, y, false);
     assert!(!v.sidebar.is_open(), "clicking it closed the pane again");
 }

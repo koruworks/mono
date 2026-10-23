@@ -7,7 +7,6 @@
 //! new heading action cannot be drawn without also being reachable.
 
 use koru_draw::geometry::Rect;
-use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -53,36 +52,6 @@ pub(super) fn button(band: Rect, modes_right: f32) -> Rect {
         return Rect::new(band.x + band.w, band.y, 0.0, band.h);
     }
     Rect::new(band.x + band.w - w, band.y, w, band.h)
-}
-
-// `search_button` and `at` used to live here, each deriving its answer from
-// `button(band, modes_right)` a second time. They are `ExploreView`'s now,
-// because the `…` can be **absent** — a mode with no actions draws none — and
-// the search icon has to take that room back. Two functions deriving the
-// button's rect from the premise rather than from the button is exactly how a
-// hidden control leaves a gap where it used to be.
-
-pub(super) fn draw_search_button(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    button: Rect,
-    hot: bool,
-) {
-    if button.w > 0.0 {
-        koru_shell_chrome::tabs::draw_icon(
-            scene,
-            root,
-            engine,
-            icons::SEARCH,
-            button,
-            if hot {
-                theme::p().text
-            } else {
-                theme::p().text_dim
-            },
-        );
-    }
 }
 
 pub(super) fn draw_button(scene: &mut Scene, root: Affine, button: Rect, hot: bool) {

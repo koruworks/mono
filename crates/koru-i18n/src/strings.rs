@@ -2372,13 +2372,20 @@ pub enum Key {
     Help,
     /// What pressing the floor chip does (its accessible description).
     FloorChipAction,
+    /// The lane's toggle, both ways.
+    HideSidebar,
+    ShowSidebar,
+    /// The lane's Search, and the command bar's placeholder.
+    SearchOrTypeACommand,
+    /// The lane's accessibility group.
+    SidebarControls,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1617] = [
+    pub const ALL: [Key; 1621] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3996,6 +4003,10 @@ impl Key {
         Key::ComingLater,
         Key::Help,
         Key::FloorChipAction,
+        Key::HideSidebar,
+        Key::ShowSidebar,
+        Key::SearchOrTypeACommand,
+        Key::SidebarControls,
     ];
 }
 
@@ -12381,4 +12392,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ComingLater, en: "Coming in a later build", es: "Disponible en una versión posterior", pt_br: "Disponível em uma versão futura", de: "Kommt in einer späteren Version", fr: "Disponible dans une version ultérieure", ar: "سيتوفر في إصدار لاحق", zh_hans: "将在后续版本中提供", ja: "今後のビルドで提供予定" },
     Row { key: Key::Help, en: "Help", es: "Ayuda", pt_br: "Ajuda", de: "Hilfe", fr: "Aide", ar: "مساعدة", zh_hans: "帮助", ja: "ヘルプ" },
     Row { key: Key::FloorChipAction, en: "Open account and workspace menu", es: "Abrir el menú de cuenta y espacio de trabajo", pt_br: "Abrir o menu de conta e espaço de trabalho", de: "Konto- und Arbeitsbereichsmenü öffnen", fr: "Ouvrir le menu du compte et de l'espace de travail", ar: "فتح قائمة الحساب ومساحة العمل", zh_hans: "打开账户和工作区菜单", ja: "アカウントとワークスペースのメニューを開く" },
+    Row { key: Key::HideSidebar, en: "Hide sidebar", es: "Ocultar la barra lateral", pt_br: "Ocultar a barra lateral", de: "Seitenleiste ausblenden", fr: "Masquer la barre latérale", ar: "إخفاء الشريط الجانبي", zh_hans: "隐藏侧边栏", ja: "サイドバーを隠す" },
+    Row { key: Key::ShowSidebar, en: "Show sidebar", es: "Mostrar la barra lateral", pt_br: "Mostrar a barra lateral", de: "Seitenleiste einblenden", fr: "Afficher la barre latérale", ar: "إظهار الشريط الجانبي", zh_hans: "显示侧边栏", ja: "サイドバーを表示" },
+    Row { key: Key::SearchOrTypeACommand, en: "Search or type a command", es: "Buscar o escribir un comando", pt_br: "Pesquisar ou digitar um comando", de: "Suchen oder einen Befehl eingeben", fr: "Rechercher ou saisir une commande", ar: "ابحث أو اكتب أمرًا", zh_hans: "搜索或输入命令", ja: "検索またはコマンドを入力" },
+    Row { key: Key::SidebarControls, en: "Sidebar controls", es: "Controles de la barra lateral", pt_br: "Controles da barra lateral", de: "Steuerelemente der Seitenleiste", fr: "Commandes de la barre latérale", ar: "عناصر تحكم الشريط الجانبي", zh_hans: "侧边栏控件", ja: "サイドバーのコントロール" },
 ];

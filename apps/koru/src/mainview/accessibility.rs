@@ -109,11 +109,11 @@ pub(crate) mod parts {
     /// magnifier. Minimise, maximise and close belong to the *window* and are
     /// the host's — see `koru_workspace_host::accessibility::window_commands`.
     ///
-    /// The caption's magnifier is **not** here: this build reserves no slot for
-    /// one (`MainView::hit_at` passes `search: false`), and the search route is
-    /// the explore column's own button, which that module publishes.
+    /// The lane's Search is here too: it is window chrome, in the lane while
+    /// the pane is open and in the caption's chain while it is shut.
     pub const WINDOW_MENU: ControlPart = ControlPart::new("window-menu");
     pub const TOGGLE_EXPLORE: ControlPart = ControlPart::new("toggle-explore");
+    pub const SEARCH: ControlPart = ControlPart::new("search");
     /// The region the active tab draws into.
     pub const CONTENT: ControlPart = ControlPart::new("content");
     /// The Koru AI column. Named, and empty: its contents are `koru-ai-ui`'s

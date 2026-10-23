@@ -3869,11 +3869,13 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
         list.clone(),
         Some(list[0].id),
     );
-    // The avatar opens the profiles.
-    let h = crate::panes::explore::ExploreView::header_rects(v.regions.sidebar);
-    let (x, y) = h.avatar.centre();
+    // The floor chip opens the switcher; its Profiles page is one page away.
+    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open(), "the avatar opens the profiles");
+    assert!(v.explore.popover_open(), "the chip opens the switcher");
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
     (v, w, profiles)
 }
 
@@ -7783,7 +7785,7 @@ fn search_navigation_lands_before_the_matched_text() {
 #[test]
 fn pressing_the_pane_toggle_mutes_its_tooltip() {
     let (mut v, mut workspace) = container();
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x, y) = v.lane_controls().toggle.centre();
 
     v.mouse_move(x, y);
     assert!(!v.toggle_tip_muted, "pointing at it asks the question");
@@ -7798,7 +7800,7 @@ fn pressing_the_pane_toggle_mutes_its_tooltip() {
 #[test]
 fn leaving_the_pane_toggle_re_arms_its_tooltip() {
     let (mut v, mut workspace) = container();
-    let (x, y) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x, y) = v.lane_controls().toggle.centre();
     v.mouse_down(&mut workspace.ws, x, y, false);
     assert!(v.toggle_tip_muted);
 
@@ -7806,7 +7808,7 @@ fn leaving_the_pane_toggle_re_arms_its_tooltip() {
     v.mouse_move(v.viewport.0 * 0.5, v.viewport.1 * 0.75);
     assert!(!v.toggle_tip_muted);
 
-    let (x2, y2) = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption).centre();
+    let (x2, y2) = v.lane_controls().toggle.centre();
     v.mouse_move(x2, y2);
     assert!(!v.toggle_tip_muted, "still armed while merely hovering");
 }
@@ -7817,7 +7819,10 @@ fn caption_search_explains_both_the_action_and_its_chord() {
     let tip = v
         .caption_tooltip(Hit::Search)
         .expect("search has a tooltip");
-    assert_eq!(tip.label, "Search");
+    assert_eq!(
+        tip.label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand)
+    );
     // **Against the registry, not against `"Ctrl+P"`.** The literal was here
     // and in the tooltip both, so the pair agreed with each other and with
     // nothing else — on macOS the chord is ⌘P and this assertion was the reason
@@ -7826,10 +7831,7 @@ fn caption_search_explains_both_the_action_and_its_chord() {
         tip.shortcut,
         Some(koru_keys::label_of(koru_keys::ShortcutId::Search))
     );
-    assert_eq!(
-        tip.anchor,
-        koru_shell_chrome::caption::leading_chain(v.drawn_caption(), leading()).search
-    );
+    assert_eq!(tip.anchor, v.lane_controls().search);
 }
 
 #[test]
@@ -8038,7 +8040,7 @@ fn pressing_a_caption_control_clears_its_tooltip() {
     // Drives the sidebar toggle: the search control left the caption for the
     // Explore header, so this is the caption's remaining hoverable control.
     let (mut v, mut workspace) = container();
-    let toggle = koru_shell_chrome::caption::sidebar_toggle(v.drawn_caption());
+    let toggle = v.lane_controls().toggle;
     let (x, y) = toggle.centre();
     v.mouse_move(x, y);
     assert!(v.tooltip.is_present());

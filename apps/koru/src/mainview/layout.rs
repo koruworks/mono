@@ -128,11 +128,12 @@ impl MainView {
     /// lane's intersection with this band. Geometric rather than by pane
     /// identity, so a nested or right-hand pane answers for itself.
     pub(super) fn caption_lane(&self) -> Rect {
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let taken = self
             .branch_pill()
@@ -924,11 +925,12 @@ impl MainView {
     /// for tests that verify caption geometry.
     #[cfg(test)]
     pub(super) fn caption_strip(&self) -> Rect {
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let taken = self
             .branch_pill()
@@ -964,11 +966,12 @@ impl MainView {
         if w <= 0.0 {
             return None;
         }
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         let band = match self.offline_chip() {
             Some(chip) => Rect::new(
@@ -992,11 +995,12 @@ impl MainView {
     /// of the time and costs the strip nothing.
     pub(super) fn offline_chip(&self) -> Option<Rect> {
         self.store_trouble.as_ref()?;
-        let full = koru_shell_chrome::caption::tab_strip_with_host_action(
+        let full = koru_shell_chrome::caption::tab_strip_with_leading(
             self.regions.caption,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
             super::reminder_bell(),
+            self.leading(),
         );
         Some(koru_shell_chrome::status_chip::chip(full))
     }
@@ -1101,25 +1105,13 @@ impl MainView {
             0.0,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
-            super::leading(),
+            self.leading(),
             super::reminder_bell(),
             false,
             x,
             y,
         );
         let hit = match hit {
-            // **Until the lane is drawn (PLAN.final P4), the pane's own
-            // header still lives in the lane's band.** The chrome now answers
-            // `Caption` for the lane's empty part; while the explore view
-            // draws its identity row there, that press is the pane's. P4
-            // removes this arm with the header it protects.
-            koru_shell_chrome::regions::Hit::Caption
-                if self.regions.lane.w > 0.0
-                    && self.regions.lane.contains(x, y)
-                    && super::leading() == koru_shell_chrome::lane::Leading::NONE =>
-            {
-                koru_shell_chrome::regions::Hit::Sidebar
-            }
             // The bell opts out of the caption's historical 140 ms settled-hit
             // trade: its popover anchor, paint and hit rectangle are one drawn
             // geometry authority even while Explore is sliding.

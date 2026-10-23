@@ -400,6 +400,9 @@ impl MainView {
                 .and_then(|h| images.get(h))
                 .map(|a| a.as_ref());
             self.explore.draw(scene, root, &mut self.engine, sb, avatar);
+            // The lane, over the pane's top band: window chrome, so it is the
+            // window that draws it.
+            self.draw_lane(scene, root, sb);
         }
         let ai = self.ai_rect();
         if ai.w > 0.0 {
@@ -745,28 +748,35 @@ impl MainView {
         // for the rest of the function.
         let hover_now = self.hover;
         let hovered = |h: Hit| hover_now == Some(h);
-        // **The pane's toggle wears a pane, not the brand.** The corner used to
-        // hold the Koru mark, which said whose app this is and nothing about
-        // what pressing it does — a logo is not a verb. Its open state is
-        // already visible in the layout, so the icon keeps the ordinary rest
-        // and hover treatment rather than looking permanently selected.
-        let logo_slot = caption::sidebar_toggle(cap);
-        // The same chip the `+` wears, from the same function, so the two line
-        // up with the tabs between them instead of each picking its own size —
-        // this one was 24px against the tabs' 27 and read as a smaller control.
-        // `hover_tint` at radius 6, matching the profile and workspace rows.
-        koru_ui::icon_button::draw(
-            scene,
-            root,
-            &mut self.engine,
-            logo_slot,
-            icons::PANEL_LEFT,
-            koru_ui::icon_button::State {
-                hovered: hovered(Hit::ToggleSidebar),
-                active: false,
-                disabled: false,
-            },
-        );
+        // **The leading chain**: the lane's controls, folded into the
+        // caption's left end while the pane is shut (frame 9). While it is
+        // open the chain is empty and the lane draws them (`draw_lane`).
+        let leading = self.leading();
+        if leading.folded {
+            let chain = caption::leading_chain(cap, leading);
+            self.draw_lane_controls(
+                scene,
+                root,
+                koru_shell_chrome::lane::LaneRects {
+                    leading: chain.leading,
+                    search: chain.search,
+                    new: chain.new,
+                    toggle: chain.toggle,
+                },
+                hovered(Hit::ToggleSidebar),
+                hovered(Hit::Search),
+            );
+            if chain.divider.w > 0.0 {
+                let p = theme::p();
+                let x = (chain.divider.x + chain.divider.w * 0.5).floor();
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_border,
+                    &scene::rect(x, cap.y + 10.0, 1.0, (cap.h - 20.0).max(0.0)),
+                );
+            }
+        }
         // Caption controls share the same rest and hover states. Context is a
         // document action and normally lives on the title block; this remains
         // behind the zero-width product switch for compatible chrome geometry.
@@ -810,6 +820,95 @@ impl MainView {
 
         if WINDOW_BUTTONS {
             self.draw_window_buttons(scene, root, cap);
+        }
+    }
+
+    /// The lane: the window's own band at the top of the drawn pane
+    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.1). The
+    /// mark leads, Search and the toggle pack against the right, and the
+    /// caption's hairline runs under it so the two read as one band.
+    fn draw_lane(&mut self, scene: &mut Scene, root: Affine, pane: Rect) {
+        let leading = self.leading();
+        if leading.folded || pane.w <= 0.0 {
+            return;
+        }
+        let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
+        let _section = koru_draw::inspect::scope(
+            "KoruLane",
+            "container",
+            root,
+            scene::rect(lane.x, lane.y, lane.w, lane.h),
+            |r| {
+                r.property("implementation", "koru_shell_chrome::lane", "geometry");
+            },
+        );
+        let p = theme::p();
+        scene::fill(
+            scene,
+            root,
+            p.panel_border,
+            &scene::rect(lane.x, lane.y + lane.h - 1.0, lane.w, 1.0),
+        );
+        let rects = koru_shell_chrome::lane::solve(lane, leading);
+        let hovered = |h: Hit| self.hover == Some(h);
+        self.draw_lane_controls(
+            scene,
+            root,
+            rects,
+            hovered(Hit::ToggleSidebar),
+            hovered(Hit::Search),
+        );
+    }
+
+    /// The lane's controls at the rects given — the same drawing whether
+    /// they sit in the lane or in the caption's chain. The mark is
+    /// `KoruLogo` at 16 px in the text colour: a logo is not a verb, so it
+    /// gets no chip and no hover.
+    fn draw_lane_controls(
+        &mut self,
+        scene: &mut Scene,
+        root: Affine,
+        rects: koru_shell_chrome::lane::LaneRects,
+        toggle_hot: bool,
+        search_hot: bool,
+    ) {
+        let p = theme::p();
+        if rects.leading.w > 0.0 {
+            const MARK: f32 = 16.0;
+            koru_ui::logo::KoruLogo::new(MARK).tint(p.text).draw(
+                scene,
+                root,
+                rects.leading.x + (rects.leading.w - MARK) * 0.5,
+                rects.leading.y + (rects.leading.h - MARK) * 0.5,
+            );
+        }
+        if rects.search.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.search,
+                icons::SEARCH,
+                koru_ui::icon_button::State {
+                    hovered: search_hot,
+                    active: self.search.is_some(),
+                    disabled: false,
+                },
+            );
+        }
+        if rects.toggle.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.toggle,
+                icons::PANEL_LEFT,
+                koru_ui::icon_button::State {
+                    hovered: toggle_hot,
+                    active: false,
+                    disabled: false,
+                },
+            );
         }
     }
 

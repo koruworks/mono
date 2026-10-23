@@ -71,13 +71,10 @@ pub(crate) mod parts {
     /// The column itself.
     pub const COLUMN: ControlPart = ControlPart::new("column");
     /// The header's two halves.
-    pub const PROFILE: ControlPart = ControlPart::new("profile");
-    pub const WORKSPACE: ControlPart = ControlPart::new("workspace");
     /// The strip of projection buttons.
     pub const MODES: ControlPart = ControlPart::new("modes");
     /// The library heading's `…` and magnifier.
     pub const ACTIONS: ControlPart = ControlPart::new("actions");
-    pub const SEARCH: ControlPart = ControlPart::new("search");
     /// The tree of rows, and what stands in its place when there are none.
     pub const TREE: ControlPart = ControlPart::new("tree");
     pub const EMPTY: ControlPart = ControlPart::new("empty");
@@ -137,7 +134,7 @@ impl ExploreView {
     /// `&self` throughout: nothing here lays out, folds, scrolls or reads the
     /// Store, and the signature is what makes that true rather than a comment.
     pub(crate) fn semantics(&self, cx: &Context) -> SemanticNode {
-        let mut children = self.header_semantics(cx);
+        let mut children = Vec::new();
         children.push(self.modes_semantics(cx));
         children.extend(self.heading_semantics(cx));
         if self.showing_tasks() {
@@ -307,58 +304,6 @@ impl ExploreView {
         }
     }
 
-    // ------------------------------------------------------------- the header
-
-    fn header_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
-        let rects = Self::header_rects(cx.area);
-        let profile = self
-            .current_profile
-            .and_then(|id| self.profiles.iter().find(|p| p.id == id))
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
-        let workspace = self
-            .current
-            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
-            .map(|w| w.name.clone())
-            .unwrap_or_default();
-        // **The name is the accessible name, and the action is the
-        // description a client already has.** Both halves open a list, so the
-        // person needs to hear where they are — not "switch profile" over and
-        // over.
-        let named = |occurrence, name: String, fallback: Key, rect: Rect| {
-            let label = if name.is_empty() {
-                t(cx.lang, fallback).to_string()
-            } else {
-                name
-            };
-            // **No `expanded`.** It would say the popover is open, and it
-            // would cost this button its Invoke pattern:
-            // `accesskit_consumer` excludes an expand-collapse control from
-            // `is_invocable`, and `accesskit_windows` 0.32.1 implements no
-            // ExpandCollapse pattern to replace it with -- so the state would
-            // be unreadable *and* the button unusable. See
-            // `guide/contributing/deps/ACCESSKIT.md`.
-            SemanticNode::new(occurrence, Role::Button)
-                .with_label(label)
-                .with_bounds(rect)
-                .with_action(Action::Click)
-        };
-        vec![
-            named(
-                cx.surface(EXPLORE, parts::PROFILE),
-                profile,
-                Key::TerminalSwitchProfile,
-                rects.avatar_hit,
-            ),
-            named(
-                cx.surface(EXPLORE, parts::WORKSPACE),
-                workspace,
-                Key::TerminalSwitchWorkspace,
-                rects.name_hit,
-            ),
-        ]
-    }
-
     fn modes_semantics(&self, cx: &Context) -> SemanticNode {
         let rects = self.navigator_mode_rects(cx.area);
         let total = rects.len();
@@ -424,15 +369,6 @@ impl ExploreView {
                 SemanticNode::new(cx.surface(EXPLORE, parts::ACTIONS), Role::Button)
                     .with_label(t(cx.lang, Key::A11yMoreActions))
                     .with_bounds(actions)
-                    .with_action(Action::Click),
-            );
-        }
-        let search = self.search_button(cx.area);
-        if search.w > 0.0 {
-            out.push(
-                SemanticNode::new(cx.surface(EXPLORE, parts::SEARCH), Role::Button)
-                    .with_label(t(cx.lang, Key::A11ySearch))
-                    .with_bounds(search)
                     .with_action(Action::Click),
             );
         }
@@ -793,11 +729,7 @@ impl ExploreView {
                 })
             }
             EXPLORE => match target.part {
-                p if p == parts::PROFILE => {
-                    self.toggle_popover(PopoverKind::Profiles);
-                    Some(Outcome::Consumed)
-                }
-                p if p == parts::WORKSPACE => {
+                p if p == parts::FLOOR_CHIP => {
                     self.toggle_popover(PopoverKind::Workspaces);
                     Some(Outcome::Consumed)
                 }
@@ -805,7 +737,6 @@ impl ExploreView {
                     self.toggle_popover(PopoverKind::LibraryActions);
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::SEARCH => Some(Outcome::Search),
                 p if p == parts::TRASH => Some(Outcome::OpenTrash),
                 p if p == parts::EMPTY_ACTION => Some(self.empty_state().2),
                 _ => None,

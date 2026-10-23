@@ -232,15 +232,13 @@ fn the_empty_section_offers_new_canvas() {
 }
 
 /// No library actions — nothing imports as a canvas and a flat list has no
-/// folds — so the search icon takes the `…`'s lane, and empty space offers no
-/// import menu.
+/// folds — so there is no `…`, and empty space offers no import menu.
 #[test]
 fn the_canvases_section_has_no_library_actions() {
     let mut view = ExploreView::new();
     view.show_canvases();
     let a = area();
     assert_eq!(view.actions_button(a).w, 0.0);
-    assert!(view.search_button(a).w > 0.0);
     let below = view.rows_top(a) + theme::NAV_ROW_H * 3.0;
     assert_eq!(
         view.context_menu(a, a.x + a.w * 0.5, below),
