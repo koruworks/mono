@@ -213,7 +213,8 @@ impl MainView {
                 self.open_search();
             }
             ChromeStop::Lane(LaneControl::New) => {
-                self.run_primary_create();
+                let square = self.settled_lane_controls().new;
+                self.open_new_tab_menu_at(square);
             }
             ChromeStop::Apps(i) => {
                 if let Some(mode) = NavigatorMode::visible().get(i).copied() {

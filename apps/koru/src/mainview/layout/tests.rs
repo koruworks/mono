@@ -550,12 +550,13 @@ fn the_toggle_still_works_from_its_new_place() {
     assert!(!v.sidebar.is_open(), "clicking it closed the pane again");
 }
 
-/// **New comes and goes with the active app** (PLAN.final P9). Documents
-/// has a primary create, so the lane offers the square; Files has none, so
-/// the square is gone and the controls close up; pressing it with Documents
-/// active does what the `+` menu's *New* does: a new tab.
+/// **New is always there, and it is the Add… menu's second door**
+/// (QUESTIONS.md E21): the same list the tab strip's `+` opens, whichever
+/// app is active, hung under the lane's square. Files, which makes nothing
+/// of its own, offers it too.
 #[test]
-fn the_lanes_new_follows_the_active_apps_primary_create() {
+fn the_lanes_new_opens_the_add_menu_for_every_app() {
+    use crate::mainview::context_menu::MenuSubject;
     use crate::panes::explore::NavigatorMode;
     let (mut v, mut workspace) = container();
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
@@ -570,17 +571,29 @@ fn the_lanes_new_follows_the_active_apps_primary_create() {
 
     v.show_navigator(NavigatorMode::Files);
     let lane = v.settled_lane_controls();
-    assert_eq!(lane.new.w, 0.0, "Files has no primary create");
     assert!(
-        lane.search.x + lane.search.w <= lane.toggle.x + 0.5,
-        "and nothing is left behind"
+        lane.new.w > 0.0,
+        "Files offers it too: the menu is not the app's"
     );
 
-    v.show_navigator(NavigatorMode::Documents);
-    let before = v.tabs().len();
-    let (x, y) = v.settled_lane_controls().new.centre();
+    let square = lane.new;
+    let (x, y) = square.centre();
     v.mouse_down(&mut workspace.ws, x, y, false);
-    assert_eq!(v.tabs().len(), before + 1, "New document opened a tab");
+    let menu = v.menu.as_ref().expect("New opened the Add… menu");
+    assert_eq!(
+        menu.subject,
+        MenuSubject::NewTab,
+        "the same list as the strip's +"
+    );
+    let panel = menu.panel(v.viewport);
+    assert!(
+        panel.y >= square.y + square.h - 0.5,
+        "hung under the square: {panel:?} vs {square:?}"
+    );
+    assert!(
+        (panel.x - square.x).abs() < 0.5,
+        "from its left edge: {panel:?} vs {square:?}"
+    );
 }
 
 /// **The fold reflows once, at the toggle** (ANIMATION.md, "The pane

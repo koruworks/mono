@@ -85,9 +85,11 @@ impl Leaf {
         }
     }
 
-    /// The trailing Context action beside the document title, expressed in the
-    /// leaf's viewport. Sits inside the title's block-selection chip so Narrow
-    /// stays on the sheet and the icon cannot drift past the highlight.
+    /// The trailing action slot beside the document title, expressed in the
+    /// leaf's viewport: Koru AI's ✦ (the context toggle that stood here moved
+    /// to the caption, beside the pane it opens). Sits inside the title's
+    /// block-selection chip so Narrow stays on the sheet and the icon cannot
+    /// drift past the highlight.
     pub fn title_action_rect(&self) -> Option<Rect> {
         let Self::Document(d) = self;
         let view = &d.editor.view;
@@ -117,22 +119,16 @@ impl Leaf {
         Some(slot)
     }
 
-    /// The Koru AI action immediately left of the context action. Both are
-    /// anchored to row 0 and therefore scroll with the title instead of being
-    /// clamped into the viewport beside unrelated paragraphs.
+    /// The Koru AI action, in the title's trailing slot. Anchored to row 0
+    /// and therefore scrolling with the title instead of being clamped into
+    /// the viewport beside unrelated paragraphs.
     pub fn title_ai_action_rect(&self) -> Option<Rect> {
         // No ✦ button in a build that hides Koru AI (koru-features): no rect
         // means no draw, no hit, no tooltip and no accessibility node.
         if !koru_features::ai() {
             return None;
         }
-        let context = self.title_action_rect()?;
-        Some(Rect::new(
-            context.x - context.w - 4.0,
-            context.y,
-            context.w,
-            context.h,
-        ))
+        self.title_action_rect()
     }
 
     /// The find panel's rect, when this leaf has one open.
@@ -962,8 +958,8 @@ mod tests {
             slot.x < page_edge_x,
             "not the old page-edge placement: {slot:?} vs {page_edge_x}"
         );
-        let ai = leaf.title_ai_action_rect().expect("AI beside Context");
-        assert_eq!(ai.x + ai.w + 4.0, slot.x);
+        let ai = leaf.title_ai_action_rect().expect("AI in the slot");
+        assert_eq!(ai, slot, "the AI action takes the trailing slot");
     }
 
     #[test]

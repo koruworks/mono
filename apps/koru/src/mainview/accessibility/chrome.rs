@@ -138,12 +138,10 @@ impl MainView {
                     .with_action(Action::Click),
             );
         }
-        if lane.new.w > 0.0
-            && let Some(create) = self.explore.navigator_mode().primary_create()
-        {
+        if lane.new.w > 0.0 {
             out.push(
                 SemanticNode::new(cx.surface(SHELL, parts::NEW), Role::Button)
-                    .with_label(create.label_in(cx.lang))
+                    .with_label(t(cx.lang, Key::A11yNewTab))
                     .with_bounds(lane.new)
                     .with_action(Action::Click),
             );
@@ -210,7 +208,8 @@ pub(super) fn action(
         }
         p if p == parts::SEARCH => Outcome::Search,
         p if p == parts::NEW => {
-            return view.run_primary_create();
+            let square = view.settled_lane_controls().new;
+            return view.open_new_tab_menu_at(square);
         }
         p if p == parts::WINDOW_MENU => {
             let Some(button) = view.window_menu_button() else {

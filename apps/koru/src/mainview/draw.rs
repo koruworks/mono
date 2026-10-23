@@ -278,16 +278,13 @@ impl MainView {
                     View::draw(l, scene, ws, images, leaf_root, caret_on, local)
                 }
             }
-            // The page's Context and AI buttons live in its title row, so
-            // they draw inside the pane's boundary — and, for the inspector,
-            // inside its node too.
-            if &path == self.panes.focused_path() {
-                if let Some(button) = self.document_ai_button() {
-                    button.draw(scene, root, &mut self.engine);
-                }
-                if let Some(button) = self.document_context_button() {
-                    button.draw(scene, root, &mut self.engine);
-                }
+            // The page's AI button lives in its title row, so it draws
+            // inside the pane's boundary — and, for the inspector, inside
+            // its node too.
+            if &path == self.panes.focused_path()
+                && let Some(button) = self.document_ai_button()
+            {
+                button.draw(scene, root, &mut self.engine);
             }
         }
 

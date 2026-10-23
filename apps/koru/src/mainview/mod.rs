@@ -4243,17 +4243,23 @@ impl MainView {
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
-            // Every window action is always available — the rows were built from
-            // this window's state when the menu opened, and a window can always
-            // be minimised, resized and closed.
-            MenuSubject::Window => match action {
-                // The help popover's rows: the notes' sections and the
-                // changelog only when notes shipped; the rest wait on their
-                // phases and say so.
+            // The help popover's rows: the notes' sections and the changelog
+            // only when notes shipped; the rest wait on their phases and say
+            // so. Feedback and Support are always there.
+            MenuSubject::Help => match action {
                 MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
                     self.help_headlines.is_some()
                 }
                 MenuAction::HelpShortcuts | MenuAction::HelpAsk | MenuAction::HelpAbout => false,
+                _ => matches!(
+                    action,
+                    MenuAction::HeaderFeedback | MenuAction::HeaderSupport
+                ),
+            },
+            // Every window action is always available — the rows were built from
+            // this window's state when the menu opened, and a window can always
+            // be minimised, resized and closed.
+            MenuSubject::Window => match action {
                 // Dim while *another* window holds the process's one
                 // recording — the flag is the enforcement's visible half.
                 MenuAction::HeaderStartRecording => {
@@ -4709,6 +4715,20 @@ impl MainView {
                 }
                 _ => false,
             },
+            // The help popover. A What's new section opens the tab; revealing
+            // the section itself waits on a heading lookup (QUESTIONS.md), so
+            // every row opens from the top for now.
+            MenuSubject::Help => match action {
+                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
+                    self.open_whats_new(env!("CARGO_PKG_VERSION"))
+                }
+                MenuAction::HeaderFeedback => self.open_send_feedback_tab(),
+                MenuAction::HeaderSupport => {
+                    self.ask_pane(PaneRequest::OpenSupport);
+                    true
+                }
+                _ => false,
+            },
             // Straight to the shell, the same requests the four caption buttons
             // raised. A view holds no `Window`, so it asks and the shell performs
             // it inside this press — see [`ask_window`].
@@ -4725,17 +4745,6 @@ impl MainView {
                     self.ask_pane(PaneRequest::Zoom(ZoomIntent::ActualSize))
                 }
                 MenuAction::HeaderSettings => self.open_settings_tab(),
-                // A What's new section opens the tab; revealing the section
-                // itself waits on a heading lookup (QUESTIONS.md), so every
-                // row opens from the top for now.
-                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
-                    self.open_whats_new(env!("CARGO_PKG_VERSION"))
-                }
-                MenuAction::HelpWhatsNewHeading
-                | MenuAction::HelpShortcuts
-                | MenuAction::HelpAsk
-                | MenuAction::HelpAbout
-                | MenuAction::HelpFoot => false,
                 MenuAction::HeaderFeedback => self.open_send_feedback_tab(),
                 MenuAction::HeaderSupport => {
                     self.ask_pane(PaneRequest::OpenSupport);
@@ -4809,7 +4818,7 @@ impl MainView {
         let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
         let mut m = ContextMenu::aligned(
             &mut self.engine,
-            MenuSubject::Window,
+            MenuSubject::Help,
             (button.x + button.w, button.y),
             items,
             MenuAnchor::ButtonRight,
@@ -6698,6 +6707,14 @@ impl MainView {
     }
 
     fn open_new_tab_menu(&mut self) -> bool {
+        self.ensure_tab_widths();
+        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
+        self.open_new_tab_menu_at(button)
+    }
+
+    /// The Add… menu hung under `button`: the tab strip's `+`, or the lane's
+    /// New, which opens the same list whichever app is active.
+    pub(crate) fn open_new_tab_menu_at(&mut self, button: Rect) -> bool {
         // Freshen the presence probe that dims missing programs — off the loop
         // thread, so the menu opens now on the last known answer and the
         // worker's wake re-dims the rows when the fresh one lands.
@@ -6710,8 +6727,6 @@ impl MainView {
             self.ai_chat.activate();
         }
         self.snapshot_plus_menu();
-        self.ensure_tab_widths();
-        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
         let mut menu = ContextMenu::aligned(
             &mut self.engine,
             MenuSubject::NewTab,
@@ -7330,10 +7345,12 @@ impl MainView {
             // press rather than opening an empty column.
             Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
-            // The lane's New: the active app's primary create, the same thing
-            // the `+` menu's row of that name does.
+            // The lane's New: the Add… menu the tab strip's `+` opens, hung
+            // under the square instead — on the settled rect, which is what
+            // the hit test that got us here read.
             Hit::New => {
-                return if self.run_primary_create() {
+                let square = self.settled_lane_controls().new;
+                return if self.open_new_tab_menu_at(square) {
                     Outcome::Consumed
                 } else {
                     Outcome::Ignored
@@ -8949,10 +8966,6 @@ impl MainView {
         if let Some(action) = self
             .document_ai_button()
             .and_then(|button| button.action_at(x, y))
-            .or_else(|| {
-                self.document_context_button()
-                    .and_then(|button| button.action_at(x, y))
-            })
         {
             let outcome = self.run_icon_action(action, x, y);
             return self.apply(ws, outcome) || dismissed;
@@ -10078,9 +10091,7 @@ impl View for MainView {
         }
         if self
             .document_ai_button()
-            .into_iter()
-            .chain(self.document_context_button())
-            .any(|button| button.contains(self.pointer.0, self.pointer.1))
+            .is_some_and(|button| button.contains(self.pointer.0, self.pointer.1))
         {
             return koru_ui::cursor::PRESS;
         }
@@ -14961,35 +14972,20 @@ impl MainView {
     /// in the lane while the pane is open, folded into the caption's left end
     /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
     /// §5.1). The mark leads on every platform until the Mac catch-up swaps
-    /// it for the lights' reserve; New joins with the apps manager (plan P9).
+    /// it for the lights' reserve; New opens the Add… menu (QUESTIONS.md E21).
     pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
         koru_shell_chrome::lane::Leading {
             mark: koru_shell_chrome::lane::Mark::Mark,
             search: true,
-            // New comes and goes with the active app (PLAN.final P9).
-            new: self.explore.navigator_mode().primary_create().is_some(),
+            // New is always there: it opens the same Add… menu as the tab
+            // strip's `+`, whichever app is active (QUESTIONS.md E21).
+            new: true,
             folded: !self.sidebar.is_open(),
         }
     }
 
-    /// Run the active app's primary create — what the lane's New does, and
-    /// what `F6` → New → Enter does. Each arm is the `+` menu's row of the
-    /// same name, so there is one place a new document comes from; *New
-    /// task* opens the Tasks page on Today and puts the caret in its
-    /// *Add a task…* row, which is where a task is typed today.
-    pub(crate) fn run_primary_create(&mut self) -> bool {
-        use crate::panes::explore::Create;
-        match self.explore.navigator_mode().primary_create() {
-            Some(Create::Document) => self.new_tab(),
-            Some(Create::Canvas) => self.new_canvas(),
-            Some(Create::Chat) => self.open_ai_chat_tab(),
-            Some(Create::Task) => self.open_task_capture(),
-            None => false,
-        }
-    }
-
     /// The Tasks page on Today with the caret in its *Add a task…* row —
-    /// where a task is typed today. The lane's New and Home's *Add task*.
+    /// where a task is typed today. Home's *Add task*.
     pub(crate) fn open_task_capture(&mut self) -> bool {
         let opened = self.open_tasks_tab(
             crate::panes::explore::rail::RailTarget::Bucket(koru_core::tasks::Bucket::Today),
@@ -15057,8 +15053,8 @@ impl MainView {
     }
 
     /// The same controls on the **settled** rects — where the hit test reads
-    /// them, and what a test asks mid-slide.
-    #[cfg(test)]
+    /// them, where a menu opened from one of them hangs, and what a test
+    /// asks mid-slide.
     pub(crate) fn settled_lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
         self.lane_controls_in(self.regions.caption, self.regions.sidebar)
     }
@@ -15119,17 +15115,14 @@ impl MainView {
                 )
                 .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),
             ),
-            Hit::New => self
-                .explore
-                .navigator_mode()
-                .primary_create()
-                .map(|create| {
-                    TooltipContent::new(
-                        5,
-                        self.lane_controls().new,
-                        create.label_in(crate::format::lang()),
-                    )
-                }),
+            // The strip's `+` words: one menu, two doors.
+            Hit::New => {
+                let square = self.lane_controls().new;
+                (square.w > 0.0).then(|| {
+                    TooltipContent::new(5, square, "Add…")
+                        .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+                })
+            }
             Hit::HostAction if reminder_bell() => Some(TooltipContent::new(
                 6,
                 koru_shell_chrome::caption::host_action_with_context(
@@ -15564,12 +15557,10 @@ impl MainView {
         // After the chrome hovers, deliberately: a history row's tooltip is
         // read from the context column's fresh hover, and asking before the
         // update would anchor it one row behind the pointer.
-        // The page-furniture context toggle is not a caption hit — check it
+        // The page-furniture AI button is not a caption hit — check it
         // before the caption table, or a pointer on the title icon is
         // `Hit::Content` and teaches nothing.
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
-            Some(content)
-        } else if let Some(content) = self.document_context_tooltip() {
             Some(content)
         } else if hit == Hit::Sidebar {
             // The floor's chip and `?`, then the apps row — icon-only and

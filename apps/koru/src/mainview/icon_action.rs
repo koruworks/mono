@@ -25,7 +25,6 @@ use koru_window::WindowRequest;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum IconAction {
     ToggleAi,
-    ToggleContext,
     ToggleWindowMenu,
 }
 
@@ -37,7 +36,6 @@ impl MainView {
                 self.toggle_ai();
                 Outcome::Consumed
             }
-            IconAction::ToggleContext => Outcome::ToggleContext,
             // The support window's ⋯ slot is the pin (no menu there at all).
             IconAction::ToggleWindowMenu if self.support_only => {
                 self.ask_window(WindowRequest::TogglePin);
@@ -80,30 +78,10 @@ impl MainView {
             })
     }
 
-    /// The document-page context control. `Leaf` gives its content-local
-    /// location; the container translates it once into window coordinates.
-    pub(super) fn document_context_button(&self) -> Option<IconButton<IconAction>> {
-        let content = self.focused_view_rect();
-        let TabView::Leaf(leaf) = &self.tabs().active_tab().view else {
-            return None;
-        };
-        let rect = leaf.title_action_rect()?;
-        let rect = Rect::new(content.x + rect.x, content.y + rect.y, rect.w, rect.h);
-        if rect.y < content.y || rect.y + rect.h > content.y + content.h {
-            return None;
-        }
-        Some(
-            IconButton::new(icons::PANEL_RIGHT, rect)
-                .on_click(IconAction::ToggleContext)
-                .with_state(State {
-                    hovered: rect.contains(self.pointer.0, self.pointer.1),
-                    active: self.context.is_open(),
-                    disabled: false,
-                }),
-        )
-    }
-
-    /// Koru AI beside the page Context action, anchored to the same title row.
+    /// Koru AI in the title row's trailing slot. `Leaf` gives its
+    /// content-local location; the container translates it once into window
+    /// coordinates. (The context toggle that stood beside it is the
+    /// caption's now, next to the pane it opens.)
     pub(super) fn document_ai_button(&self) -> Option<IconButton<IconAction>> {
         let content = self.focused_view_rect();
         let TabView::Leaf(leaf) = &self.tabs().active_tab().view else {
@@ -125,28 +103,10 @@ impl MainView {
         )
     }
 
-    /// Caption-style explanation for the page-furniture context toggle.
+    /// Caption-style explanation for the page-furniture AI button.
     ///
     /// Not a caption `Hit`, so [`super::MainView::caption_tooltip`] never sees
     /// it. The pointer check lives next to the button that owns the rect.
-    pub(super) fn document_context_tooltip(&self) -> Option<TooltipContent> {
-        if self.group_drag().is_some() || self.sidebar.animating() || self.ai_panel.animating() {
-            return None;
-        }
-        let button = self.document_context_button()?;
-        if !button.contains(self.pointer.0, self.pointer.1) {
-            return None;
-        }
-        Some(
-            TooltipContent::new(5, button.rect(), "Document context").with_optional_shortcut(
-                koru_keys::show_hint(
-                    koru_keys::ShortcutId::ToggleContext,
-                    koru_keys::Section::Tooltip,
-                ),
-            ),
-        )
-    }
-
     pub(super) fn document_ai_tooltip(&self) -> Option<TooltipContent> {
         if self.group_drag().is_some() || self.sidebar.animating() || self.ai_panel.animating() {
             return None;

@@ -3838,8 +3838,9 @@ fn a_foreign_drop_over_no_pane_is_refused() {
 
 // ------------------------------------------- the popover overhangs its column
 
-/// A pane with two profiles and the profiles popover already showing.
-fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
+/// A pane with two profiles and the switcher's summary showing, opened
+/// from the floor chip.
+fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
     let (v, w) = container();
     let profiles: Vec<koru_core::ProfileSummary> = ["mine", "theirs"]
         .iter()
@@ -3874,6 +3875,12 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
     let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the chip opens the switcher");
+    (v, w, profiles)
+}
+
+/// ...and on its Profiles page, one slide from the summary.
+fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) {
+    let (mut v, w, profiles) = with_summary_open();
     v.explore
         .open_popover(crate::panes::explore::PopoverKind::Profiles);
     (v, w, profiles)
@@ -3949,6 +3956,54 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
         Some(crate::panes::explore::PopoverRow::Back),
         "on that Profile's workspaces"
     );
+}
+
+/// **A card keeps the switcher open.** The person and workspace cards
+/// drill into the account's page (View 2), so the press that chooses one
+/// must not also dismiss the panel — it did, and the slide then ran on a
+/// popover that was already fading, which read as the chip no longer
+/// opening anything. The chip still shuts it from that page and opens the
+/// summary again afterwards.
+#[test]
+fn a_card_slides_to_the_accounts_page_and_the_chip_still_closes_and_reopens() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, _) = with_summary_open();
+    let sb = v.regions.sidebar;
+    let vp = v.viewport;
+    let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
+    assert_eq!(
+        first(&v),
+        Some(PopoverRow::PersonCard),
+        "the summary leads with you"
+    );
+    let card = |v: &MainView, want: PopoverRow| {
+        v.explore
+            .popover_rects(sb, vp)
+            .into_iter()
+            .find(|(row, _)| *row == want)
+            .map(|(_, r)| r.centre())
+            .expect("the card is there")
+    };
+    let (x, y) = card(&v, PopoverRow::PersonCard);
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(v.explore.popover_open(), "the card keeps the switcher open");
+    assert_eq!(first(&v), Some(PopoverRow::Back), "on the account's page");
+
+    let chip = crate::panes::sidebar::floor::solve(sb).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(!v.explore.popover_open(), "the chip shuts it from there");
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(v.explore.popover_open(), "and opens it again");
+    assert_eq!(first(&v), Some(PopoverRow::PersonCard), "on the summary");
+
+    // The workspace card drills the same way.
+    let (x, y) = card(&v, PopoverRow::WorkspaceCard);
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(v.explore.popover_open());
+    assert_eq!(first(&v), Some(PopoverRow::Back));
 }
 
 // ------------------------------------------------------------------- drafts
@@ -8156,26 +8211,6 @@ fn the_plus_tooltip_names_add_and_its_own_shortcut() {
         tip.shortcut,
         Some(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
     );
-}
-
-#[test]
-fn the_document_context_icon_explains_itself() {
-    let (mut v, _workspace) = on_document();
-    v.size_visible_groups();
-    let button = v
-        .document_context_button()
-        .expect("a document tab offers the page icon");
-    let (x, y) = button.rect().centre();
-    v.pointer = (x, y);
-    let tip = v
-        .document_context_tooltip()
-        .expect("hovering the icon teaches the chord");
-    assert_eq!(tip.label, "Document context");
-    assert_eq!(
-        tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::ToggleContext))
-    );
-    assert_eq!(tip.anchor, button.rect());
 }
 
 #[test]
@@ -12651,6 +12686,19 @@ fn the_help_popover_rises_from_the_floor_with_this_builds_sections() {
     assert!(
         koru_ui::MenuItem::disabled_reason(&MenuAction::HelpShortcuts).is_some(),
         "a dimmed row explains itself"
+    );
+    // Its own subject, not the window menu's: the caption's ⋯ tracker shuts
+    // a `Window` menu the moment the pointer leaves its button, which took
+    // this popover down on the first move.
+    assert!(
+        !v.window_menu_open(),
+        "the help popover is not the window menu"
+    );
+    let content = v.content();
+    v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
+    assert!(
+        v.menu.is_some(),
+        "a pointer move leaves the help popover up"
     );
     // Without notes the changelog is dimmed too, and says what is missing.
     v.menu = None;

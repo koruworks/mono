@@ -58,6 +58,11 @@ pub(crate) use koru_ui::menu::EDGE_MARGIN;
 pub enum MenuSubject {
     /// The caption `+` button: create or import rather than acting on a tab.
     NewTab,
+    /// The floor's `?`: the help popover. **Not [`Window`](Self::Window)**,
+    /// whose menu the caption's ⋯ tracker shuts the moment the pointer
+    /// leaves its button — which took the help popover down on the first
+    /// move.
+    Help,
     Tab(usize),
     Workspace(WorkspaceId),
     /// A right-click in the Agents navigator: a project row's menu, or —
