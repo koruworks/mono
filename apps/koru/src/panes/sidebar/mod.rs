@@ -10,3 +10,4 @@
 //! are measured at draw and cached, the way the tab strip's are.
 
 pub mod apps_row;
+pub mod floor;

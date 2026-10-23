@@ -961,16 +961,20 @@ fn the_avatar_and_the_name_open_different_popovers() {
     assert!(!v.popover_open());
 }
 
-/// Both pages hang from the same corner, so a slide between them never jumps
-/// the panel sideways.
+/// Both pages hang from the same corner — the floor chip's — so a slide
+/// between them never jumps the panel sideways, and the panel sits **above**
+/// the chip, inside the window.
 #[test]
-fn both_pages_anchor_at_the_header_row() {
+fn both_pages_anchor_above_the_floor_chip() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let row = ExploreView::header_rects(a).row;
+    let chip = crate::panes::sidebar::floor::solve(a).chip;
     for kind in [PopoverKind::Profiles, PopoverKind::Workspaces] {
         v.toggle_popover(kind);
-        assert_eq!(v.popover_panel(a, VIEW).unwrap().x, row.x, "{kind:?}");
+        let panel = v.popover_panel(a, VIEW).unwrap();
+        assert_eq!(panel.x, chip.x, "{kind:?}");
+        assert!(panel.y + panel.h <= chip.y, "{kind:?} sits above the chip");
+        assert!(panel.y >= 0.0);
     }
 }
 

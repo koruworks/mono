@@ -84,6 +84,8 @@ pub(crate) mod parts {
     pub const EMPTY_ACTION: ControlPart = ControlPart::new("empty-action");
     /// The pinned floor row.
     pub const TRASH: ControlPart = ControlPart::new("trash");
+    pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
+    pub const HELP: ControlPart = ControlPart::new("help");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
     pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
@@ -148,6 +150,7 @@ impl ExploreView {
             children.push(self.tree_semantics(cx));
         }
         children.extend(self.footer_semantics(cx));
+        children.extend(self.floor_semantics(cx));
         children.extend(self.popover_semantics(cx));
         SemanticNode::new(cx.surface(EXPLORE, parts::COLUMN), Role::Group)
             .with_label(t(cx.lang, Key::A11yNavigator))
@@ -564,6 +567,37 @@ impl ExploreView {
                     .with_action(Action::Click)
             })
             .collect()
+    }
+
+    /// The floor: the who/where chip, named by where and who, with its
+    /// action as the description; and the `?`, dimmed until the help popover
+    /// lands, so it is named and has no action yet.
+    fn floor_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
+        let r = crate::panes::sidebar::floor::solve(cx.area);
+        if r.chip.w <= 0.0 {
+            return Vec::new();
+        }
+        let workspace = self
+            .current
+            .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchWorkspace).to_string());
+        let person = self
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchProfile).to_string());
+        vec![
+            SemanticNode::new(cx.surface(EXPLORE, parts::FLOOR_CHIP), Role::Button)
+                // The name says where and who; the Click action a client
+                // already has is what pressing does (`FloorChipAction` is
+                // the tooltip's sentence).
+                .with_label(format!("{workspace}, {person}"))
+                .with_bounds(r.chip)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::HELP), Role::Button)
+                .with_label(t(cx.lang, Key::Help))
+                .with_bounds(r.help),
+        ]
     }
 
     // ------------------------------------------------------------ the popover

@@ -2368,13 +2368,17 @@ pub enum Key {
     ManageApps,
     /// A control drawn dimmed because its phase has not landed yet.
     ComingLater,
+    /// The floor's `?` button.
+    Help,
+    /// What pressing the floor chip does (its accessible description).
+    FloorChipAction,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1615] = [
+    pub const ALL: [Key; 1617] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3990,6 +3994,8 @@ impl Key {
         Key::TelemetryConsentDecline,
         Key::ManageApps,
         Key::ComingLater,
+        Key::Help,
+        Key::FloorChipAction,
     ];
 }
 
@@ -12373,4 +12379,6 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TelemetryConsentDecline, en: "Don't share", es: "No compartir", pt_br: "Não compartilhar", de: "Nicht teilen", fr: "Ne pas partager", ar: "عدم المشاركة", zh_hans: "不共享", ja: "共有しない" },
     Row { key: Key::ManageApps, en: "Manage apps", es: "Gestionar aplicaciones", pt_br: "Gerenciar aplicativos", de: "Apps verwalten", fr: "Gérer les applications", ar: "إدارة التطبيقات", zh_hans: "管理应用", ja: "アプリを管理" },
     Row { key: Key::ComingLater, en: "Coming in a later build", es: "Disponible en una versión posterior", pt_br: "Disponível em uma versão futura", de: "Kommt in einer späteren Version", fr: "Disponible dans une version ultérieure", ar: "سيتوفر في إصدار لاحق", zh_hans: "将在后续版本中提供", ja: "今後のビルドで提供予定" },
+    Row { key: Key::Help, en: "Help", es: "Ayuda", pt_br: "Ajuda", de: "Hilfe", fr: "Aide", ar: "مساعدة", zh_hans: "帮助", ja: "ヘルプ" },
+    Row { key: Key::FloorChipAction, en: "Open account and workspace menu", es: "Abrir el menú de cuenta y espacio de trabajo", pt_br: "Abrir o menu de conta e espaço de trabalho", de: "Konto- und Arbeitsbereichsmenü öffnen", fr: "Ouvrir le menu du compte et de l'espace de travail", ar: "فتح قائمة الحساب ومساحة العمل", zh_hans: "打开账户和工作区菜单", ja: "アカウントとワークスペースのメニューを開く" },
 ];

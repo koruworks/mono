@@ -49,7 +49,7 @@ use super::fold;
 use super::{DropTarget, DropZone};
 use koru_shell_chrome::tabs::{draw_icon, draw_icon_filled};
 
-use crate::panes::sidebar::apps_row;
+use crate::panes::sidebar::{apps_row, floor};
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
 /// How far the pointer must travel before a press on a manifest row stops being
@@ -601,6 +601,8 @@ pub struct ExploreView {
     app_label_w: Vec<(NavigatorMode, f32)>,
     /// Whether the pointer is on the dimmed *Manage apps* square.
     manage_hover: bool,
+    /// Which floor control the pointer is on, if any.
+    floor_hover: Option<floor::Hit>,
     /// The tasks mode's content. Composed rather than a second view, because
     /// the header, the mode row and the column's own fill are the same in all
     /// three modes — a sibling would have to be handed all of them.
@@ -3293,7 +3295,7 @@ impl ExploreView {
             return None;
         }
         let available_h = (viewport.1 - POPOVER_EDGE * 2.0).max(0.0);
-        let h = if p.kind == PopoverKind::LibraryActions {
+        let mut h = if p.kind == PopoverKind::LibraryActions {
             self.page_natural_h(p.kind).min(available_h)
         } else {
             let cap = |kind| {
@@ -3306,21 +3308,33 @@ impl ExploreView {
             profiles + (workspaces - profiles) * p.page
         };
         let w = POPOVER_W.max(area.w - theme::NAV_PAD * 2.0);
-        let header = Self::header_rects(area);
+        let chip = floor::solve(area).chip;
         let x = match p.kind {
-            PopoverKind::Profiles | PopoverKind::Workspaces => header.row.x,
+            PopoverKind::Profiles | PopoverKind::Workspaces => chip.x,
             PopoverKind::LibraryActions => {
                 let button = self.actions_button(area);
                 (button.x + button.w - w).max(POPOVER_EDGE)
             }
         };
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
-        let anchor = match p.kind {
-            PopoverKind::LibraryActions => self.actions_button(area),
-            PopoverKind::Profiles | PopoverKind::Workspaces => header.row,
+        let y = match p.kind {
+            // The library's menu hangs under its button, as it always has.
+            PopoverKind::LibraryActions => {
+                let anchor = self.actions_button(area);
+                (anchor.y + anchor.h + POPOVER_GAP)
+                    .min((viewport.1 - h - POPOVER_EDGE).max(anchor.y))
+            }
+            // **The switcher rises from the floor chip.** Below would always
+            // overflow, so it is anchored above and capped to the room there;
+            // in a window too short for even that it keeps the top edge and
+            // the chip is covered rather than the panel leaving the window.
+            PopoverKind::Profiles | PopoverKind::Workspaces => {
+                let foot = chip.y.min(viewport.1);
+                let room = (foot - POPOVER_GAP - POPOVER_EDGE).max(0.0);
+                h = h.min(room.max(POPOVER_ROW_H));
+                (foot - POPOVER_GAP - h).max(POPOVER_EDGE)
+            }
         };
-        let y =
-            (anchor.y + anchor.h + POPOVER_GAP).min((viewport.1 - h - POPOVER_EDGE).max(anchor.y));
         Some(Rect::new(x.max(0.0), y.max(0.0), w, h))
     }
 
@@ -4265,7 +4279,9 @@ impl ExploreView {
         }
         let rows = self.footer_rows();
         let mut out = Vec::with_capacity(rows.len());
-        let mut y = area.y + area.h - FOOTER_PAD;
+        // Above the floor band (QUESTIONS.md Q-P): the pinned rows keep
+        // their place at the nav's foot, and the floor is the window's.
+        let mut y = area.y + area.h - floor::H - FOOTER_PAD;
         for row in rows.iter().rev() {
             y -= theme::NAV_ROW_H;
             out.push((*row, Rect::new(area.x, y, area.w, theme::NAV_ROW_H)));
@@ -4319,7 +4335,12 @@ impl ExploreView {
         self.footer_rects(area)
             .first()
             .map(|(_, r)| r.y)
-            .unwrap_or(area.y + area.h)
+            .unwrap_or(area.y + area.h - if area.w > 0.0 { floor::H } else { 0.0 })
+    }
+
+    /// The floor's rects, from the pane's rect — the chip and the `?`.
+    pub fn floor_rects(&self, area: Rect) -> floor::Rects {
+        floor::solve(area)
     }
 
     /// What a pinned row shows: its glyph and its label.
@@ -4425,6 +4446,12 @@ impl ExploreView {
                 }
                 return self.choose(row);
             }
+            // The floor chip shuts the switcher it opened; falling through
+            // would reopen it on the same press.
+            if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
+                self.toggle_popover(PopoverKind::Workspaces);
+                return Outcome::Consumed;
+            }
             // The header's halves move the switcher between its pages, or shut
             // the page already showing. Anywhere else shuts it; falling through
             // to the header below would immediately reopen it.
@@ -4525,6 +4552,18 @@ impl ExploreView {
         if koru_features::cloud_sync() && self.empty_subscribe.is_some_and(|cta| cta.contains(x, y))
         {
             return Outcome::SubscribeCloud;
+        }
+        // The floor: the chip opens the who/where switcher in place, telling
+        // the container nothing (the header's precedent); the `?` is drawn
+        // dimmed until the help popover lands (PLAN.final P5) and swallows
+        // the press so it does not fall through to the pane.
+        match floor::hit(area, x, y) {
+            Some(floor::Hit::Chip) => {
+                self.toggle_popover(PopoverKind::Workspaces);
+                return Outcome::Consumed;
+            }
+            Some(floor::Hit::Help) => return Outcome::Consumed,
+            None => {}
         }
         // The pinned rows, before `row_at` because they sit below the library's
         // band and are not part of it. A collapsed column offers none, so the
@@ -5145,6 +5184,11 @@ impl ExploreView {
             None
         };
         let manage = popover.is_none() && self.manage_at(area, x, y);
+        let on_floor = if popover.is_none() {
+            floor::hit(area, x, y)
+        } else {
+            None
+        };
         let on_footer = if popover.is_some() {
             None
         } else {
@@ -5224,6 +5268,7 @@ impl ExploreView {
             || search != self.search_hover
             || mode != self.mode_hover
             || manage != self.manage_hover
+            || on_floor != self.floor_hover
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
             || on_subscribe != self.subscribe_hover
@@ -5234,6 +5279,7 @@ impl ExploreView {
         self.search_hover = search;
         self.mode_hover = mode;
         self.manage_hover = manage;
+        self.floor_hover = on_floor;
         self.footer_hover = on_footer;
         self.cta_hover = on_cta;
         self.subscribe_hover = on_subscribe;
@@ -6439,6 +6485,116 @@ impl ExploreView {
         let footer = self.draw_nodes(scene, root, engine, area, p);
         if footer {
             self.draw_footer_rows(scene, root, engine, area, p);
+        }
+        if area.w > 0.0 {
+            self.draw_floor(scene, root, engine, area, avatar, p);
+        }
+    }
+
+    /// The floor: a hairline, the who/where chip and the `?`.
+    ///
+    /// The chip wears `hover_tint` while the pointer is on it and while the
+    /// switcher it opens is on screen (DESIGN.md: a chip whose popover is
+    /// open keeps a persistent tinted background). The `?` is a compact icon
+    /// button, dimmed until the help popover lands.
+    fn draw_floor(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        area: Rect,
+        avatar: Option<&peniko::ImageBrush>,
+        p: &theme::Palette,
+    ) {
+        let r = floor::solve(area);
+        let _section = koru_draw::inspect::scope(
+            "KoruFloor",
+            "container",
+            root,
+            scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
+            |rec| {
+                rec.property("height", floor::H, "floor band");
+            },
+        );
+        scene::fill(
+            scene,
+            root,
+            p.panel_border,
+            &scene::rect(r.band.x, r.band.y, r.band.w, 1.0),
+        );
+        let open = self
+            .popover
+            .as_ref()
+            .is_some_and(|x| x.kind != PopoverKind::LibraryActions);
+        if self.floor_hover == Some(floor::Hit::Chip) || open {
+            scene::fill(
+                scene,
+                root,
+                p.hover_tint,
+                &scene::rrect(r.chip.x, r.chip.y, r.chip.w, r.chip.h, 7.0),
+            );
+        }
+        if r.avatar.w > 0.0 {
+            self.draw_avatar(scene, root, engine, r.avatar, avatar, theme::role::hint());
+        }
+        if r.text.w > 0.0 {
+            let workspace = self
+                .current
+                .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
+                .map(|w| w.name.as_str())
+                .unwrap_or("Workspace");
+            let person = self.profile().map(|p| p.name.as_str()).unwrap_or("");
+            let name = Rect::new(r.text.x, r.text.y + 2.0, r.text.w, 16.0);
+            let meta = Rect::new(r.text.x, r.text.y + 18.0, r.text.w, 14.0);
+            draw_middle(
+                scene,
+                root,
+                engine,
+                &label_fit(workspace),
+                name,
+                theme::role::row().with_weight(theme::FontWeight::SemiBold),
+                p.text,
+            );
+            if !person.is_empty() {
+                draw_middle(
+                    scene,
+                    root,
+                    engine,
+                    &label_fit(person),
+                    meta,
+                    theme::role::hint(),
+                    p.text_dim,
+                );
+            }
+        }
+        if r.chevron.w > 0.0 {
+            draw_icon(
+                scene,
+                root,
+                engine,
+                icons::CARET_DOWN,
+                r.chevron,
+                if self.floor_hover == Some(floor::Hit::Chip) || open {
+                    p.text
+                } else {
+                    p.text_dim
+                },
+            );
+        }
+        if r.help.w > 0.0 {
+            koru_ui::icon_button::draw_with(
+                scene,
+                root,
+                engine,
+                r.help,
+                icons::QUESTION,
+                koru_ui::icon_button::State {
+                    hovered: self.floor_hover == Some(floor::Hit::Help),
+                    active: false,
+                    disabled: true,
+                },
+                koru_ui::icon_button::Metrics::COMPACT,
+            );
         }
     }
 
