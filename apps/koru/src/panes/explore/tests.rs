@@ -65,13 +65,7 @@ fn on_label(r: Rect) -> f32 {
 fn draw_once(v: &mut ExploreView, a: Rect) {
     let mut scene = vello::Scene::new();
     let mut engine = TextEngine::new();
-    v.draw(
-        &mut scene,
-        vello::kurbo::Affine::IDENTITY,
-        &mut engine,
-        a,
-        None,
-    );
+    v.draw(&mut scene, vello::kurbo::Affine::IDENTITY, &mut engine, a);
 }
 
 fn area() -> Rect {
@@ -842,6 +836,27 @@ fn a_scrolled_row_never_rides_up_under_the_header() {
 
 /// The floor chip opens the switcher on its Workspaces page, and pressing it
 /// again shuts it — one control, one popover, two pages behind it.
+/// **The person card is a card, not a Profile row** (frame 6A): two lines
+/// tall, so the email and the Profile count fit under the name; and the
+/// linked count the *Link a device* row prints comes from the window.
+#[test]
+fn the_summarys_person_card_is_two_lines_and_the_linked_count_is_set_from_outside() {
+    let (mut v, _, _) = with_context(0);
+    let a = area();
+    let chip = crate::panes::sidebar::floor::solve(a).chip;
+    let (cx, cy) = chip.centre();
+    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
+    let rects = v.popover_rects(a, VIEW);
+    let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
+    assert_eq!(h(PopoverRow::PersonCard), Some(super::PERSON_CARD_H));
+    assert!(
+        h(PopoverRow::PersonCard) > h(PopoverRow::Settings),
+        "taller than a one-line row"
+    );
+    assert!(v.set_linked_count(2), "a new count is a change");
+    assert!(!v.set_linked_count(2), "the same count is not");
+}
+
 #[test]
 fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let (mut v, _, _) = with_context(0);
@@ -6047,7 +6062,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         let root = vello::kurbo::Affine::IDENTITY;
         let capture =
             koru_draw::inspect::Frame::begin(1, root, koru_draw::scene::rect(a.x, a.y, a.w, a.h));
-        v.draw(&mut scene, root, &mut engine, a, None);
+        v.draw(&mut scene, root, &mut engine, a);
         let records = capture.finish().records;
 
         for name in [

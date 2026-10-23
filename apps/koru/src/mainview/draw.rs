@@ -404,11 +404,6 @@ impl MainView {
                 scene::rect(sb.x, sb.y, sb.w, sb.h),
                 |r| r.property("layout", "Column / vertical", "explore host"),
             );
-            let avatar = self
-                .explore
-                .avatar_hash()
-                .and_then(|h| images.get(h))
-                .map(|a| a.as_ref());
             // The ring a chrome stop wears is drawn by whoever draws the
             // control: the column for its chips and floor, the window for
             // the lane.
@@ -420,7 +415,7 @@ impl MainView {
             if fading {
                 scene::fade_layer(scene, root, alpha, &scene::rect(sb.x, sb.y, sb.w, sb.h));
             }
-            self.explore.draw(scene, root, &mut self.engine, sb, avatar);
+            self.explore.draw(scene, root, &mut self.engine, sb);
             // The lane, over the pane's top band: window chrome, so it is the
             // window that draws it.
             self.draw_lane(scene, root, sb);

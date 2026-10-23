@@ -218,13 +218,7 @@ fn the_empty_section_offers_new_canvas() {
     let a = area();
     let mut scene = vello::Scene::new();
     let mut engine = TextEngine::new();
-    view.draw(
-        &mut scene,
-        vello::kurbo::Affine::IDENTITY,
-        &mut engine,
-        a,
-        None,
-    );
+    view.draw(&mut scene, vello::kurbo::Affine::IDENTITY, &mut engine, a);
     let cta = view.empty_cta.expect("a button was laid out");
     assert_eq!(
         view.mouse_down(a, VIEW, cta.centre().0, cta.centre().1, false),

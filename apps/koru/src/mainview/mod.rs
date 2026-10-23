@@ -6078,7 +6078,8 @@ impl MainView {
     /// and its *Linked devices* page.
     fn push_linked_devices(&mut self) -> bool {
         let devices = &self.linked_devices;
-        let mut changed = false;
+        // The summary's *Link a device* row counts the others.
+        let mut changed = self.explore.set_linked_count(devices.devices().len());
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
                 if let TabView::Manage(view) = &mut tab.view {

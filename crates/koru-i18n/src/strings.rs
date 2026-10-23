@@ -2411,6 +2411,10 @@ pub enum Key {
     HomeGreetingPlain,
     HomeTasksDueOne,
     HomeTasksDueMany,
+    /// The who/where summary's cards and rows (workspace foundation, rung 2).
+    ProfilesCount,
+    LinkedCountOne,
+    LinkedCountMany,
     HomeAgentsRunningOne,
     HomeAgentsRunningMany,
     HomeDueToday,
@@ -2431,7 +2435,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1662] = [
+    pub const ALL: [Key; 1665] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4080,6 +4084,9 @@ impl Key {
         Key::HomeGreetingPlain,
         Key::HomeTasksDueOne,
         Key::HomeTasksDueMany,
+        Key::ProfilesCount,
+        Key::LinkedCountOne,
+        Key::LinkedCountMany,
         Key::HomeAgentsRunningOne,
         Key::HomeAgentsRunningMany,
         Key::HomeDueToday,
@@ -12510,6 +12517,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::HomeGreetingPlain, en: "Hello", es: "Hola", pt_br: "Olá", de: "Hallo", fr: "Bonjour", ar: "مرحبًا", zh_hans: "你好", ja: "こんにちは" },
     Row { key: Key::HomeTasksDueOne, en: "{} task due", es: "{} tarea pendiente", pt_br: "{} tarefa pendente", de: "{} Aufgabe fällig", fr: "{} tâche à faire", ar: "{} مهمة مستحقة", zh_hans: "{} 项待办任务", ja: "期限のタスク {} 件" },
     Row { key: Key::HomeTasksDueMany, en: "{} tasks due", es: "{} tareas pendientes", pt_br: "{} tarefas pendentes", de: "{} Aufgaben fällig", fr: "{} tâches à faire", ar: "{} مهام مستحقة", zh_hans: "{} 项待办任务", ja: "期限のタスク {} 件" },
+    Row { key: Key::ProfilesCount, en: "{} profiles", es: "{} perfiles", pt_br: "{} perfis", de: "{} Profile", fr: "{} profils", ar: "{} ملفات تعريف", zh_hans: "{} 个配置文件", ja: "{} 件のプロファイル" },
+    Row { key: Key::LinkedCountOne, en: "{} linked", es: "{} vinculado", pt_br: "{} vinculado", de: "{} verknüpft", fr: "{} associé", ar: "{} مرتبط", zh_hans: "已关联 {} 台", ja: "リンク済み {} 台" },
+    Row { key: Key::LinkedCountMany, en: "{} linked", es: "{} vinculados", pt_br: "{} vinculados", de: "{} verknüpft", fr: "{} associés", ar: "{} مرتبطة", zh_hans: "已关联 {} 台", ja: "リンク済み {} 台" },
     Row { key: Key::HomeAgentsRunningOne, en: "{} agent running", es: "{} agente en marcha", pt_br: "{} agente em execução", de: "{} Agent läuft", fr: "{} agent en cours", ar: "{} وكيل قيد التشغيل", zh_hans: "{} 个代理运行中", ja: "実行中のエージェント {} 件" },
     Row { key: Key::HomeAgentsRunningMany, en: "{} agents running", es: "{} agentes en marcha", pt_br: "{} agentes em execução", de: "{} Agenten laufen", fr: "{} agents en cours", ar: "{} وكلاء قيد التشغيل", zh_hans: "{} 个代理运行中", ja: "実行中のエージェント {} 件" },
     Row { key: Key::HomeDueToday, en: "Due today", es: "Para hoy", pt_br: "Para hoje", de: "Heute fällig", fr: "À faire aujourd'hui", ar: "مستحق اليوم", zh_hans: "今日到期", ja: "今日が期限" },

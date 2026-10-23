@@ -629,6 +629,9 @@ pub struct ExploreView {
     /// Whether the Agent reports a Profile Cloud holds — the summary's Koru
     /// Cloud row's state.
     cloud_subscribed: bool,
+    /// Devices besides this one that hold the Profile: the summary's *Link a
+    /// device* row says *n linked* (frame 6A).
+    linked_count: usize,
     /// Home's nav: Inbox, Today, Upcoming and the recents (`home_nav.rs`).
     home_nav: home_nav::HomeNav,
     /// The tasks mode's content. Composed rather than a second view, because
@@ -857,6 +860,14 @@ impl ExploreView {
         let changed = self.receiving_profiles != receiving || self.cloud_subscribed != subscribed;
         self.receiving_profiles = receiving;
         self.cloud_subscribed = subscribed;
+        changed
+    }
+
+    /// How many devices besides this one hold the Profile — what the
+    /// summary's *Link a device* row prints. Answers whether it changed.
+    pub fn set_linked_count(&mut self, count: usize) -> bool {
+        let changed = self.linked_count != count;
+        self.linked_count = count;
         changed
     }
     pub fn new() -> Self {
@@ -3337,7 +3348,8 @@ impl ExploreView {
         match row {
             PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => SECTION_H,
             PopoverRow::Divider | PopoverRow::HeadDivider => POPOVER_DIVIDER_H,
-            PopoverRow::Profile(_) | PopoverRow::PersonCard => koru_ui::profile_picker::ROW_H,
+            PopoverRow::Profile(_) => koru_ui::profile_picker::ROW_H,
+            PopoverRow::PersonCard => PERSON_CARD_H,
             _ => POPOVER_ROW_H,
         }
     }
@@ -6419,17 +6431,10 @@ impl ExploreView {
         }
     }
 
-    /// `avatar` is the profile's picture, already decoded by the container —
-    /// this crate has no image decoder and is not getting one. `None` falls back
-    /// to the initials chip.
-    pub fn draw(
-        &mut self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        area: Rect,
-        avatar: Option<&peniko::ImageBrush>,
-    ) {
+    /// The column at rest: the apps row, the mode's rows and the floor. The
+    /// popover over it is drawn by `draw_popover`, which is where the
+    /// person's picture goes.
+    pub fn draw(&mut self, scene: &mut Scene, root: Affine, engine: &mut TextEngine, area: Rect) {
         let p = theme::p();
         scene::fill(
             scene,
@@ -6529,7 +6534,7 @@ impl ExploreView {
             self.draw_footer_rows(scene, root, engine, area, p);
         }
         if area.w > 0.0 {
-            self.draw_floor(scene, root, engine, area, avatar, p);
+            self.draw_floor(scene, root, engine, area, p);
         }
     }
 
@@ -6545,7 +6550,6 @@ impl ExploreView {
         root: Affine,
         engine: &mut TextEngine,
         area: Rect,
-        avatar: Option<&peniko::ImageBrush>,
         p: &theme::Palette,
     ) {
         let r = floor::solve(area);
@@ -6577,7 +6581,17 @@ impl ExploreView {
             );
         }
         if r.avatar.w > 0.0 {
-            self.draw_avatar(scene, root, engine, r.avatar, avatar, theme::role::hint());
+            // The workspace's tile, not the person's picture: the chip says
+            // where you are first (the CTO's call, QUESTIONS.md E26).
+            let entry = self
+                .current
+                .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
+            koru_draw::tile::Tile {
+                icon: entry.and_then(|w| w.icon.as_deref()),
+                color: entry.and_then(|w| w.color.as_deref()),
+                name: entry.map_or("Workspace", |w| w.name.as_str()),
+            }
+            .draw(scene, root, engine, r.avatar);
         }
         if r.text.w > 0.0 {
             let workspace = self
@@ -7617,44 +7631,99 @@ impl ExploreView {
                     );
                 }
                 PopoverRow::PersonCard => {
-                    // The person as a card: the same row the Profiles page
-                    // draws for the open Profile, with a caret saying it
-                    // leads somewhere.
-                    let detail = self.profile().map_or(String::new(), |profile| {
-                        if profile.email.is_empty() {
-                            String::new()
-                        } else {
-                            profile.email.clone()
-                        }
-                    });
+                    // The person as a card (frame 6A): the picture or the
+                    // initials, the name over the email and the Profile
+                    // count, the chord that opens the Profiles page, and a
+                    // caret saying it leads somewhere. Not the Profiles
+                    // page's one-line row wearing the Profile's icon: that
+                    // read as one more Profile beside the workspace card
+                    // (the CTO's note, QUESTIONS.md E27).
+                    if hot {
+                        scene::fill(
+                            scene,
+                            root,
+                            p.hover_tint,
+                            &scene::rrect(r.x + 4.0, r.y, (r.w - 8.0).max(0.0), r.h, 5.0),
+                        );
+                    }
+                    let lang = crate::format::lang();
                     let name = self.profile().map_or("", |profile| profile.name.as_str());
                     let key = self.profile().map_or("", |profile| profile.email.as_str());
-                    koru_ui::profile_picker::draw_row(
+                    let mut detail = self
+                        .profile()
+                        .map_or(String::new(), |profile| profile.email.clone());
+                    let n = self.profiles.len();
+                    if n > 1 {
+                        let count = koru_i18n::fill(
+                            koru_i18n::t(lang, koru_i18n::Key::ProfilesCount),
+                            &[&n.to_string()],
+                        );
+                        detail = if detail.is_empty() {
+                            count
+                        } else {
+                            format!("{detail} · {count}")
+                        };
+                    }
+                    let at = Rect::new(
+                        r.x + theme::NAV_PAD,
+                        r.y + (r.h - PERSON_AVATAR) * 0.5,
+                        PERSON_AVATAR,
+                        PERSON_AVATAR,
+                    );
+                    koru_ui::profile_picker::draw_avatar(
+                        scene,
+                        root,
+                        engine,
+                        at,
+                        avatar,
+                        name,
+                        key,
+                        theme::role::row(),
+                    );
+                    let caret =
+                        Rect::new(r.x + r.w - WORKSPACE_DOTS - 8.0, r.y, WORKSPACE_DOTS, r.h);
+                    let right = draw_chord_keycap(
                         scene,
                         root,
                         engine,
                         r,
-                        koru_ui::profile_picker::ProfileRow {
-                            name,
-                            detail: &detail,
-                            palette_key: key,
-                            selected: false,
-                            removable: false,
-                            menu: false,
-                            avatar,
-                            icon: self.profile().and_then(|profile| profile.icon.as_deref()),
-                            color: self.profile().and_then(|profile| profile.color.as_deref()),
-                        },
-                        hot,
+                        caret.x,
+                        koru_keys::ShortcutId::SwitchProfile,
                     );
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::CARET_RIGHT,
-                        koru_ui::profile_picker::row_parts(r).trailing,
-                        p.row_hint,
-                    );
+                    draw_icon(scene, root, engine, icons::CARET_RIGHT, caret, p.row_hint);
+                    let text_x = at.x + at.w + 8.0;
+                    let text_w = (right - text_x).max(1.0);
+                    let name_style = theme::role::row().with_weight(theme::FontWeight::SemiBold);
+                    if detail.is_empty() {
+                        draw_middle(
+                            scene,
+                            root,
+                            engine,
+                            &label_fit(name),
+                            Rect::new(text_x, r.y, text_w, r.h),
+                            name_style,
+                            p.text,
+                        );
+                    } else {
+                        draw_middle(
+                            scene,
+                            root,
+                            engine,
+                            &label_fit(name),
+                            Rect::new(text_x, r.y + 7.0, text_w, 16.0),
+                            name_style,
+                            p.text,
+                        );
+                        draw_middle(
+                            scene,
+                            root,
+                            engine,
+                            &label_fit(&detail),
+                            Rect::new(text_x, r.y + 25.0, text_w, 14.0),
+                            theme::role::hint(),
+                            p.text_dim,
+                        );
+                    }
                 }
                 PopoverRow::WorkspaceCard => {
                     // The workspace as a card: its tile and name, no subtitle
@@ -7675,6 +7744,14 @@ impl ExploreView {
                         name,
                     }
                     .draw(scene, root, engine, chip);
+                    let right = draw_chord_keycap(
+                        scene,
+                        root,
+                        engine,
+                        r,
+                        r.x + r.w - WORKSPACE_DOTS - 8.0,
+                        koru_keys::ShortcutId::SwitchWorkspace,
+                    );
                     draw_middle(
                         scene,
                         root,
@@ -7683,7 +7760,7 @@ impl ExploreView {
                         Rect::new(
                             chip.x + chip.w + 8.0,
                             r.y,
-                            (r.x + r.w - chip.x - chip.w - 8.0 - WORKSPACE_DOTS - 8.0).max(1.0),
+                            (right - chip.x - chip.w - 8.0).max(1.0),
                             r.h,
                         ),
                         theme::role::row().with_weight(theme::FontWeight::SemiBold),
@@ -7907,12 +7984,36 @@ impl ExploreView {
                         Rect::new(icon_x, r.y, 16.0, r.h),
                         p.text_dim,
                     );
+                    let mut label_rect = text(text_x);
+                    // *n linked* at the row's end, a fact the devices page
+                    // already holds (frame 6A).
+                    if matches!(row, PopoverRow::LinkDevice) && self.linked_count > 0 {
+                        let lang = crate::format::lang();
+                        let n = self.linked_count;
+                        let key = if n == 1 {
+                            koru_i18n::Key::LinkedCountOne
+                        } else {
+                            koru_i18n::Key::LinkedCountMany
+                        };
+                        let trailing = koru_i18n::fill(koru_i18n::t(lang, key), &[&n.to_string()]);
+                        let laid = engine.simple_layout(&trailing, theme::role::hint());
+                        let x = r.x + r.w - laid.width() - theme::NAV_PAD;
+                        scene::draw_layout_first_line(
+                            scene,
+                            root,
+                            &laid,
+                            x,
+                            r.y + (r.h - scene::first_line_height(&laid)) * 0.5,
+                            Some(p.row_hint),
+                        );
+                        label_rect.w = (x - 8.0 - label_rect.x).max(1.0);
+                    }
                     draw_middle(
                         scene,
                         root,
                         engine,
                         label,
-                        text(text_x),
+                        label_rect,
                         theme::role::row(),
                         p.text_dim,
                     );
@@ -7934,41 +8035,6 @@ impl ExploreView {
                 &scene::rrect(band.x + band.w - 4.0, thumb_y, 2.0, thumb_h, 1.0),
             );
         }
-    }
-
-    /// The header's avatar: this profile's picture, or its initials chip.
-    fn draw_avatar(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        avatar: Option<&peniko::ImageBrush>,
-        style: theme::TextStyle,
-    ) {
-        static NOBODY: std::sync::OnceLock<ProfileSummary> = std::sync::OnceLock::new();
-        let profile = self
-            .profile()
-            .unwrap_or_else(|| NOBODY.get_or_init(ProfileSummary::default));
-        if profile.icon.is_some() || (avatar.is_none() && profile.color.is_some()) {
-            koru_draw::tile::Tile {
-                icon: profile.icon.as_deref(),
-                color: profile.color.as_deref(),
-                name: &profile.name,
-            }
-            .draw(scene, root, engine, at);
-            return;
-        }
-        koru_ui::profile_picker::draw_avatar(
-            scene,
-            root,
-            engine,
-            at,
-            avatar,
-            &profile.name,
-            &profile.email,
-            style,
-        );
     }
 }
 
@@ -8114,6 +8180,50 @@ const SWITCHER_MAX_H: f32 = 500.0;
 /// The rounded tile at the left of a workspace row, carrying its colour and its
 /// emoji. Square.
 const WORKSPACE_CHIP: f32 = 20.0;
+/// The summary's person card: two lines, the picture beside them.
+const PERSON_CARD_H: f32 = 48.0;
+const PERSON_AVATAR: f32 = 28.0;
+const KEYCAP_PAD: f32 = 5.0;
+
+/// A card's chord as a keycap just left of `right`: the registry's hint in
+/// the hint style inside a hairline box, the way frame 6A prints `^⌥P`
+/// beside the person. Answers the x where the card's text must stop; when
+/// the registry has no hint to show, nothing is drawn and the text runs to
+/// the caret.
+fn draw_chord_keycap(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    row: Rect,
+    right: f32,
+    shortcut: koru_keys::ShortcutId,
+) -> f32 {
+    let Some(chord) = koru_keys::show_hint(shortcut, koru_keys::Section::Heading) else {
+        return right - 8.0;
+    };
+    let p = theme::p();
+    let laid = engine.simple_layout(&chord, theme::role::hint());
+    let w = laid.width() + KEYCAP_PAD * 2.0;
+    let h = scene::first_line_height(&laid) + 6.0;
+    let x = (right - 8.0 - w).floor();
+    let y = (row.y + (row.h - h) * 0.5).floor();
+    scene::stroke(
+        scene,
+        root,
+        p.panel_border,
+        1.0,
+        &scene::rrect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, 4.0),
+    );
+    scene::draw_layout_first_line(
+        scene,
+        root,
+        &laid,
+        x + KEYCAP_PAD,
+        y + 3.0,
+        Some(p.row_hint),
+    );
+    x - 8.0
+}
 /// The `…` between the name and the tick.
 /// Where a row's icon sits, given its depth and whether the row carries the
 /// caret lane.
