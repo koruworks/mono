@@ -948,12 +948,20 @@ leaves you on a fresh welcome tab rather than going away. Closing the tab you
 are looking at takes you **back to the tab you were in before it** — the trail
 of what you actually visited — not to whichever tab happens to sit beside it.
 
-Down the left is the **pane** — `Ctrl+Shift+E`, or the sidebar button in the
-top-left corner, which draws solid while the pane is open and says *Show
-Sidebar* / *Hide Sidebar* when you point at it. It runs the
-full height of the window and pushes everything else to the right. At its head
-are your avatar and the workspace you are in; below them, the documents, people
-and pictures in that workspace.
+Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
+that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
+full height of the window and pushes everything else to the right. At its
+top is a lane with the Koru mark, **Search** and the sidebar button; under
+it a row of **apps** — Documents, Files, Tasks and the rest the build shows
+— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them);
+then that app's own navigation; and on the floor one chip that says which
+workspace you are in and who you are, with a **?** beside it. The chip opens
+the workspace and account switcher; the **?** opens help: what is new in
+this build, feedback and support. Hide the sidebar and the lane's buttons
+fold into the title bar's left end; the chip goes with the pane, and
+`Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
+keyboard over the lane, the apps row and the floor; the arrows move within
+each, Enter presses, Escape returns to the page.
 
 ### With a screen reader
 
