@@ -211,12 +211,12 @@ impl HomePage {
         }
     }
 
-    /// Today's date in the reader's language and order (Q-N: the numeric
-    /// form until the long date lands).
+    /// Today, with its name: *Thursday 22 October* in the reader's language
+    /// and order (PLAN.final P15).
     fn date_line(&self, lang: Lang) -> String {
         let now = chrono::Local::now().timestamp_millis();
         crate::format::local_parts(now)
-            .map(|parts| koru_i18n::time::absolute_date(lang, parts, false))
+            .map(|parts| koru_i18n::time::date_long(lang, parts))
             .unwrap_or_default()
     }
 
