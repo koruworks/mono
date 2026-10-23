@@ -36,16 +36,18 @@ use koru_draw::{anim::ease_out_cubic as ease, theme};
 /// it before anything else resolves a point (see `ShellState::pane_grip`).
 pub const GRIP: f32 = 8.0;
 
-/// How far the left column may be dragged, and both numbers are Koru's
-/// (`SIDEBAR_MIN_W` / `SIDEBAR_MAX_W`, same file).
+/// How far the left column may be dragged, both ends. **The theme owns the
+/// numbers** (`koru_draw::theme::SIDEBAR_MIN_W` / `SIDEBAR_MAX_W`): this file
+/// and the workspace window's layout each held a copy, both 190/500, and a
+/// clamp written twice is two clamps. Re-exported so the shell's callers keep
+/// their path.
 ///
 /// Koru's reasoning applies here unchanged: the floor is where a tree stops
 /// being readable — a name elided to three characters is not a list — and the
 /// ceiling is where a *column* stops being one. `regions::solve` still gives way
 /// in order below either, so these are taste rather than safety; a limit you
 /// cannot usefully reach is not a limit.
-pub const SIDEBAR_MIN_W: f32 = 190.0;
-pub const SIDEBAR_MAX_W: f32 = 500.0;
+pub use koru_draw::theme::{SIDEBAR_MAX_W, SIDEBAR_MIN_W};
 
 /// The band at a drawn column's resizing edge, or a zero-width rect when there
 /// is nothing to grab.

@@ -2447,11 +2447,20 @@ pub const CAPTION_BTN: f32 = 44.0;
 /// is a zero-width rect rather than an absent one, so every caller does the same
 /// arithmetic either way.
 ///
-/// **240 so the explore heading holds seven mode icons and its search button.**
-/// Seven icons at a 26 px pitch end at 188 px; the `…` and the search icon need
-/// 24 px each beyond that, so 232 — the width before Canvases became the seventh
-/// mode — dropped the search button at the default width.
-pub const SIDEBAR_W: f32 = 240.0;
+/// **256 is the sidebar's resting width on the workspace-foundation canvas**
+/// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.11), and also
+/// its floor: the apps row wraps rather than clips below it, so a narrower
+/// column would only be a narrower nav. It was 240 while the explore heading
+/// held seven mode icons and a search button in one 24 px band.
+pub const SIDEBAR_W: f32 = 256.0;
+/// How far the sidebar may be dragged, both ends. **One owner.** These were
+/// written twice — once in `koru-app-shell`'s panel and once in the
+/// workspace window's layout, both 190/500 — and a clamp applied in two
+/// places is two clamps. The canvas's range is 256–600: past 600 the pane
+/// competes with the document rather than serving it, and `regions::solve`
+/// would start eating into `CONTENT_MIN_W` on an ordinary laptop screen.
+pub const SIDEBAR_MIN_W: f32 = 256.0;
+pub const SIDEBAR_MAX_W: f32 = 600.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.

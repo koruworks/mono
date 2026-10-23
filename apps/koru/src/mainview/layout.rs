@@ -37,8 +37,7 @@ const CHIP_GAP: f32 = 6.0;
 /// the last one — Canvases, the seventh, was the one that stopped fitting.
 /// Socials made eight; `ExploreView::navigator_mode_rects` now narrows the gaps
 /// and then the icons to fit, so the floor did not have to move again.
-pub(crate) const SIDEBAR_MIN_W: f32 = 190.0;
-pub(super) const SIDEBAR_MAX_W: f32 = 500.0;
+pub(crate) use koru_draw::theme::{SIDEBAR_MAX_W, SIDEBAR_MIN_W};
 pub(super) const AI_MIN_W: f32 = 400.0;
 pub(super) const AI_MAX_W: f32 = 900.0;
 
@@ -1102,13 +1101,25 @@ impl MainView {
             0.0,
             super::WINDOW_BUTTONS,
             super::CONTEXT_TOGGLE,
-            false,
+            super::leading(),
             super::reminder_bell(),
             false,
             x,
             y,
         );
         let hit = match hit {
+            // **Until the lane is drawn (PLAN.final P4), the pane's own
+            // header still lives in the lane's band.** The chrome now answers
+            // `Caption` for the lane's empty part; while the explore view
+            // draws its identity row there, that press is the pane's. P4
+            // removes this arm with the header it protects.
+            koru_shell_chrome::regions::Hit::Caption
+                if self.regions.lane.w > 0.0
+                    && self.regions.lane.contains(x, y)
+                    && super::leading() == koru_shell_chrome::lane::Leading::NONE =>
+            {
+                koru_shell_chrome::regions::Hit::Sidebar
+            }
             // The bell opts out of the caption's historical 140 ms settled-hit
             // trade: its popover anchor, paint and hit rectangle are one drawn
             // geometry authority even while Explore is sliding.

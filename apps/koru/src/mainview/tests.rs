@@ -3893,7 +3893,11 @@ fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
         .into_iter()
         .find(|(row, _)| *row == crate::panes::explore::PopoverRow::Profile(1))
         .expect("the other profile's row");
-    let (x, y) = koru_ui::profile_picker::row_parts(r).trailing.centre();
+    // The popover is `PANEL_W` wide from `NAV_PAD`, so it overhangs a column
+    // at its 256 px floor by ten pixels; the point this is about is one pixel
+    // into that overhang, on the row.
+    let (x, y) = (sb.x + sb.w + 1.0, r.centre().1);
+    assert!(r.contains(x, y), "the point is on the row");
     assert!(
         x > sb.x + sb.w,
         "the point this is about is outside the column: {x} vs {}",
@@ -3927,7 +3931,8 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
         .into_iter()
         .find(|(row, _)| *row == crate::panes::explore::PopoverRow::Profile(1))
         .expect("the other profile's row");
-    let (x, y) = koru_ui::profile_picker::row_parts(r).trailing.centre();
+    let (x, y) = (sb.x + sb.w + 1.0, r.centre().1);
+    assert!(r.contains(x, y), "the point is on the row");
     assert!(x > sb.x + sb.w, "the point is outside the column");
     v.mouse_move(x, y);
     v.mouse_down(&mut w.ws, x, y, false);
@@ -7823,12 +7828,7 @@ fn caption_search_explains_both_the_action_and_its_chord() {
     );
     assert_eq!(
         tip.anchor,
-        koru_shell_chrome::caption::search_button_with_host_action(
-            v.drawn_caption(),
-            WINDOW_BUTTONS,
-            CONTEXT_TOGGLE,
-            reminder_bell(),
-        )
+        koru_shell_chrome::caption::leading_chain(v.drawn_caption(), leading()).search
     );
 }
 

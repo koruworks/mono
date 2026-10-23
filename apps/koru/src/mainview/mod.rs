@@ -332,6 +332,15 @@ const WINDOW_BUTTONS: bool = true;
 /// The reminder-attention bell owns the optional product caption slot —
 /// when this build shows reminders (koru-features). With them hidden the slot
 /// is empty and the tab strip takes the room back.
+/// Which lane controls this window offers. **None yet**: the lane and its
+/// chain land with the sidebar's composition
+/// (`docs/features/workspace-foundation/PLAN.final.md`, P4); until then the
+/// caption is the toggle alone, to the pixel, which is what every existing
+/// chrome test asserts.
+pub(crate) fn leading() -> koru_shell_chrome::lane::Leading {
+    koru_shell_chrome::lane::Leading::NONE
+}
+
 fn reminder_bell() -> bool {
     koru_features::reminders()
 }
@@ -7088,6 +7097,9 @@ impl MainView {
                 Outcome::ToggleSidebar
             }
             Hit::ToggleContext => Outcome::ToggleContext,
+            // Nothing offers the lane's New yet (`leading()`); when the apps
+            // manager lands it runs the active app's primary create.
+            Hit::New => Outcome::Ignored,
             Hit::Search => {
                 return if self.open_search() {
                     Outcome::Consumed
@@ -9973,6 +9985,7 @@ impl View for MainView {
             | Some(Hit::ToggleSidebar)
             | Some(Hit::ToggleContext)
             | Some(Hit::Search)
+            | Some(Hit::New)
             | Some(Hit::HostAction)
             | Some(Hit::Window(_)) => koru_ui::cursor::PRESS,
             // The caption is the part with no furniture on it: you drag the
@@ -14718,12 +14731,7 @@ impl MainView {
             Hit::Search => Some(
                 TooltipContent::new(
                     3,
-                    koru_shell_chrome::caption::search_button_with_host_action(
-                        cap,
-                        WINDOW_BUTTONS,
-                        CONTEXT_TOGGLE,
-                        reminder_bell(),
-                    ),
+                    koru_shell_chrome::caption::leading_chain(cap, leading()).search,
                     "Search",
                 )
                 .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),

@@ -164,11 +164,12 @@ fn a_sidebar_drag_reflows_the_content_once_on_release() {
     let before_view = v.focused_view_rect();
     assert_eq!(before, (before_view.w, before_view.h));
 
-    // The drag: three moves. The column *draws* at the pointer…
-    for w in [220.0, 260.0, 300.0] {
+    // The drag: three moves, all inside the clamp (256–600). The column
+    // *draws* at the pointer…
+    for w in [300.0, 340.0, 380.0] {
         assert!(v.set_sidebar_width(w));
     }
-    assert_eq!(v.sidebar.full(), 300.0, "the drawn chrome follows the drag");
+    assert_eq!(v.sidebar.full(), 380.0, "the drawn chrome follows the drag");
     // …while the layout holds still: the view rect keeps its committed
     // width, and the tab is not re-laid-out per mouse-move.
     assert_eq!(

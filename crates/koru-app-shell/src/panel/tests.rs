@@ -7,9 +7,8 @@ use std::time::Duration;
 
 const W: f32 = 200.0;
 
-/// The explore pane's drag ceiling in Koru, as a plain number: the column that
-/// owns that constant is a host's, and this file may not name one.
-const SIDEBAR_MAX_W: f32 = 500.0;
+/// The explore pane's drag ceiling, which the theme owns.
+const SIDEBAR_MAX_W: f32 = theme::SIDEBAR_MAX_W;
 
 fn slide_time() -> Duration {
     Duration::from_secs_f32(theme::PANEL_SLIDE_MS / 1000.0)

@@ -222,15 +222,13 @@ fn the_trailing_furniture_is_one_chain_from_the_window_buttons_inward() {
     let settings = banner::settings_slot(c, true, slots);
     let context = context_toggle_with_banner(c, true, true, slots);
     let action = host_action_with_banner(c, true, true, true, slots);
-    let search = search_button_with_banner(c, true, true, true, slots);
-    let lane = tab_strip_with_search_and_banner(c, true, true, true, slots);
+    let lane = tab_strip_with_banner(c, true, true, true, slots);
 
     assert_eq!(trailing_edge(c, true), overflow.x);
     assert_eq!(settings.x + settings.w, overflow.x);
     assert_eq!(context.x + context.w, settings.x);
     assert_eq!(action.x + action.w, context.x);
-    assert_eq!(search.x + search.w, action.x);
-    assert_eq!(lane.x + lane.w, search.x);
+    assert_eq!(lane.x + lane.w, action.x);
     assert_eq!(lane.x, banner::end(c, slots), "and it begins at the banner");
 }
 
@@ -249,10 +247,6 @@ fn no_banner_leaves_every_trailing_rect_where_it_was() {
             assert_eq!(
                 host_action_with_banner(c, buttons, context, true, banner::Slots::NONE),
                 host_action_with_context(c, buttons, context, true),
-            );
-            assert_eq!(
-                search_button_with_banner(c, buttons, context, true, banner::Slots::NONE),
-                search_button_with_host_action(c, buttons, context, true),
             );
             assert_eq!(
                 tab_strip_with_banner(c, buttons, context, true, banner::Slots::NONE),

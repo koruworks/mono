@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Cutting a window into four: the caption row, the two side columns, and the
-//! active view between them.
+//! Cutting a window into five: the lane at the top of the pane, the caption
+//! row, the two side columns, and the active view between them.
 //!
 //! One function does the arithmetic and one function reads it back, which is
 //! `DESIGN.md`'s rule for chrome and the reason the document toolbar has
@@ -10,9 +10,9 @@
 use koru_draw::geometry::Rect;
 use koru_draw::theme;
 
-use crate::{banner, caption, tabs};
+use crate::{banner, caption, lane, tabs};
 
-/// The four regions of a container window, in logical pixels.
+/// The regions of a container window, in logical pixels.
 ///
 /// A collapsed column is a **zero-width rect**, not an `Option` and not an
 /// absence: every caller then does the same arithmetic whether the column is
@@ -20,11 +20,17 @@ use crate::{banner, caption, tabs};
 /// get wrong at the ends of an animation.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Regions {
-    /// The full-width strip along the top. Carries the panel toggles, the tabs,
-    /// and — once the window is undecorated — the minimise/maximise/close
+    /// The window's own band at the top of the pane: the mark or the lights,
+    /// Search, New and the sidebar toggle
+    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.1). The
+    /// top `CAPTION_H` of the sidebar, and zero-width when the pane is shut —
+    /// its controls then fold into the caption's leading chain.
+    pub lane: Rect,
+    /// The strip along the top of the content. Carries the leading chain, the
+    /// tabs, and — once the window is undecorated — the minimise/maximise/close
     /// buttons at its right end.
     pub caption: Rect,
-    /// The explore column, on the left.
+    /// The explore column, on the left. The lane is its top band.
     pub sidebar: Rect,
     /// The active tab's view.
     pub content: Rect,
@@ -63,8 +69,12 @@ pub fn solve(w: f32, h: f32, sidebar_w: f32, context_w: f32) -> Regions {
     let below = (h - caption_h).max(0.0);
 
     Regions {
+        // **The lane and the caption share one band.** Same height, same
+        // hairline at its foot, so the row reads as one whether the pane is
+        // open or shut.
+        lane: Rect::new(0.0, 0.0, sw, caption_h),
         // **The caption starts after the pane.** The explore column owns the
-        // full height of its own strip, so the logo, the tabs and the window
+        // full height of its own strip, so the chain, the tabs and the window
         // buttons all shift right with it rather than sitting above it — which
         // is what makes the pane read as a place rather than a drawer.
         //
@@ -85,7 +95,8 @@ pub fn solve(w: f32, h: f32, sidebar_w: f32, context_w: f32) -> Regions {
 /// strip claims what is left.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Hit {
-    /// The explore column. Which row is the column's own question.
+    /// The explore column, below its lane. Which row is the column's own
+    /// question.
     Sidebar,
     /// The context column.
     Context,
@@ -102,34 +113,41 @@ pub enum Hit {
 
     ToggleSidebar,
     ToggleContext,
+    /// The lane's Search — in the lane while the pane is open, in the
+    /// caption's leading chain while it is shut.
     Search,
+    /// The lane's New, likewise. What it creates is the host's business.
+    New,
     /// An optional product-owned caption action. Chrome owns only its slot.
     HostAction,
 
-    /// The caption, but none of its furniture — the part you drag the window by.
+    /// The caption or the lane, but none of its furniture — the part you drag
+    /// the window by. The mark and the lights' reserve answer this too: a logo
+    /// is not a verb.
     Caption,
     /// A host-neutral control from `koru-ui`; the container maps it to its
     /// own window request or menu behavior.
     Window(koru_ui::caption::Action),
 }
 
-/// Resolve a window-space point.
+/// Resolve a window-space point for a window with a lane.
 ///
 /// `window_buttons` is false while the OS still draws its own titlebar, so the
 /// right end of the caption is empty space rather than three buttons.
 /// `context` is false while the context column is not offered, and its toggle
-/// is then a zero-width rect the tab strip has already taken. Both are
-/// parameters rather than build flags, because which furniture a window has is
-/// the container's decision — and because the tests drive every combination.
+/// is then a zero-width rect the tab strip has already taken. `leading` says
+/// which lane controls the window offers, and is read in both of the places
+/// they can be. All are parameters rather than build flags, because which
+/// furniture a window has is the container's decision — and because the tests
+/// drive every combination.
+#[allow(clippy::too_many_arguments)]
 pub fn hit(
     r: &Regions,
     tab_widths: &[f32],
     tab_scroll: f32,
     window_buttons: bool,
     context: bool,
-    // When true, reserve and hit-test the reusable search button between the
-    // tabs and the optional context toggle.
-    search: bool,
+    leading: lane::Leading,
     // When true, reserve and hit-test one host-owned action immediately before
     // the window controls.
     host_action: bool,
@@ -139,13 +157,13 @@ pub fn hit(
     x: f32,
     y: f32,
 ) -> Hit {
-    hit_with_banner(
+    resolve(
         r,
         tab_widths,
         tab_scroll,
         window_buttons,
         context,
-        search,
+        leading,
         host_action,
         tab_scrollbar,
         banner::Slots::NONE,
@@ -154,7 +172,7 @@ pub fn hit(
     )
 }
 
-/// The same, for a window whose caption carries a banner.
+/// The same, for a window whose caption carries a banner and no lane.
 ///
 /// The banner's own slots are **not** resolved here: they are asked first, by
 /// the container, through [`banner::hit`], which is the precedence
@@ -172,7 +190,38 @@ pub fn hit_with_banner(
     tab_scroll: f32,
     window_buttons: bool,
     context: bool,
-    search: bool,
+    host_action: bool,
+    tab_scrollbar: bool,
+    slots: banner::Slots,
+    x: f32,
+    y: f32,
+) -> Hit {
+    resolve(
+        r,
+        tab_widths,
+        tab_scroll,
+        window_buttons,
+        context,
+        lane::Leading::NONE,
+        host_action,
+        tab_scrollbar,
+        slots,
+        x,
+        y,
+    )
+}
+
+/// One resolver behind both entry points. A banner window has no lane
+/// (`Leading::NONE`) and a lane window has no banner (`Slots::NONE`); the
+/// arithmetic is the same either way, so there is one copy of it.
+#[allow(clippy::too_many_arguments)]
+fn resolve(
+    r: &Regions,
+    tab_widths: &[f32],
+    tab_scroll: f32,
+    window_buttons: bool,
+    context: bool,
+    leading: lane::Leading,
     host_action: bool,
     tab_scrollbar: bool,
     slots: banner::Slots,
@@ -181,11 +230,12 @@ pub fn hit_with_banner(
 ) -> Hit {
     // Caption first, and that ordering is now doing real work in both
     // directions. With the pane **open** its left edge is `sidebar_w`, so a
-    // point in the top-left fails this test and falls through to the pane —
-    // which is the wanted answer, since the pane is what is drawn there. With
-    // the pane **shut** the sidebar is a zero-width rect, and `contains` is
-    // inclusive on every edge, so asking it first would swallow `x == 0` for
-    // the whole height of the window and the logo would stop responding.
+    // point in the top-left fails this test and falls through to the lane —
+    // which is the wanted answer, since the lane is what is drawn there. With
+    // the pane **shut** the sidebar and the lane are zero-width rects, and
+    // `contains` is inclusive on every edge, so asking either first would
+    // swallow `x == 0` for the whole height of the window and the toggle would
+    // stop responding.
     //
     // At exactly `x == sidebar_w` both rects contain the point and the caption
     // wins, which matches what the toggle did at `x == 0` before: the edge of a
@@ -196,8 +246,18 @@ pub fn hit_with_banner(
                 return Hit::Window(action);
             }
         }
-        if caption::sidebar_toggle(r.caption).contains(x, y) {
+        // The leading chain, left to right. The mark and the divider are not
+        // in it: a press on either is a drag.
+        let chain = caption::leading_chain(r.caption, leading);
+        let owns = |rect: Rect| rect.w > 0.0 && rect.contains(x, y);
+        if owns(chain.toggle) {
             return Hit::ToggleSidebar;
+        }
+        if owns(chain.search) {
+            return Hit::Search;
+        }
+        if owns(chain.new) {
+            return Hit::New;
         }
         let host = caption::host_action_with_banner(
             r.caption,
@@ -206,7 +266,7 @@ pub fn hit_with_banner(
             host_action,
             slots,
         );
-        if host.w > 0.0 && host.contains(x, y) {
+        if owns(host) {
             return Hit::HostAction;
         }
         // A hidden toggle is a zero-width rect sitting on the strip's right
@@ -219,28 +279,19 @@ pub fn hit_with_banner(
         // never reaches here.
         let context_toggle =
             caption::context_toggle_with_banner(r.caption, window_buttons, context, slots);
-        if context_toggle.w > 0.0 && context_toggle.contains(x, y) {
+        if owns(context_toggle) {
             return Hit::ToggleContext;
         }
-        if search
-            && caption::search_button_with_banner(
+        // The lane begins after whichever leading furniture this window has:
+        // the chain for a lane window, the banner for a banner window. With
+        // neither, both answers are the sidebar toggle's far edge.
+        let strip = if slots == banner::Slots::NONE {
+            caption::tab_strip_with_leading(
                 r.caption,
                 window_buttons,
                 context,
                 host_action,
-                slots,
-            )
-            .contains(x, y)
-        {
-            return Hit::Search;
-        }
-        let strip = if search {
-            caption::tab_strip_with_search_and_banner(
-                r.caption,
-                window_buttons,
-                context,
-                host_action,
-                slots,
+                leading,
             )
         } else {
             caption::tab_strip_with_banner(r.caption, window_buttons, context, host_action, slots)
@@ -255,8 +306,8 @@ pub fn hit_with_banner(
         // A tab is only hittable where it is *drawn*, and it is drawn clipped to
         // the lane — so a point in the `+`'s lane belongs to no tab even when a
         // scrolled tab's rect reaches into it.
-        let lane = tabs::lane(strip);
-        let view_right = lane.x + lane.w;
+        let view = tabs::lane(strip);
+        let view_right = view.x + view.w;
         if x >= view_right {
             return Hit::Caption;
         }
@@ -273,6 +324,16 @@ pub fn hit_with_banner(
             }
         }
         return Hit::Caption;
+    }
+    // The lane: the pane's top band, asked before the pane because it sits on
+    // it. Its empty part — and the mark — drag the window like the caption.
+    if r.lane.w > 0.0 && r.lane.contains(x, y) {
+        return match lane::hit(r.lane, leading, x, y) {
+            Some(lane::Hit::Toggle) => Hit::ToggleSidebar,
+            Some(lane::Hit::Search) => Hit::Search,
+            Some(lane::Hit::New) => Hit::New,
+            None => Hit::Caption,
+        };
     }
     // A zero-width column cannot be hit: `contains` is inclusive on every edge,
     // so a collapsed sidebar would otherwise swallow the content's left edge.
