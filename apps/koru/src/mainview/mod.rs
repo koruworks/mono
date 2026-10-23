@@ -10149,6 +10149,8 @@ impl View for MainView {
         self.ai_chat.invalidate();
         self.engine.clear_pill_cache();
         self.mark_tab_widths_stale();
+        // The apps row's labels are a measurement too.
+        self.explore.invalidate_app_labels();
         self.reminder_shell.invalidate_metrics();
         // The indicator's widths are measured once, when its word changes — so
         // a theme, font-role or density change is the one other thing that has

@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 use super::*;
+use crate::panes::sidebar::apps_row;
 
 #[test]
 fn enrolled_empty_profile_explains_pending_sync_and_keeps_workspace_creation() {
@@ -822,10 +823,12 @@ fn nothing_in_the_header_is_hit_in_a_collapsed_column() {
 fn the_first_library_row_sits_where_it_always_did() {
     let (v, _, _) = with_context(4);
     let a = Rect::new(0.0, 0.0, theme::SIDEBAR_W, 600.0);
-    // Header, gap, tab row, gap: the trailing NAV_PAD is the deliberate
-    // section gap between the tab row and the nodes content — the same gap
-    // the header and the tab row have.
-    let stacked = theme::CAPTION_H + theme::NAV_PAD + HEADER_H + theme::NAV_PAD;
+    // Header, gap, apps row, gap, heading band, gap: the trailing NAV_PAD is
+    // the deliberate section gap between the heading band and the nodes
+    // content — the same gap every band of the stack has.
+    let apps = v.apps_layout(a).height;
+    let stacked =
+        theme::CAPTION_H + theme::NAV_PAD + apps + theme::NAV_PAD + HEADER_H + theme::NAV_PAD;
     assert_eq!(v.row_rects(a)[0].1.y, stacked);
 }
 
@@ -3701,22 +3704,31 @@ fn navigator_modes_project_pages_and_files_from_one_manifest_cache() {
     assert_eq!(labels(&view), ["Page"]);
 }
 
-/// **Eight modes, one row of icons**, and each of them hit-tests back to
-/// itself — the arithmetic that used to be `HEADER_H * 2.0 + 2.0` in four
-/// places and is one function now.
+/// **Eight apps, one row of chips**, and each of them hit-tests back to
+/// itself — the apps row (`docs/features/workspace-foundation/TECHNICAL.final.md`
+/// §5.2), under the header and above the heading band.
 ///
-/// **At the narrowest the column can be dragged, and at its default.** All
-/// seven fit inside the column at `SIDEBAR_MIN_W` — Canvases, the seventh, is
-/// what raised that floor — and at the default `SIDEBAR_W` the search button
-/// still has its lane beside the `…`, which 232 px no longer left it.
+/// **At the narrowest the column can be dragged, and at its default.** Both
+/// are 256 px now, where eight squares and the manage button do not fit one
+/// line, so the row wraps rather than clipping (QUESTIONS.md Q-J); every chip
+/// stays inside the column and the heading band moves down under it.
 #[test]
 fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
     let view = ExploreView::new();
-    for width in [crate::mainview::layout::SIDEBAR_MIN_W, theme::SIDEBAR_W] {
+    for width in [
+        crate::mainview::layout::SIDEBAR_MIN_W,
+        theme::SIDEBAR_W,
+        400.0,
+    ] {
         let a = Rect::new(0.0, theme::CAPTION_H, width, 600.0);
         let rects = view.navigator_mode_rects(a);
         assert_eq!(rects.len(), NavigatorMode::ALL.len());
         for &(mode, r) in &rects {
+            assert_eq!(
+                r.w,
+                apps_row::SQUARE,
+                "{mode:?} is a square before its label is measured"
+            );
             assert!(
                 r.x + r.w <= a.x + a.w,
                 "{mode:?} fits inside a {width} px column"
@@ -3724,11 +3736,19 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
             let (x, y) = r.centre();
             assert_eq!(view.navigator_mode_at(a, x, y), Some(mode), "{mode:?}");
         }
-        // The heading actions yield to them rather than overlapping.
-        for (_, r) in view.navigator_mode_rects(a) {
-            assert!(view.search_button(a).x >= r.x + r.w);
-            assert!(view.actions_button(a).x >= r.x + r.w);
+        let layout = view.apps_layout(a);
+        let manage = view.manage_button(a);
+        assert!(manage.w > 0.0 && manage.x + manage.w <= a.x + a.w);
+        if width < 280.0 {
+            assert_eq!(layout.lines, 2, "eight squares wrap at {width}");
+        } else {
+            assert_eq!(layout.lines, 1);
         }
+        // The heading band sits under the whole row, and its actions keep
+        // their band.
+        let last = rects.last().unwrap().1;
+        assert!(view.search_button(a).y >= last.y + last.h);
+        assert!(view.actions_button(a).y >= last.y + last.h);
         for (mode, r) in rects {
             let (x, y) = r.centre();
             assert!(!view.actions_at(a, x, y), "{mode:?} is not the ... button");
@@ -6078,33 +6098,36 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         }
         let at = |name| records.iter().position(|r| r.name == name).unwrap();
         let header = records[at("ExploreHeader")].rect();
+        let apps = records[at("KoruAppsRow")].rect();
         let tabs = records[at("ExploreTabs")].rect();
         let nodes = at("ExploreNodes");
         let band = records[nodes].rect();
         assert!(
-            header.y1 <= tabs.y0 && tabs.y1 <= band.y0 + 0.5,
-            "header, tabs and nodes stack in order in {mode:?}"
+            header.y1 <= apps.y0 && apps.y1 <= tabs.y0 && tabs.y1 <= band.y0 + 0.5,
+            "header, apps row, tabs and nodes stack in order in {mode:?}"
         );
         assert!(
             records[nodes].properties.iter().any(|p| p.name == "mode"),
             "the band says which tab's view it holds"
         );
 
-        // The section gaps are named geometry, and both are the shell's
-        // NAV_PAD: header-to-tabs and tabs-to-nodes alike.
+        // The section gaps are named geometry, and all are the shell's
+        // NAV_PAD: header-to-apps, apps-to-tabs and tabs-to-nodes alike.
         let spacers: Vec<_> = records
             .iter()
             .filter(|r| r.name == "ExploreSpacer")
             .collect();
-        assert_eq!(spacers.len(), 2, "one gap per seam in {mode:?}");
+        assert_eq!(spacers.len(), 3, "one gap per seam in {mode:?}");
         for spacer in &spacers {
             assert_eq!(spacer.rect().height(), theme::NAV_PAD as f64);
         }
-        let (first, second) = (spacers[0].rect(), spacers[1].rect());
+        let (first, second, third) = (spacers[0].rect(), spacers[1].rect(), spacers[2].rect());
         assert_eq!(first.y0, header.y1, "the first gap follows the header");
-        assert_eq!(first.y1, tabs.y0, "the first gap meets the tab row");
-        assert_eq!(second.y0, tabs.y1, "the second gap follows the tab row");
-        assert_eq!(second.y1, band.y0, "the second gap meets the nodes band");
+        assert_eq!(first.y1, apps.y0, "the first gap meets the apps row");
+        assert_eq!(second.y0, apps.y1, "the second gap follows the apps row");
+        assert_eq!(second.y1, tabs.y0, "the second gap meets the tab row");
+        assert_eq!(third.y0, tabs.y1, "the third gap follows the tab row");
+        assert_eq!(third.y1, band.y0, "the third gap meets the nodes band");
 
         // Every row answers to a named owner: the nodes band for the mode's
         // rows, the footer for the pinned Trash.
@@ -6356,9 +6379,9 @@ fn agents_on_alone_keeps_the_agents_and_artifacts_views_hidden() {
     });
 }
 
-/// **Sized from the modes the build shows** (QUESTIONS #5, maintainer 2026-10-10):
-/// a build that shows four modes or fewer gets full 24 px icons at the
-/// default column; only the full eight shrink there.
+/// **Chips are sized from the modes this build shows**: a hidden mode has
+/// no chip, Files is always second, and every chip is a square before the
+/// labels are measured — whatever the build shows, nothing shrinks.
 #[test]
 fn mode_icons_are_sized_from_the_modes_the_build_shows() {
     use koru_features::Features;
@@ -6374,40 +6397,45 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
             let rects = view.navigator_mode_rects(a);
             assert_eq!(rects.len(), shown);
             for &(mode, r) in &rects {
-                assert_eq!(r.w, HEADER_H, "{mode:?} at {shown} shown");
+                assert_eq!(r.w, apps_row::SQUARE, "{mode:?} at {shown} shown");
             }
             assert_eq!(rects[1].0, NavigatorMode::Files);
             assert!(view.search_button(a).w > 0. && view.actions_button(a).w > 0.);
         });
     }
-    // Eight shown do not fit at 24 px beside both lanes, so they shrink.
     let view = ExploreView::new();
     let rects = view.navigator_mode_rects(a);
     assert_eq!(rects.len(), NavigatorMode::ALL.len());
-    assert!(
-        rects
-            .iter()
-            .all(|(_, r)| r.w < HEADER_H && r.w >= MIN_MODE_ICON)
-    );
+    assert!(rects.iter().all(|(_, r)| r.w == apps_row::SQUARE));
 }
 
+/// **The row never clips.** At every width the last chip and the manage
+/// square are inside the column — wrapping when they must — and the heading
+/// band's actions sit under the row, never beside it.
 #[test]
 fn eight_modes_fit_narrow_sidebars_and_leave_actions_room_when_wide() {
     let view = ExploreView::new();
-    for width in [180., 232., 280.] {
+    for width in [256., 300., 400., 600.] {
         let a = Rect::new(0., 0., width, 800.);
         let modes = view.navigator_mode_rects(a);
-        let last = modes.last().unwrap().1;
-        assert!(last.x + last.w <= width);
+        for (mode, r) in &modes {
+            assert!(r.x + r.w <= width, "{mode:?} inside {width}");
+        }
+        let manage = view.manage_button(a);
+        assert!(manage.x + manage.w <= width);
+        let bottom = modes
+            .iter()
+            .map(|(_, r)| r.y + r.h)
+            .fold(0.0_f32, f32::max)
+            .max(manage.y + manage.h);
         let search = view.search_button(a);
         let actions = view.actions_button(a);
+        assert!(search.w > 0. && actions.w > 0.);
         for action in [search, actions] {
-            if action.w > 0. {
-                assert!(last.x + last.w <= action.x);
-            }
-        }
-        if width >= 232. {
-            assert!(search.w > 0. && actions.w > 0.);
+            assert!(
+                action.y >= bottom,
+                "the heading band is under the row at {width}"
+            );
         }
     }
 }

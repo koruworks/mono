@@ -14,6 +14,7 @@
 pub mod context;
 pub mod explore;
 pub mod fold;
+pub mod sidebar;
 
 use koru_core::{NodeId, ProfileId, WorkspaceId};
 use koru_session_protocol::{ProjectId, SessionId};

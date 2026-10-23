@@ -48,6 +48,8 @@ use super::Outcome;
 use super::fold;
 use super::{DropTarget, DropZone};
 use koru_shell_chrome::tabs::{draw_icon, draw_icon_filled};
+
+use crate::panes::sidebar::apps_row;
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
 /// How far the pointer must travel before a press on a manifest row stops being
@@ -197,26 +199,27 @@ impl NavigatorMode {
         }
     }
 
-    /// The word the icon's tooltip says — the registry's label for the same
-    /// chord, so the tooltip and the shortcut sheet agree.
+    /// The word the apps row and the icon's tooltip say — the registry's
+    /// label for the same chord, so the chip, the tooltip and the shortcut
+    /// sheet agree. In the window's language.
     pub fn label(self) -> &'static str {
+        self.label_in(crate::format::lang())
+    }
+
+    /// The same word in `lang`. **Every mode keyed**: the four that were
+    /// English literals reuse the rows the accessibility names already had
+    /// (the apps row made them a new surface's words — PLAN.final P2).
+    pub fn label_in(self, lang: koru_i18n::Lang) -> &'static str {
+        use koru_i18n::{Key, t};
         match self {
-            Self::Documents => "Documents",
-            Self::Files => "Files",
-            Self::Tasks => "Tasks",
-            // Keyed, for Artifacts' reason below: a new label is not a new
-            // English literal.
-            Self::Chats => koru_i18n::t(crate::format::lang(), koru_i18n::Key::ChatsTitle),
-            Self::Agents => "Agents",
-            // The one label of the five that goes through `koru-i18n`: the
-            // four above it are literals this plan did not open, and a
-            // fifth English literal beside a keyed one would be the wrong
-            // half to add. See `docs/contributing/techdebt/README.md`.
-            Self::Artifacts => koru_i18n::t(crate::format::lang(), koru_i18n::Key::ArtifactsTitle),
-            Self::Canvases => koru_i18n::t(crate::format::lang(), koru_i18n::Key::CanvasesTitle),
-            Self::Socials => {
-                koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
-            }
+            Self::Documents => t(lang, Key::DocumentsHeading),
+            Self::Files => t(lang, Key::A11yFilesHeading),
+            Self::Tasks => t(lang, Key::A11yTasksHeading),
+            Self::Chats => t(lang, Key::ChatsTitle),
+            Self::Agents => t(lang, Key::A11yAgentsHeading),
+            Self::Artifacts => t(lang, Key::ArtifactsTitle),
+            Self::Canvases => t(lang, Key::CanvasesTitle),
+            Self::Socials => koru_i18n::socials::t(lang, koru_i18n::socials::Key::Title),
         }
     }
 
@@ -592,6 +595,12 @@ pub struct RowParts {
 pub struct ExploreView {
     mode: NavigatorMode,
     mode_hover: Option<NavigatorMode>,
+    /// The apps row's label widths, measured at draw and cached — the tab
+    /// strip's arrangement, so the hit path never needs a `TextEngine`.
+    /// Empty until the first draw, which lays every chip out icon-only.
+    app_label_w: Vec<(NavigatorMode, f32)>,
+    /// Whether the pointer is on the dimmed *Manage apps* square.
+    manage_hover: bool,
     /// The tasks mode's content. Composed rather than a second view, because
     /// the header, the mode row and the column's own fill are the same in all
     /// three modes — a sibling would have to be handed all of them.
@@ -3833,7 +3842,62 @@ impl ExploreView {
     /// the tab row have, owned by the shell's stack and visible in the
     /// inspector as an `ExploreSpacer`.
     fn rows_top(&self, area: Rect) -> f32 {
-        area.y + WORKSPACE_ROW_H + theme::NAV_PAD + HEADER_H + theme::NAV_PAD
+        self.heading_band(area).y + HEADER_H + theme::NAV_PAD
+    }
+
+    /// The apps row's band: under the header, the full pane width minus the
+    /// nav padding. Its height is the row's own answer (it wraps).
+    fn apps_band(&self, area: Rect) -> Rect {
+        Rect::new(
+            area.x + theme::NAV_PAD,
+            area.y + WORKSPACE_ROW_H + theme::NAV_PAD,
+            (area.w - theme::NAV_PAD * 2.0).max(0.0),
+            apps_row::SQUARE,
+        )
+    }
+
+    /// The apps row's items: every mode this build shows, in `ALL` order,
+    /// with its cached label width.
+    fn apps_items(&self) -> Vec<apps_row::Item> {
+        NavigatorMode::visible()
+            .into_iter()
+            .map(|mode| apps_row::Item {
+                mode,
+                label_w: self
+                    .app_label_w
+                    .iter()
+                    .find(|(m, _)| *m == mode)
+                    .map_or(0.0, |(_, w)| *w),
+            })
+            .collect()
+    }
+
+    /// The apps row, laid out. One function for drawing, hit-testing and the
+    /// accessibility tree. Zero-width chips in a collapsed column.
+    pub fn apps_layout(&self, area: Rect) -> apps_row::Layout {
+        let band = self.apps_band(area);
+        let band = if area.w <= 0.0 {
+            Rect::new(area.x, band.y, 0.0, band.h)
+        } else {
+            band
+        };
+        apps_row::solve(
+            band,
+            &self.apps_items(),
+            self.mode,
+            area.w >= apps_row::LABELS_FROM,
+        )
+    }
+
+    /// The *Manage apps* square at the row's end — dimmed and inert until
+    /// the apps manager lands (PLAN.final P11).
+    pub fn manage_button(&self, area: Rect) -> Rect {
+        self.apps_layout(area).manage
+    }
+
+    fn manage_at(&self, area: Rect, x: f32, y: f32) -> bool {
+        let r = self.manage_button(area);
+        r.w > 0.0 && r.contains(x, y)
     }
 
     /// The "Library" heading band, which is also where the fold buttons live.
@@ -3848,9 +3912,11 @@ impl ExploreView {
         if area.w <= 0.0 {
             return Rect::new(area.x, area.y, 0.0, 0.0);
         }
+        // Under the apps row, which is as tall as its lines.
+        let apps = self.apps_band(area);
         Rect::new(
             area.x,
-            area.y + WORKSPACE_ROW_H + theme::NAV_PAD,
+            apps.y + self.apps_layout(area).height + theme::NAV_PAD,
             area.w,
             HEADER_H,
         )
@@ -3864,11 +3930,9 @@ impl ExploreView {
     /// adding a third icon to a two-icon sum in three places is how a `…`
     /// starts overlapping a button.
     fn modes_right(&self, area: Rect) -> f32 {
-        let modes = self.navigator_mode_rects(area);
-        modes
-            .last()
-            .map(|(_, r)| r.x + r.w + 2.0)
-            .unwrap_or(area.x + theme::NAV_PAD)
+        // The modes left the heading band for the apps row above it; the
+        // heading's actions now start at the band's left pad.
+        area.x + theme::NAV_PAD
     }
 
     /// The library heading's compact actions button. It yields instead of
@@ -3905,59 +3969,21 @@ impl ExploreView {
         button.w > 0.0 && button.contains(x, y)
     }
 
-    /// The mode selectors, left to right. **One arithmetic for all four**, so
-    /// a fifth is a row in this array rather than a fourth `+ size + 2.0`.
+    /// The apps' chips, left to right, in `ALL` order — the apps row
+    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.2). The
+    /// rect is the whole chip, label included when it wears one. Kept under
+    /// its old name because the chords, the tooltip and the accessibility
+    /// tab list all read it.
     pub fn navigator_mode_rects(&self, area: Rect) -> Vec<(NavigatorMode, Rect)> {
-        let band = self.heading_band(area);
-        // **Sized from the modes this build shows** (decided 2026-10-10).
-        // The flags are latched per
-        // process, so within one build the set — and with it every icon's
-        // size and place — never changes, and Files is always second. A
-        // build that shows few modes gets full `HEADER_H` icons; they shrink
-        // only when more are shown than fit.
-        let visible = NavigatorMode::visible();
-        let count = visible.len().max(2) as f32;
-        // The two trailing lanes, search and `…`, each `HEADER_H` wide, plus
-        // the 2 px `modes_right` leaves after the last icon.
-        let lanes = 2. * HEADER_H + 2.;
-        // Gaps shrink first (2 px down to 1), then the icons, so that the
-        // shown icons and both lanes share the default column. Below the width
-        // where an icon would drop under `MIN_MODE_ICON`, the lanes give way
-        // instead (their buttons decline the room) and the icons take the
-        // whole band.
-        let gap = ((area.w - theme::NAV_PAD - count * HEADER_H - lanes) / (count - 1.))
-            .floor()
-            .clamp(1., 2.);
-        let with_lanes = ((area.w - theme::NAV_PAD - lanes - (count - 1.) * gap) / count).floor();
-        let size = if with_lanes >= MIN_MODE_ICON {
-            HEADER_H.min(with_lanes)
-        } else {
-            HEADER_H.min(((area.w - theme::NAV_PAD * 2. - (count - 1.) * gap) / count).max(0.))
-        };
-        // **One order**, the one the chords count in: `Alt+1` is the first
-        // icon because both read `NavigatorMode::ALL`. Only the modes this
-        // build shows get an icon ([`NavigatorMode::visible`]), packed left.
-        visible
+        self.apps_layout(area)
+            .chips
             .into_iter()
-            .enumerate()
-            .map(|(i, mode)| {
-                (
-                    mode,
-                    Rect::new(
-                        area.x + theme::NAV_PAD + i as f32 * (size + gap),
-                        band.y,
-                        size,
-                        band.h,
-                    ),
-                )
-            })
+            .map(|c| (c.mode, c.rect))
             .collect()
     }
 
     fn navigator_mode_at(&self, area: Rect, x: f32, y: f32) -> Option<NavigatorMode> {
-        self.navigator_mode_rects(area)
-            .into_iter()
-            .find_map(|(mode, rect)| rect.contains(x, y).then_some(mode))
+        apps_row::chip_at(&self.apps_layout(area), x, y)
     }
 
     /// The glyph the mode switcher draws for each mode. Its own function so
@@ -3979,39 +4005,126 @@ impl ExploreView {
         }
     }
 
-    fn draw_navigator_modes(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        area: Rect,
-    ) {
+    /// Measure every shown app's label once per font change, so the row's
+    /// geometry — and the hit test behind it — never waits on the engine.
+    fn ensure_app_label_widths(&mut self, engine: &mut TextEngine) {
+        let shown = NavigatorMode::visible();
+        if self.app_label_w.len() == shown.len()
+            && self
+                .app_label_w
+                .iter()
+                .zip(&shown)
+                .all(|((m, _), s)| m == s)
+        {
+            return;
+        }
+        self.app_label_w = shown
+            .into_iter()
+            .map(|mode| {
+                (
+                    mode,
+                    engine
+                        .simple_layout(mode.label(), theme::role::row())
+                        .width()
+                        .ceil(),
+                )
+            })
+            .collect();
+    }
+
+    /// The row's label widths are a measurement; a font or density change
+    /// makes it stale.
+    pub fn invalidate_app_labels(&mut self) {
+        self.app_label_w.clear();
+    }
+
+    /// The apps row: the active app's chip is a card (`panel_bg` with a
+    /// `panel_border` ring, the explore column's active card) and wears its
+    /// label; the rest are icons that tint on hover. The *Manage apps*
+    /// square ends the row, dimmed until the manager lands.
+    fn draw_apps_row(&self, scene: &mut Scene, root: Affine, engine: &mut TextEngine, area: Rect) {
         let p = theme::p();
-        for (mode, rect) in self.navigator_mode_rects(area) {
-            if mode == self.mode || self.mode_hover == Some(mode) {
+        let layout = self.apps_layout(area);
+        let band = self.apps_band(area);
+        let _section = koru_draw::inspect::scope(
+            "KoruAppsRow",
+            "container",
+            root,
+            scene::rect(band.x, band.y, band.w, layout.height),
+            |r| {
+                r.property("lines", layout.lines as f32, "wrapped lines");
+                r.property("square", apps_row::SQUARE, "chip side");
+            },
+        );
+        for chip in &layout.chips {
+            let r = chip.rect;
+            if r.w <= 0.0 {
+                continue;
+            }
+            let active = chip.mode == self.mode;
+            if active {
                 scene::fill(
                     scene,
                     root,
-                    if mode == self.mode {
-                        p.panel_bg
-                    } else {
-                        p.hover_tint
-                    },
-                    &scene::rrect(rect.x, rect.y + 2.0, rect.w, rect.h - 4.0, 5.0),
+                    p.panel_border,
+                    &scene::rrect(r.x - 0.5, r.y - 0.5, r.w + 1.0, r.h + 1.0, 6.5),
+                );
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_bg,
+                    &scene::rrect(r.x, r.y, r.w, r.h, 6.0),
+                );
+            } else if self.mode_hover == Some(chip.mode) {
+                scene::fill(
+                    scene,
+                    root,
+                    p.hover_tint,
+                    &scene::rrect(r.x, r.y, r.w, r.h, 6.0),
                 );
             }
-            let icon = Self::navigator_mode_icon(mode);
+            let colour = if active { p.text } else { p.text_dim };
+            let square = Rect::new(r.x, r.y, apps_row::SQUARE.min(r.w), r.h);
             draw_icon(
                 scene,
                 root,
                 engine,
-                icon,
-                rect,
-                if mode == self.mode {
-                    p.text
-                } else {
-                    p.text_dim
+                Self::navigator_mode_icon(chip.mode),
+                square,
+                colour,
+            );
+            if chip.labelled {
+                let label = Rect::new(
+                    square.x + square.w + apps_row::LABEL_GAP,
+                    r.y,
+                    (r.w - square.w - apps_row::LABEL_GAP - apps_row::LABEL_PAD_RIGHT).max(0.0),
+                    r.h,
+                );
+                draw_middle(
+                    scene,
+                    root,
+                    engine,
+                    chip.mode.label(),
+                    label,
+                    theme::role::row().with_weight(theme::FontWeight::SemiBold),
+                    colour,
+                );
+            }
+        }
+        let m = layout.manage;
+        if m.w > 0.0 {
+            koru_ui::icon_button::draw_with(
+                scene,
+                root,
+                engine,
+                m,
+                icons::PLUS,
+                koru_ui::icon_button::State {
+                    hovered: self.manage_hover,
+                    active: false,
+                    disabled: true,
                 },
+                koru_ui::icon_button::Metrics::COMPACT,
             );
         }
     }
@@ -5031,6 +5144,7 @@ impl ExploreView {
         } else {
             None
         };
+        let manage = popover.is_none() && self.manage_at(area, x, y);
         let on_footer = if popover.is_some() {
             None
         } else {
@@ -5109,6 +5223,7 @@ impl ExploreView {
             || actions != self.actions_hover
             || search != self.search_hover
             || mode != self.mode_hover
+            || manage != self.manage_hover
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
             || on_subscribe != self.subscribe_hover
@@ -5118,6 +5233,7 @@ impl ExploreView {
         self.actions_hover = actions;
         self.search_hover = search;
         self.mode_hover = mode;
+        self.manage_hover = manage;
         self.footer_hover = on_footer;
         self.cta_hover = on_cta;
         self.subscribe_hover = on_subscribe;
@@ -6239,10 +6355,14 @@ impl ExploreView {
             &scene::rect(area.x + area.w - 1.0, area.y, 1.0, area.h),
         );
 
+        // Label widths before any geometry below reads them: the apps row's
+        // height moves every band under it.
+        self.ensure_app_label_widths(engine);
         // The explore shell is one section structure for every tab: the
-        // profile/workspace row, the tab row, and the nodes band. Only the
-        // nodes band's contents change between tabs; the pinned footer rows
-        // answer to the shell, not to the nodes band they sit below.
+        // profile/workspace row, the apps row, the heading band, and the
+        // nodes band. Only the nodes band's contents change between tabs;
+        // the pinned footer rows answer to the shell, not to the nodes band
+        // they sit below.
         {
             let _section = koru_draw::inspect::scope(
                 "ExploreHeader",
@@ -6265,7 +6385,22 @@ impl ExploreView {
                 scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, theme::NAV_PAD),
                 |r| {
                     r.property("height", theme::NAV_PAD, "shell section gap");
-                    r.property("separates", "ExploreHeader / ExploreTabs", "shell stack");
+                    r.property("separates", "ExploreHeader / KoruAppsRow", "shell stack");
+                },
+            );
+        }
+        if area.w > 0.0 {
+            self.draw_apps_row(scene, root, engine, area);
+            let apps = self.apps_band(area);
+            let bottom = apps.y + self.apps_layout(area).height;
+            let _gap = koru_draw::inspect::scope(
+                "ExploreSpacer",
+                "part",
+                root,
+                scene::rect(area.x, bottom, area.w, theme::NAV_PAD),
+                |r| {
+                    r.property("height", theme::NAV_PAD, "shell section gap");
+                    r.property("separates", "KoruAppsRow / ExploreTabs", "shell stack");
                 },
             );
         }
@@ -6278,7 +6413,6 @@ impl ExploreView {
                 scene::rect(band.x, band.y, band.w, band.h),
                 |_| {},
             );
-            self.draw_navigator_modes(scene, root, engine, area);
             actions::draw_search_button(
                 scene,
                 root,
@@ -7690,9 +7824,6 @@ fn next_selectable(rows: &[PopoverRow], from: Option<usize>, forward: bool) -> O
 
 /// Room above the first row, for the column's own heading.
 const HEADER_H: f32 = 24.0;
-/// The smallest a navigator mode icon shrinks to before the heading's search
-/// and `…` lanes give way to it (`ExploreView::navigator_mode_rects`).
-const MIN_MODE_ICON: f32 = 20.0;
 
 /// The workspace band at the top of the pane. `CAPTION_H` tall so the avatar and
 /// the workspace name sit on the same optical line as the logo and the tabs

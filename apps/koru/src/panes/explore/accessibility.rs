@@ -123,19 +123,10 @@ impl Context {
 }
 
 /// The name of the projection now showing, which is also the tree's own name.
+/// The mode's name in `lang`: the same word the apps row draws, so a screen
+/// reader and the chip cannot disagree.
 fn mode_label(mode: NavigatorMode, lang: Lang) -> &'static str {
-    match mode {
-        // Reused rather than respelled: the row was in the table with nothing
-        // reading it.
-        NavigatorMode::Documents => t(lang, Key::DocumentsHeading),
-        NavigatorMode::Files => t(lang, Key::A11yFilesHeading),
-        NavigatorMode::Tasks => t(lang, Key::A11yTasksHeading),
-        NavigatorMode::Agents => t(lang, Key::A11yAgentsHeading),
-        NavigatorMode::Artifacts => t(lang, Key::ArtifactsTitle),
-        NavigatorMode::Chats => t(lang, Key::ChatsTitle),
-        NavigatorMode::Canvases => t(lang, Key::CanvasesTitle),
-        NavigatorMode::Socials => koru_i18n::socials::t(lang, koru_i18n::socials::Key::Title),
-    }
+    mode.label_in(lang)
 }
 
 impl ExploreView {

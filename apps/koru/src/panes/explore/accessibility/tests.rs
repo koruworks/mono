@@ -260,7 +260,9 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
 #[test]
 fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
     let (view, _) = pane(&["Brief"]);
-    for width in [180., 232., 280.] {
+    // The modes left the heading band for the apps row, so at every width
+    // the column can take both heading controls have their room.
+    for width in [256., 300., 400.] {
         let mut context = cx(Lang::En);
         context.area.w = width;
         let heading = view.heading_semantics(&context);
@@ -269,7 +271,7 @@ fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
                 .iter()
                 .all(|node| node.bounds.is_some_and(|r| r.w > 0. && r.h > 0.))
         );
-        assert_eq!(heading.len(), if width >= 232. { 2 } else { 0 });
+        assert_eq!(heading.len(), 2);
     }
     // Sized from the shown modes (QUESTIONS #5): with only Documents and
     // Files, the narrowest column still has room for both lanes.
