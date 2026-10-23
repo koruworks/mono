@@ -5995,6 +5995,99 @@ fn ctrl_alt_w_leaves_the_switcher_open() {
     assert!(!v.explore.popover_open());
 }
 
+/// **The chord lands the keyboard on the workspace you are in** (the CTO's
+/// note): ↵ straight away is a no-op switch, and ↑↓ walk from there, rather
+/// than from the top of a list that may have the current one below the
+/// fold.
+#[test]
+fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, profiles) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    // Two workspaces; the second is the one open.
+    let list = vec![
+        koru_core::WorkspaceEntry::new(WorkspaceId::new(), "First", 0),
+        koru_core::WorkspaceEntry::new(WorkspaceId::new(), "Second", 1),
+    ];
+    v.set_pane_context(
+        profiles.clone(),
+        profiles[0].id,
+        list.clone(),
+        Some(list[1].id),
+    );
+    // The column takes the list on the next frame; the chord reads the
+    // column, so hand it over the way a frame would.
+    v.refresh_explore(&mut w.ws, true);
+
+    assert!(v.key(&mut w.ws, &ch("w"), Some("w"), PRIMARY_ALT));
+    assert!(v.explore.popover_open());
+    let rows = v
+        .explore
+        .popover_rects(v.regions.sidebar, v.viewport)
+        .into_iter()
+        .map(|(row, _)| row)
+        .collect::<Vec<_>>();
+    let second = rows
+        .iter()
+        .position(|row| *row == PopoverRow::Workspace(1))
+        .unwrap_or_else(|| panic!("the second workspace is listed: {rows:?}"));
+    assert_eq!(
+        v.explore.popover_hover(),
+        Some(second),
+        "the keyboard starts on the open workspace"
+    );
+}
+
+/// **Import content… opens its format menu beside the page, and the page
+/// stays** (the CTO's note): the menu hangs level with the row off the
+/// panel's right edge; choosing a format is what shuts the page.
+#[test]
+fn import_content_opens_its_menu_beside_the_page_and_leaves_it_up() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, _) = with_summary_open();
+    let sb = v.regions.sidebar;
+    let vp = v.viewport;
+    let centre = |v: &MainView, want: PopoverRow| {
+        v.explore
+            .popover_rects(sb, vp)
+            .into_iter()
+            .find(|(row, _)| *row == want)
+            .map(|(_, r)| r)
+            .expect("the row is there")
+    };
+    let (x, y) = centre(&v, PopoverRow::PersonCard).centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    let row = centre(&v, PopoverRow::ImportContent);
+    let (x, y) = row.centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(v.explore.popover_open(), "the page stays");
+    let menu = v.menu.as_ref().expect("the format menu opened");
+    assert_eq!(menu.subject, MenuSubject::NewTab);
+    let panel = v
+        .explore
+        .popover_panel(v.explore_popover_area(), vp)
+        .expect("the page's panel");
+    let m = menu.panel(vp);
+    assert!(
+        m.x >= panel.x + panel.w - 0.5,
+        "beside the panel: {m:?} vs {panel:?}"
+    );
+    assert!(
+        (m.y - row.y).abs() < 0.5,
+        "level with the row: {m:?} vs {row:?}"
+    );
+    // A format is the end of it.
+    let format = koru_workspace_host::formats::import_menu_formats()[0].id;
+    v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::ImportFormat(format));
+    assert!(
+        !v.explore.popover_open(),
+        "choosing a format shuts the page"
+    );
+}
+
 /// And it must not be confused with `Ctrl+W`, which closes a tab.
 #[test]
 fn ctrl_alt_w_does_not_close_a_tab() {
@@ -6002,45 +6095,6 @@ fn ctrl_alt_w_does_not_close_a_tab() {
     let before = v.tabs().len();
     v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
     assert_eq!(v.tabs().len(), before, "Alt is what tells the two apart");
-}
-
-/// *Import content…* is a switcher row now: it shuts the switcher and opens
-/// the import formats as a menu, whose rows import through the picker.
-#[test]
-fn import_content_closes_the_switcher_and_offers_the_formats() {
-    let (mut v, mut workspace) = on_document();
-    v.key(&mut workspace.ws, &ch("w"), Some("w"), PRIMARY_ALT);
-    let row = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| *row == crate::panes::explore::PopoverRow::ImportContent)
-        .map(|(_, rect)| rect)
-        .expect("the Import content row");
-    let (x, y) = row.centre();
-    v.mouse_down(&mut workspace.ws, x, y, false);
-    assert!(
-        !v.explore.popover_open(),
-        "the switcher closes after choosing"
-    );
-
-    let markdown = v
-        .menu
-        .as_ref()
-        .map(|menu| {
-            assert_eq!(menu.items(), context_menu::import_items().as_slice());
-            menu.item_rect(v.viewport, 0)
-        })
-        .expect("the import format menu");
-    let (x, y) = markdown.centre();
-    v.mouse_down(&mut workspace.ws, x, y, false);
-    assert_eq!(
-        v.take_pane_request(),
-        Some(PaneRequest::ImportContent {
-            format: "markdown",
-            source: koru_workspace_host::ImportSourceSelection::Picker,
-        })
-    );
 }
 
 #[test]

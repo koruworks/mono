@@ -3138,6 +3138,12 @@ impl ExploreView {
             return false;
         }
         self.toggle_popover(kind);
+        // A chord opens for the keyboard, so the keyboard starts somewhere:
+        // on the workspace you are in, the row ↵ would otherwise have to be
+        // walked to (the CTO's note, QUESTIONS.md E28).
+        if kind == PopoverKind::Workspaces {
+            self.hover_current_workspace();
+        }
         true
     }
 
@@ -3740,12 +3746,16 @@ impl ExploreView {
         // The cards slide to the account's page the way a Profile row drills:
         // the press that chooses one must not also dismiss the panel it
         // slides, or the slide runs on a popover that is already fading.
+        // Import content opens its format menu *beside* the page, which
+        // stays (the CTO's note, QUESTIONS.md E29); choosing a format is
+        // what shuts it.
         matches!(
             row,
             PopoverRow::Profile(_)
                 | PopoverRow::Back
                 | PopoverRow::PersonCard
                 | PopoverRow::WorkspaceCard
+                | PopoverRow::ImportContent
         )
     }
 
@@ -3873,7 +3883,9 @@ impl ExploreView {
                 ) =>
             {
                 let outcome = self.choose(hovered.expect("matched above"));
-                self.hover_first_workspace();
+                if !self.hover_current_workspace() {
+                    self.hover_first_workspace();
+                }
                 Some(outcome)
             }
             Key::Named(NamedKey::Enter) if hovered == Some(PopoverRow::Back) => {
@@ -3899,6 +3911,26 @@ impl ExploreView {
         if let Some(p) = self.popover.as_mut() {
             p.hover = first;
         }
+    }
+
+    /// The keyboard on the workspace you are in, when the page lists it —
+    /// the open Profile's page does; another Profile's never. Answers
+    /// whether it did; otherwise the hover is left as it was.
+    fn hover_current_workspace(&mut self) -> bool {
+        if self.browsing_other().is_some() {
+            return false;
+        }
+        let list = self.browsed_workspaces();
+        let Some(index) = self.popover_rows().iter().position(|row| {
+            matches!(row, PopoverRow::Workspace(i)
+                if list.get(*i).is_some_and(|w| Some(w.id) == self.current))
+        }) else {
+            return false;
+        };
+        if let Some(p) = self.popover.as_mut() {
+            p.hover = Some(index);
+        }
+        true
     }
 
     /// Where the first library row sits.

@@ -4341,10 +4341,15 @@ impl MainView {
                 MenuAction::OpenRecentChat(id) => self.open_ai_chat_tab_for(id),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
                 MenuAction::ClearRecents => self.clear_recents(),
-                MenuAction::ImportFormat(format) => self.ask_pane(PaneRequest::ImportContent {
-                    format,
-                    source: koru_workspace_host::ImportSourceSelection::Picker,
-                }),
+                MenuAction::ImportFormat(format) => {
+                    // The who/where page stayed under its format menu; a
+                    // chosen format is the end of that interaction.
+                    self.explore.close_popover();
+                    self.ask_pane(PaneRequest::ImportContent {
+                        format,
+                        source: koru_workspace_host::ImportSourceSelection::Picker,
+                    })
+                }
                 MenuAction::ImportAs => false,
                 _ => false,
             },
@@ -6745,11 +6750,26 @@ impl MainView {
     /// entry. It shares the NewTab subject because those are the same import
     /// actions; only the parent menu's New document row is omitted here.
     fn open_import_menu(&mut self) -> bool {
-        let mut menu = ContextMenu::new(
+        // From the who/where page's *Import content…* row the menu hangs
+        // beside the panel, level with the row, and the page stays under it
+        // (QUESTIONS.md E29); from anywhere else it opens at the pointer.
+        let beside = self.explore.popover_open().then(|| {
+            let area = self.explore_popover_area();
+            let panel = self.explore.popover_panel(area, self.viewport)?;
+            let (_, row) = self
+                .explore
+                .popover_rects(area, self.viewport)
+                .into_iter()
+                .find(|(row, _)| *row == crate::panes::explore::PopoverRow::ImportContent)?;
+            Some((panel.x + panel.w + koru_app_shell::popover::GAP, row.y))
+        });
+        let at = beside.flatten().unwrap_or(self.pointer);
+        let mut menu = ContextMenu::aligned(
             &mut self.engine,
             MenuSubject::NewTab,
-            self.pointer,
+            at,
             context_menu::import_items(),
+            MenuAnchor::Cursor,
         );
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);

@@ -739,8 +739,14 @@ impl MainView {
     /// asked before `nav_key` on every press.
     pub(super) fn open_workspaces_popover(&mut self) -> bool {
         super::chrome_debug::chrome_debug!("who/where popover opened on workspaces");
-        self.explore
-            .open_popover(crate::panes::explore::PopoverKind::Workspaces)
+        let opened = self
+            .explore
+            .open_popover(crate::panes::explore::PopoverKind::Workspaces);
+        // The keyboard lands on the current workspace; a long list may have
+        // it below the fold.
+        let area = self.explore_popover_area();
+        self.explore.reveal_popover_hover(area, self.viewport);
+        opened
     }
 
     /// Show the profiles switcher without changing the Explore pane.
