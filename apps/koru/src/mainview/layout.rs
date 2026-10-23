@@ -651,6 +651,11 @@ impl MainView {
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
         let open = self.sidebar.toggle(Instant::now());
+        super::chrome_debug::chrome_debug!(
+            "pane {} (width {})",
+            if open { "opening" } else { "closing" },
+            self.sidebar.full()
+        );
         // Closing the pane closes what was hanging off it: a popover left
         // floating over the content with nothing to anchor it to is a panel
         // from nowhere.
@@ -675,12 +680,14 @@ impl MainView {
     /// keeps all of its width. The popover has the arrows, and `popover_key` is
     /// asked before `nav_key` on every press.
     pub(super) fn open_workspaces_popover(&mut self) -> bool {
+        super::chrome_debug::chrome_debug!("who/where popover opened on workspaces");
         self.explore
             .open_popover(crate::panes::explore::PopoverKind::Workspaces)
     }
 
     /// Show the profiles switcher without changing the Explore pane.
     pub(super) fn open_profiles_popover(&mut self) -> bool {
+        super::chrome_debug::chrome_debug!("who/where popover opened on profiles");
         self.explore
             .open_popover(crate::panes::explore::PopoverKind::Profiles)
     }

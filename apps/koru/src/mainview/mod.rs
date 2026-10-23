@@ -63,6 +63,7 @@ pub(crate) mod accessibility;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
+mod chrome_debug;
 mod chrome_focus;
 pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
@@ -382,11 +383,20 @@ struct MoveUndo {
 
 /// Whether the caption offers the context column's **toggle**.
 ///
-/// Context belongs to the active document, so its control lives with that
-/// document's title block (and on `Ctrl+J`), not beside the machine-wide AI
-/// launcher in the window caption. False deliberately produces zero-width
-/// geometry, letting the tabs reclaim the slot without another layout path.
-const CONTEXT_TOGGLE: bool = false;
+/// True again: the workspace-foundation canvas draws *Show context* at the
+/// caption's right end on every frame, beside the overflow menu
+/// (QUESTIONS.md Q4). The document title row keeps its own context and AI
+/// buttons, and the caption's toggle is drawn dimmed, never hidden, while
+/// the column has nothing to show. False would produce zero-width geometry
+/// and give the slot back to the tabs, which is still one line here, not
+/// another layout path.
+const CONTEXT_TOGGLE: bool = true;
+
+/// Whether the context column has anything to show this build: at least
+/// one of its sections is visible. The caption's toggle dims otherwise.
+fn context_has_sections() -> bool {
+    !crate::panes::context::Section::visible().is_empty()
+}
 
 const SEARCH_MODAL_W: f32 = 620.0;
 const SEARCH_MODAL_H: f32 = 400.0;
@@ -4650,6 +4660,7 @@ impl MainView {
         if self.support_only || button.w <= 0.0 {
             return false;
         }
+        chrome_debug::chrome_debug!("help popover opened at {:?}", button);
         let foot = self.help_foot();
         let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
         let mut m = ContextMenu::aligned(
@@ -7169,6 +7180,9 @@ impl MainView {
                 self.toggle_tip_muted = true;
                 Outcome::ToggleSidebar
             }
+            // A dimmed toggle (the column has nothing to show) swallows the
+            // press rather than opening an empty column.
+            Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
             // Nothing offers the lane's New yet (`leading()`); when the apps
             // manager lands it runs the active app's primary create.
@@ -14871,6 +14885,7 @@ impl MainView {
     /// `Alt+1..8`: show one of the explore column's views, opening the column
     /// when it is closed — the view was asked for by name.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
+        chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
             self.toggle_sidebar();
         }

@@ -30,6 +30,7 @@ the runtime switches one by one.
 | `KORU_CLIPBOARD_DEBUG` | on/off | Clipboard format names, payload sizes and line/block counts — never contents. | koru.exe |
 | `KORU_SPELL_DEBUG` | on/off | Spell-check requests, timings, language tags and issue counts — never a word, sentence, suggestion or dictionary entry. | koru.exe |
 | `KORU_UNDO_DEBUG` | on/off | The undo and paste-history chain; also on whenever KORU_CLIPBOARD_DEBUG is. | koru.exe |
+| `KORU_CHROME_DEBUG` | on/off | One line per thing the sidebar's chrome does: a pane toggle, an app switch, the who/where or help popover opening. Control names and app tokens, never a document's text. | koru.exe |
 | `KORU_CANVAS_DEBUG` | on/off | One line per request a canvas tab applies to its document (add, move, width, arrow, delete, text, agent, run, stop, undo) and whether it was refused — object ids, kinds and refusal tokens, never a card's text or a canvas's name. | koru.exe |
 | `KORU_NAV_DEBUG` | on/off | Tab select, Store document swap, catch-up and spot restore — ids, counts and stages, never a title or row text. | koru.exe |
 | `KORU_ACCESSIBILITY_DEBUG` | on/off | The native accessibility bridge per window: whether a provider was installed, when a screen reader attached or detached, semantic trees built, and actions routed or refused with their stable locator. Window and view slot numbers, occurrence locators, roles, counts and stages — never an accessible name, a label, a document title or any text a person wrote. | koru.exe |

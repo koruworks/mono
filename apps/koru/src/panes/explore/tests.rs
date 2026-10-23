@@ -5992,7 +5992,13 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         v.draw(&mut scene, root, &mut engine, a, None);
         let records = capture.finish().records;
 
-        for name in ["KoruLane", "KoruAppsRow", "ExploreTabs", "ExploreNodes"] {
+        for name in [
+            "KoruLane",
+            "KoruAppsRow",
+            "ExploreTabs",
+            "ExploreNodes",
+            "KoruFloor",
+        ] {
             assert_eq!(
                 records.iter().filter(|r| r.name == name).count(),
                 1,

@@ -806,7 +806,9 @@ impl MainView {
                 koru_ui::icon_button::State {
                     hovered: hovered(Hit::ToggleContext),
                     active: false,
-                    disabled: false,
+                    // Dimmed, never hidden, while the column has nothing to
+                    // show (DESIGN.md: a disabled control explains itself).
+                    disabled: !super::context_has_sections(),
                 },
             );
         }

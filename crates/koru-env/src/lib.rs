@@ -396,6 +396,11 @@ pub const VARS: &[EnvVar] = &[
         "koru.exe",
     ),
     switch_var(
+        name::KORU_CHROME_DEBUG,
+        "One line per thing the sidebar's chrome does: a pane toggle, an app switch, the who/where or help popover opening. Control names and app tokens, never a document's text.",
+        "koru.exe",
+    ),
+    switch_var(
         name::KORU_CANVAS_DEBUG,
         "One line per request a canvas tab applies to its document (add, move, width, arrow, delete, text, agent, run, stop, undo) and whether it was refused — object ids, kinds and refusal tokens, never a card's text or a canvas's name.",
         "koru.exe",
@@ -1011,6 +1016,7 @@ pub mod name {
     pub const KORU_UNDO_DEBUG: &str = "KORU_UNDO_DEBUG";
     pub const KORU_NAV_DEBUG: &str = "KORU_NAV_DEBUG";
     pub const KORU_CANVAS_DEBUG: &str = "KORU_CANVAS_DEBUG";
+    pub const KORU_CHROME_DEBUG: &str = "KORU_CHROME_DEBUG";
     pub const KORU_ACCESSIBILITY_DEBUG: &str = "KORU_ACCESSIBILITY_DEBUG";
     pub const KORU_ACCESSIBILITY_DUMP: &str = "KORU_ACCESSIBILITY_DUMP";
     pub const KORU_ACCESSIBILITY_DUMP_CONTENT: &str = "KORU_ACCESSIBILITY_DUMP_CONTENT";
