@@ -115,7 +115,15 @@ pub fn leading_w(band: Rect, mark: Mark) -> f32 {
 /// the pane is put away and a pane that cannot be shut is a trap.
 pub fn solve(lane: Rect, leading: Leading) -> LaneRects {
     let s = square(lane);
-    let lead_w = leading_w(lane, leading.mark).min(lane.w);
+    // **The mark sits over the rail.** In the lane its slot is the rail's
+    // width, so the mark is centred on the column of app squares under it
+    // (the CTO's note on artboard 11); in the caption's chain, which has no
+    // rail under it, the slot stays one square (`caption::leading_chain`).
+    let lead_w = match leading.mark {
+        Mark::Mark => theme::RAIL_W.max(s),
+        _ => leading_w(lane, leading.mark),
+    }
+    .min(lane.w);
     let leading_rect = Rect::new(lane.x, lane.y, lead_w, lane.h);
     let right = lane.x + lane.w;
     let floor = leading_rect.x + leading_rect.w;

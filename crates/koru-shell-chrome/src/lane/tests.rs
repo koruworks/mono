@@ -45,7 +45,11 @@ fn the_squares_pack_against_the_right_edge_in_order() {
     assert_eq!(r.new.x + r.new.w, r.toggle.x);
     assert_eq!(r.search.x + r.search.w, r.new.x);
     assert_eq!(r.leading.x, l.x);
-    assert_eq!(r.leading.w, s, "the mark takes one square");
+    assert_eq!(
+        r.leading.w,
+        theme::RAIL_W.max(s),
+        "the mark's slot is the rail's width, so the mark centres over it"
+    );
 }
 
 /// A slot the window does not offer is zero-width at its place, so the
@@ -97,16 +101,17 @@ fn the_leading_slot_is_the_marks_width() {
 #[test]
 fn a_narrow_lane_gives_way_from_the_left_and_keeps_the_toggle() {
     let s = square(lane());
-    // Room for the mark, the toggle and one whole square: new stays, search
-    // declines.
-    let narrow = Rect::new(0.0, 0.0, s * 3.0, theme::CAPTION_H);
+    // The mark's slot is the rail's width. Room for it, the toggle and one
+    // whole square: new stays, search declines.
+    let mark = theme::RAIL_W.max(s);
+    let narrow = Rect::new(0.0, 0.0, mark + s * 2.0, theme::CAPTION_H);
     let r = solve(narrow, all());
     assert_eq!(r.toggle.w, s);
     assert_eq!(r.new.w, s);
     assert_eq!(r.search.w, 0.0, "search gave way first");
     assert_eq!(r.new.x, r.leading.x + r.leading.w);
     // Half a square short of that: a square is whole or absent, never clipped.
-    let narrower = Rect::new(0.0, 0.0, s * 2.5, theme::CAPTION_H);
+    let narrower = Rect::new(0.0, 0.0, mark + s * 1.5, theme::CAPTION_H);
     let r = solve(narrower, all());
     assert_eq!(r.toggle.w, s);
     assert_eq!(r.new.w, 0.0, "new declines rather than being clipped");
