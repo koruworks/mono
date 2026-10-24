@@ -2461,6 +2461,10 @@ pub const SIDEBAR_W: f32 = 256.0;
 /// would start eating into `CONTENT_MIN_W` on an ordinary laptop screen.
 pub const SIDEBAR_MIN_W: f32 = 256.0;
 pub const SIDEBAR_MAX_W: f32 = 600.0;
+/// The rail at the sidebar's left edge — the apps, and at its foot Settings,
+/// Help and the profile (the CTO's artboard 11). The pane and its widths
+/// above are what sits after it; the sidebar as a whole is the two together.
+pub const RAIL_W: f32 = 56.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.

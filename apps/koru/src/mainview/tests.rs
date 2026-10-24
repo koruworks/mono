@@ -3369,7 +3369,7 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     v.toggle_sidebar();
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (_, row) = v
         .explore
         .row_rects(sb)
@@ -3412,7 +3412,7 @@ fn dragging_a_document_into_a_pane_opens_it_there() {
     v.refresh_explore(&workspace.ws, true);
     assert!(
         v.explore
-            .row_rects(v.regions.sidebar)
+            .row_rects(v.explore_area())
             .iter()
             .any(|(i, _)| v.explore.row_node(*i) == Some(doc)),
         "the node stayed in the tree"
@@ -3483,7 +3483,7 @@ fn sidebar_with_a_manifest_document() -> (MainView, Workspace, Rect, koru_core::
     let node = koru_core::NodeId::from_uuid(document.as_uuid());
     let (_, row) = v
         .explore
-        .row_rects(v.regions.sidebar)
+        .row_rects(v.explore_area())
         .into_iter()
         .find(|(i, _)| v.explore.row_node(*i) == Some(node))
         .expect("Brief has a row");
@@ -3678,7 +3678,7 @@ fn dragging_a_document_over_a_pane_hides_the_tree_ghost() {
         "over a pane the ghost is hidden"
     );
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     v.mouse_move(sb.x + sb.w * 0.5, row.y + row.h * 0.5);
     assert!(
         !v.explore.carried_hidden(),
@@ -3871,7 +3871,7 @@ fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) 
         Some(list[0].id),
     );
     // The floor chip opens the switcher; its Profiles page is one page away.
-    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
     let (x, y) = chip.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the chip opens the switcher");
@@ -3894,7 +3894,7 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
 #[test]
 fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
     let (mut v, _w, _) = with_profiles_open();
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let vp = v.viewport;
     let (row, r) = v
         .explore
@@ -3932,7 +3932,7 @@ fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
 #[test]
 fn a_press_on_the_overhang_reaches_the_profile_row() {
     let (mut v, mut w, profiles) = with_profiles_open();
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let vp = v.viewport;
     let (_, r) = v
         .explore
@@ -3967,13 +3967,23 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
 fn your_card_slides_to_the_profiles_page_and_the_chip_still_closes_and_reopens() {
     use crate::panes::explore::PopoverRow;
     let (mut v, mut w, _) = with_summary_open();
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let vp = v.viewport;
     let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
     assert_eq!(
         first(&v),
+        Some(PopoverRow::WorkspacesHeading),
+        "the chip's page lists the workspaces only"
+    );
+    // The rail's profile square: the page with your card.
+    let rail = v.rail_area();
+    let (sx, sy) = v.explore.apps_rail_rects(rail).profile.centre();
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(v.explore.popover_open(), "the square opens the page");
+    assert_eq!(
+        first(&v),
         Some(PopoverRow::PersonCard),
-        "the main page leads with you"
+        "your card leads it"
     );
     let (x, y) = v
         .explore
@@ -3984,15 +3994,15 @@ fn your_card_slides_to_the_profiles_page_and_the_chip_still_closes_and_reopens()
     assert!(v.explore.popover_open(), "the card keeps the switcher open");
     assert_eq!(first(&v), Some(PopoverRow::Back), "on the Profiles page");
 
+    v.mouse_down(&mut w.ws, sx, sy, false);
+    assert!(!v.explore.popover_open(), "the square shuts it from there");
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     let chip = crate::panes::sidebar::floor::solve(sb).chip;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
-    assert!(!v.explore.popover_open(), "the chip shuts it from there");
-    v.explore
-        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    v.mouse_down(&mut w.ws, cx, cy, false);
-    assert!(v.explore.popover_open(), "and opens it again");
-    assert_eq!(first(&v), Some(PopoverRow::PersonCard), "on the main page");
+    assert!(v.explore.popover_open(), "and the chip opens its page");
+    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
@@ -4013,7 +4023,7 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         v.show_navigator(mode);
         // Read after the switch: a mode that opens a tab can relay out the
         // pane, and the floor moves with it.
-        let floor = crate::panes::sidebar::floor::solve(v.regions.sidebar);
+        let floor = crate::panes::sidebar::floor::solve(v.explore_area());
         let (cx, cy) = floor.chip.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
@@ -5297,7 +5307,7 @@ fn f2_over_a_file_row_renames_that_file() {
     v.explore.show_files();
     v.refresh_explore(&workspace.ws, true);
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (_, r) = v
         .explore
         .row_rects(sb)
@@ -5333,7 +5343,7 @@ fn f2_over_a_tree_row_renames_that_document() {
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
 
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let (i, r) = v
         .explore
         .row_rects(sb)
@@ -5899,7 +5909,7 @@ fn a_prompt_takes_enter_back_from_the_tree() {
 
     // Hand the tree the keyboard back *while the prompt is up*, which is the
     // state the guard is for.
-    v.explore.focus_tree(v.regions.sidebar);
+    v.explore.focus_tree(v.explore_area());
     v.key(&mut workspace.ws, &ch("Brief"), Some("Brief"), NONE);
     v.key(
         &mut workspace.ws,
@@ -6020,7 +6030,7 @@ fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
     assert!(v.explore.popover_open());
     let rows = v
         .explore
-        .popover_rects(v.regions.sidebar, v.viewport)
+        .popover_rects(v.explore_area(), v.viewport)
         .into_iter()
         .map(|(row, _)| row)
         .collect::<Vec<_>>();
@@ -6088,7 +6098,7 @@ fn the_workspaces_menu_hangs_beside_the_page_and_leaves_it_up() {
     v.submenu = None;
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
@@ -6127,7 +6137,7 @@ fn the_sync_icon_opens_the_sync_settings_tab_once() {
 
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     let (x, y) = v
@@ -7878,7 +7888,7 @@ fn opening_a_search_result_unfolds_the_tree_to_its_document() {
     v.explore
         .set_collapsed(vec![NodeId::from_uuid(parent.as_uuid())]);
     v.refresh_explore(&workspace.ws, true);
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     assert_eq!(
         v.explore.row_rects(area).len(),
         1,
@@ -8089,7 +8099,7 @@ fn opening_a_binned_result_leaves_the_tree_folded() {
         None,
     ));
     v.refresh_explore(&workspace.ws, true);
-    assert_eq!(v.explore.row_rects(v.regions.sidebar).len(), 1);
+    assert_eq!(v.explore.row_rects(v.explore_area()).len(), 1);
 }
 
 #[test]
@@ -10000,7 +10010,7 @@ fn revealing_a_task_due_today_opens_today() {
 
 /// Where the rail's rows are, given a container with its sidebar open.
 fn rail_row(v: &MainView, want: crate::panes::explore::rail::RailRow) -> koru_draw::geometry::Rect {
-    let sb = v.regions.sidebar;
+    let sb = v.explore_area();
     let top = v.explore.rail_top(sb);
     v.explore
         .rail()
@@ -10027,7 +10037,7 @@ fn mode_icon(
     want: crate::panes::explore::NavigatorMode,
 ) -> koru_draw::geometry::Rect {
     v.explore
-        .navigator_mode_rects(v.regions.sidebar)
+        .navigator_mode_rects(v.rail_area())
         .into_iter()
         .find(|(mode, _)| *mode == want)
         .map(|(_, r)| r)
@@ -10132,7 +10142,7 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
 fn a_list_is_made_inline_and_handed_to_the_shell() {
     let (mut v, mut w) = on_tasks();
     let plus = {
-        let sb = v.regions.sidebar;
+        let sb = v.explore_area();
         let heading = rail_row(&v, crate::panes::explore::rail::RailRow::ListsHeading);
         let _ = sb;
         v.explore

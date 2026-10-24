@@ -37,7 +37,11 @@ const CHIP_GAP: f32 = 6.0;
 /// the last one — Canvases, the seventh, was the one that stopped fitting.
 /// Socials made eight; `ExploreView::navigator_mode_rects` now narrows the gaps
 /// and then the icons to fit, so the floor did not have to move again.
-pub(crate) use koru_draw::theme::{SIDEBAR_MAX_W, SIDEBAR_MIN_W};
+/// The sidebar's drag limits: the pane's (`koru_draw::theme`) plus the rail
+/// that sits before it. **One owner** still — the theme's are the pane's,
+/// these the column's, and the clamp is applied here alone.
+pub(crate) const SIDEBAR_MIN_W: f32 = koru_draw::theme::SIDEBAR_MIN_W + koru_draw::theme::RAIL_W;
+pub(crate) const SIDEBAR_MAX_W: f32 = koru_draw::theme::SIDEBAR_MAX_W + koru_draw::theme::RAIL_W;
 pub(super) const AI_MIN_W: f32 = 400.0;
 pub(super) const AI_MAX_W: f32 = 900.0;
 
@@ -337,10 +341,40 @@ impl MainView {
     /// pane itself there — only the popover uses this rectangle.
     pub(super) fn explore_popover_area(&self) -> Rect {
         if self.regions.sidebar.w > 0.0 {
-            self.regions.sidebar
+            self.explore_area()
         } else {
-            Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1)
+            Self::pane_of(Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1))
         }
+    }
+
+    /// The sidebar column is the rail and the pane (the CTO's artboard 11):
+    /// the rail `RAIL_W` wide at the left under the lane, the pane after it.
+    /// `regions.sidebar` and the lane stay the whole column; the explore
+    /// view is handed the pane, and the rail its own rect.
+    pub(super) fn pane_of(column: Rect) -> Rect {
+        let rail = koru_draw::theme::RAIL_W.min(column.w.max(0.0));
+        Rect::new(
+            column.x + rail,
+            column.y,
+            (column.w - rail).max(0.0),
+            column.h,
+        )
+    }
+
+    pub(super) fn rail_of(column: Rect) -> Rect {
+        let lane = koru_draw::theme::CAPTION_H.min(column.h);
+        let rail = koru_draw::theme::RAIL_W.min(column.w.max(0.0));
+        Rect::new(column.x, column.y + lane, rail, (column.h - lane).max(0.0))
+    }
+
+    /// The settled pane — what the explore view is hit-tested against.
+    pub(super) fn explore_area(&self) -> Rect {
+        Self::pane_of(self.regions.sidebar)
+    }
+
+    /// The settled rail.
+    pub(super) fn rail_area(&self) -> Rect {
+        Self::rail_of(self.regions.sidebar)
     }
 
     /// Where the caption is *drawn*, which is not quite where it lives while the
@@ -492,7 +526,7 @@ impl MainView {
             ) {
                 let revealed = self.reveal_tab_in_explore(self.tabs().active());
                 if revealed {
-                    self.explore.focus_tree(self.regions.sidebar);
+                    self.explore.focus_tree(self.explore_area());
                 }
                 return revealed;
             }
@@ -510,7 +544,7 @@ impl MainView {
         }
         if self.sidebar.is_open()
             && !self.explore.has_focus()
-            && self.explore.focus_tree(self.regions.sidebar)
+            && self.explore.focus_tree(self.explore_area())
         {
             return true;
         }
@@ -610,13 +644,13 @@ impl MainView {
         self.explore_stale = true;
         let landed = match place {
             ColumnPlace::Result(version) => {
-                self.explore.reveal_artifact(version, self.regions.sidebar)
+                self.explore.reveal_artifact(version, self.explore_area())
             }
             // A chat the list has not answered with yet is remembered, and
             // the keyboard lands on it when it arrives — so it is not a miss
             // to paper over with the first row.
             ColumnPlace::Chat(chat) => {
-                self.explore.reveal_chat(chat, self.regions.sidebar);
+                self.explore.reveal_chat(chat, self.explore_area());
                 true
             }
             // The rail owns its own rows, so `focus_tree` is a no-op on a Tasks
@@ -624,7 +658,7 @@ impl MainView {
             ColumnPlace::Task(_) | ColumnPlace::Run(_) => false,
         };
         if !landed {
-            self.explore.focus_tree(self.regions.sidebar);
+            self.explore.focus_tree(self.explore_area());
         }
         true
     }
@@ -641,7 +675,7 @@ impl MainView {
         self.explore.set_selected(Some(node));
         self.explore.reveal(node);
         self.explore_stale = true;
-        self.explore.focus_tree(self.regions.sidebar);
+        self.explore.focus_tree(self.explore_area());
         // Correct home after a successful reveal (overwrites a wrong stamp).
         let home = self.current_workspace();
         if let Some(tab) = self.tabs_mut().iter_mut().find(|t| {
@@ -690,7 +724,7 @@ impl MainView {
         self.relayout();
         // A hidden list must not keep the keyboard.
         if open {
-            self.explore.focus_tree(self.regions.sidebar);
+            self.explore.focus_tree(self.explore_area());
         } else {
             self.explore.clear_focus();
         }

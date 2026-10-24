@@ -1715,7 +1715,7 @@ impl MainView {
             foreign_targeted: false,
             // Shut by default: an empty tree beside an empty workspace is worse
             // than no tree, and the toggle is one keystroke away.
-            sidebar: Panel::new(theme::SIDEBAR_W, false),
+            sidebar: Panel::new(theme::SIDEBAR_W + theme::RAIL_W, false),
             explore: ExploreView::new(),
             explore_stale: true,
             naming: None,
@@ -2631,7 +2631,7 @@ impl MainView {
         if self.sidebar.is_open()
             && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files
         {
-            if let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py) {
+            if let Some(node) = self.explore.row_node_at(self.explore_area(), px, py) {
                 return self.start_file_rename(node);
             }
             let selected = self.explore.selection_nodes();
@@ -2642,13 +2642,13 @@ impl MainView {
         }
         if self.sidebar.is_open()
             && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Agents
-            && let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py)
+            && let Some(node) = self.explore.row_node_at(self.explore_area(), px, py)
             && let Some(schedule) = self.explore.agent_schedule_at(node)
         {
             return self.start_schedule_rename(schedule);
         }
         if self.sidebar.is_open()
-            && let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py)
+            && let Some(node) = self.explore.row_node_at(self.explore_area(), px, py)
         {
             return self.rename_node(ws, node);
         }
@@ -5696,12 +5696,12 @@ impl MainView {
             RenameTarget::File(id) => {
                 return self
                     .explore
-                    .row_label_rect(self.regions.sidebar, NodeId::from_uuid(id.as_uuid()));
+                    .row_label_rect(self.explore_area(), NodeId::from_uuid(id.as_uuid()));
             }
             RenameTarget::Schedule(schedule) => {
                 if let Some(row) = self
                     .explore
-                    .agent_schedule_label_rect(self.regions.sidebar, schedule)
+                    .agent_schedule_label_rect(self.explore_area(), schedule)
                 {
                     return Some(row);
                 }
@@ -6754,26 +6754,38 @@ impl MainView {
         true
     }
 
-    /// The who/where popover's `?`: the help popover beside the panel, its
-    /// foot level with the control's, and the page still under it.
-    fn open_help_beside_popover(&mut self) -> bool {
+    /// The help popover beside whatever `?` asked for it: the who/where
+    /// page's toolbar, with the page still under it, or the rail's foot. Its
+    /// foot is level with the control's.
+    fn open_help_beside(&mut self) -> bool {
         let area = self.explore_popover_area();
-        let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
-            return false;
-        };
-        let Some(help) =
-            self.explore
-                .popover_tool_rect(area, self.viewport, crate::panes::explore::Tool::Help)
-        else {
-            return false;
+        let (edge, help) = if self.explore.popover_open() {
+            let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
+                return false;
+            };
+            let Some(help) = self.explore.popover_tool_rect(
+                area,
+                self.viewport,
+                crate::panes::explore::Tool::Help,
+            ) else {
+                return false;
+            };
+            (panel.x + panel.w, help)
+        } else {
+            let rail = self.rail_area();
+            let help = self.explore.apps_rail_rects(rail).help;
+            if help.w <= 0.0 {
+                return false;
+            }
+            (rail.x + rail.w, help)
         };
         if self.support_only {
             return false;
         }
-        chrome_debug::chrome_debug!("help popover opened beside the who/where page");
+        chrome_debug::chrome_debug!("help popover opened beside its ?");
         let foot = self.help_foot();
         let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
-        let x = panel.x + panel.w + koru_app_shell::popover::GAP;
+        let x = edge + koru_app_shell::popover::GAP;
         let mut m = ContextMenu::aligned(
             &mut self.engine,
             MenuSubject::Help,
@@ -6960,7 +6972,7 @@ impl MainView {
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
             Outcome::NewTab => self.open_new_tab_menu(),
             Outcome::Search => self.open_search(),
-            Outcome::OpenHelp => self.open_help_beside_popover(),
+            Outcome::OpenHelp => self.open_help_beside(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -7673,7 +7685,7 @@ impl MainView {
         // so it also covers the case where the column was shut or the window was
         // still swapping workspaces.
         if visible {
-            self.explore.apply_reveal(self.regions.sidebar);
+            self.explore.apply_reveal(self.explore_area());
         }
         self.sync_taskbar_recents();
         // Never highlight a draft's private root in the library tree.
@@ -7731,7 +7743,7 @@ impl MainView {
         if reveal_ready {
             self.apply_pending_explore_reveal();
             if visible {
-                self.explore.apply_reveal(self.regions.sidebar);
+                self.explore.apply_reveal(self.explore_area());
             }
         } else {
             self.explore.set_selected(selected);
@@ -8026,7 +8038,7 @@ impl MainView {
     /// drawn and the box clicks are measured against cannot end up on two
     /// different rows.
     fn new_list_field_rect(&self) -> Option<Rect> {
-        let area = self.regions.sidebar;
+        let area = self.explore_area();
         let top = self.explore.rail_top(area);
         match self.new_list.as_ref()?.target() {
             new_list::Target::New => self.explore.rail().new_list_field_rect(area, top),
@@ -8988,12 +9000,17 @@ impl MainView {
         // with nothing on screen to say why.
         let unfocused = hit != Hit::Sidebar && self.explore.clear_focus();
         let dismissed = dismissed || unfocused;
+        if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
+            // The rail: an app, Settings, Help or the profile square.
+            let out = self.explore.apps_rail_mouse_down(self.rail_area(), x, y);
+            return self.apply(ws, out);
+        }
         if hit == Hit::Sidebar {
             // Reached only by a press that landed in the column, so it is on
             // screen and its rows have to be current before they are hit-tested.
             self.refresh_explore(ws, true);
             let out = self.explore.mouse_down_with_modifiers(
-                self.regions.sidebar,
+                self.explore_area(),
                 self.viewport,
                 x,
                 y,
@@ -9626,7 +9643,7 @@ impl View for MainView {
             // the cursor rather than under a button.
             Hit::Sidebar => {
                 self.refresh_explore(ws, true);
-                let out = self.explore.context_menu(self.regions.sidebar, x, y);
+                let out = self.explore.context_menu(self.explore_area(), x, y);
                 self.apply(ws, out)
             }
             Hit::Content => {
@@ -9857,7 +9874,7 @@ impl View for MainView {
             self.refresh_explore(ws, true);
             let out = self
                 .explore
-                .mouse_double_click(self.regions.sidebar, self.viewport, x, y);
+                .mouse_double_click(self.explore_area(), self.viewport, x, y);
             return self.apply(ws, out);
         }
         if hit != Hit::Content {
@@ -9978,7 +9995,7 @@ impl View for MainView {
         }
         if self.regions.sidebar.w > 0.0 && self.regions.sidebar.contains(px, py) {
             let dy = Self::wheel_lines(delta);
-            self.explore.scroll_by(self.regions.sidebar, dy);
+            self.explore.scroll_by(self.explore_area(), dy);
             return;
         }
         if self.ai_visible() && self.ai_rect().contains(px, py) {
@@ -10462,8 +10479,6 @@ impl View for MainView {
         self.ai_chat.invalidate();
         self.engine.clear_pill_cache();
         self.mark_tab_widths_stale();
-        // The apps row's labels are a measurement too.
-        self.explore.invalidate_app_labels();
         self.reminder_shell.invalidate_metrics();
         // The indicator's widths are measured once, when its word changes — so
         // a theme, font-role or density change is the one other thing that has
@@ -13469,7 +13484,7 @@ impl MainView {
             // ...but never over a prompt. A panel asking a question owns Enter,
             // whoever else has the arrows.
             && !self.tabs().active_tab().view.is_prompting()
-            && let Some(out) = self.explore.nav_key_with_modifiers(self.regions.sidebar, key, mods)
+            && let Some(out) = self.explore.nav_key_with_modifiers(self.explore_area(), key, mods)
         {
             inputdebug::write(format_args!("[Koru][input] view key claimed=explore-nav"));
             // An expand or a collapse changed which rows there are.
@@ -15214,7 +15229,7 @@ impl MainView {
             return None;
         }
         self.explore
-            .navigator_mode_rects(self.regions.sidebar)
+            .navigator_mode_rects(self.rail_area())
             .into_iter()
             .enumerate()
             .find(|(_, (_, rect))| rect.w > 0.0 && rect.contains(x, y))
@@ -15238,13 +15253,13 @@ impl MainView {
             crate::panes::explore::NavigatorMode::Files => self.explore.show_files(),
             crate::panes::explore::NavigatorMode::Tasks => {
                 self.explore.show_tasks();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
             // **Focus enters on open**: the chords that show a list put the
             // keyboard in it, on the chat in front of you when it is there.
             crate::panes::explore::NavigatorMode::Chats => {
                 self.explore.show_chats();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
             crate::panes::explore::NavigatorMode::Home => self.explore.show_home(),
             crate::panes::explore::NavigatorMode::Agents => self.explore.show_agents(),
@@ -15252,7 +15267,7 @@ impl MainView {
             crate::panes::explore::NavigatorMode::Canvases => self.explore.show_canvases(),
             crate::panes::explore::NavigatorMode::Socials => {
                 self.open_socials_tab();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
         }
         self.explore_stale = true;
@@ -15470,7 +15485,7 @@ impl MainView {
             return reminder_moved
                 || self
                     .explore
-                    .mouse_move(self.regions.sidebar, self.viewport, x, y);
+                    .mouse_move(self.explore_area(), self.viewport, x, y);
         }
         // **The popover first, for the same reason `mouse_down` asks first.** It
         // is wider than the column it hangs off, so `regions::hit` answers
@@ -15586,9 +15601,13 @@ impl MainView {
 
         // Each column has its own hover, and a pointer that has left one must
         // not leave a row or a section lit behind.
-        let explore_moved = if hit == Hit::Sidebar {
-            self.explore
-                .mouse_move(self.regions.sidebar, self.viewport, x, y)
+        let explore_moved = if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
+            self.explore.clear_hover() | self.explore.apps_rail_mouse_move(self.rail_area(), x, y)
+        } else if hit == Hit::Sidebar {
+            self.explore.clear_rail_hover()
+                | self
+                    .explore
+                    .mouse_move(self.explore_area(), self.viewport, x, y)
         } else {
             self.explore.clear_hover()
         };
@@ -15638,28 +15657,45 @@ impl MainView {
             };
             Some(TooltipContent::new(id, rect, koru_i18n::t(lang, key)))
         } else if hit == Hit::Sidebar {
-            // The floor's chip, then the apps row — icon-only and chip
-            // controls, so each carries its name (`DESIGN.md`: one
-            // interaction clock, flat chip).
-            let floor = self.explore.floor_rects(self.regions.sidebar);
+            // The floor's chip, then the rail — icon-only and chip controls,
+            // so each carries its name (`DESIGN.md`: one interaction clock,
+            // flat chip).
+            let floor = self.explore.floor_rects(self.explore_area());
+            let rail = self.explore.apps_rail_rects(self.rail_area());
             let lang = crate::format::lang();
-            if floor.chip.w > 0.0 && floor.chip.contains(x, y) {
+            let on = |r: Rect| r.w > 0.0 && r.contains(x, y);
+            if on(floor.chip) {
                 Some(TooltipContent::new(
                     5,
                     floor.chip,
+                    koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
+                ))
+            } else if on(rail.manage) {
+                Some(TooltipContent::new(
+                    7,
+                    rail.manage,
+                    koru_i18n::t(lang, koru_i18n::Key::ComingLater),
+                ))
+            } else if on(rail.settings) {
+                Some(TooltipContent::new(
+                    9,
+                    rail.settings,
+                    koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
+                ))
+            } else if on(rail.help) {
+                Some(TooltipContent::new(
+                    6,
+                    rail.help,
+                    koru_i18n::t(lang, koru_i18n::Key::Help),
+                ))
+            } else if on(rail.profile) {
+                Some(TooltipContent::new(
+                    10,
+                    rail.profile,
                     koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
                 ))
             } else {
-                let manage = self.explore.manage_button(self.regions.sidebar);
-                if manage.w > 0.0 && manage.contains(x, y) {
-                    Some(TooltipContent::new(
-                        7,
-                        manage,
-                        koru_i18n::t(lang, koru_i18n::Key::ComingLater),
-                    ))
-                } else {
-                    self.navigator_mode_tooltip(x, y)
-                }
+                self.navigator_mode_tooltip(x, y)
             }
         } else {
             self.caption_tooltip(hit)

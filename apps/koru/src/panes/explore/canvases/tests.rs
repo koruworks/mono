@@ -59,11 +59,11 @@ fn a_workspace() -> Vec<ExploreEntry> {
 fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
     let mut view = ExploreView::new();
     let a = area();
-    let (mode, icon) = view.navigator_mode_rects(a)[7];
+    let (mode, icon) = view.navigator_mode_rects(view.rail_of(a))[7];
     assert_eq!(mode, NavigatorMode::Canvases);
     let (x, y) = icon.centre();
     assert_eq!(
-        view.mouse_down(a, VIEW, x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::Consumed,
         "the column's own business"
     );

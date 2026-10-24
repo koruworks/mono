@@ -56,6 +56,11 @@ pub(super) fn container() -> (MainView, Workspace) {
     let workspace_id = ws.id().expect("workspace id");
     let workspace = Workspace::new(ws);
     let mut v = MainView::new();
+    // **Not the machine's setting.** `MainView::new` reads the OS's
+    // animation preference, and a suite that followed it would pass or fail
+    // with Windows' *Animation effects* switch. The one test about reduced
+    // motion sets the flag itself.
+    v.reduced_motion = false;
     v.set_viewport(1200.0, 700.0);
     v.set_pane_context(
         Vec::new(),

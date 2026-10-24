@@ -287,7 +287,8 @@ impl MainView {
         ExploreContext {
             window: cx.window,
             view: cx.view,
-            area: self.regions.sidebar,
+            area: self.explore_area(),
+            rail: self.rail_area(),
             viewport: cx.viewport,
             lang: cx.lang,
         }
@@ -723,7 +724,7 @@ impl MainView {
         if !self.sidebar.is_open() {
             return false;
         }
-        let area = self.regions.sidebar;
+        let area = self.explore_area();
         let viewport = self.viewport;
         let Some(outcome) = self
             .explore

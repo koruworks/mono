@@ -49,7 +49,7 @@ use super::fold;
 use super::{DropTarget, DropZone};
 use koru_shell_chrome::tabs::draw_icon;
 
-use crate::panes::sidebar::{apps_row, floor};
+use crate::panes::sidebar::{apps_rail, floor};
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
 /// How far the pointer must travel before a press on a manifest row stops being
@@ -370,6 +370,22 @@ struct Popover {
     /// Which of the toolbar's three controls the keyboard is on while the
     /// toolbar row is hovered: ← and → move it, Enter presses it.
     tool: Tool,
+    /// What the panel hangs off: the floor chip (above it) or the rail's
+    /// profile square (beside it).
+    anchor: PopoverAnchor,
+    /// Whether the main page leads with your card. The chip's page lists the
+    /// workspaces only (the CTO's artboard 11); the profile square's page
+    /// keeps the card, which is the way to the Profiles page.
+    card: bool,
+}
+
+/// Where the who/where popover hangs.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PopoverAnchor {
+    /// Above the pane's floor chip.
+    Chip,
+    /// Beside the rail's profile square, its foot level with the square's.
+    Rail,
 }
 
 impl Popover {
@@ -559,6 +575,9 @@ struct RowDrag {
 pub enum ExploreChromeFocus {
     App(usize),
     Manage,
+    RailSettings,
+    RailHelp,
+    RailProfile,
     FloorChip,
 }
 
@@ -627,13 +646,8 @@ pub struct RowParts {
 #[derive(Default)]
 pub struct ExploreView {
     mode: NavigatorMode,
-    mode_hover: Option<NavigatorMode>,
-    /// The apps row's label widths, measured at draw and cached — the tab
-    /// strip's arrangement, so the hit path never needs a `TextEngine`.
-    /// Empty until the first draw, which lays every chip out icon-only.
-    app_label_w: Vec<(NavigatorMode, f32)>,
-    /// Whether the pointer is on the dimmed *Manage apps* square.
-    manage_hover: bool,
+    /// Which rail control the pointer is on, if any.
+    rail_hover: Option<apps_rail::Hit>,
     /// Which floor control the pointer is on, if any.
     floor_hover: Option<floor::Hit>,
     /// Which part of the hovered popover row the pointer is on — the gear,
@@ -3252,25 +3266,42 @@ impl ExploreView {
         true
     }
 
-    /// Open `kind`, or shut it if it is already the page showing.
+    /// Open `kind` where a chord or the chip puts it, or shut it if it is
+    /// already the page showing: the main page above the chip, workspaces
+    /// only; the Profiles page beside the rail's profile square, your card
+    /// behind it for `←`.
+    fn toggle_popover(&mut self, kind: PopoverKind) {
+        let (anchor, card) = match kind {
+            PopoverKind::Profiles => (PopoverAnchor::Rail, true),
+            PopoverKind::Summary | PopoverKind::LibraryActions => (PopoverAnchor::Chip, false),
+        };
+        self.toggle_popover_from(kind, anchor, card);
+    }
+
+    /// Open `kind` hung off `anchor`, or shut it if that is what is showing.
     ///
     /// Asking for the other page of the switcher slides to it rather than
-    /// closing — one panel, two pages.
-    fn toggle_popover(&mut self, kind: PopoverKind) {
+    /// closing — one panel, two pages. Asking for the same page from the
+    /// other anchor moves the panel there.
+    fn toggle_popover_from(&mut self, kind: PopoverKind, anchor: PopoverAnchor, card: bool) {
         let now = Instant::now();
         let switcher = |k: PopoverKind| k != PopoverKind::LibraryActions;
         match self.popover.as_mut() {
-            Some(p) if !p.closing && p.showing(kind) => {
+            Some(p) if !p.closing && p.showing(kind) && p.anchor == anchor && p.card == card => {
                 self.close_popover();
             }
             Some(p) if !p.closing && switcher(p.kind) && switcher(kind) => {
                 p.kind = kind;
+                p.anchor = anchor;
+                p.card = card;
                 p.hover = None;
                 p.scroll = 0.0;
                 p.slide = Some((now, p.page));
             }
             Some(p) => {
                 p.kind = kind;
+                p.anchor = anchor;
+                p.card = card;
                 p.hover = None;
                 p.scroll = 0.0;
                 p.closing = false;
@@ -3289,9 +3320,16 @@ impl ExploreView {
                     page: page_of(kind),
                     slide: None,
                     tool: Tool::Sync,
+                    anchor,
+                    card,
                 })
             }
         }
+    }
+
+    /// Whether the open page leads with your card.
+    pub fn popover_has_card(&self) -> bool {
+        self.popover.as_ref().is_some_and(|p| p.card)
     }
 
     /// Slide to the Profiles page. The popover stays open: your card is a
@@ -3330,7 +3368,11 @@ impl ExploreView {
         match kind {
             PopoverKind::Summary => {
                 let list = &self.workspaces;
-                let mut out = vec![PopoverRow::PersonCard, PopoverRow::WorkspacesHeading];
+                let mut out = Vec::with_capacity(list.len() + 4);
+                if self.popover_has_card() {
+                    out.push(PopoverRow::PersonCard);
+                }
+                out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
                 // this window is showing it, so its current row remains useful.
@@ -3444,9 +3486,18 @@ impl ExploreView {
             let profiles = cap(PopoverKind::Profiles);
             main + (profiles - main) * page
         };
-        let w = POPOVER_W.max(area.w - theme::NAV_PAD * 2.0);
+        let beside_rail = p.kind != PopoverKind::LibraryActions && p.anchor == PopoverAnchor::Rail;
+        let w = if beside_rail {
+            POPOVER_W
+        } else {
+            POPOVER_W.max(area.w - theme::NAV_PAD * 2.0)
+        };
         let chip = floor::solve(area).chip;
+        let rail = self.rail_of(area);
         let x = match p.kind {
+            PopoverKind::Summary | PopoverKind::Profiles if beside_rail => {
+                rail.x + rail.w + POPOVER_GAP
+            }
             PopoverKind::Summary | PopoverKind::Profiles => chip.x,
             PopoverKind::LibraryActions => {
                 let button = self.actions_button(area);
@@ -3460,6 +3511,14 @@ impl ExploreView {
                 let anchor = self.actions_button(area);
                 (anchor.y + anchor.h + POPOVER_GAP)
                     .min((viewport.1 - h - POPOVER_EDGE).max(anchor.y))
+            }
+            // **Beside the rail's profile square**, its foot level with the
+            // square's foot, capped to the window above it.
+            PopoverKind::Summary | PopoverKind::Profiles if beside_rail => {
+                let square = self.apps_rail_rects(rail).profile;
+                let foot = (square.y + square.h).min(viewport.1 - POPOVER_EDGE);
+                h = h.min((foot - POPOVER_EDGE).max(POPOVER_ROW_H));
+                (foot - h).max(POPOVER_EDGE)
             }
             // **The switcher rises from the floor chip.** Below would always
             // overflow, so it is anchored above and capped to the room there;
@@ -4065,48 +4124,26 @@ impl ExploreView {
         self.heading_band(area).y + HEADER_H + theme::NAV_PAD
     }
 
-    /// The apps row's band: under the header, the full pane width minus the
-    /// nav padding. Its height is the row's own answer (it wraps).
-    fn apps_band(&self, area: Rect) -> Rect {
+    /// The rail beside this pane: `RAIL_W` wide to its left, under the lane.
+    /// The container cuts the two from one column (`MainView::explore_area`
+    /// and `rail_area`), and this is the same arithmetic read back, so the
+    /// popover can hang off the rail's profile square without being handed a
+    /// second rect.
+    pub fn rail_of(&self, area: Rect) -> Rect {
+        let lane = theme::CAPTION_H.min(area.h);
+        let w = if area.w > 0.0 { theme::RAIL_W } else { 0.0 };
         Rect::new(
-            area.x + theme::NAV_PAD,
-            area.y + WORKSPACE_ROW_H + theme::NAV_PAD,
-            (area.w - theme::NAV_PAD * 2.0).max(0.0),
-            apps_row::SQUARE,
+            area.x - theme::RAIL_W,
+            area.y + lane,
+            w,
+            (area.h - lane).max(0.0),
         )
     }
 
-    /// The apps row's items: every mode this build shows, in `ALL` order,
-    /// with its cached label width.
-    fn apps_items(&self) -> Vec<apps_row::Item> {
-        NavigatorMode::visible()
-            .into_iter()
-            .map(|mode| apps_row::Item {
-                mode,
-                label_w: self
-                    .app_label_w
-                    .iter()
-                    .find(|(m, _)| *m == mode)
-                    .map_or(0.0, |(_, w)| *w),
-            })
-            .collect()
-    }
-
-    /// The apps row, laid out. One function for drawing, hit-testing and the
-    /// accessibility tree. Zero-width chips in a collapsed column.
-    pub fn apps_layout(&self, area: Rect) -> apps_row::Layout {
-        let band = self.apps_band(area);
-        let band = if area.w <= 0.0 {
-            Rect::new(area.x, band.y, 0.0, band.h)
-        } else {
-            band
-        };
-        apps_row::solve(
-            band,
-            &self.apps_items(),
-            self.mode,
-            area.w >= apps_row::LABELS_FROM,
-        )
+    /// The rail, laid out. One function for drawing, hit-testing and the
+    /// accessibility tree. Zero-width squares in a collapsed column.
+    pub fn apps_rail_rects(&self, rail: Rect) -> apps_rail::Rects {
+        apps_rail::solve(rail, &NavigatorMode::visible())
     }
 
     /// Where `F6` has the keyboard, for the ring. The window owns the focus;
@@ -4119,22 +4156,8 @@ impl ExploreView {
         true
     }
 
-    /// The *Manage apps* square at the row's end — dimmed and inert until
-    /// the apps manager lands (PLAN.final P11).
-    pub fn manage_button(&self, area: Rect) -> Rect {
-        self.apps_layout(area).manage
-    }
-
-    fn manage_at(&self, area: Rect, x: f32, y: f32) -> bool {
-        let r = self.manage_button(area);
-        r.w > 0.0 && r.contains(x, y)
-    }
-
-    /// The "Library" heading band, which is also where the fold buttons live.
-    ///
-    /// Positioned from the shell's stack directly rather than back from
-    /// [`rows_top`](Self::rows_top): the gap between this band and the rows is
-    /// a section gap of the shell, not part of either band.
+    /// The band the library's heading and its `…` sit in: under the lane
+    /// and the shell's gap.
     ///
     /// Zero-width in a collapsed column, so heading actions decline it — the same
     /// guard `row_rects` and `header_at` use, and for the same reason.
@@ -4142,11 +4165,9 @@ impl ExploreView {
         if area.w <= 0.0 {
             return Rect::new(area.x, area.y, 0.0, 0.0);
         }
-        // Under the apps row, which is as tall as its lines.
-        let apps = self.apps_band(area);
         Rect::new(
             area.x,
-            apps.y + self.apps_layout(area).height + theme::NAV_PAD,
+            area.y + WORKSPACE_ROW_H + theme::NAV_PAD,
             area.w,
             HEADER_H,
         )
@@ -4183,21 +4204,70 @@ impl ExploreView {
         button.w > 0.0 && button.contains(x, y)
     }
 
-    /// The apps' chips, left to right, in `ALL` order — the apps row
-    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.2). The
-    /// rect is the whole chip, label included when it wears one. Kept under
-    /// its old name because the chords, the tooltip and the accessibility
-    /// tab list all read it.
-    pub fn navigator_mode_rects(&self, area: Rect) -> Vec<(NavigatorMode, Rect)> {
-        self.apps_layout(area)
-            .chips
-            .into_iter()
-            .map(|c| (c.mode, c.rect))
-            .collect()
+    /// The apps' squares, top to bottom, in `ALL` order — the rail (the
+    /// CTO's artboard 11). Kept under its old name because the chords, the
+    /// tooltip and the accessibility tab list all read it; it takes the
+    /// **rail's** rect now, not the pane's.
+    pub fn navigator_mode_rects(&self, rail: Rect) -> Vec<(NavigatorMode, Rect)> {
+        self.apps_rail_rects(rail).apps
     }
 
-    fn navigator_mode_at(&self, area: Rect, x: f32, y: f32) -> Option<NavigatorMode> {
-        apps_row::chip_at(&self.apps_layout(area), x, y)
+    /// A press in the rail: an app shows its nav; Settings, Help and the
+    /// profile square are the container's destinations, except that the
+    /// square's popover is this pane's own, hung beside the square.
+    pub fn apps_rail_mouse_down(&mut self, rail: Rect, x: f32, y: f32) -> Outcome {
+        let rects = self.apps_rail_rects(rail);
+        match apps_rail::hit(&rects, x, y) {
+            Some(apps_rail::Hit::App(mode)) => {
+                self.set_navigator_mode(mode);
+                if mode == NavigatorMode::Socials {
+                    Outcome::OpenSocials
+                } else {
+                    Outcome::Consumed
+                }
+            }
+            // Inert until the manager lands (PLAN.final P11).
+            Some(apps_rail::Hit::Manage) => Outcome::Consumed,
+            Some(apps_rail::Hit::Settings) => {
+                self.close_popover();
+                Outcome::OpenSettings
+            }
+            Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
+            Some(apps_rail::Hit::Profile) => {
+                self.toggle_profile_popover();
+                Outcome::Consumed
+            }
+            None => Outcome::Consumed,
+        }
+    }
+
+    /// The pointer over the rail. Answers whether the hover changed.
+    pub fn apps_rail_mouse_move(&mut self, rail: Rect, x: f32, y: f32) -> bool {
+        let hit = apps_rail::hit(&self.apps_rail_rects(rail), x, y);
+        let changed = hit != self.rail_hover;
+        self.rail_hover = hit;
+        changed
+    }
+
+    /// The rail's profile square: its popover beside the square, with your
+    /// card — or, while that popover shows any page, shut (the chip's rule:
+    /// one control, one popover).
+    pub fn toggle_profile_popover(&mut self) {
+        let showing_its_page = self.live().is_some_and(|p| {
+            p.kind != PopoverKind::LibraryActions && p.anchor == PopoverAnchor::Rail
+        });
+        if showing_its_page {
+            self.close_popover();
+        } else {
+            self.toggle_popover_from(PopoverKind::Summary, PopoverAnchor::Rail, true);
+        }
+    }
+
+    /// The pointer has left the rail.
+    pub fn clear_rail_hover(&mut self) -> bool {
+        let changed = self.rail_hover.is_some();
+        self.rail_hover = None;
+        changed
     }
 
     /// The glyph the mode switcher draws for each mode. Its own function so
@@ -4220,136 +4290,175 @@ impl ExploreView {
         }
     }
 
-    /// Measure every shown app's label once per font change, so the row's
-    /// geometry — and the hit test behind it — never waits on the engine.
-    fn ensure_app_label_widths(&mut self, engine: &mut TextEngine) {
-        let shown = NavigatorMode::visible();
-        if self.app_label_w.len() == shown.len()
-            && self
-                .app_label_w
-                .iter()
-                .zip(&shown)
-                .all(|((m, _), s)| m == s)
-        {
+    /// The rail: a shade darker than the pane, the apps as squares with the
+    /// active one on a card, *Manage apps* dimmed under them, and at the
+    /// foot Settings, Help and the profile square with its sync dot (the
+    /// CTO's artboard 11). `avatar` is the open Profile's decoded picture,
+    /// which the container resolves.
+    pub fn draw_apps_rail(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rail: Rect,
+        avatar: Option<&peniko::ImageBrush>,
+    ) {
+        if rail.w <= 0.0 {
             return;
         }
-        self.app_label_w = shown
-            .into_iter()
-            .map(|mode| {
-                (
-                    mode,
-                    engine
-                        .simple_layout(mode.label(), theme::role::row())
-                        .width()
-                        .ceil(),
-                )
-            })
-            .collect();
-    }
-
-    /// The row's label widths are a measurement; a font or density change
-    /// makes it stale.
-    pub fn invalidate_app_labels(&mut self) {
-        self.app_label_w.clear();
-    }
-
-    /// The apps row: the active app's chip is a card (`panel_bg` with a
-    /// `panel_border` ring, the explore column's active card) and wears its
-    /// label; the rest are icons that tint on hover. The *Manage apps*
-    /// square ends the row, dimmed until the manager lands.
-    fn draw_apps_row(&self, scene: &mut Scene, root: Affine, engine: &mut TextEngine, area: Rect) {
         let p = theme::p();
-        let layout = self.apps_layout(area);
-        let band = self.apps_band(area);
+        let r = self.apps_rail_rects(rail);
         let _section = koru_draw::inspect::scope(
-            "KoruAppsRow",
+            "KoruRail",
             "container",
             root,
-            scene::rect(band.x, band.y, band.w, layout.height),
-            |r| {
-                r.property("lines", layout.lines as f32, "wrapped lines");
-                r.property("square", apps_row::SQUARE, "chip side");
+            scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
+            |rec| {
+                rec.property("width", theme::RAIL_W, "rail");
+                rec.property("square", apps_rail::SQUARE, "control side");
             },
         );
-        for chip in &layout.chips {
-            let r = chip.rect;
-            if r.w <= 0.0 {
-                continue;
-            }
-            let active = chip.mode == self.mode;
+        scene::fill(
+            scene,
+            root,
+            p.chip_bg,
+            &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
+        );
+        // Hairline between the rail and the pane.
+        scene::fill(
+            scene,
+            root,
+            p.panel_border,
+            &scene::rect(r.band.x + r.band.w - 1.0, r.band.y, 1.0, r.band.h),
+        );
+        for (i, (mode, square)) in r.apps.iter().enumerate() {
+            let active = *mode == self.mode;
             if active {
                 scene::fill(
                     scene,
                     root,
                     p.panel_border,
-                    &scene::rrect(r.x - 0.5, r.y - 0.5, r.w + 1.0, r.h + 1.0, 6.5),
+                    &scene::rrect(
+                        square.x - 0.5,
+                        square.y - 0.5,
+                        square.w + 1.0,
+                        square.h + 1.0,
+                        8.5,
+                    ),
                 );
                 scene::fill(
                     scene,
                     root,
                     p.panel_bg,
-                    &scene::rrect(r.x, r.y, r.w, r.h, 6.0),
+                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
-            } else if self.mode_hover == Some(chip.mode) {
+            } else if self.rail_hover == Some(apps_rail::Hit::App(*mode)) {
                 scene::fill(
                     scene,
                     root,
                     p.hover_tint,
-                    &scene::rrect(r.x, r.y, r.w, r.h, 6.0),
+                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             }
-            let colour = if active { p.text } else { p.text_dim };
-            let square = Rect::new(r.x, r.y, apps_row::SQUARE.min(r.w), r.h);
-            draw_icon(
+            draw_rail_glyph(
                 scene,
                 root,
                 engine,
-                Self::navigator_mode_icon(chip.mode),
-                square,
-                colour,
+                Self::navigator_mode_icon(*mode),
+                *square,
+                if active { p.text } else { p.text_dim },
             );
-            if chip.labelled {
-                let label = Rect::new(
-                    square.x + square.w + apps_row::LABEL_GAP,
-                    r.y,
-                    (r.w - square.w - apps_row::LABEL_GAP - apps_row::LABEL_PAD_RIGHT).max(0.0),
-                    r.h,
-                );
-                draw_middle(
+            if self.chrome_focus == Some(ExploreChromeFocus::App(i)) {
+                draw_focus_ring(scene, root, *square, p);
+            }
+        }
+        // Manage apps: dimmed, inert, a grid-plus.
+        draw_rail_glyph(scene, root, engine, icons::PLUS, r.manage, p.row_hint);
+        for (square, glyph, hit, focus) in [
+            (
+                r.settings,
+                icons::FADERS,
+                apps_rail::Hit::Settings,
+                ExploreChromeFocus::RailSettings,
+            ),
+            (
+                r.help,
+                icons::QUESTION,
+                apps_rail::Hit::Help,
+                ExploreChromeFocus::RailHelp,
+            ),
+        ] {
+            if self.rail_hover == Some(hit) {
+                scene::fill(
                     scene,
                     root,
-                    engine,
-                    chip.mode.label(),
-                    label,
-                    theme::role::row().with_weight(theme::FontWeight::SemiBold),
-                    colour,
+                    p.hover_tint,
+                    &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             }
+            draw_rail_glyph(scene, root, engine, glyph, square, p.text_dim);
+            if self.chrome_focus == Some(focus) {
+                draw_focus_ring(scene, root, square, p);
+            }
         }
-        let m = layout.manage;
-        if m.w > 0.0 {
-            koru_ui::icon_button::draw_with(
+        // The profile square: the picture or the initials, a card while its
+        // popover is up, and the sync dot at its corner.
+        let square = r.profile;
+        let open = self.popover.as_ref().is_some_and(|x| {
+            x.kind != PopoverKind::LibraryActions && x.anchor == PopoverAnchor::Rail
+        });
+        if self.rail_hover == Some(apps_rail::Hit::Profile) || open {
+            scene::fill(
                 scene,
                 root,
-                engine,
-                m,
-                icons::PLUS,
-                koru_ui::icon_button::State {
-                    hovered: self.manage_hover,
-                    active: false,
-                    disabled: true,
-                },
-                koru_ui::icon_button::Metrics::COMPACT,
+                p.hover_tint,
+                &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
             );
         }
-        // `F6`'s ring on the focused chip or on *Manage apps*.
-        let ring = match self.chrome_focus {
-            Some(ExploreChromeFocus::App(i)) => layout.chips.get(i).map(|c| c.rect),
-            Some(ExploreChromeFocus::Manage) if m.w > 0.0 => Some(m),
-            _ => None,
+        let tile = Rect::new(
+            square.x + (square.w - apps_rail::PROFILE_TILE) * 0.5,
+            square.y + (square.h - apps_rail::PROFILE_TILE) * 0.5,
+            apps_rail::PROFILE_TILE,
+            apps_rail::PROFILE_TILE,
+        );
+        let name = self.profile().map_or("", |profile| profile.name.as_str());
+        let key = self.profile().map_or("", |profile| profile.email.as_str());
+        koru_ui::profile_picker::draw_avatar(
+            scene,
+            root,
+            engine,
+            tile,
+            avatar,
+            name,
+            key,
+            theme::role::row(),
+        );
+        let dot = match self.sync_status() {
+            SyncStatus::NotSetUp => None,
+            SyncStatus::UpToDate | SyncStatus::Syncing => Some(p.accent),
+            SyncStatus::Offline => Some(p.row_hint),
+            SyncStatus::NeedsAttention => {
+                Some(theme::accent_tone("red").map_or(p.text, |tone| tone.swatch))
+            }
         };
-        if let Some(r) = ring {
-            draw_focus_ring(scene, root, r, p);
+        if let Some(colour) = dot {
+            const DOT: f32 = 10.0;
+            let (dx, dy) = (tile.x + tile.w - DOT + 2.0, tile.y + tile.h - DOT + 2.0);
+            scene::fill(
+                scene,
+                root,
+                p.chip_bg,
+                &scene::rrect(dx - 2.0, dy - 2.0, DOT + 4.0, DOT + 4.0, (DOT + 4.0) * 0.5),
+            );
+            scene::fill(
+                scene,
+                root,
+                colour,
+                &scene::rrect(dx, dy, DOT, DOT, DOT * 0.5),
+            );
+        }
+        if self.chrome_focus == Some(ExploreChromeFocus::RailProfile) {
+            draw_focus_ring(scene, root, square, p);
         }
     }
 
@@ -4680,15 +4789,6 @@ impl ExploreView {
                 self.clamp_scroll(area);
             }
             return Outcome::Consumed;
-        }
-
-        if let Some(mode) = self.navigator_mode_at(area, x, y) {
-            self.set_navigator_mode(mode);
-            return if mode == NavigatorMode::Socials {
-                Outcome::OpenSocials
-            } else {
-                Outcome::Consumed
-            };
         }
 
         // The floor, **before any mode's own surface**: the chip opens the
@@ -5380,12 +5480,6 @@ impl ExploreView {
             None
         };
         let actions = popover.is_none() && self.actions_at(area, x, y);
-        let mode = if popover.is_none() {
-            self.navigator_mode_at(area, x, y)
-        } else {
-            None
-        };
-        let manage = popover.is_none() && self.manage_at(area, x, y);
         let on_footer = if popover.is_some() {
             None
         } else {
@@ -5396,24 +5490,20 @@ impl ExploreView {
             popover.is_none() && self.empty_subscribe.is_some_and(|c| c.contains(x, y));
         let scrollbar =
             popover.is_none() && self.scrollbar_geom(area).is_some_and(|g| g.in_gutter(x, y));
-        let hover = if header.is_some()
-            || popover.is_some()
-            || actions
-            || mode.is_some()
-            || on_footer.is_some()
-            || scrollbar
-        {
-            None
-        } else {
-            self.row_at(area, x, y)
-        };
+        let hover =
+            if header.is_some() || popover.is_some() || actions || on_footer.is_some() || scrollbar
+            {
+                None
+            } else {
+                self.row_at(area, x, y)
+            };
 
         // The rail's own rows, tracked on the same pass and under the same
         // exclusions — the heading, the mode buttons and an open popover all
         // outrank it.
         let artifacts_moved = if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions || mode.is_some() {
+            if header.is_some() || popover.is_some() || actions {
                 self.artifacts.clear_hover()
             } else {
                 self.artifacts.mouse_move(area, top, x, y)
@@ -5423,7 +5513,7 @@ impl ExploreView {
         };
         let chats_moved = if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions || mode.is_some() {
+            if header.is_some() || popover.is_some() || actions {
                 self.chats.clear_hover()
             } else {
                 self.chats.mouse_move(area, top, x, y)
@@ -5433,7 +5523,7 @@ impl ExploreView {
         };
         let home_moved = if self.mode == NavigatorMode::Home {
             let top = self.rows_top(area);
-            if header.is_some() || popover.is_some() || actions || mode.is_some() {
+            if header.is_some() || popover.is_some() || actions {
                 self.home_nav.clear_hover()
             } else {
                 self.home_nav.mouse_move(area, top, x, y)
@@ -5446,9 +5536,7 @@ impl ExploreView {
                 let top = self.rows_top(area);
                 // A live drag follows the pointer wherever it went, including over
                 // the header — the same rule the library's own drag keeps.
-                if !self.rail.dragging()
-                    && (header.is_some() || popover.is_some() || actions || mode.is_some())
-                {
+                if !self.rail.dragging() && (header.is_some() || popover.is_some() || actions) {
                     self.rail.clear_hover()
                 } else {
                     self.rail.mouse_move(area, top, x, y)
@@ -5458,7 +5546,7 @@ impl ExploreView {
             };
         let socials_moved = self.showing_socials()
             && self.socials.as_ref().is_some_and(|surface| {
-                let blocked = header.is_some() || popover.is_some() || actions || mode.is_some();
+                let blocked = header.is_some() || popover.is_some() || actions;
                 surface.borrow_mut().navigation_mouse_move(
                     if blocked { -1. } else { x },
                     if blocked { -1. } else { y },
@@ -5472,8 +5560,6 @@ impl ExploreView {
             || popover_part != self.popover_part
             || header != self.floor_hover
             || actions != self.actions_hover
-            || mode != self.mode_hover
-            || manage != self.manage_hover
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
             || on_subscribe != self.subscribe_hover
@@ -5482,8 +5568,6 @@ impl ExploreView {
         self.popover_part = popover_part;
         self.floor_hover = header;
         self.actions_hover = actions;
-        self.mode_hover = mode;
-        self.manage_hover = manage;
         self.footer_hover = on_footer;
         self.cta_hover = on_cta;
         self.subscribe_hover = on_subscribe;
@@ -6358,6 +6442,7 @@ impl ExploreView {
         let had = self.rail.clear_hover()
             || self.hover.is_some()
             || self.floor_hover.is_some()
+            || self.rail_hover.is_some()
             || self.actions_hover
             || self.footer_hover.is_some()
             || self.cta_hover
@@ -6365,6 +6450,7 @@ impl ExploreView {
             || self.scrollbar_hover;
         self.hover = None;
         self.floor_hover = None;
+        self.rail_hover = None;
         self.actions_hover = false;
         self.footer_hover = None;
         self.cta_hover = false;
@@ -6597,14 +6683,11 @@ impl ExploreView {
             &scene::rect(area.x + area.w - 1.0, area.y, 1.0, area.h),
         );
 
-        // Label widths before any geometry below reads them: the apps row's
-        // height moves every band under it.
-        self.ensure_app_label_widths(engine);
         // The explore shell is one section structure for every tab: the
-        // profile/workspace row, the apps row, the heading band, and the
-        // nodes band. Only the nodes band's contents change between tabs;
-        // the pinned footer rows answer to the shell, not to the nodes band
-        // they sit below.
+        // lane, the heading band, and the nodes band. Only the nodes band's
+        // contents change between tabs; the pinned footer rows answer to the
+        // shell, not to the nodes band they sit below. The apps are in the
+        // rail beside the pane (`draw_apps_rail`).
         {
             // **The lane.** The window's own band at the top of the pane —
             // the mark, Search and the toggle — is window chrome, drawn and
@@ -6620,7 +6703,7 @@ impl ExploreView {
                 },
             );
         }
-        // The gaps between the shell's sections are the stack's geometry, not
+        // The gap between the shell's sections is the stack's geometry, not
         // a margin any one section owns — named, so the spacing between the
         // rows is itself inspectable instead of an anonymous constant in
         // `rows_top`.
@@ -6632,22 +6715,7 @@ impl ExploreView {
                 scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, theme::NAV_PAD),
                 |r| {
                     r.property("height", theme::NAV_PAD, "shell section gap");
-                    r.property("separates", "KoruLane / KoruAppsRow", "shell stack");
-                },
-            );
-        }
-        if area.w > 0.0 {
-            self.draw_apps_row(scene, root, engine, area);
-            let apps = self.apps_band(area);
-            let bottom = apps.y + self.apps_layout(area).height;
-            let _gap = koru_draw::inspect::scope(
-                "ExploreSpacer",
-                "part",
-                root,
-                scene::rect(area.x, bottom, area.w, theme::NAV_PAD),
-                |r| {
-                    r.property("height", theme::NAV_PAD, "shell section gap");
-                    r.property("separates", "KoruAppsRow / ExploreTabs", "shell stack");
+                    r.property("separates", "KoruLane / ExploreTabs", "shell stack");
                 },
             );
         }
@@ -6742,39 +6810,18 @@ impl ExploreView {
             .draw(scene, root, engine, r.avatar);
         }
         if r.text.w > 0.0 {
+            // The workspace's name alone (the CTO's artboard 11): who you are
+            // is the rail's profile square now, and the sync state its dot.
             let workspace = entry.map_or("Workspace", |w| w.name.as_str());
-            let mut meta_text = self.profile().map_or(String::new(), |p| p.name.clone());
-            let status = self.sync_status();
-            if status != SyncStatus::NotSetUp {
-                let word = koru_i18n::t(crate::format::lang(), status.key());
-                meta_text = if meta_text.is_empty() {
-                    word.to_owned()
-                } else {
-                    format!("{meta_text} · {word}")
-                };
-            }
-            let name = Rect::new(r.text.x, r.text.y + 2.0, r.text.w, 16.0);
-            let meta = Rect::new(r.text.x, r.text.y + 18.0, r.text.w, 14.0);
             draw_middle(
                 scene,
                 root,
                 engine,
                 &label_fit(workspace),
-                name,
+                r.text,
                 theme::role::row().with_weight(theme::FontWeight::SemiBold),
                 p.text,
             );
-            if !meta_text.is_empty() {
-                draw_middle(
-                    scene,
-                    root,
-                    engine,
-                    &label_fit(&meta_text),
-                    meta,
-                    theme::role::hint(),
-                    p.text_dim,
-                );
-            }
         }
         if r.chevron.w > 0.0 {
             draw_icon(
@@ -8152,6 +8199,32 @@ fn label_fit(name: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// A rail square's glyph, at `apps_rail::GLYPH` and centred in the square —
+/// larger than a command's icon, because the rail is read from across the
+/// window.
+fn draw_rail_glyph(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    glyph: char,
+    at: Rect,
+    colour: peniko::Color,
+) {
+    if at.w <= 0.0 {
+        return;
+    }
+    let layout = engine.icon_layout(glyph, apps_rail::GLYPH);
+    let (w, h) = (layout.width(), layout.height());
+    scene::draw_layout(
+        scene,
+        root,
+        &layout,
+        at.x + (at.w - w) * 0.5,
+        at.y + (at.h - h) * 0.5,
+        Some(colour),
+    );
 }
 
 /// A tree row's disclosure caret, centred in `at` and drawn under `root` —

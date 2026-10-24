@@ -164,12 +164,12 @@ fn a_sidebar_drag_reflows_the_content_once_on_release() {
     let before_view = v.focused_view_rect();
     assert_eq!(before, (before_view.w, before_view.h));
 
-    // The drag: three moves, all inside the clamp (256–600). The column
-    // *draws* at the pointer…
-    for w in [300.0, 340.0, 380.0] {
+    // The drag: three moves, all inside the clamp (the pane's 256–600 plus
+    // the rail). The column *draws* at the pointer…
+    for w in [340.0, 380.0, 420.0] {
         assert!(v.set_sidebar_width(w));
     }
-    assert_eq!(v.sidebar.full(), 380.0, "the drawn chrome follows the drag");
+    assert_eq!(v.sidebar.full(), 420.0, "the drawn chrome follows the drag");
     // …while the layout holds still: the view rect keeps its committed
     // width, and the tab is not re-laid-out per mouse-move.
     assert_eq!(
@@ -479,8 +479,15 @@ fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
-    assert_eq!(v.regions.sidebar.w, theme::SIDEBAR_W);
-    assert_eq!(v.content().x, theme::SIDEBAR_W, "the view made room");
+    assert_eq!(v.regions.sidebar.w, theme::SIDEBAR_W + theme::RAIL_W);
+    assert_eq!(
+        v.content().x,
+        theme::SIDEBAR_W + theme::RAIL_W,
+        "the view made room"
+    );
+    assert_eq!(v.rail_area().w, theme::RAIL_W, "the rail before the pane");
+    assert_eq!(v.explore_area().x, theme::RAIL_W);
+    assert_eq!(v.explore_area().w, theme::SIDEBAR_W);
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(!v.sidebar.is_open());
@@ -501,11 +508,11 @@ fn opening_the_pane_pushes_the_caption_and_its_toggle_right() {
 
     assert_eq!(v.regions.sidebar.y, 0.0, "the pane starts at the top");
     assert_eq!(v.regions.sidebar.h, v.viewport.1, "and runs to the bottom");
-    assert_eq!(v.regions.caption.x, theme::SIDEBAR_W);
+    assert_eq!(v.regions.caption.x, theme::SIDEBAR_W + theme::RAIL_W);
     let open_toggle = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption);
     assert_eq!(
         open_toggle.x - shut_toggle.x,
-        theme::SIDEBAR_W,
+        theme::SIDEBAR_W + theme::RAIL_W,
         "the toggle moved"
     );
 }
@@ -542,7 +549,10 @@ fn the_toggle_still_works_from_its_new_place() {
     // the settled lane, not the drawn one.
     let toggle = v.settled_lane_controls().toggle;
     let (x, y) = toggle.centre();
-    assert!(x < theme::SIDEBAR_W, "it really is in the lane: {x}");
+    assert!(
+        x < theme::SIDEBAR_W + theme::RAIL_W,
+        "it really is in the lane: {x}"
+    );
     assert!(y < theme::CAPTION_H);
     let chain = koru_shell_chrome::caption::leading_chain(v.regions.caption, v.leading());
     assert_eq!(chain.toggle.w, 0.0, "and not in the caption");
@@ -774,7 +784,7 @@ fn clicking_a_document_in_the_tree_from_welcome_opens_it_beside_welcome() {
     v.adopt(&workspace.ws);
     v.refresh_explore(&workspace.ws, true);
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     let (_, r) = v.explore.row_rects(area).into_iter().next().expect("a row");
     // Right of the caret column, on the label. **Not the far right** — the last
     // 20 px of every row are the `…`'s reserved lane now, and a press there
@@ -802,7 +812,7 @@ fn clicking_explore_after_opening_ai_releases_explores_latent_drag() {
     v.refresh_explore(&workspace.ws, true);
     assert!(v.ai_focused, "opening AI gives its composer focus");
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     let (_, row) = v.explore.row_rects(area).into_iter().next().expect("a row");
     v.mouse_down(
         &mut workspace.ws,
@@ -847,7 +857,7 @@ fn the_wheel_over_the_column_scrolls_the_tree() {
         TabView::Leaf(l) => l.view().scroll,
         _ => 0.0,
     };
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.mouse_move(area.centre().0, area.centre().1);
     v.scroll_by(MouseScrollDelta::LineDelta(0.0, -5.0));
     assert_eq!(doc_scroll(&v), 0.0, "the document did not move");
@@ -942,8 +952,11 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     v.adopt(ws);
 
     let c = v.content();
-    assert_eq!(c.x, theme::SIDEBAR_W);
-    assert_eq!(c.w, 1200.0 - theme::SIDEBAR_W - theme::CONTEXT_W);
+    assert_eq!(c.x, theme::SIDEBAR_W + theme::RAIL_W);
+    assert_eq!(
+        c.w,
+        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W
+    );
 
     let view = v.focused_view_rect();
     let mut bare = Leaf::document(ws, doc);
@@ -1083,7 +1096,7 @@ fn a_pointer_over_the_column_does_not_wear_the_ibeam() {
     v.mouse_move(c.x + 70.0, c.y + row_y(0));
     assert_eq!(v.cursor_icon(), CursorIcon::Text);
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.mouse_move(area.x + 8.0, area.y + 200.0);
     assert_ne!(v.cursor_icon(), CursorIcon::Text, "over the column");
     let TabView::Leaf(l) = &v.tabs().active_tab().view else {

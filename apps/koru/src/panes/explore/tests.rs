@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::panes::sidebar::apps_row;
+use crate::panes::sidebar::apps_rail;
 
 #[test]
 fn enrolled_empty_profile_explains_pending_sync_and_keeps_workspace_creation() {
@@ -70,6 +70,15 @@ fn draw_once(v: &mut ExploreView, a: Rect) {
 
 fn area() -> Rect {
     Rect::new(0.0, theme::CAPTION_H, theme::SIDEBAR_W, 600.0)
+}
+
+/// The app under a point in the rail beside `a`, through the same hit test a
+/// press uses; `None` for the gaps and for the foot's controls.
+fn mode_at(v: &ExploreView, a: Rect, x: f32, y: f32) -> Option<NavigatorMode> {
+    match apps_rail::hit(&v.apps_rail_rects(v.rail_of(a)), x, y) {
+        Some(apps_rail::Hit::App(mode)) => Some(mode),
+        _ => None,
+    }
 }
 
 /// `n` rows, alternating depth so the indent arithmetic is exercised too.
@@ -746,12 +755,11 @@ fn nothing_in_the_floor_is_hit_in_a_collapsed_column() {
 fn the_first_library_row_sits_where_it_always_did() {
     let (v, _, _) = with_context(4);
     let a = Rect::new(0.0, 0.0, theme::SIDEBAR_W, 600.0);
-    // Header, gap, apps row, gap, heading band, gap: the trailing NAV_PAD is
-    // the deliberate section gap between the heading band and the nodes
-    // content — the same gap every band of the stack has.
-    let apps = v.apps_layout(a).height;
-    let stacked =
-        theme::CAPTION_H + theme::NAV_PAD + apps + theme::NAV_PAD + HEADER_H + theme::NAV_PAD;
+    // Lane, gap, heading band, gap: the trailing NAV_PAD is the deliberate
+    // section gap between the heading band and the nodes content — the same
+    // gap every band of the stack has. The apps are in the rail beside the
+    // pane, so no band of theirs sits in the stack any more.
+    let stacked = theme::CAPTION_H + theme::NAV_PAD + HEADER_H + theme::NAV_PAD;
     assert_eq!(v.row_rects(a)[0].1.y, stacked);
 }
 
@@ -802,7 +810,6 @@ fn a_long_switcher_caps_at_its_max_and_scrolls_only_its_list() {
         "the list scrolls"
     );
     for fixed in [
-        PopoverRow::PersonCard,
         PopoverRow::WorkspacesHeading,
         PopoverRow::Divider,
         PopoverRow::Toolbar,
@@ -839,10 +846,8 @@ fn a_scrolled_row_never_rides_up_under_the_header() {
 #[test]
 fn the_person_card_is_two_lines_and_the_linked_count_is_set_from_outside() {
     let (mut v, _, _) = with_context(0);
+    v.toggle_profile_popover();
     let a = area();
-    let chip = crate::panes::sidebar::floor::solve(a).chip;
-    let (cx, cy) = chip.centre();
-    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     let rects = v.popover_rects(a, VIEW);
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
     assert_eq!(h(PopoverRow::PersonCard), Some(super::PERSON_CARD_H));
@@ -944,17 +949,34 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let chip = crate::panes::sidebar::floor::solve(a).chip;
     let (cx, cy) = chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
-    // The main page: your card, the workspaces, the toolbar.
+    // The chip's page: the workspaces and the toolbar — no card (the
+    // CTO's artboard 11: the chip is the workspace's).
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
     );
     assert!(v.popover_open());
     let rows = v.popover_rows();
-    assert_eq!(rows[0], PopoverRow::PersonCard);
-    assert_eq!(rows[1], PopoverRow::WorkspacesHeading);
+    assert_eq!(rows[0], PopoverRow::WorkspacesHeading);
+    assert!(
+        !rows.contains(&PopoverRow::PersonCard),
+        "no card on the chip's page"
+    );
     assert!(rows.contains(&PopoverRow::Workspace(0)));
     assert_eq!(rows.last(), Some(&PopoverRow::Toolbar));
+    // Pressing the chip while it is open shuts it.
+    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
+    assert!(!v.popover_open());
+    v.advance_popover(Instant::now() + Duration::from_secs(1));
+
+    // The rail's profile square: the same page with your card leading it.
+    let rail = v.rail_of(a);
+    let (sx, sy) = v.apps_rail_rects(rail).profile.centre();
+    assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
+    assert!(v.popover_open());
+    let rows = v.popover_rows();
+    assert_eq!(rows[0], PopoverRow::PersonCard);
+    assert_eq!(rows[1], PopoverRow::WorkspacesHeading);
     // Your card slides to the Profiles page.
     assert_eq!(
         v.choose(PopoverRow::PersonCard, PopoverPart::Row),
@@ -972,14 +994,13 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert_eq!(rows[0], PopoverRow::Back);
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(rows.last(), Some(&PopoverRow::NewProfile));
-    // Back returns to the main page.
+    // Back returns to the main page; the square shuts it from there.
     v.back();
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
     );
-    // Pressing the chip while it is open shuts it, on any page.
-    assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
+    assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
 }
 
@@ -1016,11 +1037,27 @@ fn both_pages_anchor_above_the_floor_chip() {
     let (mut v, _, _) = with_context(0);
     let a = area();
     let chip = crate::panes::sidebar::floor::solve(a).chip;
-    for kind in [PopoverKind::Profiles, PopoverKind::Summary] {
-        v.toggle_popover(kind);
+    // The chip's page rises from the chip.
+    v.toggle_popover(PopoverKind::Summary);
+    let panel = v.popover_panel(a, VIEW).unwrap();
+    assert_eq!(panel.x, chip.x);
+    assert!(panel.y + panel.h <= chip.y, "sits above the chip");
+    assert!(panel.y >= 0.0);
+    // The Profiles page, and the square's page, hang beside the rail with
+    // their foot level with the profile square's (the CTO's artboard 11).
+    let rail = v.rail_of(a);
+    let square = v.apps_rail_rects(rail).profile;
+    for open in [
+        (|v: &mut ExploreView| v.toggle_popover(PopoverKind::Profiles)) as fn(&mut ExploreView),
+        |v: &mut ExploreView| v.toggle_profile_popover(),
+    ] {
+        open(&mut v);
         let panel = v.popover_panel(a, VIEW).unwrap();
-        assert_eq!(panel.x, chip.x, "{kind:?}");
-        assert!(panel.y + panel.h <= chip.y, "{kind:?} sits above the chip");
+        assert_eq!(panel.x, rail.x + rail.w + POPOVER_GAP, "beside the rail");
+        assert!(
+            (panel.y + panel.h - (square.y + square.h)).abs() < 0.5,
+            "its foot level with the square's: {panel:?} vs {square:?}"
+        );
         assert!(panel.y >= 0.0);
     }
 }
@@ -1384,7 +1421,7 @@ fn choosing_a_profile_switches_to_it_and_slides_back() {
 fn back_returns_to_the_main_page_with_the_keyboard_on_your_card() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    v.toggle_popover(PopoverKind::Summary);
+    v.toggle_profile_popover();
     let click = |v: &mut ExploreView, want: PopoverRow| {
         let (_, r) = *v
             .popover_rects(a, VIEW)
@@ -1415,7 +1452,7 @@ fn the_keys_drill_in_and_back_out() {
     use winit::keyboard::{Key, NamedKey};
     for drill_key in [NamedKey::ArrowRight, NamedKey::Enter] {
         let (mut v, _, _) = with_context(0);
-        v.toggle_popover(PopoverKind::Summary);
+        v.toggle_profile_popover();
         // Down once lands on your card.
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
         assert_eq!(
@@ -1508,7 +1545,7 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Summary);
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
-    for _ in 0..3 {
+    for _ in 0..2 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -1590,7 +1627,6 @@ fn the_heading_menu_reports_itself_and_stays_open() {
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::WorkspacesMenu);
     assert!(v.popover_open(), "the page stays");
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
         Some(PopoverRow::WorkspacesHeading)
@@ -1610,8 +1646,11 @@ fn the_chip_closes_the_main_page_reached_by_back() {
     let a = area();
     v.toggle_popover(PopoverKind::Profiles);
     v.back();
-    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    // The page came from the rail's square, so the square is what shuts it
+    // — the panel hangs over the floor chip from there.
+    let rail = v.rail_of(a);
+    let (x, y) = v.apps_rail_rects(rail).profile.centre();
+    assert_eq!(v.apps_rail_mouse_down(rail, x, y), Outcome::Consumed);
     assert!(!v.popover_open());
 }
 
@@ -1622,15 +1661,19 @@ fn reopening_from_the_chip_shows_the_main_page() {
     let (mut v, _, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Profiles);
-    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    let rail = v.rail_of(a);
+    let (sx, sy) = v.apps_rail_rects(rail).profile.centre();
+    assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
+    v.advance_popover(Instant::now() + Duration::from_secs(1));
+    let (x, y) = crate::panes::sidebar::floor::solve(a).chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert!(v.popover_open());
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
     );
+    assert!(!v.popover_has_card(), "the chip's page has no card");
 }
 
 /// The slide between pages asks for frames while it runs, and stops.
@@ -1733,7 +1776,20 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::NewProfile,
         ]
     );
+    // The chip's page: the workspaces only.
     v.toggle_popover(PopoverKind::Summary);
+    assert_eq!(
+        v.popover_rows(),
+        vec![
+            PopoverRow::WorkspacesHeading,
+            PopoverRow::Workspace(0),
+            PopoverRow::Workspace(1),
+            PopoverRow::Divider,
+            PopoverRow::Toolbar,
+        ]
+    );
+    // The profile square's page: your card leads it.
+    v.toggle_profile_popover();
     assert_eq!(
         v.popover_rows(),
         vec![
@@ -1882,9 +1938,9 @@ fn enter_runs_the_highlighted_row() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, list) = with_context(0);
     v.toggle_popover(PopoverKind::Summary);
-    // Down once from nothing lands on your card, then the heading; the
-    // third Down is the first workspace.
-    for _ in 0..3 {
+    // Down once from nothing lands on the heading; the second Down is the
+    // first workspace.
+    for _ in 0..2 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -3788,56 +3844,44 @@ fn navigator_modes_project_pages_and_files_from_one_manifest_cache() {
 /// itself — the apps row (`docs/features/workspace-foundation/TECHNICAL.final.md`
 /// §5.2), under the header and above the heading band.
 ///
-/// **At the narrowest the column can be dragged, and at its default.** Both
-/// are 256 px now, where eight squares and the manage button do not fit one
-/// line, so the row wraps rather than clipping (QUESTIONS.md Q-J); every chip
-/// stays inside the column and the heading band moves down under it.
+/// **The apps are squares down the rail**, whatever the pane's width: each
+/// inside the rail, each hit-testing to its own mode, *Manage apps* under
+/// the last, and the heading's `…` untouched by any of them (the CTO's
+/// artboard 11).
 #[test]
 fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
     let view = ExploreView::new();
     for width in [
-        crate::mainview::layout::SIDEBAR_MIN_W,
+        crate::mainview::layout::SIDEBAR_MIN_W - theme::RAIL_W,
         theme::SIDEBAR_W,
         400.0,
     ] {
-        let a = Rect::new(0.0, theme::CAPTION_H, width, 600.0);
-        let rects = view.navigator_mode_rects(a);
+        let a = Rect::new(theme::RAIL_W, theme::CAPTION_H, width, 600.0);
+        let rail = view.rail_of(a);
+        assert_eq!(rail.x, 0.0, "the rail is before the pane");
+        assert_eq!(rail.w, theme::RAIL_W);
+        assert_eq!(rail.y, a.y + theme::CAPTION_H, "under the lane");
+        let rects = view.navigator_mode_rects(rail);
         assert_eq!(rects.len(), NavigatorMode::ALL.len());
         for &(mode, r) in &rects {
-            assert_eq!(
-                r.w,
-                apps_row::SQUARE,
-                "{mode:?} is a square before its label is measured"
-            );
+            assert_eq!(r.w, apps_rail::SQUARE, "{mode:?} is a square");
             assert!(
-                r.x + r.w <= a.x + a.w,
-                "{mode:?} fits inside a {width} px column"
+                r.x >= rail.x && r.x + r.w <= rail.x + rail.w,
+                "{mode:?} fits inside the rail"
             );
             let (x, y) = r.centre();
-            assert_eq!(view.navigator_mode_at(a, x, y), Some(mode), "{mode:?}");
-        }
-        let layout = view.apps_layout(a);
-        let manage = view.manage_button(a);
-        assert!(manage.w > 0.0 && manage.x + manage.w <= a.x + a.w);
-        if width < 280.0 {
-            assert_eq!(layout.lines, 2, "eight squares wrap at {width}");
-        } else {
-            assert_eq!(layout.lines, 1);
-        }
-        // The heading band sits under the whole row, and its `…` keeps its
-        // band.
-        let last = rects.last().unwrap().1;
-        assert!(view.actions_button(a).y >= last.y + last.h);
-        for (mode, r) in rects {
-            let (x, y) = r.centre();
+            assert_eq!(mode_at(&view, a, x, y), Some(mode), "{mode:?}");
             assert!(!view.actions_at(a, x, y), "{mode:?} is not the ... button");
         }
+        let manage = view.apps_rail_rects(rail).manage;
+        let last = rects.last().unwrap().1;
+        assert_eq!(
+            manage.y,
+            last.y + last.h + apps_rail::GAP,
+            "Manage apps under the last"
+        );
+        assert!(view.actions_button(a).w > 0.0, "the `…` shows at {width}");
     }
-    let a = area();
-    assert!(
-        view.actions_button(a).w > 0.0,
-        "the `…` shows at the default width"
-    );
 }
 
 /// Tasks is a mode of this column, not a tab: pressing its icon swaps what the
@@ -3858,13 +3902,13 @@ fn switching_to_tasks_and_back_leaves_the_documents_mode_alone() {
     let a = area();
 
     let (_, tasks) = view
-        .navigator_mode_rects(a)
+        .navigator_mode_rects(view.rail_of(a))
         .into_iter()
         .find(|(mode, _)| *mode == NavigatorMode::Tasks)
         .unwrap();
     let (x, y) = tasks.centre();
     assert_eq!(
-        view.mouse_down(a, (1200.0, 800.0), x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::Consumed
     );
     assert_eq!(view.navigator_mode(), NavigatorMode::Tasks);
@@ -5317,13 +5361,13 @@ fn the_artifacts_mode_is_reached_by_its_icon_and_owns_the_column() {
     let mut view = ExploreView::new();
     let a = area();
     let (_, artifacts) = view
-        .navigator_mode_rects(a)
+        .navigator_mode_rects(view.rail_of(a))
         .into_iter()
         .find(|(mode, _)| *mode == NavigatorMode::Artifacts)
         .unwrap();
     let (x, y) = artifacts.centre();
     assert_eq!(
-        view.mouse_down(a, (1200.0, 800.0), x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::Consumed
     );
     assert_eq!(view.navigator_mode(), NavigatorMode::Artifacts);
@@ -6159,13 +6203,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         v.draw(&mut scene, root, &mut engine, a);
         let records = capture.finish().records;
 
-        for name in [
-            "KoruLane",
-            "KoruAppsRow",
-            "ExploreTabs",
-            "ExploreNodes",
-            "KoruFloor",
-        ] {
+        for name in ["KoruLane", "ExploreTabs", "ExploreNodes", "KoruFloor"] {
             assert_eq!(
                 records.iter().filter(|r| r.name == name).count(),
                 1,
@@ -6174,36 +6212,37 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         }
         let at = |name| records.iter().position(|r| r.name == name).unwrap();
         let header = records[at("KoruLane")].rect();
-        let apps = records[at("KoruAppsRow")].rect();
         let tabs = records[at("ExploreTabs")].rect();
         let nodes = at("ExploreNodes");
         let band = records[nodes].rect();
         assert!(
-            header.y1 <= apps.y0 && apps.y1 <= tabs.y0 && tabs.y1 <= band.y0 + 0.5,
-            "header, apps row, tabs and nodes stack in order in {mode:?}"
+            header.y1 <= tabs.y0 && tabs.y1 <= band.y0 + 0.5,
+            "header, tabs and nodes stack in order in {mode:?}"
+        );
+        assert!(
+            !records.iter().any(|r| r.name == "KoruAppsRow"),
+            "the apps are in the rail, not a band of the pane"
         );
         assert!(
             records[nodes].properties.iter().any(|p| p.name == "mode"),
             "the band says which tab's view it holds"
         );
 
-        // The section gaps are named geometry, and all are the shell's
-        // NAV_PAD: header-to-apps, apps-to-tabs and tabs-to-nodes alike.
+        // The section gaps are named geometry, and both are the shell's
+        // NAV_PAD: header-to-tabs and tabs-to-nodes alike.
         let spacers: Vec<_> = records
             .iter()
             .filter(|r| r.name == "ExploreSpacer")
             .collect();
-        assert_eq!(spacers.len(), 3, "one gap per seam in {mode:?}");
+        assert_eq!(spacers.len(), 2, "one gap per seam in {mode:?}");
         for spacer in &spacers {
             assert_eq!(spacer.rect().height(), theme::NAV_PAD as f64);
         }
-        let (first, second, third) = (spacers[0].rect(), spacers[1].rect(), spacers[2].rect());
+        let (first, second) = (spacers[0].rect(), spacers[1].rect());
         assert_eq!(first.y0, header.y1, "the first gap follows the header");
-        assert_eq!(first.y1, apps.y0, "the first gap meets the apps row");
-        assert_eq!(second.y0, apps.y1, "the second gap follows the apps row");
-        assert_eq!(second.y1, tabs.y0, "the second gap meets the tab row");
-        assert_eq!(third.y0, tabs.y1, "the third gap follows the tab row");
-        assert_eq!(third.y1, band.y0, "the third gap meets the nodes band");
+        assert_eq!(first.y1, tabs.y0, "the first gap meets the tab row");
+        assert_eq!(second.y0, tabs.y1, "the second gap follows the tab row");
+        assert_eq!(second.y1, band.y0, "the second gap meets the nodes band");
 
         // Every row answers to a named owner: the nodes band for the mode's
         // rows, the footer for the pinned Trash.
@@ -6369,10 +6408,10 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     );
     let mut view = ExploreView::new();
     let a = area();
-    let (_, chats) = view.navigator_mode_rects(a)[4];
+    let (_, chats) = view.navigator_mode_rects(view.rail_of(a))[4];
     let (x, y) = chats.centre();
     assert_eq!(
-        view.mouse_down(a, (1200.0, 800.0), x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::Consumed
     );
     assert_eq!(view.navigator_mode(), NavigatorMode::Chats);
@@ -6397,13 +6436,13 @@ fn socials_mode_requests_its_shared_tab_and_has_no_library_footer() {
     let mut view = ExploreView::new();
     let a = area();
     let (_, socials) = view
-        .navigator_mode_rects(a)
+        .navigator_mode_rects(view.rail_of(a))
         .into_iter()
         .find(|(mode, _)| *mode == NavigatorMode::Socials)
         .expect("Socials shows in every build until ENABLE_SOCIALS");
     let (x, y) = socials.centre();
     assert_eq!(
-        view.mouse_down(a, (1200., 800.), x, y, false),
+        view.apps_rail_mouse_down(view.rail_of(a), x, y),
         Outcome::OpenSocials
     );
     assert!(view.showing_socials());
@@ -6471,48 +6510,41 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
     for (features, shown) in [(Features::ALL_OFF, 3), (four, 5)] {
         koru_features::testing::with(features, || {
             let view = ExploreView::new();
-            let rects = view.navigator_mode_rects(a);
+            let rects = view.navigator_mode_rects(view.rail_of(a));
             assert_eq!(rects.len(), shown);
             for &(mode, r) in &rects {
-                assert_eq!(r.w, apps_row::SQUARE, "{mode:?} at {shown} shown");
+                assert_eq!(r.w, apps_rail::SQUARE, "{mode:?} at {shown} shown");
             }
             assert_eq!(rects[2].0, NavigatorMode::Files);
             assert!(view.actions_button(a).w > 0.);
         });
     }
     let view = ExploreView::new();
-    let rects = view.navigator_mode_rects(a);
+    let rects = view.navigator_mode_rects(view.rail_of(a));
     assert_eq!(rects.len(), NavigatorMode::ALL.len());
-    assert!(rects.iter().all(|(_, r)| r.w == apps_row::SQUARE));
+    assert!(rects.iter().all(|(_, r)| r.w == apps_rail::SQUARE));
 }
 
-/// **The row never clips.** At every width the last chip and the manage
-/// square are inside the column — wrapping when they must — and the heading
-/// band's actions sit under the row, never beside it.
+/// **The rail does not change with the pane's width**: the squares sit where
+/// they sit, the foot's three controls stand on the band's floor, and the
+/// heading's `…` has its band in the pane whatever the width.
 #[test]
-fn eight_modes_fit_narrow_sidebars_and_leave_actions_room_when_wide() {
+fn the_rail_keeps_its_squares_at_every_pane_width() {
     let view = ExploreView::new();
+    let mut seen: Option<Vec<Rect>> = None;
     for width in [256., 300., 400., 600.] {
-        let a = Rect::new(0., 0., width, 800.);
-        let modes = view.navigator_mode_rects(a);
-        for (mode, r) in &modes {
-            assert!(r.x + r.w <= width, "{mode:?} inside {width}");
+        let a = Rect::new(theme::RAIL_W, 0., width, 800.);
+        let rail = view.rail_of(a);
+        let r = view.apps_rail_rects(rail);
+        let squares: Vec<Rect> = r.apps.iter().map(|(_, r)| *r).collect();
+        if let Some(seen) = &seen {
+            assert_eq!(&squares, seen, "the rail moved with the pane at {width}");
         }
-        let manage = view.manage_button(a);
-        assert!(manage.x + manage.w <= width);
-        let bottom = modes
-            .iter()
-            .map(|(_, r)| r.y + r.h)
-            .fold(0.0_f32, f32::max)
-            .max(manage.y + manage.h);
-        let actions = view.actions_button(a);
-        assert!(actions.w > 0.);
-        for action in [actions] {
-            assert!(
-                action.y >= bottom,
-                "the heading band is under the row at {width}"
-            );
-        }
+        seen = Some(squares);
+        assert_eq!(r.profile.y + r.profile.h, rail.y + rail.h - 8.0);
+        assert!(r.settings.y + r.settings.h <= r.help.y);
+        assert!(r.help.y + r.help.h <= r.profile.y);
+        assert!(view.actions_button(a).w > 0.);
     }
 }
 
@@ -6613,6 +6645,7 @@ fn the_chats_view_publishes_a_row_per_chat_with_open_and_delete() {
         window: koru_workspace_host::accessibility::WindowSlot::from_raw(1),
         view: koru_workspace_host::accessibility::ViewSlot::from_raw(1),
         area: area(),
+        rail: view.rail_of(area()),
         viewport: (1200.0, 800.0),
         lang: koru_i18n::Lang::En,
     };
@@ -6643,7 +6676,7 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         let mut view = ExploreView::new();
         let a = area();
-        let rects = view.navigator_mode_rects(a);
+        let rects = view.navigator_mode_rects(view.rail_of(a));
         let modes: Vec<NavigatorMode> = rects.iter().map(|(mode, _)| *mode).collect();
         assert_eq!(
             modes,
@@ -6653,22 +6686,26 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
                 NavigatorMode::Files
             ]
         );
-        // Files keeps its place within the build: third, one gap after
+        // Files keeps its place within the build: third, one gap under
         // Documents, on every call.
-        assert_eq!(rects, view.navigator_mode_rects(a), "Files keeps its place");
-        assert_eq!(rects[2].1.x, rects[1].1.x + rects[1].1.w + 2.);
+        assert_eq!(
+            rects,
+            view.navigator_mode_rects(view.rail_of(a)),
+            "Files keeps its place"
+        );
+        assert_eq!(rects[2].1.y, rects[1].1.y + rects[1].1.h + apps_rail::GAP);
         for &(mode, r) in &rects {
             let (x, y) = r.centre();
-            assert_eq!(view.navigator_mode_at(a, x, y), Some(mode));
+            assert_eq!(mode_at(&view, a, x, y), Some(mode));
         }
         // Past Files there is nothing: the hidden icons leave no gap and no
         // target where Tasks' icon would be.
         let files = rects[2].1;
         let (x, y) = (
-            files.x + files.w + 2. + files.w / 2.,
-            files.y + files.h / 2.,
+            files.x + files.w / 2.,
+            files.y + files.h + apps_rail::GAP + files.h / 2.,
         );
-        assert_eq!(view.navigator_mode_at(a, x, y), None);
+        assert_eq!(mode_at(&view, a, x, y), None);
         for hidden in [
             NavigatorMode::Tasks,
             NavigatorMode::Chats,

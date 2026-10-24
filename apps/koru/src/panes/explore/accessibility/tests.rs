@@ -26,6 +26,7 @@ fn cx(lang: Lang) -> Context {
         window: WINDOW,
         view: VIEW,
         area: Rect::new(0.0, 0.0, 260.0, 700.0),
+        rail: ExploreView::new().rail_of(Rect::new(0.0, 0.0, 260.0, 700.0)),
         viewport: (1200.0, 700.0),
         lang,
     }

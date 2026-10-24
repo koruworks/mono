@@ -22,11 +22,15 @@ use super::{MainView, WorkspaceDoc};
 use crate::panes::explore::{ExploreChromeFocus, NavigatorMode};
 
 /// Where the keyboard is, when it is on the sidebar's chrome.
+/// The rail's controls after the apps: *Manage apps*, Settings, Help, the
+/// profile square.
+const RAIL_FOOT: usize = 4;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ChromeStop {
     Lane(LaneControl),
-    /// An index into the apps row: the shown modes in order, then *Manage
-    /// apps* at `visible.len()`.
+    /// An index down the rail: the shown apps in order, then *Manage apps*
+    /// at `visible.len()`, then Settings, Help and the profile square.
     Apps(usize),
     Floor(FloorControl),
 }
@@ -147,8 +151,16 @@ impl MainView {
                 self.chrome_focus = None;
                 true
             }
-            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight) => {
-                let forward = matches!(key, Key::Named(NamedKey::ArrowRight));
+            // The rail runs top to bottom, so ↑↓ walk it as ←→ do; the lane
+            // takes both too rather than refusing a pair.
+            Key::Named(NamedKey::ArrowLeft)
+            | Key::Named(NamedKey::ArrowRight)
+            | Key::Named(NamedKey::ArrowUp)
+            | Key::Named(NamedKey::ArrowDown) => {
+                let forward = matches!(
+                    key,
+                    Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowDown)
+                );
                 self.chrome_focus = Some(self.step_within(stop, forward));
                 true
             }
@@ -189,7 +201,9 @@ impl MainView {
                 ChromeStop::Lane(shown.get(j).copied().unwrap_or(LaneControl::Toggle))
             }
             ChromeStop::Apps(i) => {
-                let n = NavigatorMode::visible().len() + 1;
+                // The apps, Manage apps, then the foot: Settings, Help, the
+                // profile square.
+                let n = NavigatorMode::visible().len() + RAIL_FOOT;
                 ChromeStop::Apps(if forward {
                     (i + 1) % n
                 } else {
@@ -216,11 +230,23 @@ impl MainView {
                 self.open_new_tab_menu_at(square);
             }
             ChromeStop::Apps(i) => {
-                if let Some(mode) = NavigatorMode::visible().get(i).copied() {
+                let apps = NavigatorMode::visible();
+                if let Some(mode) = apps.get(i).copied() {
                     self.show_navigator(mode);
+                } else {
+                    match i - apps.len() {
+                        // *Manage apps*, inert until the manager lands
+                        // (PLAN.final P11).
+                        0 => {}
+                        1 => {
+                            self.open_settings_tab();
+                        }
+                        2 => {
+                            self.open_help_beside();
+                        }
+                        _ => self.explore.toggle_profile_popover(),
+                    }
                 }
-                // `visible.len()` is *Manage apps*, inert until the manager
-                // lands (PLAN.final P11).
             }
             ChromeStop::Floor(FloorControl::Chip) => {
                 if self.explore.popover_open() {
@@ -237,11 +263,19 @@ impl MainView {
     /// *Manage apps*, or a floor control. The lane's ring is the window's.
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
-            ChromeStop::Apps(i) => Some(if i < NavigatorMode::visible().len() {
-                ExploreChromeFocus::App(i)
-            } else {
-                ExploreChromeFocus::Manage
-            }),
+            ChromeStop::Apps(i) => {
+                let apps = NavigatorMode::visible().len();
+                Some(if i < apps {
+                    ExploreChromeFocus::App(i)
+                } else {
+                    match i - apps {
+                        0 => ExploreChromeFocus::Manage,
+                        1 => ExploreChromeFocus::RailSettings,
+                        2 => ExploreChromeFocus::RailHelp,
+                        _ => ExploreChromeFocus::RailProfile,
+                    }
+                })
+            }
             ChromeStop::Floor(FloorControl::Chip) => Some(ExploreChromeFocus::FloorChip),
             ChromeStop::Lane(_) => None,
         }

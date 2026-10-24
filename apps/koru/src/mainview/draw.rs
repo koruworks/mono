@@ -415,9 +415,20 @@ impl MainView {
             if fading {
                 scene::fade_layer(scene, root, alpha, &scene::rect(sb.x, sb.y, sb.w, sb.h));
             }
-            self.explore.draw(scene, root, &mut self.engine, sb);
-            // The lane, over the pane's top band: window chrome, so it is the
-            // window that draws it.
+            // The rail and the pane, cut from the drawn column the way the
+            // settled one is (`layout::pane_of`, `rail_of`).
+            let pane = Self::pane_of(sb);
+            let rail = Self::rail_of(sb);
+            self.explore.draw(scene, root, &mut self.engine, pane);
+            let avatar = self
+                .explore
+                .avatar_hash()
+                .and_then(|h| images.get(h))
+                .map(|a| a.as_ref());
+            self.explore
+                .draw_apps_rail(scene, root, &mut self.engine, rail, avatar);
+            // The lane, over the column's top band: window chrome, so it is
+            // the window that draws it.
             self.draw_lane(scene, root, sb);
             if fading {
                 scene.pop_layer();

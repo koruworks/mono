@@ -374,7 +374,7 @@ fn the_open_action_is_advertised_and_opens_the_document() {
     // focused row is the existing open route; what an invoke has to produce is
     // that, byte for byte, rather than something that merely also opens a
     // document. So both are run and compared.
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     assert!(
         v.focus_or_toggle_sidebar(&w.ws),
         "the tree would not take the keyboard"
@@ -469,7 +469,7 @@ fn accessible_focus_is_the_state_the_focus_ring_is_drawn_from() {
     );
 
     // Move it with the arrows and it follows — one state, not two.
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.explore
         .nav_key(area, &Key::Named(NamedKey::ArrowDown))
         .expect("the tree answered the arrow");
@@ -684,7 +684,7 @@ fn the_window_commands_carry_the_rectangles_the_caption_draws() {
 fn an_entry_carries_the_rectangle_the_pane_hit_tests() {
     let (mut v, _w) = seated();
     with_rows(&mut v, &["Brief", "Minutes"]);
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     let drawn = v.explore.row_rects(area);
     assert!(!drawn.is_empty(), "the fixture drew no rows");
 
@@ -815,7 +815,7 @@ fn an_offscreen_entry_is_published_and_can_be_revealed() {
     let titles: Vec<String> = (0..200).map(|i| format!("doc {i}")).collect();
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
     let ids = with_rows(&mut v, &refs);
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
 
     let drawn: Vec<usize> = v
         .explore
@@ -867,7 +867,7 @@ fn scrolling_does_not_change_the_revision() {
     let titles: Vec<String> = (0..200).map(|i| format!("doc {i}")).collect();
     let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
     with_rows(&mut v, &refs);
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
 
     let before = v.semantics_revision();
     v.explore.scroll_by(area, -400.0);
@@ -889,7 +889,7 @@ fn a_change_a_person_can_see_does_change_the_revision() {
     assert!(v.focus_or_toggle_sidebar(&w.ws));
     seen.push(v.semantics_revision());
 
-    let area = v.regions.sidebar;
+    let area = v.explore_area();
     v.explore.nav_key(area, &Key::Named(NamedKey::ArrowDown));
     seen.push(v.semantics_revision());
 

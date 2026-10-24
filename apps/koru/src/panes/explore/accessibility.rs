@@ -83,6 +83,10 @@ pub(crate) mod parts {
     pub const TRASH: ControlPart = ControlPart::new("trash");
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
     pub const MANAGE_APPS: ControlPart = ControlPart::new("manage-apps");
+    /// The rail's foot: Settings, Help and the profile square.
+    pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
+    pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
+    pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
     pub const BACK: ControlPart = ControlPart::new("back");
@@ -106,7 +110,10 @@ pub(crate) mod parts {
 pub(crate) struct Context {
     pub window: WindowSlot,
     pub view: ViewSlot,
+    /// The pane: the nav and its floor, after the rail.
     pub area: Rect,
+    /// The rail beside it, under the lane.
+    pub rail: Rect,
     /// The whole window, which the popover clamps itself inside.
     pub viewport: (f32, f32),
     pub lang: Lang,
@@ -150,6 +157,7 @@ impl ExploreView {
             children.push(self.tree_semantics(cx));
         }
         children.extend(self.footer_semantics(cx));
+        children.extend(self.rail_foot_semantics(cx));
         children.extend(self.floor_semantics(cx));
         children.extend(self.popover_semantics(cx));
         SemanticNode::new(cx.surface(EXPLORE, parts::COLUMN), Role::Group)
@@ -316,7 +324,7 @@ impl ExploreView {
     }
 
     fn modes_semantics(&self, cx: &Context) -> SemanticNode {
-        let rects = self.navigator_mode_rects(cx.area);
+        let rects = self.navigator_mode_rects(cx.rail);
         let total = rects.len();
         let children = rects
             .iter()
@@ -532,8 +540,39 @@ impl ExploreView {
                 cx.surface(MODE, ControlPart::new(mode.token()))
             }
             ExploreChromeFocus::Manage => cx.surface(EXPLORE, parts::MANAGE_APPS),
+            ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
+            ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
+            ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
             ExploreChromeFocus::FloorChip => cx.surface(EXPLORE, parts::FLOOR_CHIP),
         })
+    }
+
+    /// The rail's foot: Settings, Help and the profile square, each a
+    /// button with its name. *Manage apps* is inert until the manager lands
+    /// and is not offered.
+    fn rail_foot_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
+        let r = self.apps_rail_rects(cx.rail);
+        if r.band.w <= 0.0 {
+            return Vec::new();
+        }
+        let person = self
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchProfile).to_string());
+        vec![
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_SETTINGS), Role::Button)
+                .with_label(t(cx.lang, Key::SettingsTab))
+                .with_bounds(r.settings)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_HELP), Role::Button)
+                .with_label(t(cx.lang, Key::Help))
+                .with_bounds(r.help)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_PROFILE), Role::Button)
+                .with_label(format!("{person}, {}", t(cx.lang, Key::FloorChipAction)))
+                .with_bounds(r.profile)
+                .with_action(Action::Click),
+        ]
     }
 
     /// The floor: the who/where chip, named by where and who, with its
@@ -779,7 +818,7 @@ impl ExploreView {
         match surface {
             MODE => {
                 let (mode, _) = self
-                    .navigator_mode_rects(area)
+                    .navigator_mode_rects(self.rail_of(area))
                     .into_iter()
                     .find(|(mode, _)| mode.token() == target.part.name())?;
                 // The same call the press makes, two lines below the popover
@@ -794,6 +833,12 @@ impl ExploreView {
             EXPLORE => match target.part {
                 p if p == parts::FLOOR_CHIP => {
                     self.toggle_popover(PopoverKind::Summary);
+                    Some(Outcome::Consumed)
+                }
+                p if p == parts::RAIL_SETTINGS => Some(Outcome::OpenSettings),
+                p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
+                p if p == parts::RAIL_PROFILE => {
+                    self.toggle_profile_popover();
                     Some(Outcome::Consumed)
                 }
                 p if p == parts::ACTIONS => {

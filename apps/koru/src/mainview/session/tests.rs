@@ -262,7 +262,11 @@ fn restoring_an_open_column_does_not_animate() {
     // pane comes back open. Both are still *set* rather than slid.
     assert!(back.sidebar.is_open());
     assert!(!back.animating(), "no slide on startup");
-    assert_eq!(back.content().x, theme::SIDEBAR_W, "already in place");
+    assert_eq!(
+        back.content().x,
+        theme::SIDEBAR_W + theme::RAIL_W,
+        "already in place"
+    );
 }
 
 /// Scroll comes back too, so a long document reopens where you were reading.
