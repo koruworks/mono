@@ -367,16 +367,9 @@ struct Popover {
     /// When the current slide began and the page it began from. `None` at rest,
     /// for the same reason `fade` is.
     slide: Option<(Instant, f32)>,
-    /// Which of the toolbar's three controls the keyboard is on while the
-    /// toolbar row is hovered: ← and → move it, Enter presses it.
-    tool: Tool,
     /// What the panel hangs off: the floor chip (above it) or the rail's
     /// profile square (beside it).
     anchor: PopoverAnchor,
-    /// Whether the main page leads with your card. The chip's page lists the
-    /// workspaces only (the CTO's artboard 11); the profile square's page
-    /// keeps the card, which is the way to the Profiles page.
-    card: bool,
 }
 
 /// Where the who/where popover hangs.
@@ -407,9 +400,6 @@ fn page_of(kind: PopoverKind) -> f32 {
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
-    /// The main page's first row: you, as a card that slides to the
-    /// Profiles page.
-    PersonCard,
     /// *WORKSPACES · n*, with the ⋯ that opens New workspace and Import….
     WorkspacesHeading,
     /// An index into the open Profile's workspace list. The row switches; the
@@ -417,13 +407,12 @@ pub enum PopoverRow {
     Workspace(usize),
     /// The hairline above a page's footer.
     Divider,
-    /// The main page's footer: the sync icon, settings and help.
-    Toolbar,
-    /// The Profiles page's head: `‹ Profiles`, the way back.
-    Back,
+    /// The Profiles page's head: its name. Furniture — there is no page
+    /// behind it to go back to (the CTO's note: no views inside the popover).
+    ProfilesTitle,
     /// An index into the profile list — **every** profile the machine knows.
-    /// The row switches to it and slides back; the gear that shows on hover
-    /// opens the Manage tab on it.
+    /// The row switches to it; the gear that shows on hover opens the Manage
+    /// tab on it.
     Profile(usize),
     /// *New profile*: the Profile manager's create form.
     NewProfile,
@@ -432,20 +421,20 @@ pub enum PopoverRow {
 }
 
 impl PopoverRow {
-    /// Whether the keyboard may land on it. The divider is furniture, and the
-    /// arrows step over it the way `next_enabled` steps over a dimmed menu
-    /// item. The heading is a stop: Enter on it opens its ⋯ menu.
+    /// Whether the keyboard may land on it. The divider and the Profiles
+    /// title are furniture, and the arrows step over them the way
+    /// `next_enabled` steps over a dimmed menu item. The heading is a stop:
+    /// Enter on it opens its ⋯ menu.
     fn selectable(self) -> bool {
-        !matches!(self, Self::Divider)
+        !matches!(self, Self::Divider | Self::ProfilesTitle)
     }
 }
 
 /// Which part of a popover row a point is on.
 ///
 /// A row is one target with, at most, one control at its trailing end — a
-/// workspace's or profile's gear, the heading's ⋯ — and the toolbar is three
-/// controls in one row. The press and the hover both read this, so the gear a
-/// hover shows is the gear a press hits.
+/// workspace's or profile's gear, the heading's ⋯. The press and the hover
+/// both read this, so the gear a hover shows is the gear a press hits.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverPart {
     /// The row itself.
@@ -454,22 +443,6 @@ pub enum PopoverPart {
     Gear,
     /// The heading's ⋯: New workspace and Import….
     Menu,
-    Tool(Tool),
-}
-
-/// The toolbar's three controls, left to right.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Tool {
-    /// The sync icon: the Sync settings tab.
-    Sync,
-    /// The Settings tab.
-    Settings,
-    /// The help popover.
-    Help,
-}
-
-impl Tool {
-    const ALL: [Tool; 3] = [Tool::Sync, Tool::Settings, Tool::Help];
 }
 
 /// What the sync icon says, from the Agent's account state for the open
@@ -3267,33 +3240,32 @@ impl ExploreView {
     }
 
     /// Open `kind` where a chord or the chip puts it, or shut it if it is
-    /// already the page showing: the main page above the chip, workspaces
-    /// only; the Profiles page beside the rail's profile square, your card
-    /// behind it for `←`.
+    /// already the page showing: the workspaces above the chip, the Profiles
+    /// beside the rail's profile square. Two pages, two doors, nothing
+    /// between them (the CTO's note: no views inside the popover).
     fn toggle_popover(&mut self, kind: PopoverKind) {
-        let (anchor, card) = match kind {
-            PopoverKind::Profiles => (PopoverAnchor::Rail, true),
-            PopoverKind::Summary | PopoverKind::LibraryActions => (PopoverAnchor::Chip, false),
+        let anchor = match kind {
+            PopoverKind::Profiles => PopoverAnchor::Rail,
+            PopoverKind::Summary | PopoverKind::LibraryActions => PopoverAnchor::Chip,
         };
-        self.toggle_popover_from(kind, anchor, card);
+        self.toggle_popover_from(kind, anchor);
     }
 
     /// Open `kind` hung off `anchor`, or shut it if that is what is showing.
     ///
-    /// Asking for the other page of the switcher slides to it rather than
-    /// closing — one panel, two pages. Asking for the same page from the
-    /// other anchor moves the panel there.
-    fn toggle_popover_from(&mut self, kind: PopoverKind, anchor: PopoverAnchor, card: bool) {
+    /// Asking for the other page while one is up slides to it rather than
+    /// closing — one panel, two pages — and moves the panel to the other
+    /// anchor.
+    fn toggle_popover_from(&mut self, kind: PopoverKind, anchor: PopoverAnchor) {
         let now = Instant::now();
         let switcher = |k: PopoverKind| k != PopoverKind::LibraryActions;
         match self.popover.as_mut() {
-            Some(p) if !p.closing && p.showing(kind) && p.anchor == anchor && p.card == card => {
+            Some(p) if !p.closing && p.showing(kind) && p.anchor == anchor => {
                 self.close_popover();
             }
             Some(p) if !p.closing && switcher(p.kind) && switcher(kind) => {
                 p.kind = kind;
                 p.anchor = anchor;
-                p.card = card;
                 p.hover = None;
                 p.scroll = 0.0;
                 p.slide = Some((now, p.page));
@@ -3301,7 +3273,6 @@ impl ExploreView {
             Some(p) => {
                 p.kind = kind;
                 p.anchor = anchor;
-                p.card = card;
                 p.hover = None;
                 p.scroll = 0.0;
                 p.closing = false;
@@ -3319,38 +3290,9 @@ impl ExploreView {
                     closing: false,
                     page: page_of(kind),
                     slide: None,
-                    tool: Tool::Sync,
                     anchor,
-                    card,
                 })
             }
-        }
-    }
-
-    /// Whether the open page leads with your card.
-    pub fn popover_has_card(&self) -> bool {
-        self.popover.as_ref().is_some_and(|p| p.card)
-    }
-
-    /// Slide to the Profiles page. The popover stays open: your card is a
-    /// step towards a Profile, not a destination.
-    fn drill(&mut self) {
-        if let Some(p) = self.popover.as_mut().filter(|p| !p.closing) {
-            p.kind = PopoverKind::Profiles;
-            p.hover = None;
-            p.scroll = 0.0;
-            p.slide = Some((Instant::now(), p.page));
-        }
-    }
-
-    /// Slide back to the main page, with the keyboard on your card so Enter
-    /// goes straight back in.
-    fn back(&mut self) {
-        if let Some(p) = self.popover.as_mut().filter(|p| !p.closing) {
-            p.kind = PopoverKind::Summary;
-            p.hover = Some(0);
-            p.scroll = 0.0;
-            p.slide = Some((Instant::now(), p.page));
         }
     }
 
@@ -3368,10 +3310,7 @@ impl ExploreView {
         match kind {
             PopoverKind::Summary => {
                 let list = &self.workspaces;
-                let mut out = Vec::with_capacity(list.len() + 4);
-                if self.popover_has_card() {
-                    out.push(PopoverRow::PersonCard);
-                }
+                let mut out = Vec::with_capacity(list.len() + 1);
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
@@ -3391,12 +3330,12 @@ impl ExploreView {
                     .collect();
                 shown.sort_by_key(|&i| !list[i].pinned);
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
-                out.push(PopoverRow::Divider);
-                out.push(PopoverRow::Toolbar);
+                // The chip's page ends with its workspaces: sync, settings
+                // and help are the rail's now (the CTO's note).
                 out
             }
             PopoverKind::Profiles => {
-                let mut out = vec![PopoverRow::Back];
+                let mut out = vec![PopoverRow::ProfilesTitle];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
                 out.push(PopoverRow::Divider);
                 out.push(PopoverRow::NewProfile);
@@ -3414,8 +3353,6 @@ impl ExploreView {
         match row {
             PopoverRow::Divider => POPOVER_DIVIDER_H,
             PopoverRow::Profile(_) => PROFILE_ROW_H,
-            PopoverRow::PersonCard => PERSON_CARD_H,
-            PopoverRow::Toolbar => TOOLBAR_H,
             _ => POPOVER_ROW_H,
         }
     }
@@ -3424,16 +3361,13 @@ impl ExploreView {
     fn page_head(row: PopoverRow) -> bool {
         matches!(
             row,
-            PopoverRow::PersonCard | PopoverRow::WorkspacesHeading | PopoverRow::Back
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle
         )
     }
 
     /// Whether `row` begins, or is in, a page's fixed footer.
     fn page_foot(row: PopoverRow) -> bool {
-        matches!(
-            row,
-            PopoverRow::Divider | PopoverRow::Toolbar | PopoverRow::NewProfile
-        )
+        matches!(row, PopoverRow::Divider | PopoverRow::NewProfile)
     }
 
     /// A page's height with every row showing, padding included.
@@ -3559,33 +3493,11 @@ impl ExploreView {
             .map(|(_, r)| r)
     }
 
-    /// Where one of the toolbar's controls is, when the main page is showing.
-    pub fn popover_tool_rect(&self, area: Rect, viewport: (f32, f32), tool: Tool) -> Option<Rect> {
-        let row = self.popover_row_rect(area, viewport, PopoverRow::Toolbar)?;
-        Some(toolbar_parts(row).of(tool))
-    }
-
     /// Where the heading's ⋯ is, when the main page is showing — what the
     /// container hangs the New workspace / Import… menu off.
     pub fn popover_heading_menu_rect(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
         let row = self.popover_row_rect(area, viewport, PopoverRow::WorkspacesHeading)?;
         Some(heading_menu_rect(row))
-    }
-
-    /// The toolbar control under a point, with its rect — for the tooltip.
-    pub fn popover_tool_at(
-        &self,
-        area: Rect,
-        viewport: (f32, f32),
-        x: f32,
-        y: f32,
-    ) -> Option<(Tool, Rect)> {
-        let (_, row, part) = self.popover_part_at(area, viewport, x, y)?;
-        let PopoverPart::Tool(tool) = part else {
-            return None;
-        };
-        let r = self.popover_row_rect(area, viewport, row)?;
-        Some((tool, toolbar_parts(r).of(tool)))
     }
 
     /// One page's rows in `panel`: the fixed top rows, the scrolling list, and
@@ -3868,31 +3780,19 @@ impl ExploreView {
                 PopoverPart::Gear
             }
             PopoverRow::WorkspacesHeading => PopoverPart::Menu,
-            PopoverRow::Toolbar => {
-                let t = toolbar_parts(r);
-                match Tool::ALL
-                    .into_iter()
-                    .find(|tool| t.of(*tool).contains(x, y))
-                {
-                    Some(tool) => PopoverPart::Tool(tool),
-                    None => PopoverPart::Row,
-                }
-            }
             _ => PopoverPart::Row,
         };
         Some((i, row, part))
     }
 
-    /// Whether choosing `row`'s `part` keeps the popover open. The cards and
-    /// the back row move between its pages, a Profile row switches and
-    /// slides back, the heading's ⋯ and the help control open a menu
-    /// *beside* the page (the CTO's note, QUESTIONS.md E29); everything else
-    /// is a destination.
+    /// Whether choosing `row`'s `part` keeps the popover open. A Profile row
+    /// switches and the list stays, with the tick moved; the heading's ⋯
+    /// opens a menu *beside* the page (the CTO's note, QUESTIONS.md E29); the
+    /// title is furniture; everything else is a destination.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
-            PopoverRow::PersonCard | PopoverRow::Back | PopoverRow::WorkspacesHeading => true,
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => true,
             PopoverRow::Profile(_) => part == PopoverPart::Row,
-            PopoverRow::Toolbar => matches!(part, PopoverPart::Row | PopoverPart::Tool(Tool::Help)),
             PopoverRow::Workspace(_)
             | PopoverRow::Divider
             | PopoverRow::NewProfile
@@ -3913,11 +3813,10 @@ impl ExploreView {
                     Outcome::SwitchWorkspace(id)
                 }
             }
-            // **A Profile row switches to it and slides back** (the CTO's
-            // artboard): the window lands on the workspace that Profile last
-            // had open, and the main page lists that Profile's workspaces
-            // once the switch has happened. Its gear opens the Manage tab on
-            // it instead.
+            // **A Profile row switches to it** (the CTO's artboard): the
+            // window lands on the workspace that Profile last had open, and
+            // the list stays up with its tick moved. Its gear opens the
+            // Manage tab on it instead.
             PopoverRow::Profile(i) => {
                 let Some(id) = self.profiles.get(i).map(|p| p.id) else {
                     return Outcome::Consumed;
@@ -3925,31 +3824,16 @@ impl ExploreView {
                 if part == PopoverPart::Gear {
                     return Outcome::ManageProfile(id);
                 }
-                self.back();
                 if self.current_profile == Some(id) {
                     Outcome::Consumed
                 } else {
                     Outcome::SwitchProfile(id)
                 }
             }
-            PopoverRow::PersonCard => {
-                self.drill();
-                Outcome::Consumed
-            }
-            PopoverRow::Back => {
-                self.back();
-                Outcome::Consumed
-            }
             PopoverRow::WorkspacesHeading => Outcome::WorkspacesMenu,
-            PopoverRow::Toolbar => match part {
-                PopoverPart::Tool(Tool::Sync) => Outcome::OpenSyncSettings,
-                PopoverPart::Tool(Tool::Settings) => Outcome::OpenSettings,
-                PopoverPart::Tool(Tool::Help) => Outcome::OpenHelp,
-                _ => Outcome::Consumed,
-            },
             PopoverRow::NewProfile => Outcome::NewProfile,
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
-            PopoverRow::Divider => Outcome::Consumed,
+            PopoverRow::Divider | PopoverRow::ProfilesTitle => Outcome::Consumed,
         }
     }
 
@@ -3986,13 +3870,11 @@ impl ExploreView {
     /// chords rather than being swallowed: a popover hanging off a column is not
     /// a modal over the document, so Ctrl+E must still shut the pane under it.
     ///
-    /// Left goes back from the Profiles page; Right and Enter on your card go
-    /// in, landing on the Profile you are in so the arrows carry on from
-    /// there. On the toolbar row Left and Right move between its three
-    /// controls and Enter presses the one the keyboard is on.
+    /// Enter on a Profile row switches with the list left up; on the
+    /// heading it opens the ⋯ menu; on a workspace it switches and shuts.
     pub fn popover_key(&mut self, key: &winit::keyboard::Key) -> Option<Outcome> {
         use winit::keyboard::{Key, NamedKey};
-        let kind = self.live()?.kind;
+        self.live()?;
         let rows = self.popover_rows();
         let hovered = self
             .live()
@@ -4011,49 +3893,13 @@ impl ExploreView {
                 }
                 Some(Outcome::Consumed)
             }
-            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight)
-                if hovered == Some(PopoverRow::Toolbar) =>
-            {
-                let forward = matches!(key, Key::Named(NamedKey::ArrowRight));
-                if let Some(p) = self.popover.as_mut() {
-                    let i = Tool::ALL.iter().position(|t| *t == p.tool).unwrap_or(0);
-                    let n = Tool::ALL.len();
-                    p.tool = Tool::ALL[if forward {
-                        (i + 1) % n
-                    } else {
-                        (i + n - 1) % n
-                    }];
-                }
-                Some(Outcome::Consumed)
-            }
-            Key::Named(NamedKey::ArrowLeft) if kind == PopoverKind::Profiles => {
-                self.back();
-                Some(Outcome::Consumed)
-            }
-            Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::Enter)
-                if hovered == Some(PopoverRow::PersonCard) =>
-            {
-                self.drill();
-                if !self.hover_current_profile() {
-                    self.hover_first_row();
-                }
-                Some(Outcome::Consumed)
-            }
             Key::Named(NamedKey::Enter)
                 if matches!(
                     hovered,
-                    Some(PopoverRow::Back | PopoverRow::Profile(_) | PopoverRow::WorkspacesHeading)
+                    Some(PopoverRow::Profile(_) | PopoverRow::WorkspacesHeading)
                 ) =>
             {
                 Some(self.choose(hovered.expect("matched above"), PopoverPart::Row))
-            }
-            Key::Named(NamedKey::Enter) if hovered == Some(PopoverRow::Toolbar) => {
-                let tool = self.popover.as_ref().map_or(Tool::Sync, |p| p.tool);
-                let part = PopoverPart::Tool(tool);
-                if !Self::stays_open(PopoverRow::Toolbar, part) {
-                    self.close_popover();
-                }
-                Some(self.choose(PopoverRow::Toolbar, part))
             }
             Key::Named(NamedKey::Enter) => {
                 self.close_popover();
@@ -4063,17 +3909,6 @@ impl ExploreView {
                 })
             }
             _ => None,
-        }
-    }
-
-    /// Put the keyboard on the first row after a page's head.
-    fn hover_first_row(&mut self) {
-        let rows = self.popover_rows();
-        let first = rows
-            .iter()
-            .position(|row| !Self::page_head(*row) && row.selectable());
-        if let Some(p) = self.popover.as_mut() {
-            p.hover = first;
         }
     }
 
@@ -4249,9 +4084,9 @@ impl ExploreView {
         changed
     }
 
-    /// The rail's profile square: its popover beside the square, with your
-    /// card — or, while that popover shows any page, shut (the chip's rule:
-    /// one control, one popover).
+    /// The rail's profile square: the Profiles page beside the square — or,
+    /// while that popover is up, shut (the chip's rule: one control, one
+    /// popover).
     pub fn toggle_profile_popover(&mut self) {
         let showing_its_page = self.live().is_some_and(|p| {
             p.kind != PopoverKind::LibraryActions && p.anchor == PopoverAnchor::Rail
@@ -4259,7 +4094,7 @@ impl ExploreView {
         if showing_its_page {
             self.close_popover();
         } else {
-            self.toggle_popover_from(PopoverKind::Summary, PopoverAnchor::Rail, true);
+            self.toggle_popover_from(PopoverKind::Profiles, PopoverAnchor::Rail);
         }
     }
 
@@ -4292,16 +4127,14 @@ impl ExploreView {
 
     /// The rail: a shade darker than the pane, the apps as squares with the
     /// active one on a card, *Manage apps* dimmed under them, and at the
-    /// foot Settings, Help and the profile square with its sync dot (the
-    /// CTO's artboard 11). `avatar` is the open Profile's decoded picture,
-    /// which the container resolves.
+    /// foot Settings, Help and the profile square — the Profile's tile with
+    /// its sync dot (the CTO's artboard 11).
     pub fn draw_apps_rail(
         &self,
         scene: &mut Scene,
         root: Affine,
         engine: &mut TextEngine,
         rail: Rect,
-        avatar: Option<&peniko::ImageBrush>,
     ) {
         if rail.w <= 0.0 {
             return;
@@ -4421,18 +4254,15 @@ impl ExploreView {
             apps_rail::PROFILE_TILE,
             apps_rail::PROFILE_TILE,
         );
-        let name = self.profile().map_or("", |profile| profile.name.as_str());
-        let key = self.profile().map_or("", |profile| profile.email.as_str());
-        koru_ui::profile_picker::draw_avatar(
-            scene,
-            root,
-            engine,
-            tile,
-            avatar,
-            name,
-            key,
-            theme::role::row(),
-        );
+        // The Profile's own tile — its colour and emoji, or its initial —
+        // the way the Profiles page draws it (the CTO's note).
+        let profile = self.profile();
+        koru_draw::tile::Tile {
+            icon: profile.and_then(|p| p.icon.as_deref()),
+            color: profile.and_then(|p| p.color.as_deref()),
+            name: profile.map_or("", |p| p.name.as_str()),
+        }
+        .draw(scene, root, engine, tile);
         let dot = match self.sync_status() {
             SyncStatus::NotSetUp => None,
             SyncStatus::UpToDate | SyncStatus::Syncing => Some(p.accent),
@@ -7660,8 +7490,8 @@ impl ExploreView {
                 );
             }
             let hot = hover == Some(i);
-            // The heading and the toolbar light their controls, not the row.
-            if hot && !matches!(row, PopoverRow::WorkspacesHeading | PopoverRow::Toolbar) {
+            // The heading lights its ⋯, not the row.
+            if hot && !matches!(row, PopoverRow::WorkspacesHeading) {
                 scene::fill(
                     scene,
                     root,
@@ -7707,22 +7537,14 @@ impl ExploreView {
                         koru_ui::icon_button::Metrics::COMPACT,
                     );
                 }
-                PopoverRow::Back => {
-                    // The way back, and the page's name: `‹ Profiles`.
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::CARET_LEFT,
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        p.text_dim,
-                    );
+                PopoverRow::ProfilesTitle => {
+                    // The page's name. No caret: nothing is behind it.
                     draw_middle(
                         scene,
                         root,
                         engine,
                         koru_i18n::t(lang, koru_i18n::Key::WorkspacesProfiles),
-                        text(text_x),
+                        text(icon_x),
                         theme::role::row().with_weight(theme::FontWeight::SemiBold),
                         p.text,
                     );
@@ -7774,50 +7596,6 @@ impl ExploreView {
                         p.text_dim,
                     );
                 }
-                PopoverRow::PersonCard => {
-                    // You, as a card: the picture or the initials, the name
-                    // over where you sync and how many devices hold the
-                    // Profile, and a caret saying it leads somewhere (the
-                    // CTO's artboard).
-                    let name = self.profile().map_or("", |profile| profile.name.as_str());
-                    let key = self.profile().map_or("", |profile| profile.email.as_str());
-                    let detail = self
-                        .profile()
-                        .map_or(String::new(), |profile| self.profile_detail(profile, lang));
-                    let at = Rect::new(
-                        r.x + theme::NAV_PAD,
-                        r.y + (r.h - PERSON_AVATAR) * 0.5,
-                        PERSON_AVATAR,
-                        PERSON_AVATAR,
-                    );
-                    koru_ui::profile_picker::draw_avatar(
-                        scene,
-                        root,
-                        engine,
-                        at,
-                        avatar,
-                        name,
-                        key,
-                        theme::role::row(),
-                    );
-                    let caret = trailing_lane(r);
-                    draw_icon(scene, root, engine, icons::CARET_RIGHT, caret, p.row_hint);
-                    draw_two_lines(
-                        scene,
-                        root,
-                        engine,
-                        Rect::new(
-                            at.x + at.w + 8.0,
-                            r.y,
-                            (caret.x - at.x - at.w - 12.0).max(1.0),
-                            r.h,
-                        ),
-                        &label_fit(name),
-                        &detail,
-                        true,
-                        p,
-                    );
-                }
                 PopoverRow::Divider => {
                     scene::fill(
                         scene,
@@ -7830,47 +7608,6 @@ impl ExploreView {
                             1.0,
                         ),
                     );
-                }
-                PopoverRow::Toolbar => {
-                    let t = toolbar_parts(r);
-                    let tool = self.popover.as_ref().map_or(Tool::Sync, |x| x.tool);
-                    // A control is lit by the pointer on it, or by the
-                    // keyboard while the row is its stop and the pointer is
-                    // elsewhere.
-                    let lit = |which: Tool| {
-                        hot && match part {
-                            Some(PopoverPart::Tool(on)) => on == which,
-                            Some(_) => false,
-                            None => tool == which,
-                        }
-                    };
-                    draw_sync_icon(
-                        scene,
-                        root,
-                        engine,
-                        t.sync,
-                        self.sync_status(),
-                        lit(Tool::Sync),
-                        p,
-                    );
-                    for (which, glyph) in [
-                        (Tool::Settings, icons::FADERS),
-                        (Tool::Help, icons::QUESTION),
-                    ] {
-                        koru_ui::icon_button::draw_with(
-                            scene,
-                            root,
-                            engine,
-                            t.of(which),
-                            glyph,
-                            koru_ui::icon_button::State {
-                                hovered: lit(which),
-                                active: false,
-                                disabled: false,
-                            },
-                            koru_ui::icon_button::Metrics::COMPACT,
-                        );
-                    }
                 }
                 PopoverRow::NewProfile => {
                     draw_icon(
@@ -7982,43 +7719,6 @@ pub(crate) fn heading_menu_rect(r: Rect) -> Rect {
     )
 }
 
-/// Where the toolbar's three controls are.
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub struct ToolbarParts {
-    pub sync: Rect,
-    pub settings: Rect,
-    pub help: Rect,
-}
-
-impl ToolbarParts {
-    pub fn of(self, tool: Tool) -> Rect {
-        match tool {
-            Tool::Sync => self.sync,
-            Tool::Settings => self.settings,
-            Tool::Help => self.help,
-        }
-    }
-}
-
-/// The sync icon at the row's left; settings and help at its right (the
-/// CTO's artboard).
-pub(crate) fn toolbar_parts(r: Rect) -> ToolbarParts {
-    let y = r.y + (r.h - TOOL) * 0.5;
-    let sync = Rect::new(r.x + theme::NAV_PAD, y, TOOL, TOOL);
-    let help = Rect::new(
-        (r.x + r.w - theme::NAV_PAD - TOOL).max(sync.x),
-        y,
-        TOOL,
-        TOOL,
-    );
-    let settings = Rect::new((help.x - 4.0 - TOOL).max(sync.x), y, TOOL, TOOL);
-    ToolbarParts {
-        sync,
-        settings,
-        help,
-    }
-}
-
 /// A row's trailing lane: the gear while the pointer is on the row, else the
 /// tick on the one you are in. The gear is lit when the pointer is on it.
 #[allow(clippy::too_many_arguments)]
@@ -8103,56 +7803,6 @@ fn draw_two_lines(
         theme::role::hint(),
         p.text_dim,
     );
-}
-
-/// The sync icon in its five states (the CTO's artboard): up to date in the
-/// ordinary ink, syncing in the accent, offline with a grey dot, needs
-/// attention with a red dot, not set up muted.
-fn draw_sync_icon(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    slot: Rect,
-    status: SyncStatus,
-    hovered: bool,
-    p: &theme::Palette,
-) {
-    if hovered {
-        scene::fill(
-            scene,
-            root,
-            p.hover_tint,
-            &scene::rrect(slot.x, slot.y, slot.w, slot.h, 6.0),
-        );
-    }
-    let colour = match status {
-        SyncStatus::Syncing => p.accent,
-        SyncStatus::NotSetUp => p.row_hint,
-        _ => p.text_dim,
-    };
-    draw_icon(scene, root, engine, icons::ARROWS_CLOCKWISE, slot, colour);
-    let dot = match status {
-        SyncStatus::Offline => Some(p.row_hint),
-        SyncStatus::NeedsAttention => {
-            Some(theme::accent_tone("red").map_or(p.text, |tone| tone.swatch))
-        }
-        _ => None,
-    };
-    if let Some(colour) = dot {
-        const DOT: f32 = 6.0;
-        scene::fill(
-            scene,
-            root,
-            colour,
-            &scene::rrect(
-                slot.x + slot.w - DOT - 2.0,
-                slot.y + slot.h - DOT - 2.0,
-                DOT,
-                DOT,
-                DOT * 0.5,
-            ),
-        );
-    }
 }
 
 /// The keyboard's ring around a chrome control: `focus_ring`, two borders
@@ -8301,15 +7951,9 @@ const SWITCHER_MAX_H: f32 = 500.0;
 /// The rounded tile at the left of a workspace row, carrying its colour and its
 /// emoji. Square.
 const WORKSPACE_CHIP: f32 = 20.0;
-/// The main page's person card: two lines, the picture beside them.
-const PERSON_CARD_H: f32 = 48.0;
-const PERSON_AVATAR: f32 = 28.0;
 /// A Profile row on the Profiles page: two lines, the tile beside them.
 const PROFILE_ROW_H: f32 = 44.0;
 const PROFILE_TILE: f32 = 24.0;
-/// The main page's footer and its three controls.
-const TOOLBAR_H: f32 = 36.0;
-const TOOL: f32 = 24.0;
 const HEADING_BUTTON_H: f32 = 20.0;
 
 /// The `…` between the name and the tick.

@@ -809,22 +809,16 @@ fn a_long_switcher_caps_at_its_max_and_scrolls_only_its_list() {
         find(&after, PopoverRow::Workspace(0)).y < find(&before, PopoverRow::Workspace(0)).y,
         "the list scrolls"
     );
-    for fixed in [
-        PopoverRow::WorkspacesHeading,
-        PopoverRow::Divider,
-        PopoverRow::Toolbar,
-    ] {
-        assert_eq!(
-            find(&after, fixed),
-            find(&before, fixed),
-            "{fixed:?} stays fixed"
-        );
-    }
+    assert_eq!(
+        find(&after, PopoverRow::WorkspacesHeading),
+        find(&before, PopoverRow::WorkspacesHeading),
+        "the heading stays fixed"
+    );
+    let band = v.popover_list_band(a, VIEW).expect("a band");
     let panel = v.popover_panel(a, VIEW).unwrap();
-    let last = find(&after, PopoverRow::Toolbar);
     assert!(
-        (last.y + last.h - (panel.y + panel.h - POPOVER_PAD)).abs() < 0.01,
-        "the toolbar sits on the panel's floor"
+        (band.y + band.h - (panel.y + panel.h - POPOVER_PAD)).abs() < 0.01,
+        "with no footer the list runs to the panel's floor"
     );
 }
 
@@ -844,15 +838,15 @@ fn a_scrolled_row_never_rides_up_under_the_header() {
 /// so where you sync and how many devices hold the Profile fit under the
 /// name; and the device count comes from the window.
 #[test]
-fn the_person_card_is_two_lines_and_the_linked_count_is_set_from_outside() {
+fn a_profile_row_is_two_lines_and_the_linked_count_is_set_from_outside() {
     let (mut v, _, _) = with_context(0);
     v.toggle_profile_popover();
     let a = area();
     let rects = v.popover_rects(a, VIEW);
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
-    assert_eq!(h(PopoverRow::PersonCard), Some(super::PERSON_CARD_H));
+    assert_eq!(h(PopoverRow::Profile(0)), Some(super::PROFILE_ROW_H));
     assert!(
-        h(PopoverRow::PersonCard) > h(PopoverRow::WorkspacesHeading),
+        h(PopoverRow::Profile(0)) > h(PopoverRow::NewProfile),
         "taller than a one-line row"
     );
     assert!(v.set_linked_count(2), "a new count is a change");
@@ -949,8 +943,8 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let chip = crate::panes::sidebar::floor::solve(a).chip;
     let (cx, cy) = chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
-    // The chip's page: the workspaces and the toolbar — no card (the
-    // CTO's artboard 11: the chip is the workspace's).
+    // The chip's page: the heading and the workspaces, nothing else (the
+    // CTO's artboard 11 and the notes after it).
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
@@ -958,48 +952,28 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert!(v.popover_open());
     let rows = v.popover_rows();
     assert_eq!(rows[0], PopoverRow::WorkspacesHeading);
-    assert!(
-        !rows.contains(&PopoverRow::PersonCard),
-        "no card on the chip's page"
-    );
     assert!(rows.contains(&PopoverRow::Workspace(0)));
-    assert_eq!(rows.last(), Some(&PopoverRow::Toolbar));
+    assert!(matches!(rows.last(), Some(PopoverRow::Workspace(_))));
     // Pressing the chip while it is open shuts it.
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
 
-    // The rail's profile square: the same page with your card leading it.
+    // The rail's profile square: the Profiles page, no views inside it.
     let rail = v.rail_of(a);
     let (sx, sy) = v.apps_rail_rects(rail).profile.centre();
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(v.popover_open());
-    let rows = v.popover_rows();
-    assert_eq!(rows[0], PopoverRow::PersonCard);
-    assert_eq!(rows[1], PopoverRow::WorkspacesHeading);
-    // Your card slides to the Profiles page.
-    assert_eq!(
-        v.choose(PopoverRow::PersonCard, PopoverPart::Row),
-        Outcome::Consumed
-    );
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Profiles)
     );
-    assert!(
-        v.popover.as_ref().is_some_and(|p| p.slide.is_some()),
-        "it slides between pages rather than fading"
-    );
     let rows = v.popover_rows();
-    assert_eq!(rows[0], PopoverRow::Back);
+    assert_eq!(rows[0], PopoverRow::ProfilesTitle);
+    assert!(!rows[0].selectable(), "the title is furniture");
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(rows.last(), Some(&PopoverRow::NewProfile));
-    // Back returns to the main page; the square shuts it from there.
-    v.back();
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Summary)
-    );
+    // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
 }
@@ -1114,30 +1088,6 @@ fn every_popover_part_hit_tests_back_to_itself() {
         v.popover_part_at(a, VIEW, x, y)
             .map(|(_, row, part)| (row, part)),
         Some((PopoverRow::WorkspacesHeading, PopoverPart::Menu))
-    );
-    let r = find(&v, PopoverRow::Toolbar);
-    let t = super::toolbar_parts(r);
-    for tool in Tool::ALL {
-        let (x, y) = t.of(tool).centre();
-        assert_eq!(
-            v.popover_part_at(a, VIEW, x, y)
-                .map(|(_, row, part)| (row, part)),
-            Some((PopoverRow::Toolbar, PopoverPart::Tool(tool))),
-            "{tool:?}"
-        );
-    }
-    assert!(t.sync.x + t.sync.w < t.settings.x, "sync is at the left");
-    assert!(
-        t.settings.x + t.settings.w <= t.help.x,
-        "settings before help"
-    );
-    assert!(t.help.x + t.help.w <= r.x + r.w, "help inside the row");
-    let (x, y) = ((t.sync.x + t.sync.w + t.settings.x) * 0.5, r.centre().1);
-    assert_eq!(
-        v.popover_part_at(a, VIEW, x, y)
-            .map(|(_, row, part)| (row, part)),
-        Some((PopoverRow::Toolbar, PopoverPart::Row)),
-        "the gap between them is the row"
     );
 
     v.toggle_popover(PopoverKind::Profiles);
@@ -1382,7 +1332,7 @@ fn every_known_profile_gets_a_row() {
 /// main page, with the popover still open; choosing the one you are in only
 /// slides back.
 #[test]
-fn choosing_a_profile_switches_to_it_and_slides_back() {
+fn choosing_a_profile_switches_to_it_and_leaves_the_list_up() {
     let (mut v, profiles, _) = with_context(0);
     let a = area();
     let current = profiles[1].id;
@@ -1401,13 +1351,12 @@ fn choosing_a_profile_switches_to_it_and_slides_back() {
             Outcome::SwitchProfile(want.id)
         };
         assert_eq!(v.mouse_down(a, VIEW, x, y, false), expected, "row {i}");
-        assert!(v.popover_open(), "row {i}: still open");
+        assert!(v.popover_open(), "row {i}: the list stays up");
         assert_eq!(
             v.popover.as_ref().map(|p| p.kind),
-            Some(PopoverKind::Summary),
-            "row {i}: back on the main page"
+            Some(PopoverKind::Profiles),
+            "row {i}: still the Profiles page — no views inside it"
         );
-        assert_eq!(v.popover_rows().first(), Some(&PopoverRow::PersonCard));
         v.close_popover();
         v.advance_popover(Instant::now() + Duration::from_secs(1));
     }
@@ -1418,97 +1367,55 @@ fn choosing_a_profile_switches_to_it_and_slides_back() {
 /// Back returns to the main page, with the keyboard on your card — so Enter
 /// goes straight back in.
 #[test]
-fn back_returns_to_the_main_page_with_the_keyboard_on_your_card() {
+fn the_profiles_page_has_no_page_behind_it() {
+    use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
     let a = area();
     v.toggle_profile_popover();
-    let click = |v: &mut ExploreView, want: PopoverRow| {
-        let (_, r) = *v
-            .popover_rects(a, VIEW)
-            .iter()
-            .find(|(row, _)| *row == want)
-            .expect("listed");
-        let (x, y) = r.centre();
-        v.mouse_down(a, VIEW, x, y, false)
-    };
-    assert_eq!(click(&mut v, PopoverRow::PersonCard), Outcome::Consumed);
+    let (_, r) = *v
+        .popover_rects(a, VIEW)
+        .iter()
+        .find(|(row, _)| *row == PopoverRow::ProfilesTitle)
+        .expect("the title");
+    let (x, y) = r.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    assert!(v.popover_open(), "the title is furniture, not a way out");
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Profiles)
     );
-
-    assert_eq!(click(&mut v, PopoverRow::Back), Outcome::Consumed);
-    assert!(v.popover_open(), "still open");
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Summary)
-    );
-    let hovered = v.popover_hover().map(|i| v.popover_rows()[i]);
-    assert_eq!(hovered, Some(PopoverRow::PersonCard));
+    // Left has nowhere to go and falls through to the container.
+    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
+    assert!(v.popover_open());
 }
 
 #[test]
-fn the_keys_drill_in_and_back_out() {
-    use winit::keyboard::{Key, NamedKey};
-    for drill_key in [NamedKey::ArrowRight, NamedKey::Enter] {
-        let (mut v, _, _) = with_context(0);
-        v.toggle_profile_popover();
-        // Down once lands on your card.
-        v.popover_key(&Key::Named(NamedKey::ArrowDown));
-        assert_eq!(
-            v.popover_hover().map(|i| v.popover_rows()[i]),
-            Some(PopoverRow::PersonCard)
-        );
-        assert_eq!(
-            v.popover_key(&Key::Named(drill_key)),
-            Some(Outcome::Consumed),
-            "{drill_key:?}"
-        );
-        assert!(v.popover_open(), "{drill_key:?} stays open");
-        assert_eq!(
-            v.popover.as_ref().map(|p| p.kind),
-            Some(PopoverKind::Profiles)
-        );
-        assert_eq!(
-            v.popover_hover().map(|i| v.popover_rows()[i]),
-            Some(PopoverRow::Profile(1)),
-            "{drill_key:?} lands on the Profile you are in"
-        );
-
-        assert_eq!(
-            v.popover_key(&Key::Named(NamedKey::ArrowLeft)),
-            Some(Outcome::Consumed)
-        );
-        assert_eq!(
-            v.popover.as_ref().map(|p| p.kind),
-            Some(PopoverKind::Summary)
-        );
-        assert_eq!(
-            v.popover_hover().map(|i| v.popover_rows()[i]),
-            Some(PopoverRow::PersonCard),
-            "back on your card"
-        );
-    }
-}
-
-#[test]
-fn enter_on_the_back_row_goes_back() {
+fn the_arrows_skip_the_profiles_title() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
-    v.toggle_popover(PopoverKind::Profiles);
+    v.toggle_profile_popover();
+    // Down once from nothing skips the title and lands on the first Profile.
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::Back)
+        Some(PopoverRow::Profile(0))
     );
+    // Up from there wraps to the last stop, New profile.
+    v.popover_key(&Key::Named(NamedKey::ArrowUp));
     assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::Consumed)
+        v.popover_hover().map(|i| v.popover_rows()[i]),
+        Some(PopoverRow::NewProfile)
     );
-    assert!(v.popover_open());
+}
+
+#[test]
+fn ctrl_alt_p_lands_the_keyboard_on_the_profile_you_are_in() {
+    let (mut v, _, _) = with_context(0);
+    assert!(v.open_popover(PopoverKind::Profiles));
     assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Summary)
+        v.popover_hover().map(|i| v.popover_rows()[i]),
+        Some(PopoverRow::Profile(1)),
+        "on the open Profile"
     );
 }
 
@@ -1518,8 +1425,8 @@ fn enter_on_a_profile_row_switches_and_stays_open() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, profiles, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    // Back, then the three Profiles: four Downs reach the third.
-    for _ in 0..4 {
+    // The title is skipped: three Downs reach the third Profile.
+    for _ in 0..3 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -1530,10 +1437,10 @@ fn enter_on_a_profile_row_switches_and_stays_open() {
         v.popover_key(&Key::Named(NamedKey::Enter)),
         Some(Outcome::SwitchProfile(profiles[2].id))
     );
-    assert!(v.popover_open(), "the page stays up");
+    assert!(v.popover_open(), "the list stays up");
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Summary)
+        Some(PopoverKind::Profiles)
     );
 }
 
@@ -1561,53 +1468,14 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
 /// settings are destinations that shut the page; help opens beside it and
 /// leaves it up.
 #[test]
-fn the_toolbar_takes_left_right_and_enter() {
+fn left_and_right_fall_through_on_the_profiles_page() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
-    v.toggle_popover(PopoverKind::Summary);
-    // Up from nothing lands on the last stop: the toolbar.
-    v.popover_key(&Key::Named(NamedKey::ArrowUp));
-    assert_eq!(
-        v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::Toolbar)
-    );
-    assert_eq!(v.popover.as_ref().map(|p| p.tool), Some(Tool::Sync));
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::ArrowLeft)),
-        Some(Outcome::Consumed)
-    );
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.tool),
-        Some(Tool::Help),
-        "wraps"
-    );
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenHelp)
-    );
-    assert!(v.popover_open(), "help leaves the page up");
-    v.popover_key(&Key::Named(NamedKey::ArrowRight));
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.tool),
-        Some(Tool::Sync),
-        "wraps back"
-    );
-    v.popover_key(&Key::Named(NamedKey::ArrowRight));
-    assert_eq!(v.popover.as_ref().map(|p| p.tool), Some(Tool::Settings));
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSettings)
-    );
-    assert!(!v.popover_open(), "a destination shuts the page");
-    v.advance_popover(Instant::now() + Duration::from_secs(1));
-
-    v.toggle_popover(PopoverKind::Summary);
-    v.popover_key(&Key::Named(NamedKey::ArrowUp));
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSyncSettings)
-    );
-    assert!(!v.popover_open());
+    v.toggle_profile_popover();
+    v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
+    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
+    assert!(v.popover_open(), "and neither dismissed it");
 }
 
 /// The heading's ⋯ asks the container for its menu and keeps the page; so
@@ -1641,12 +1509,11 @@ fn the_heading_menu_reports_itself_and_stays_open() {
 /// After Back, the chip shuts the main page — it must not need a second
 /// press because the Profiles page was visited.
 #[test]
-fn the_chip_closes_the_main_page_reached_by_back() {
+fn the_square_shuts_the_profiles_page() {
     let (mut v, _, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Profiles);
-    v.back();
-    // The page came from the rail's square, so the square is what shuts it
+    // The page hangs off the rail's square, so the square is what shuts it
     // — the panel hangs over the floor chip from there.
     let rail = v.rail_of(a);
     let (x, y) = v.apps_rail_rects(rail).profile.centre();
@@ -1673,7 +1540,6 @@ fn reopening_from_the_chip_shows_the_main_page() {
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
     );
-    assert!(!v.popover_has_card(), "the chip's page has no card");
 }
 
 /// The slide between pages asks for frames while it runs, and stops.
@@ -1684,7 +1550,7 @@ fn a_slide_animates_and_then_settles() {
     v.advance_popover(Instant::now() + Duration::from_secs(1));
     assert!(!v.popover_animating(), "opened and settled");
 
-    v.drill();
+    v.toggle_popover(PopoverKind::Profiles);
     assert!(v.popover_animating(), "mid-slide");
     let half = Instant::now() + Duration::from_millis((theme::POPOVER_FADE_MS * 0.5) as u64);
     v.advance_popover(half);
@@ -1739,25 +1605,6 @@ fn fixed_footer_actions_report_themselves() {
     let (x, y) = r.centre();
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewProfile);
     assert!(!v.popover_open());
-    v.advance_popover(Instant::now() + Duration::from_secs(1));
-
-    for (tool, want, open_after) in [
-        (Tool::Sync, Outcome::OpenSyncSettings, false),
-        (Tool::Settings, Outcome::OpenSettings, false),
-        (Tool::Help, Outcome::OpenHelp, true),
-    ] {
-        v.toggle_popover(PopoverKind::Summary);
-        let (_, r) = *v
-            .popover_rects(a, VIEW)
-            .iter()
-            .find(|(row, _)| *row == PopoverRow::Toolbar)
-            .expect("the toolbar");
-        let (x, y) = super::toolbar_parts(r).of(tool).centre();
-        assert_eq!(v.mouse_down(a, VIEW, x, y, false), want, "{tool:?}");
-        assert_eq!(v.popover_open(), open_after, "{tool:?}");
-        v.close_popover();
-        v.advance_popover(Instant::now() + Duration::from_secs(1));
-    }
 }
 
 /// Each page's rows, in the order the artboard lists them.
@@ -1768,7 +1615,7 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
     assert_eq!(
         v.popover_rows(),
         vec![
-            PopoverRow::Back,
+            PopoverRow::ProfilesTitle,
             PopoverRow::Profile(0),
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
@@ -1776,7 +1623,7 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::NewProfile,
         ]
     );
-    // The chip's page: the workspaces only.
+    // The chip's page: the heading and the workspaces, nothing else.
     v.toggle_popover(PopoverKind::Summary);
     assert_eq!(
         v.popover_rows(),
@@ -1784,21 +1631,6 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::WorkspacesHeading,
             PopoverRow::Workspace(0),
             PopoverRow::Workspace(1),
-            PopoverRow::Divider,
-            PopoverRow::Toolbar,
-        ]
-    );
-    // The profile square's page: your card leads it.
-    v.toggle_profile_popover();
-    assert_eq!(
-        v.popover_rows(),
-        vec![
-            PopoverRow::PersonCard,
-            PopoverRow::WorkspacesHeading,
-            PopoverRow::Workspace(0),
-            PopoverRow::Workspace(1),
-            PopoverRow::Divider,
-            PopoverRow::Toolbar,
         ]
     );
 }
@@ -1808,25 +1640,20 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
 #[test]
 fn a_footer_row_outranks_a_scrolled_row_behind_it() {
     let a = area();
-    let (mut v, profiles, _) = with_context(0);
-    let workspaces: Vec<_> = (0..30).map(|i| ws(&format!("Workspace {i}"))).collect();
-    v.set_context(
-        profiles.clone(),
-        profiles[1].id,
-        workspaces.clone(),
-        workspaces[0].id,
-    );
-    v.toggle_popover(PopoverKind::Summary);
+    let (mut v, _, list) = with_context(0);
+    let profiles: Vec<_> = (0..30).map(|i| a_profile(&format!("p{i}"))).collect();
+    v.set_context(profiles.clone(), profiles[1].id, list.clone(), list[0].id);
+    v.toggle_popover(PopoverKind::Profiles);
     let (_, footer) = *v
         .popover_rects(a, VIEW)
         .iter()
-        .find(|(row, _)| *row == PopoverRow::Toolbar)
+        .find(|(row, _)| *row == PopoverRow::NewProfile)
         .expect("footer row");
-    let (x, y) = super::toolbar_parts(footer).sync.centre();
+    let (x, y) = footer.centre();
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::OpenSyncSettings,
-        "the toolbar answers, not the row under it"
+        Outcome::NewProfile,
+        "the footer answers, not the row under it"
     );
 }
 
@@ -1834,22 +1661,16 @@ fn a_footer_row_outranks_a_scrolled_row_behind_it() {
 #[test]
 fn pressing_furniture_only_closes_the_popover() {
     let a = area();
-    for kind in [PopoverKind::Summary, PopoverKind::Profiles] {
-        let (mut v, _, _) = with_context(0);
-        v.toggle_popover(kind);
-        let (_, r) = *v
-            .popover_rects(a, VIEW)
-            .iter()
-            .find(|(row, _)| *row == PopoverRow::Divider)
-            .unwrap();
-        let (x, y) = r.centre();
-        assert_eq!(
-            v.mouse_down(a, VIEW, x, y, false),
-            Outcome::Consumed,
-            "{kind:?}"
-        );
-        assert!(!v.popover_open());
-    }
+    let (mut v, _, _) = with_context(0);
+    v.toggle_popover(PopoverKind::Profiles);
+    let (_, r) = *v
+        .popover_rects(a, VIEW)
+        .iter()
+        .find(|(row, _)| *row == PopoverRow::Divider)
+        .unwrap();
+    let (x, y) = r.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    assert!(!v.popover_open());
 }
 
 /// Without this the second click of a double-click re-toggles, and the chip
@@ -2022,9 +1843,9 @@ fn a_dismissed_popover_goes_deaf_before_it_goes_away() {
     let (_, r) = v
         .popover_rects(a, vp)
         .into_iter()
-        .find(|(row, _)| *row == PopoverRow::Toolbar)
-        .expect("the toolbar");
-    let (x, y) = super::toolbar_parts(r).sync.centre();
+        .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
+        .expect("the heading");
+    let (x, y) = super::heading_menu_rect(r).centre();
     assert!(v.close_popover());
 
     assert!(!v.popover_open(), "deaf immediately");

@@ -420,13 +420,8 @@ impl MainView {
             let pane = Self::pane_of(sb);
             let rail = Self::rail_of(sb);
             self.explore.draw(scene, root, &mut self.engine, pane);
-            let avatar = self
-                .explore
-                .avatar_hash()
-                .and_then(|h| images.get(h))
-                .map(|a| a.as_ref());
             self.explore
-                .draw_apps_rail(scene, root, &mut self.engine, rail, avatar);
+                .draw_apps_rail(scene, root, &mut self.engine, rail);
             // The lane, over the column's top band: window chrome, so it is
             // the window that draws it.
             self.draw_lane(scene, root, sb);

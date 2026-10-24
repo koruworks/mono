@@ -75,8 +75,7 @@ pub enum Outcome {
     NewTab,
     /// Open the workspace-scoped search surface.
     Search,
-    /// The who/where popover's help control: the container opens the help
-    /// popover beside the page, which stays.
+    /// The rail's `?`: the container opens the help popover beside the rail.
     OpenHelp,
 
     // ---------------------------------------------------------------- panels
@@ -298,10 +297,8 @@ pub enum Outcome {
     OpenHome,
     /// A recent document, from Home's nav.
     OpenRecentDocument(koru_core::DocumentId),
-    /// The who/where popover's settings control: the Settings tab.
+    /// The rail's settings square: the Settings tab.
     OpenSettings,
-    /// Its sync control: the Sync settings tab.
-    OpenSyncSettings,
 
     // ---------------------------------------------------------------- window
     //

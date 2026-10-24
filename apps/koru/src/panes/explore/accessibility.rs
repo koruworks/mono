@@ -89,14 +89,9 @@ pub(crate) mod parts {
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
-    pub const BACK: ControlPart = ControlPart::new("back");
-    pub const PERSON: ControlPart = ControlPart::new("person");
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
-    /// The main page's heading ⋯, and its toolbar's three controls.
+    /// The chip's page's heading ⋯.
     pub const WORKSPACES_MENU: ControlPart = ControlPart::new("workspaces-menu");
-    pub const SYNC: ControlPart = ControlPart::new("sync");
-    pub const SETTINGS: ControlPart = ControlPart::new("settings");
-    pub const HELP: ControlPart = ControlPart::new("help");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -614,27 +609,11 @@ impl ExploreView {
         let popover = self.live()?;
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
-        // **The toolbar is three controls in one row**, and the heading's ⋯
-        // is a control of its own: each is a node, so a client reaches the
-        // control a press would hit rather than the row around it.
-        let mut children = Vec::with_capacity(rects.len() + 3);
+        // **The heading's ⋯ is a control of its own**: a node, so a client
+        // reaches the control a press would hit rather than the row around it.
+        let mut children = Vec::with_capacity(rects.len());
         for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
             match row {
-                PopoverRow::Toolbar => {
-                    let t_ = super::toolbar_parts(*rect);
-                    for (part, label, bounds) in [
-                        (parts::SYNC, Key::SyncSettingsTab, t_.sync),
-                        (parts::SETTINGS, Key::SettingsTab, t_.settings),
-                        (parts::HELP, Key::Help, t_.help),
-                    ] {
-                        children.push(
-                            SemanticNode::new(cx.surface(POPOVER, part), Role::MenuItem)
-                                .with_label(t(cx.lang, label))
-                                .with_bounds(bounds)
-                                .with_actions([Action::Click, Action::Focus]),
-                        );
-                    }
-                }
                 PopoverRow::WorkspacesHeading => {
                     children.push(
                         SemanticNode::new(
@@ -691,15 +670,12 @@ impl ExploreView {
                 Some(p) => cx.model(p.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
-            PopoverRow::Back => cx.surface(POPOVER, parts::BACK),
             PopoverRow::NewProfile => cx.surface(POPOVER, parts::NEW_PROFILE),
-            PopoverRow::PersonCard => cx.surface(POPOVER, parts::PERSON),
             PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::WORKSPACES_MENU),
-            PopoverRow::Toolbar => cx.surface(POPOVER, parts::SYNC),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
-            PopoverRow::Divider => cx.surface(POPOVER, parts::POPOVER),
+            PopoverRow::Divider | PopoverRow::ProfilesTitle => cx.surface(POPOVER, parts::POPOVER),
         }
     }
 
@@ -715,15 +691,12 @@ impl ExploreView {
                 .get(i)
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
-            PopoverRow::Back => t(lang, Key::Back).to_string(),
             PopoverRow::NewProfile => t(lang, Key::NewProfile).to_string(),
-            PopoverRow::PersonCard => self.profile().map(|p| p.name.clone()).unwrap_or_default(),
             PopoverRow::WorkspacesHeading => t(lang, Key::A11yMoreActions).to_string(),
-            PopoverRow::Toolbar => t(lang, Key::SyncSettingsTab).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
-            PopoverRow::Divider => String::new(),
+            PopoverRow::Divider | PopoverRow::ProfilesTitle => String::new(),
         }
     }
 
@@ -743,20 +716,7 @@ impl ExploreView {
         let index = rows
             .iter()
             .position(|row| row.selectable() && self.popover_row_matches(*row, target))?;
-        // The toolbar's three controls share one row; which of them the
-        // request names is the keyboard's `tool`, so Enter presses it.
-        let tool = [
-            (parts::SYNC, super::Tool::Sync),
-            (parts::SETTINGS, super::Tool::Settings),
-            (parts::HELP, super::Tool::Help),
-        ]
-        .into_iter()
-        .find(|(part, _)| target.part == *part)
-        .map(|(_, tool)| tool);
         let popover = self.popover.as_mut()?;
-        if let Some(tool) = tool {
-            popover.tool = tool;
-        }
         match action {
             // The highlight the arrows move — the popover's own keyboard
             // state, not a second one.
@@ -782,19 +742,12 @@ impl ExploreView {
                 .profiles
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
-            PopoverRow::Back => target.part == parts::BACK,
             PopoverRow::NewProfile => target.part == parts::NEW_PROFILE,
             PopoverRow::WorkspacesHeading => target.part == parts::WORKSPACES_MENU,
-            PopoverRow::Toolbar => {
-                target.part == parts::SYNC
-                    || target.part == parts::SETTINGS
-                    || target.part == parts::HELP
-            }
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
-            PopoverRow::PersonCard => target.part == parts::PERSON,
-            PopoverRow::Divider => false,
+            PopoverRow::Divider | PopoverRow::ProfilesTitle => false,
         }
     }
 

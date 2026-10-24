@@ -6754,31 +6754,15 @@ impl MainView {
         true
     }
 
-    /// The help popover beside whatever `?` asked for it: the who/where
-    /// page's toolbar, with the page still under it, or the rail's foot. Its
-    /// foot is level with the control's.
+    /// The help popover beside the rail's `?`, its foot level with the
+    /// control's.
     fn open_help_beside(&mut self) -> bool {
-        let area = self.explore_popover_area();
-        let (edge, help) = if self.explore.popover_open() {
-            let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
-                return false;
-            };
-            let Some(help) = self.explore.popover_tool_rect(
-                area,
-                self.viewport,
-                crate::panes::explore::Tool::Help,
-            ) else {
-                return false;
-            };
-            (panel.x + panel.w, help)
-        } else {
-            let rail = self.rail_area();
-            let help = self.explore.apps_rail_rects(rail).help;
-            if help.w <= 0.0 {
-                return false;
-            }
-            (rail.x + rail.w, help)
-        };
+        let rail = self.rail_area();
+        let help = self.explore.apps_rail_rects(rail).help;
+        if help.w <= 0.0 {
+            return false;
+        }
+        let edge = rail.x + rail.w;
         if self.support_only {
             return false;
         }
@@ -6802,7 +6786,10 @@ impl MainView {
     }
 
     /// The Sync settings tab: a singleton page that, for now, says only its
-    /// name (the CTO's artboard; what it holds is QUESTIONS.md E31).
+    /// name (the CTO's artboard; what it holds is QUESTIONS.md E31). Nothing
+    /// opens it since the popover's toolbar went (E32); it waits for the
+    /// Sync settings design to say where its door is.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn open_sync_settings_tab(&mut self) -> bool {
         let existing = self.tabs().iter().position(|t| {
             t.whats_new
@@ -7079,7 +7066,6 @@ impl MainView {
             }
             Outcome::WorkspacesMenu => self.open_workspaces_menu(),
             Outcome::OpenSettings => self.open_settings_tab(),
-            Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::OpenHome => self.open_home_tab(),
             Outcome::OpenRecentDocument(id) => self.open_recent_document(id),
             Outcome::NodeMenu {
@@ -15634,28 +15620,8 @@ impl MainView {
         // The page-furniture AI button is not a caption hit — check it
         // before the caption table, or a pointer on the title icon is
         // `Hit::Content` and teaches nothing.
-        let on_tool = self
-            .explore
-            .popover_open()
-            .then(|| {
-                self.explore
-                    .popover_tool_at(self.explore_popover_area(), self.viewport, x, y)
-            })
-            .flatten();
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
             Some(content)
-        } else if let Some((tool, rect)) = on_tool {
-            // The who/where popover's toolbar is icon-only, so each control
-            // carries its name. Before the sidebar branch: the panel is
-            // wider than the column it hangs off.
-            use crate::panes::explore::Tool;
-            let lang = crate::format::lang();
-            let (id, key) = match tool {
-                Tool::Sync => (8, koru_i18n::Key::SyncSettingsTab),
-                Tool::Settings => (9, koru_i18n::Key::SettingsTab),
-                Tool::Help => (6, koru_i18n::Key::Help),
-            };
-            Some(TooltipContent::new(id, rect, koru_i18n::t(lang, key)))
         } else if hit == Hit::Sidebar {
             // The floor's chip, then the rail — icon-only and chip controls,
             // so each carries its name (`DESIGN.md`: one interaction clock,
