@@ -845,6 +845,20 @@ pub struct WhatsNewTab {
     /// Not the window's workspace. Never saved, never synced, thrown away whole
     /// when the tab is closed.
     pub workspace: Workspace,
+    /// Which private page this is. The release notes were the only one; the
+    /// Sync settings placeholder is built the same way (a read-only page
+    /// over a private workspace), and the session file spells each.
+    pub page: PrivatePage,
+}
+
+/// The pages a tab can host over a private workspace.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PrivatePage {
+    /// This build's release notes.
+    WhatsNew,
+    /// The who/where popover's sync control: a page that says only its name
+    /// for now (QUESTIONS.md E31).
+    SyncSettings,
 }
 
 /// One tab: what it shows, whether it can be closed, and whether it has been
@@ -1294,22 +1308,43 @@ impl Tab {
     /// failed halfway would be a mystery.
     pub fn whats_new(version: &str, notes: Option<&str>) -> Option<Self> {
         let title = format!("What's new in Koru {version}");
-        let doc = WorkspaceDoc::create(WorkspaceId::new(), &title).ok()?;
+        Self::private_page(
+            PrivatePage::WhatsNew,
+            &title,
+            &crate::whatsnew::blocks(version, notes),
+        )
+    }
+
+    /// The Sync settings tab: its name as the title and nothing under it yet
+    /// (the CTO's artboard; QUESTIONS.md E31). A singleton, like Settings.
+    pub fn sync_settings() -> Option<Self> {
+        let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::SyncSettingsTab);
+        Self::private_page(PrivatePage::SyncSettings, title, &[])
+    }
+
+    /// A read-only page over a workspace of its own, titled and filled.
+    ///
+    /// `None` only if Loro will not make a document at all. The caller opens
+    /// nothing in that case: a missing notice is invisible, where a tab that
+    /// failed halfway would be a mystery.
+    fn private_page(
+        page: PrivatePage,
+        title: &str,
+        blocks: &[koru_workspace_host::RichBlock],
+    ) -> Option<Self> {
+        let doc = WorkspaceDoc::create(WorkspaceId::new(), title).ok()?;
         let mut workspace = Workspace::new(doc);
         // The title goes in row 0 the way every document's does, so the page has
         // a real heading and the tab has a real name, with no second mechanism.
-        let root = koru_workspace::create_document(&mut workspace.ws, &title)?;
+        let root = koru_workspace::create_document(&mut workspace.ws, title)?;
         let mut leaf = Leaf::document(&workspace.ws, root);
         // **Filled before it is made read-only.** The guard refuses writes from
         // the key map, and `paste_rich` is not one — but ordering it this way
         // means the flag is true for the whole of the tab's visible life, rather
         // than for all of it except the frame nobody sees.
-        View::paste_rich(
-            &mut leaf,
-            &mut workspace.ws,
-            None,
-            &crate::whatsnew::blocks(version, notes),
-        );
+        if !blocks.is_empty() {
+            View::paste_rich(&mut leaf, &mut workspace.ws, None, blocks);
+        }
         // **Drop the empty paragraph `create_document` seeds.** Every new
         // document gets one so there is a line to type into; this page is never
         // typed into, and the blocks are *appended* after it — so left alone it
@@ -1341,11 +1376,11 @@ impl Tab {
             // Not a document in the person's workspace, so nothing in the
             // explore column or the tab-reuse check may match it.
             document: None,
-            label: title,
+            label: title.to_owned(),
             icon: None,
             sized: None,
             draft: None,
-            whats_new: Some(WhatsNewTab { workspace }),
+            whats_new: Some(WhatsNewTab { workspace, page }),
             home: None,
             pinned: None,
             show_title: false,

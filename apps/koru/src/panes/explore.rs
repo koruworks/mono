@@ -47,7 +47,7 @@ use winit::window::CursorIcon;
 use super::Outcome;
 use super::fold;
 use super::{DropTarget, DropZone};
-use koru_shell_chrome::tabs::{draw_icon, draw_icon_filled};
+use koru_shell_chrome::tabs::draw_icon;
 
 use crate::panes::sidebar::{apps_row, floor};
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
@@ -309,22 +309,21 @@ impl NavigatorMode {
     }
 }
 
-/// Which page of the switcher is showing, or the library's action menu.
+/// Which page of the who/where popover is showing, or the library's action
+/// menu.
 ///
-/// **One switcher, two pages.** Profiles and Workspaces used to be two
-/// popovers, one under each half of the header. They are now the two pages of
-/// one: choosing a Profile slides its workspaces in from the right, and a back
-/// row slides out again. The header's halves still open their own page.
+/// **One popover, two pages.** The main page is the floor chip's: you as a
+/// card, then WORKSPACES · *n* with its ⋯ menu and the workspace rows, then
+/// the sync · settings · help toolbar. Your card slides the Profiles page in
+/// from the right, and its back row slides out again (the CTO's artboard,
+/// QUESTIONS.md E30).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverKind {
-    /// **View 1** of the who/where popover (frame 6A): you and the workspace
-    /// as cards that drill into the account's page, then Settings, Link a
-    /// device, Koru Cloud and Add account. What the floor chip opens.
+    /// The main page: your card, the workspaces, the toolbar. What the floor
+    /// chip and `Ctrl+Alt+W` open.
     Summary,
-    /// One Profile's workspaces — the open one unless a Profile was chosen.
-    /// For the open Profile this is **View 2**: its actions, then WORKSPACES.
-    Workspaces,
-    /// Every profile on this machine.
+    /// Every profile on this machine, one slide to the right. What your
+    /// card and `Ctrl+Alt+P` open.
     Profiles,
     /// The compact action menu at the right end of the library heading.
     LibraryActions,
@@ -363,110 +362,125 @@ struct Popover {
     fade: Option<(Instant, f32)>,
     /// On its way out. Dropped entirely when `progress` reaches 0.
     closing: bool,
-    /// Whose workspaces the Workspaces page lists. `None` is the open Profile.
-    browse: Option<ProfileId>,
-    /// Which page is on the left of the slide: the summary when the floor
-    /// chip opened the popover, the Profiles page when a chord did. `back()`
-    /// returns here.
-    left: PopoverKind,
-    /// Where the slide between the pages is: 0 the left page, 1 Workspaces.
+    /// Where the slide between the pages is: 0 the main page, 1 Profiles.
     page: f32,
     /// When the current slide began and the page it began from. `None` at rest,
     /// for the same reason `fade` is.
     slide: Option<(Instant, f32)>,
+    /// Which of the toolbar's three controls the keyboard is on while the
+    /// toolbar row is hovered: ← and → move it, Enter presses it.
+    tool: Tool,
 }
 
 impl Popover {
-    /// Whether `kind` is the page a header half (or its shortcut) would open.
-    /// The Workspaces half means the **open** Profile's; `browse` outlives a
-    /// Back so the page can slide out, which must not stop the Profiles page
-    /// from counting as showing.
+    /// Whether `kind` is the page showing.
     fn showing(&self, kind: PopoverKind) -> bool {
-        self.kind == kind && (kind != PopoverKind::Workspaces || self.browse.is_none())
+        self.kind == kind
     }
 }
 
-/// The page value the switcher slides to for `kind`.
+/// The page value the popover slides to for `kind`.
 fn page_of(kind: PopoverKind) -> f32 {
-    if kind == PopoverKind::Workspaces {
+    if kind == PopoverKind::Profiles {
         1.0
     } else {
         0.0
     }
 }
 
-/// The left page a fresh opening of `kind` slides back to: itself for a left
-/// page, the Profiles page for the Workspaces chord (so ← still reaches the
-/// profiles, as it always did).
-fn left_of(kind: PopoverKind) -> PopoverKind {
-    match kind {
-        PopoverKind::Workspaces => PopoverKind::Profiles,
-        other => other,
-    }
-}
-
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
-    /// The Workspaces page's first row: the Profile it lists, and the way back
-    /// to the page that opened it (the summary, or the Profiles page).
-    Back,
-    /// View 1: the person, as a card that drills into the account's page.
+    /// The main page's first row: you, as a card that slides to the
+    /// Profiles page.
     PersonCard,
-    /// View 1: the workspace, as a card that drills into the same page.
-    WorkspaceCard,
-    /// The Settings tab.
-    Settings,
-    /// Koru Cloud: the state, and *Subscribe* when there is no subscription.
-    Cloud,
-    /// Dimmed with its reason: sharing does not exist yet.
-    InvitePeople,
-    /// Dimmed *active*: View 2 is always the open Profile's page.
-    ActivateProfile,
-    /// A rule inside a page's fixed head, where `Divider` would read as the
-    /// start of the list.
-    HeadDivider,
+    /// *WORKSPACES · n*, with the ⋯ that opens New workspace and Import….
     WorkspacesHeading,
-    /// An index into the browsed Profile's workspace list.
+    /// An index into the open Profile's workspace list. The row switches; the
+    /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
-    NewWorkspace,
-    /// "Import content…" — the import formats, as a menu.
-    ImportContent,
-    /// "Manage workspaces…" — the workspace manager tab.
-    ManageWorkspaces,
-
-    ProfilesHeading,
-    /// An index into the profile list — **every** profile the machine knows.
-    /// Choosing one opens its workspaces; it does not switch to it.
-    Profile(usize),
-    /// The hairline between a page's *New* row and its commands.
+    /// The hairline above a page's footer.
     Divider,
-    /// "New profile" on the Profiles page, *Add account* on the summary — the
-    /// Profile manager's create form either way.
+    /// The main page's footer: the sync icon, settings and help.
+    Toolbar,
+    /// The Profiles page's head: `‹ Profiles`, the way back.
+    Back,
+    /// An index into the profile list — **every** profile the machine knows.
+    /// The row switches to it and slides back; the gear that shows on hover
+    /// opens the Manage tab on it.
+    Profile(usize),
+    /// *New profile*: the Profile manager's create form.
     NewProfile,
-    /// Open the singleton Profile and account-management tab.
-    ManageProfiles,
-    /// "Link a device…" — global device synchronization, not workspace sharing.
-    LinkDevice,
     /// A mode-dependent action from the library heading's `…` menu.
     LibraryAction(actions::Action),
 }
 
 impl PopoverRow {
-    /// Whether the keyboard may land on it. The headings and the divider are
-    /// furniture, and the arrows step over them the way `next_enabled` steps
-    /// over a dimmed menu item.
+    /// Whether the keyboard may land on it. The divider is furniture, and the
+    /// arrows step over it the way `next_enabled` steps over a dimmed menu
+    /// item. The heading is a stop: Enter on it opens its ⋯ menu.
     fn selectable(self) -> bool {
-        !matches!(
-            self,
-            Self::WorkspacesHeading
-                | Self::ProfilesHeading
-                | Self::Divider
-                | Self::HeadDivider
-                // Dimmed, never hidden: the keyboard steps over them.
-                | Self::InvitePeople
-                | Self::ActivateProfile
-        )
+        !matches!(self, Self::Divider)
+    }
+}
+
+/// Which part of a popover row a point is on.
+///
+/// A row is one target with, at most, one control at its trailing end — a
+/// workspace's or profile's gear, the heading's ⋯ — and the toolbar is three
+/// controls in one row. The press and the hover both read this, so the gear a
+/// hover shows is the gear a press hits.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PopoverPart {
+    /// The row itself.
+    Row,
+    /// The gear at a workspace's or profile's trailing end: the Manage tab.
+    Gear,
+    /// The heading's ⋯: New workspace and Import….
+    Menu,
+    Tool(Tool),
+}
+
+/// The toolbar's three controls, left to right.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Tool {
+    /// The sync icon: the Sync settings tab.
+    Sync,
+    /// The Settings tab.
+    Settings,
+    /// The help popover.
+    Help,
+}
+
+impl Tool {
+    const ALL: [Tool; 3] = [Tool::Sync, Tool::Settings, Tool::Help];
+}
+
+/// What the sync icon says, from the Agent's account state for the open
+/// Profile (the CTO's artboard: five states).
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum SyncStatus {
+    /// No cloud for this Profile: muted.
+    #[default]
+    NotSetUp,
+    UpToDate,
+    /// Connecting, or a Profile the Agent is still receiving: the accent.
+    Syncing,
+    /// A cloud that exists and cannot be reached: a grey dot.
+    Offline,
+    /// Failed, cancelled, or waiting for consent: a red dot.
+    NeedsAttention,
+}
+
+impl SyncStatus {
+    pub fn key(self) -> koru_i18n::Key {
+        match self {
+            Self::NotSetUp => koru_i18n::Key::SyncNotSetUp,
+            Self::UpToDate => koru_i18n::Key::SyncUpToDate,
+            Self::Syncing => koru_i18n::Key::SyncSyncing,
+            Self::Offline => koru_i18n::Key::SyncOffline,
+            Self::NeedsAttention => koru_i18n::Key::SyncNeedsAttention,
+        }
     }
 }
 
@@ -546,7 +560,6 @@ pub enum ExploreChromeFocus {
     App(usize),
     Manage,
     FloorChip,
-    FloorHelp,
 }
 
 /// Every rect in a workspace row of the switcher, derived from the row alone.
@@ -557,11 +570,11 @@ pub enum ExploreChromeFocus {
 pub struct WorkspaceRowParts {
     /// The rounded tile carrying the workspace's colour and emoji.
     pub chip: Rect,
-    /// What is left for the name, before the *Pinned* lane.
+    /// What is left for the name, before the trailing lane.
     pub name: Rect,
     /// Where a pinned workspace's pin mark sits. A mark, not a control: pin
     /// and unpin live in the workspace manager.
-    pub pin: Rect,
+    pub trailing: Rect,
 }
 
 /// A row pinned to the floor of the column, below the library.
@@ -623,12 +636,18 @@ pub struct ExploreView {
     manage_hover: bool,
     /// Which floor control the pointer is on, if any.
     floor_hover: Option<floor::Hit>,
+    /// Which part of the hovered popover row the pointer is on — the gear,
+    /// the ⋯, a toolbar control — so the draw lights the control a press
+    /// would hit. `None` while the pointer is off the popover.
+    popover_part: Option<PopoverPart>,
     /// Which chrome control `F6` has the keyboard on, as the window tells it
     /// before each frame.
     chrome_focus: Option<ExploreChromeFocus>,
-    /// Whether the Agent reports a Profile Cloud holds — the summary's Koru
-    /// Cloud row's state.
+    /// Whether the Agent reports a Profile Cloud holds.
     cloud_subscribed: bool,
+    /// The Agent's last account state, which the sync icon and your card's
+    /// subtitle read for the open Profile ([`sync_status`](Self::sync_status)).
+    account: Option<koru_agent_wire::AccountState>,
     /// Devices besides this one that hold the Profile: the summary's *Link a
     /// device* row says *n linked* (frame 6A).
     linked_count: usize,
@@ -857,10 +876,90 @@ impl ExploreView {
         // The nearest fact to "subscribed" the Agent reports: a Profile Cloud
         // holds. The summary's Koru Cloud row reads it.
         let subscribed = !state.cloud_profiles.is_empty();
-        let changed = self.receiving_profiles != receiving || self.cloud_subscribed != subscribed;
+        let changed = self.receiving_profiles != receiving
+            || self.cloud_subscribed != subscribed
+            || self.account.as_ref() != Some(state);
         self.receiving_profiles = receiving;
         self.cloud_subscribed = subscribed;
+        self.account = Some(state.clone());
         changed
+    }
+
+    /// What the sync icon and the chip's second line say about the open
+    /// Profile: the Agent's account stage first, then the Profile's own cloud
+    /// row. A Profile the Agent is still receiving is *Syncing*; one with no
+    /// cloud row and nothing on its way is *Not set up*.
+    pub fn sync_status(&self) -> SyncStatus {
+        use koru_agent_wire::{AccountStage, CloudConnectionStage};
+        let Some(state) = self.account.as_ref() else {
+            return SyncStatus::NotSetUp;
+        };
+        match state.stage {
+            AccountStage::NotConfigured
+            | AccountStage::SignedOut
+            | AccountStage::AwaitingAccountCreation => return SyncStatus::NotSetUp,
+            AccountStage::Unavailable => return SyncStatus::Offline,
+            AccountStage::Failed | AccountStage::Cancelled => return SyncStatus::NeedsAttention,
+            _ => {}
+        }
+        let Some(profile) = self.current_profile else {
+            return SyncStatus::NotSetUp;
+        };
+        let id = profile.to_string();
+        match state
+            .cloud_profiles
+            .iter()
+            .find(|row| row.profile_id == id)
+            .map(|row| row.stage)
+        {
+            Some(CloudConnectionStage::Syncing) => SyncStatus::UpToDate,
+            Some(CloudConnectionStage::Connecting) => SyncStatus::Syncing,
+            Some(CloudConnectionStage::Retrying) => SyncStatus::Offline,
+            Some(CloudConnectionStage::WaitingForConsent) => SyncStatus::NeedsAttention,
+            None if self.receiving_profiles.contains(&profile) => SyncStatus::Syncing,
+            None => SyncStatus::NotSetUp,
+        }
+    }
+
+    /// The second line under a profile's name. The open Profile says where
+    /// it syncs and how many other devices hold it; another says its email,
+    /// or that it is on this computer (the CTO's artboard).
+    ///
+    /// **Two facts at most**: the line has about 180 px, and *Needs
+    /// attention · Koru Cloud · 2 devices* was cut mid-word on screen. The
+    /// device count stands in for *Koru Cloud* when there is one — a Profile
+    /// other devices hold is a cloud Profile.
+    fn profile_detail(&self, profile: &ProfileSummary, lang: koru_i18n::Lang) -> String {
+        use koru_i18n::{Key, fill, t};
+        if self.current_profile != Some(profile.id) {
+            return if profile.email.is_empty() {
+                t(lang, Key::OnThisComputer).to_owned()
+            } else {
+                profile.email.clone()
+            };
+        }
+        let status = self.sync_status();
+        let first = match status {
+            SyncStatus::NotSetUp => t(lang, Key::OnThisComputer),
+            status => t(lang, status.key()),
+        };
+        let n = self.linked_count;
+        let second = if n > 0 {
+            let key = if n == 1 {
+                Key::DevicesCountOne
+            } else {
+                Key::DevicesCountMany
+            };
+            Some(fill(t(lang, key), &[&n.to_string()]))
+        } else if status != SyncStatus::NotSetUp {
+            Some(t(lang, Key::CloudTitle).to_owned())
+        } else {
+            None
+        };
+        match second {
+            Some(second) => format!("{first} · {second}"),
+            None => first.to_owned(),
+        }
     }
 
     /// How many devices besides this one hold the Profile — what the
@@ -3123,8 +3222,7 @@ impl ExploreView {
         true
     }
 
-    /// Show `kind`, whatever was showing before. For the Workspaces page that
-    /// is the **open** Profile's workspaces.
+    /// Show `kind`, whatever was showing before.
     ///
     /// **Not [`toggle_popover`](Self::toggle_popover)**, which a second press of
     /// the same chord would close: this is what a keyboard shortcut asks for,
@@ -3132,26 +3230,32 @@ impl ExploreView {
     /// can walk it. Escape and Enter are how it shuts, which is what
     /// [`popover_key`](Self::popover_key) already answers.
     ///
+    /// A chord opens for the keyboard, so the keyboard starts somewhere: on
+    /// the workspace you are in (the CTO's note, QUESTIONS.md E28), or on the
+    /// Profile you are in.
+    ///
     /// Answers whether anything changed, so a caller repaints only when it must.
     pub fn open_popover(&mut self, kind: PopoverKind) -> bool {
         if self.live().is_some_and(|p| p.showing(kind)) {
             return false;
         }
         self.toggle_popover(kind);
-        // A chord opens for the keyboard, so the keyboard starts somewhere:
-        // on the workspace you are in, the row ↵ would otherwise have to be
-        // walked to (the CTO's note, QUESTIONS.md E28).
-        if kind == PopoverKind::Workspaces {
-            self.hover_current_workspace();
+        match kind {
+            PopoverKind::Summary => {
+                self.hover_current_workspace();
+            }
+            PopoverKind::Profiles => {
+                self.hover_current_profile();
+            }
+            PopoverKind::LibraryActions => {}
         }
         true
     }
 
     /// Open `kind`, or shut it if it is already the page showing.
     ///
-    /// Pressing the *other* half of the header slides the switcher to the
-    /// other page rather than closing — the header is one control with two
-    /// halves, and the switcher is one panel with two pages.
+    /// Asking for the other page of the switcher slides to it rather than
+    /// closing — one panel, two pages.
     fn toggle_popover(&mut self, kind: PopoverKind) {
         let now = Instant::now();
         let switcher = |k: PopoverKind| k != PopoverKind::LibraryActions;
@@ -3161,22 +3265,16 @@ impl ExploreView {
             }
             Some(p) if !p.closing && switcher(p.kind) && switcher(kind) => {
                 p.kind = kind;
-                p.browse = None;
                 p.hover = None;
                 p.scroll = 0.0;
-                if kind != PopoverKind::Workspaces {
-                    p.left = kind;
-                }
                 p.slide = Some((now, p.page));
             }
             Some(p) => {
                 p.kind = kind;
-                p.browse = None;
                 p.hover = None;
                 p.scroll = 0.0;
                 p.closing = false;
                 p.fade = Some((now, p.progress));
-                p.left = left_of(kind);
                 p.page = page_of(kind);
                 p.slide = None;
             }
@@ -3188,74 +3286,33 @@ impl ExploreView {
                     progress: 0.0,
                     fade: Some((now, 0.0)),
                     closing: false,
-                    browse: None,
-                    left: left_of(kind),
                     page: page_of(kind),
                     slide: None,
+                    tool: Tool::Sync,
                 })
             }
         }
     }
 
-    /// Slide to `profile`'s workspaces. The switcher stays open: choosing a
-    /// Profile is a step towards a workspace, not a switch.
-    fn drill(&mut self, profile: ProfileId) {
-        let browse = (self.current_profile != Some(profile)).then_some(profile);
+    /// Slide to the Profiles page. The popover stays open: your card is a
+    /// step towards a Profile, not a destination.
+    fn drill(&mut self) {
         if let Some(p) = self.popover.as_mut().filter(|p| !p.closing) {
-            p.kind = PopoverKind::Workspaces;
-            p.browse = browse;
+            p.kind = PopoverKind::Profiles;
             p.hover = None;
             p.scroll = 0.0;
             p.slide = Some((Instant::now(), p.page));
         }
     }
 
-    /// Slide back to the page that opened the workspaces: the Profiles page,
-    /// with the Profile just shown under the keyboard so Enter goes straight
-    /// back in; or the summary, with its first card.
+    /// Slide back to the main page, with the keyboard on your card so Enter
+    /// goes straight back in.
     fn back(&mut self) {
-        let browsed = self.browsed_profile();
-        let left = self
-            .popover
-            .as_ref()
-            .map_or(PopoverKind::Profiles, |p| p.left);
-        let hover = match left {
-            PopoverKind::Profiles => self.rows_for(PopoverKind::Profiles).iter().position(|row| {
-                matches!(row, PopoverRow::Profile(i) if self.profiles.get(*i).map(|p| p.id) == browsed)
-            }),
-            _ => Some(0),
-        };
         if let Some(p) = self.popover.as_mut().filter(|p| !p.closing) {
-            p.kind = left;
-            p.hover = hover;
+            p.kind = PopoverKind::Summary;
+            p.hover = Some(0);
             p.scroll = 0.0;
             p.slide = Some((Instant::now(), p.page));
-        }
-    }
-
-    /// The Profile the Workspaces page lists.
-    fn browsed_profile(&self) -> Option<ProfileId> {
-        self.popover
-            .as_ref()
-            .and_then(|p| p.browse)
-            .or(self.current_profile)
-    }
-
-    /// Another Profile's id while the Workspaces page lists it; `None` while it
-    /// lists the open one.
-    fn browsing_other(&self) -> Option<ProfileId> {
-        self.popover
-            .as_ref()
-            .and_then(|p| p.browse)
-            .filter(|id| self.current_profile != Some(*id))
-    }
-
-    /// The workspaces the Workspaces page lists: the open Profile's live view,
-    /// or another Profile's rows from the Store catalog.
-    fn browsed_workspaces(&self) -> &[WorkspaceEntry] {
-        match self.browsing_other() {
-            Some(id) => self.catalog.get(&id).map_or(&[], Vec::as_slice),
-            None => &self.workspaces,
         }
     }
 
@@ -3271,39 +3328,9 @@ impl ExploreView {
     /// both are drawn.
     fn rows_for(&self, kind: PopoverKind) -> Vec<PopoverRow> {
         match kind {
-            // **View 1.** The two cards drill into the account's page; the
-            // rest are the window's own destinations.
             PopoverKind::Summary => {
-                let mut out = vec![
-                    PopoverRow::PersonCard,
-                    PopoverRow::WorkspaceCard,
-                    PopoverRow::HeadDivider,
-                    PopoverRow::Settings,
-                    PopoverRow::LinkDevice,
-                ];
-                if koru_features::cloud_sync() {
-                    out.push(PopoverRow::Cloud);
-                }
-                out.push(PopoverRow::NewProfile);
-                out
-            }
-            PopoverKind::Workspaces => {
-                let list = self.browsed_workspaces();
-                let open_here = self.browsing_other().is_none();
-                let mut out = vec![PopoverRow::Back];
-                // **View 2**, for the open Profile only: its actions ahead
-                // of its workspaces. Another Profile's page is a list and a
-                // way back, as before.
-                if open_here {
-                    out.extend([
-                        PopoverRow::Settings,
-                        PopoverRow::InvitePeople,
-                        PopoverRow::ImportContent,
-                        PopoverRow::ActivateProfile,
-                        PopoverRow::HeadDivider,
-                    ]);
-                }
-                out.push(PopoverRow::WorkspacesHeading);
+                let list = &self.workspaces;
+                let mut out = vec![PopoverRow::PersonCard, PopoverRow::WorkspacesHeading];
                 // **Pinned first, archived not at all — except the one you are
                 // in — and deleted never.** A workspace can be archived while
                 // this window is showing it, so its current row remains useful.
@@ -3311,35 +3338,26 @@ impl ExploreView {
                 // elsewhere, and the manager's Deleted section is the one
                 // deliberate route back to it.
                 //
-                // The index is into the browsed list and is what the row
-                // carries, so filtering here cannot renumber anything: the rows
-                // are built *from* indices rather than being renumbered after.
+                // The index is into the list and is what the row carries, so
+                // filtering here cannot renumber anything: the rows are built
+                // *from* indices rather than being renumbered after.
                 let mut shown: Vec<usize> = (0..list.len())
                     .filter(|&i| {
                         let w = &list[i];
-                        w.deleted_at.is_none()
-                            && (!w.archived || (open_here && self.current == Some(w.id)))
+                        w.deleted_at.is_none() && (!w.archived || self.current == Some(w.id))
                     })
                     .collect();
                 shown.sort_by_key(|&i| !list[i].pinned);
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
-                out.push(PopoverRow::NewWorkspace);
                 out.push(PopoverRow::Divider);
-                if !open_here {
-                    out.push(PopoverRow::ImportContent);
-                }
-                out.push(PopoverRow::ManageWorkspaces);
+                out.push(PopoverRow::Toolbar);
                 out
             }
             PopoverKind::Profiles => {
-                let mut out = vec![PopoverRow::ProfilesHeading];
+                let mut out = vec![PopoverRow::Back];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-                out.extend([
-                    PopoverRow::NewProfile,
-                    PopoverRow::Divider,
-                    PopoverRow::ManageProfiles,
-                    PopoverRow::LinkDevice,
-                ]);
+                out.push(PopoverRow::Divider);
+                out.push(PopoverRow::NewProfile);
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -3352,10 +3370,10 @@ impl ExploreView {
 
     fn popover_row_h(row: PopoverRow) -> f32 {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => SECTION_H,
-            PopoverRow::Divider | PopoverRow::HeadDivider => POPOVER_DIVIDER_H,
-            PopoverRow::Profile(_) => koru_ui::profile_picker::ROW_H,
+            PopoverRow::Divider => POPOVER_DIVIDER_H,
+            PopoverRow::Profile(_) => PROFILE_ROW_H,
             PopoverRow::PersonCard => PERSON_CARD_H,
+            PopoverRow::Toolbar => TOOLBAR_H,
             _ => POPOVER_ROW_H,
         }
     }
@@ -3364,20 +3382,16 @@ impl ExploreView {
     fn page_head(row: PopoverRow) -> bool {
         matches!(
             row,
-            PopoverRow::Back
-                | PopoverRow::WorkspacesHeading
-                | PopoverRow::ProfilesHeading
-                | PopoverRow::Settings
-                | PopoverRow::InvitePeople
-                | PopoverRow::ImportContent
-                | PopoverRow::ActivateProfile
-                | PopoverRow::HeadDivider
+            PopoverRow::PersonCard | PopoverRow::WorkspacesHeading | PopoverRow::Back
         )
     }
 
-    /// Whether `row` begins a page's fixed footer.
+    /// Whether `row` begins, or is in, a page's fixed footer.
     fn page_foot(row: PopoverRow) -> bool {
-        matches!(row, PopoverRow::NewWorkspace | PopoverRow::NewProfile)
+        matches!(
+            row,
+            PopoverRow::Divider | PopoverRow::Toolbar | PopoverRow::NewProfile
+        )
     }
 
     /// A page's height with every row showing, padding included.
@@ -3392,10 +3406,9 @@ impl ExploreView {
     /// The floating panel, or `None` when nothing is open.
     ///
     /// **The one function that owns the popover's geometry**, alongside
-    /// [`popover_rects`] which stacks inside it. Anchored under the header and
-    /// clamped to the window, the same shape the tab menu has. Mid-slide its
-    /// height moves between the two pages' heights, off the same number the
-    /// pages slide by.
+    /// [`popover_rects`] which stacks inside it. Anchored above the floor chip
+    /// and clamped to the window. Mid-slide its height moves between the two
+    /// pages' heights, off the same number the pages slide by.
     ///
     /// [`popover_rects`]: Self::popover_rects
     pub fn popover_panel(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
@@ -3427,14 +3440,14 @@ impl ExploreView {
                     .min(SWITCHER_MAX_H)
                     .min(available_h)
             };
-            let left = cap(p.left);
-            let workspaces = cap(PopoverKind::Workspaces);
-            left + (workspaces - left) * page
+            let main = cap(PopoverKind::Summary);
+            let profiles = cap(PopoverKind::Profiles);
+            main + (profiles - main) * page
         };
         let w = POPOVER_W.max(area.w - theme::NAV_PAD * 2.0);
         let chip = floor::solve(area).chip;
         let x = match p.kind {
-            PopoverKind::Summary | PopoverKind::Profiles | PopoverKind::Workspaces => chip.x,
+            PopoverKind::Summary | PopoverKind::Profiles => chip.x,
             PopoverKind::LibraryActions => {
                 let button = self.actions_button(area);
                 (button.x + button.w - w).max(POPOVER_EDGE)
@@ -3452,7 +3465,7 @@ impl ExploreView {
             // overflow, so it is anchored above and capped to the room there;
             // in a window too short for even that it keeps the top edge and
             // the chip is covered rather than the panel leaving the window.
-            PopoverKind::Summary | PopoverKind::Profiles | PopoverKind::Workspaces => {
+            PopoverKind::Summary | PopoverKind::Profiles => {
                 let foot = chip.y.min(viewport.1);
                 let room = (foot - POPOVER_GAP - POPOVER_EDGE).max(0.0);
                 h = h.min(room.max(POPOVER_ROW_H));
@@ -3472,6 +3485,48 @@ impl ExploreView {
             return Vec::new();
         };
         self.page_rects(p.kind, panel, p.scroll)
+    }
+
+    /// One row's rect, when the open page lists it.
+    pub fn popover_row_rect(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        want: PopoverRow,
+    ) -> Option<Rect> {
+        self.popover_rects(area, viewport)
+            .into_iter()
+            .find(|(row, _)| *row == want)
+            .map(|(_, r)| r)
+    }
+
+    /// Where one of the toolbar's controls is, when the main page is showing.
+    pub fn popover_tool_rect(&self, area: Rect, viewport: (f32, f32), tool: Tool) -> Option<Rect> {
+        let row = self.popover_row_rect(area, viewport, PopoverRow::Toolbar)?;
+        Some(toolbar_parts(row).of(tool))
+    }
+
+    /// Where the heading's ⋯ is, when the main page is showing — what the
+    /// container hangs the New workspace / Import… menu off.
+    pub fn popover_heading_menu_rect(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
+        let row = self.popover_row_rect(area, viewport, PopoverRow::WorkspacesHeading)?;
+        Some(heading_menu_rect(row))
+    }
+
+    /// The toolbar control under a point, with its rect — for the tooltip.
+    pub fn popover_tool_at(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        x: f32,
+        y: f32,
+    ) -> Option<(Tool, Rect)> {
+        let (_, row, part) = self.popover_part_at(area, viewport, x, y)?;
+        let PopoverPart::Tool(tool) = part else {
+            return None;
+        };
+        let r = self.popover_row_rect(area, viewport, row)?;
+        Some((tool, toolbar_parts(r).of(tool)))
     }
 
     /// One page's rows in `panel`: the fixed top rows, the scrolling list, and
@@ -3578,7 +3633,7 @@ impl ExploreView {
     pub fn scroll_popover(&mut self, area: Rect, viewport: (f32, f32), dy: f32) -> bool {
         if !matches!(
             self.live().map(|p| p.kind),
-            Some(PopoverKind::Workspaces | PopoverKind::Profiles)
+            Some(PopoverKind::Summary | PopoverKind::Profiles)
         ) {
             return false;
         }
@@ -3634,7 +3689,7 @@ impl ExploreView {
             return WorkspaceRowParts {
                 chip: empty,
                 name: empty,
-                pin: empty,
+                trailing: empty,
             };
         }
         let chip = Rect::new(
@@ -3643,19 +3698,14 @@ impl ExploreView {
             WORKSPACE_CHIP,
             WORKSPACE_CHIP,
         );
-        // **There is no tick.** The workspace you are in is the one in bold,
-        // which is a stronger signal than a mark at the far end of the row.
-        let pin = Rect::new(
-            (r.x + r.w - WORKSPACE_DOTS - 8.0).max(r.x),
-            r.y,
-            WORKSPACE_DOTS,
-            r.h,
-        );
+        // The trailing lane: the tick on the workspace you are in, the gear
+        // while the pointer is on the row.
+        let trailing = trailing_lane(r);
         let name_x = chip.x + chip.w + 8.0;
         WorkspaceRowParts {
             chip,
-            name: Rect::new(name_x, r.y, (pin.x - name_x - 4.0).max(1.0), r.h),
-            pin,
+            name: Rect::new(name_x, r.y, (trailing.x - name_x - 4.0).max(1.0), r.h),
+            trailing,
         }
     }
 
@@ -3671,7 +3721,7 @@ impl ExploreView {
         viewport: (f32, f32),
         id: WorkspaceId,
     ) -> Option<Rect> {
-        let list = self.browsed_workspaces();
+        let list = &self.workspaces;
         self.popover_rects(area, viewport)
             .into_iter()
             .find_map(|(row, r)| match row {
@@ -3705,7 +3755,7 @@ impl ExploreView {
 
     /// Keep the workspace that owns an open context menu visibly hot.
     pub fn highlight_popover_workspace(&mut self, id: WorkspaceId) -> bool {
-        let list = self.browsed_workspaces();
+        let list = &self.workspaces;
         let Some(index) = self.popover_rows().iter().position(|row| {
             matches!(row, PopoverRow::Workspace(i) if list.get(*i).is_some_and(|w| w.id == id))
         }) else {
@@ -3726,91 +3776,121 @@ impl ExploreView {
         x: f32,
         y: f32,
     ) -> Option<(usize, PopoverRow)> {
+        self.popover_part_at(area, viewport, x, y)
+            .map(|(i, row, _)| (i, row))
+    }
+
+    /// The row under a point, and which part of it: the gear at a
+    /// workspace's or profile's trailing end, the heading's ⋯, one of the
+    /// toolbar's controls, or the row itself.
+    fn popover_part_at(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        x: f32,
+        y: f32,
+    ) -> Option<(usize, PopoverRow, PopoverPart)> {
         // Deaf the moment it is dismissed, however long it is still on screen.
         self.live()?;
         let band = self.popover_list_band(area, viewport);
-        self.popover_rects(area, viewport)
+        let (i, (row, r)) = self
+            .popover_rects(area, viewport)
             .into_iter()
             .enumerate()
             .find(|(_, (row, r))| {
                 let in_band = !matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_))
                     || band.is_some_and(|band| band.contains(x, y));
                 in_band && r.contains(x, y)
-            })
-            .map(|(i, (row, _))| (i, row))
-    }
-
-    /// Whether choosing `row` keeps the switcher open. Profiles and the back
-    /// row move between its pages; everything else is a destination.
-    fn stays_open(row: PopoverRow) -> bool {
-        // The cards slide to the account's page the way a Profile row drills:
-        // the press that chooses one must not also dismiss the panel it
-        // slides, or the slide runs on a popover that is already fading.
-        // Import content opens its format menu *beside* the page, which
-        // stays (the CTO's note, QUESTIONS.md E29); choosing a format is
-        // what shuts it.
-        matches!(
-            row,
-            PopoverRow::Profile(_)
-                | PopoverRow::Back
-                | PopoverRow::PersonCard
-                | PopoverRow::WorkspaceCard
-                | PopoverRow::ImportContent
-        )
-    }
-
-    /// What the container should do about a popover row being chosen.
-    fn choose(&mut self, row: PopoverRow) -> Outcome {
-        match row {
-            PopoverRow::Workspace(i) => {
-                let Some(id) = self.browsed_workspaces().get(i).map(|w| w.id) else {
-                    return Outcome::Consumed;
-                };
-                match self.browsing_other() {
-                    Some(profile) => Outcome::SwitchToWorkspaceIn {
-                        profile,
-                        workspace: id,
-                    },
-                    None => Outcome::SwitchWorkspace(id),
+            })?;
+        let part = match row {
+            PopoverRow::Workspace(_) | PopoverRow::Profile(_)
+                if trailing_lane(r).contains(x, y) =>
+            {
+                PopoverPart::Gear
+            }
+            PopoverRow::WorkspacesHeading => PopoverPart::Menu,
+            PopoverRow::Toolbar => {
+                let t = toolbar_parts(r);
+                match Tool::ALL
+                    .into_iter()
+                    .find(|tool| t.of(*tool).contains(x, y))
+                {
+                    Some(tool) => PopoverPart::Tool(tool),
+                    None => PopoverPart::Row,
                 }
             }
-            PopoverRow::NewWorkspace => match self.browsing_other() {
-                Some(profile) => Outcome::NewWorkspaceIn(profile),
-                None => Outcome::NewWorkspace,
-            },
-            PopoverRow::ImportContent => Outcome::ImportContent,
-            PopoverRow::ManageWorkspaces => Outcome::ManageWorkspaces(self.browsed_profile()),
-            // **A Profile opens its workspaces; it does not switch.** You
-            // switch Profile by choosing one of its workspaces.
-            PopoverRow::Profile(i) => {
-                if let Some(id) = self.profiles.get(i).map(|p| p.id) {
-                    self.drill(id);
+            _ => PopoverPart::Row,
+        };
+        Some((i, row, part))
+    }
+
+    /// Whether choosing `row`'s `part` keeps the popover open. The cards and
+    /// the back row move between its pages, a Profile row switches and
+    /// slides back, the heading's ⋯ and the help control open a menu
+    /// *beside* the page (the CTO's note, QUESTIONS.md E29); everything else
+    /// is a destination.
+    fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
+        match row {
+            PopoverRow::PersonCard | PopoverRow::Back | PopoverRow::WorkspacesHeading => true,
+            PopoverRow::Profile(_) => part == PopoverPart::Row,
+            PopoverRow::Toolbar => matches!(part, PopoverPart::Row | PopoverPart::Tool(Tool::Help)),
+            PopoverRow::Workspace(_)
+            | PopoverRow::Divider
+            | PopoverRow::NewProfile
+            | PopoverRow::LibraryAction(_) => false,
+        }
+    }
+
+    /// What the container should do about a popover row's part being chosen.
+    fn choose(&mut self, row: PopoverRow, part: PopoverPart) -> Outcome {
+        match row {
+            PopoverRow::Workspace(i) => {
+                let Some(id) = self.workspaces.get(i).map(|w| w.id) else {
+                    return Outcome::Consumed;
+                };
+                if part == PopoverPart::Gear {
+                    Outcome::ManageWorkspace(id)
+                } else {
+                    Outcome::SwitchWorkspace(id)
                 }
+            }
+            // **A Profile row switches to it and slides back** (the CTO's
+            // artboard): the window lands on the workspace that Profile last
+            // had open, and the main page lists that Profile's workspaces
+            // once the switch has happened. Its gear opens the Manage tab on
+            // it instead.
+            PopoverRow::Profile(i) => {
+                let Some(id) = self.profiles.get(i).map(|p| p.id) else {
+                    return Outcome::Consumed;
+                };
+                if part == PopoverPart::Gear {
+                    return Outcome::ManageProfile(id);
+                }
+                self.back();
+                if self.current_profile == Some(id) {
+                    Outcome::Consumed
+                } else {
+                    Outcome::SwitchProfile(id)
+                }
+            }
+            PopoverRow::PersonCard => {
+                self.drill();
                 Outcome::Consumed
             }
             PopoverRow::Back => {
                 self.back();
                 Outcome::Consumed
             }
-            // Both cards drill into the open account's page (View 2).
-            PopoverRow::PersonCard | PopoverRow::WorkspaceCard => {
-                if let Some(id) = self.current_profile {
-                    self.drill(id);
-                }
-                Outcome::Consumed
-            }
-            PopoverRow::Settings => Outcome::OpenSettings,
-            PopoverRow::Cloud => Outcome::ManageCloud,
+            PopoverRow::WorkspacesHeading => Outcome::WorkspacesMenu,
+            PopoverRow::Toolbar => match part {
+                PopoverPart::Tool(Tool::Sync) => Outcome::OpenSyncSettings,
+                PopoverPart::Tool(Tool::Settings) => Outcome::OpenSettings,
+                PopoverPart::Tool(Tool::Help) => Outcome::OpenHelp,
+                _ => Outcome::Consumed,
+            },
             PopoverRow::NewProfile => Outcome::NewProfile,
-            PopoverRow::ManageProfiles => Outcome::ManageProfiles,
-            PopoverRow::LinkDevice => Outcome::LinkDevice,
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
-            PopoverRow::WorkspacesHeading
-            | PopoverRow::ProfilesHeading
-            | PopoverRow::Divider
-            | PopoverRow::HeadDivider
-            | PopoverRow::InvitePeople
-            | PopoverRow::ActivateProfile => Outcome::Consumed,
+            PopoverRow::Divider => Outcome::Consumed,
         }
     }
 
@@ -3847,8 +3927,10 @@ impl ExploreView {
     /// chords rather than being swallowed: a popover hanging off a column is not
     /// a modal over the document, so Ctrl+E must still shut the pane under it.
     ///
-    /// Left goes back from a Profile's workspaces; Right and Enter on a Profile
-    /// go in, landing on its first row so the arrows carry on from there.
+    /// Left goes back from the Profiles page; Right and Enter on your card go
+    /// in, landing on the Profile you are in so the arrows carry on from
+    /// there. On the toolbar row Left and Right move between its three
+    /// controls and Enter presses the one the keyboard is on.
     pub fn popover_key(&mut self, key: &winit::keyboard::Key) -> Option<Outcome> {
         use winit::keyboard::{Key, NamedKey};
         let kind = self.live()?.kind;
@@ -3870,31 +3952,54 @@ impl ExploreView {
                 }
                 Some(Outcome::Consumed)
             }
-            Key::Named(NamedKey::ArrowLeft) if kind == PopoverKind::Workspaces => {
+            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowRight)
+                if hovered == Some(PopoverRow::Toolbar) =>
+            {
+                let forward = matches!(key, Key::Named(NamedKey::ArrowRight));
+                if let Some(p) = self.popover.as_mut() {
+                    let i = Tool::ALL.iter().position(|t| *t == p.tool).unwrap_or(0);
+                    let n = Tool::ALL.len();
+                    p.tool = Tool::ALL[if forward {
+                        (i + 1) % n
+                    } else {
+                        (i + n - 1) % n
+                    }];
+                }
+                Some(Outcome::Consumed)
+            }
+            Key::Named(NamedKey::ArrowLeft) if kind == PopoverKind::Profiles => {
                 self.back();
                 Some(Outcome::Consumed)
             }
             Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::Enter)
+                if hovered == Some(PopoverRow::PersonCard) =>
+            {
+                self.drill();
+                if !self.hover_current_profile() {
+                    self.hover_first_row();
+                }
+                Some(Outcome::Consumed)
+            }
+            Key::Named(NamedKey::Enter)
                 if matches!(
                     hovered,
-                    Some(
-                        PopoverRow::Profile(_) | PopoverRow::PersonCard | PopoverRow::WorkspaceCard
-                    )
+                    Some(PopoverRow::Back | PopoverRow::Profile(_) | PopoverRow::WorkspacesHeading)
                 ) =>
             {
-                let outcome = self.choose(hovered.expect("matched above"));
-                if !self.hover_current_workspace() {
-                    self.hover_first_workspace();
-                }
-                Some(outcome)
+                Some(self.choose(hovered.expect("matched above"), PopoverPart::Row))
             }
-            Key::Named(NamedKey::Enter) if hovered == Some(PopoverRow::Back) => {
-                Some(self.choose(PopoverRow::Back))
+            Key::Named(NamedKey::Enter) if hovered == Some(PopoverRow::Toolbar) => {
+                let tool = self.popover.as_ref().map_or(Tool::Sync, |p| p.tool);
+                let part = PopoverPart::Tool(tool);
+                if !Self::stays_open(PopoverRow::Toolbar, part) {
+                    self.close_popover();
+                }
+                Some(self.choose(PopoverRow::Toolbar, part))
             }
             Key::Named(NamedKey::Enter) => {
                 self.close_popover();
                 Some(match hovered {
-                    Some(row) => self.choose(row),
+                    Some(row) => self.choose(row, PopoverPart::Row),
                     None => Outcome::Consumed,
                 })
             }
@@ -3902,8 +4007,8 @@ impl ExploreView {
         }
     }
 
-    /// Put the keyboard on the first row after the back row and heading.
-    fn hover_first_workspace(&mut self) {
+    /// Put the keyboard on the first row after a page's head.
+    fn hover_first_row(&mut self) {
         let rows = self.popover_rows();
         let first = rows
             .iter()
@@ -3913,17 +4018,27 @@ impl ExploreView {
         }
     }
 
-    /// The keyboard on the workspace you are in, when the page lists it —
-    /// the open Profile's page does; another Profile's never. Answers
-    /// whether it did; otherwise the hover is left as it was.
+    /// The keyboard on the workspace you are in, when the page lists it.
+    /// Answers whether it did; otherwise the hover is left as it was.
     fn hover_current_workspace(&mut self) -> bool {
-        if self.browsing_other().is_some() {
-            return false;
-        }
-        let list = self.browsed_workspaces();
+        let list = &self.workspaces;
         let Some(index) = self.popover_rows().iter().position(|row| {
             matches!(row, PopoverRow::Workspace(i)
                 if list.get(*i).is_some_and(|w| Some(w.id) == self.current))
+        }) else {
+            return false;
+        };
+        if let Some(p) = self.popover.as_mut() {
+            p.hover = Some(index);
+        }
+        true
+    }
+
+    /// The keyboard on the Profile you are in, when the page lists it.
+    fn hover_current_profile(&mut self) -> bool {
+        let Some(index) = self.popover_rows().iter().position(|row| {
+            matches!(row, PopoverRow::Profile(i)
+                if self.profiles.get(*i).map(|p| p.id) == self.current_profile)
         }) else {
             return false;
         };
@@ -4535,11 +4650,11 @@ impl ExploreView {
         // would otherwise answer for a press meant for a menu item — the same
         // ordering a tab's close box needs against the tab it sits in.
         if self.popover_open() {
-            if let Some((_, row)) = self.popover_at(area, viewport, x, y) {
-                if !Self::stays_open(row) {
+            if let Some((_, row, part)) = self.popover_part_at(area, viewport, x, y) {
+                if !Self::stays_open(row, part) {
                     self.close_popover();
                 }
-                return self.choose(row);
+                return self.choose(row, part);
             }
             // The floor chip shuts the switcher it opened — whichever page is
             // showing; falling through would reopen it on the same press.
@@ -4583,22 +4698,18 @@ impl ExploreView {
         // Socials each claim every press below the heading, and the floor
         // asked after them was unreachable in those modes — the chip and
         // the `?` worked on Files and did nothing on Home.
-        match floor::hit(area, x, y) {
-            Some(floor::Hit::Chip) => {
-                // One control, one popover: a press while it shows any page
-                // shuts it (QUESTIONS.md E2); otherwise View 1 opens.
-                if self
-                    .live()
-                    .is_some_and(|p| p.kind != PopoverKind::LibraryActions)
-                {
-                    self.close_popover();
-                } else {
-                    self.toggle_popover(PopoverKind::Summary);
-                }
-                return Outcome::Consumed;
+        if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
+            // One control, one popover: a press while it shows any page
+            // shuts it (QUESTIONS.md E2); otherwise the main page opens.
+            if self
+                .live()
+                .is_some_and(|p| p.kind != PopoverKind::LibraryActions)
+            {
+                self.close_popover();
+            } else {
+                self.toggle_popover(PopoverKind::Summary);
             }
-            Some(floor::Hit::Help) => return Outcome::OpenHelp,
-            None => {}
+            return Outcome::Consumed;
         }
 
         if self.actions_at(area, x, y) {
@@ -5260,7 +5371,9 @@ impl ExploreView {
             return true;
         }
 
-        let popover = self.popover_at(area, viewport, x, y).map(|(i, _)| i);
+        let on_popover = self.popover_part_at(area, viewport, x, y);
+        let popover = on_popover.map(|(i, _, _)| i);
+        let popover_part = on_popover.map(|(_, _, part)| part);
         let header = if popover.is_none() {
             floor::hit(area, x, y)
         } else {
@@ -5356,6 +5469,7 @@ impl ExploreView {
             || artifacts_moved
             || chats_moved
             || hover != self.hover
+            || popover_part != self.popover_part
             || header != self.floor_hover
             || actions != self.actions_hover
             || mode != self.mode_hover
@@ -5365,6 +5479,7 @@ impl ExploreView {
             || on_subscribe != self.subscribe_hover
             || scrollbar != self.scrollbar_hover;
         self.hover = hover;
+        self.popover_part = popover_part;
         self.floor_hover = header;
         self.actions_hover = actions;
         self.mode_hover = mode;
@@ -6570,12 +6685,13 @@ impl ExploreView {
         }
     }
 
-    /// The floor: a hairline, the who/where chip and the `?`.
+    /// The floor: a hairline and the who/where chip.
     ///
     /// The chip wears `hover_tint` while the pointer is on it and while the
-    /// switcher it opens is on screen (DESIGN.md: a chip whose popover is
-    /// open keeps a persistent tinted background). The `?` is a compact icon
-    /// button, dimmed until the help popover lands.
+    /// popover it opens is on screen (DESIGN.md: a chip whose popover is
+    /// open keeps a persistent tinted background). It says where first — the
+    /// workspace's tile and name — and under that who, with the sync state
+    /// after a dot when there is one (the CTO's artboard).
     fn draw_floor(
         &self,
         scene: &mut Scene,
@@ -6612,12 +6728,12 @@ impl ExploreView {
                 &scene::rrect(r.chip.x, r.chip.y, r.chip.w, r.chip.h, 7.0),
             );
         }
+        let entry = self
+            .current
+            .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
         if r.avatar.w > 0.0 {
             // The workspace's tile, not the person's picture: the chip says
             // where you are first (the CTO's call, QUESTIONS.md E26).
-            let entry = self
-                .current
-                .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
             koru_draw::tile::Tile {
                 icon: entry.and_then(|w| w.icon.as_deref()),
                 color: entry.and_then(|w| w.color.as_deref()),
@@ -6626,12 +6742,17 @@ impl ExploreView {
             .draw(scene, root, engine, r.avatar);
         }
         if r.text.w > 0.0 {
-            let workspace = self
-                .current
-                .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
-                .map(|w| w.name.as_str())
-                .unwrap_or("Workspace");
-            let person = self.profile().map(|p| p.name.as_str()).unwrap_or("");
+            let workspace = entry.map_or("Workspace", |w| w.name.as_str());
+            let mut meta_text = self.profile().map_or(String::new(), |p| p.name.clone());
+            let status = self.sync_status();
+            if status != SyncStatus::NotSetUp {
+                let word = koru_i18n::t(crate::format::lang(), status.key());
+                meta_text = if meta_text.is_empty() {
+                    word.to_owned()
+                } else {
+                    format!("{meta_text} · {word}")
+                };
+            }
             let name = Rect::new(r.text.x, r.text.y + 2.0, r.text.w, 16.0);
             let meta = Rect::new(r.text.x, r.text.y + 18.0, r.text.w, 14.0);
             draw_middle(
@@ -6643,12 +6764,12 @@ impl ExploreView {
                 theme::role::row().with_weight(theme::FontWeight::SemiBold),
                 p.text,
             );
-            if !person.is_empty() {
+            if !meta_text.is_empty() {
                 draw_middle(
                     scene,
                     root,
                     engine,
-                    &label_fit(person),
+                    &label_fit(&meta_text),
                     meta,
                     theme::role::hint(),
                     p.text_dim,
@@ -6669,28 +6790,8 @@ impl ExploreView {
                 },
             );
         }
-        if r.help.w > 0.0 {
-            koru_ui::icon_button::draw_with(
-                scene,
-                root,
-                engine,
-                r.help,
-                icons::QUESTION,
-                koru_ui::icon_button::State {
-                    hovered: self.floor_hover == Some(floor::Hit::Help),
-                    active: false,
-                    disabled: false,
-                },
-                koru_ui::icon_button::Metrics::COMPACT,
-            );
-        }
-        let ring = match self.chrome_focus {
-            Some(ExploreChromeFocus::FloorChip) if r.chip.w > 0.0 => Some(r.chip),
-            Some(ExploreChromeFocus::FloorHelp) if r.help.w > 0.0 => Some(r.help),
-            _ => None,
-        };
-        if let Some(rect) = ring {
-            draw_focus_ring(scene, root, rect, p);
+        if self.chrome_focus == Some(ExploreChromeFocus::FloorChip) && r.chip.w > 0.0 {
+            draw_focus_ring(scene, root, r.chip, p);
         }
     }
 
@@ -7415,16 +7516,16 @@ impl ExploreView {
             return;
         };
         if state.slide.is_some() {
-            // **Both pages, side by side, sliding together.** The Profiles page
-            // leaves to the left as a Profile's workspaces arrive from the
-            // right, and the reverse on the way back. Clipped to the panel so
+            // **Both pages, side by side, sliding together.** The main page
+            // leaves to the left as the Profiles page arrives from the right,
+            // and the reverse on the way back. Clipped to the panel so
             // neither page is seen outside it.
             scene.push_clip_layer(
                 peniko::Fill::NonZero,
                 root,
                 &scene::rrect(panel.x, panel.y, panel.w, panel.h, POPOVER_RADIUS),
             );
-            for kind in [state.left, PopoverKind::Workspaces] {
+            for kind in [PopoverKind::Summary, PopoverKind::Profiles] {
                 let dx = (page_of(kind) - state.page) * panel.w;
                 let current = kind == state.kind;
                 let scroll = if current { state.scroll } else { 0.0 };
@@ -7474,6 +7575,7 @@ impl ExploreView {
         avatar: Option<&peniko::ImageBrush>,
     ) {
         let p = theme::p();
+        let lang = crate::format::lang();
         let list_band = self.page_band(kind, panel);
         let content_h = self.page_list_content_h(kind);
         let scroll_max = list_band.map_or(0.0, |band| (content_h - band.h).max(0.0));
@@ -7489,8 +7591,9 @@ impl ExploreView {
                 &scene::rect(band.x + 8.0, band.y + band.h, (band.w - 16.0).max(0.0), 1.0),
             );
         }
-        let browsed = self.browsed_workspaces();
-        let open_here = self.browsing_other().is_none();
+        // Which part of the hovered row the pointer is on; `None` while the
+        // keyboard owns the hover.
+        let part = self.popover_part;
         for (i, (row, r)) in self.page_rects(kind, panel, scroll).into_iter().enumerate() {
             let list_row = matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_));
             if list_row {
@@ -7498,7 +7601,7 @@ impl ExploreView {
                 if r.y + r.h <= band.y || r.y >= band.y + band.h {
                     continue;
                 }
-                if matches!(row, PopoverRow::Workspace(i) if browsed.get(i).is_none())
+                if matches!(row, PopoverRow::Workspace(i) if self.workspaces.get(i).is_none())
                     || matches!(row, PopoverRow::Profile(i) if self.profiles.get(i).is_none())
                 {
                     continue;
@@ -7510,7 +7613,8 @@ impl ExploreView {
                 );
             }
             let hot = hover == Some(i);
-            if hot && row.selectable() {
+            // The heading and the toolbar light their controls, not the row.
+            if hot && !matches!(row, PopoverRow::WorkspacesHeading | PopoverRow::Toolbar) {
                 scene::fill(
                     scene,
                     root,
@@ -7522,52 +7626,42 @@ impl ExploreView {
             let text_x = icon_x + 22.0;
             let text = |x: f32| Rect::new(x, r.y, (r.x + r.w - x - 8.0).max(1.0), r.h);
             match row {
-                PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => {
-                    let workspaces = matches!(row, PopoverRow::WorkspacesHeading);
-                    let label = if workspaces { "WORKSPACES" } else { "PROFILES" };
+                PopoverRow::WorkspacesHeading => {
+                    // *WORKSPACES · n*, and the ⋯ that opens New workspace
+                    // and Import… beside the page.
+                    let n = self
+                        .rows_for(kind)
+                        .iter()
+                        .filter(|row| matches!(row, PopoverRow::Workspace(_)))
+                        .count();
+                    let label = format!("WORKSPACES · {n}");
+                    let button = heading_menu_rect(r);
                     let x = r.x + theme::NAV_PAD * 2.0;
-                    // **The heading teaches the chord that opens it.** A
-                    // shortcut nobody can find is one nobody uses, and this
-                    // panel has no other row to hang it off. Rendered from the
-                    // registry, so it says `⌥⌘W` on a Mac without a second
-                    // literal to keep in step.
-                    let mut label_right = r.x + r.w - 8.0;
-                    let shortcut = if workspaces {
-                        koru_keys::ShortcutId::SwitchWorkspace
-                    } else {
-                        koru_keys::ShortcutId::SwitchProfile
-                    };
-                    let chord = koru_keys::show_hint(shortcut, koru_keys::Section::Heading);
-                    if let Some(chord) = chord {
-                        let laid = engine.simple_layout(&chord, theme::role::hint());
-                        let chord_x = r.x + r.w - laid.width() - theme::NAV_PAD * 2.0;
-                        scene::draw_layout_first_line(
-                            scene,
-                            root,
-                            &laid,
-                            chord_x,
-                            r.y + (r.h - scene::first_line_height(&laid)) * 0.5,
-                            Some(p.row_hint),
-                        );
-                        // The heading stops before it, so a longer word in
-                        // another language wraps or elides rather than running
-                        // underneath the chord.
-                        label_right = chord_x - 8.0;
-                    }
                     draw_middle(
                         scene,
                         root,
                         engine,
-                        label,
-                        Rect::new(x, r.y, (label_right - x).max(1.0), r.h),
+                        &label,
+                        Rect::new(x, r.y, (button.x - 8.0 - x).max(1.0), r.h),
                         theme::role::hint(),
                         p.row_hint,
                     );
+                    koru_ui::icon_button::draw_with(
+                        scene,
+                        root,
+                        engine,
+                        button,
+                        icons::DOTS_THREE,
+                        koru_ui::icon_button::State {
+                            hovered: hot,
+                            active: false,
+                            disabled: false,
+                        },
+                        koru_ui::icon_button::Metrics::COMPACT,
+                    );
                 }
                 PopoverRow::Back => {
-                    // The way back, and the name of the Profile whose
-                    // workspaces these are — one row, so the page says whose
-                    // list it is without a second heading.
+                    // The way back, and the page's name: `‹ Profiles`.
                     draw_icon(
                         scene,
                         root,
@@ -7576,35 +7670,19 @@ impl ExploreView {
                         Rect::new(icon_x, r.y, 16.0, r.h),
                         p.text_dim,
                     );
-                    let profile = self
-                        .browsed_profile()
-                        .and_then(|id| self.profiles.iter().find(|p| p.id == id));
-                    let name = profile.map_or("Profile", |p| p.name.as_str());
-                    let chip = Rect::new(
-                        text_x,
-                        r.y + (r.h - WORKSPACE_CHIP) * 0.5,
-                        WORKSPACE_CHIP,
-                        WORKSPACE_CHIP,
-                    );
-                    koru_draw::tile::Tile {
-                        icon: profile.and_then(|p| p.icon.as_deref()),
-                        color: profile.and_then(|p| p.color.as_deref()),
-                        name,
-                    }
-                    .draw(scene, root, engine, chip);
                     draw_middle(
                         scene,
                         root,
                         engine,
-                        &label_fit(name),
-                        text(chip.x + chip.w + 8.0),
+                        koru_i18n::t(lang, koru_i18n::Key::WorkspacesProfiles),
+                        text(text_x),
                         theme::role::row().with_weight(theme::FontWeight::SemiBold),
                         p.text,
                     );
                 }
                 PopoverRow::Workspace(i) => {
-                    let w = &browsed[i];
-                    let current = open_here && self.current == Some(w.id);
+                    let w = &self.workspaces[i];
+                    let current = self.current == Some(w.id);
                     let parts = self.workspace_row_parts(row, r);
                     koru_draw::tile::Tile {
                         icon: w.icon.as_deref(),
@@ -7612,9 +7690,6 @@ impl ExploreView {
                         name: &w.name,
                     }
                     .draw(scene, root, engine, parts.chip);
-                    // Bold **is** the "you are here" mark. It reads at a glance
-                    // in the column where you are already looking, rather than
-                    // at the far end of the row where a tick sat.
                     let colour = if current { p.text } else { p.text_dim };
                     let style = if current {
                         theme::role::row().with_weight(theme::FontWeight::SemiBold)
@@ -7631,17 +7706,7 @@ impl ExploreView {
                         scene::centre_y_in(&label, parts.name),
                         Some(colour),
                     );
-                    // A mark, not a control: pinning lives in the manager.
-                    if w.pinned {
-                        draw_icon_filled(
-                            scene,
-                            root,
-                            engine,
-                            icons::PUSH_PIN,
-                            parts.pin,
-                            p.row_hint,
-                        );
-                    }
+                    draw_trailing(scene, root, engine, parts.trailing, current, hot, part, p);
                 }
                 PopoverRow::LibraryAction(action) => {
                     draw_icon(
@@ -7663,39 +7728,15 @@ impl ExploreView {
                     );
                 }
                 PopoverRow::PersonCard => {
-                    // The person as a card (frame 6A): the picture or the
-                    // initials, the name over the email and the Profile
-                    // count, the chord that opens the Profiles page, and a
-                    // caret saying it leads somewhere. Not the Profiles
-                    // page's one-line row wearing the Profile's icon: that
-                    // read as one more Profile beside the workspace card
-                    // (the CTO's note, QUESTIONS.md E27).
-                    if hot {
-                        scene::fill(
-                            scene,
-                            root,
-                            p.hover_tint,
-                            &scene::rrect(r.x + 4.0, r.y, (r.w - 8.0).max(0.0), r.h, 5.0),
-                        );
-                    }
-                    let lang = crate::format::lang();
+                    // You, as a card: the picture or the initials, the name
+                    // over where you sync and how many devices hold the
+                    // Profile, and a caret saying it leads somewhere (the
+                    // CTO's artboard).
                     let name = self.profile().map_or("", |profile| profile.name.as_str());
                     let key = self.profile().map_or("", |profile| profile.email.as_str());
-                    let mut detail = self
+                    let detail = self
                         .profile()
-                        .map_or(String::new(), |profile| profile.email.clone());
-                    let n = self.profiles.len();
-                    if n > 1 {
-                        let count = koru_i18n::fill(
-                            koru_i18n::t(lang, koru_i18n::Key::ProfilesCount),
-                            &[&n.to_string()],
-                        );
-                        detail = if detail.is_empty() {
-                            count
-                        } else {
-                            format!("{detail} · {count}")
-                        };
-                    }
+                        .map_or(String::new(), |profile| self.profile_detail(profile, lang));
                     let at = Rect::new(
                         r.x + theme::NAV_PAD,
                         r.y + (r.h - PERSON_AVATAR) * 0.5,
@@ -7712,210 +7753,23 @@ impl ExploreView {
                         key,
                         theme::role::row(),
                     );
-                    let caret =
-                        Rect::new(r.x + r.w - WORKSPACE_DOTS - 8.0, r.y, WORKSPACE_DOTS, r.h);
-                    let right = draw_chord_keycap(
-                        scene,
-                        root,
-                        engine,
-                        r,
-                        caret.x,
-                        koru_keys::ShortcutId::SwitchProfile,
-                    );
+                    let caret = trailing_lane(r);
                     draw_icon(scene, root, engine, icons::CARET_RIGHT, caret, p.row_hint);
-                    let text_x = at.x + at.w + 8.0;
-                    let text_w = (right - text_x).max(1.0);
-                    let name_style = theme::role::row().with_weight(theme::FontWeight::SemiBold);
-                    if detail.is_empty() {
-                        draw_middle(
-                            scene,
-                            root,
-                            engine,
-                            &label_fit(name),
-                            Rect::new(text_x, r.y, text_w, r.h),
-                            name_style,
-                            p.text,
-                        );
-                    } else {
-                        draw_middle(
-                            scene,
-                            root,
-                            engine,
-                            &label_fit(name),
-                            Rect::new(text_x, r.y + 7.0, text_w, 16.0),
-                            name_style,
-                            p.text,
-                        );
-                        draw_middle(
-                            scene,
-                            root,
-                            engine,
-                            &label_fit(&detail),
-                            Rect::new(text_x, r.y + 25.0, text_w, 14.0),
-                            theme::role::hint(),
-                            p.text_dim,
-                        );
-                    }
-                }
-                PopoverRow::WorkspaceCard => {
-                    // The workspace as a card: its tile and name, no subtitle
-                    // until there is a fact to print (QUESTIONS.md Q-O).
-                    let entry = self
-                        .current
-                        .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
-                    let chip = Rect::new(
-                        icon_x,
-                        r.y + (r.h - WORKSPACE_CHIP) * 0.5,
-                        WORKSPACE_CHIP,
-                        WORKSPACE_CHIP,
-                    );
-                    let name = entry.map_or("Workspace", |w| w.name.as_str());
-                    koru_draw::tile::Tile {
-                        icon: entry.and_then(|w| w.icon.as_deref()),
-                        color: entry.and_then(|w| w.color.as_deref()),
-                        name,
-                    }
-                    .draw(scene, root, engine, chip);
-                    let right = draw_chord_keycap(
+                    draw_two_lines(
                         scene,
                         root,
                         engine,
-                        r,
-                        r.x + r.w - WORKSPACE_DOTS - 8.0,
-                        koru_keys::ShortcutId::SwitchWorkspace,
-                    );
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        &label_fit(name),
                         Rect::new(
-                            chip.x + chip.w + 8.0,
+                            at.x + at.w + 8.0,
                             r.y,
-                            (right - chip.x - chip.w - 8.0).max(1.0),
+                            (caret.x - at.x - at.w - 12.0).max(1.0),
                             r.h,
                         ),
-                        theme::role::row().with_weight(theme::FontWeight::SemiBold),
-                        p.text,
+                        &label_fit(name),
+                        &detail,
+                        true,
+                        p,
                     );
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::CARET_RIGHT,
-                        Rect::new(r.x + r.w - WORKSPACE_DOTS - 8.0, r.y, WORKSPACE_DOTS, r.h),
-                        p.row_hint,
-                    );
-                }
-                PopoverRow::Settings
-                | PopoverRow::Cloud
-                | PopoverRow::InvitePeople
-                | PopoverRow::ActivateProfile => {
-                    let lang = crate::format::lang();
-                    let (glyph, label, trailing, dimmed) = match row {
-                        PopoverRow::Settings => (
-                            icons::FADERS,
-                            koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
-                            None,
-                            false,
-                        ),
-                        PopoverRow::Cloud => (
-                            icons::CLOUD,
-                            koru_i18n::t(lang, koru_i18n::Key::CloudTitle),
-                            Some(if self.cloud_subscribed {
-                                koru_i18n::t(lang, koru_i18n::Key::CloudSubscribed)
-                            } else {
-                                koru_i18n::t(lang, koru_i18n::Key::Subscribe)
-                            }),
-                            false,
-                        ),
-                        PopoverRow::InvitePeople => (
-                            icons::PLUS,
-                            koru_i18n::t(lang, koru_i18n::Key::InvitePeople),
-                            Some(koru_i18n::t(lang, koru_i18n::Key::SharingNotAvailable)),
-                            true,
-                        ),
-                        _ => (
-                            icons::CHECK,
-                            koru_i18n::t(lang, koru_i18n::Key::ActivateThisProfile),
-                            Some(koru_i18n::t(lang, koru_i18n::Key::ActiveNow)),
-                            true,
-                        ),
-                    };
-                    let colour = if dimmed { p.row_hint } else { p.text_dim };
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        glyph,
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        colour,
-                    );
-                    let mut right = r.x + r.w - 8.0;
-                    if let Some(trailing) = trailing {
-                        let laid = engine.simple_layout(trailing, theme::role::hint());
-                        let x = r.x + r.w - laid.width() - theme::NAV_PAD;
-                        scene::draw_layout_first_line(
-                            scene,
-                            root,
-                            &laid,
-                            x,
-                            r.y + (r.h - scene::first_line_height(&laid)) * 0.5,
-                            Some(p.row_hint),
-                        );
-                        right = x - 8.0;
-                    }
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        label,
-                        Rect::new(text_x, r.y, (right - text_x).max(1.0), r.h),
-                        theme::role::row(),
-                        colour,
-                    );
-                }
-                PopoverRow::HeadDivider => {
-                    scene::fill(
-                        scene,
-                        root,
-                        p.panel_border,
-                        &scene::rect(
-                            r.x + theme::NAV_PAD,
-                            r.y + (r.h - 1.0) * 0.5,
-                            (r.w - theme::NAV_PAD * 2.0).max(0.0),
-                            1.0,
-                        ),
-                    );
-                }
-                PopoverRow::NewWorkspace | PopoverRow::NewProfile => {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::PLUS,
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        p.text_dim,
-                    );
-                    let label = if row == PopoverRow::NewWorkspace {
-                        "New workspace"
-                    } else if kind == PopoverKind::Summary {
-                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::AddAccount)
-                    } else {
-                        "New profile"
-                    };
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        label,
-                        text(text_x),
-                        theme::role::row(),
-                        p.text_dim,
-                    );
-                    // **No chord printed here.** `Ctrl+Shift+N` was once
-                    // printed and is the document's Narrow view mode. See
-                    // `mainview::keys::resolve`.
                 }
                 PopoverRow::Divider => {
                     scene::fill(
@@ -7930,53 +7784,53 @@ impl ExploreView {
                         ),
                     );
                 }
-                PopoverRow::Profile(i) => {
-                    let profile = &self.profiles[i];
-                    let current = self.current_profile == Some(profile.id);
-                    // Only the profile you are *in* has a decoded picture to
-                    // hand — the others are rows in an index, and their blobs
-                    // live in folders this process has not opened. The initials
-                    // chip is the honest fallback rather than a blank circle.
-                    let brush = if current { avatar } else { None };
-                    let detail = if profile.email.is_empty() {
-                        folder_hint(&profile.folder)
-                    } else {
-                        profile.email.clone()
+                PopoverRow::Toolbar => {
+                    let t = toolbar_parts(r);
+                    let tool = self.popover.as_ref().map_or(Tool::Sync, |x| x.tool);
+                    // A control is lit by the pointer on it, or by the
+                    // keyboard while the row is its stop and the pointer is
+                    // elsewhere.
+                    let lit = |which: Tool| {
+                        hot && match part {
+                            Some(PopoverPart::Tool(on)) => on == which,
+                            Some(_) => false,
+                            None => tool == which,
+                        }
                     };
-                    koru_ui::profile_picker::draw_row(
+                    draw_sync_icon(
                         scene,
                         root,
                         engine,
-                        r,
-                        koru_ui::profile_picker::ProfileRow {
-                            name: &profile.name,
-                            detail: &detail,
-                            palette_key: &profile.email,
-                            selected: current,
-                            removable: false,
-                            menu: false,
-                            avatar: brush,
-                            icon: profile.icon.as_deref(),
-                            color: profile.color.as_deref(),
-                        },
-                        hot,
+                        t.sync,
+                        self.sync_status(),
+                        lit(Tool::Sync),
+                        p,
                     );
-                    // The row goes somewhere — its workspaces — and says so.
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::CARET_RIGHT,
-                        koru_ui::profile_picker::row_parts(r).trailing,
-                        p.row_hint,
-                    );
+                    for (which, glyph) in [
+                        (Tool::Settings, icons::FADERS),
+                        (Tool::Help, icons::QUESTION),
+                    ] {
+                        koru_ui::icon_button::draw_with(
+                            scene,
+                            root,
+                            engine,
+                            t.of(which),
+                            glyph,
+                            koru_ui::icon_button::State {
+                                hovered: lit(which),
+                                active: false,
+                                disabled: false,
+                            },
+                            koru_ui::icon_button::Metrics::COMPACT,
+                        );
+                    }
                 }
-                PopoverRow::ImportContent => {
+                PopoverRow::NewProfile => {
                     draw_icon(
                         scene,
                         root,
                         engine,
-                        icons::IMPORT,
+                        icons::PLUS,
                         Rect::new(icon_x, r.y, 16.0, r.h),
                         p.text_dim,
                     );
@@ -7984,71 +7838,64 @@ impl ExploreView {
                         scene,
                         root,
                         engine,
-                        "Import content\u{2026}",
+                        koru_i18n::t(lang, koru_i18n::Key::NewProfile),
                         text(text_x),
                         theme::role::row(),
                         p.text_dim,
                     );
-                    // A flyout of formats opens from it, so it carries the
-                    // submenu caret every menu row with a flyout carries.
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::CARET_RIGHT,
-                        Rect::new(r.x + r.w - WORKSPACE_DOTS - 8.0, r.y, WORKSPACE_DOTS, r.h),
-                        p.row_hint,
-                    );
+                    // **No chord printed here.** `Ctrl+Shift+N` was once
+                    // printed and is the document's Narrow view mode. See
+                    // `mainview::keys::resolve`.
                 }
-                PopoverRow::ManageProfiles
-                | PopoverRow::ManageWorkspaces
-                | PopoverRow::LinkDevice => {
-                    let (glyph, label) = match row {
-                        PopoverRow::ManageProfiles => (icons::LINK, "Manage profiles\u{2026}"),
-                        PopoverRow::ManageWorkspaces => (icons::LINK, "Manage workspaces\u{2026}"),
-                        _ => (icons::LINK, "Link a device\u{2026}"),
-                    };
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        glyph,
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        p.text_dim,
+                PopoverRow::Profile(i) => {
+                    let profile = &self.profiles[i];
+                    let current = self.current_profile == Some(profile.id);
+                    let tile = Rect::new(
+                        r.x + theme::NAV_PAD,
+                        r.y + (r.h - PROFILE_TILE) * 0.5,
+                        PROFILE_TILE,
+                        PROFILE_TILE,
                     );
-                    let mut label_rect = text(text_x);
-                    // *n linked* at the row's end, a fact the devices page
-                    // already holds (frame 6A).
-                    if matches!(row, PopoverRow::LinkDevice) && self.linked_count > 0 {
-                        let lang = crate::format::lang();
-                        let n = self.linked_count;
-                        let key = if n == 1 {
-                            koru_i18n::Key::LinkedCountOne
-                        } else {
-                            koru_i18n::Key::LinkedCountMany
-                        };
-                        let trailing = koru_i18n::fill(koru_i18n::t(lang, key), &[&n.to_string()]);
-                        let laid = engine.simple_layout(&trailing, theme::role::hint());
-                        let x = r.x + r.w - laid.width() - theme::NAV_PAD;
-                        scene::draw_layout_first_line(
+                    // Only the profile you are *in* has a decoded picture to
+                    // hand — the others are rows in an index, and their blobs
+                    // live in folders this process has not opened. The tile
+                    // is the honest fallback rather than a blank circle.
+                    if current && avatar.is_some() && profile.icon.is_none() {
+                        koru_ui::profile_picker::draw_avatar(
                             scene,
                             root,
-                            &laid,
-                            x,
-                            r.y + (r.h - scene::first_line_height(&laid)) * 0.5,
-                            Some(p.row_hint),
+                            engine,
+                            tile,
+                            avatar,
+                            &profile.name,
+                            &profile.email,
+                            theme::role::row(),
                         );
-                        label_rect.w = (x - 8.0 - label_rect.x).max(1.0);
+                    } else {
+                        koru_draw::tile::Tile {
+                            icon: profile.icon.as_deref(),
+                            color: profile.color.as_deref(),
+                            name: &profile.name,
+                        }
+                        .draw(scene, root, engine, tile);
                     }
-                    draw_middle(
+                    let trailing = trailing_lane(r);
+                    draw_two_lines(
                         scene,
                         root,
                         engine,
-                        label,
-                        label_rect,
-                        theme::role::row(),
-                        p.text_dim,
+                        Rect::new(
+                            tile.x + tile.w + 8.0,
+                            r.y,
+                            (trailing.x - tile.x - tile.w - 12.0).max(1.0),
+                            r.h,
+                        ),
+                        &label_fit(&profile.name),
+                        &self.profile_detail(profile, lang),
+                        current,
+                        p,
                     );
+                    draw_trailing(scene, root, engine, trailing, current, hot, part, p);
                 }
             }
             if list_row {
@@ -8067,6 +7914,197 @@ impl ExploreView {
                 &scene::rrect(band.x + band.w - 4.0, thumb_y, 2.0, thumb_h, 1.0),
             );
         }
+    }
+}
+
+/// The trailing lane of a popover row: the tick, the gear, a caret.
+/// The same lane a Profile row's trailing caret has, so every row's control
+/// lines up.
+pub(crate) fn trailing_lane(r: Rect) -> Rect {
+    koru_ui::profile_picker::row_parts(r).trailing
+}
+
+/// The heading's ⋯ button, at the trailing lane.
+pub(crate) fn heading_menu_rect(r: Rect) -> Rect {
+    let lane = trailing_lane(r);
+    Rect::new(
+        lane.x,
+        r.y + (r.h - HEADING_BUTTON_H) * 0.5,
+        lane.w,
+        HEADING_BUTTON_H,
+    )
+}
+
+/// Where the toolbar's three controls are.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ToolbarParts {
+    pub sync: Rect,
+    pub settings: Rect,
+    pub help: Rect,
+}
+
+impl ToolbarParts {
+    pub fn of(self, tool: Tool) -> Rect {
+        match tool {
+            Tool::Sync => self.sync,
+            Tool::Settings => self.settings,
+            Tool::Help => self.help,
+        }
+    }
+}
+
+/// The sync icon at the row's left; settings and help at its right (the
+/// CTO's artboard).
+pub(crate) fn toolbar_parts(r: Rect) -> ToolbarParts {
+    let y = r.y + (r.h - TOOL) * 0.5;
+    let sync = Rect::new(r.x + theme::NAV_PAD, y, TOOL, TOOL);
+    let help = Rect::new(
+        (r.x + r.w - theme::NAV_PAD - TOOL).max(sync.x),
+        y,
+        TOOL,
+        TOOL,
+    );
+    let settings = Rect::new((help.x - 4.0 - TOOL).max(sync.x), y, TOOL, TOOL);
+    ToolbarParts {
+        sync,
+        settings,
+        help,
+    }
+}
+
+/// A row's trailing lane: the gear while the pointer is on the row, else the
+/// tick on the one you are in. The gear is lit when the pointer is on it.
+#[allow(clippy::too_many_arguments)]
+fn draw_trailing(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    lane: Rect,
+    current: bool,
+    hot: bool,
+    part: Option<PopoverPart>,
+    p: &theme::Palette,
+) {
+    if hot {
+        let on_gear = part == Some(PopoverPart::Gear);
+        if on_gear {
+            scene::fill(
+                scene,
+                root,
+                p.hover_tint,
+                &scene::rrect(
+                    lane.x - 2.0,
+                    lane.y + (lane.h - 22.0) * 0.5,
+                    lane.w + 4.0,
+                    22.0,
+                    5.0,
+                ),
+            );
+        }
+        draw_icon(
+            scene,
+            root,
+            engine,
+            icons::FADERS,
+            lane,
+            if on_gear { p.text } else { p.text_dim },
+        );
+    } else if current {
+        draw_icon(scene, root, engine, icons::CHECK, lane, p.text_dim);
+    }
+}
+
+/// A name over a detail line, the pair centred in `at`.
+#[allow(clippy::too_many_arguments)]
+fn draw_two_lines(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    at: Rect,
+    name: &str,
+    detail: &str,
+    strong: bool,
+    p: &theme::Palette,
+) {
+    let name_style = if strong {
+        theme::role::row().with_weight(theme::FontWeight::SemiBold)
+    } else {
+        theme::role::row()
+    };
+    let name_colour = if strong { p.text } else { p.text_dim };
+    if detail.is_empty() {
+        draw_middle(scene, root, engine, name, at, name_style, name_colour);
+        return;
+    }
+    let top = at.y + (at.h - 32.0) * 0.5;
+    draw_middle(
+        scene,
+        root,
+        engine,
+        name,
+        Rect::new(at.x, top, at.w, 16.0),
+        name_style,
+        name_colour,
+    );
+    let fitted = engine.elided(detail, theme::role::hint(), at.w);
+    draw_middle(
+        scene,
+        root,
+        engine,
+        &fitted,
+        Rect::new(at.x, top + 18.0, at.w, 14.0),
+        theme::role::hint(),
+        p.text_dim,
+    );
+}
+
+/// The sync icon in its five states (the CTO's artboard): up to date in the
+/// ordinary ink, syncing in the accent, offline with a grey dot, needs
+/// attention with a red dot, not set up muted.
+fn draw_sync_icon(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    status: SyncStatus,
+    hovered: bool,
+    p: &theme::Palette,
+) {
+    if hovered {
+        scene::fill(
+            scene,
+            root,
+            p.hover_tint,
+            &scene::rrect(slot.x, slot.y, slot.w, slot.h, 6.0),
+        );
+    }
+    let colour = match status {
+        SyncStatus::Syncing => p.accent,
+        SyncStatus::NotSetUp => p.row_hint,
+        _ => p.text_dim,
+    };
+    draw_icon(scene, root, engine, icons::ARROWS_CLOCKWISE, slot, colour);
+    let dot = match status {
+        SyncStatus::Offline => Some(p.row_hint),
+        SyncStatus::NeedsAttention => {
+            Some(theme::accent_tone("red").map_or(p.text, |tone| tone.swatch))
+        }
+        _ => None,
+    };
+    if let Some(colour) = dot {
+        const DOT: f32 = 6.0;
+        scene::fill(
+            scene,
+            root,
+            colour,
+            &scene::rrect(
+                slot.x + slot.w - DOT - 2.0,
+                slot.y + slot.h - DOT - 2.0,
+                DOT,
+                DOT,
+                DOT * 0.5,
+            ),
+        );
     }
 }
 
@@ -8103,28 +8141,6 @@ fn draw_middle(
         at.y + (at.h - line_h) * 0.5,
         Some(colour),
     );
-}
-
-/// The last two components of a path — enough to tell two folders with the same
-/// name apart, which is what the second line of a profile row is for.
-///
-/// The *tail*, not the head: truncating a long path from the right would hide
-/// exactly the part that differs, since what collides is the last component.
-fn folder_hint(folder: &str) -> String {
-    let parts: Vec<&str> = folder
-        .split(['/', '\\'])
-        .filter(|p| !p.is_empty())
-        .collect();
-    match parts.len() {
-        0 => String::new(),
-        1 => parts[0].to_string(),
-        n => format!(
-            "{}{}{}",
-            parts[n - 2],
-            std::path::MAIN_SEPARATOR,
-            parts[n - 1]
-        ),
-    }
 }
 
 /// A name that is definitely something. An empty one reads as a broken row
@@ -8212,50 +8228,17 @@ const SWITCHER_MAX_H: f32 = 500.0;
 /// The rounded tile at the left of a workspace row, carrying its colour and its
 /// emoji. Square.
 const WORKSPACE_CHIP: f32 = 20.0;
-/// The summary's person card: two lines, the picture beside them.
+/// The main page's person card: two lines, the picture beside them.
 const PERSON_CARD_H: f32 = 48.0;
 const PERSON_AVATAR: f32 = 28.0;
-const KEYCAP_PAD: f32 = 5.0;
+/// A Profile row on the Profiles page: two lines, the tile beside them.
+const PROFILE_ROW_H: f32 = 44.0;
+const PROFILE_TILE: f32 = 24.0;
+/// The main page's footer and its three controls.
+const TOOLBAR_H: f32 = 36.0;
+const TOOL: f32 = 24.0;
+const HEADING_BUTTON_H: f32 = 20.0;
 
-/// A card's chord as a keycap just left of `right`: the registry's hint in
-/// the hint style inside a hairline box, the way frame 6A prints `^⌥P`
-/// beside the person. Answers the x where the card's text must stop; when
-/// the registry has no hint to show, nothing is drawn and the text runs to
-/// the caret.
-fn draw_chord_keycap(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    row: Rect,
-    right: f32,
-    shortcut: koru_keys::ShortcutId,
-) -> f32 {
-    let Some(chord) = koru_keys::show_hint(shortcut, koru_keys::Section::Heading) else {
-        return right - 8.0;
-    };
-    let p = theme::p();
-    let laid = engine.simple_layout(&chord, theme::role::hint());
-    let w = laid.width() + KEYCAP_PAD * 2.0;
-    let h = scene::first_line_height(&laid) + 6.0;
-    let x = (right - 8.0 - w).floor();
-    let y = (row.y + (row.h - h) * 0.5).floor();
-    scene::stroke(
-        scene,
-        root,
-        p.panel_border,
-        1.0,
-        &scene::rrect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, 4.0),
-    );
-    scene::draw_layout_first_line(
-        scene,
-        root,
-        &laid,
-        x + KEYCAP_PAD,
-        y + 3.0,
-        Some(p.row_hint),
-    );
-    x - 8.0
-}
 /// The `…` between the name and the tick.
 /// Where a row's icon sits, given its depth and whether the row carries the
 /// caret lane.
@@ -8277,7 +8260,6 @@ fn icon_lane(x: f32, depth: u16, caret: bool) -> f32 {
         + if caret { theme::NAV_INDENT } else { 0.0 }
 }
 
-const WORKSPACE_DOTS: f32 = 20.0;
 /// The `…` at the end of a library row. Its width is reserved on every row
 /// whether or not the button is showing — see [`ExploreView::row_parts`].
 const ROW_DOTS: f32 = 20.0;

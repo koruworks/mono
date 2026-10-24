@@ -211,7 +211,7 @@ impl MainView {
                     // rather than breaks (the entry is skipped and the strip
                     // silently shortens), which is exactly why the compiler
                     // will not tell you.
-                    _ if t.whats_new.is_some() => TabRef::WhatsNew,
+                    _ if t.whats_new.is_some() => private_page_ref(t),
                     TabView::Welcome(_) => TabRef::Welcome,
                     TabView::Manage(_) => TabRef::Manage,
                     TabView::Trash(_) => TabRef::Trash,
@@ -395,6 +395,10 @@ impl MainView {
                         None => continue,
                     }
                 }
+                TabRef::SyncSettings => match Tab::sync_settings() {
+                    Some(tab) => tab,
+                    None => continue,
+                },
                 TabRef::Node(id) => {
                     if ws.read(*id).is_err() {
                         continue;
@@ -655,6 +659,7 @@ impl MainView {
                 let notes = crate::whatsnew::notes_beside_the_exe();
                 Tab::whats_new(version, notes.as_deref())?
             }
+            TabRef::SyncSettings => Tab::sync_settings()?,
             TabRef::Node(id) => {
                 if ws.read(*id).is_err() {
                     return None;
@@ -726,7 +731,7 @@ impl MainView {
                 .filter_map(|t| {
                     let which = match &t.view {
                         _ if t.draft.is_some() => TabRef::Draft,
-                        _ if t.whats_new.is_some() => TabRef::WhatsNew,
+                        _ if t.whats_new.is_some() => private_page_ref(t),
                         TabView::Welcome(_) => TabRef::Welcome,
                         TabView::Manage(_) => TabRef::Manage,
                         TabView::Trash(_) => TabRef::Trash,
@@ -866,5 +871,14 @@ fn tasks_tab_ref(target: RailTarget) -> koru_workspace_host::TasksTabRef {
             Bucket::Later => "later",
             Bucket::Completed => "completed",
         }),
+    }
+}
+
+/// Which token a tab over a private workspace writes: the release notes or
+/// the Sync settings page.
+fn private_page_ref(tab: &Tab) -> TabRef {
+    match tab.whats_new.as_ref().map(|n| n.page) {
+        Some(super::tab::PrivatePage::SyncSettings) => TabRef::SyncSettings,
+        _ => TabRef::WhatsNew,
     }
 }

@@ -75,7 +75,8 @@ pub enum Outcome {
     NewTab,
     /// Open the workspace-scoped search surface.
     Search,
-    /// The floor's `?`: the container opens the help popover above it.
+    /// The who/where popover's help control: the container opens the help
+    /// popover beside the page, which stays.
     OpenHelp,
 
     // ---------------------------------------------------------------- panels
@@ -272,19 +273,12 @@ pub enum Outcome {
     // and where a profile's folder lives are all the container's business.
     /// Show this workspace in **this** window, replacing what is open.
     SwitchWorkspace(WorkspaceId),
-    /// Show a workspace of **another** Profile in this window, switching
-    /// Profile to get there. The switcher's Workspaces page can list any
-    /// Profile's workspaces.
-    SwitchToWorkspaceIn {
-        profile: ProfileId,
-        workspace: WorkspaceId,
-    },
+    /// A Profile row on the who/where popover's Profiles page: switch this
+    /// window to that Profile, landing on the workspace it last had open.
+    SwitchProfile(ProfileId),
     /// The "New workspace" row. What it is called is asked afterwards, by the
     /// container — the same contract [`Outcome::NewTab`] has.
     NewWorkspace,
-    /// The same row while the switcher lists another Profile's workspaces: the
-    /// new one is made there, and this window switches to it.
-    NewWorkspaceIn(ProfileId),
     /// "New profile" — the Profile manager's create form.
     NewProfile,
     /// "Subscribe to Koru Cloud" — the website's Pricing page, the same
@@ -292,23 +286,22 @@ pub enum Outcome {
     SubscribeCloud,
     /// Import documents into the open workspace.
     ImportContent,
-    /// Open the singleton Profile/account management tab.
-    ManageProfiles,
-    /// Open the global device-linking modal. Linked devices receive every
-    /// current and future profile and workspace in the MVP.
-    LinkDevice,
+    /// The gear on a workspace row: the Manage tab on the open Profile's
+    /// page, scrolled to its Workspaces.
+    ManageWorkspace(WorkspaceId),
+    /// The gear on a Profile row: the Manage tab on that Profile's page.
+    ManageProfile(ProfileId),
+    /// The who/where popover's *WORKSPACES* ⋯: the container hangs New
+    /// workspace and Import… beside the page, which stays.
+    WorkspacesMenu,
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,
     /// A recent document, from Home's nav.
     OpenRecentDocument(koru_core::DocumentId),
-    /// The who/where popover's Settings row: the Settings tab.
+    /// The who/where popover's settings control: the Settings tab.
     OpenSettings,
-    /// Its Koru Cloud row: Manage's Koru Cloud page.
-    ManageCloud,
-    /// "Manage workspaces…" — the Manage tab, on the page of the Profile the
-    /// switcher is listing (`None`: the open one), scrolled to its
-    /// Workspaces.
-    ManageWorkspaces(Option<ProfileId>),
+    /// Its sync control: the Sync settings tab.
+    OpenSyncSettings,
 
     // ---------------------------------------------------------------- window
     //

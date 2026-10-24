@@ -1356,13 +1356,13 @@ fn a_new_workspace_is_named_before_the_shell_is_asked_to_create_it() {
     ));
 }
 
-/// The switcher's *New workspace* while another Profile's workspaces are
-/// listed: the same name prompt, but the host is asked to make it **there**.
+/// *New workspace* for another Profile (the workspace menu's): the same
+/// name prompt, but the host is asked to make it **there**.
 #[test]
 fn a_new_workspace_in_another_profile_names_its_owner() {
     let (mut v, mut workspace) = container();
     let owner = koru_core::ProfileId::new();
-    assert!(v.apply(&workspace.ws, crate::panes::Outcome::NewWorkspaceIn(owner)));
+    assert!(v.prompt_new_workspace_in(owner));
     assert!(v.new_document.is_some(), "the shared name prompt is open");
 
     assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
@@ -3927,11 +3927,11 @@ fn moving_onto_the_popovers_overhang_keeps_the_row_it_is_over_hovered() {
     );
 }
 
-/// ...and the press that follows reaches it: the Profile row drills into its
-/// workspaces, asking the host for nothing and leaving the switcher open.
+/// ...and the press that follows reaches it: the Profile row switches to
+/// that Profile and slides back to the main page, leaving the switcher open.
 #[test]
 fn a_press_on_the_overhang_reaches_the_profile_row() {
-    let (mut v, mut w, _) = with_profiles_open();
+    let (mut v, mut w, profiles) = with_profiles_open();
     let sb = v.regions.sidebar;
     let vp = v.viewport;
     let (_, r) = v
@@ -3947,25 +3947,24 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
     v.mouse_down(&mut w.ws, x, y, false);
     assert_eq!(
         v.take_pane_request(),
-        None,
-        "choosing a Profile does not switch"
+        Some(PaneRequest::SwitchProfile(profiles[1].id)),
+        "choosing a Profile switches to it"
     );
     assert!(v.explore.popover_open(), "the switcher stays open");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::Back),
-        "on that Profile's workspaces"
+        Some(crate::panes::explore::PopoverRow::PersonCard),
+        "back on the main page"
     );
 }
 
-/// **A card keeps the switcher open.** The person and workspace cards
-/// drill into the account's page (View 2), so the press that chooses one
-/// must not also dismiss the panel — it did, and the slide then ran on a
-/// popover that was already fading, which read as the chip no longer
-/// opening anything. The chip still shuts it from that page and opens the
-/// summary again afterwards.
+/// **Your card keeps the switcher open.** It slides to the Profiles page,
+/// so the press that chooses it must not also dismiss the panel — it did,
+/// and the slide then ran on a popover that was already fading, which read
+/// as the chip no longer opening anything. The chip still shuts it from
+/// that page and opens the main page again afterwards.
 #[test]
-fn a_card_slides_to_the_accounts_page_and_the_chip_still_closes_and_reopens() {
+fn your_card_slides_to_the_profiles_page_and_the_chip_still_closes_and_reopens() {
     use crate::panes::explore::PopoverRow;
     let (mut v, mut w, _) = with_summary_open();
     let sb = v.regions.sidebar;
@@ -3974,20 +3973,16 @@ fn a_card_slides_to_the_accounts_page_and_the_chip_still_closes_and_reopens() {
     assert_eq!(
         first(&v),
         Some(PopoverRow::PersonCard),
-        "the summary leads with you"
+        "the main page leads with you"
     );
-    let card = |v: &MainView, want: PopoverRow| {
-        v.explore
-            .popover_rects(sb, vp)
-            .into_iter()
-            .find(|(row, _)| *row == want)
-            .map(|(_, r)| r.centre())
-            .expect("the card is there")
-    };
-    let (x, y) = card(&v, PopoverRow::PersonCard);
+    let (x, y) = v
+        .explore
+        .popover_row_rect(sb, vp, PopoverRow::PersonCard)
+        .expect("the card is there")
+        .centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the card keeps the switcher open");
-    assert_eq!(first(&v), Some(PopoverRow::Back), "on the account's page");
+    assert_eq!(first(&v), Some(PopoverRow::Back), "on the Profiles page");
 
     let chip = crate::panes::sidebar::floor::solve(sb).chip;
     let (cx, cy) = chip.centre();
@@ -3997,24 +3992,19 @@ fn a_card_slides_to_the_accounts_page_and_the_chip_still_closes_and_reopens() {
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open(), "and opens it again");
-    assert_eq!(first(&v), Some(PopoverRow::PersonCard), "on the summary");
-
-    // The workspace card drills the same way.
-    let (x, y) = card(&v, PopoverRow::WorkspaceCard);
-    v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open());
-    assert_eq!(first(&v), Some(PopoverRow::Back));
+    assert_eq!(first(&v), Some(PopoverRow::PersonCard), "on the main page");
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
 /// Socials each own everything below the heading in their mode, and the
-/// floor asked after them was unreachable there: the chip and the `?`
-/// worked on Files and did nothing on Home (the CTO's second note). Every
-/// app the build shows gets both pressed.
+/// floor asked after them was unreachable there: the chip worked on Files
+/// and did nothing on Home (the CTO's second note). Every app the build
+/// shows gets the chip pressed, and the popover's `?` opens the help
+/// popover beside the page, which stays.
 #[test]
 fn the_chip_and_the_help_open_whichever_app_is_showing() {
     use crate::mainview::context_menu::MenuSubject;
-    use crate::panes::explore::NavigatorMode;
+    use crate::panes::explore::{NavigatorMode, Tool};
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
     v.explore
@@ -4025,23 +4015,28 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         // pane, and the floor moves with it.
         let floor = crate::panes::sidebar::floor::solve(v.regions.sidebar);
         let (cx, cy) = floor.chip.centre();
-        let (hx, hy) = floor.help.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
             v.explore.popover_open(),
             "the chip opens the switcher on {mode:?}"
         );
-        v.mouse_down(&mut w.ws, cx, cy, false);
-        assert!(!v.explore.popover_open(), "and shuts it on {mode:?}");
-        v.explore
-            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+        let (hx, hy) = v
+            .explore
+            .popover_tool_rect(v.explore_popover_area(), v.viewport, Tool::Help)
+            .expect("the toolbar's ?")
+            .centre();
         v.mouse_down(&mut w.ws, hx, hy, false);
         assert_eq!(
             v.menu.as_ref().map(|m| m.subject.clone()),
             Some(MenuSubject::Help),
             "the ? opens the help popover on {mode:?}"
         );
+        assert!(v.explore.popover_open(), "and the page stays on {mode:?}");
         v.menu = None;
+        v.mouse_down(&mut w.ws, cx, cy, false);
+        assert!(!v.explore.popover_open(), "the chip shuts it on {mode:?}");
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     }
 }
 
@@ -6040,44 +6035,44 @@ fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
     );
 }
 
-/// **Import content… opens its format menu beside the page, and the page
-/// stays** (the CTO's note): the menu hangs level with the row off the
-/// panel's right edge; choosing a format is what shuts the page.
+/// **The WORKSPACES ⋯ opens New workspace and Import… beside the page, and
+/// the page stays** (the CTO's artboard, and the CTO's note on Import): the
+/// menu hangs level with the ⋯ off the panel's right edge; Import… is the
+/// formats as a submenu; choosing a format, or the creator, shuts the page.
 #[test]
-fn import_content_opens_its_menu_beside_the_page_and_leaves_it_up() {
+fn the_workspaces_menu_hangs_beside_the_page_and_leaves_it_up() {
     use crate::mainview::context_menu::{MenuAction, MenuSubject};
-    use crate::panes::explore::PopoverRow;
     let (mut v, mut w, _) = with_summary_open();
-    let sb = v.regions.sidebar;
     let vp = v.viewport;
-    let centre = |v: &MainView, want: PopoverRow| {
-        v.explore
-            .popover_rects(sb, vp)
-            .into_iter()
-            .find(|(row, _)| *row == want)
-            .map(|(_, r)| r)
-            .expect("the row is there")
-    };
-    let (x, y) = centre(&v, PopoverRow::PersonCard).centre();
-    v.mouse_down(&mut w.ws, x, y, false);
-    let row = centre(&v, PopoverRow::ImportContent);
-    let (x, y) = row.centre();
+    let area = v.explore_popover_area();
+    let button = v
+        .explore
+        .popover_heading_menu_rect(area, vp)
+        .expect("the heading's ⋯");
+    let (x, y) = button.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the page stays");
-    let menu = v.menu.as_ref().expect("the format menu opened");
+    let menu = v.menu.as_ref().expect("the menu opened");
     assert_eq!(menu.subject, MenuSubject::NewTab);
-    let panel = v
-        .explore
-        .popover_panel(v.explore_popover_area(), vp)
-        .expect("the page's panel");
+    assert_eq!(
+        menu.items(),
+        &[MenuAction::NewWorkspace, MenuAction::ImportAs],
+        "make one, or import"
+    );
+    let panel = v.explore.popover_panel(area, vp).expect("the page's panel");
     let m = menu.panel(vp);
     assert!(
         m.x >= panel.x + panel.w - 0.5,
         "beside the panel: {m:?} vs {panel:?}"
     );
     assert!(
-        (m.y - row.y).abs() < 0.5,
-        "level with the row: {m:?} vs {row:?}"
+        (m.y - button.y).abs() < 0.5,
+        "level with the ⋯: {m:?} vs {button:?}"
+    );
+    assert!(v.open_submenu(1), "Import… is a submenu");
+    assert_eq!(
+        v.submenu.as_ref().unwrap().1.items(),
+        context_menu::import_items()
     );
     // A format is the end of it.
     let format = koru_workspace_host::formats::import_menu_formats()[0].id;
@@ -6086,8 +6081,67 @@ fn import_content_opens_its_menu_beside_the_page_and_leaves_it_up() {
         !v.explore.popover_open(),
         "choosing a format shuts the page"
     );
+
+    // And so is the creator. (The test ran the action without the menu's
+    // own dismissal, so take the menu down the way a choice would.)
+    v.menu = None;
+    v.submenu = None;
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(v.explore.popover_open());
+    v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::NewWorkspace);
+    assert!(!v.explore.popover_open(), "the creator shuts the page");
+    assert!(v.new_document.is_some(), "and the name prompt is open");
 }
 
+/// **The toolbar's sync icon opens the Sync settings tab**, once; the
+/// settings icon the Settings tab. Both shut the page. The sync tab says
+/// only its name for now, and comes back from a session as itself.
+#[test]
+fn the_sync_icon_opens_the_sync_settings_tab_once() {
+    use crate::panes::explore::Tool;
+    let (mut v, mut w, _) = with_summary_open();
+    let tabs = v.tabs().len();
+    let (x, y) = v
+        .explore
+        .popover_tool_rect(v.explore_popover_area(), v.viewport, Tool::Sync)
+        .expect("the sync icon")
+        .centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(!v.explore.popover_open(), "a destination shuts the page");
+    assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
+    let lang = crate::format::lang();
+    assert_eq!(
+        v.tabs().active_tab().label,
+        koru_i18n::t(lang, koru_i18n::Key::SyncSettingsTab)
+    );
+    assert_eq!(
+        v.tabs().active_tab().whats_new.as_ref().map(|n| n.page),
+        Some(tab::PrivatePage::SyncSettings)
+    );
+    assert!(v.open_sync_settings_tab(), "the same tab comes forward");
+    assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
+
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let chip = crate::panes::sidebar::floor::solve(v.regions.sidebar).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    let (x, y) = v
+        .explore
+        .popover_tool_rect(v.explore_popover_area(), v.viewport, Tool::Settings)
+        .expect("the settings icon")
+        .centre();
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(!v.explore.popover_open());
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Settings(_)),
+        "the Settings tab"
+    );
+}
 /// And it must not be confused with `Ctrl+W`, which closes a tab.
 #[test]
 fn ctrl_alt_w_does_not_close_a_tab() {
@@ -6137,11 +6191,13 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    // The press is the row's: it switches to that workspace.
-    assert_eq!(
-        v.take_pane_request(),
-        Some(PaneRequest::Switch(workspace_id))
+    // The press is the row's — its trailing end, where the grip overlaps,
+    // is the gear, so the Manage tab opens on the workspace.
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "the gear under the grip opened Manage"
     );
+    let _ = workspace_id;
 }
 
 // ------------------------------------------------- Ctrl+Alt+P, the profiles
@@ -12733,8 +12789,8 @@ fn workspace_verbs_find_a_workspace_of_a_profile_that_is_not_open() {
 #[test]
 fn the_help_popover_rises_from_the_floor_with_this_builds_sections() {
     use crate::mainview::context_menu::MenuAction;
-    let (mut v, mut workspace) = container();
-    v.toggle_sidebar();
+    use crate::panes::explore::Tool;
+    let (mut v, mut workspace, _) = with_summary_open();
     v.help_headlines_rx = None;
     v.help_headlines = Some(vec![
         "Welcome".to_owned(),
@@ -12742,7 +12798,14 @@ fn the_help_popover_rises_from_the_floor_with_this_builds_sections() {
         "Agents".to_owned(),
         "A fourth that does not show".to_owned(),
     ]);
-    let help = v.explore.floor_rects(v.regions.sidebar).help;
+    let page = v
+        .explore
+        .popover_panel(v.explore_popover_area(), v.viewport)
+        .expect("the who/where page");
+    let help = v
+        .explore
+        .popover_tool_rect(v.explore_popover_area(), v.viewport, Tool::Help)
+        .expect("the toolbar's ?");
     let (x, y) = help.centre();
     v.mouse_down(&mut workspace.ws, x, y, false);
     let menu = v.menu.as_ref().expect("the help popover opened");
@@ -12763,10 +12826,15 @@ fn the_help_popover_rises_from_the_floor_with_this_builds_sections() {
     assert!(!MenuAction::HelpWhatsNewHeading.selectable());
     let panel = menu.panel(v.viewport);
     assert!(
-        panel.y + panel.h <= help.y + 0.5,
-        "the popover sits above the ?: {panel:?} vs {help:?}"
+        panel.x >= page.x + page.w - 0.5,
+        "the popover hangs beside the page: {panel:?} vs {page:?}"
+    );
+    assert!(
+        (panel.y + panel.h - (help.y + help.h)).abs() < 0.5,
+        "its foot level with the ?: {panel:?} vs {help:?}"
     );
     assert!(panel.y >= 0.0);
+    assert!(v.explore.popover_open(), "the page stays under it");
     // The rows waiting on later phases are dimmed, with a reason.
     let enabled = v.enabled_items(menu);
     let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();

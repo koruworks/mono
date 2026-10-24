@@ -83,16 +83,16 @@ pub(crate) mod parts {
     pub const TRASH: ControlPart = ControlPart::new("trash");
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
     pub const MANAGE_APPS: ControlPart = ControlPart::new("manage-apps");
-    pub const HELP: ControlPart = ControlPart::new("help");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
-    pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
-    pub const MANAGE_PROFILES: ControlPart = ControlPart::new("manage-profiles");
-    pub const LINK_DEVICE: ControlPart = ControlPart::new("link-device");
     pub const BACK: ControlPart = ControlPart::new("back");
+    pub const PERSON: ControlPart = ControlPart::new("person");
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
-    pub const IMPORT_CONTENT: ControlPart = ControlPart::new("import-content");
-    pub const MANAGE_WORKSPACES: ControlPart = ControlPart::new("manage-workspaces");
+    /// The main page's heading ⋯, and its toolbar's three controls.
+    pub const WORKSPACES_MENU: ControlPart = ControlPart::new("workspaces-menu");
+    pub const SYNC: ControlPart = ControlPart::new("sync");
+    pub const SETTINGS: ControlPart = ControlPart::new("settings");
+    pub const HELP: ControlPart = ControlPart::new("help");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -191,7 +191,6 @@ impl ExploreView {
                 rev.byte(1);
                 rev.str(match popover.kind {
                     PopoverKind::Summary => "summary",
-                    PopoverKind::Workspaces => "workspaces",
                     PopoverKind::Profiles => "profiles",
                     PopoverKind::LibraryActions => "library",
                 });
@@ -534,13 +533,11 @@ impl ExploreView {
             }
             ExploreChromeFocus::Manage => cx.surface(EXPLORE, parts::MANAGE_APPS),
             ExploreChromeFocus::FloorChip => cx.surface(EXPLORE, parts::FLOOR_CHIP),
-            ExploreChromeFocus::FloorHelp => cx.surface(EXPLORE, parts::HELP),
         })
     }
 
     /// The floor: the who/where chip, named by where and who, with its
-    /// action as the description; and the `?`, dimmed until the help popover
-    /// lands, so it is named and has no action yet.
+    /// action as the description.
     fn floor_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let r = crate::panes::sidebar::floor::solve(cx.area);
         if r.chip.w <= 0.0 {
@@ -563,10 +560,6 @@ impl ExploreView {
                 .with_label(format!("{workspace}, {person}"))
                 .with_bounds(r.chip)
                 .with_action(Action::Click),
-            SemanticNode::new(cx.surface(EXPLORE, parts::HELP), Role::Button)
-                .with_label(t(cx.lang, Key::Help))
-                .with_bounds(r.help)
-                .with_action(Action::Click),
         ]
     }
 
@@ -582,28 +575,60 @@ impl ExploreView {
         let popover = self.live()?;
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
-        let selectable = rects.iter().filter(|(row, _)| row.selectable()).count();
-        let mut index = 0;
-        let children = rects
-            .iter()
-            .filter(|(row, _)| row.selectable())
-            .map(|(row, rect)| {
-                let node = SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
-                    .with_label(self.popover_row_label(*row, cx.lang))
-                    .with_bounds(*rect)
-                    .with_actions([Action::Click, Action::Focus])
-                    .with_position(index);
-                index += 1;
-                node
-            })
-            .collect();
+        // **The toolbar is three controls in one row**, and the heading's ⋯
+        // is a control of its own: each is a node, so a client reaches the
+        // control a press would hit rather than the row around it.
+        let mut children = Vec::with_capacity(rects.len() + 3);
+        for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
+            match row {
+                PopoverRow::Toolbar => {
+                    let t_ = super::toolbar_parts(*rect);
+                    for (part, label, bounds) in [
+                        (parts::SYNC, Key::SyncSettingsTab, t_.sync),
+                        (parts::SETTINGS, Key::SettingsTab, t_.settings),
+                        (parts::HELP, Key::Help, t_.help),
+                    ] {
+                        children.push(
+                            SemanticNode::new(cx.surface(POPOVER, part), Role::MenuItem)
+                                .with_label(t(cx.lang, label))
+                                .with_bounds(bounds)
+                                .with_actions([Action::Click, Action::Focus]),
+                        );
+                    }
+                }
+                PopoverRow::WorkspacesHeading => {
+                    children.push(
+                        SemanticNode::new(
+                            cx.surface(POPOVER, parts::WORKSPACES_MENU),
+                            Role::MenuItem,
+                        )
+                        .with_label(t(cx.lang, Key::A11yMoreActions))
+                        .with_bounds(super::heading_menu_rect(*rect))
+                        .with_actions([Action::Click, Action::Focus]),
+                    );
+                }
+                _ => children.push(
+                    SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
+                        .with_label(self.popover_row_label(*row, cx.lang))
+                        .with_bounds(*rect)
+                        .with_actions([Action::Click, Action::Focus]),
+                ),
+            }
+        }
+        let size = children.len();
+        for (index, child) in children.iter_mut().enumerate() {
+            *child = std::mem::replace(
+                child,
+                SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::MenuItem),
+            )
+            .with_position(index);
+        }
         Some(
             SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::Menu)
-                .with_size_of_set(selectable)
+                .with_size_of_set(size)
                 .with_label(match popover.kind {
                     // The chip's popover is the chip's name: who and where.
                     PopoverKind::Summary => t(cx.lang, Key::FloorChipAction),
-                    PopoverKind::Workspaces => t(cx.lang, Key::TerminalSwitchWorkspace),
                     PopoverKind::Profiles => t(cx.lang, Key::TerminalSwitchProfile),
                     PopoverKind::LibraryActions => t(cx.lang, Key::A11yMoreActions),
                 })
@@ -619,7 +644,7 @@ impl ExploreView {
     /// rows carry a keyword. Neither is a position, and neither is a label.
     fn popover_row_occurrence(&self, cx: &Context, row: PopoverRow) -> Occurrence {
         match row {
-            PopoverRow::Workspace(i) => match self.browsed_workspaces().get(i) {
+            PopoverRow::Workspace(i) => match self.workspaces.get(i) {
                 Some(w) => cx.model(w.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
@@ -627,33 +652,22 @@ impl ExploreView {
                 Some(p) => cx.model(p.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
-            PopoverRow::NewWorkspace => cx.surface(POPOVER, parts::NEW_WORKSPACE),
             PopoverRow::Back => cx.surface(POPOVER, parts::BACK),
             PopoverRow::NewProfile => cx.surface(POPOVER, parts::NEW_PROFILE),
-            PopoverRow::ImportContent => cx.surface(POPOVER, parts::IMPORT_CONTENT),
-            PopoverRow::ManageWorkspaces => cx.surface(POPOVER, parts::MANAGE_WORKSPACES),
-            PopoverRow::ManageProfiles => cx.surface(POPOVER, parts::MANAGE_PROFILES),
-            PopoverRow::LinkDevice => cx.surface(POPOVER, parts::LINK_DEVICE),
-            PopoverRow::PersonCard => cx.surface(POPOVER, ControlPart::new("person")),
-            PopoverRow::WorkspaceCard => cx.surface(POPOVER, ControlPart::new("workspace-card")),
-            PopoverRow::Settings => cx.surface(POPOVER, ControlPart::new("settings")),
-            PopoverRow::Cloud => cx.surface(POPOVER, ControlPart::new("cloud")),
-            PopoverRow::InvitePeople => cx.surface(POPOVER, ControlPart::new("invite")),
-            PopoverRow::ActivateProfile => cx.surface(POPOVER, ControlPart::new("activate")),
-            PopoverRow::HeadDivider => cx.surface(POPOVER, parts::POPOVER),
+            PopoverRow::PersonCard => cx.surface(POPOVER, parts::PERSON),
+            PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::WORKSPACES_MENU),
+            PopoverRow::Toolbar => cx.surface(POPOVER, parts::SYNC),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading | PopoverRow::Divider => {
-                cx.surface(POPOVER, parts::POPOVER)
-            }
+            PopoverRow::Divider => cx.surface(POPOVER, parts::POPOVER),
         }
     }
 
     fn popover_row_label(&self, row: PopoverRow, lang: Lang) -> String {
         match row {
             PopoverRow::Workspace(i) => self
-                .browsed_workspaces()
+                .workspaces
                 .get(i)
                 .map(|w| w.name.clone())
                 .unwrap_or_default(),
@@ -662,40 +676,15 @@ impl ExploreView {
                 .get(i)
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
-            PopoverRow::NewWorkspace => t(lang, Key::CreateWorkspace).to_string(),
             PopoverRow::Back => t(lang, Key::Back).to_string(),
-            PopoverRow::NewProfile => {
-                if self
-                    .popover
-                    .as_ref()
-                    .is_some_and(|p| p.kind == PopoverKind::Summary)
-                {
-                    t(lang, Key::AddAccount).to_string()
-                } else {
-                    "New profile".to_string()
-                }
-            }
+            PopoverRow::NewProfile => t(lang, Key::NewProfile).to_string(),
             PopoverRow::PersonCard => self.profile().map(|p| p.name.clone()).unwrap_or_default(),
-            PopoverRow::WorkspaceCard => self
-                .current
-                .and_then(|id| self.workspaces.iter().find(|w| w.id == id))
-                .map(|w| w.name.clone())
-                .unwrap_or_default(),
-            PopoverRow::Settings => t(lang, Key::SettingsTab).to_string(),
-            PopoverRow::Cloud => t(lang, Key::CloudTitle).to_string(),
-            PopoverRow::InvitePeople => t(lang, Key::InvitePeople).to_string(),
-            PopoverRow::ActivateProfile => t(lang, Key::ActivateThisProfile).to_string(),
-            PopoverRow::HeadDivider => String::new(),
-            PopoverRow::ImportContent => t(lang, Key::WorkspacesImport).to_string(),
-            PopoverRow::ManageWorkspaces => "Manage workspaces".to_string(),
-            PopoverRow::ManageProfiles => t(lang, Key::WorkspacesProfiles).to_string(),
-            PopoverRow::LinkDevice => t(lang, Key::TerminalLinkDevice).to_string(),
+            PopoverRow::WorkspacesHeading => t(lang, Key::A11yMoreActions).to_string(),
+            PopoverRow::Toolbar => t(lang, Key::SyncSettingsTab).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading | PopoverRow::Divider => {
-                String::new()
-            }
+            PopoverRow::Divider => String::new(),
         }
     }
 
@@ -715,7 +704,20 @@ impl ExploreView {
         let index = rows
             .iter()
             .position(|row| row.selectable() && self.popover_row_matches(*row, target))?;
+        // The toolbar's three controls share one row; which of them the
+        // request names is the keyboard's `tool`, so Enter presses it.
+        let tool = [
+            (parts::SYNC, super::Tool::Sync),
+            (parts::SETTINGS, super::Tool::Settings),
+            (parts::HELP, super::Tool::Help),
+        ]
+        .into_iter()
+        .find(|(part, _)| target.part == *part)
+        .map(|(_, tool)| tool);
         let popover = self.popover.as_mut()?;
+        if let Some(tool) = tool {
+            popover.tool = tool;
+        }
         match action {
             // The highlight the arrows move — the popover's own keyboard
             // state, not a second one.
@@ -734,24 +736,26 @@ impl ExploreView {
     fn popover_row_matches(&self, row: PopoverRow, target: Occurrence) -> bool {
         match row {
             PopoverRow::Workspace(i) => self
-                .browsed_workspaces()
+                .workspaces
                 .get(i)
                 .is_some_and(|w| target.object == object_of(w.id.as_uuid())),
             PopoverRow::Profile(i) => self
                 .profiles
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
-            PopoverRow::NewWorkspace => target.part == parts::NEW_WORKSPACE,
             PopoverRow::Back => target.part == parts::BACK,
             PopoverRow::NewProfile => target.part == parts::NEW_PROFILE,
-            PopoverRow::ImportContent => target.part == parts::IMPORT_CONTENT,
-            PopoverRow::ManageWorkspaces => target.part == parts::MANAGE_WORKSPACES,
-            PopoverRow::ManageProfiles => target.part == parts::MANAGE_PROFILES,
-            PopoverRow::LinkDevice => target.part == parts::LINK_DEVICE,
+            PopoverRow::WorkspacesHeading => target.part == parts::WORKSPACES_MENU,
+            PopoverRow::Toolbar => {
+                target.part == parts::SYNC
+                    || target.part == parts::SETTINGS
+                    || target.part == parts::HELP
+            }
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
-            _ => false,
+            PopoverRow::PersonCard => target.part == parts::PERSON,
+            PopoverRow::Divider => false,
         }
     }
 
@@ -789,10 +793,9 @@ impl ExploreView {
             }
             EXPLORE => match target.part {
                 p if p == parts::FLOOR_CHIP => {
-                    self.toggle_popover(PopoverKind::Workspaces);
+                    self.toggle_popover(PopoverKind::Summary);
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::HELP => Some(Outcome::OpenHelp),
                 p if p == parts::ACTIONS => {
                     self.toggle_popover(PopoverKind::LibraryActions);
                     Some(Outcome::Consumed)

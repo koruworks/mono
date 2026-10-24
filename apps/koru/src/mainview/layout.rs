@@ -741,7 +741,7 @@ impl MainView {
         super::chrome_debug::chrome_debug!("who/where popover opened on workspaces");
         let opened = self
             .explore
-            .open_popover(crate::panes::explore::PopoverKind::Workspaces);
+            .open_popover(crate::panes::explore::PopoverKind::Summary);
         // The keyboard lands on the current workspace; a long list may have
         // it below the fold.
         let area = self.explore_popover_area();

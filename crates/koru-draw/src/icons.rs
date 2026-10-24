@@ -469,6 +469,10 @@ pub const CLOUD: char = '\u{E1AA}';
 /// the toggle beside it already carries the on/off colour, and a colour-only
 /// difference is the one difference a person cannot see in greyscale.
 pub const CLOUD_SLASH: char = '\u{E1B6}';
+/// Two arrows chasing each other round a circle — `ph-arrows-clockwise`,
+/// U+E094 in the same stylesheet. The who/where popover's sync icon, worn in
+/// five states by colour and a dot (the CTO's artboard).
+pub const ARROWS_CLOCKWISE: char = '\u{E094}';
 
 /// A **canvas** — `ph-squares-four`: Explore's Canvases section, the `+`
 /// menu's Canvases flyout, and the tab over a canvas.
@@ -515,7 +519,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 126] = [
+pub const ALL: [(&str, char); 127] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -641,6 +645,7 @@ pub const ALL: [(&str, char); 126] = [
     ("LINUX_LOGO", LINUX_LOGO),
     ("CLOUD", CLOUD),
     ("CLOUD_SLASH", CLOUD_SLASH),
+    ("ARROWS_CLOCKWISE", ARROWS_CLOCKWISE),
     ("CANVAS", CANVAS),
 ];
 

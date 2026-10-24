@@ -2429,13 +2429,25 @@ pub enum Key {
     HomeLater,
     HomeLoading,
     HomeMoreTasks,
+    /// The who/where popover's sync icon, its toolbar and the Profiles page
+    /// (workspace foundation, the CTO's artboard).
+    SyncNotSetUp,
+    SyncUpToDate,
+    SyncSyncing,
+    SyncOffline,
+    SyncNeedsAttention,
+    SyncSettingsTab,
+    OnThisComputer,
+    DevicesCountOne,
+    DevicesCountMany,
+    NewProfile,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1665] = [
+    pub const ALL: [Key; 1675] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4101,6 +4113,16 @@ impl Key {
         Key::HomeLater,
         Key::HomeLoading,
         Key::HomeMoreTasks,
+        Key::SyncNotSetUp,
+        Key::SyncUpToDate,
+        Key::SyncSyncing,
+        Key::SyncOffline,
+        Key::SyncNeedsAttention,
+        Key::SyncSettingsTab,
+        Key::OnThisComputer,
+        Key::DevicesCountOne,
+        Key::DevicesCountMany,
+        Key::NewProfile,
     ];
 }
 
@@ -12534,4 +12556,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::HomeLater, en: "Later", es: "Más adelante", pt_br: "Em breve", de: "Später", fr: "Bientôt", ar: "لاحقًا", zh_hans: "稍后", ja: "後日" },
     Row { key: Key::HomeLoading, en: "Loading…", es: "Cargando…", pt_br: "Carregando…", de: "Wird geladen…", fr: "Chargement…", ar: "جارٍ التحميل…", zh_hans: "正在加载…", ja: "読み込み中…" },
     Row { key: Key::HomeMoreTasks, en: "{} more on the Tasks page", es: "{} más en la página Tareas", pt_br: "{} mais na página Tarefas", de: "{} weitere auf der Seite Aufgaben", fr: "{} de plus sur la page Tâches", ar: "{} أخرى في صفحة المهام", zh_hans: "任务页面还有 {} 项", ja: "タスクページにあと {} 件" },
+    Row { key: Key::SyncNotSetUp, en: "Not set up", es: "Sin configurar", pt_br: "Não configurado", de: "Nicht eingerichtet", fr: "Non configuré", ar: "غير مُعدّ", zh_hans: "未设置", ja: "未設定" },
+    Row { key: Key::SyncUpToDate, en: "Up to date", es: "Al día", pt_br: "Atualizado", de: "Aktuell", fr: "À jour", ar: "محدَّث", zh_hans: "已是最新", ja: "最新" },
+    Row { key: Key::SyncSyncing, en: "Syncing", es: "Sincronizando", pt_br: "Sincronizando", de: "Synchronisiert", fr: "Synchronisation", ar: "جارٍ المزامنة", zh_hans: "正在同步", ja: "同期中" },
+    Row { key: Key::SyncOffline, en: "Offline", es: "Sin conexión", pt_br: "Off-line", de: "Offline", fr: "Hors ligne", ar: "غير متصل", zh_hans: "离线", ja: "オフライン" },
+    Row { key: Key::SyncNeedsAttention, en: "Needs attention", es: "Requiere atención", pt_br: "Precisa de atenção", de: "Aufmerksamkeit nötig", fr: "À traiter", ar: "يحتاج إلى اهتمام", zh_hans: "需要处理", ja: "要対応" },
+    Row { key: Key::SyncSettingsTab, en: "Sync settings", es: "Ajustes de sincronización", pt_br: "Configurações de sincronização", de: "Synchronisierungseinstellungen", fr: "Réglages de synchronisation", ar: "إعدادات المزامنة", zh_hans: "同步设置", ja: "同期設定" },
+    Row { key: Key::OnThisComputer, en: "On this computer", es: "En este equipo", pt_br: "Neste computador", de: "Auf diesem Computer", fr: "Sur cet ordinateur", ar: "على هذا الكمبيوتر", zh_hans: "在此电脑上", ja: "このコンピューター上" },
+    Row { key: Key::DevicesCountOne, en: "{} device", es: "{} dispositivo", pt_br: "{} dispositivo", de: "{} Gerät", fr: "{} appareil", ar: "{} جهاز", zh_hans: "{} 台设备", ja: "{} 台のデバイス" },
+    Row { key: Key::DevicesCountMany, en: "{} devices", es: "{} dispositivos", pt_br: "{} dispositivos", de: "{} Geräte", fr: "{} appareils", ar: "{} أجهزة", zh_hans: "{} 台设备", ja: "{} 台のデバイス" },
+    Row { key: Key::NewProfile, en: "New profile", es: "Nuevo perfil", pt_br: "Novo perfil", de: "Neues Profil", fr: "Nouveau profil", ar: "ملف تعريف جديد", zh_hans: "新建配置文件", ja: "新しいプロファイル" },
 ];

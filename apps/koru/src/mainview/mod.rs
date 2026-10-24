@@ -3998,6 +3998,7 @@ impl MainView {
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::OpenWelcome
                         | MenuAction::ClearRecents
+                        | MenuAction::NewWorkspace
                         | MenuAction::ImportAs
                 ),
             },
@@ -4349,6 +4350,10 @@ impl MainView {
                         format,
                         source: koru_workspace_host::ImportSourceSelection::Picker,
                     })
+                }
+                MenuAction::NewWorkspace => {
+                    self.explore.close_popover();
+                    self.prompt_new_workspace()
                 }
                 MenuAction::ImportAs => false,
                 _ => false,
@@ -4804,33 +4809,6 @@ impl MainView {
             ),
             MenuAnchor::ButtonRight,
         );
-        let enabled = self.enabled_items(&m);
-        m.step(&enabled, 1);
-        self.menu = Some(m);
-        true
-    }
-
-    /// The help popover, rising from the floor's `?`
-    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.10): a
-    /// menu like the ⋯ menu's, anchored so its foot sits just above the
-    /// button and its right edge on the button's.
-    pub(super) fn open_help_menu(&mut self, button: Rect) -> bool {
-        if self.support_only || button.w <= 0.0 {
-            return false;
-        }
-        chrome_debug::chrome_debug!("help popover opened at {:?}", button);
-        let foot = self.help_foot();
-        let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
-        let mut m = ContextMenu::aligned(
-            &mut self.engine,
-            MenuSubject::Help,
-            (button.x + button.w, button.y),
-            items,
-            MenuAnchor::ButtonRight,
-        );
-        let gap = koru_app_shell::popover::GAP;
-        let height = m.height();
-        m.set_anchor((button.x + button.w, (button.y - gap - height).max(0.0)));
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
@@ -6035,19 +6013,6 @@ impl MainView {
         true
     }
 
-    /// The switcher's *Manage profiles…*: Manage on the open Profile's page.
-    /// Before the
-    /// window knows its Profile, Koru Cloud — the account-wide page.
-    fn open_manage_profiles(&mut self) -> bool {
-        let page = self
-            .pane_context
-            .as_ref()
-            .map_or(crate::manage::Page::Cloud, |(_, current, _, _)| {
-                crate::manage::Page::Profile(*current)
-            });
-        self.open_manage(page)
-    }
-
     /// Hand the Manage tab what the window knows: the Profiles, the open one
     /// and its Workspaces, the account, the retained and hidden Profiles, the
     /// Workspace counts and how many devices are linked.
@@ -6750,30 +6715,99 @@ impl MainView {
     /// entry. It shares the NewTab subject because those are the same import
     /// actions; only the parent menu's New document row is omitted here.
     fn open_import_menu(&mut self) -> bool {
-        // From the who/where page's *Import content…* row the menu hangs
-        // beside the panel, level with the row, and the page stays under it
-        // (QUESTIONS.md E29); from anywhere else it opens at the pointer.
-        let beside = self.explore.popover_open().then(|| {
-            let area = self.explore_popover_area();
-            let panel = self.explore.popover_panel(area, self.viewport)?;
-            let (_, row) = self
-                .explore
-                .popover_rects(area, self.viewport)
-                .into_iter()
-                .find(|(row, _)| *row == crate::panes::explore::PopoverRow::ImportContent)?;
-            Some((panel.x + panel.w + koru_app_shell::popover::GAP, row.y))
-        });
-        let at = beside.flatten().unwrap_or(self.pointer);
+        let mut menu = ContextMenu::new(
+            &mut self.engine,
+            MenuSubject::NewTab,
+            self.pointer,
+            context_menu::import_items(),
+        );
+        let enabled = self.enabled_items(&menu);
+        menu.step(&enabled, 1);
+        self.menu = Some(menu);
+        true
+    }
+
+    /// The who/where popover's *WORKSPACES* ⋯: New workspace and Import…,
+    /// hanging off the panel's right edge level with the ⋯, with the page
+    /// still under it (the CTO's note, QUESTIONS.md E29). Import… is a
+    /// submenu of the formats; a chosen format or the creator shuts the
+    /// page, since either is the end of the interaction.
+    fn open_workspaces_menu(&mut self) -> bool {
+        let area = self.explore_popover_area();
+        let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
+            return false;
+        };
+        let Some(button) = self.explore.popover_heading_menu_rect(area, self.viewport) else {
+            return false;
+        };
+        let at = (panel.x + panel.w + koru_app_shell::popover::GAP, button.y);
         let mut menu = ContextMenu::aligned(
             &mut self.engine,
             MenuSubject::NewTab,
             at,
-            context_menu::import_items(),
+            context_menu::workspaces_menu_items(),
             MenuAnchor::Cursor,
         );
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
         self.menu = Some(menu);
+        true
+    }
+
+    /// The who/where popover's `?`: the help popover beside the panel, its
+    /// foot level with the control's, and the page still under it.
+    fn open_help_beside_popover(&mut self) -> bool {
+        let area = self.explore_popover_area();
+        let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
+            return false;
+        };
+        let Some(help) =
+            self.explore
+                .popover_tool_rect(area, self.viewport, crate::panes::explore::Tool::Help)
+        else {
+            return false;
+        };
+        if self.support_only {
+            return false;
+        }
+        chrome_debug::chrome_debug!("help popover opened beside the who/where page");
+        let foot = self.help_foot();
+        let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
+        let x = panel.x + panel.w + koru_app_shell::popover::GAP;
+        let mut m = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::Help,
+            (x, help.y),
+            items,
+            MenuAnchor::Cursor,
+        );
+        let height = m.height();
+        m.set_anchor((x, (help.y + help.h - height).max(0.0)));
+        let enabled = self.enabled_items(&m);
+        m.step(&enabled, 1);
+        self.menu = Some(m);
+        true
+    }
+
+    /// The Sync settings tab: a singleton page that, for now, says only its
+    /// name (the CTO's artboard; what it holds is QUESTIONS.md E31).
+    pub(crate) fn open_sync_settings_tab(&mut self) -> bool {
+        let existing = self.tabs().iter().position(|t| {
+            t.whats_new
+                .as_ref()
+                .is_some_and(|n| n.page == tab::PrivatePage::SyncSettings)
+        });
+        if let Some(i) = existing {
+            self.select(i);
+            return true;
+        }
+        let Some(tab) = Tab::sync_settings() else {
+            return false;
+        };
+        self.tabs_mut().push(tab);
+        self.slides_mut().clear();
+        self.relayout();
+        self.select(self.tabs().len() - 1);
         true
     }
 
@@ -6926,10 +6960,7 @@ impl MainView {
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
             Outcome::NewTab => self.open_new_tab_menu(),
             Outcome::Search => self.open_search(),
-            Outcome::OpenHelp => {
-                let help = self.explore.floor_rects(self.regions.sidebar).help;
-                self.open_help_menu(help)
-            }
+            Outcome::OpenHelp => self.open_help_beside_popover(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -7015,11 +7046,12 @@ impl MainView {
             // process are all the shell's; a view has neither the data
             // directory nor a `Window`. So each is recorded and drained.
             Outcome::SwitchWorkspace(id) => self.switch_workspace_here(id),
-            Outcome::SwitchToWorkspaceIn { profile, workspace } => {
-                self.ask_pane(PaneRequest::SwitchToWorkspaceIn(profile, workspace))
-            }
+            // The popover stays open on its main page, and lists the new
+            // Profile's workspaces once the switch has happened (the CTO's
+            // artboard). The window lands on the workspace that Profile
+            // last had open — each Profile keeps its own window settings.
+            Outcome::SwitchProfile(id) => self.ask_pane(PaneRequest::SwitchProfile(id)),
             Outcome::NewWorkspace => self.prompt_new_workspace(),
-            Outcome::NewWorkspaceIn(profile) => self.prompt_new_workspace_in(profile),
             Outcome::NewProfile => self.open_profile_creation(),
             Outcome::SubscribeCloud => {
                 self.ask_pane(PaneRequest::OpenWebsite(crate::website::page_url(
@@ -7029,13 +7061,15 @@ impl MainView {
                 )))
             }
             Outcome::ImportContent => self.open_import_menu(),
-            Outcome::ManageWorkspaces(profile) => self.open_manage_workspaces(profile),
-            Outcome::ManageProfiles => self.open_manage_profiles(),
-            Outcome::LinkDevice => self.open_link_device(),
+            Outcome::ManageWorkspace(_) => self.open_manage_workspaces(None),
+            Outcome::ManageProfile(profile) => {
+                self.open_manage(crate::manage::Page::Profile(profile))
+            }
+            Outcome::WorkspacesMenu => self.open_workspaces_menu(),
             Outcome::OpenSettings => self.open_settings_tab(),
+            Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::OpenHome => self.open_home_tab(),
             Outcome::OpenRecentDocument(id) => self.open_recent_document(id),
-            Outcome::ManageCloud => self.open_manage(crate::manage::Page::Cloud),
             Outcome::NodeMenu {
                 nodes,
                 at,
@@ -15581,11 +15615,31 @@ impl MainView {
         // The page-furniture AI button is not a caption hit — check it
         // before the caption table, or a pointer on the title icon is
         // `Hit::Content` and teaches nothing.
+        let on_tool = self
+            .explore
+            .popover_open()
+            .then(|| {
+                self.explore
+                    .popover_tool_at(self.explore_popover_area(), self.viewport, x, y)
+            })
+            .flatten();
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
             Some(content)
+        } else if let Some((tool, rect)) = on_tool {
+            // The who/where popover's toolbar is icon-only, so each control
+            // carries its name. Before the sidebar branch: the panel is
+            // wider than the column it hangs off.
+            use crate::panes::explore::Tool;
+            let lang = crate::format::lang();
+            let (id, key) = match tool {
+                Tool::Sync => (8, koru_i18n::Key::SyncSettingsTab),
+                Tool::Settings => (9, koru_i18n::Key::SettingsTab),
+                Tool::Help => (6, koru_i18n::Key::Help),
+            };
+            Some(TooltipContent::new(id, rect, koru_i18n::t(lang, key)))
         } else if hit == Hit::Sidebar {
-            // The floor's chip and `?`, then the apps row — icon-only and
-            // chip controls, so each carries its name (`DESIGN.md`: one
+            // The floor's chip, then the apps row — icon-only and chip
+            // controls, so each carries its name (`DESIGN.md`: one
             // interaction clock, flat chip).
             let floor = self.explore.floor_rects(self.regions.sidebar);
             let lang = crate::format::lang();
@@ -15594,12 +15648,6 @@ impl MainView {
                     5,
                     floor.chip,
                     koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
-                ))
-            } else if floor.help.w > 0.0 && floor.help.contains(x, y) {
-                Some(TooltipContent::new(
-                    6,
-                    floor.help,
-                    koru_i18n::t(lang, koru_i18n::Key::Help),
                 ))
             } else {
                 let manage = self.explore.manage_button(self.regions.sidebar);

@@ -82,12 +82,12 @@ fn manage_is_one_tab_brought_forward_on_the_asked_page() {
     );
 }
 
-/// The switcher's *Manage profiles…* opens Manage on the open Profile's
-/// page.
+/// A Profile row's gear on the who/where popover opens Manage on that
+/// Profile's page.
 #[test]
-fn manage_profiles_opens_manage_on_the_open_profiles_page() {
+fn a_profiles_gear_opens_manage_on_its_page() {
     let (mut v, w, personal) = with_profile();
-    assert!(v.apply(&w.ws, crate::panes::Outcome::ManageProfiles));
+    assert!(v.apply(&w.ws, crate::panes::Outcome::ManageProfile(personal.id)));
     assert_eq!(manage_tabs(&v), 1);
     assert_eq!(
         active_manage(&mut v).page(),
@@ -95,21 +95,12 @@ fn manage_profiles_opens_manage_on_the_open_profiles_page() {
     );
     // Again from another page: the same tab comes back to the Profile.
     assert!(v.open_manage(Page::Cloud));
-    assert!(v.apply(&w.ws, crate::panes::Outcome::ManageProfiles));
+    assert!(v.apply(&w.ws, crate::panes::Outcome::ManageProfile(personal.id)));
     assert_eq!(manage_tabs(&v), 1);
     assert_eq!(
         active_manage(&mut v).page(),
         Some(Page::Profile(personal.id))
     );
-}
-
-/// Before the window has said which Profile is open, *Manage profiles…*
-/// lands on the account-wide page.
-#[test]
-fn manage_profiles_without_a_profile_opens_koru_cloud() {
-    let mut v = MainView::new();
-    assert!(v.open_manage_profiles());
-    assert_eq!(active_manage(&mut v).page(), Some(Page::Cloud));
 }
 
 /// Cloud is read only while a page that shows it is the tab in front: Koru

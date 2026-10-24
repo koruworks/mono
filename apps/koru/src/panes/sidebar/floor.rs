@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The floor: one chip for who and where, and the `?`, at the foot of the
-//! sidebar (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.4).
+//! The floor: one chip for where and who, at the foot of the sidebar
+//! (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.4).
 //!
 //! ```text
 //! ────────────────────────────────  hairline
-//!  (SL) Acme Labs            ⌄  [?]
-//!       Steven Liechti
+//!  (AL) Acme Labs                 ⌄
+//!       Steven Liechti · Syncing
 //! ```
 //!
 //! The chip is one control that opens one popover — the two-page who/where
-//! switcher the pane already has — anchored **above** it. The `?` opens the
-//! help popover. Both hide with the pane (frame 9): who/where stays one chord
-//! away, and the floor needs no chrome of its own in the caption.
+//! switcher the pane already has — anchored **above** it. The `?` that sat
+//! beside it moved into that popover's toolbar (the CTO's artboard,
+//! QUESTIONS.md E30), so the chip has the band to itself. It hides with the
+//! pane (frame 9): who/where stays one chord away, and the floor needs no
+//! chrome of its own in the caption.
 //!
 //! Geometry only, from the pane's rect; drawing and hit-testing read one
 //! function and the tests hit every rect back to itself.
@@ -24,10 +26,8 @@ use koru_draw::theme;
 pub const H: f32 = 48.0;
 /// The chip inside it.
 pub const CHIP_H: f32 = 34.0;
-/// The avatar circle at the chip's left.
+/// The workspace's tile at the chip's left.
 pub const AVATAR: f32 = 24.0;
-/// The `?` square at the band's right.
-pub const HELP: f32 = 28.0;
 /// The chevron at the chip's right.
 pub const CHEVRON: f32 = 14.0;
 /// Inside the band and inside the chip.
@@ -45,7 +45,6 @@ pub struct Rects {
     /// The two text lines: the workspace's name over the person's.
     pub text: Rect,
     pub chevron: Rect,
-    pub help: Rect,
 }
 
 /// Lay the floor out at the foot of `area`.
@@ -59,19 +58,11 @@ pub fn solve(area: Rect) -> Rects {
             avatar: z,
             text: z,
             chevron: z,
-            help: z,
         };
     }
     let right = band.x + band.w;
-    let help_w = HELP.min(band.w);
-    let help = Rect::new(
-        right - PAD - help_w,
-        band.y + (H - HELP) * 0.5,
-        help_w,
-        HELP,
-    );
     let chip_x = band.x + PAD;
-    let chip_w = (help.x - theme::NAV_PAD * 0.5 - chip_x).max(0.0);
+    let chip_w = (right - PAD - chip_x).max(0.0);
     let chip = Rect::new(chip_x, band.y + (H - CHIP_H) * 0.5, chip_w, CHIP_H);
     let avatar = Rect::new(
         chip.x + CHIP_PAD,
@@ -98,7 +89,6 @@ pub fn solve(area: Rect) -> Rects {
         avatar,
         text,
         chevron,
-        help,
     }
 }
 
@@ -106,20 +96,13 @@ pub fn solve(area: Rect) -> Rects {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Hit {
     Chip,
-    Help,
 }
 
 /// Resolve a point. `None` is the band's empty part, which is the pane's.
 pub fn hit(area: Rect, x: f32, y: f32) -> Option<Hit> {
     let r = solve(area);
     let owns = |rect: Rect| rect.w > 0.0 && rect.contains(x, y);
-    if owns(r.help) {
-        Some(Hit::Help)
-    } else if owns(r.chip) {
-        Some(Hit::Chip)
-    } else {
-        None
-    }
+    if owns(r.chip) { Some(Hit::Chip) } else { None }
 }
 
 #[cfg(test)]

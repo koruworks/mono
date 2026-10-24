@@ -91,12 +91,12 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
             Some(ChromeStop::Apps(documents)),
             "wrapped past Manage apps"
         );
-        // Floor: chip ↔ help; Enter on the chip opens the switcher.
+        // Floor: the chip is its one control (the ? lives in the popover's
+        // toolbar now); Enter on it opens the switcher.
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         assert_eq!(v.chrome_focus, Some(ChromeStop::Floor(FloorControl::Chip)));
         press(&mut v, &mut workspace.ws, NamedKey::ArrowRight);
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Floor(FloorControl::Help)));
-        press(&mut v, &mut workspace.ws, NamedKey::ArrowLeft);
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Floor(FloorControl::Chip)));
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
         assert!(
             v.explore.popover_open(),

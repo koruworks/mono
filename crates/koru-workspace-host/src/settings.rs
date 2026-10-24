@@ -110,6 +110,9 @@ pub enum TabRef {
     /// tab is "what this build changed", and after an update this build is a
     /// different one.
     WhatsNew,
+    /// The Sync settings page. Spelled `sync-settings`; an **older reader**
+    /// knows no such word and drops the entry, keeping every other tab.
+    SyncSettings,
     /// A running shell or agent session, hosted as an ordinary tab
     /// (TERMINATAB W4).
     ///
@@ -190,6 +193,7 @@ impl TabRef {
             Self::Trash => "trash".to_string(),
             Self::Tasks(target) => target.to_storage(),
             Self::WhatsNew => "whatsnew".to_string(),
+            Self::SyncSettings => "sync-settings".to_string(),
             Self::Draft => "draft".to_string(),
             Self::Node(id) => id.to_storage(),
             Self::Document {
@@ -223,6 +227,7 @@ impl TabRef {
             "manage" => Some(Self::Manage),
             "trash" => Some(Self::Trash),
             "whatsnew" => Some(Self::WhatsNew),
+            "sync-settings" => Some(Self::SyncSettings),
             "draft" => Some(Self::Draft),
             other if other.starts_with("tasks:") => {
                 TasksTabRef::parse(&other["tasks:".len()..]).map(Self::Tasks)
@@ -2273,6 +2278,19 @@ mod tests {
             tabs.into_iter().map(|(which, _)| which).collect::<Vec<_>>(),
             vec![TabRef::Manage, TabRef::Workspaces, TabRef::ManageProfiles]
         );
+    }
+
+    /// The Sync settings page has its own word; an older reader drops it
+    /// and keeps its neighbours, as it does for every word it does not know.
+    #[test]
+    fn the_sync_settings_tab_round_trips_and_an_older_reader_skips_it() {
+        assert_eq!(TabRef::SyncSettings.to_storage(), "sync-settings");
+        let tabs = parse_tabs("welcome:0,sync-settings:0,manage:0");
+        assert_eq!(
+            tabs.into_iter().map(|(which, _)| which).collect::<Vec<_>>(),
+            vec![TabRef::Welcome, TabRef::SyncSettings, TabRef::Manage]
+        );
+        assert_eq!(TabRef::parse("sync-settings"), Some(TabRef::SyncSettings));
     }
 
     /// The Reminders page is one `tasks:` spelling like any other — and an

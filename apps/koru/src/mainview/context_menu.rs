@@ -182,6 +182,9 @@ pub enum MenuAction {
     /// Select the one Welcome tab, or open it. *Get started* used to be a
     /// second row for the checklist; every Welcome is the checklist now.
     OpenWelcome,
+    /// The who/where popover's ⋯ menu: the workspace creator. The same
+    /// prompt the empty column's *Create workspace* opens.
+    NewWorkspace,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -939,6 +942,12 @@ impl MenuAction {
                 ));
             }
             MenuAction::OpenWelcome => "Welcome",
+            MenuAction::NewWorkspace => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::TerminalNewWorkspace,
+                ));
+            }
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFormat(id) => {
@@ -1190,6 +1199,8 @@ impl MenuAction {
             MenuAction::NewAiChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::NewWorkspace => Some(koru_draw::icons::PLUS),
+            MenuAction::ImportAs => Some(koru_draw::icons::IMPORT),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
             MenuAction::Delegate | MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
@@ -1900,6 +1911,12 @@ pub fn session_items() -> Vec<MenuAction> {
         MenuAction::SessionMoveToProject,
         MenuAction::SessionTerminate,
     ]
+}
+
+/// The who/where popover's *WORKSPACES* ⋯ menu: make one, or import into the
+/// open one (the CTO's artboard).
+pub fn workspaces_menu_items() -> Vec<MenuAction> {
+    vec![MenuAction::NewWorkspace, MenuAction::ImportAs]
 }
 
 /// Formats behind *Import…* / *Import content…*. A projection of the shell's

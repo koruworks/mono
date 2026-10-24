@@ -39,10 +39,12 @@ pub(super) enum LaneControl {
     New,
 }
 
+/// The floor's one control. The `?` that was its second moved into the
+/// who/where popover's toolbar (QUESTIONS.md E30), where the popover's own
+/// arrows reach it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum FloorControl {
     Chip,
-    Help,
 }
 
 /// The rotation's order, as the eye reads the chrome: the reminder pill and
@@ -194,10 +196,7 @@ impl MainView {
                     (i + n - 1) % n
                 })
             }
-            ChromeStop::Floor(control) => ChromeStop::Floor(match control {
-                FloorControl::Chip => FloorControl::Help,
-                FloorControl::Help => FloorControl::Chip,
-            }),
+            ChromeStop::Floor(FloorControl::Chip) => ChromeStop::Floor(FloorControl::Chip),
         }
     }
 
@@ -230,10 +229,6 @@ impl MainView {
                     self.open_workspaces_popover();
                 }
             }
-            ChromeStop::Floor(FloorControl::Help) => {
-                let help = self.explore.floor_rects(self.regions.sidebar).help;
-                self.open_help_menu(help);
-            }
         }
         let _ = ws;
     }
@@ -248,7 +243,6 @@ impl MainView {
                 ExploreChromeFocus::Manage
             }),
             ChromeStop::Floor(FloorControl::Chip) => Some(ExploreChromeFocus::FloorChip),
-            ChromeStop::Floor(FloorControl::Help) => Some(ExploreChromeFocus::FloorHelp),
             ChromeStop::Lane(_) => None,
         }
     }
