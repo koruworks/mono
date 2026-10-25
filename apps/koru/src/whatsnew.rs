@@ -28,6 +28,10 @@
 use koru_channel::RELEASE_NOTES_FILE;
 use koru_workspace_host::{RichBlock, parse_markdown};
 
+/// Every release, on the website — what the help popover's *Full changelog*
+/// opens in the browser.
+pub const RELEASES_URL: &str = "https://www.koru.do/en/releases";
+
 /// This build's release notes, if it shipped with any.
 ///
 /// **Beside the executable, never through a search path.** The rule the four

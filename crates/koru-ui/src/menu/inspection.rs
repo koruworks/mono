@@ -213,6 +213,47 @@ pub(super) fn row<T: MenuItem>(
     ))
 }
 
+/// A card row's panel: its texts as properties, so the inspector reads what
+/// the card says without a node per line.
+pub(super) fn card(
+    root: Affine,
+    bounds: Rect,
+    card: &super::MenuCard,
+    index: usize,
+    highlighted: bool,
+) -> Option<Scope> {
+    if !inspect::enabled() {
+        return None;
+    }
+    Some(inspect::scope(
+        "Menu card",
+        "part",
+        root,
+        scene::rect(bounds.x, bounds.y, bounds.w, bounds.h),
+        |r| {
+            r.property("index", index, "row index");
+            r.property("badge", card.badge.as_str(), "the chip on the first line");
+            r.property(
+                "date",
+                card.date.as_str(),
+                "beside the chip; empty when unknown",
+            );
+            r.property("title", card.title.as_str(), "wrapped");
+            r.property("body", card.body.as_str(), "wrapped, dimmed");
+            r.property(
+                "button",
+                card.button
+                    .as_ref()
+                    .map_or(String::from("none"), |(l, on)| {
+                        format!("{l} ({})", if *on { "enabled" } else { "dimmed" })
+                    }),
+                "at the card's foot",
+            );
+            r.property("highlighted", highlighted, "the pointer's row");
+        },
+    ))
+}
+
 pub(super) fn control(
     root: Affine,
     bounds: Rect,

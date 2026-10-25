@@ -4244,17 +4244,20 @@ impl MainView {
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
-            // The help popover's rows: the notes' sections and the changelog
-            // only when notes shipped; the rest wait on their phases and say
-            // so. Feedback and Support are always there.
+            // The help popover's rows: the shortcuts wait on their page and
+            // say so; everything else is always there. The card's Download
+            // is a control, gated by its own `enabled` rather than here.
             MenuSubject::Help => match action {
-                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
-                    self.help_headlines.is_some()
-                }
-                MenuAction::HelpShortcuts | MenuAction::HelpAsk | MenuAction::HelpAbout => false,
+                MenuAction::HelpShortcuts => false,
                 _ => matches!(
                     action,
-                    MenuAction::HeaderFeedback | MenuAction::HeaderSupport
+                    MenuAction::HelpRelease
+                        | MenuAction::HelpDownload
+                        | MenuAction::HelpFullChangelog
+                        | MenuAction::HelpSendFeedback
+                        | MenuAction::HelpReportProblem
+                        | MenuAction::HelpWebsite
+                        | MenuAction::HelpSocial(_)
                 ),
             },
             // Every window action is always available — the rows were built from
@@ -4725,16 +4728,25 @@ impl MainView {
                 }
                 _ => false,
             },
-            // The help popover. A What's new section opens the tab; revealing
-            // the section itself waits on a heading lookup (QUESTIONS.md), so
-            // every row opens from the top for now.
+            // The help popover (QUESTIONS.md E33). The card opens the What's
+            // new tab; its button sends the update's first consent; the
+            // changelog, the website and the socials open in the browser
+            // through the shell's URI port, never from the view.
             MenuSubject::Help => match action {
-                MenuAction::HelpHeadline(_) | MenuAction::HelpFullChangelog => {
-                    self.open_whats_new(env!("CARGO_PKG_VERSION"))
+                MenuAction::HelpRelease => self.open_whats_new(env!("CARGO_PKG_VERSION")),
+                MenuAction::HelpDownload => self.help_download(),
+                MenuAction::HelpFullChangelog => {
+                    self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
+                    true
                 }
-                MenuAction::HeaderFeedback => self.open_send_feedback_tab(),
-                MenuAction::HeaderSupport => {
-                    self.ask_pane(PaneRequest::OpenSupport);
+                MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
+                MenuAction::HelpReportProblem => self.open_report_problem_tab(),
+                MenuAction::HelpWebsite => {
+                    self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
+                    true
+                }
+                MenuAction::HelpSocial(social) => {
+                    self.ask_pane(PaneRequest::OpenUri(social.url()));
                     true
                 }
                 _ => false,
@@ -4815,26 +4827,116 @@ impl MainView {
         true
     }
 
-    /// The foot of the help popover: the build's label and what the Agent
-    /// says about updates.
-    fn help_foot(&self) -> String {
+    /// The help popover's release card: the build the Agent is offering when
+    /// it has one — its title and summary straight from the manifest, Download
+    /// live while it waits for the first consent — else the build that is
+    /// running: channel and version, the day it was released, the shipped
+    /// notes' first sections for a title and a line, and Download drawn dim
+    /// since there is nothing to fetch (the CTO's artboard). A build without
+    /// notes says so in the card rather than inventing a headline.
+    fn help_card(&self) -> context_menu::HelpCard {
         use koru_agent_wire::UpdateStage;
         let lang = crate::format::lang();
-        let build = koru_channel::build_info().build_label();
-        let state = match self.updates.report().map(|r| r.stage) {
-            Some(UpdateStage::Checking) => koru_i18n::t(lang, koru_i18n::Key::UpdateChecking),
-            Some(UpdateStage::Available | UpdateStage::Downloading | UpdateStage::Verifying) => {
-                koru_i18n::t(lang, koru_i18n::Key::UpdateAvailable)
-            }
-            Some(UpdateStage::Ready) => koru_i18n::t(lang, koru_i18n::Key::UpdateReady),
-            Some(UpdateStage::UpToDate) => koru_i18n::t(lang, koru_i18n::Key::UpToDate),
-            _ => "",
-        };
-        if state.is_empty() {
-            format!("Koru {build}")
-        } else {
-            format!("Koru {build} · {state}")
+        let info = koru_channel::build_info();
+        let report = self.updates.report();
+        let offered = report.as_ref().filter(|r| {
+            !r.version.is_empty()
+                && matches!(
+                    r.stage,
+                    UpdateStage::Available
+                        | UpdateStage::Downloading
+                        | UpdateStage::Verifying
+                        | UpdateStage::Ready
+                        | UpdateStage::Installing
+                        | UpdateStage::Deferred
+                )
+        });
+        if let Some(r) = offered {
+            let channel = if r.channel.is_empty() {
+                info.channel
+            } else {
+                r.channel.as_str()
+            };
+            return context_menu::HelpCard {
+                badge: format!("{} · {}", channel.to_uppercase(), r.version),
+                date: String::new(),
+                title: r.title.clone(),
+                body: r
+                    .summary
+                    .iter()
+                    .take(2)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                download: Some(matches!(
+                    r.stage,
+                    UpdateStage::Available | UpdateStage::Deferred
+                )),
+                unread: true,
+            };
         }
+        let date = chrono::DateTime::parse_from_rfc3339(info.released_at)
+            .ok()
+            .and_then(|t| crate::format::local_parts(t.timestamp_millis()))
+            .map(|parts| koru_i18n::time::absolute_date(lang, parts, false))
+            .unwrap_or_default();
+        let headlines = self.help_headlines.as_deref().unwrap_or(&[]);
+        let (title, body) = match headlines.split_first() {
+            Some((first, rest)) => (
+                first.clone(),
+                rest.iter().take(2).cloned().collect::<Vec<_>>().join(" · "),
+            ),
+            None => (
+                format!("Koru {}", info.version),
+                koru_i18n::t(lang, koru_i18n::Key::NotShippedWithThisBuild).to_owned(),
+            ),
+        };
+        context_menu::HelpCard {
+            badge: format!("{} · {}", info.channel.to_uppercase(), info.version),
+            date,
+            title,
+            body,
+            download: Some(false),
+            unread: false,
+        }
+    }
+
+    /// The card's Download: the update's first consent, the one the banner's
+    /// own button sends. Refused unless a build is waiting for it.
+    fn help_download(&mut self) -> bool {
+        use koru_agent_wire::{UpdateChoice, UpdateStage};
+        let Some(report) = self.updates.report() else {
+            return false;
+        };
+        if !matches!(report.stage, UpdateStage::Available | UpdateStage::Deferred) {
+            return false;
+        }
+        self.update_consent(UpdateChoice::Download, report.stage);
+        true
+    }
+
+    /// The Feedback tab on *Something isn't working* — the help popover's
+    /// *Report a problem*. An open Feedback tab is turned to that kind rather
+    /// than doubled.
+    pub(crate) fn open_report_problem_tab(&mut self) -> bool {
+        let existing = self
+            .tabs()
+            .iter()
+            .position(|t| matches!(t.view, TabView::Feedback(_)) && t.draft.is_none());
+        if let Some(i) = existing {
+            let _ = self.select(i);
+            if let TabView::Feedback(view) = &mut self.tabs_mut().active_mut().view {
+                view.set_kind(crate::feedback::Kind::Bug);
+            }
+            return true;
+        }
+        self.record_jump();
+        self.tabs_mut().push(Tab::report_problem());
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
+        true
     }
 
     /// Keep an open window menu hanging off its `⋯` button after a zoom step.
@@ -6767,8 +6869,7 @@ impl MainView {
             return false;
         }
         chrome_debug::chrome_debug!("help popover opened beside its ?");
-        let foot = self.help_foot();
-        let items = context_menu::help_items(self.help_headlines.as_deref(), foot);
+        let items = context_menu::help_items(self.help_card());
         let x = edge + koru_app_shell::popover::GAP;
         let mut m = ContextMenu::aligned(
             &mut self.engine,
@@ -8987,9 +9088,15 @@ impl MainView {
         let unfocused = hit != Hit::Sidebar && self.explore.clear_focus();
         let dismissed = dismissed || unfocused;
         if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
-            // The rail: an app, Settings, Help or the profile square.
+            // The rail: an app, Settings, Help or the profile square. A press
+            // on it is a press outside the popover, so the popover shuts
+            // first (the CTO's note: the Profiles list stayed up beside the
+            // help popover the `?` opened) — unless the press is the square,
+            // the popover's own door, which toggles it.
+            let square = self.explore.apps_rail_rects(self.rail_area()).profile;
+            let shut = !square.contains(x, y) && self.explore.close_popover();
             let out = self.explore.apps_rail_mouse_down(self.rail_area(), x, y);
-            return self.apply(ws, out);
+            return self.apply(ws, out) || shut;
         }
         if hit == Hit::Sidebar {
             // Reached only by a press that landed in the column, so it is on

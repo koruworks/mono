@@ -294,6 +294,20 @@ impl FeedbackView {
         view
     }
 
+    /// The page opened on a kind — *Report a problem* lands on *Something
+    /// isn't working* — over whatever draft this session kept.
+    pub fn with_kind(kind: Kind) -> Self {
+        let mut view = Self::new();
+        view.set_kind(kind);
+        view
+    }
+
+    /// Choose a kind, the way pressing its card does.
+    pub fn set_kind(&mut self, kind: Kind) {
+        self.kind = kind;
+        self.persist();
+    }
+
     pub fn take_wants_close(&mut self) -> bool {
         std::mem::take(&mut self.wants_close)
     }
@@ -1607,8 +1621,7 @@ impl FeedbackView {
 
     #[cfg(test)]
     pub fn click_kind(&mut self, kind: Kind) {
-        self.kind = kind;
-        self.persist();
+        self.set_kind(kind);
     }
 
     #[cfg(test)]

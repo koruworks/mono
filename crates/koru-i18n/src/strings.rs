@@ -2441,13 +2441,17 @@ pub enum Key {
     DevicesCountOne,
     DevicesCountMany,
     NewProfile,
+    /// The help popover's rows and its card's button (the CTO's artboard).
+    SendFeedback,
+    ReportAProblem,
+    Download,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1675] = [
+    pub const ALL: [Key; 1678] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4123,6 +4127,9 @@ impl Key {
         Key::DevicesCountOne,
         Key::DevicesCountMany,
         Key::NewProfile,
+        Key::SendFeedback,
+        Key::ReportAProblem,
+        Key::Download,
     ];
 }
 
@@ -12566,4 +12573,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::DevicesCountOne, en: "{} device", es: "{} dispositivo", pt_br: "{} dispositivo", de: "{} Gerät", fr: "{} appareil", ar: "{} جهاز", zh_hans: "{} 台设备", ja: "{} 台のデバイス" },
     Row { key: Key::DevicesCountMany, en: "{} devices", es: "{} dispositivos", pt_br: "{} dispositivos", de: "{} Geräte", fr: "{} appareils", ar: "{} أجهزة", zh_hans: "{} 台设备", ja: "{} 台のデバイス" },
     Row { key: Key::NewProfile, en: "New profile", es: "Nuevo perfil", pt_br: "Novo perfil", de: "Neues Profil", fr: "Nouveau profil", ar: "ملف تعريف جديد", zh_hans: "新建配置文件", ja: "新しいプロファイル" },
+    Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
+    Row { key: Key::ReportAProblem, en: "Report a problem", es: "Informar de un problema", pt_br: "Relatar um problema", de: "Problem melden", fr: "Signaler un problème", ar: "الإبلاغ عن مشكلة", zh_hans: "报告问题", ja: "問題を報告" },
+    Row { key: Key::Download, en: "Download", es: "Descargar", pt_br: "Baixar", de: "Herunterladen", fr: "Télécharger", ar: "تنزيل", zh_hans: "下载", ja: "ダウンロード" },
 ];

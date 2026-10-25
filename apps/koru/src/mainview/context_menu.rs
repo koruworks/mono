@@ -151,6 +151,60 @@ pub enum MenuSubject {
     Window,
 }
 
+/// Koru's accounts, in the strip's order after the website's globe. Brand
+/// names, so no row of the catalog: a name a translator must not touch.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Social {
+    X,
+    Reddit,
+    Instagram,
+    TikTok,
+    YouTube,
+}
+
+impl Social {
+    pub const ALL: [Social; 5] = [
+        Social::X,
+        Social::Reddit,
+        Social::Instagram,
+        Social::TikTok,
+        Social::YouTube,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Social::X => "X",
+            Social::Reddit => "Reddit",
+            Social::Instagram => "Instagram",
+            Social::TikTok => "TikTok",
+            Social::YouTube => "YouTube",
+        }
+    }
+
+    pub fn url(self) -> &'static str {
+        match self {
+            Social::X => "https://x.com/korudotdo",
+            Social::Reddit => "https://www.reddit.com/r/korudo/",
+            Social::Instagram => "https://www.instagram.com/korudotdo/",
+            Social::TikTok => "https://www.tiktok.com/@korudotdo",
+            Social::YouTube => "https://www.youtube.com/@korudotdo",
+        }
+    }
+
+    pub fn glyph(self) -> char {
+        match self {
+            Social::X => koru_draw::icons::X_LOGO,
+            Social::Reddit => koru_draw::icons::REDDIT_LOGO,
+            Social::Instagram => koru_draw::icons::INSTAGRAM_LOGO,
+            Social::TikTok => koru_draw::icons::TIKTOK_LOGO,
+            Social::YouTube => koru_draw::icons::YOUTUBE_LOGO,
+        }
+    }
+}
+
+/// Where the strip's globe goes.
+pub const WEBSITE_URL: &str = "https://www.koru.do";
+
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MenuAction {
@@ -502,20 +556,33 @@ pub enum MenuAction {
     HeaderShortcuts,
     HeaderMobile,
     // ------------------------------------------------------------ help
-    /// The *What's new* heading over the shipped notes' sections.
+    /// The *WHAT'S NEW* heading over the release card. It wears a dot while
+    /// a build is on offer.
     HelpWhatsNewHeading,
-    /// One section of this build's notes; opens the What's new tab.
-    HelpHeadline(usize),
-    /// The whole What's new tab.
+    /// The release card (the CTO's artboard): the build on offer when the
+    /// Agent has one, else the build that is running — badge, date, title,
+    /// a line under it, and the Download button at its foot, which is
+    /// [`HelpDownload`](Self::HelpDownload). Chosen as a whole (its `›`), it
+    /// opens the What's new tab.
+    HelpRelease,
+    /// The card's button. **Not a row**: reached only through the card's
+    /// control, like the zoom stepper's three, so nothing lists it.
+    HelpDownload,
+    /// The releases page on koru.do, in the browser.
     HelpFullChangelog,
     /// Dimmed until the shortcuts page lands (PLAN.final rung 7).
     HelpShortcuts,
-    /// Dimmed until the command bar's help scope lands.
-    HelpAsk,
-    /// Dimmed until there is a destination.
-    HelpAbout,
-    /// The version and the update state: a readout, never chosen.
-    HelpFoot,
+    /// The Feedback tab.
+    HelpSendFeedback,
+    /// The Feedback tab, opened on *Something isn't working*.
+    HelpReportProblem,
+    /// The strip at the popover's foot: the website and the socials, each a
+    /// control of this one row. **Not a row that is chosen**: its controls
+    /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
+    /// [`HelpSocial`](Self::HelpSocial), which nothing lists either.
+    HelpSocials,
+    HelpWebsite,
+    HelpSocial(Social),
     /// The internal session recorder: opens the setup modal
     /// (the internal session-recorder design). Only ever *built* behind the
     /// internal-and-Windows gate in [`window_items`]; a public build matches
@@ -1071,21 +1138,31 @@ impl MenuAction {
             MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
+            // A heading, so in caps — the pane's *WORKSPACES · n* rule.
             MenuAction::HelpWhatsNewHeading => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew)
+                return Cow::Owned(
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew).to_uppercase(),
+                );
             }
-            MenuAction::HelpHeadline(i) => return Cow::Owned(help_headline(i)),
+            MenuAction::HelpRelease => return Cow::Owned(help_card().title),
+            MenuAction::HelpDownload => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download)
+            }
             MenuAction::HelpFullChangelog => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
             }
             MenuAction::HelpShortcuts => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::KeyboardShortcuts)
             }
-            MenuAction::HelpAsk => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::AskAboutKoru)
+            MenuAction::HelpSendFeedback => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
             }
-            MenuAction::HelpAbout => koru_i18n::t(crate::format::lang(), koru_i18n::Key::About),
-            MenuAction::HelpFoot => return Cow::Owned(help_foot()),
+            MenuAction::HelpReportProblem => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReportAProblem)
+            }
+            MenuAction::HelpSocials => "",
+            MenuAction::HelpWebsite => "koru.do",
+            MenuAction::HelpSocial(social) => social.name(),
             MenuAction::HeaderStartRecording => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::RecordingMenuStart)
             }
@@ -1209,6 +1286,14 @@ impl MenuAction {
             MenuAction::Chats => Some(koru_draw::icons::SPARKLE),
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
+            // The help popover's rows, as the artboard draws them.
+            MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
+            MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
+            MenuAction::HelpShortcuts => Some(koru_draw::icons::KEYBOARD),
+            MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
+            MenuAction::HelpReportProblem => Some(koru_draw::icons::WARNING),
+            MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
+            MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
                 Some(koru_draw::icons::POP_OUT)
             }
@@ -1286,7 +1371,7 @@ impl MenuAction {
                 | MenuAction::SelectionHeader(_)
                 | MenuAction::HeaderZoom
                 | MenuAction::HelpWhatsNewHeading
-                | MenuAction::HelpFoot
+                | MenuAction::HelpSocials
         )
     }
 
@@ -1356,6 +1441,8 @@ impl koru_ui::MenuItem for MenuAction {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
             MenuAction::SelectionHeader(_) | MenuAction::HelpWhatsNewHeading => theme::ROW_H - 4.0,
+            // A touch taller than a row, so six logos have air around them.
+            MenuAction::HelpSocials => theme::ROW_H + 8.0,
             MenuAction::Divider => 8.0,
             _ => theme::ROW_H,
         }
@@ -1376,6 +1463,19 @@ impl koru_ui::MenuItem for MenuAction {
             .collect()
     }
 
+    fn card(&self) -> Option<koru_ui::MenuCard> {
+        matches!(self, MenuAction::HelpRelease).then(|| help_card().menu_card())
+    }
+
+    /// The changelog leaves the app: an `↗` where its chord would be.
+    fn trailing_icon(&self) -> Option<char> {
+        matches!(self, MenuAction::HelpFullChangelog).then_some(koru_draw::icons::POP_OUT)
+    }
+
+    fn unread(&self) -> bool {
+        matches!(self, MenuAction::HelpWhatsNewHeading) && help_card().unread
+    }
+
     /// A dimmed row that does not explain itself is a dead end; the rows that
     /// can be dimmed here are dimmed for reasons a person cannot see from the
     /// row, so each answers with its one reason and needs no subject.
@@ -1392,18 +1492,11 @@ impl koru_ui::MenuItem for MenuAction {
             return Some(Cow::Owned(reason));
         }
         match self {
-            // The help popover's rows that wait on a later phase say so
-            // (disabled, never hidden); the changelog without notes says
-            // what is missing.
-            MenuAction::HelpShortcuts | MenuAction::HelpAsk | MenuAction::HelpAbout => {
-                Some(Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::ComingLater,
-                )))
-            }
-            MenuAction::HelpFullChangelog => Some(Cow::Borrowed(koru_i18n::t(
+            // The help popover's row that waits on a later phase says so
+            // (disabled, never hidden).
+            MenuAction::HelpShortcuts => Some(Cow::Borrowed(koru_i18n::t(
                 crate::format::lang(),
-                koru_i18n::Key::NotShippedWithThisBuild,
+                koru_i18n::Key::ComingLater,
             ))),
             MenuAction::Open | MenuAction::OpenInNewWindow => {
                 Some(Cow::Borrowed("This workspace is already open"))
@@ -2085,51 +2178,73 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
     items
 }
 
+/// What the help popover's release card says. Built by the window when the
+/// popover opens (`MainView::help_card`) and read through the thread-local
+/// below, the same arrangement the `+` menu's recent titles use: a row's
+/// label, card and controls are read from the action alone.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct HelpCard {
+    /// `STABLE · 1.0.1` — the channel in caps and the version.
+    pub badge: String,
+    /// The release date, the reader's way; empty for a build never released.
+    pub date: String,
+    pub title: String,
+    pub body: String,
+    /// The Download button: `Some(true)` while a build waits for the first
+    /// consent, `Some(false)` drawn dim when there is nothing to fetch,
+    /// `None` for no button.
+    pub download: Option<bool>,
+    /// Whether the heading wears its dot: a build is on offer.
+    pub unread: bool,
+}
+
+impl HelpCard {
+    fn menu_card(&self) -> koru_ui::MenuCard {
+        koru_ui::MenuCard {
+            badge: self.badge.clone(),
+            date: self.date.clone(),
+            title: self.title.clone(),
+            body: self.body.clone(),
+            button: self.download.map(|on| {
+                (
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download).to_owned(),
+                    on,
+                )
+            }),
+        }
+    }
+}
+
 thread_local! {
-    /// This window's What's new headlines, set when the help popover opens
-    /// — the same arrangement the `+` menu's recent titles use, because a
-    /// row's label is read from the action alone.
-    static HELP_HEADLINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// The foot's readout: the version and the update state.
-    static HELP_FOOT: RefCell<String> = const { RefCell::new(String::new()) };
+    /// This window's release card, set when the help popover opens.
+    static HELP_CARD: RefCell<HelpCard> = RefCell::new(HelpCard::default());
 }
 
-fn help_headline(i: usize) -> String {
-    HELP_HEADLINES.with(|h| h.borrow().get(i).cloned().unwrap_or_default())
+fn help_card() -> HelpCard {
+    HELP_CARD.with(|c| c.borrow().clone())
 }
 
-fn help_foot() -> String {
-    HELP_FOOT.with(|f| f.borrow().clone())
-}
-
-/// The help popover's rows (`docs/features/workspace-foundation/TECHNICAL.final.md`
-/// §5.10): WHAT'S NEW with up to three of this build's sections, the full
-/// changelog, then the shortcuts and *Ask about Koru…* (dimmed until their
-/// phases land), then feedback and support, and a foot with the version and
-/// the update state. `headlines` is `None` when no notes shipped beside this
-/// build; the foot then says *dev build*.
-pub fn help_items(headlines: Option<&[String]>, foot: String) -> Vec<MenuAction> {
-    let shown: Vec<String> = headlines
-        .map(|h| h.iter().take(3).cloned().collect())
-        .unwrap_or_default();
-    let count = shown.len();
-    HELP_HEADLINES.with(|h| *h.borrow_mut() = shown);
-    HELP_FOOT.with(|f| *f.borrow_mut() = foot);
-    let mut items = vec![MenuAction::HelpWhatsNewHeading];
-    items.extend((0..count).map(MenuAction::HelpHeadline));
-    items.extend([
+/// The help popover's rows (the CTO's artboard, QUESTIONS.md E33): *WHAT'S
+/// NEW* over the release card, then *Full changelog*, then *Keyboard
+/// shortcuts* (dimmed until its page lands), then *Send feedback* and
+/// *Report a problem*, and the strip of the website and the socials at the
+/// foot. Support is not a row: it stays reachable through the Agent's own
+/// asks, and the CTO hid it here.
+pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
+    HELP_CARD.with(|c| *c.borrow_mut() = card);
+    vec![
+        MenuAction::HelpWhatsNewHeading,
+        MenuAction::HelpRelease,
+        MenuAction::Divider,
         MenuAction::HelpFullChangelog,
         MenuAction::Divider,
         MenuAction::HelpShortcuts,
-        MenuAction::HelpAsk,
         MenuAction::Divider,
-        MenuAction::HeaderFeedback,
-        MenuAction::HeaderSupport,
+        MenuAction::HelpSendFeedback,
+        MenuAction::HelpReportProblem,
         MenuAction::Divider,
-        MenuAction::HelpAbout,
-        MenuAction::HelpFoot,
-    ]);
-    items
+        MenuAction::HelpSocials,
+    ]
 }
 
 /// **Hidden for now: Feedback is the overflow's only destination.** Support,
@@ -2224,8 +2339,46 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
+        // The card's one control: its Download button, live only while a
+        // build waits for the first consent.
+        MenuAction::HelpRelease => help_card()
+            .download
+            .map(|enabled| {
+                vec![(
+                    Control::Button {
+                        glyph: koru_draw::icons::IMPORT,
+                        enabled,
+                    },
+                    Some(MenuAction::HelpDownload),
+                )]
+            })
+            .unwrap_or_default(),
+        // The strip: the website's globe, then the socials in their order.
+        MenuAction::HelpSocials => std::iter::once((
+            Control::Button {
+                glyph: koru_draw::icons::GLOBE,
+                enabled: true,
+            },
+            Some(MenuAction::HelpWebsite),
+        ))
+        .chain(Social::ALL.into_iter().map(|social| {
+            (
+                Control::Button {
+                    glyph: social.glyph(),
+                    enabled: true,
+                },
+                Some(MenuAction::HelpSocial(social)),
+            )
+        }))
+        .collect(),
         _ => Vec::new(),
     }
+}
+
+/// How many controls `items` carry between them — the ids a menu reserves
+/// beyond its rows' (see [`ContextMenu::control_instance`]).
+fn controls_total(items: &[MenuAction]) -> usize {
+    items.iter().map(|item| row_controls(*item).len()).sum()
 }
 
 /// What *Arrange Window* opens.
@@ -2436,7 +2589,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::aligned(engine, anchor, items, align),
         }
     }
@@ -2469,7 +2622,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::as_submenu(engine, parent, items, viewport),
         }
     }
@@ -2487,7 +2640,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::at_width(anchor, items, align, width),
         }
     }
@@ -2509,6 +2662,34 @@ impl ContextMenu {
         let offset = id.checked_sub(self.instance + 1)?;
         let i = usize::try_from(offset).ok()?;
         (i < self.items().len()).then_some(i)
+    }
+
+    /// The accessibility id of control `c` of row `row` — the ids after the
+    /// rows' in this opening's block, in row order then control order, so a
+    /// stepper's `−` and a strip's logos are each named once and never by a
+    /// row's number.
+    pub fn control_instance(&self, row: usize, c: usize) -> u64 {
+        let before: usize = self
+            .items()
+            .iter()
+            .take(row)
+            .map(|item| row_controls(*item).len())
+            .sum();
+        self.instance + 1 + self.items().len() as u64 + (before + c) as u64
+    }
+
+    /// …and the control an id names, if it is one of this opening's.
+    pub fn control_of_instance(&self, id: u64) -> Option<(usize, usize)> {
+        let offset = id.checked_sub(self.instance + 1 + self.items().len() as u64)?;
+        let mut rest = usize::try_from(offset).ok()?;
+        for (row, item) in self.items().iter().enumerate() {
+            let n = row_controls(*item).len();
+            if rest < n {
+                return Some((row, rest));
+            }
+            rest -= n;
+        }
+        None
     }
 }
 

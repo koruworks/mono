@@ -474,6 +474,18 @@ pub const CLOUD_SLASH: char = '\u{E1B6}';
 /// five states by colour and a dot (the CTO's artboard).
 pub const ARROWS_CLOCKWISE: char = '\u{E094}';
 
+// The help popover (workspace foundation, the CTO's artboard): its rows'
+// glyphs and the social strip at its foot. `ph-x-logo`, `ph-reddit-logo`,
+// `ph-instagram-logo`, `ph-tiktok-logo`, `ph-youtube-logo`,
+// `ph-keyboard`. The changelog's `↗` is [`POP_OUT`] and the card's Download
+// glyph is [`IMPORT`]: the same Phosphor shapes, already named.
+pub const X_LOGO: char = '\u{E4BC}';
+pub const REDDIT_LOGO: char = '\u{E59C}';
+pub const INSTAGRAM_LOGO: char = '\u{E2D0}';
+pub const TIKTOK_LOGO: char = '\u{EAF2}';
+pub const YOUTUBE_LOGO: char = '\u{E4FC}';
+pub const KEYBOARD: char = '\u{E2D8}';
+
 /// A **canvas** — `ph-squares-four`: Explore's Canvases section, the `+`
 /// menu's Canvases flyout, and the tab over a canvas.
 ///
@@ -519,7 +531,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 127] = [
+pub const ALL: [(&str, char); 133] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -647,6 +659,12 @@ pub const ALL: [(&str, char); 127] = [
     ("CLOUD_SLASH", CLOUD_SLASH),
     ("ARROWS_CLOCKWISE", ARROWS_CLOCKWISE),
     ("CANVAS", CANVAS),
+    ("X_LOGO", X_LOGO),
+    ("REDDIT_LOGO", REDDIT_LOGO),
+    ("INSTAGRAM_LOGO", INSTAGRAM_LOGO),
+    ("TIKTOK_LOGO", TIKTOK_LOGO),
+    ("YOUTUBE_LOGO", YOUTUBE_LOGO),
+    ("KEYBOARD", KEYBOARD),
 ];
 
 #[cfg(test)]

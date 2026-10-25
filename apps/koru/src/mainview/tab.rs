@@ -1009,6 +1009,17 @@ impl Tab {
         tab
     }
 
+    /// The Feedback tab opened on *Something isn't working* — the help
+    /// popover's *Report a problem*.
+    pub fn report_problem() -> Self {
+        let mut tab = Self::welcome();
+        tab.view = TabView::Feedback(crate::feedback::FeedbackView::with_kind(
+            crate::feedback::Kind::Bug,
+        ));
+        tab.label = "Feedback".to_string();
+        tab
+    }
+
     /// The Trash tab. Its glyph comes from [`TabView::icon`], not from a
     /// leading emoji — it is a place, and places have no title to take one from.
     pub fn trash() -> Self {
