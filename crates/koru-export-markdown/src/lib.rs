@@ -319,7 +319,7 @@ fn emit_node(
                 out.push('\n');
             }
         }
-        Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Contact => {
+        Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Callout | Kind::Contact => {
             if let Some(style) = parent_list {
                 let indent = "  ".repeat(list_depth);
                 let marker = list_marker(style, item_index, node.meta.done);
@@ -437,6 +437,11 @@ fn emit_node(
 fn block_prefix(node: &Node) -> &'static str {
     if node.kind == Kind::Quote {
         return "> ";
+    }
+    // A callout has no CommonMark form; a quote led by its icon reads the
+    // same in any viewer.
+    if node.kind == Kind::Callout {
+        return "> 💡 ";
     }
     match node.meta.heading {
         Some(Heading::H1) => "# ",

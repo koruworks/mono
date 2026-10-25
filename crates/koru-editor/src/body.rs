@@ -1033,7 +1033,13 @@ impl Body {
         // An empty quote ends the quotation instead of creating an endless
         // run of empty quoted rows. A non-empty quote still goes through the
         // ordinary split below, which preserves its kind.
-        if at == 0 && row.kind == koru_core::node::Kind::Quote && row.text.is_empty() {
+        if at == 0
+            && matches!(
+                row.kind,
+                koru_core::node::Kind::Quote | koru_core::node::Kind::Callout
+            )
+            && row.text.is_empty()
+        {
             let _ = ws.set_kind(id, koru_core::node::Kind::Paragraph);
             self.rebuild(ws);
             self.focus_on(id);
@@ -1218,6 +1224,18 @@ impl Body {
                 .is_some_and(|row| row.list_style.is_some() && row.caret() == 0)
             && self.outdent_list_item(ws, id)
         {
+            return Some(0);
+        }
+        // Backspace at the start of a callout takes the box away and keeps the
+        // text, the way it takes a list marker away before it joins anything.
+        if backwards
+            && self.rows.get(index).is_some_and(|row| {
+                row.kind == koru_core::node::Kind::Callout && row.range() == (0..0)
+            })
+        {
+            let _ = ws.set_kind(id, koru_core::node::Kind::Paragraph);
+            self.rebuild(ws);
+            self.focus_on(id);
             return Some(0);
         }
         // Neither direction across the title seam. Backspace *in* the title has

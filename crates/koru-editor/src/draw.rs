@@ -175,6 +175,48 @@ pub fn draw_document(
             fill(scene, root, theme::p().code_bg, &panel);
             stroke(scene, root, theme::p().panel_border, 1.0, &panel);
         }
+        if row.kind == Kind::Callout {
+            // Adjacent callout rows are one box, the way adjacent quotes share
+            // one rule: the box is drawn once, from the first visible row of
+            // the run, and the icon sits beside the run's first line.
+            let starts_visible_group = i == visible.start
+                || i.checked_sub(1)
+                    .and_then(|previous| outline.rows.get(previous))
+                    .map(|previous| previous.kind)
+                    != Some(Kind::Callout);
+            if starts_visible_group {
+                let mut end = i;
+                while outline
+                    .rows
+                    .get(end + 1)
+                    .is_some_and(|next| next.kind == Kind::Callout)
+                {
+                    end += 1;
+                }
+                let end_row = &outline.rows[end];
+                let r = rowlayout::callout_panel_rect(row, oy, end_row, end_row.y - scroll, vw);
+                let panel = rrect(r.x, r.y, r.w, r.h, 8.0);
+                let tint = theme::accent_tone("yellow").map_or(theme::p().code_bg, |t| t.fill);
+                fill(scene, root, tint, &panel);
+                let starts_run = i
+                    .checked_sub(1)
+                    .and_then(|previous| outline.rows.get(previous))
+                    .map(|previous| previous.kind)
+                    != Some(Kind::Callout);
+                if starts_run {
+                    let slot = rowlayout::callout_icon_rect(row, oy);
+                    let layout = engine.icon_layout(koru_draw::icons::LIGHTBULB, slot.w);
+                    draw_layout(
+                        scene,
+                        root,
+                        &layout,
+                        slot.x + (slot.w - layout.width()) * 0.5,
+                        slot.y + (slot.h - layout.height()) * 0.5,
+                        Some(theme::p().text_dim),
+                    );
+                }
+            }
+        }
         if row.kind == Kind::Quote {
             // One semantic blockquote copied from ChatGPT may arrive as
             // several adjacent one-line Quote nodes. Draw one rule for the

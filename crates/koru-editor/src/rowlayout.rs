@@ -737,6 +737,37 @@ pub fn code_panel_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
     )
 }
 
+/// The tinted box behind a run of adjacent callouts, from `first` (drawn at
+/// `first_oy`) through `last` (at `last_oy`). Its left edge derives from
+/// `text_x`, so the box, the icon and the text cannot drift apart.
+pub fn callout_panel_rect(
+    first: &Paragraph,
+    first_oy: f32,
+    last: &Paragraph,
+    last_oy: f32,
+    layout_w: f32,
+) -> Rect {
+    const PAD_Y: f32 = 6.0;
+    let left = first.text_x() - crate::paragraph::CALLOUT_INSET_X;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
+    let top = first_oy - PAD_Y;
+    let bottom = last_oy + last.height + PAD_Y;
+    Rect::new(left, top, (right - left).max(0.0), bottom - top)
+}
+
+/// The square slot a callout's icon is drawn in, at the leading edge of its
+/// box and level with the first line of `row`.
+pub fn callout_icon_rect(row: &Paragraph, oy: f32) -> Rect {
+    const SIDE: f32 = 18.0;
+    let line_h = row
+        .layout
+        .lines()
+        .next()
+        .map_or(row.height, |line| line.metrics().line_height);
+    let x = row.text_x() - crate::paragraph::CALLOUT_INSET_X + 12.0;
+    Rect::new(x, oy + (line_h - SIDE) * 0.5, SIDE, SIDE)
+}
+
 /// The semantic quote rule beside `row`, in the same window-space coordinate
 /// system the text painter receives. Its position derives from `text_x`, so a
 /// future margin or depth change cannot separate the rule from the prose.

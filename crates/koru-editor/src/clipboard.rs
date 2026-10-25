@@ -156,6 +156,9 @@ impl CopiedRow {
         if self.kind == Kind::Quote {
             return "> ".into();
         }
+        if self.kind == Kind::Callout {
+            return "> 💡 ".into();
+        }
         if let Some(spec) = self.list {
             let indent = "  ".repeat(spec.depth as usize);
             let marker = match spec.style {
@@ -1048,6 +1051,11 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                     out.push_str("<blockquote><p>");
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p></blockquote>");
+                } else if row.kind == Kind::Callout {
+                    // `<aside>` is what Notion writes for a callout.
+                    out.push_str("<aside><p>💡 ");
+                    out.push_str(&html_runs(row, label));
+                    out.push_str("</p></aside>");
                 } else {
                     out.push_str("<p>");
                     out.push_str(&html_runs(row, label));
@@ -2084,8 +2092,8 @@ fn paste_rows<E: Editing + ?Sized>(
         // still adapt it to their own row kind, the same way they adapt prose.
         let row_kind = if row.kind == Kind::Table && e.view().tables_enabled {
             Kind::Table
-        } else if row.kind == Kind::Quote && e.view().quotes_enabled {
-            Kind::Quote
+        } else if matches!(row.kind, Kind::Quote | Kind::Callout) && e.view().quotes_enabled {
+            row.kind
         } else {
             kind
         };

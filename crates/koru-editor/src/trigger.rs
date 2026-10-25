@@ -488,6 +488,7 @@ pub fn for_command(engine: &mut TextEngine, trigger: Trigger, cmd: Command) -> O
         | Command::Table
         | Command::Divider
         | Command::Quote
+        | Command::Callout
         | Command::Tasks
         | Command::List(_)
         | Command::Attr

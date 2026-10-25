@@ -28,6 +28,10 @@ pub enum Kind {
     /// it into another quote, but hierarchy belongs to structural blocks
     /// rather than to the quotation's visual inset.
     Quote,
+    /// A highlighted line in a document, drawn in a tinted box with an icon.
+    /// A text-shaped leaf like [`Quote`](Kind::Quote): Enter may split it
+    /// into another callout, and adjacent callouts draw as one box.
+    Callout,
     /// Its text is the title; its children are the body.
     Document,
     /// A named, opaque workspace file. Its bytes live in the blob store and
@@ -93,6 +97,7 @@ impl Kind {
             Self::Task
             | Self::Paragraph
             | Self::Quote
+            | Self::Callout
             | Self::Document
             | Self::ListBlock
             | Self::Table
@@ -127,6 +132,7 @@ impl Kind {
             Self::Task => "task",
             Self::Paragraph => "paragraph",
             Self::Quote => "quote",
+            Self::Callout => "callout",
             Self::Document => "document",
             Self::File => "file",
             Self::ListBlock => "listblock",
@@ -145,6 +151,7 @@ impl Kind {
             "task" => Self::Task,
             "paragraph" => Self::Paragraph,
             "quote" => Self::Quote,
+            "callout" => Self::Callout,
             "document" => Self::Document,
             "file" => Self::File,
             "listblock" => Self::ListBlock,

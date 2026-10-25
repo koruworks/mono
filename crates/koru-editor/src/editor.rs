@@ -5368,7 +5368,14 @@ pub trait Editing {
         if cmd == command_menu::Command::Quote {
             self.view_mut().overlay = Overlay::None;
             if let Some(t) = trigger {
-                self.commit_quote(ws, t);
+                self.commit_quote(ws, t, Kind::Quote);
+            }
+            return;
+        }
+        if cmd == command_menu::Command::Callout {
+            self.view_mut().overlay = Overlay::None;
+            if let Some(t) = trigger {
+                self.commit_quote(ws, t, Kind::Callout);
             }
             return;
         }
@@ -6467,7 +6474,9 @@ pub trait Editing {
     /// Take `/quote` back out and make the row quoted prose without changing
     /// its identity. This mirrors `commit_code`: both are semantic block kinds,
     /// not marks painted over a paragraph.
-    fn commit_quote(&mut self, ws: &mut WorkspaceDoc, trigger: Trigger) {
+    /// Take the typed `/quote` or `/callout` back out and make the row `kind`.
+    /// Both are text-shaped leaves offered behind the same view flag.
+    fn commit_quote(&mut self, ws: &mut WorkspaceDoc, trigger: Trigger, kind: Kind) {
         if !self.view().quotes_enabled {
             return;
         }
@@ -6484,7 +6493,7 @@ pub trait Editing {
             let _ = ws.delete_text(id, trigger.start..end);
         }
         let _ = ws.set_heading(id, None);
-        let _ = ws.set_kind(id, Kind::Quote);
+        let _ = ws.set_kind(id, kind);
         ws.checkpoint();
         self.body_mut().rebuild(ws);
         self.body_mut().focus_on(id);
@@ -12196,6 +12205,54 @@ mod tests {
         assert_eq!(node.kind, Kind::Code);
         // The `/code` trigger text is gone; the original line's text remains.
         assert_eq!(node.content.as_text(), Some("let x = 1;"));
+    }
+
+    /// `/callout` on an empty line makes it a callout with the caret inside;
+    /// Enter continues the callout and Enter on its empty line leaves it.
+    #[test]
+    fn slash_callout_makes_a_callout_and_empty_enter_leaves_it() {
+        let (mut ws, mut e) = doc_editor(&[""]);
+        e.view.active = true;
+        e.view.quotes_enabled = true;
+        let id = e.body.focused().unwrap().id;
+        type_str(&mut e, &mut ws, "/callout");
+        e.key(
+            &mut ws,
+            &Key::Named(winit::keyboard::NamedKey::Enter),
+            None,
+            ModifiersState::empty(),
+        );
+        let node = ws.read(id).unwrap();
+        assert_eq!(node.kind, Kind::Callout);
+        assert_eq!(node.content.as_text(), Some(""), "the trigger text is gone");
+        assert!(
+            ws.effective_schema_version() >= 5,
+            "an older build must open a document with a callout read-only"
+        );
+
+        e.type_text(&mut ws, "Book tickets early");
+        e.reflow();
+        assert!(e.act(&mut ws, Action::SplitLine));
+        assert_eq!(e.body.focused().unwrap().kind, Kind::Callout);
+        assert!(e.act(&mut ws, Action::SplitLine));
+        assert_eq!(e.body.focused().unwrap().kind, Kind::Paragraph);
+    }
+
+    /// Backspace at the start of a callout takes the box away and keeps the
+    /// text, rather than joining it to the line above.
+    #[test]
+    fn backspace_at_the_start_of_a_callout_unwraps_it() {
+        let (mut ws, mut e) = doc_editor(&["above", "inside"]);
+        e.view.quotes_enabled = true;
+        let id = e.body.rows.iter().find(|r| r.text == "inside").unwrap().id;
+        ws.set_kind(id, Kind::Callout).unwrap();
+        e.body.rebuild(&ws);
+        e.body.focus_on(id);
+        e.place_caret(0);
+        assert!(e.act(&mut ws, Action::DeleteBack { by_word: false }));
+        let node = ws.read(id).unwrap();
+        assert_eq!(node.kind, Kind::Paragraph);
+        assert_eq!(node.content.as_text(), Some("inside"));
     }
 
     #[test]

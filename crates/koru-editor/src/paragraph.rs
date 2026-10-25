@@ -32,6 +32,9 @@ use koru_draw::theme::{self, Brush, FontChoice};
 /// row geometry so layout, hit-testing, selection and caret inherit one inset.
 pub const QUOTE_INSET_X: f32 = 34.0;
 pub const QUOTE_BAR_W: f32 = 4.0;
+/// Horizontal room reserved for a callout's icon and the air around it, on
+/// row geometry for the same reason as [`QUOTE_INSET_X`].
+pub const CALLOUT_INSET_X: f32 = 40.0;
 
 /// The image a row renders in place of text: enough to address its bytes and
 /// size it. The decoded pixels are fetched from the shell's `ImageCache` at draw
@@ -325,10 +328,10 @@ impl Paragraph {
     /// the glyphs somewhere the clicks do not land.
     pub fn text_x(&self) -> f32 {
         text_x(self.depth, self.is_task() || self.list_style.is_some())
-            + if self.kind == Kind::Quote {
-                QUOTE_INSET_X
-            } else {
-                0.0
+            + match self.kind {
+                Kind::Quote => QUOTE_INSET_X,
+                Kind::Callout => CALLOUT_INSET_X,
+                _ => 0.0,
             }
     }
 

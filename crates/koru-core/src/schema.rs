@@ -151,7 +151,7 @@ pub(crate) const K_SCHEMA: &str = "schema_version";
 /// below a root it is derived rather than stored.
 const K_DOCUMENT: &str = "document";
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// What a document carrying no marker *is*.
 ///
@@ -2569,12 +2569,13 @@ impl WorkspaceDoc {
 
     /// Raise an older workspace's marker only when a write introduces content
     /// that the older schema cannot understand. Ordinary edits keep their
-    /// existing marker; adding a Divider or Quote makes the compatibility gate
-    /// tell the corresponding older build to open read-only.
+    /// existing marker; adding a Divider, Quote or Callout makes the
+    /// compatibility gate tell the corresponding older build to open read-only.
     fn record_schema_for_kind(&self, kind: Kind) -> Result<()> {
         let required = match kind {
             Kind::Divider => 2,
             Kind::Quote => 3,
+            Kind::Callout => 5,
             _ => return Ok(()),
         };
         if self.effective_schema_version() < required {
@@ -3478,7 +3479,7 @@ impl WorkspaceDoc {
         let Ok(node) = self.read(target) else {
             return (None, None);
         };
-        let kind = matches!(node.kind, Kind::Task | Kind::Quote).then_some(node.kind);
+        let kind = matches!(node.kind, Kind::Task | Kind::Quote | Kind::Callout).then_some(node.kind);
         (kind, node.meta.heading)
     }
 
