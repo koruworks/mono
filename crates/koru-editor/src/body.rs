@@ -1339,6 +1339,31 @@ impl Body {
         self.rows.iter_mut().find(|r| r.id == id)
     }
 
+    /// The rows of the callout box `id` is in, top to bottom: the adjacent
+    /// callout rows that share its icon and tint. Empty when `id` is not a
+    /// callout row in this body.
+    pub fn callout_run(&self, id: NodeId) -> Vec<NodeId> {
+        let Some(i) = self.index_of(id) else {
+            return Vec::new();
+        };
+        if self.rows[i].kind != koru_core::node::Kind::Callout {
+            return Vec::new();
+        }
+        let mut start = i;
+        while start > 0 && self.rows[start].continues_callout(&self.rows[start - 1]) {
+            start -= 1;
+        }
+        let mut end = i;
+        while self
+            .rows
+            .get(end + 1)
+            .is_some_and(|next| next.continues_callout(&self.rows[end]))
+        {
+            end += 1;
+        }
+        self.rows[start..=end].iter().map(|row| row.id).collect()
+    }
+
     pub fn index_of(&self, id: NodeId) -> Option<usize> {
         self.rows.iter().position(|r| r.id == id)
     }

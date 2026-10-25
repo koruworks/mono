@@ -429,6 +429,13 @@ pub enum TextKind {
     Code {
         language: Option<String>,
     },
+    /// A line of a callout: Notion's Markdown export writes one as an
+    /// `<aside>` block. `icon` is an emoji, `tint` an `AccentColor` token;
+    /// `None` is the default for either ([`koru_core::callout`]).
+    Callout {
+        icon: Option<String>,
+        tint: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -488,12 +495,27 @@ impl MarkDepth {
     }
 }
 
+/// An `<aside>` that is open: every prose block until its `</aside>` is a
+/// callout line carrying this look.
+#[derive(Default)]
+struct OpenCallout {
+    icon: Option<String>,
+    tint: Option<String>,
+    /// Whether the icon has been settled — from a leading `<img>`, or from the
+    /// first line's leading emoji. Only the first line can carry it.
+    settled: bool,
+    /// Markdown Notion left inside the raw HTML block that opened the aside,
+    /// parsed as Markdown once that block ends ([`Adapter::flush_raw`]).
+    raw: String,
+}
+
 struct Adapter {
     blocks: Vec<Block>,
     current: Option<TextBlock>,
     lists: Vec<ListStyle>,
     item_depth: u16,
     quote_depth: u16,
+    callout: Option<OpenCallout>,
     marks: MarkDepth,
     open_links: Vec<(usize, String)>,
     image: Option<ImageBlock>,
@@ -507,6 +529,7 @@ impl Adapter {
             lists: Vec::new(),
             item_depth: 0,
             quote_depth: 0,
+            callout: None,
             marks: MarkDepth::default(),
             open_links: Vec::new(),
             image: None,
@@ -528,14 +551,17 @@ impl Adapter {
     }
     fn ensure(&mut self) {
         if self.current.is_none() {
-            self.begin(
-                None,
-                if self.quote_depth > 0 {
-                    TextKind::Quote
-                } else {
-                    TextKind::Paragraph
-                },
-            );
+            let kind = if self.quote_depth > 0 {
+                TextKind::Quote
+            } else if let Some(callout) = &self.callout {
+                TextKind::Callout {
+                    icon: callout.icon.clone(),
+                    tint: callout.tint.clone(),
+                }
+            } else {
+                TextKind::Paragraph
+            };
+            self.begin(None, kind);
         }
     }
     fn append(&mut self, value: &str, extra: Option<Mark>) {
@@ -579,10 +605,109 @@ impl Adapter {
         } else {
             block.text = block.text.trim_matches(['\r', '\n']).to_owned();
         }
+        if matches!(block.kind, TextKind::Callout { .. })
+            && let Some(callout) = self.callout.as_mut()
+        {
+            if !callout.settled {
+                callout.settled = true;
+                if let Some((emoji, cut)) = koru_import::leading_callout_icon(&block.text) {
+                    callout.icon = Some(emoji);
+                    strip_front(&mut block, cut);
+                }
+            }
+            block.kind = TextKind::Callout {
+                icon: callout.icon.clone(),
+                tint: callout.tint.clone(),
+            };
+        }
         if !block.text.trim().is_empty() || block.task.is_some() {
             self.blocks.push(Block::Text(block));
         }
     }
+    /// Raw HTML, which is where a Notion callout lives: `<aside>` opens one,
+    /// `</aside>` closes it, and the text between is its first line. Any other
+    /// HTML lands as text, as it always has.
+    fn html(&mut self, value: &str) {
+        let mut rest = value;
+        loop {
+            let lower = rest.to_ascii_lowercase();
+            let open = lower.find("<aside");
+            let close = lower.find("</aside>");
+            match (open, close) {
+                (Some(o), c) if c.is_none_or(|c| o < c) => {
+                    self.callout_html(&rest[..o]);
+                    self.flush_raw();
+                    self.flush();
+                    self.callout = Some(OpenCallout::default());
+                    let end = rest[o..].find('>').map_or(rest.len(), |e| o + e + 1);
+                    rest = &rest[end..];
+                }
+                (_, Some(c)) => {
+                    self.callout_html(&rest[..c]);
+                    self.flush_raw();
+                    self.flush();
+                    self.callout = None;
+                    rest = &rest[c + "</aside>".len()..];
+                }
+                _ => return self.callout_html(rest),
+            }
+        }
+    }
+
+    /// HTML text that is not an `<aside>` tag. Inside a callout the raw lines
+    /// are its prose — and a leading `<img>` of Notion's icon set is its icon.
+    fn callout_html(&mut self, raw: &str) {
+        let Some(callout) = self.callout.as_mut() else {
+            return self.append(raw, None);
+        };
+        let mut raw = raw.trim();
+        if !callout.settled && raw.to_ascii_lowercase().starts_with("<img") {
+            let end = raw.find('>').map_or(raw.len(), |e| e + 1);
+            if let Some((icon, tint)) = html_attribute(&raw[..end], "src")
+                .and_then(koru_core::callout::from_notion_icon_url)
+            {
+                callout.icon = icon.map(str::to_owned);
+                callout.tint = tint.map(|tint| tint.as_str().to_owned());
+            }
+            callout.settled = true;
+            raw = raw[end..].trim();
+        }
+        callout.raw.push_str(raw);
+        callout.raw.push('\n');
+    }
+
+    /// The Markdown gathered from a raw HTML block inside a callout, as callout
+    /// lines. Notion writes the callout's first line there, so `**bold**` in
+    /// it is still bold.
+    fn flush_raw(&mut self) {
+        let Some(raw) = self
+            .callout
+            .as_mut()
+            .map(|callout| std::mem::take(&mut callout.raw))
+        else {
+            return;
+        };
+        if raw.trim().is_empty() {
+            return;
+        }
+        self.flush();
+        for block in parse(&raw) {
+            match block {
+                Block::Text(mut text) => {
+                    if text.kind == TextKind::Paragraph {
+                        text.kind = TextKind::Callout {
+                            icon: None,
+                            tint: None,
+                        };
+                    }
+                    self.current = Some(text);
+                    self.flush();
+                }
+                other => self.blocks.push(other),
+            }
+        }
+    }
+
     fn start_link(&mut self, url: String) {
         self.ensure();
         self.open_links
@@ -600,6 +725,31 @@ impl Adapter {
             block.links.push(TextLink { start, end, url });
         }
     }
+}
+
+/// Drop the first `cut` bytes of `block`'s text, moving its runs and links
+/// with it — the callout icon the text led with is not prose.
+fn strip_front(block: &mut TextBlock, cut: usize) {
+    block.text.drain(..cut);
+    block.runs.retain_mut(|run| {
+        run.start = run.start.saturating_sub(cut);
+        run.end = run.end.saturating_sub(cut);
+        run.start < run.end
+    });
+    block.links.retain_mut(|link| {
+        link.start = link.start.saturating_sub(cut);
+        link.end = link.end.saturating_sub(cut);
+        link.start < link.end
+    });
+}
+
+/// The value of `name="…"` in one HTML tag.
+fn html_attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let at = tag.to_ascii_lowercase().find(&format!("{name}="))? + name.len() + 1;
+    let rest = &tag[at..];
+    let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+    let rest = &rest[1..];
+    Some(&rest[..rest.find(quote)?])
 }
 
 /// Parse Markdown into semantic Koru-shaped blocks. This is deliberately pure:
@@ -663,6 +813,7 @@ pub fn parse(text: &str) -> Vec<Block> {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => out.ensure(),
+                Tag::HtmlBlock if out.callout.is_some() => out.flush(),
                 Tag::Heading { level, .. } => out.begin(Some(heading(level)), TextKind::Paragraph),
                 Tag::BlockQuote(_) => {
                     out.flush();
@@ -707,6 +858,7 @@ pub fn parse(text: &str) -> Vec<Block> {
             },
             Event::End(tag) => match tag {
                 TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::CodeBlock => out.flush(),
+                TagEnd::HtmlBlock => out.flush_raw(),
                 TagEnd::BlockQuote(_) => {
                     out.flush();
                     out.quote_depth = out.quote_depth.saturating_sub(1);
@@ -738,7 +890,7 @@ pub fn parse(text: &str) -> Vec<Block> {
                 out.append(&value, None);
                 out.flush();
             }
-            Event::Html(value) | Event::InlineHtml(value) => out.append(&value, None),
+            Event::Html(value) | Event::InlineHtml(value) => out.html(&value),
             Event::FootnoteReference(label) => out.append(&format!("[{label}]"), None),
             Event::SoftBreak | Event::HardBreak => {
                 let separator = if out
@@ -957,6 +1109,11 @@ fn build_document(
                     TextKind::Paragraph => Node::paragraph(text.text.replace(['\n', '\r'], "")),
                     TextKind::Quote => Node::quote(text.text.replace(['\n', '\r'], "")),
                     TextKind::Code { .. } => Node::code(text.text.clone()),
+                    TextKind::Callout { icon, tint } => Node::callout(
+                        text.text.replace(['\n', '\r'], ""),
+                        icon.as_deref(),
+                        tint.as_deref(),
+                    ),
                 }
                 .map_err(import_failed)?;
                 let id = doc
@@ -1399,6 +1556,125 @@ mod tests {
         assert_eq!(
             parse_document(Path::new("Meeting notes.md"), "Hello").title,
             "Meeting notes"
+        );
+    }
+
+    /// The text blocks of `blocks` as `(kind, text)`, for the callout tests.
+    fn texts(blocks: &[Block]) -> Vec<(TextKind, &str)> {
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Text(text) => Some((text.kind.clone(), text.text.as_str())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn callout(icon: Option<&str>, tint: Option<&str>) -> TextKind {
+        TextKind::Callout {
+            icon: icon.map(str::to_owned),
+            tint: tint.map(str::to_owned),
+        }
+    }
+
+    /// Notion's Markdown export: `<aside>`, the icon leading the first line,
+    /// more blocks after a blank line, `</aside>`. Every line is a callout
+    /// line carrying the icon; nothing of the HTML is left in the text.
+    #[test]
+    fn a_notion_aside_imports_as_callout_lines_with_its_icon() {
+        let blocks =
+            parse("before\n\n<aside>\n⚠️ Back up **weekly**.\n\nSecond line\n\n</aside>\n\nafter");
+        assert_eq!(
+            texts(&blocks),
+            vec![
+                (TextKind::Paragraph, "before"),
+                (callout(Some("⚠️"), None), "Back up weekly."),
+                (callout(Some("⚠️"), None), "Second line"),
+                (TextKind::Paragraph, "after"),
+            ]
+        );
+    }
+
+    /// The icon on a line of its own, and a first line that is markdown
+    /// rather than raw HTML: the marks survive the icon being cut away.
+    #[test]
+    fn an_icon_alone_on_its_line_still_belongs_to_the_callout() {
+        let blocks = parse("<aside>\n💡\n\n**Tip:** read this\n\n</aside>");
+        assert_eq!(
+            texts(&blocks),
+            vec![(callout(Some("💡"), None), "Tip: read this")]
+        );
+        let Block::Text(text) = &blocks[0] else {
+            unreachable!()
+        };
+        assert_eq!(&text.text[text.runs[0].start..text.runs[0].end], "Tip:");
+
+        let blocks = parse("<aside>\n\n🔥 **Hot** take\n\n</aside>");
+        let Block::Text(text) = &blocks[0] else {
+            unreachable!()
+        };
+        assert_eq!(
+            (text.kind.clone(), text.text.as_str()),
+            (callout(Some("🔥"), None), "Hot take")
+        );
+        assert_eq!(&text.text[text.runs[0].start..text.runs[0].end], "Hot");
+    }
+
+    /// A Notion built-in icon arrives as an `<img>` of `notion.so/icons`; its
+    /// name picks the emoji and its colour the tint.
+    #[test]
+    fn a_notion_icon_image_becomes_the_icon_and_the_tint() {
+        let blocks = parse(
+            "<aside>\n<img src=\"https://www.notion.so/icons/clock_gray.svg\" alt=\"x\" width=\"40px\" /> Keep learning\n\n</aside>",
+        );
+        assert_eq!(
+            texts(&blocks),
+            vec![(callout(Some("⏰"), Some("gray")), "Keep learning")]
+        );
+    }
+
+    /// The one-line shape some exports write, and the whole document built:
+    /// the rows are callout nodes with the icon in their metadata.
+    #[test]
+    fn a_one_line_aside_builds_a_callout_node() {
+        let blocks = parse("<aside> 📌 Pinned note\n</aside>");
+        assert_eq!(
+            texts(&blocks),
+            vec![(callout(Some("📌"), None), "Pinned note")]
+        );
+
+        let context = ImportContext {
+            target_profile: None,
+            target_workspace: Some(koru_store_core_id()),
+            occupied_titles: &std::collections::BTreeSet::new(),
+            blobs: &Sink,
+            tags: &koru_import::NoTagSink,
+        };
+        let (_, snapshot, _) = build_document_from_text(
+            koru_core::WorkspaceId::new(),
+            "Doc",
+            "notion-export",
+            "<aside>\n📌 Pinned note\n\n</aside>",
+            &context,
+            &koru_import::NoProgress,
+        )
+        .unwrap();
+        let doc = WorkspaceDoc::from_snapshot(&snapshot).unwrap();
+        let root = doc.children(Parent::Root).unwrap()[0];
+        let body = doc.children(Parent::Node(root)).unwrap();
+        let node = doc.read(body[0]).unwrap();
+        assert_eq!(node.kind, koru_core::Kind::Callout);
+        assert_eq!(node.meta.icon.as_deref(), Some("📌"));
+        assert_eq!(node.content.as_text(), Some("Pinned note"));
+    }
+
+    /// Other HTML is still text, as it was before callouts.
+    #[test]
+    fn html_that_is_not_an_aside_is_unchanged() {
+        let blocks = parse("a <kbd>K</kbd> key");
+        assert_eq!(
+            texts(&blocks),
+            vec![(TextKind::Paragraph, "a <kbd>K</kbd> key")]
         );
     }
 

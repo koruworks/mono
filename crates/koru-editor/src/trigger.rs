@@ -95,6 +95,9 @@ pub enum Anchor {
     RenameImage(NodeId),
     /// A page node's metadata icon, selected by the Unicode picker.
     PageIcon(NodeId),
+    /// A callout's icon, opened by pressing it. Committing sets the icon on
+    /// every row of the callout's box, which is what keeps it one box.
+    CalloutIcon(NodeId),
     /// An attribute chip that was clicked. Nothing in the document stands in
     /// for the picker — the chip is presentation of node state, not text — so
     /// committing replaces nothing, exactly like [`Insert`](Self::Insert).

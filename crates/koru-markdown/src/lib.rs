@@ -136,6 +136,10 @@ pub fn render_parsed(
     if matches!(block.kind, TextKind::Quote) {
         prefix.push_str("\u{2502} ");
     }
+    if let TextKind::Callout { icon, .. } = &block.kind {
+        prefix.push_str(icon.as_deref().unwrap_or(koru_core::callout::DEFAULT_ICON));
+        prefix.push(' ');
+    }
     let prefix_len = prefix.len();
     let text = prefix + &block.text;
     let links = block

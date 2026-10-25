@@ -9,3 +9,5 @@ description = "Source-independent import lifecycle and preview contract for Koru
 
 [dependencies]
 koru-store-core = { path = "../koru-store-core" }
+# Recognising the emoji a callout export leads its text with.
+emojis.workspace = true

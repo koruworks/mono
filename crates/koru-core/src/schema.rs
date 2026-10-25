@@ -2630,6 +2630,21 @@ impl WorkspaceDoc {
         Ok(())
     }
 
+    /// Set a node's presentation colour — an `AccentColor` token, never RGB.
+    /// A callout's tint is the one reader today ([`crate::callout`]). `None`
+    /// (or empty) removes it, which draws the default.
+    pub fn set_colour(&mut self, target: NodeId, colour: Option<&str>) -> Result<()> {
+        let tid = self.tree_id(target)?;
+        let meta = self.nodes().get_meta(tid)?;
+        match colour {
+            Some(colour) if !colour.is_empty() => meta.insert(K_COLOUR, colour)?,
+            Some(_) | None if meta.get(K_COLOUR).is_some() => meta.delete(K_COLOUR)?,
+            Some(_) | None => {}
+        }
+        self.doc.commit();
+        Ok(())
+    }
+
     pub fn set_level_name(&mut self, target: NodeId, level: Option<&str>) -> Result<()> {
         let tid = self.tree_id(target)?;
         let meta = self.nodes().get_meta(tid)?;
@@ -2985,6 +3000,13 @@ impl WorkspaceDoc {
                 if let Some(heading) = node.meta.heading {
                     ws.set_heading(tail, Some(heading))?;
                 }
+            }
+            // A callout's look carries wherever the split falls: the new row
+            // is the next line of the same box, and a box is the rows that
+            // share an icon and a tint (`callout::continues`).
+            if node.kind == Kind::Callout {
+                ws.set_icon(tail, node.meta.icon.as_deref())?;
+                ws.set_colour(tail, node.meta.colour.as_deref())?;
             }
             ws.transplant(target, at..len, tail, 0)?;
             ws.delete_text(target, at..len)?;
@@ -3479,7 +3501,8 @@ impl WorkspaceDoc {
         let Ok(node) = self.read(target) else {
             return (None, None);
         };
-        let kind = matches!(node.kind, Kind::Task | Kind::Quote | Kind::Callout).then_some(node.kind);
+        let kind =
+            matches!(node.kind, Kind::Task | Kind::Quote | Kind::Callout).then_some(node.kind);
         (kind, node.meta.heading)
     }
 

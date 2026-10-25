@@ -886,6 +886,20 @@ impl Node {
         Self::new(Kind::Quote, Content::text(text))
     }
 
+    /// A callout line in a document, carrying `icon` (one emoji; `None` is
+    /// the default) and `tint` (an `AccentColor` token; `None` is the
+    /// default) — see [`crate::callout`].
+    pub fn callout(
+        text: impl Into<String>,
+        icon: Option<&str>,
+        tint: Option<&str>,
+    ) -> Result<Self, ShapeError> {
+        let mut node = Self::new(Kind::Callout, Content::text(text))?;
+        node.meta.icon = icon.filter(|icon| !icon.is_empty()).map(str::to_owned);
+        node.meta.colour = tint.filter(|tint| !tint.is_empty()).map(str::to_owned);
+        Ok(node)
+    }
+
     /// A code block. Its text may span many lines — newlines are legal for
     /// [`Kind::Code`], and parley treats each as a mandatory break inside one
     /// `Layout`. The grammar is set separately via `NodeMeta::language`.

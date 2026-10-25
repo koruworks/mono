@@ -290,6 +290,12 @@ pub enum RichTextKind {
     Code {
         language: Option<String>,
     },
+    /// A callout line: `icon` an emoji, `tint` an `AccentColor` token, `None`
+    /// the default for either. Markdown carries one as Notion's `<aside>`.
+    Callout {
+        icon: Option<String>,
+        tint: Option<String>,
+    },
 }
 
 /// A list marker carried in a [`RichTextBlock`].

@@ -475,3 +475,40 @@ fn evernote_link_guid_accepts_the_standard_repeated_route_only_once() {
         None
     );
 }
+
+/// Evernote's callout is a `div` marked `--en-callout`, its icon in
+/// `--en-emoji`; an older one has no emoji and means the 💡 default. Its
+/// prose lines become callout lines carrying the icon, and the text around
+/// it stays prose.
+#[test]
+fn an_evernote_callout_imports_as_callout_lines_with_its_emoji() {
+    let (document, warnings) = convert_enml(
+        r#"<en-note><div>before</div><div style="--en-callout:true; --en-emoji:🤖;--en-requiredFeatures:&quot;[\&quot;callout\&quot;]&quot;;"><div>First <b>line</b></div><div>Second line</div></div><div style="--en-callout:true;"><div>Default icon</div></div><div>after</div></en-note>"#,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let rows: Vec<_> = body_rows(&document)
+        .into_iter()
+        .map(|row| document.read(row).unwrap())
+        .collect();
+    let shape: Vec<_> = rows
+        .iter()
+        .map(|node| {
+            (
+                node.kind,
+                node.content.as_text().unwrap_or_default(),
+                node.meta.icon.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (Kind::Paragraph, "before", None),
+            (Kind::Callout, "First line", Some("🤖")),
+            (Kind::Callout, "Second line", Some("🤖")),
+            (Kind::Callout, "Default icon", None),
+            (Kind::Paragraph, "after", None),
+        ]
+    );
+    assert!(document.effective_schema_version() >= 5);
+}

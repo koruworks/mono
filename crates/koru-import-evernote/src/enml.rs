@@ -98,6 +98,12 @@ impl EnmlElement {
         })
     }
 
+    /// Whether an Evernote `--en-*: true` marker is set in the style.
+    fn style_flag(&self, wanted: &str) -> bool {
+        self.style_value(wanted)
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    }
+
     fn has_element_child(&self) -> bool {
         self.children
             .iter()
@@ -455,6 +461,7 @@ impl Converter<'_> {
                 Ok(true)
             }
             "p" => self.flush_inline(&element.children, parent, Kind::Paragraph, None, true),
+            "div" if element.style_flag("--en-callout") => self.render_callout(element, parent),
             "div" => {
                 self.render_flow(&element.children, parent, true)?;
                 Ok(true)
@@ -498,6 +505,39 @@ impl Converter<'_> {
                 self.flush_inline(&element.children, parent, Kind::Paragraph, None, false)
             }
         }
+    }
+
+    /// An Evernote callout — `<div style="--en-callout:true; --en-emoji:🤖">`
+    /// around its blocks. Its prose lines become callout lines carrying the
+    /// emoji (absent means Evernote's 💡, which is also Koru's default); a
+    /// list, a table or code inside keeps its own kind, since a Koru callout
+    /// is a line, not a container.
+    fn render_callout(&mut self, element: &EnmlElement, parent: NodeId) -> Result<bool, EnmlError> {
+        let before = self
+            .document
+            .children(Parent::Node(parent))
+            .map_err(build_error)?
+            .len();
+        self.render_flow(&element.children, parent, true)?;
+        let icon = element
+            .style_value("--en-emoji")
+            .map(|value| value.trim_matches(['"', '\'']).trim())
+            .filter(|value| !value.is_empty());
+        let rows = self
+            .document
+            .children(Parent::Node(parent))
+            .map_err(build_error)?;
+        for id in rows.into_iter().skip(before) {
+            let node = self.document.read(id).map_err(build_error)?;
+            if node.kind != Kind::Paragraph || node.meta.heading.is_some() {
+                continue;
+            }
+            self.document
+                .set_kind(id, Kind::Callout)
+                .map_err(build_error)?;
+            self.document.set_icon(id, icon).map_err(build_error)?;
+        }
+        Ok(true)
     }
 
     fn render_table(&mut self, table: &EnmlElement, parent: NodeId) -> Result<bool, EnmlError> {

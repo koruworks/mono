@@ -613,3 +613,23 @@ fn a_page_icon_replicates_as_node_metadata() {
     a.import(&b.export_all_updates().unwrap()).unwrap();
     assert_eq!(a.read(page).unwrap().meta.icon.as_deref(), Some("🔥"));
 }
+
+#[test]
+fn a_callout_split_keeps_its_icon_and_tint_on_both_rows() {
+    let mut ws = ws();
+    let id = ws
+        .insert(
+            Parent::Root,
+            Node::callout("Book tickets early", Some("⚠️"), Some("red")).unwrap(),
+        )
+        .unwrap();
+    let tail = ws.split(id, 4).unwrap();
+    let (head, tail) = (ws.read(id).unwrap(), ws.read(tail).unwrap());
+    assert_eq!(tail.kind, koru_core::Kind::Callout);
+    assert_eq!(tail.meta.icon.as_deref(), Some("⚠️"));
+    assert_eq!(tail.meta.colour.as_deref(), Some("red"));
+    assert!(koru_core::callout::continues(&head.meta, &tail.meta));
+
+    ws.set_colour(id, None).unwrap();
+    assert_eq!(ws.read(id).unwrap().meta.colour, None);
+}

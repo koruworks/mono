@@ -265,6 +265,9 @@ pub enum Hover {
     /// yet.
     Plus(usize),
     Checkbox(usize),
+    /// The icon at the head of a callout box. Pressing it opens the emoji
+    /// picker for the box.
+    CalloutIcon(usize),
     Pill {
         row: usize,
         attr: AttrId,
@@ -338,6 +341,7 @@ impl Hover {
             Self::Grip(i)
             | Self::Plus(i)
             | Self::Checkbox(i)
+            | Self::CalloutIcon(i)
             | Self::Text(i)
             | Self::Emoji(i)
             | Self::Image(i)
@@ -396,7 +400,8 @@ impl Hover {
             | Self::PanelRow(_)
             | Self::PanelControl
             | Self::ScrollTrack
-            | Self::Checkbox(_) => cursor::PRESS,
+            | Self::Checkbox(_)
+            | Self::CalloutIcon(_) => cursor::PRESS,
         }
     }
 }
@@ -1552,6 +1557,7 @@ mod tests {
             },
             Hover::Chip { row: 0, chip: 0 },
             Hover::Checkbox(0),
+            Hover::CalloutIcon(0),
             Hover::TableLayout(0),
             Hover::TableMode(0),
             Hover::PanelRow(0),

@@ -145,6 +145,9 @@ pub fn parse(text: &str) -> Vec<RichBlock> {
                         koru_import_markdown::TextKind::Code { language } => {
                             RichTextKind::Code { language }
                         }
+                        koru_import_markdown::TextKind::Callout { icon, tint } => {
+                            RichTextKind::Callout { icon, tint }
+                        }
                     },
                     runs: block
                         .runs

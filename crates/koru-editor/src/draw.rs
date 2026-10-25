@@ -176,43 +176,52 @@ pub fn draw_document(
             stroke(scene, root, theme::p().panel_border, 1.0, &panel);
         }
         if row.kind == Kind::Callout {
-            // Adjacent callout rows are one box, the way adjacent quotes share
-            // one rule: the box is drawn once, from the first visible row of
-            // the run, and the icon sits beside the run's first line.
-            let starts_visible_group = i == visible.start
-                || i.checked_sub(1)
-                    .and_then(|previous| outline.rows.get(previous))
-                    .map(|previous| previous.kind)
-                    != Some(Kind::Callout);
-            if starts_visible_group {
+            // Adjacent callout rows with the same icon and tint are one box,
+            // the way adjacent quotes share one rule: the box is drawn once,
+            // from the first visible row of the run, and the icon sits beside
+            // the run's first line. Two different callouts that touch stay two.
+            let starts_run = !i
+                .checked_sub(1)
+                .and_then(|previous| outline.rows.get(previous))
+                .is_some_and(|previous| row.continues_callout(previous));
+            if starts_run || i == visible.start {
                 let mut end = i;
                 while outline
                     .rows
                     .get(end + 1)
-                    .is_some_and(|next| next.kind == Kind::Callout)
+                    .is_some_and(|next| next.continues_callout(&outline.rows[end]))
                 {
                     end += 1;
                 }
                 let end_row = &outline.rows[end];
                 let r = rowlayout::callout_panel_rect(row, oy, end_row, end_row.y - scroll, vw);
                 let panel = rrect(r.x, r.y, r.w, r.h, 8.0);
-                let tint = theme::accent_tone("yellow").map_or(theme::p().code_bg, |t| t.fill);
-                fill(scene, root, tint, &panel);
-                let starts_run = i
-                    .checked_sub(1)
-                    .and_then(|previous| outline.rows.get(previous))
-                    .map(|previous| previous.kind)
-                    != Some(Kind::Callout);
+                let (icon, tint) = row.callout_look();
+                let tone = theme::accent_tone(tint.map_or("yellow", |t| t.as_str()));
+                fill(
+                    scene,
+                    root,
+                    tone.map_or(theme::p().code_bg, |t| t.fill),
+                    &panel,
+                );
                 if starts_run {
                     let slot = rowlayout::callout_icon_rect(row, oy);
-                    let layout = engine.icon_layout(koru_draw::icons::LIGHTBULB, slot.w);
+                    // No icon set draws the lightbulb glyph; a chosen one — the
+                    // default emoji included — draws as the emoji itself.
+                    let (layout, brush) = match row.icon.as_deref() {
+                        Some(_) => (engine.emoji_layout(icon, slot.w), None),
+                        None => (
+                            engine.icon_layout(koru_draw::icons::LIGHTBULB, slot.w),
+                            Some(tone.map_or(theme::p().text_dim, |t| t.ink)),
+                        ),
+                    };
                     draw_layout(
                         scene,
                         root,
                         &layout,
                         slot.x + (slot.w - layout.width()) * 0.5,
                         slot.y + (slot.h - layout.height()) * 0.5,
-                        Some(theme::p().text_dim),
+                        brush,
                     );
                 }
             }

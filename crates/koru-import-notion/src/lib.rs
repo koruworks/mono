@@ -1096,6 +1096,71 @@ mod tests {
     /// because an importer's exemption is that the classification entry point
     /// and the six canonical commands are simply not on this path — which this
     /// test reads off the crate itself rather than taking on trust.
+    /// A Notion callout survives the export: the `<aside>` Notion's Markdown
+    /// writes lands as callout rows carrying the icon, emoji or built-in.
+    #[test]
+    fn a_notion_callout_lands_as_a_callout_with_its_icon() {
+        let id = "22222222222222222222222222222222";
+        let (_dir, zip) = write_zip(&[(
+            &format!("Guide {id}.md"),
+            "# Guide\n\n<aside>\n⚠️ Back up first\n\n</aside>\n\n<aside>\n<img src=\"https://www.notion.so/icons/info-alternate_blue.svg\" alt=\"i\" width=\"40px\" /> Built-in icon\n\n</aside>\n",
+        )]);
+        let prepared = NotionImporter
+            .inspect(ImportSource::Files(vec![zip]), &NoProgress)
+            .unwrap();
+        let blobs = MemBlobs(Mutex::new(Vec::new()));
+        let product = prepared
+            .build(
+                ImportOptions {
+                    identity: IdentityMode::Copy,
+                    accept_warnings: true,
+                },
+                &ImportContext {
+                    target_profile: None,
+                    target_workspace: Some(StoreWorkspaceId::new()),
+                    occupied_titles: &std::collections::BTreeSet::new(),
+                    blobs: &blobs,
+                    tags: &koru_import::NoTagSink,
+                },
+                &NoProgress,
+            )
+            .unwrap();
+        let ImportProduct::Documents(content) = product else {
+            panic!("expected documents");
+        };
+        let page = content
+            .documents
+            .iter()
+            .find(|d| d.title == "Guide")
+            .unwrap();
+        let doc = WorkspaceDoc::from_snapshot(&page.snapshot).unwrap();
+        let callouts: Vec<_> = doc
+            .walk_all()
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| doc.read(id).unwrap())
+            .filter(|node| node.kind == koru_core::Kind::Callout)
+            .map(|node| {
+                (
+                    node.content.as_text().unwrap_or_default().to_owned(),
+                    node.meta.icon,
+                    node.meta.colour,
+                )
+            })
+            .collect();
+        assert_eq!(
+            callouts,
+            vec![
+                ("Back up first".to_owned(), Some("⚠️".to_owned()), None),
+                (
+                    "Built-in icon".to_owned(),
+                    Some("ℹ️".to_owned()),
+                    Some("blue".to_owned())
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn a_notion_to_do_lands_verbatim_and_no_task_is_invented() {
         let id = "11111111111111111111111111111111";

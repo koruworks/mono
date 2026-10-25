@@ -102,6 +102,10 @@ pub enum Outcome {
     SetAttr(Vec<koru_core::NodeId>, String, koru_core::node::AttrValue),
     /// Dismiss and remove every value under this key from these nodes.
     ClearAttr(Vec<koru_core::NodeId>, String),
+    /// Dismiss and give these callout rows — one callout's box — this tint.
+    /// `None` is the default tint. Not an attribute: a callout's tint is
+    /// presentation in `NodeMeta::colour`, like a page's icon.
+    SetCalloutTint(Vec<koru_core::NodeId>, Option<koru_core::AccentColor>),
     /// Dismiss and put these nodes in a list — making each a task first when
     /// it is not one. `/task_list`'s pick of an existing list.
     JoinList(Vec<koru_core::NodeId>, koru_core::ids::ListId),

@@ -57,6 +57,24 @@ fn heading_quote_code_divider_and_table() {
 }
 
 #[test]
+fn a_callout_leaves_as_a_quote_led_by_its_own_icon() {
+    let (mut ws, root) = with_doc("Doc");
+    ws.insert(
+        Parent::Node(root),
+        Node::callout("plain", None, None).unwrap(),
+    )
+    .unwrap();
+    ws.insert(
+        Parent::Node(root),
+        Node::callout("careful", Some("⚠️"), Some("red")).unwrap(),
+    )
+    .unwrap();
+    let md = render_document(&ws, &NoBlobs, "x.assets").unwrap().markdown;
+    assert!(md.contains("> 💡 plain"));
+    assert!(md.contains("> ⚠️ careful"));
+}
+
+#[test]
 fn checkbox_list_and_task_tree() {
     let (mut ws, root) = with_doc("Tasks");
     let block = ws

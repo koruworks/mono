@@ -78,7 +78,10 @@ fn valid_overlay_span(ws: &WorkspaceDoc, trigger: &Trigger, start: usize, end: u
         }
         Anchor::Pill => span == ANCHOR_STR,
         Anchor::Insert | Anchor::Chip | Anchor::Selection(_) | Anchor::NewBlock { .. } => true,
-        Anchor::Rename(_) | Anchor::RenameImage(_) | Anchor::PageIcon(_) => false,
+        Anchor::Rename(_)
+        | Anchor::RenameImage(_)
+        | Anchor::PageIcon(_)
+        | Anchor::CalloutIcon(_) => false,
     }
 }
 
@@ -3586,7 +3589,10 @@ pub trait Editing {
                 .unwrap_or(fallback_end)
                 .min(len),
             // Handled above; it never reaches the text.
-            Anchor::Rename(_) | Anchor::RenameImage(_) | Anchor::PageIcon(_) => return,
+            Anchor::Rename(_)
+            | Anchor::RenameImage(_)
+            | Anchor::PageIcon(_)
+            | Anchor::CalloutIcon(_) => return,
         };
         if !valid_overlay_span(ws, &trigger, start, end) {
             self.view_mut().notice = Some("that insertion point changed elsewhere".into());
@@ -3643,6 +3649,18 @@ pub trait Editing {
             _ => None,
         };
         self.view_mut().overlay = Overlay::None;
+        if let Anchor::CalloutIcon(node) = trigger.anchor {
+            ws.checkpoint();
+            // The whole box, so it stays one box: a box is the rows that share
+            // an icon and a tint.
+            let run = self.body().callout_run(node);
+            let saved = run.iter().all(|row| ws.set_icon(*row, Some(value)).is_ok());
+            if !saved {
+                self.view_mut().notice = Some("could not set this callout's icon".into());
+            }
+            self.body_mut().rebuild(ws);
+            return;
+        }
         if let Anchor::PageIcon(node) = trigger.anchor {
             ws.checkpoint();
             let saved = ws.set_icon(node, Some(value)).is_ok();
@@ -4042,6 +4060,7 @@ pub trait Editing {
                 }
                 outcome @ (Outcome::SetAttr(..)
                 | Outcome::ClearAttr(..)
+                | Outcome::SetCalloutTint(..)
                 | Outcome::AddTag(..)
                 | Outcome::RemoveTag(..)
                 | Outcome::CreateTag(..)
@@ -5226,6 +5245,21 @@ pub trait Editing {
         }
     }
 
+    /// The emoji picker for the callout box `node` is in. The choice lands on
+    /// every row of the box (`commit_unicode`).
+    fn open_callout_icon_picker(&mut self, node: NodeId) {
+        let trigger = Trigger {
+            kind: TriggerKind::Colon,
+            start: 0,
+            node,
+            anchor: Anchor::CalloutIcon(node),
+            stable: None,
+        };
+        let view = self.view_mut();
+        let picker = EmojiPicker::standalone(&mut view.engine, trigger);
+        view.overlay = Overlay::Emoji(picker);
+    }
+
     fn open_page_icon_picker(
         &mut self,
         node: NodeId,
@@ -5461,6 +5495,7 @@ pub trait Editing {
         };
         match cmd {
             command_menu::Command::Remind => self.arm_reminder(ws, t, arg),
+            command_menu::Command::Callout => self.commit_callout_arg(ws, t, arg),
             command_menu::Command::Due => {
                 // The clock is resolved here and injected — the parser never
                 // reads system time (its whole test story).
@@ -5886,6 +5921,23 @@ pub trait Editing {
     }
 
     fn open_color_chooser(&mut self, ws: &WorkspaceDoc, trigger: Trigger, nodes: Vec<NodeId>) {
+        // `/color` in a callout colours the callout, the way Notion's block
+        // colour does — the box, every row of it.
+        if let [node] = nodes.as_slice()
+            && let Ok(read) = ws.read(*node)
+            && read.kind == Kind::Callout
+        {
+            let run = self.body().callout_run(*node);
+            let width = color_picker::ColorPicker::measure_width(&mut self.view_mut().engine);
+            let mut picker = color_picker::ColorPicker::for_callout(
+                trigger,
+                run,
+                koru_core::callout::tint(&read.meta),
+            );
+            picker.width = width;
+            self.view_mut().overlay = Overlay::Color(picker);
+            return;
+        }
         let current = current_color(ws, nodes.first().copied());
         let width = color_picker::ColorPicker::measure_width(&mut self.view_mut().engine);
         let mut picker = color_picker::ColorPicker::open_for(trigger, nodes, current);
@@ -6166,6 +6218,16 @@ pub trait Editing {
                 for one in owed {
                     crate::tasks::remember(&mut self.body_mut().task_activity, one);
                 }
+            }
+            Outcome::SetCalloutTint(nodes, tint) => {
+                // The same undo bracket and trigger removal an attribute gets;
+                // the write is the box's tint, on every row of the box.
+                let token = tint.map(koru_core::AccentColor::as_str);
+                self.commit_attribute(ws, trigger, nodes, &mut |ws| {
+                    nodes
+                        .iter()
+                        .try_for_each(|&node| ws.set_colour(node, token))
+                });
             }
             Outcome::AddTag(nodes, tag) => {
                 // **The tag chooser stays open across several choices**
@@ -6498,6 +6560,68 @@ pub trait Editing {
         self.body_mut().rebuild(ws);
         self.body_mut().focus_on(id);
         self.place_caret(trigger.start);
+    }
+
+    /// `/callout blue`, `/callout ⚠️`, `/callout red 🔥`: make the row a
+    /// callout with that tint and/or icon, or — on a row that already is one
+    /// — give its whole box the new look. A colour is a Koru token or a Notion
+    /// name (`brown`, `blue_background`, `default`); anything else that is an
+    /// emoji is the icon. One undo step, like `/callout` itself.
+    fn commit_callout_arg(&mut self, ws: &mut WorkspaceDoc, trigger: Trigger, arg: &str) {
+        if !self.view().quotes_enabled {
+            return;
+        }
+        let mut icon = None;
+        let mut tint = None;
+        let mut unknown = Vec::new();
+        for word in arg.split_whitespace() {
+            if let Some(named) = koru_core::callout::tint_from_name(word) {
+                tint = Some(named);
+            } else if emojis::get(word).is_some() {
+                icon = Some(word);
+            } else {
+                unknown.push(word);
+            }
+        }
+        let Some(row) = self.body_mut().row(trigger.node) else {
+            return;
+        };
+        let (len, caret) = (row.text.len(), row.caret());
+        let end = caret.clamp(trigger.start, len);
+        // An existing box changes as a whole; a new callout takes the look on
+        // its own row only, so it never recolours a neighbouring box it lands
+        // beside.
+        let rows = match row.kind {
+            Kind::Callout => self.body().callout_run(trigger.node),
+            _ => vec![trigger.node],
+        };
+        let id = trigger.node;
+        self.body_mut().focus_on(id);
+        ws.checkpoint();
+        ws.begin_group();
+        if end > trigger.start {
+            let _ = ws.delete_text(id, trigger.start..end);
+        }
+        let _ = ws.set_heading(id, None);
+        let _ = ws.set_kind(id, Kind::Callout);
+        for row in rows {
+            if let Some(icon) = icon {
+                let _ = ws.set_icon(row, Some(icon));
+            }
+            if let Some(tint) = tint {
+                let _ = ws.set_colour(row, tint.map(koru_core::AccentColor::as_str));
+            }
+        }
+        ws.checkpoint();
+        self.body_mut().rebuild(ws);
+        self.body_mut().focus_on(id);
+        self.place_caret(trigger.start);
+        if !unknown.is_empty() {
+            self.view_mut().notice = Some(format!(
+                "not a callout colour or emoji: {}",
+                unknown.join(" ")
+            ));
+        }
     }
 
     /// Take the typed `/tasks` back out and wrap the row into a ListBlock.
@@ -7595,6 +7719,12 @@ pub trait Editing {
         if self.checkbox_rect(i).is_some_and(|r| r.contains(x, doc_y)) {
             return Some(Hover::Checkbox(i));
         }
+        if self
+            .callout_icon_rect(i)
+            .is_some_and(|r| r.contains(x, doc_y))
+        {
+            return Some(Hover::CalloutIcon(i));
+        }
         if let Some(reminder) = self.reminder_at_point(i, x, doc_y) {
             return Some(Hover::Reminder { row: i, reminder });
         }
@@ -8015,6 +8145,16 @@ pub trait Editing {
             let (id, done) = (self.body_mut().rows[i].id, self.body_mut().rows[i].done);
             self.body_mut().set_done(ws, id, !done);
             self.reflow();
+            return true;
+        }
+
+        // A callout's icon opens the emoji picker for its box.
+        if self
+            .callout_icon_rect(i)
+            .is_some_and(|r| r.contains(cx, doc_y))
+        {
+            let id = self.body().rows[i].id;
+            self.open_callout_icon_picker(id);
             return true;
         }
 
@@ -8838,6 +8978,7 @@ pub trait Editing {
             }
             outcome @ (Outcome::SetAttr(..)
             | Outcome::ClearAttr(..)
+            | Outcome::SetCalloutTint(..)
             | Outcome::AddTag(..)
             | Outcome::RemoveTag(..)
             | Outcome::CreateTag(..)
@@ -8899,6 +9040,21 @@ pub trait Editing {
         // became a third caller: a control published somewhere other than where
         // it answers is a control a screen reader cannot press.
         rowlayout::checkbox_band(row, row.y)
+    }
+
+    /// Rect of the icon at the head of a callout box, in document coordinates
+    /// — `None` on every other row, on a callout row that continues the box
+    /// above it, and in a read-only view, where the icon is only a picture.
+    fn callout_icon_rect(&self, i: usize) -> Option<Rect> {
+        if self.view().read_only {
+            return None;
+        }
+        let row = self.body().rows.get(i)?;
+        let continues = i
+            .checked_sub(1)
+            .and_then(|above| self.body().rows.get(above))
+            .is_some_and(|above| row.continues_callout(above));
+        (row.kind == Kind::Callout && !continues).then(|| rowlayout::callout_icon_rect(row, row.y))
     }
 
     /// Rect of a row's drag grip, which lives in the affordance lane.
@@ -12238,6 +12394,100 @@ mod tests {
         assert_eq!(e.body.focused().unwrap().kind, Kind::Paragraph);
     }
 
+    /// `/callout blue ⚠️` makes a callout with that tint and icon, and Enter
+    /// carries both to the next line so it stays in the same box.
+    #[test]
+    fn slash_callout_with_a_colour_and_an_emoji_sets_the_look() {
+        let (mut ws, mut e) = doc_editor(&[""]);
+        e.view.active = true;
+        e.view.quotes_enabled = true;
+        let id = e.body.focused().unwrap().id;
+        type_str(&mut e, &mut ws, "/callout blue ⚠️");
+        enter(&mut e, &mut ws);
+        let node = ws.read(id).unwrap();
+        assert_eq!(node.kind, Kind::Callout);
+        assert_eq!(node.content.as_text(), Some(""));
+        assert_eq!(node.meta.colour.as_deref(), Some("blue"));
+        assert_eq!(node.meta.icon.as_deref(), Some("⚠️"));
+
+        e.type_text(&mut ws, "Mind the gap");
+        e.reflow();
+        assert!(e.act(&mut ws, Action::SplitLine));
+        let next = e.body.focused().unwrap().id;
+        assert_eq!(e.body.callout_run(next), vec![id, next]);
+    }
+
+    /// On a row that already is a callout, `/callout <colour>` recolours the
+    /// whole box and leaves its text alone.
+    #[test]
+    fn slash_callout_with_a_colour_recolours_the_whole_box() {
+        let (mut ws, mut e) = doc_editor(&["first", "second"]);
+        e.view.active = true;
+        e.view.quotes_enabled = true;
+        let ids: Vec<NodeId> = e
+            .body
+            .rows
+            .iter()
+            .filter(|r| !r.is_title)
+            .map(|r| r.id)
+            .collect();
+        for id in &ids {
+            ws.set_kind(*id, Kind::Callout).unwrap();
+        }
+        e.body.rebuild(&ws);
+        e.body.focus_on(ids[0]);
+        e.place_caret("first".len());
+        type_str(&mut e, &mut ws, "/callout red");
+        enter(&mut e, &mut ws);
+        for id in &ids {
+            assert_eq!(ws.read(*id).unwrap().meta.colour.as_deref(), Some("red"));
+        }
+        assert_eq!(ws.read(ids[0]).unwrap().content.as_text(), Some("first"));
+        assert_eq!(e.body.callout_run(ids[1]), ids);
+    }
+
+    /// The icon heads the box and is pressable only there; the emoji picked
+    /// for it lands on every row of the box, so the box stays whole, and a
+    /// callout below with a different icon is a box of its own.
+    #[test]
+    fn a_callout_icon_opens_the_picker_and_sets_the_whole_box() {
+        let (mut ws, mut e) = doc_editor(&["one", "two", "other"]);
+        e.view.quotes_enabled = true;
+        let ids: Vec<NodeId> = e
+            .body
+            .rows
+            .iter()
+            .filter(|r| !r.is_title)
+            .map(|r| r.id)
+            .collect();
+        for id in &ids {
+            ws.set_kind(*id, Kind::Callout).unwrap();
+        }
+        ws.set_icon(ids[2], Some("🔥")).unwrap();
+        e.body.rebuild(&ws);
+        e.reflow();
+        let index = |e: &Editor, id| e.body.index_of(id).unwrap();
+        assert!(e.callout_icon_rect(index(&e, ids[0])).is_some());
+        assert!(
+            e.callout_icon_rect(index(&e, ids[1])).is_none(),
+            "continues the box above"
+        );
+        assert!(
+            e.callout_icon_rect(index(&e, ids[2])).is_some(),
+            "a different icon is a new box"
+        );
+
+        e.open_callout_icon_picker(ids[1]);
+        let trigger = e.view.overlay.trigger().unwrap();
+        assert_eq!(trigger.anchor, Anchor::CalloutIcon(ids[1]));
+        e.commit_unicode(&mut ws, trigger, "🚀");
+        assert!(matches!(e.view.overlay, Overlay::None));
+        for id in &ids[..2] {
+            assert_eq!(ws.read(*id).unwrap().meta.icon.as_deref(), Some("🚀"));
+        }
+        assert_eq!(ws.read(ids[2]).unwrap().meta.icon.as_deref(), Some("🔥"));
+    }
+
     /// Backspace at the start of a callout takes the box away and keeps the
     /// text, rather than joining it to the line above.
     #[test]
@@ -13893,6 +14143,59 @@ mod tests {
             1,
             "and choosing the unticked row puts it back"
         );
+    }
+
+    /// `/color` in a callout opens the same nine colours for the callout's
+    /// box: the choice tints every row of it, sets no `koru.color`, and takes
+    /// the typed `/color` back out.
+    #[test]
+    fn slash_color_in_a_callout_tints_its_box() {
+        use koru_core::attributes::KEY_COLOR;
+        let (mut ws, mut e) = doc_editor(&["first", "second"]);
+        e.view.active = true;
+        let ids: Vec<NodeId> = e
+            .body
+            .rows
+            .iter()
+            .filter(|r| !r.is_title)
+            .map(|r| r.id)
+            .collect();
+        for id in &ids {
+            ws.set_kind(*id, Kind::Callout).unwrap();
+        }
+        e.body.rebuild(&ws);
+        e.body.focus_on(ids[1]);
+        e.place_caret("second".len());
+
+        type_str(&mut e, &mut ws, "/color");
+        enter(&mut e, &mut ws);
+        let Overlay::Color(picker) = &e.view.overlay else {
+            panic!("the colour picker is open");
+        };
+        assert!(picker.callout);
+        assert_eq!(picker.nodes, ids, "the whole box");
+        // Row 0 with nothing set is Red.
+        enter(&mut e, &mut ws);
+        for id in &ids {
+            let node = ws.read(*id).unwrap();
+            assert_eq!(node.meta.colour.as_deref(), Some("red"));
+            assert!(!node.content.attrs().iter().any(|a| a.role == KEY_COLOR));
+        }
+        assert_eq!(ws.read(ids[1]).unwrap().content.as_text(), Some("second"));
+        assert_eq!(e.body.callout_run(ids[0]), ids, "still one box");
+
+        // Clear — the row above the preselected current tint — brings back
+        // the default.
+        type_str(&mut e, &mut ws, "/color");
+        enter(&mut e, &mut ws);
+        e.key(
+            &mut ws,
+            &Key::Named(NamedKey::ArrowUp),
+            None,
+            ModifiersState::empty(),
+        );
+        enter(&mut e, &mut ws);
+        assert_eq!(ws.read(ids[0]).unwrap().meta.colour, None);
     }
 
     /// `/color` sets the token, the picker preselects it next time, and Clear

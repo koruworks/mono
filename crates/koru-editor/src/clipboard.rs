@@ -109,6 +109,10 @@ pub struct CopiedRow {
     pub kind: Kind,
     pub done: bool,
     pub level_name: Option<String>,
+    /// A callout's icon and tint ([`koru_core::callout`]), carried so a
+    /// copied callout pastes with its look. Ignored on every other kind.
+    pub icon: Option<String>,
+    pub colour: Option<String>,
     pub align: Option<Align>,
     pub heading: Option<Heading>,
     pub table_layout: Option<TableLayout>,
@@ -124,6 +128,13 @@ pub struct CopiedRow {
 }
 
 impl CopiedRow {
+    /// The icon this row leaves with when it is a callout.
+    fn callout_icon(&self) -> &str {
+        self.icon
+            .as_deref()
+            .unwrap_or(koru_core::callout::DEFAULT_ICON)
+    }
+
     /// The text alone, with each pill replaced by the label it draws.
     ///
     /// The anchor character is invisible and means nothing outside this
@@ -157,7 +168,7 @@ impl CopiedRow {
             return "> ".into();
         }
         if self.kind == Kind::Callout {
-            return "> 💡 ".into();
+            return format!("> {} ", self.callout_icon());
         }
         if let Some(spec) = self.list {
             let indent = "  ".repeat(spec.depth as usize);
@@ -746,6 +757,8 @@ fn read_row<E: Editing + ?Sized>(
         kind: node.kind,
         done: node.meta.done,
         level_name: node.meta.level_name.clone(),
+        icon: node.meta.icon.clone(),
+        colour: node.meta.colour.clone(),
         align: node.meta.align,
         heading: node.meta.heading,
         table_layout: node.meta.table_layout,
@@ -934,6 +947,8 @@ fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
+                icon: None,
+                colour: None,
                 align: None,
                 // A fragment of a heading is not a heading.
                 heading: None,
@@ -973,6 +988,8 @@ pub fn cf_html(ws: &WorkspaceDoc, payload: &Payload) -> Option<String> {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
+                icon: None,
+                colour: None,
                 align: None,
                 heading: None,
                 table_layout: None,
@@ -1053,7 +1070,9 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                     out.push_str("</p></blockquote>");
                 } else if row.kind == Kind::Callout {
                     // `<aside>` is what Notion writes for a callout.
-                    out.push_str("<aside><p>💡 ");
+                    out.push_str("<aside><p>");
+                    out.push_str(&html_escape(row.callout_icon()));
+                    out.push(' ');
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p></aside>");
                 } else {
@@ -1256,6 +1275,10 @@ fn apply_meta(ws: &mut WorkspaceDoc, id: NodeId, row: &CopiedRow, kind: Kind) {
     }
     if kind == Kind::Table {
         let _ = ws.set_table_layout(id, row.table_layout.unwrap_or_default());
+    }
+    if kind == Kind::Callout {
+        let _ = ws.set_icon(id, row.icon.as_deref());
+        let _ = ws.set_colour(id, row.colour.as_deref());
     }
 }
 
@@ -1538,6 +1561,8 @@ fn unformatted_text(ws: &WorkspaceDoc) -> Option<String> {
             kind: Kind::Task,
             done: false,
             level_name: None,
+            icon: None,
+            colour: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -1732,6 +1757,8 @@ pub fn paste_plain_text<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc, t
             kind: Kind::Task,
             done: false,
             level_name: None,
+            icon: None,
+            colour: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -1793,6 +1820,8 @@ fn paste_inline<E: Editing + ?Sized>(
             kind: Kind::Task,
             done: false,
             level_name: None,
+            icon: None,
+            colour: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -3362,6 +3391,8 @@ mod tests {
             kind: Kind::Task,
             done: false,
             level_name: None,
+            icon: None,
+            colour: None,
             align: None,
             heading: None,
             table_layout: None,

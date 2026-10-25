@@ -428,9 +428,39 @@ impl From<&str> for ImportError {
     }
 }
 
+/// The emoji a callout's text leads with in another app's export — Notion's
+/// Markdown writes `<aside>` then `💡 First line`, Trilium and others prepend
+/// the icon the same way. Returns the icon and how many bytes of `text` it and
+/// the space after it take, so the caller can strip them. `None` when the
+/// first word is not a single emoji.
+pub fn leading_callout_icon(text: &str) -> Option<(String, usize)> {
+    let start = text.len() - text.trim_start().len();
+    let rest = &text[start..];
+    let word_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let word = &rest[..word_end];
+    emojis::get(word)?;
+    let after = &rest[word_end..];
+    let space = after.len() - after.trim_start().len();
+    Some((word.to_owned(), start + word_end + space))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_leading_emoji_is_a_callout_icon_and_a_word_is_not() {
+        assert_eq!(
+            leading_callout_icon(" 💡 Read this"),
+            Some(("💡".to_owned(), " 💡 ".len()))
+        );
+        assert_eq!(
+            leading_callout_icon("⚠️"),
+            Some(("⚠️".to_owned(), "⚠️".len()))
+        );
+        assert_eq!(leading_callout_icon("Read this"), None);
+        assert_eq!(leading_callout_icon(""), None);
+    }
 
     struct Stub;
     static DESC: ImporterDescriptor = ImporterDescriptor {

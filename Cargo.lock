@@ -5992,6 +5992,7 @@ version = "0.0.3"
 name = "koru-import"
 version = "0.0.3"
 dependencies = [
+ "emojis",
  "koru-store-core",
 ]
 

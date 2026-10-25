@@ -898,6 +898,11 @@ impl View for BuiltInDocument {
                         }
                         RichTextKind::Quote => Node::quote(rt.text.replace(['\n', '\r'], "")),
                         RichTextKind::Code { .. } => Node::code(rt.text.clone()),
+                        RichTextKind::Callout { icon, tint } => Node::callout(
+                            rt.text.replace(['\n', '\r'], ""),
+                            icon.as_deref(),
+                            tint.as_deref(),
+                        ),
                     };
                     let language = match &rt.kind {
                         RichTextKind::Code { language } => language.as_deref(),

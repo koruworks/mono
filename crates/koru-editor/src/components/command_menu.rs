@@ -393,11 +393,14 @@ impl Command {
 
     /// Whether text after the name in the search field is an argument this
     /// command can commit from directly — `due friday`, `priority high`.
-    /// D7's typed-argument sugar, and only these two: everything else either
-    /// has nothing to type (`/color` is nine rows) or its own richer query
-    /// (the tag chooser's field).
+    /// D7's typed-argument sugar: everything else either has nothing to type
+    /// (`/color` is nine rows) or its own richer query (the tag chooser's
+    /// field). `callout blue` / `callout ⚠️` set a callout's look.
     pub fn takes_argument(self) -> bool {
-        matches!(self, Self::Due | Self::Priority | Self::Remind)
+        matches!(
+            self,
+            Self::Due | Self::Priority | Self::Remind | Self::Callout
+        )
     }
 
     /// The typing shorthand that does the same thing, set quietly at the row's
@@ -1854,6 +1857,19 @@ mod tests {
             Command::Delegate.hint().is_empty(),
             "the chord belongs to the modal, not to the row"
         );
+    }
+
+    /// `callout blue ⚠️` hands its look to the editor rather than opening a
+    /// bare callout.
+    #[test]
+    fn callout_takes_its_look_as_an_argument() {
+        let (mut engine, mut m) = menu();
+        typed(&mut engine, &mut m, "callout blue ⚠️");
+        assert_eq!(m.hits, vec![Command::Callout]);
+        assert!(matches!(
+            press(&mut engine, &mut m, NamedKey::Enter),
+            Outcome::CommandArg(Command::Callout, arg) if arg == "blue ⚠️"
+        ));
     }
 
     #[test]

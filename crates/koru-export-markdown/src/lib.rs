@@ -362,7 +362,7 @@ fn emit_node(
                 }
             } else {
                 let prefix = block_prefix(node);
-                out.push_str(prefix);
+                out.push_str(&prefix);
                 out.push_str(&inline_line(ws, id, node)?);
                 out.push_str("\n\n");
                 emit_children(
@@ -434,14 +434,14 @@ fn emit_node(
     Ok(())
 }
 
-fn block_prefix(node: &Node) -> &'static str {
+fn block_prefix(node: &Node) -> std::borrow::Cow<'static, str> {
     if node.kind == Kind::Quote {
-        return "> ";
+        return "> ".into();
     }
     // A callout has no CommonMark form; a quote led by its icon reads the
     // same in any viewer.
     if node.kind == Kind::Callout {
-        return "> 💡 ";
+        return format!("> {} ", koru_core::callout::icon(&node.meta)).into();
     }
     match node.meta.heading {
         Some(Heading::H1) => "# ",
@@ -452,6 +452,7 @@ fn block_prefix(node: &Node) -> &'static str {
         Some(Heading::H6) => "###### ",
         None => "",
     }
+    .into()
 }
 
 fn list_marker(style: ListStyle, index: usize, done: bool) -> String {

@@ -138,6 +138,8 @@ pub struct Paragraph {
     /// empty vec draws nothing: unset attributes are invisible.
     pub chips: Vec<crate::chips::ChipSpec>,
     pub icon: Option<String>,
+    /// `NodeMeta::colour`: a callout's tint token. See [`Paragraph::callout_look`].
+    pub colour: Option<String>,
     pub level_name: Option<String>,
 
     /// The image this row renders instead of text. `None` for every text row;
@@ -293,6 +295,7 @@ impl Paragraph {
             pills,
             chips: crate::chips::attribute_chips(node),
             icon: node.meta.icon.clone(),
+            colour: node.meta.colour.clone(),
             level_name: node.meta.level_name.clone(),
             image: image_of(&node.content, &node.meta),
             layout: Layout::new(),
@@ -326,6 +329,27 @@ impl Paragraph {
     /// `geometry::text_x` with a depth: the column now depends on the checkbox
     /// too, and a call site that remembered one and forgot the other would draw
     /// the glyphs somewhere the clicks do not land.
+    /// The icon and tint this row draws when it is a callout, defaults filled
+    /// in — the pair [`koru_core::callout::continues`] compares, so a box here
+    /// is exactly the run the document model means.
+    pub fn callout_look(&self) -> (&str, Option<koru_core::AccentColor>) {
+        (
+            self.icon
+                .as_deref()
+                .unwrap_or(koru_core::callout::DEFAULT_ICON),
+            self.colour
+                .as_deref()
+                .and_then(koru_core::AccentColor::parse),
+        )
+    }
+
+    /// Whether this callout row continues the box of the callout row `above`.
+    pub fn continues_callout(&self, above: &Paragraph) -> bool {
+        self.kind == Kind::Callout
+            && above.kind == Kind::Callout
+            && self.callout_look() == above.callout_look()
+    }
+
     pub fn text_x(&self) -> f32 {
         text_x(self.depth, self.is_task() || self.list_style.is_some())
             + match self.kind {
@@ -499,6 +523,7 @@ impl Paragraph {
         self.language = language;
         self.table_layout = table_layout;
         self.icon = node.meta.icon.clone();
+        self.colour = node.meta.colour.clone();
         self.level_name = node.meta.level_name.clone();
         // **A row carrying a dictation splice is always re-read.** `same`
         // compares `self.text` — which is the *composed* string while a
