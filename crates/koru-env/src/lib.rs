@@ -585,7 +585,7 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_ENABLE_TASKS,
-        "Shows the Tasks view and its entry points (`/due` still creates a task). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows the Tasks view and its entry points (`/due` still creates a task). On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(

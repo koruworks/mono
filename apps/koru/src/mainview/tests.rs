@@ -3406,12 +3406,12 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     (v, workspace, row, doc)
 }
 
-/// **A double-click opens the row as a tab of its own** (the CTO's note):
-/// the first click reused the working tab, the second keeps it, so the next
-/// click on another row opens beside it rather than over it. Nothing is
-/// doubled.
+/// **A double-click opens the row in a new tab of its own** (the CTO's
+/// note): the first click showed it in the working tab, the second opens a
+/// new tab on it and keeps that one, so the next click on another row
+/// reuses the working tab and leaves the kept one standing.
 #[test]
-fn a_double_click_keeps_the_rows_tab() {
+fn a_double_click_opens_the_row_in_a_new_kept_tab() {
     let (mut v, mut workspace, row, doc) = sidebar_with_a_document();
     let (x, y) = (row.x + row.w * 0.4, row.centre().1);
     v.mouse_down(&mut workspace.ws, x, y, false);
@@ -3423,11 +3423,11 @@ fn a_double_click_keeps_the_rows_tab() {
     );
     let tabs = v.tabs().len();
     assert!(v.mouse_double_click(&workspace.ws, x, y));
-    assert_eq!(v.tabs().len(), tabs, "no second tab on the same document");
-    assert_eq!(v.document_root(), Some(doc));
+    assert_eq!(v.tabs().len(), tabs + 1, "a new tab appeared");
+    assert_eq!(v.document_root(), Some(doc), "on the document");
     assert!(
         !v.tabs().active_tab().is_reusable(),
-        "kept: the next click opens beside it"
+        "kept: the next click opens elsewhere"
     );
 
     let other = a_document(&mut workspace.ws, "Other");
@@ -3443,7 +3443,9 @@ fn a_double_click_keeps_the_rows_tab() {
     v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
     v.mouse_up(&mut workspace.ws);
     assert_eq!(v.document_root(), Some(other));
-    assert_eq!(v.tabs().len(), tabs + 1, "beside the kept tab, not over it");
+    // The kept tab was the active one, and the strip reuses only Main's
+    // last-active tab: the click opens beside it, as it would beside a pin.
+    assert_eq!(v.tabs().len(), tabs + 2, "beside the kept tab");
     assert!(
         labels(&v).contains(&"Brief".to_string()),
         "the kept tab is still there: {:?}",

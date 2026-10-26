@@ -88,10 +88,9 @@ pub enum Outcome {
     /// the note's, not the row's. The same reasoning that keeps
     /// [`Outcome::DownloadFile`] distinct.
     OpenNote(NodeId),
-    /// Double-clicked a document or canvas row: open it as a tab of its own
-    /// (the CTO's note). The first click of the pair opened it in the
-    /// working tab; the container keeps that tab rather than pushing a
-    /// second one on the same document.
+    /// Double-clicked a document or canvas row: open it in a new tab of its
+    /// own, kept (the CTO's note). The first click of the pair showed it in
+    /// the working tab, which stays the working tab.
     OpenNodeInNewTab(NodeId),
     /// A document dragged to a new place in the explore tree. `nodes` is the
     /// carried set in document order (one entry for a plain drag); `target`

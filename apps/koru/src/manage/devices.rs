@@ -416,7 +416,11 @@ impl ManageView {
                     w,
                     ActionButton::H,
                 ),
-                label: format!("Unlink {}\u{2026}", device.display_name),
+                // *Unlink…* alone (the CTO's note): the row names the device,
+                // and the button is measured for this word — the name made it
+                // overflow and elide. The screen reader still hears the name
+                // (`control_name`).
+                label: UNLINK.to_owned(),
                 look: Look::Action(ActionStyle::Destructive),
             });
         }

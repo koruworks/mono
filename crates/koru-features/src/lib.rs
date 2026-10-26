@@ -197,8 +197,10 @@ pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"
 /// unset: agent *tabs* ship, the views over their runs and results do not
 /// (maintainers, 2026-10-16).
 pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT_VIEWS"));
-/// The Tasks view and its entry points, as baked into this build.
-pub const ENABLE_TASKS: bool = switch_value(option_env!("KORU_ENABLE_TASKS"));
+/// The Tasks view and its entry points, as baked into this build. **On when
+/// unset** (the CTO's note, 2026-10-26, QUESTIONS.md E52): the view ships;
+/// `KORU_ENABLE_TASKS=0` bakes it off.
+pub const ENABLE_TASKS: bool = switch_value_or(option_env!("KORU_ENABLE_TASKS"), true);
 /// Koru AI chat and Delegate, as baked into this build.
 pub const ENABLE_AI: bool = switch_value(option_env!("KORU_ENABLE_AI"));
 /// The reminders UI, as baked into this build.

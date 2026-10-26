@@ -942,9 +942,9 @@ pub struct Tab {
     /// Copied from the Welcome default at pin time; the tab menu overrides it.
     pub show_title: bool,
     /// Opened as a tab of its own by a double-click in Explore (the CTO's
-    /// note): the working tab it was, kept — the next Explore click opens
-    /// beside it rather than over it. Not a pin: it has no home of its own
-    /// and does not outlive the session.
+    /// note): kept — the next Explore click opens beside it rather than
+    /// over it. Not a pin: it has no home of its own and does not outlive
+    /// the session.
     pub kept: bool,
 }
 

@@ -155,21 +155,19 @@ impl MainView {
         self.push_document_tab(ws, root, reveal, None)
     }
 
-    /// Explore double-click (the CTO's note): the document as a tab of its
-    /// own. The first click of the pair opened it in the working tab, so this
-    /// opens the same way and then **keeps** the tab it lands on — the next
-    /// Explore click opens beside it rather than over it. Nothing is
-    /// doubled: a document already showing is focused and kept. A document
-    /// the shell is still fetching lands later and is not kept; the next
-    /// double-click keeps it.
+    /// Explore double-click (the CTO's note): the document in a **new** tab
+    /// of its own, kept — the next Explore click opens beside it rather than
+    /// over it. The first click of the pair showed it in the working tab,
+    /// which stays the working tab; a new tab appearing is what the gesture
+    /// promises, and keeping that tab silently read as nothing happening.
+    /// A document the shell is still fetching is asked for in a new tab the
+    /// same way (`OpenWhere::NewTab`) and lands later, unkept.
     pub(super) fn keep_open_from_explore(&mut self, ws: &WorkspaceDoc, node: NodeId) -> bool {
-        let opened = self.open_from_explore(ws, node);
-        if let Some((root, _)) = Self::resolve_target(ws, node)
-            && self.tabs().showing(root) == Some(self.tabs().active())
-        {
+        if self.open_node_in_new_tab(ws, node) {
             self.tabs_mut().active_mut().keep();
+            return true;
         }
-        opened
+        self.request_new_tab_document(node)
     }
 
     /// Explore's *Open in new tab*: ask the shell and land with [`OpenWhere::NewTab`].
