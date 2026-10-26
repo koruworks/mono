@@ -262,8 +262,9 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
 fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
     let (view, _) = pane(&["Brief"]);
     // The modes left the heading band for the apps row and Search left it
-    // for the lane, so at every width the column can take the `…` has its
-    // room and is the band's one control.
+    // for the lane, so at every width the column can take the band is the
+    // app's name and the `…`, each with its room (the CTO's note: the band
+    // names the app).
     for width in [256., 300., 400.] {
         let mut context = cx(Lang::En);
         context.area.w = width;
@@ -273,10 +274,12 @@ fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
                 .iter()
                 .all(|node| node.bounds.is_some_and(|r| r.w > 0. && r.h > 0.))
         );
-        assert_eq!(heading.len(), 1);
+        assert_eq!(heading.len(), 2);
+        assert_eq!(heading[0].role, accesskit::Role::Heading);
+        assert_eq!(heading[0].label.as_deref(), Some("Documents"));
     }
-    // With only Documents and Files shown the answer is the same: the `…`
-    // alone, with its room.
+    // With only Documents and Files shown the answer is the same: the name
+    // and the `…`, with their room.
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         let (view, _) = pane(&["Brief"]);
         for width in [256., 300., 400.] {
@@ -288,7 +291,7 @@ fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
                     .iter()
                     .all(|node| node.bounds.is_some_and(|r| r.w > 0. && r.h > 0.))
             );
-            assert_eq!(heading.len(), 1, "at {width}");
+            assert_eq!(heading.len(), 2, "at {width}");
         }
     });
 }

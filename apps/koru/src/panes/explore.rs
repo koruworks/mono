@@ -4097,6 +4097,21 @@ impl ExploreView {
         area.x + theme::NAV_PAD
     }
 
+    /// Where the band's title sits: the app's name (*Home*, *Documents*,
+    /// *Files*, *Tasks*, *Chats*…) at the band's left pad, out to the `…`.
+    /// The band held the mode icons once; with those on the rail it had only
+    /// the `…` left, and a row that names nothing above a list is a row the
+    /// eye has to work out (the CTO's note). Zero-sized when the band is.
+    pub fn heading_title_rect(&self, area: Rect) -> Rect {
+        let band = self.heading_band(area);
+        if band.w <= 0.0 {
+            return band;
+        }
+        let x = self.modes_right(area);
+        let right = self.actions_button(area).x - theme::NAV_PAD;
+        Rect::new(x, band.y, (right - x).max(0.0), band.h)
+    }
+
     /// The library heading's compact actions button. It yields instead of
     /// overlapping the mode selectors while a narrow pane is animating.
     fn actions_button(&self, area: Rect) -> Rect {
@@ -6669,6 +6684,14 @@ impl ExploreView {
                 scene::rect(band.x, band.y, band.w, band.h),
                 |_| {},
             );
+            // The app's name, a section heading, elided before it reaches
+            // the `…`. See `heading_title_rect`.
+            let title = self.heading_title_rect(area);
+            if title.w > 0.0 {
+                let style = theme::role::section_heading();
+                let fitted = engine.elided(self.mode.label(), style, title.w);
+                draw_middle(scene, root, engine, &fitted, title, style, p.text);
+            }
             actions::draw_button(scene, root, self.actions_button(area), self.actions_hover);
         }
         if area.w > 0.0 {

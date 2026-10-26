@@ -73,6 +73,8 @@ pub(crate) mod parts {
     /// The header's two halves.
     /// The strip of projection buttons.
     pub const MODES: ControlPart = ControlPart::new("modes");
+    /// The heading band's title: the app's name.
+    pub const HEADING: ControlPart = ControlPart::new("heading");
     /// The library heading's `…` and magnifier.
     pub const ACTIONS: ControlPart = ControlPart::new("actions");
     /// The tree of rows, and what stands in its place when there are none.
@@ -379,6 +381,16 @@ impl ExploreView {
     /// pane's own hit test reads.
     fn heading_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let mut out = Vec::new();
+        // The band's title says which app the rows below belong to, as the
+        // drawn heading does (the CTO's note).
+        let title = self.heading_title_rect(cx.area);
+        if title.w > 0.0 {
+            out.push(
+                SemanticNode::new(cx.surface(EXPLORE, parts::HEADING), Role::Heading)
+                    .with_label(self.mode.label_in(cx.lang))
+                    .with_bounds(title),
+            );
+        }
         let actions = self.actions_button(cx.area);
         if actions.w > 0.0 {
             out.push(

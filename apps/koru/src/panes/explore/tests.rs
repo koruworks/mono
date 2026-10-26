@@ -177,6 +177,37 @@ fn a_list_that_fits_does_not_scroll() {
     assert!(v.scrollbar_geom(area()).is_none());
 }
 
+/// **The heading band names the app** (the CTO's note): the mode's label
+/// sits at the band's left pad and stops short of the `…`, in every mode,
+/// and it is gone with the band in a collapsed column.
+#[test]
+fn the_heading_band_names_the_app() {
+    let mut v = with_rows(3);
+    let a = area();
+    for mode in [
+        NavigatorMode::Home,
+        NavigatorMode::Documents,
+        NavigatorMode::Files,
+        NavigatorMode::Tasks,
+        NavigatorMode::Chats,
+    ] {
+        v.set_navigator_mode(mode);
+        let title = v.heading_title_rect(a);
+        assert!(title.w > 0.0, "{mode:?} has a title");
+        assert_eq!(title.x, a.x + theme::NAV_PAD, "{mode:?}: at the band's pad");
+        let dots = v.actions_button(a);
+        if dots.w > 0.0 {
+            assert!(
+                title.x + title.w <= dots.x,
+                "{mode:?}: the title stops before the `…`"
+            );
+        }
+        assert!(!mode.label().is_empty());
+    }
+    let shut = Rect::new(a.x, a.y, 0.0, a.h);
+    assert_eq!(v.heading_title_rect(shut).w, 0.0, "no band, no title");
+}
+
 #[test]
 fn documents_actions_menu_opens_and_routes_every_action() {
     let mut v = with_rows(3);

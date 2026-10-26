@@ -201,8 +201,10 @@ pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT
 /// unset** (the CTO's note, 2026-10-26, QUESTIONS.md E52): the view ships;
 /// `KORU_ENABLE_TASKS=0` bakes it off.
 pub const ENABLE_TASKS: bool = switch_value_or(option_env!("KORU_ENABLE_TASKS"), true);
-/// Koru AI chat and Delegate, as baked into this build.
-pub const ENABLE_AI: bool = switch_value(option_env!("KORU_ENABLE_AI"));
+/// Koru AI chat and Delegate, as baked into this build. **On when unset**
+/// (the CTO's note, 2026-10-26, QUESTIONS.md E54: enable Chats): the Chats
+/// view, the chat tab and Delegate ship; `KORU_ENABLE_AI=0` bakes them off.
+pub const ENABLE_AI: bool = switch_value_or(option_env!("KORU_ENABLE_AI"), true);
 /// The reminders UI, as baked into this build.
 pub const ENABLE_REMINDERS: bool = switch_value(option_env!("KORU_ENABLE_REMINDERS"));
 /// Canvases, as baked into this build.
