@@ -5118,6 +5118,19 @@ impl ExploreView {
     /// Opening a menu is the container's job; this updates the pane's selection
     /// and reports the nodes the menu is about.
     pub fn context_menu(&mut self, area: Rect, x: f32, y: f32) -> Outcome {
+        // The floor chip is the open workspace's tile: a right-click on it
+        // asks for that workspace's menu, the one its row's right-click
+        // opens (the CTO's note, E42). Before any mode's own surface, for
+        // the reason the floor comes first in `mouse_down`.
+        if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
+            return match self.current {
+                Some(workspace) => Outcome::WorkspaceMenu {
+                    workspace,
+                    at: (x, y),
+                },
+                None => Outcome::Consumed,
+            };
+        }
         // The rail owns everything below the heading in tasks mode, on this
         // gesture for the reason it owns `mouse_down`: `self.rows` is the
         // library's, and asking it where a right-click landed in tasks mode

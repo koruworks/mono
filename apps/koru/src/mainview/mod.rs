@@ -5703,10 +5703,27 @@ impl MainView {
     /// Begin renaming a workspace in place — over its Manage row, where the
     /// field goes (`workspace_rename_row`).
     fn start_workspace_rename(&mut self, id: WorkspaceId) -> bool {
-        let Some(name) = self.workspace_facts(id).map(|w| w.name) else {
+        let Some(facts) = self.workspace_facts(id) else {
             return false;
         };
-        self.workspace_rename = Some(WorkspaceRename::new(&mut self.engine, id, &name));
+        // The field is drawn over the row of whichever list shows the
+        // workspace (`workspace_rename_row`). Started where no list does —
+        // the floor chip's menu, a Manage tab on another Profile — it had
+        // nowhere to go and nothing appeared (E41). So the Manage tab is
+        // opened on the workspace's Profile first, scrolled to its
+        // Workspaces, the way the lifecycle verbs reach their controller.
+        let on_the_page = self
+            .explore
+            .popover_workspace_rect(self.explore_popover_area(), self.viewport, id)
+            .is_some();
+        let on_a_manage_row = matches!(
+            &self.tabs().active_tab().view,
+            TabView::Manage(manage) if manage.workspace_name_rect(id).is_some()
+        );
+        if !on_the_page && !on_a_manage_row {
+            self.open_manage_workspaces(facts.owner);
+        }
+        self.workspace_rename = Some(WorkspaceRename::new(&mut self.engine, id, &facts.name));
         true
     }
 

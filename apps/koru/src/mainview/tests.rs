@@ -6113,6 +6113,70 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.explore.popover_open(), "and the page stays");
 }
 
+/// **Rename… from a right-click shows its field** (the CTO's issue: nothing
+/// appeared). The field is drawn over the row of whichever list shows the
+/// workspace: the page's row when the page lists it — so the page stays up
+/// for it — and the Manage tab's row otherwise, the tab opened on the
+/// workspace's Profile first.
+#[test]
+fn rename_from_a_right_click_has_a_row_to_draw_on() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    let (mut v, mut w, _) = with_summary_open();
+    let id = v.workspaces()[0].id;
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
+    assert!(v.explore.popover_open(), "the page stays for the field");
+    assert!(v.workspace_rename.is_some(), "the field is open");
+    assert!(
+        v.workspace_rename_row().is_some(),
+        "over the page's row, with nothing else showing the workspace"
+    );
+    assert!(
+        !matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "no Manage tab was needed"
+    );
+
+    // Put the field and the page away, and rename with nothing listing the
+    // workspace: the Manage tab opens to carry the field.
+    v.workspace_rename = None;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(!v.explore.popover_open());
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        "the Manage tab opens on the workspace's Profile"
+    );
+    assert!(v.workspace_rename.is_some(), "and the field is open");
+}
+
+/// **A right-click on the floor chip opens the open workspace's menu** (the
+/// CTO's note): the chip is the workspace's tile, so it gets the menu its
+/// row gets, at the pointer.
+#[test]
+fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
+    use crate::mainview::context_menu::MenuSubject;
+    let (mut v, mut w, _) = with_summary_open();
+    let id = v.workspaces()[0].id;
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    // Shut the page the fixture opened; the chip is its door.
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(!v.explore.popover_open());
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.context_menu(&mut w.ws, cx, cy));
+    let menu = v.menu.as_ref().expect("the workspace menu opened");
+    assert_eq!(menu.subject, MenuSubject::Workspace(id));
+    assert_eq!(
+        menu.items(),
+        context_menu::workspace_items(false, false, false).as_slice()
+    );
+    assert!(!v.explore.popover_open(), "the chip's page was not opened");
+}
+
 /// **The WORKSPACES heading's import button hangs the formats beside the
 /// page, and the page stays** (the CTO's note: a `+` and an import button
 /// where the ⋯ was): the menu hangs level with the button off the panel's
