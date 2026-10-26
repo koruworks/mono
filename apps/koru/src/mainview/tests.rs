@@ -6165,6 +6165,24 @@ fn the_rails_settings_tooltip_carries_its_chord() {
     assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
 }
 
+/// **The profile tile and the chip's tile share a baseline** (the CTO's
+/// note): the same size, their centres level, side by side at the foot.
+#[test]
+fn the_profile_tile_sits_level_with_the_chips_tile() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let square = v.explore.apps_rail_rects(v.rail_area()).profile;
+    let tile = crate::panes::sidebar::apps_rail::PROFILE_TILE;
+    let profile_centre = square.y + square.h * 0.5;
+    let chip_tile = crate::panes::sidebar::floor::solve(v.explore_area()).avatar;
+    assert_eq!(chip_tile.h, tile, "the same size");
+    assert!(
+        (profile_centre - chip_tile.centre().1).abs() < 0.5,
+        "level: the square's centre {profile_centre} vs the chip tile's {:?}",
+        chip_tile
+    );
+}
+
 /// **The lane has no `+`** (the CTO's note, E44): search and the toggle
 /// only, and the keyboard's lane walk has no New stop.
 #[test]

@@ -6470,7 +6470,12 @@ fn the_rail_keeps_its_squares_at_every_pane_width() {
             assert_eq!(&squares, seen, "the rail moved with the pane at {width}");
         }
         seen = Some(squares);
-        assert_eq!(r.profile.y + r.profile.h, rail.y + rail.h - 8.0);
+        // The square's centre is the floor chip's tile's: half the floor
+        // band above the foot (the CTO's note on the two tiles' baseline).
+        assert_eq!(
+            r.profile.y + r.profile.h * 0.5,
+            rail.y + rail.h - crate::panes::sidebar::floor::H * 0.5
+        );
         assert!(r.settings.y + r.settings.h <= r.help.y);
         assert!(r.help.y + r.help.h <= r.profile.y);
         assert!(view.actions_button(a).w > 0.);

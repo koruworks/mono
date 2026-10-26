@@ -29,9 +29,13 @@ use crate::panes::explore::NavigatorMode;
 pub const SQUARE: f32 = 36.0;
 /// Between squares.
 pub const GAP: f32 = 4.0;
-/// Above the first app and under the profile square.
+/// Above the first app.
 const PAD_TOP: f32 = 10.0;
-const PAD_BOTTOM: f32 = 8.0;
+/// Under the profile square: what centres the square — and so the Profile's
+/// tile in it — on the floor chip's tile beside it, so the two tiles share
+/// a baseline (the CTO's note). The chip's tile is centred in the floor's
+/// band; the square sits that band's half-height above the foot.
+const PAD_BOTTOM: f32 = (super::floor::H - SQUARE) * 0.5;
 /// The glyph inside a square.
 pub const GLYPH: f32 = 18.0;
 /// The profile's tile inside its square: **the floor chip's workspace tile's
