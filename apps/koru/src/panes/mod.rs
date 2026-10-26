@@ -207,6 +207,10 @@ pub enum Outcome {
         workspace: WorkspaceId,
         at: (f32, f32),
     },
+    /// A Documents row's `+` (the CTO's note, Notion's *Add a page inside*):
+    /// the container asks for a name and has the shell make a document as
+    /// this row's last child.
+    NewChildDocument(NodeId),
     /// A library row wants its menu — the `…` was pressed, or it was
     /// right-clicked.
     ///

@@ -3210,13 +3210,13 @@ fn a_footer_row_shares_the_library_rows_icon_lane() {
     let a = area();
     let (i, r) = v.row_rects(a).into_iter().next().unwrap();
     let doc_icon = v.row_parts(&v.rows[i], r).icon.x;
-    assert_eq!(icon_lane(a.x, 0, true), doc_icon);
+    assert_eq!(icon_lane(a.x, 0, false), doc_icon);
 }
 
-/// The caret lane is paid for only where a caret can appear: every Documents
-/// row reserves it, so an icon cannot jump sideways when a child arrives; a
-/// Files row never draws one; an Agents row reserves it only while it has
-/// children of its own.
+/// The caret lane is paid for only where a caret can appear in it: a
+/// Documents row keeps a file row's padding — its chevron takes the icon's
+/// slot on hover (the CTO's note) — a Files row never draws one, and an
+/// Agents row reserves a lane only while it has children of its own.
 #[test]
 fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     let a = area();
@@ -3227,9 +3227,18 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     leaf.has_children = false;
     assert_eq!(
         v.row_parts(&leaf, r).icon.x,
-        a.x + theme::NAV_PAD + theme::NAV_INDENT,
-        "a documents leaf keeps the placeholder"
+        a.x + theme::NAV_PAD,
+        "a documents leaf has a file row's padding"
     );
+    let mut parent = leaf.clone();
+    parent.has_children = true;
+    let parts = v.row_parts(&parent, r);
+    assert_eq!(
+        parts.icon.x,
+        a.x + theme::NAV_PAD,
+        "and so does a documents parent"
+    );
+    assert_eq!(parts.caret, parts.icon, "its chevron is the icon's slot");
     let mut v = with_rows(1);
     v.mode = NavigatorMode::Files;
     assert_eq!(
@@ -3256,6 +3265,57 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
         a.x + theme::NAV_PAD,
         "and its caret sits in it"
     );
+}
+
+/// **The profile square's tile is the floor chip's tile's size** (the CTO's
+/// note): the two sit beside each other and read as one kind of thing.
+#[test]
+fn the_profile_tile_is_the_chips_tile_size() {
+    assert_eq!(
+        apps_rail::PROFILE_TILE,
+        crate::panes::sidebar::floor::AVATAR
+    );
+}
+
+/// **A Documents parent's chevron is its icon's slot** (the CTO's note,
+/// Notion's shape): a press there folds the row without opening it, and
+/// the `+` beside the `…` asks for a document inside the row. A Files row
+/// has no `+`.
+#[test]
+fn a_documents_rows_slot_folds_it_and_its_plus_asks_for_a_child() {
+    let a = area();
+    let mut v = with_rows(3);
+    let (i, r) = v.row_rects(a).into_iter().next().unwrap();
+    let row = v.rows[i].clone();
+    assert!(row.has_children, "the fixture's first row is a parent");
+    let parts = v.row_parts(&row, r);
+    assert!(parts.plus.w > 0.0, "a documents row offers a `+`");
+    assert!(
+        parts.plus.x + parts.plus.w <= parts.dots.x,
+        "left of the `…`: {:?} vs {:?}",
+        parts.plus,
+        parts.dots
+    );
+    assert!(
+        parts.label.x + parts.label.w <= parts.plus.x,
+        "the label stops before it"
+    );
+    let (x, y) = parts.plus.centre();
+    assert_eq!(
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::NewChildDocument(row.node)
+    );
+    // The slot folds.
+    let (x, y) = parts.caret.centre();
+    assert!(!v.collapsed.contains(&row.node));
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    assert!(v.collapsed.contains(&row.node), "folded, not opened");
+    assert!(v.expand(row.node), "and unfolded again by `expand`");
+    // No `+` on a file row.
+    v.mode = NavigatorMode::Files;
+    let mut file = row.clone();
+    file.kind = Kind::File;
+    assert_eq!(v.row_parts(&file, r).plus.w, 0.0);
 }
 
 /// A collapsed column has no Trash row to press.

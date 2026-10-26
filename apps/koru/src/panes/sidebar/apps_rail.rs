@@ -34,8 +34,10 @@ const PAD_TOP: f32 = 10.0;
 const PAD_BOTTOM: f32 = 8.0;
 /// The glyph inside a square.
 pub const GLYPH: f32 = 18.0;
-/// The profile's tile inside its square.
-pub const PROFILE_TILE: f32 = 30.0;
+/// The profile's tile inside its square: **the floor chip's workspace tile's
+/// size**, so the two tiles beside each other read as one kind of thing (the
+/// CTO's note).
+pub const PROFILE_TILE: f32 = super::floor::AVATAR;
 
 /// Every rect in the rail. Zero-width in a collapsed column, the idiom the
 /// rest of the chrome uses, so a hit test must exclude them explicitly.

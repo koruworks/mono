@@ -114,8 +114,6 @@ const NAV_TOP: f32 = PageShell::TOP;
 /// The search box, and the air between it and the list (or chips) under it.
 const SEARCH_H: f32 = 30.0;
 const SEARCH_GAP: f32 = 14.0;
-/// The room kept at the search box's right end for the *Ctrl+,* hint.
-const SEARCH_HINT_W: f32 = 44.0;
 /// The page column's side air.
 const PAGE_MARGIN: f32 = PageShell::PAGE_MARGIN;
 /// **Below this width the nav has no column of its own**: the search box and
@@ -1190,8 +1188,9 @@ impl SettingsSurface {
     /// The search box's text area: the box, less the magnifier's slot.
     fn search_text_rect(&self) -> Rect {
         let r = self.search_rect();
-        let hint = if self.compact() { 0.0 } else { SEARCH_HINT_W };
-        Rect::new(r.x + 26.0, r.y, (r.w - 30.0 - hint).max(0.0), r.h)
+        // No chord inside the box (the CTO's note): the rail's Settings
+        // tooltip carries it.
+        Rect::new(r.x + 26.0, r.y, (r.w - 30.0).max(0.0), r.h)
     }
 
     fn draw_search(&mut self, scene_out: &mut Scene, root: Affine) {
@@ -1209,26 +1208,6 @@ impl SettingsSurface {
         scene::fill(scene_out, root, p.status_bg, &shape);
         if self.search_focused {
             scene::stroke(scene_out, root, p.focus_ring, theme::BORDER_W, &shape);
-        }
-        // The chord that opens Settings, inside the box's right end — where
-        // the sidebar heading used to carry it.
-        if !self.compact()
-            && let Some(chord) =
-                koru_keys::show_hint(koru_keys::ShortcutId::Settings, koru_keys::Section::Heading)
-        {
-            let style = theme::role::hint();
-            let hint = self.engine.simple_layout(&chord, style);
-            koru_ui::text_paragraph::draw_line(
-                scene_out,
-                root,
-                &mut self.engine,
-                &chord,
-                r.x + r.w - 8.0 - hint.width(),
-                r.y + (r.h - scene::first_line_height(&hint)) * 0.5,
-                style,
-                "theme::role::hint()",
-                p.placeholder,
-            );
         }
         let glass = self.engine.icon_layout(icons::SEARCH, 13.0);
         scene::draw_layout(

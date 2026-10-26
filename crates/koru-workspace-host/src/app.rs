@@ -8660,6 +8660,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::CreateDocumentIn { parent, title } => {
+                self.create_child_document(source, parent, &title)
+            }
             PaneRequest::CreateCanvas(title) => self.create_document(source, &title, true),
             PaneRequest::NewWorkspaceIn(owner, name) => self.new_workspace_in(owner, &name),
             PaneRequest::CreateLinkedDocument(title) => self.create_linked_document(source, &title),
@@ -11198,6 +11201,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
             let after = self.runtime.workspace.active();
             self.runtime.workspace.create_document_after(title, after)
         };
+        self.settle_created_document(source, created, canvas);
+    }
+
+    /// A document made inside another — a sidebar row's `+`
+    /// (`PaneRequest::CreateDocumentIn`): the same round trip as
+    /// [`create_document`](Self::create_document), placed as the row's last
+    /// child.
+    fn create_child_document(
+        &mut self,
+        source: WindowId,
+        parent: koru_core::DocumentId,
+        title: &str,
+    ) {
+        let created = self.runtime.workspace.create_document_in(title, parent);
+        self.settle_created_document(source, created, false);
+    }
+
+    /// What follows a creation, made or refused: the new document opens and
+    /// every pane hears the manifest changed, or the asking view and the
+    /// person are told nothing was changed.
+    fn settle_created_document(
+        &mut self,
+        source: WindowId,
+        created: Result<koru_core::DocumentId, koru_store_core::errors::Error>,
+        canvas: bool,
+    ) {
         match created {
             Ok(id) => {
                 if let Err(e) = self.runtime.workspace.open_document(id) {

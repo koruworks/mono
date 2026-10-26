@@ -1271,6 +1271,33 @@ fn a_leading_title_emoji_becomes_the_tab_icon() {
     assert_eq!(tab.label, "Craft.do Pricing");
 }
 
+/// **A row's `+` makes a document inside the row** (the CTO's note): the
+/// same name prompt, and the shell is asked to place the document as the
+/// row's last child, the row unfolded so it shows where it lands.
+#[test]
+fn a_rows_plus_prompts_for_a_document_inside_the_row() {
+    let (mut v, mut workspace) = container();
+    let parent = NodeId::new();
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(parent)
+    ));
+    assert!(v.new_document.is_some(), "the name prompt is open");
+    assert!(v.key(&mut workspace.ws, &ch("Inside"), Some("Inside"), NONE,));
+    assert!(v.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    ));
+    assert!(v.new_document.is_none(), "commit closes the modal");
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent: p, title })
+            if title == "Inside" && p == koru_core::DocumentId::from_uuid(parent.as_uuid())
+    ));
+}
+
 #[test]
 fn the_taskbar_prompt_creates_a_named_document_and_opens_its_tab() {
     let (mut v, mut workspace) = container();
@@ -6111,6 +6138,42 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.context_menu(&mut w.ws, h.x + 20.0, h.centre().1));
     assert!(v.menu.is_none(), "nothing to open on the heading");
     assert!(v.explore.popover_open(), "and the page stays");
+}
+
+/// **The rail's Settings tooltip carries its chord** (the CTO's note), the
+/// way the lane's controls carry theirs; the `?` has no chord to carry.
+#[test]
+fn the_rails_settings_tooltip_carries_its_chord() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let rects = v.explore.apps_rail_rects(v.rail_area());
+    let (x, y) = rects.settings.centre();
+    v.mouse_move(x, y);
+    assert_eq!(
+        v.tooltip.label(),
+        Some(koru_i18n::t(
+            crate::format::lang(),
+            koru_i18n::Key::SettingsTab
+        ))
+    );
+    assert_eq!(
+        v.tooltip.shortcut(),
+        Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
+    );
+    let (hx, hy) = rects.help.centre();
+    v.mouse_move(hx, hy);
+    assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
+}
+
+/// **The lane has no `+`** (the CTO's note, E44): search and the toggle
+/// only, and the keyboard's lane walk has no New stop.
+#[test]
+fn the_lane_has_no_plus() {
+    let (mut v, _w) = container();
+    v.toggle_sidebar();
+    let lane = v.lane_controls();
+    assert_eq!(lane.new.w, 0.0, "no New square");
+    assert!(lane.search.w > 0.0 && lane.toggle.w > 0.0);
 }
 
 /// **Rename… from a right-click shows its field** (the CTO's issue: nothing
@@ -12956,8 +13019,6 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
             MenuAction::Divider,
             MenuAction::HelpFullChangelog,
             MenuAction::Divider,
-            MenuAction::HelpShortcuts,
-            MenuAction::Divider,
             MenuAction::HelpSendFeedback,
             MenuAction::Divider,
             MenuAction::HelpSocials,
@@ -13040,14 +13101,10 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
     );
     assert!(panel.y >= 0.0);
     assert!(panel.w >= koru_ui::menu::CARD_MIN_W);
-    // Everything can be chosen but the shortcuts, which explain themselves.
+    // Every row can be chosen; the Keyboard shortcuts row is gone until its
+    // page exists (the CTO's note).
     let enabled = v.enabled_items(menu);
     let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();
-    assert!(!enabled[at(MenuAction::HelpShortcuts)]);
-    assert!(
-        MenuItem::disabled_reason(&MenuAction::HelpShortcuts).is_some(),
-        "a dimmed row explains itself"
-    );
     for row in [
         MenuAction::HelpRelease,
         MenuAction::HelpFullChangelog,

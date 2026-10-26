@@ -2951,6 +2951,17 @@ impl MainView {
         }
     }
 
+    /// A sidebar row's `+` (the CTO's note): the document's name, then the
+    /// shell makes it as the row's last child and opens it.
+    fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
+        self.menu = None;
+        if self.new_document.is_none() {
+            self.new_workspace_owner = None;
+            self.new_document = Some(NewDocument::child(&mut self.engine, parent));
+        }
+        true
+    }
+
     /// Ask for the workspace's name before creating any durable catalog row.
     /// The prompt is the same `NamePrompt` used for documents, so caret,
     /// selection, paste, undo, and platform editing keys do not fork here.
@@ -3440,6 +3451,21 @@ impl MainView {
                     sender.rename_project(id, name.trim().to_owned());
                 }
                 true
+            }
+            // A row's `+`: inside that row, as its last child. The row is
+            // unfolded first so the child shows where it lands.
+            NewDocumentAction::CreateDocument(title)
+                if matches!(purpose, PromptPurpose::ChildDocument(_)) =>
+            {
+                self.new_document = None;
+                if let PromptPurpose::ChildDocument(parent) = purpose {
+                    self.explore.expand(parent);
+                    self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
+                        parent: koru_core::DocumentId::from_uuid(parent.as_uuid()),
+                        title,
+                    });
+                }
+                return true;
             }
             NewDocumentAction::CreateDocument(title) => {
                 // **A document belongs to the workspace, not to the document in
@@ -4243,21 +4269,17 @@ impl MainView {
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
-            // The help popover's rows: the shortcuts wait on their page and
-            // say so; everything else is always there. The card's Download
+            // The help popover's rows are always there. The card's Download
             // is a control, gated by its own `enabled` rather than here.
-            MenuSubject::Help => match action {
-                MenuAction::HelpShortcuts => false,
-                _ => matches!(
-                    action,
-                    MenuAction::HelpRelease
-                        | MenuAction::HelpDownload
-                        | MenuAction::HelpFullChangelog
-                        | MenuAction::HelpSendFeedback
-                        | MenuAction::HelpWebsite
-                        | MenuAction::HelpSocial(_)
-                ),
-            },
+            MenuSubject::Help => matches!(
+                action,
+                MenuAction::HelpRelease
+                    | MenuAction::HelpDownload
+                    | MenuAction::HelpFullChangelog
+                    | MenuAction::HelpSendFeedback
+                    | MenuAction::HelpWebsite
+                    | MenuAction::HelpSocial(_)
+            ),
             // Every window action is always available — the rows were built from
             // this window's state when the menu opened, and a window can always
             // be minimised, resized and closed.
@@ -7048,6 +7070,7 @@ impl MainView {
             Outcome::CloseTab(i) => self.close_requested(i),
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
             Outcome::NewTab => self.open_new_tab_menu(),
+            Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
             Outcome::OpenNode(id)
@@ -15140,9 +15163,9 @@ impl MainView {
         koru_shell_chrome::lane::Leading {
             mark: koru_shell_chrome::lane::Mark::Mark,
             search: true,
-            // New is always there: it opens the same Add… menu as the tab
-            // strip's `+`, whichever app is active (QUESTIONS.md E21).
-            new: true,
+            // No New in the lane (the CTO's note, E44): the tab strip's `+`
+            // is the Add… menu's one door. E21's lane `+` is superseded.
+            new: false,
             folded: !self.sidebar.is_open(),
         }
     }
@@ -15750,11 +15773,20 @@ impl MainView {
                     koru_i18n::t(lang, koru_i18n::Key::ComingLater),
                 ))
             } else if on(rail.settings) {
-                Some(TooltipContent::new(
-                    9,
-                    rail.settings,
-                    koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
-                ))
+                // The chord rides the tooltip (the CTO's note), the way the
+                // lane's controls carry theirs; the Settings page's own
+                // search box no longer prints it.
+                Some(
+                    TooltipContent::new(
+                        9,
+                        rail.settings,
+                        koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::Settings,
+                        koru_keys::Section::Tooltip,
+                    )),
+                )
             } else if on(rail.help) {
                 Some(TooltipContent::new(
                     6,

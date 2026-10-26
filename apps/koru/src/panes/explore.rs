@@ -620,7 +620,10 @@ enum ScheduleNode {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct RowParts {
     /// Zero-sized for a leaf, so clicking where a caret would be does not
-    /// expand nothing.
+    /// expand nothing. **The icon's slot** on a Documents row (the CTO's
+    /// note, Notion's shape): the chevron replaces the icon while the
+    /// pointer is on the row, so the row keeps a file row's padding. Only an
+    /// Agents row with children keeps a lane of its own, left of its icon.
     pub caret: Rect,
     pub icon: Rect,
     /// What is left for the label, between the icon and the note lane (or the
@@ -629,6 +632,10 @@ pub struct RowParts {
     /// The note glyph at the right of a file row that has one. **Zero-sized
     /// when the row has no note**, so hit-testing it answers nothing.
     pub note: Rect,
+    /// The `+` that makes a document inside this one, left of the `…`.
+    /// Drawn on hover on a Documents row; **its width is reserved always**
+    /// there, and zero-sized on every other row.
+    pub plus: Rect,
     /// The `…` that opens this row's menu. Drawn on hover; **its width is
     /// reserved always.**
     pub dots: Rect,
@@ -1409,6 +1416,12 @@ impl ExploreView {
             at = parent;
         }
         changed
+    }
+
+    /// Unfold `node` so what is made inside it shows — a row's `+` asks
+    /// this before the shell makes the child. Returns whether it was folded.
+    pub fn expand(&mut self, node: NodeId) -> bool {
+        self.collapsed.remove(&node)
     }
 
     /// Scroll the row [`reveal`](Self::reveal) asked for into the band, if the
@@ -4394,18 +4407,30 @@ impl ExploreView {
             .collect()
     }
 
+    /// Whether `row` pays for a caret lane left of its icon: only an Agents
+    /// row with children (Koru Terminal's tree). Every other tree row keeps a
+    /// file row's padding and shows its chevron in the icon's slot on hover
+    /// (the CTO's note).
+    fn reserves_caret_lane(&self, row: &Row) -> bool {
+        self.mode == NavigatorMode::Agents && row.has_children
+    }
+
     /// The caret box inside a row, or a zero-sized rect for a leaf. Separate so
-    /// clicking the caret expands without also opening the node.
+    /// clicking the caret expands without also opening the node. The lane
+    /// where one is reserved, else the icon's slot.
     fn caret_rect(&self, row: &Row, r: Rect) -> Rect {
         if !row.has_children {
             return Rect::new(r.x, r.y, 0.0, 0.0);
         }
-        Rect::new(
-            r.x + theme::NAV_PAD + row.depth as f32 * theme::NAV_INDENT,
-            r.y,
-            theme::NAV_INDENT,
-            r.h,
-        )
+        if self.reserves_caret_lane(row) {
+            return Rect::new(
+                r.x + theme::NAV_PAD + row.depth as f32 * theme::NAV_INDENT,
+                r.y,
+                theme::NAV_INDENT,
+                r.h,
+            );
+        }
+        Rect::new(icon_lane(r.x, row.depth, false), r.y, PAGE_ICON_SLOT, r.h)
     }
 
     /// Every rect inside a library row, derived from the row and its band alone.
@@ -4413,14 +4438,10 @@ impl ExploreView {
     /// One function per row rather than two, so the label's width and the `…`'s
     /// position cannot be computed from different premises.
     pub fn row_parts(&self, row: &Row, r: Rect) -> RowParts {
-        // The caret lane is reserved across the board in Documents, where any
-        // row can grow one as data lands; elsewhere only a row that actually
-        // has one pays for it. See `icon_lane`.
-        let icon_x = icon_lane(
-            r.x,
-            row.depth,
-            self.mode == NavigatorMode::Documents || row.has_children,
-        );
+        // A Documents row keeps a file row's padding: its chevron takes the
+        // icon's slot on hover rather than a lane of its own. See
+        // `reserves_caret_lane` and `icon_lane`.
+        let icon_x = icon_lane(r.x, row.depth, self.reserves_caret_lane(row));
         // `PAGE_ICON_SLOT`, not a number of its own: the slot has to hold a
         // colour emoji as well as an outline glyph, and the tab strip reserves
         // the same width for the same reason.
@@ -4431,18 +4452,27 @@ impl ExploreView {
             ROW_DOTS,
             ROW_DOTS,
         );
-        // The note lane sits immediately left of the `…` lane, and exists only
-        // on a row that carries a note. Zero-sized otherwise — `Rect::contains`
-        // is inclusive on every edge, so a zero-width rect at the row's edge
-        // would answer for clicks on the `…`'s doorstep.
+        // The `+` sits immediately left of the `…`, on a Documents row only
+        // (the CTO's note): a document can hold a document; a file, a
+        // canvas or a session cannot. Zero-sized elsewhere, for the reason
+        // the note lane is.
+        let plus = if self.mode == NavigatorMode::Documents && row.kind == Kind::Document {
+            Rect::new(dots.x - ROW_DOTS - ROW_PLUS_GAP, dots.y, ROW_DOTS, ROW_DOTS)
+        } else {
+            Rect::new(dots.x, dots.y, 0.0, 0.0)
+        };
+        // The note lane sits immediately left of the trailing buttons, and
+        // exists only on a row that carries a note. Zero-sized otherwise —
+        // `Rect::contains` is inclusive on every edge, so a zero-width rect
+        // at the row's edge would answer for clicks on the `…`'s doorstep.
         let note = if row.note.is_some() {
-            let x = (dots.x - ROW_NOTE - 4.0).max(text_x);
+            let x = (plus.x - ROW_NOTE - 4.0).max(text_x);
             Rect::new(x, r.y + (r.h - ROW_NOTE) * 0.5, ROW_NOTE, ROW_NOTE)
         } else {
             Rect::new(dots.x, dots.y, 0.0, 0.0)
         };
         // The label stops at whichever adornment the row actually has.
-        let right = if row.note.is_some() { note.x } else { dots.x };
+        let right = if row.note.is_some() { note.x } else { plus.x };
         RowParts {
             caret: self.caret_rect(row, r),
             icon: Rect::new(icon_x, r.y, PAGE_ICON_SLOT, r.h),
@@ -4453,6 +4483,7 @@ impl ExploreView {
             // same reason, as `workspace_row_parts`.
             label: Rect::new(text_x, r.y, (right - 6.0 - text_x).max(1.0), r.h),
             note,
+            plus,
             dots,
         }
     }
@@ -4797,6 +4828,11 @@ impl ExploreView {
         // No `…` in Agents mode: its rows raise their menus by right-click,
         // Koru Terminal's shape — the one thing in the trailing lane there is
         // the heading's `+`, handled in the Agents branch below.
+        // The `+` beside it, with the same standing: a press there means *a
+        // document inside this one*, never *open* and never *move*.
+        if parts.plus.contains(x, y) {
+            return Outcome::NewChildDocument(row.node);
+        }
         if self.mode != NavigatorMode::Agents && parts.dots.contains(x, y) {
             let nodes = self.select_for_menu(row.node);
             self.menu_row = Some(row.node);
@@ -7080,10 +7116,10 @@ impl ExploreView {
             } else {
                 p.text
             };
-            // The mode's own lane: a pinned row reserves the caret lane exactly
-            // when the rows above it do (Documents), so the footer cannot drift
-            // a lane right of the list it is pinned under.
-            let icon_x = icon_lane(area.x, 0, self.mode == NavigatorMode::Documents);
+            // The mode's own lane: a pinned row reserves no caret lane, as no
+            // row above it does any more, so the footer cannot drift a lane
+            // right of the list it is pinned under.
+            let icon_x = icon_lane(area.x, 0, false);
             draw_icon(
                 scene,
                 root,
@@ -7162,7 +7198,11 @@ impl ExploreView {
             draw_icon(scene, root, engine, icons::PLUS, parts.dots, p.text_dim);
             return;
         }
-        if row.has_children {
+        // The chevron: always in its own lane where a row has one (Agents);
+        // otherwise **in the icon's slot while the pointer is on the row**,
+        // where it replaces the icon (the CTO's note, Notion's shape).
+        let caret_in_slot = row.has_children && !self.reserves_caret_lane(row);
+        if row.has_children && (hovered || !caret_in_slot) {
             let caret = parts.caret;
             let (cx, cy) = caret.centre();
             let turn = self.turn_of(row.node, row.expanded);
@@ -7187,7 +7227,9 @@ impl ExploreView {
         let label_metrics = label.lines().next().map(|line| *line.metrics());
         let line_h = label_metrics.map_or(0.0, |metrics| metrics.line_height);
         let label_y = r.y + (r.h - line_h) * 0.5;
-        if self.mode == NavigatorMode::Agents {
+        if caret_in_slot && hovered {
+            // The chevron has the slot.
+        } else if self.mode == NavigatorMode::Agents {
             // A session wears its product's mark — the **same** projection the
             // tab draws (Q-E7 P6) — falling back to the terminal glyph only
             // when the profile resolves to no mark. A project group keeps the
@@ -7327,6 +7369,9 @@ impl ExploreView {
         // shape), and the trailing lane there belongs to the heading's `+`.
         if self.mode != NavigatorMode::Agents && (hovered || self.menu_row == Some(row.node)) {
             scene::dots_three(scene, root, parts.dots, p.text_dim);
+            if parts.plus.w > 0.0 {
+                draw_icon(scene, root, engine, icons::PLUS, parts.plus, p.text_dim);
+            }
         }
     }
 
@@ -8058,6 +8103,8 @@ const HEAD_BUTTON_GAP: f32 = 4.0;
 /// drift out of alignment — a Trash row that sat a few pixels left of every
 /// row above it reads as a different kind of list.
 fn icon_lane(x: f32, depth: u16, caret: bool) -> f32 {
+    // `caret` is true only for an Agents row with children now (the CTO's
+    // note): a Documents row shows its chevron in the icon's slot on hover.
     x + theme::NAV_PAD
         + depth as f32 * theme::NAV_INDENT
         + if caret { theme::NAV_INDENT } else { 0.0 }
@@ -8066,6 +8113,8 @@ fn icon_lane(x: f32, depth: u16, caret: bool) -> f32 {
 /// The `…` at the end of a library row. Its width is reserved on every row
 /// whether or not the button is showing — see [`ExploreView::row_parts`].
 const ROW_DOTS: f32 = 20.0;
+/// Between a Documents row's `+` and its `…`.
+const ROW_PLUS_GAP: f32 = 2.0;
 /// The note affordance at the end of a **file** row that carries a note.
 /// Unlike the `…`, its lane is reserved only for a row that has one — the
 /// others get the label width back.

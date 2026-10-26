@@ -34,6 +34,7 @@ fn rename_before_creation_echo(deliver_on_first_tick: bool) {
         id,
         title: "Made next door".into(),
         after: None,
+        parent: None,
         kind: koru_core::explore::KIND_DOCUMENT.into(),
     });
     remote

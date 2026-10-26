@@ -2223,6 +2223,13 @@ pub enum PaneRequest {
     /// whatever is open, which is a different thing that happens to look the
     /// same in the sidebar until you reopen.
     CreateDocument(String),
+    /// Create a document **inside** `parent` — as its last child — and open
+    /// it: a sidebar row's `+` (the CTO's note). The same round trip as
+    /// [`CreateDocument`](Self::CreateDocument), placed under the row.
+    CreateDocumentIn {
+        parent: koru_core::DocumentId,
+        title: String,
+    },
     /// Create a **canvas** in the open workspace, and open it.
     ///
     /// [`CreateDocument`](Self::CreateDocument)'s twin, and a request for the
@@ -2605,6 +2612,7 @@ impl PaneRequest {
             Self::NewWorkspace { .. } => "request.new_workspace",
             Self::NewWorkspaceIn(..) => "request.new_workspace_in",
             Self::CreateDocument { .. } => "request.create_document",
+            Self::CreateDocumentIn { .. } => "request.create_document_in",
             Self::CreateCanvas(..) => "request.create_canvas",
             Self::CopyDocument { .. } => "request.copy_document",
             Self::CloseDocument(..) => "request.close_document",

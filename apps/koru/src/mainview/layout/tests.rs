@@ -560,52 +560,6 @@ fn the_toggle_still_works_from_its_new_place() {
     assert!(!v.sidebar.is_open(), "clicking it closed the pane again");
 }
 
-/// **New is always there, and it is the Add… menu's second door**
-/// (QUESTIONS.md E21): the same list the tab strip's `+` opens, whichever
-/// app is active, hung under the lane's square. Files, which makes nothing
-/// of its own, offers it too.
-#[test]
-fn the_lanes_new_opens_the_add_menu_for_every_app() {
-    use crate::mainview::context_menu::MenuSubject;
-    use crate::panes::explore::NavigatorMode;
-    let (mut v, mut workspace) = container();
-    assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
-    assert!(v.sidebar.is_open());
-    assert_eq!(v.explore.navigator_mode(), NavigatorMode::Documents);
-    let lane = v.settled_lane_controls();
-    assert!(lane.new.w > 0.0, "Documents offers New");
-    assert!(
-        lane.search.x < lane.new.x && lane.new.x < lane.toggle.x,
-        "Search, New, toggle, left to right"
-    );
-
-    v.show_navigator(NavigatorMode::Files);
-    let lane = v.settled_lane_controls();
-    assert!(
-        lane.new.w > 0.0,
-        "Files offers it too: the menu is not the app's"
-    );
-
-    let square = lane.new;
-    let (x, y) = square.centre();
-    v.mouse_down(&mut workspace.ws, x, y, false);
-    let menu = v.menu.as_ref().expect("New opened the Add… menu");
-    assert_eq!(
-        menu.subject,
-        MenuSubject::NewTab,
-        "the same list as the strip's +"
-    );
-    let panel = menu.panel(v.viewport);
-    assert!(
-        panel.y >= square.y + square.h - 0.5,
-        "hung under the square: {panel:?} vs {square:?}"
-    );
-    assert!(
-        (panel.x - square.x).abs() < 0.5,
-        "from its left edge: {panel:?} vs {square:?}"
-    );
-}
-
 /// **The fold reflows once, at the toggle** (ANIMATION.md, "The pane
 /// fold"): the layout takes the final width the moment the pane is toggled
 /// and nothing re-cuts the window while it slides. The contents fade as the

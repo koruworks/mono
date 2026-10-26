@@ -567,8 +567,6 @@ pub enum MenuAction {
     HelpDownload,
     /// The releases page on koru.do, in the browser.
     HelpFullChangelog,
-    /// Dimmed until the shortcuts page lands (PLAN.final rung 7).
-    HelpShortcuts,
     /// The Feedback tab. **The only feedback row** (the CTO's note): *Report
     /// a problem* was a second door to the same tab and went.
     HelpSendFeedback,
@@ -1141,9 +1139,6 @@ impl MenuAction {
             MenuAction::HelpFullChangelog => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
             }
-            MenuAction::HelpShortcuts => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::KeyboardShortcuts)
-            }
             MenuAction::HelpSendFeedback => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
             }
@@ -1275,7 +1270,6 @@ impl MenuAction {
             // The help popover's rows, as the artboard draws them.
             MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
             MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
-            MenuAction::HelpShortcuts => Some(koru_draw::icons::KEYBOARD),
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
             MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
             MenuAction::HelpSocial(social) => Some(social.glyph()),
@@ -1479,10 +1473,6 @@ impl koru_ui::MenuItem for MenuAction {
         match self {
             // The help popover's row that waits on a later phase says so
             // (disabled, never hidden).
-            MenuAction::HelpShortcuts => Some(Cow::Borrowed(koru_i18n::t(
-                crate::format::lang(),
-                koru_i18n::Key::ComingLater,
-            ))),
             MenuAction::Open | MenuAction::OpenInNewWindow => {
                 Some(Cow::Borrowed("This workspace is already open"))
             }
@@ -2216,8 +2206,6 @@ pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
         MenuAction::HelpRelease,
         MenuAction::Divider,
         MenuAction::HelpFullChangelog,
-        MenuAction::Divider,
-        MenuAction::HelpShortcuts,
         MenuAction::Divider,
         MenuAction::HelpSendFeedback,
         MenuAction::Divider,
