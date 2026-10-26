@@ -2042,6 +2042,9 @@ impl<H: ShellHost> ShellState<H> {
                 closable: *closable,
                 slide: window.slides.offset(index),
                 dragging: false,
+                // The shell's strip has no pin group, so no gap to keep out
+                // of a chip.
+                gap_after: 0.0,
             })
             .collect();
         tabs::draw(

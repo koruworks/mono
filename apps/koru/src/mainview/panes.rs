@@ -238,6 +238,7 @@ impl TabGroup {
         t: &'a Tab,
         carried: Option<(usize, f32)>,
         i: usize,
+        pin_count: usize,
         swatch: Option<&'a Option<String>>,
         notes: &'a std::collections::HashSet<koru_core::DocumentId>,
         ws: &'a koru_core::schema::WorkspaceDoc,
@@ -281,12 +282,21 @@ impl TabGroup {
         } else {
             &t.label
         };
+        // The pin group's gap rides in the last pin's width (`ensure_widths`);
+        // the chip stops short of it so the pin is its neighbours' size and
+        // its icon sits centred (the CTO's note).
+        let gap_after = if pin_count > 0 && i + 1 == pin_count {
+            theme::TAB_PIN_GAP
+        } else {
+            0.0
+        };
         tabs::Tab {
             label,
             icon,
             closable: !t.is_pinned(),
             slide,
             dragging,
+            gap_after,
         }
     }
 
@@ -324,11 +334,12 @@ impl TabGroup {
                 _ => None,
             })
             .collect();
+        let pin_count = self.tabs.pinned_count();
         let items: Vec<tabs::Tab<'_>> = self
             .tabs
             .iter()
             .enumerate()
-            .map(|(i, t)| Self::tab_item(t, carried, i, swatches[i].as_ref(), notes, ws))
+            .map(|(i, t)| Self::tab_item(t, carried, i, pin_count, swatches[i].as_ref(), notes, ws))
             .collect();
         tabs::draw(
             scene,

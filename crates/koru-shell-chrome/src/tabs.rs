@@ -42,6 +42,32 @@ pub struct Tab<'a> {
     /// How far left or right of its slot to *draw* this tab.
     pub slide: f32,
     pub dragging: bool,
+    /// Air the slot carries after the chip that is **not the chip's**: the pin
+    /// group's gap, folded into the last pin's width so [`layout`] stays pure
+    /// arithmetic. The chip stops short of it; the slot (and the hit) keep it.
+    /// Drawn as chip, it made the last pin six pixels wider than its
+    /// neighbours and its icon sit left of centre (the CTO's note).
+    pub gap_after: f32,
+}
+
+impl Tab<'_> {
+    /// An icon and nothing else: the pin with Show title off. Its icon
+    /// centres in the chip rather than sitting where a label's would start.
+    pub fn is_icon_only(&self) -> bool {
+        self.label.is_empty() && !self.closable
+    }
+}
+
+/// Where a tab's icon slot starts: at the label's padding for a titled tab,
+/// centred in the pill for an icon-only pin — there is no label and no close
+/// box to leave room for, so left-aligning it read as space kept for a hidden
+/// `×` (the CTO's note).
+pub fn icon_slot_x(pill: Rect, icon_only: bool) -> f32 {
+    if icon_only {
+        pill.x + ((pill.w - crate::PAGE_ICON_SLOT) * 0.5).max(0.0)
+    } else {
+        pill.x + theme::PANEL_PAD
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -490,7 +516,13 @@ fn draw_tab(
     if t.pill.w <= 0.0 || t.pill.h <= 0.0 {
         return;
     }
-    let pill = Rect::new(t.pill.x + tab.slide, t.pill.y, t.pill.w, t.pill.h);
+    // The chip ends where the pin group's gap begins; see `Tab::gap_after`.
+    let pill = Rect::new(
+        t.pill.x + tab.slide,
+        t.pill.y,
+        (t.pill.w - tab.gap_after).max(0.0),
+        t.pill.h,
+    );
     let _inspect_tab = koru_draw::inspect::scope(
         "Tab (legacy shared)",
         "container",
@@ -559,6 +591,7 @@ fn draw_tab(
     };
     let text_x = pill.x + theme::PANEL_PAD + icon_w;
     let text_w = (pill.w - theme::PANEL_PAD * 2.0 - close_w - icon_w).max(0.0);
+    let icon_x = icon_slot_x(pill, tab.is_icon_only());
     let colour = if selected { p.text } else { p.text_dim };
     let label = if text_w > 0.0 && !tab.label.is_empty() {
         Some(engine.simple_layout_wrapped(tab.label, theme::role::row(), text_w))
@@ -578,26 +611,15 @@ fn draw_tab(
         .as_ref()
         .and_then(|l| l.lines().next().map(|line| y + line.metrics().baseline));
     match tab.icon {
-        Some(TabIcon::Emoji(icon)) => crate::draw_page_emoji(
-            scene,
-            root,
-            engine,
-            icon,
-            pill.x + theme::PANEL_PAD,
-            pill,
-            label_bl,
-        ),
+        Some(TabIcon::Emoji(icon)) => {
+            crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_bl)
+        }
         Some(TabIcon::Glyph(glyph)) => draw_icon(
             scene,
             root,
             engine,
             glyph,
-            Rect::new(
-                pill.x + theme::PANEL_PAD,
-                pill.y,
-                crate::PAGE_ICON_SLOT,
-                pill.h,
-            ),
+            Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h),
             colour,
         ),
         Some(TabIcon::Swatch(token)) => {
@@ -605,12 +627,7 @@ fn draw_tab(
             // own line reads at rather than a constant: a tab is the one place
             // this mark sits beside text of the strip's size, and a square
             // fixed in pixels would drift from it the first time density moved.
-            let slot = Rect::new(
-                pill.x + theme::PANEL_PAD,
-                pill.y,
-                crate::PAGE_ICON_SLOT,
-                pill.h,
-            );
+            let slot = Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h);
             let side = (slot.w * 0.55).max(6.0);
             let fill = token
                 .and_then(theme::accent_tone)
@@ -635,7 +652,7 @@ fn draw_tab(
             scene,
             root,
             Rect::new(
-                pill.x + theme::PANEL_PAD + (crate::PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5,
+                icon_x + (crate::PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5,
                 pill.y,
                 theme::CAPTION_ICON,
                 pill.h,
