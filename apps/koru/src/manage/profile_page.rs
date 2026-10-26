@@ -128,6 +128,10 @@ pub(crate) enum Control {
     HistoryEvent(usize),
     /// *Load older*: the history's next page.
     OlderHistory,
+    // ---- the New profile page (`new_profile`) ----
+    /// The page's X: put the form away and land on the first Profile (the
+    /// CTO's note).
+    CloseCreation,
     // ---- the Koru Cloud page (`cloud`) ----
     /// *Accounts…*: the account switcher.
     Accounts,
@@ -196,6 +200,8 @@ pub(crate) enum Look {
     Row,
     /// The shared icon button with a `•••`.
     More,
+    /// The shared icon button with an X: the New profile page's close.
+    Close,
     /// A disclosure: a triangle and a line of accent text; `true` while open.
     Disclosure(bool),
 }
@@ -677,6 +683,9 @@ impl ManageView {
     pub(super) fn activate_control(&mut self, control: Control) -> bool {
         self.page_focus = Some(control);
         self.focus = None;
+        if control == Control::CloseCreation {
+            return self.close_creation();
+        }
         if let Some(done) = self.activate_device_control(control) {
             return done;
         }
@@ -746,6 +755,8 @@ impl ManageView {
             | Control::RestoreWorkspace(_)
             | Control::NoticeRetry
             | Control::NoticeDismiss => return false,
+            // The New profile page's, answered above.
+            Control::CloseCreation => return false,
             // The Linked devices page's, answered above.
             Control::LinkDevice
             | Control::ThisDevice

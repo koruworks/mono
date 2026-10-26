@@ -3998,7 +3998,6 @@ impl MainView {
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::OpenWelcome
                         | MenuAction::ClearRecents
-                        | MenuAction::NewWorkspace
                         | MenuAction::ImportAs
                 ),
             },
@@ -4255,7 +4254,6 @@ impl MainView {
                         | MenuAction::HelpDownload
                         | MenuAction::HelpFullChangelog
                         | MenuAction::HelpSendFeedback
-                        | MenuAction::HelpReportProblem
                         | MenuAction::HelpWebsite
                         | MenuAction::HelpSocial(_)
                 ),
@@ -4353,10 +4351,6 @@ impl MainView {
                         format,
                         source: koru_workspace_host::ImportSourceSelection::Picker,
                     })
-                }
-                MenuAction::NewWorkspace => {
-                    self.explore.close_popover();
-                    self.prompt_new_workspace()
                 }
                 MenuAction::ImportAs => false,
                 _ => false,
@@ -4740,7 +4734,6 @@ impl MainView {
                     true
                 }
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
-                MenuAction::HelpReportProblem => self.open_report_problem_tab(),
                 MenuAction::HelpWebsite => {
                     self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
                     true
@@ -4912,30 +4905,6 @@ impl MainView {
             return false;
         }
         self.update_consent(UpdateChoice::Download, report.stage);
-        true
-    }
-
-    /// The Feedback tab on *Something isn't working* — the help popover's
-    /// *Report a problem*. An open Feedback tab is turned to that kind rather
-    /// than doubled.
-    pub(crate) fn open_report_problem_tab(&mut self) -> bool {
-        let existing = self
-            .tabs()
-            .iter()
-            .position(|t| matches!(t.view, TabView::Feedback(_)) && t.draft.is_none());
-        if let Some(i) = existing {
-            let _ = self.select(i);
-            if let TabView::Feedback(view) = &mut self.tabs_mut().active_mut().view {
-                view.set_kind(crate::feedback::Kind::Bug);
-            }
-            return true;
-        }
-        self.record_jump();
-        self.tabs_mut().push(Tab::report_problem());
-        self.slides_mut().clear();
-        self.mark_tab_widths_stale();
-        self.size_visible_groups();
-        self.ensure_tab_visible(self.tabs().active());
         true
     }
 
@@ -6829,17 +6798,20 @@ impl MainView {
         true
     }
 
-    /// The who/where popover's *WORKSPACES* ⋯: New workspace and Import…,
-    /// hanging off the panel's right edge level with the ⋯, with the page
-    /// still under it (the CTO's note, QUESTIONS.md E29). Import… is a
-    /// submenu of the formats; a chosen format or the creator shuts the
-    /// page, since either is the end of the interaction.
-    fn open_workspaces_menu(&mut self) -> bool {
+    /// The who/where popover's heading import button: the formats, hanging
+    /// off the panel's right edge level with the button, with the page
+    /// still under it (the CTO's notes, QUESTIONS.md E29 and E37). A chosen
+    /// format shuts the page, since it is the end of the interaction.
+    fn open_workspaces_import_menu(&mut self) -> bool {
         let area = self.explore_popover_area();
         let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
             return false;
         };
-        let Some(button) = self.explore.popover_heading_menu_rect(area, self.viewport) else {
+        let Some(button) = self.explore.popover_head_button_rect(
+            area,
+            self.viewport,
+            crate::panes::explore::HeadButton::Import,
+        ) else {
             return false;
         };
         let at = (panel.x + panel.w + koru_app_shell::popover::GAP, button.y);
@@ -6847,7 +6819,7 @@ impl MainView {
             &mut self.engine,
             MenuSubject::NewTab,
             at,
-            context_menu::workspaces_menu_items(),
+            context_menu::import_items(),
             MenuAnchor::Cursor,
         );
         let enabled = self.enabled_items(&menu);
@@ -7165,7 +7137,10 @@ impl MainView {
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
-            Outcome::WorkspacesMenu => self.open_workspaces_menu(),
+            Outcome::WorkspacesImport => self.open_workspaces_import_menu(),
+            Outcome::WorkspaceMenu { workspace, at } => {
+                self.open_workspace_menu(workspace, at, false)
+            }
             Outcome::OpenSettings => self.open_settings_tab(),
             Outcome::OpenHome => self.open_home_tab(),
             Outcome::OpenRecentDocument(id) => self.open_recent_document(id),
@@ -9692,9 +9667,13 @@ impl View for MainView {
         // into the arm below and did nothing at all, not even close the popover.
         if self.popover_hit(x, y) {
             self.refresh_explore(ws, true);
-            // A right-click in the switcher is not a gesture it has — workspace
-            // and Profile actions live in their managers. It is swallowed
-            // rather than falling through to the view underneath.
+            // A workspace row's menu — the same one its Manage row's `•••`
+            // opens — at the pointer, over the page (the CTO's note). Any
+            // other press on the switcher is swallowed rather than falling
+            // through to the view underneath.
+            let area = self.explore_popover_area();
+            let out = self.explore.popover_context_menu(area, self.viewport, x, y);
+            self.apply(ws, out);
             return true;
         }
         if self.ai_visible() && self.ai_rect().contains(x, y) {
@@ -10795,6 +10774,10 @@ impl View for MainView {
 
     fn document_root(&self) -> Option<NodeId> {
         self.tabs().active_tab().view.root()
+    }
+
+    fn active_tab_title(&self) -> Option<String> {
+        Some(self.tabs().active_tab().label.clone())
     }
 
     fn delegate_folder_chosen(&mut self, chosen: koru_workspace_host::DelegateFolder) -> bool {

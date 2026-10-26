@@ -197,6 +197,16 @@ pub enum Outcome {
     /// A double-clicked file whose bytes are already here: open it through the
     /// operating system's associated application.
     OpenFile(NodeId),
+    /// A right-click on a workspace row of the who/where popover (the CTO's
+    /// note): the container opens the workspace menu — the one a Manage
+    /// row's `•••` opens — at the pointer, with the page still under it.
+    ///
+    /// **The pane reports which workspace; it never builds the menu.** What
+    /// the workspace may have done to it is the container's to know.
+    WorkspaceMenu {
+        workspace: WorkspaceId,
+        at: (f32, f32),
+    },
     /// A library row wants its menu — the `…` was pressed, or it was
     /// right-clicked.
     ///
@@ -290,9 +300,10 @@ pub enum Outcome {
     ManageWorkspace(WorkspaceId),
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
-    /// The who/where popover's *WORKSPACES* ⋯: the container hangs New
-    /// workspace and Import… beside the page, which stays.
-    WorkspacesMenu,
+    /// The who/where popover's heading import button: the container hangs
+    /// the import formats beside the page, which stays (the CTO's note:
+    /// the heading's ⋯ became a `+` and an import button).
+    WorkspacesImport,
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,
     /// A recent document, from Home's nav.

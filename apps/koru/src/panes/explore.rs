@@ -400,34 +400,52 @@ fn page_of(kind: PopoverKind) -> f32 {
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
-    /// *WORKSPACES · n*, with the ⋯ that opens New workspace and Import….
+    /// *WORKSPACES · n*, with a `+` (New workspace) and an import button at
+    /// its trailing end (the CTO's note: no ⋯ menu).
     WorkspacesHeading,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
-    /// The hairline above a page's footer.
-    Divider,
-    /// The Profiles page's head: its name. Furniture — there is no page
-    /// behind it to go back to (the CTO's note: no views inside the popover).
+    /// The Profiles page's head: its name, with a `+` (New profile) at its
+    /// trailing end (the CTO's note). No page is behind it to go back to.
     ProfilesTitle,
     /// An index into the profile list — **every** profile the machine knows.
     /// The row switches to it; the gear that shows on hover opens the Manage
     /// tab on it.
     Profile(usize),
-    /// *New profile*: the Profile manager's create form.
-    NewProfile,
     /// A mode-dependent action from the library heading's `…` menu.
     LibraryAction(actions::Action),
 }
 
 impl PopoverRow {
-    /// Whether the keyboard may land on it. The divider and the Profiles
-    /// title are furniture, and the arrows step over them the way
-    /// `next_enabled` steps over a dimmed menu item. The heading is a stop:
-    /// Enter on it opens its ⋯ menu.
+    /// Whether the keyboard may land on it. Every row is a stop now: each
+    /// page's head carries a `+` that Enter presses, and the footer with its
+    /// divider went when *New profile* moved up into the title (the CTO's
+    /// note). Kept as the one place that would say otherwise.
     fn selectable(self) -> bool {
-        !matches!(self, Self::Divider | Self::ProfilesTitle)
+        let _ = self;
+        true
     }
+
+    /// The buttons at a head row's trailing end, leading to trailing.
+    fn head_buttons(self) -> &'static [HeadButton] {
+        match self {
+            Self::WorkspacesHeading => &[HeadButton::New, HeadButton::Import],
+            Self::ProfilesTitle => &[HeadButton::New],
+            _ => &[],
+        }
+    }
+}
+
+/// A button at a head row's trailing end (the CTO's note: the `+` moved up
+/// into the Profiles title; the workspaces heading's ⋯ became a `+` and an
+/// import button).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum HeadButton {
+    /// New workspace, or New profile.
+    New,
+    /// The import formats, beside the page.
+    Import,
 }
 
 /// Which part of a popover row a point is on.
@@ -441,8 +459,8 @@ pub enum PopoverPart {
     Row,
     /// The gear at a workspace's or profile's trailing end: the Manage tab.
     Gear,
-    /// The heading's ⋯: New workspace and Import….
-    Menu,
+    /// One of a head row's buttons.
+    Button(HeadButton),
 }
 
 /// What the sync icon says, from the Agent's account state for the open
@@ -3334,11 +3352,11 @@ impl ExploreView {
                 // and help are the rail's now (the CTO's note).
                 out
             }
+            // The title carries *New profile* as its `+` (the CTO's note), so
+            // the page is the title and the Profiles, nothing under them.
             PopoverKind::Profiles => {
                 let mut out = vec![PopoverRow::ProfilesTitle];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-                out.push(PopoverRow::Divider);
-                out.push(PopoverRow::NewProfile);
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -3351,7 +3369,6 @@ impl ExploreView {
 
     fn popover_row_h(row: PopoverRow) -> f32 {
         match row {
-            PopoverRow::Divider => POPOVER_DIVIDER_H,
             PopoverRow::Profile(_) => PROFILE_ROW_H,
             _ => POPOVER_ROW_H,
         }
@@ -3363,11 +3380,6 @@ impl ExploreView {
             row,
             PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle
         )
-    }
-
-    /// Whether `row` begins, or is in, a page's fixed footer.
-    fn page_foot(row: PopoverRow) -> bool {
-        matches!(row, PopoverRow::Divider | PopoverRow::NewProfile)
     }
 
     /// A page's height with every row showing, padding included.
@@ -3495,9 +3507,22 @@ impl ExploreView {
 
     /// Where the heading's ⋯ is, when the main page is showing — what the
     /// container hangs the New workspace / Import… menu off.
-    pub fn popover_heading_menu_rect(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
-        let row = self.popover_row_rect(area, viewport, PopoverRow::WorkspacesHeading)?;
-        Some(heading_menu_rect(row))
+    pub fn popover_head_button_rect(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        button: HeadButton,
+    ) -> Option<Rect> {
+        let head = match self.live()?.kind {
+            PopoverKind::Summary => PopoverRow::WorkspacesHeading,
+            PopoverKind::Profiles => PopoverRow::ProfilesTitle,
+            PopoverKind::LibraryActions => return None,
+        };
+        let row = self.popover_row_rect(area, viewport, head)?;
+        head_button_rects(row, head)
+            .into_iter()
+            .find(|(b, _)| *b == button)
+            .map(|(_, r)| r)
     }
 
     /// One page's rows in `panel`: the fixed top rows, the scrolling list, and
@@ -3516,11 +3541,9 @@ impl ExploreView {
                 })
                 .collect();
         }
+        // A page is its fixed head, then the list scrolling under it; no page
+        // has a footer since *New profile* moved up into the title.
         let head = rows.iter().take_while(|row| Self::page_head(**row)).count();
-        let foot = rows
-            .iter()
-            .position(|row| Self::page_foot(*row))
-            .unwrap_or(rows.len());
         let mut out = Vec::with_capacity(rows.len());
         let mut y = panel.y + POPOVER_PAD;
         for row in rows[..head].iter().copied() {
@@ -3529,23 +3552,15 @@ impl ExploreView {
             y += h;
         }
         let mut list_y = y - scroll;
-        for row in rows[head..foot].iter().copied() {
+        for row in rows[head..].iter().copied() {
             let h = Self::popover_row_h(row);
             out.push((row, Rect::new(panel.x, list_y, panel.w, h)));
             list_y += h;
         }
-        let foot_h: f32 = rows[foot..].iter().copied().map(Self::popover_row_h).sum();
-        let mut foot_y = panel.y + panel.h - POPOVER_PAD - foot_h;
-        for row in rows[foot..].iter().copied() {
-            let h = Self::popover_row_h(row);
-            out.push((row, Rect::new(panel.x, foot_y, panel.w, h)));
-            foot_y += h;
-        }
         out
     }
 
-    /// The band between a page's fixed top rows and its fixed footer, where
-    /// the list scrolls.
+    /// The band under a page's fixed top rows, where the list scrolls.
     fn page_band(&self, kind: PopoverKind, panel: Rect) -> Option<Rect> {
         if kind == PopoverKind::LibraryActions {
             return None;
@@ -3557,14 +3572,8 @@ impl ExploreView {
             .take_while(|row| Self::page_head(*row))
             .map(Self::popover_row_h)
             .sum();
-        let foot_h: f32 = rows
-            .iter()
-            .position(|row| Self::page_foot(*row))
-            .map_or(0.0, |at| {
-                rows[at..].iter().copied().map(Self::popover_row_h).sum()
-            });
         let top = panel.y + POPOVER_PAD + head_h;
-        let bottom = panel.y + panel.h - POPOVER_PAD - foot_h;
+        let bottom = panel.y + panel.h - POPOVER_PAD;
         Some(Rect::new(panel.x, top, panel.w, (bottom - top).max(0.0)))
     }
 
@@ -3740,6 +3749,35 @@ impl ExploreView {
         changed
     }
 
+    /// A right-click on the popover. A workspace row asks the container for
+    /// its menu and the page stays, the row lit as the menu's subject; any
+    /// other row, and the panel itself, swallow the press — a right-click
+    /// is not a gesture a Profile row or a heading has.
+    pub fn popover_context_menu(
+        &mut self,
+        area: Rect,
+        viewport: (f32, f32),
+        x: f32,
+        y: f32,
+    ) -> Outcome {
+        let Some((i, row, _)) = self.popover_part_at(area, viewport, x, y) else {
+            return Outcome::Consumed;
+        };
+        let PopoverRow::Workspace(index) = row else {
+            return Outcome::Consumed;
+        };
+        let Some(workspace) = self.workspaces.get(index).map(|w| w.id) else {
+            return Outcome::Consumed;
+        };
+        if let Some(p) = self.popover.as_mut() {
+            p.hover = Some(i);
+        }
+        Outcome::WorkspaceMenu {
+            workspace,
+            at: (x, y),
+        }
+    }
+
     fn popover_at(
         &self,
         area: Rect,
@@ -3779,24 +3817,48 @@ impl ExploreView {
             {
                 PopoverPart::Gear
             }
-            PopoverRow::WorkspacesHeading => PopoverPart::Menu,
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => head_button_rects(r, row)
+                .into_iter()
+                .find(|(_, b)| b.contains(x, y))
+                .map_or(PopoverPart::Row, |(b, _)| PopoverPart::Button(b)),
             _ => PopoverPart::Row,
         };
         Some((i, row, part))
     }
 
     /// Whether choosing `row`'s `part` keeps the popover open. A Profile row
-    /// switches and the list stays, with the tick moved; the heading's ⋯
-    /// opens a menu *beside* the page (the CTO's note, QUESTIONS.md E29); the
-    /// title is furniture; everything else is a destination.
+    /// switches and the list stays, with the tick moved; a head's import
+    /// button opens a menu *beside* the page (the CTO's note, QUESTIONS.md
+    /// E29) and a press on a head's words does nothing, so both leave it; a
+    /// head's `+` opens a creator, which is the end of the interaction;
+    /// everything else is a destination.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => true,
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
+                part != PopoverPart::Button(HeadButton::New)
+            }
             PopoverRow::Profile(_) => part == PopoverPart::Row,
-            PopoverRow::Workspace(_)
-            | PopoverRow::Divider
-            | PopoverRow::NewProfile
-            | PopoverRow::LibraryAction(_) => false,
+            PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => false,
+        }
+    }
+
+    /// Choose `row`'s `part` the way a press or Enter does: the popover
+    /// shuts first when the choice is the end of it, so the same press
+    /// cannot also choose a row of a page on its way out.
+    fn press(&mut self, row: PopoverRow, part: PopoverPart) -> Outcome {
+        if !Self::stays_open(row, part) {
+            self.close_popover();
+        }
+        self.choose(row, part)
+    }
+
+    /// What Enter means on `row`: a head's `+`, else the row itself.
+    fn keyboard_part(row: PopoverRow) -> PopoverPart {
+        match row {
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
+                PopoverPart::Button(HeadButton::New)
+            }
+            _ => PopoverPart::Row,
         }
     }
 
@@ -3830,10 +3892,17 @@ impl ExploreView {
                     Outcome::SwitchProfile(id)
                 }
             }
-            PopoverRow::WorkspacesHeading => Outcome::WorkspacesMenu,
-            PopoverRow::NewProfile => Outcome::NewProfile,
+            // A head's buttons act; a press on its words does nothing.
+            PopoverRow::WorkspacesHeading => match part {
+                PopoverPart::Button(HeadButton::New) => Outcome::NewWorkspace,
+                PopoverPart::Button(HeadButton::Import) => Outcome::WorkspacesImport,
+                PopoverPart::Row | PopoverPart::Gear => Outcome::Consumed,
+            },
+            PopoverRow::ProfilesTitle => match part {
+                PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
+                _ => Outcome::Consumed,
+            },
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
-            PopoverRow::Divider | PopoverRow::ProfilesTitle => Outcome::Consumed,
         }
     }
 
@@ -3893,21 +3962,15 @@ impl ExploreView {
                 }
                 Some(Outcome::Consumed)
             }
-            Key::Named(NamedKey::Enter)
-                if matches!(
-                    hovered,
-                    Some(PopoverRow::Profile(_) | PopoverRow::WorkspacesHeading)
-                ) =>
-            {
-                Some(self.choose(hovered.expect("matched above"), PopoverPart::Row))
-            }
-            Key::Named(NamedKey::Enter) => {
-                self.close_popover();
-                Some(match hovered {
-                    Some(row) => self.choose(row, PopoverPart::Row),
-                    None => Outcome::Consumed,
-                })
-            }
+            // Enter chooses the lit row — a head's `+` when a head is lit —
+            // and shuts the popover when that choice is the end of it.
+            Key::Named(NamedKey::Enter) => Some(match hovered {
+                Some(row) => self.press(row, Self::keyboard_part(row)),
+                None => {
+                    self.close_popover();
+                    Outcome::Consumed
+                }
+            }),
             _ => None,
         }
     }
@@ -4590,10 +4653,7 @@ impl ExploreView {
         // ordering a tab's close box needs against the tab it sits in.
         if self.popover_open() {
             if let Some((_, row, part)) = self.popover_part_at(area, viewport, x, y) {
-                if !Self::stays_open(row, part) {
-                    self.close_popover();
-                }
-                return self.choose(row, part);
+                return self.press(row, part);
             }
             // The floor chip shuts the switcher it opened — whichever page is
             // showing; falling through would reopen it on the same press.
@@ -7490,8 +7550,14 @@ impl ExploreView {
                 );
             }
             let hot = hover == Some(i);
-            // The heading lights its ⋯, not the row.
-            if hot && !matches!(row, PopoverRow::WorkspacesHeading) {
+            // A head lights the button the pointer is on — its `+` for the
+            // keyboard — not the row.
+            if hot
+                && !matches!(
+                    row,
+                    PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle
+                )
+            {
                 scene::fill(
                     scene,
                     root,
@@ -7504,50 +7570,42 @@ impl ExploreView {
             let text = |x: f32| Rect::new(x, r.y, (r.x + r.w - x - 8.0).max(1.0), r.h);
             match row {
                 PopoverRow::WorkspacesHeading => {
-                    // *WORKSPACES · n*, and the ⋯ that opens New workspace
-                    // and Import… beside the page.
+                    // *WORKSPACES · n*, then its `+` and import button.
                     let n = self
                         .rows_for(kind)
                         .iter()
                         .filter(|row| matches!(row, PopoverRow::Workspace(_)))
                         .count();
                     let label = format!("WORKSPACES · {n}");
-                    let button = heading_menu_rect(r);
+                    let buttons = head_button_rects(r, row);
+                    let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
                     let x = r.x + theme::NAV_PAD * 2.0;
                     draw_middle(
                         scene,
                         root,
                         engine,
                         &label,
-                        Rect::new(x, r.y, (button.x - 8.0 - x).max(1.0), r.h),
+                        Rect::new(x, r.y, (first - 8.0 - x).max(1.0), r.h),
                         theme::role::hint(),
                         p.row_hint,
                     );
-                    koru_ui::icon_button::draw_with(
-                        scene,
-                        root,
-                        engine,
-                        button,
-                        icons::DOTS_THREE,
-                        koru_ui::icon_button::State {
-                            hovered: hot,
-                            active: false,
-                            disabled: false,
-                        },
-                        koru_ui::icon_button::Metrics::COMPACT,
-                    );
+                    self.draw_head_buttons(scene, root, engine, &buttons, hot);
                 }
                 PopoverRow::ProfilesTitle => {
-                    // The page's name. No caret: nothing is behind it.
+                    // The page's name, then its `+`. No caret: nothing is
+                    // behind it.
+                    let buttons = head_button_rects(r, row);
+                    let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
                     draw_middle(
                         scene,
                         root,
                         engine,
                         koru_i18n::t(lang, koru_i18n::Key::WorkspacesProfiles),
-                        text(icon_x),
+                        Rect::new(icon_x, r.y, (first - 8.0 - icon_x).max(1.0), r.h),
                         theme::role::row().with_weight(theme::FontWeight::SemiBold),
                         p.text,
                     );
+                    self.draw_head_buttons(scene, root, engine, &buttons, hot);
                 }
                 PopoverRow::Workspace(i) => {
                     let w = &self.workspaces[i];
@@ -7595,41 +7653,6 @@ impl ExploreView {
                         theme::role::row(),
                         p.text_dim,
                     );
-                }
-                PopoverRow::Divider => {
-                    scene::fill(
-                        scene,
-                        root,
-                        p.panel_border,
-                        &scene::rect(
-                            r.x + theme::NAV_PAD,
-                            r.y + (r.h - 1.0) * 0.5,
-                            (r.w - theme::NAV_PAD * 2.0).max(0.0),
-                            1.0,
-                        ),
-                    );
-                }
-                PopoverRow::NewProfile => {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::PLUS,
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        p.text_dim,
-                    );
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        koru_i18n::t(lang, koru_i18n::Key::NewProfile),
-                        text(text_x),
-                        theme::role::row(),
-                        p.text_dim,
-                    );
-                    // **No chord printed here.** `Ctrl+Shift+N` was once
-                    // printed and is the document's Narrow view mode. See
-                    // `mainview::keys::resolve`.
                 }
                 PopoverRow::Profile(i) => {
                     let profile = &self.profiles[i];
@@ -7708,15 +7731,64 @@ pub(crate) fn trailing_lane(r: Rect) -> Rect {
     koru_ui::profile_picker::row_parts(r).trailing
 }
 
-/// The heading's ⋯ button, at the trailing lane.
-pub(crate) fn heading_menu_rect(r: Rect) -> Rect {
+impl ExploreView {
+    /// A head row's buttons: compact icon buttons, the one the pointer is
+    /// on lit — or the `+` when the keyboard has the row and the pointer
+    /// is elsewhere, since that is what Enter would press.
+    fn draw_head_buttons(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        buttons: &[(HeadButton, Rect)],
+        hot: bool,
+    ) {
+        for (button, rect) in buttons {
+            let lit = hot
+                && match self.popover_part {
+                    Some(PopoverPart::Button(on)) => on == *button,
+                    Some(_) => false,
+                    None => *button == HeadButton::New,
+                };
+            koru_ui::icon_button::draw_with(
+                scene,
+                root,
+                engine,
+                *rect,
+                match button {
+                    HeadButton::New => icons::PLUS,
+                    HeadButton::Import => icons::IMPORT,
+                },
+                koru_ui::icon_button::State {
+                    hovered: lit,
+                    active: false,
+                    disabled: false,
+                },
+                koru_ui::icon_button::Metrics::COMPACT,
+            );
+        }
+    }
+}
+
+/// A head row's buttons, packed against the trailing lane's end so the
+/// last of them lines up with every row's control; each is a compact
+/// square, `HEAD_BUTTON_GAP` apart.
+pub(crate) fn head_button_rects(r: Rect, row: PopoverRow) -> Vec<(HeadButton, Rect)> {
     let lane = trailing_lane(r);
-    Rect::new(
-        lane.x,
-        r.y + (r.h - HEADING_BUTTON_H) * 0.5,
-        lane.w,
-        HEADING_BUTTON_H,
-    )
+    let y = r.y + (r.h - HEADING_BUTTON_H) * 0.5;
+    let mut x = lane.x + lane.w - HEADING_BUTTON_H;
+    let mut out: Vec<(HeadButton, Rect)> = row
+        .head_buttons()
+        .iter()
+        .rev()
+        .map(|button| {
+            let rect = Rect::new(x, y, HEADING_BUTTON_H, HEADING_BUTTON_H);
+            x -= HEADING_BUTTON_H + HEAD_BUTTON_GAP;
+            (*button, rect)
+        })
+        .collect();
+    out.reverse();
+    out
 }
 
 /// A row's trailing lane: the gear while the pointer is on the row, else the
@@ -7943,7 +8015,6 @@ const CARET_SIZE: f32 = theme::CAPTION_ICON * 0.5;
 /// Heights of a popover's rows.
 const SECTION_H: f32 = 20.0;
 const POPOVER_ROW_H: f32 = theme::ROW_H;
-const POPOVER_DIVIDER_H: f32 = 9.0;
 /// The switcher's cap. Taller than a plain menu's, because each page carries a
 /// fixed head and a four-row footer around its scrolling list.
 const SWITCHER_MAX_H: f32 = 500.0;
@@ -7955,6 +8026,8 @@ const WORKSPACE_CHIP: f32 = 20.0;
 const PROFILE_ROW_H: f32 = 44.0;
 const PROFILE_TILE: f32 = 24.0;
 const HEADING_BUTTON_H: f32 = 20.0;
+/// Between two of a head row's buttons.
+const HEAD_BUTTON_GAP: f32 = 4.0;
 
 /// The `…` between the name and the tick.
 /// Where a row's icon sits, given its depth and whether the row carries the

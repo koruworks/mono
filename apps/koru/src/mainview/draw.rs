@@ -882,6 +882,24 @@ impl MainView {
             &scene::rect(lane.x, lane.y + lane.h - 1.0, lane.w, 1.0),
         );
         let rects = koru_shell_chrome::lane::solve(lane, leading);
+        // **The mark's slot wears the rail's colour** (the CTO's note): the
+        // slot is the rail's width and sits over it, so the rail's band and
+        // its hairline run up through the lane and the column reads as one.
+        if rects.leading.w > 0.0 {
+            let slot = rects.leading;
+            scene::fill(
+                scene,
+                root,
+                p.chip_bg,
+                &scene::rect(slot.x, slot.y, slot.w, slot.h),
+            );
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(slot.x + slot.w - 1.0, slot.y, 1.0, slot.h),
+            );
+        }
         let hovered = |h: Hit| self.hover == Some(h);
         self.draw_lane_controls(
             scene,

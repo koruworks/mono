@@ -571,6 +571,13 @@ impl View for ManageView {
                 None => false,
             };
         }
+        // The New profile page's X is the page's, over the form's head and
+        // outside the form: it answers before the form is asked.
+        if self.content_page_open()
+            && let Some(control @ profile_page::Control::CloseCreation) = self.page_hit(x, y)
+        {
+            return self.activate_control(control);
+        }
         if self.content_page_open() {
             let (fx, fy) = self.form_point(x, y);
             let changed = self

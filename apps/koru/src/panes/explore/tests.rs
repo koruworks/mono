@@ -846,7 +846,7 @@ fn a_profile_row_is_two_lines_and_the_linked_count_is_set_from_outside() {
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
     assert_eq!(h(PopoverRow::Profile(0)), Some(super::PROFILE_ROW_H));
     assert!(
-        h(PopoverRow::Profile(0)) > h(PopoverRow::NewProfile),
+        h(PopoverRow::Profile(0)) > h(PopoverRow::ProfilesTitle),
         "taller than a one-line row"
     );
     assert!(v.set_linked_count(2), "a new count is a change");
@@ -970,9 +970,9 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     );
     let rows = v.popover_rows();
     assert_eq!(rows[0], PopoverRow::ProfilesTitle);
-    assert!(!rows[0].selectable(), "the title is furniture");
+    assert!(rows[0].selectable(), "the title carries the `+`");
     assert!(rows.contains(&PopoverRow::Profile(0)));
-    assert_eq!(rows.last(), Some(&PopoverRow::NewProfile));
+    assert!(matches!(rows.last(), Some(PopoverRow::Profile(_))));
     // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
@@ -1083,11 +1083,33 @@ fn every_popover_part_hit_tests_back_to_itself() {
         Some((PopoverRow::Workspace(0), PopoverPart::Row))
     );
     let r = find(&v, PopoverRow::WorkspacesHeading);
-    let (x, y) = super::heading_menu_rect(r).centre();
+    let buttons = super::head_button_rects(r, PopoverRow::WorkspacesHeading);
+    assert_eq!(
+        buttons.iter().map(|(b, _)| *b).collect::<Vec<_>>(),
+        vec![HeadButton::New, HeadButton::Import],
+        "a `+`, then import, at the trailing end"
+    );
+    assert!(buttons[0].1.x + buttons[0].1.w <= buttons[1].1.x);
+    assert!(
+        (buttons[1].1.x + buttons[1].1.w - (super::trailing_lane(r).x + super::trailing_lane(r).w))
+            .abs()
+            < 0.5,
+        "the last button ends where every row's control does"
+    );
+    for (button, rect) in &buttons {
+        let (x, y) = rect.centre();
+        assert_eq!(
+            v.popover_part_at(a, VIEW, x, y)
+                .map(|(_, row, part)| (row, part)),
+            Some((PopoverRow::WorkspacesHeading, PopoverPart::Button(*button)))
+        );
+    }
+    let (x, y) = (r.x + 30.0, r.centre().1);
     assert_eq!(
         v.popover_part_at(a, VIEW, x, y)
             .map(|(_, row, part)| (row, part)),
-        Some((PopoverRow::WorkspacesHeading, PopoverPart::Menu))
+        Some((PopoverRow::WorkspacesHeading, PopoverPart::Row)),
+        "the words are the row"
     );
 
     v.toggle_popover(PopoverKind::Profiles);
@@ -1389,23 +1411,38 @@ fn the_profiles_page_has_no_page_behind_it() {
     assert!(v.popover_open());
 }
 
+/// The title is a stop now that it carries *New profile*'s `+` (the CTO's
+/// note): Down from nothing lands on it, Enter there is the `+`, and Up from
+/// the first Profile wraps to the last Profile — there is no footer any more.
 #[test]
-fn the_arrows_skip_the_profiles_title() {
+fn the_arrows_land_on_the_profiles_title_and_enter_is_its_plus() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
     v.toggle_profile_popover();
-    // Down once from nothing skips the title and lands on the first Profile.
+    v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    assert_eq!(
+        v.popover_hover().map(|i| v.popover_rows()[i]),
+        Some(PopoverRow::ProfilesTitle)
+    );
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
         Some(PopoverRow::Profile(0))
     );
-    // Up from there wraps to the last stop, New profile.
+    v.popover_key(&Key::Named(NamedKey::ArrowUp));
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::NewProfile)
+        Some(PopoverRow::Profile(2)),
+        "wraps to the last Profile"
     );
+    v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::Enter)),
+        Some(Outcome::NewProfile),
+        "Enter on the title presses its `+`"
+    );
+    assert!(!v.popover_open(), "the creator is the end of it");
 }
 
 #[test]
@@ -1425,8 +1462,8 @@ fn enter_on_a_profile_row_switches_and_stays_open() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, profiles, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    // The title is skipped: three Downs reach the third Profile.
-    for _ in 0..3 {
+    // The title is a stop (its `+`): four Downs reach the third Profile.
+    for _ in 0..4 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -1478,22 +1515,35 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     assert!(v.popover_open(), "and neither dismissed it");
 }
 
-/// The heading's ⋯ asks the container for its menu and keeps the page; so
-/// does Enter on the heading, which is the keyboard's way to it.
+/// The heading's import button asks the container for the formats and keeps
+/// the page; its `+` asks for a workspace and shuts it, and Enter on the
+/// heading is the `+`. A press on the heading's words does nothing.
 #[test]
-fn the_heading_menu_reports_itself_and_stays_open() {
+fn the_headings_buttons_report_themselves() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Summary);
+    let import = v
+        .popover_head_button_rect(a, VIEW, HeadButton::Import)
+        .expect("the import button");
+    let (x, y) = import.centre();
+    assert_eq!(
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::WorkspacesImport
+    );
+    assert!(v.popover_open(), "the page stays under the formats");
     let (_, r) = *v
         .popover_rects(a, VIEW)
         .iter()
         .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
         .expect("the heading");
-    let (x, y) = super::heading_menu_rect(r).centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::WorkspacesMenu);
-    assert!(v.popover_open(), "the page stays");
+    assert_eq!(
+        v.mouse_down(a, VIEW, r.x + 30.0, r.centre().1, false),
+        Outcome::Consumed,
+        "the words do nothing"
+    );
+    assert!(v.popover_open());
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
@@ -1501,9 +1551,18 @@ fn the_heading_menu_reports_itself_and_stays_open() {
     );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::WorkspacesMenu)
+        Some(Outcome::NewWorkspace),
+        "Enter on the heading is its `+`"
     );
-    assert!(v.popover_open());
+    assert!(!v.popover_open(), "the creator is the end of it");
+    v.advance_popover(Instant::now() + Duration::from_secs(1));
+    v.toggle_popover(PopoverKind::Summary);
+    let plus = v
+        .popover_head_button_rect(a, VIEW, HeadButton::New)
+        .expect("the `+`");
+    let (x, y) = plus.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewWorkspace);
+    assert!(!v.popover_open());
 }
 
 /// After Back, the chip shuts the main page — it must not need a second
@@ -1592,17 +1651,22 @@ fn choosing_a_workspace_reports_it_and_closes_the_popover() {
     assert!(!v.popover_open(), "and it shut behind itself");
 }
 
+/// The Profiles title's `+` is *New profile* (the CTO's note): it reports
+/// itself and shuts the page, since the creator is the end of it.
 #[test]
-fn fixed_footer_actions_report_themselves() {
+fn the_titles_plus_reports_new_profile() {
     let a = area();
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    let (_, r) = *v
-        .popover_rects(a, VIEW)
-        .iter()
-        .find(|(row, _)| *row == PopoverRow::NewProfile)
-        .expect("listed");
-    let (x, y) = r.centre();
+    assert!(
+        v.popover_head_button_rect(a, VIEW, HeadButton::Import)
+            .is_none(),
+        "the Profiles title has no import"
+    );
+    let plus = v
+        .popover_head_button_rect(a, VIEW, HeadButton::New)
+        .expect("the `+`");
+    let (x, y) = plus.centre();
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewProfile);
     assert!(!v.popover_open());
 }
@@ -1619,8 +1683,6 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::Profile(0),
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
-            PopoverRow::Divider,
-            PopoverRow::NewProfile,
         ]
     );
     // The chip's page: the heading and the workspaces, nothing else.
@@ -1635,42 +1697,24 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
     );
 }
 
-/// A footer row is drawn over the list's overflow, so it — not a scrolled row
-/// hidden under it — answers for a press there.
+/// The head is drawn over the list's overflow, so its `+` — not a scrolled
+/// row hidden under it — answers for a press there.
 #[test]
-fn a_footer_row_outranks_a_scrolled_row_behind_it() {
+fn the_head_outranks_a_scrolled_row_behind_it() {
     let a = area();
     let (mut v, _, list) = with_context(0);
     let profiles: Vec<_> = (0..30).map(|i| a_profile(&format!("p{i}"))).collect();
     v.set_context(profiles.clone(), profiles[1].id, list.clone(), list[0].id);
     v.toggle_popover(PopoverKind::Profiles);
-    let (_, footer) = *v
-        .popover_rects(a, VIEW)
-        .iter()
-        .find(|(row, _)| *row == PopoverRow::NewProfile)
-        .expect("footer row");
-    let (x, y) = footer.centre();
+    let plus = v
+        .popover_head_button_rect(a, VIEW, HeadButton::New)
+        .expect("the `+`");
+    let (x, y) = plus.centre();
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
         Outcome::NewProfile,
-        "the footer answers, not the row under it"
+        "the head answers, not the row under it"
     );
-}
-
-/// The divider is furniture, not a target.
-#[test]
-fn pressing_furniture_only_closes_the_popover() {
-    let a = area();
-    let (mut v, _, _) = with_context(0);
-    v.toggle_popover(PopoverKind::Profiles);
-    let (_, r) = *v
-        .popover_rects(a, VIEW)
-        .iter()
-        .find(|(row, _)| *row == PopoverRow::Divider)
-        .unwrap();
-    let (x, y) = r.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
-    assert!(!v.popover_open());
 }
 
 /// Without this the second click of a double-click re-toggles, and the chip
@@ -1820,13 +1864,15 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 // ---------------------------------------------------- folder-profile rows
 
 /// The Profiles page carries no legacy folder actions and no remove box:
-/// *New profile* is its only command, whatever kind of profiles are listed.
+/// the title's `+` is its only command, whatever kind of profiles are
+/// listed, and the Profiles end the page.
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
     v.toggle_popover(PopoverKind::Profiles);
     let rows = v.popover_rows();
-    assert_eq!(rows.last(), Some(&PopoverRow::NewProfile));
+    assert!(matches!(rows.last(), Some(PopoverRow::Profile(_))));
+    assert_eq!(PopoverRow::ProfilesTitle.head_buttons(), &[HeadButton::New]);
 }
 
 // ------------------------------------------------------------------ the fade
@@ -1845,7 +1891,9 @@ fn a_dismissed_popover_goes_deaf_before_it_goes_away() {
         .into_iter()
         .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
         .expect("the heading");
-    let (x, y) = super::heading_menu_rect(r).centre();
+    let (x, y) = super::head_button_rects(r, PopoverRow::WorkspacesHeading)[0]
+        .1
+        .centre();
     assert!(v.close_popover());
 
     assert!(!v.popover_open(), "deaf immediately");

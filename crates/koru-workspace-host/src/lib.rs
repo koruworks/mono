@@ -660,6 +660,13 @@ pub trait View {
         None
     }
 
+    /// What the view's active tab is called, for the window's title — the
+    /// workspace's name, then this (the CTO's note). `None` from a view with
+    /// no tabs, whose window is titled by the workspace alone.
+    fn active_tab_title(&self) -> Option<String> {
+        None
+    }
+
     /// **The answer to [`PaneRequest::ChooseDelegateFolder`]** (ADR-365).
     ///
     /// Called only when somebody actually chose a folder; cancelling says

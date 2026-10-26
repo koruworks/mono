@@ -236,9 +236,6 @@ pub enum MenuAction {
     /// Select the one Welcome tab, or open it. *Get started* used to be a
     /// second row for the checklist; every Welcome is the checklist now.
     OpenWelcome,
-    /// The who/where popover's ⋯ menu: the workspace creator. The same
-    /// prompt the empty column's *Create workspace* opens.
-    NewWorkspace,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -572,10 +569,9 @@ pub enum MenuAction {
     HelpFullChangelog,
     /// Dimmed until the shortcuts page lands (PLAN.final rung 7).
     HelpShortcuts,
-    /// The Feedback tab.
+    /// The Feedback tab. **The only feedback row** (the CTO's note): *Report
+    /// a problem* was a second door to the same tab and went.
     HelpSendFeedback,
-    /// The Feedback tab, opened on *Something isn't working*.
-    HelpReportProblem,
     /// The strip at the popover's foot: the website and the socials, each a
     /// control of this one row. **Not a row that is chosen**: its controls
     /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
@@ -1009,12 +1005,6 @@ impl MenuAction {
                 ));
             }
             MenuAction::OpenWelcome => "Welcome",
-            MenuAction::NewWorkspace => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::TerminalNewWorkspace,
-                ));
-            }
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFormat(id) => {
@@ -1157,9 +1147,6 @@ impl MenuAction {
             MenuAction::HelpSendFeedback => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
             }
-            MenuAction::HelpReportProblem => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReportAProblem)
-            }
             MenuAction::HelpSocials => "",
             MenuAction::HelpWebsite => "koru.do",
             MenuAction::HelpSocial(social) => social.name(),
@@ -1276,7 +1263,6 @@ impl MenuAction {
             MenuAction::NewAiChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
-            MenuAction::NewWorkspace => Some(koru_draw::icons::PLUS),
             MenuAction::ImportAs => Some(koru_draw::icons::IMPORT),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
@@ -1291,7 +1277,6 @@ impl MenuAction {
             MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
             MenuAction::HelpShortcuts => Some(koru_draw::icons::KEYBOARD),
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
-            MenuAction::HelpReportProblem => Some(koru_draw::icons::WARNING),
             MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
             MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
@@ -2006,12 +1991,6 @@ pub fn session_items() -> Vec<MenuAction> {
     ]
 }
 
-/// The who/where popover's *WORKSPACES* ⋯ menu: make one, or import into the
-/// open one (the CTO's artboard).
-pub fn workspaces_menu_items() -> Vec<MenuAction> {
-    vec![MenuAction::NewWorkspace, MenuAction::ImportAs]
-}
-
 /// Formats behind *Import…* / *Import content…*. A projection of the shell's
 /// format registry (`koru_workspace_host::formats`): registering an importer with a
 /// `menu_name` lists it here, and nothing else has to change.
@@ -2241,7 +2220,6 @@ pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
         MenuAction::HelpShortcuts,
         MenuAction::Divider,
         MenuAction::HelpSendFeedback,
-        MenuAction::HelpReportProblem,
         MenuAction::Divider,
         MenuAction::HelpSocials,
     ]

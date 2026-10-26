@@ -131,6 +131,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::NoticeRetry => "notice-retry",
         Control::NoticeDismiss => "notice-dismiss",
         Control::LinkDevice => "link-device",
+        Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
         Control::Relay => "relay",
         Control::DeviceRow(_) => "manage-device",

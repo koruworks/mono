@@ -261,11 +261,32 @@ impl MainView {
     }
 
     /// Do what a workspace menu row means.
+    ///
+    /// The menu can hang over the who/where popover's page (a right-click on
+    /// its row). A verb that leaves the list — opening, renaming, exporting,
+    /// the lifecycle — shuts the page it was chosen from, the rule the
+    /// heading's menu keeps (QUESTIONS.md E29); one that changes the list in
+    /// place, or copies, leaves it up with the list redrawn.
     pub(super) fn run_workspace_menu_action(
         &mut self,
         id: WorkspaceId,
         action: MenuAction,
     ) -> bool {
+        let leaves_the_list = !matches!(
+            action,
+            MenuAction::Pin
+                | MenuAction::Unpin
+                | MenuAction::MoveWorkspaceUp
+                | MenuAction::MoveWorkspaceDown
+                | MenuAction::MoveToProfile
+                | MenuAction::CopyWorkspaceId
+        );
+        let done = self.run_workspace_menu_verb(id, action);
+        let shut = leaves_the_list && self.explore.close_popover();
+        done | shut
+    }
+
+    fn run_workspace_menu_verb(&mut self, id: WorkspaceId, action: MenuAction) -> bool {
         match action {
             MenuAction::Open => self.open_workspace(id),
             MenuAction::OpenInNewWindow => self.ask_pane(PaneRequest::OpenInNewWindow(id)),

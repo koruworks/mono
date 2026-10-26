@@ -6043,45 +6043,112 @@ fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
     );
 }
 
-/// **The WORKSPACES ⋯ opens New workspace and Import… beside the page, and
-/// the page stays** (the CTO's artboard, and the CTO's note on Import): the
-/// menu hangs level with the ⋯ off the panel's right edge; Import… is the
-/// formats as a submenu; choosing a format, or the creator, shuts the page.
+/// **A right-click on a workspace row opens its menu over the page** (the
+/// CTO's note): the same menu a Manage row's `•••` opens, at the pointer,
+/// with the row lit as its subject and the page still under it. A verb that
+/// changes the list in place leaves the page up; one that leaves the list
+/// shuts it. A right-click anywhere else on the page is swallowed.
 #[test]
-fn the_workspaces_menu_hangs_beside_the_page_and_leaves_it_up() {
+fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w, _) = with_summary_open();
+    let vp = v.viewport;
+    let area = v.explore_popover_area();
+    let id = v.workspaces()[0].id;
+    let (_, r) = v
+        .explore
+        .popover_rects(area, vp)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::Workspace(0))
+        .expect("the row");
+    // On the name, clear of the trailing lane's gear.
+    let (x, y) = (r.x + r.w * 0.4, r.centre().1);
+    assert!(v.context_menu(&mut w.ws, x, y));
+    let menu = v.menu.as_ref().expect("the workspace menu opened");
+    assert_eq!(menu.subject, MenuSubject::Workspace(id));
+    assert_eq!(
+        menu.items(),
+        context_menu::workspace_items(false, false, false).as_slice(),
+        "the Manage row's menu"
+    );
+    assert!(v.explore.popover_open(), "the page stays under the menu");
+    let row = v
+        .explore
+        .popover_rects(area, vp)
+        .iter()
+        .position(|(row, _)| *row == PopoverRow::Workspace(0));
+    assert_eq!(v.explore.popover_hover(), row, "the row is the subject");
+
+    // Copy ID changes nothing about the list and leaves the page up.
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::CopyWorkspaceId);
+    assert!(v.explore.popover_open(), "a copy leaves the page up");
+    // Export leaves the list, and shuts the page it was chosen from.
+    v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Export);
+    assert_eq!(
+        v.take_pane_request(),
+        Some(PaneRequest::ExportWorkspace(id))
+    );
+    assert!(
+        !v.explore.popover_open(),
+        "a verb that leaves the list shuts it"
+    );
+
+    // A right-click on the heading is swallowed: no menu, page still up.
+    v.menu = None;
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
+    let (cx, cy) = chip.centre();
+    v.mouse_down(&mut w.ws, cx, cy, false);
+    assert!(v.explore.popover_open());
+    let (_, h) = v
+        .explore
+        .popover_rects(area, vp)
+        .into_iter()
+        .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
+        .expect("the heading");
+    assert!(v.context_menu(&mut w.ws, h.x + 20.0, h.centre().1));
+    assert!(v.menu.is_none(), "nothing to open on the heading");
+    assert!(v.explore.popover_open(), "and the page stays");
+}
+
+/// **The WORKSPACES heading's import button hangs the formats beside the
+/// page, and the page stays** (the CTO's note: a `+` and an import button
+/// where the ⋯ was): the menu hangs level with the button off the panel's
+/// right edge; choosing a format shuts the page. The `+` opens the name
+/// prompt and shuts the page, since the creator is the end of it.
+#[test]
+fn the_headings_import_hangs_beside_the_page_and_its_plus_creates() {
+    use crate::mainview::context_menu::{MenuAction, MenuSubject};
+    use crate::panes::explore::HeadButton;
     let (mut v, mut w, _) = with_summary_open();
     let vp = v.viewport;
     let area = v.explore_popover_area();
     let button = v
         .explore
-        .popover_heading_menu_rect(area, vp)
-        .expect("the heading's ⋯");
+        .popover_head_button_rect(area, vp, HeadButton::Import)
+        .expect("the heading's import button");
     let (x, y) = button.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(v.explore.popover_open(), "the page stays");
     let menu = v.menu.as_ref().expect("the menu opened");
     assert_eq!(menu.subject, MenuSubject::NewTab);
-    assert_eq!(
-        menu.items(),
-        &[MenuAction::NewWorkspace, MenuAction::ImportAs],
-        "make one, or import"
-    );
+    assert_eq!(menu.items(), context_menu::import_items(), "the formats");
     let panel = v.explore.popover_panel(area, vp).expect("the page's panel");
     let m = menu.panel(vp);
     assert!(
         m.x >= panel.x + panel.w - 0.5,
         "beside the panel: {m:?} vs {panel:?}"
     );
+    // Level with the button when the formats fit under it; a long list near
+    // the window's foot is lifted to stay on screen, the button's line still
+    // inside it.
     assert!(
-        (m.y - button.y).abs() < 0.5,
-        "level with the ⋯: {m:?} vs {button:?}"
+        m.y <= button.y + 0.5 && m.y + m.h >= button.y + button.h - 0.5,
+        "spans the button's line: {m:?} vs {button:?}"
     );
-    assert!(v.open_submenu(1), "Import… is a submenu");
-    assert_eq!(
-        v.submenu.as_ref().unwrap().1.items(),
-        context_menu::import_items()
-    );
+    assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
     // A format is the end of it.
     let format = koru_workspace_host::formats::import_menu_formats()[0].id;
     v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::ImportFormat(format));
@@ -6100,7 +6167,12 @@ fn the_workspaces_menu_hangs_beside_the_page_and_leaves_it_up() {
     let (cx, cy) = chip.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
-    v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::NewWorkspace);
+    let plus = v
+        .explore
+        .popover_head_button_rect(area, vp, HeadButton::New)
+        .expect("the heading's `+`");
+    let (px, py) = plus.centre();
+    v.mouse_down(&mut w.ws, px, py, false);
     assert!(!v.explore.popover_open(), "the creator shuts the page");
     assert!(v.new_document.is_some(), "and the name prompt is open");
 }
@@ -12823,7 +12895,6 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
             MenuAction::HelpShortcuts,
             MenuAction::Divider,
             MenuAction::HelpSendFeedback,
-            MenuAction::HelpReportProblem,
             MenuAction::Divider,
             MenuAction::HelpSocials,
         ]
@@ -12917,7 +12988,6 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
         MenuAction::HelpRelease,
         MenuAction::HelpFullChangelog,
         MenuAction::HelpSendFeedback,
-        MenuAction::HelpReportProblem,
     ] {
         assert!(enabled[at(row)], "{row:?}");
     }
@@ -12981,17 +13051,12 @@ fn the_help_rows_open_their_destinations() {
         View::take_pane_request(&mut v).is_none(),
         "one row, one request"
     );
-    // Feedback, then the same tab turned to a problem.
+    // Feedback: the one feedback row (the CTO's note).
     assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSendFeedback));
-    let kind = |v: &MainView| match &v.tabs().active_tab().view {
-        TabView::Feedback(f) => Some(f.kind()),
-        _ => None,
-    };
-    assert!(kind(&v).is_some(), "the Feedback tab");
-    let tabs = v.tabs().len();
-    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpReportProblem));
-    assert_eq!(kind(&v), Some(crate::feedback::Kind::Bug));
-    assert_eq!(v.tabs().len(), tabs, "turned, not doubled");
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Feedback(_)),
+        "the Feedback tab"
+    );
     // The card opens What's new.
     assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpRelease));
     assert!(v.tabs().active_tab().whats_new.is_some());

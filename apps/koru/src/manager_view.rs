@@ -1559,6 +1559,13 @@ impl View for ManagerView {
         }
     }
 
+    fn active_tab_title(&self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.active_tab_title(),
+            Self::Document(v) => v.active_tab_title(),
+        }
+    }
+
     fn tab_presence(&self, document: koru_core::DocumentId) -> koru_workspace_host::TabPresence {
         match self {
             Self::Container(v) => v.tab_presence(document),

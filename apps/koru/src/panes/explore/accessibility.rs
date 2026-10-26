@@ -89,9 +89,11 @@ pub(crate) mod parts {
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
+    /// The Profiles title's `+`.
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
-    /// The chip's page's heading ⋯.
-    pub const WORKSPACES_MENU: ControlPart = ControlPart::new("workspaces-menu");
+    /// The chip's page's heading `+`, and its import button.
+    pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
+    pub const IMPORT_CONTENT: ControlPart = ControlPart::new("import-content");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -609,21 +611,22 @@ impl ExploreView {
         let popover = self.live()?;
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
-        // **The heading's ⋯ is a control of its own**: a node, so a client
-        // reaches the control a press would hit rather than the row around it.
+        // **A head's buttons are controls of their own**: a node each, so a
+        // client reaches the control a press would hit rather than the row
+        // around it.
         let mut children = Vec::with_capacity(rects.len());
         for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
             match row {
-                PopoverRow::WorkspacesHeading => {
-                    children.push(
-                        SemanticNode::new(
-                            cx.surface(POPOVER, parts::WORKSPACES_MENU),
-                            Role::MenuItem,
-                        )
-                        .with_label(t(cx.lang, Key::A11yMoreActions))
-                        .with_bounds(super::heading_menu_rect(*rect))
-                        .with_actions([Action::Click, Action::Focus]),
-                    );
+                PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
+                    for (button, bounds) in super::head_button_rects(*rect, *row) {
+                        let (part, label) = Self::head_button_identity(*row, button, cx.lang);
+                        children.push(
+                            SemanticNode::new(cx.surface(POPOVER, part), Role::MenuItem)
+                                .with_label(label)
+                                .with_bounds(bounds)
+                                .with_actions([Action::Click, Action::Focus]),
+                        );
+                    }
                 }
                 _ => children.push(
                     SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
@@ -670,12 +673,30 @@ impl ExploreView {
                 Some(p) => cx.model(p.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
-            PopoverRow::NewProfile => cx.surface(POPOVER, parts::NEW_PROFILE),
-            PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::WORKSPACES_MENU),
+            // A head's buttons publish themselves; the row is its `+`.
+            PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::NEW_WORKSPACE),
+            PopoverRow::ProfilesTitle => cx.surface(POPOVER, parts::NEW_PROFILE),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
-            PopoverRow::Divider | PopoverRow::ProfilesTitle => cx.surface(POPOVER, parts::POPOVER),
+        }
+    }
+
+    /// A head button's part and name.
+    fn head_button_identity(
+        row: PopoverRow,
+        button: super::HeadButton,
+        lang: Lang,
+    ) -> (ControlPart, String) {
+        match (row, button) {
+            (PopoverRow::ProfilesTitle, _) => {
+                (parts::NEW_PROFILE, t(lang, Key::NewProfile).to_string())
+            }
+            (_, super::HeadButton::New) => (
+                parts::NEW_WORKSPACE,
+                t(lang, Key::TerminalNewWorkspace).to_string(),
+            ),
+            (_, super::HeadButton::Import) => (parts::IMPORT_CONTENT, "Import\u{2026}".into()),
         }
     }
 
@@ -691,12 +712,11 @@ impl ExploreView {
                 .get(i)
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
-            PopoverRow::NewProfile => t(lang, Key::NewProfile).to_string(),
-            PopoverRow::WorkspacesHeading => t(lang, Key::A11yMoreActions).to_string(),
+            PopoverRow::WorkspacesHeading => t(lang, Key::TerminalNewWorkspace).to_string(),
+            PopoverRow::ProfilesTitle => t(lang, Key::NewProfile).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
-            PopoverRow::Divider | PopoverRow::ProfilesTitle => String::new(),
         }
     }
 
@@ -724,8 +744,16 @@ impl ExploreView {
                 popover.hover = Some(index);
                 Some(Outcome::Consumed)
             }
+            // Enter, except that a head's import button is not what Enter
+            // presses there: it is pressed as itself.
             Action::Click => {
                 popover.hover = Some(index);
+                if target.part == parts::IMPORT_CONTENT {
+                    return Some(self.press(
+                        rows[index],
+                        super::PopoverPart::Button(super::HeadButton::Import),
+                    ));
+                }
                 self.popover_key(&WKey::Named(NamedKey::Enter))
             }
             _ => None,
@@ -742,12 +770,13 @@ impl ExploreView {
                 .profiles
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
-            PopoverRow::NewProfile => target.part == parts::NEW_PROFILE,
-            PopoverRow::WorkspacesHeading => target.part == parts::WORKSPACES_MENU,
+            PopoverRow::WorkspacesHeading => {
+                target.part == parts::NEW_WORKSPACE || target.part == parts::IMPORT_CONTENT
+            }
+            PopoverRow::ProfilesTitle => target.part == parts::NEW_PROFILE,
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
-            PopoverRow::Divider | PopoverRow::ProfilesTitle => false,
         }
     }
 
