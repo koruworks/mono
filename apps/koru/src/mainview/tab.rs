@@ -941,6 +941,11 @@ pub struct Tab {
     /// When pinned, whether the strip shows the title as well as the icon.
     /// Copied from the Welcome default at pin time; the tab menu overrides it.
     pub show_title: bool,
+    /// Opened as a tab of its own by a double-click in Explore (the CTO's
+    /// note): the working tab it was, kept — the next Explore click opens
+    /// beside it rather than over it. Not a pin: it has no home of its own
+    /// and does not outlive the session.
+    pub kept: bool,
 }
 
 /// Split a document name into the tab's icon (leading emoji) and label.
@@ -976,6 +981,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1024,6 +1030,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1059,6 +1066,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1078,6 +1086,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1099,6 +1108,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1116,6 +1126,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1160,6 +1171,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1233,6 +1245,7 @@ impl Tab {
             home,
             pinned: None,
             show_title: false,
+            kept: false,
         }
     }
 
@@ -1384,6 +1397,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         })
     }
 
@@ -1424,6 +1438,7 @@ impl Tab {
             home: None,
             pinned: None,
             show_title: false,
+            kept: false,
         })
     }
 
@@ -1441,8 +1456,14 @@ impl Tab {
     /// reusable.
     pub fn is_reusable(&self) -> bool {
         !self.is_pinned()
+            && !self.kept
             && self.draft.is_none()
             && !matches!(self.view, TabView::Welcome(_) | TabView::Socials(_))
+    }
+
+    /// Keep this tab: Explore stops reusing it. See [`kept`](Self::kept).
+    pub fn keep(&mut self) {
+        self.kept = true;
     }
 
     /// **The workspace this tab's view must be talked to through.**

@@ -759,8 +759,9 @@ pub struct Settings {
     pub pinned: bool,
 
     // ------------------------------------------------------------- container
-    /// The explore column. Shut by default: an empty tree beside an empty
-    /// workspace is worse than no tree.
+    /// The explore column. **Open by default** (the CTO's note): a new
+    /// window after Welcome starts with the rail and the pane showing, since
+    /// they are the way around. A file that never said otherwise opens too.
     pub sidebar_open: bool,
     /// Which projection the explore column is showing — `"documents"`,
     /// `"files"` or `"tasks"`. The projection is window state, not workspace
@@ -1141,7 +1142,7 @@ impl Default for Settings {
             zoom: 1.0,
             hide_completed: false,
             pinned: false,
-            sidebar_open: false,
+            sidebar_open: true,
             navigator_mode: String::new(),
             context_open: false,
             ai_open: false,
@@ -3153,7 +3154,8 @@ mod tests {
         let s = Settings::from_text("x=1\ny=2\nw=940\nh=620\ndark=1\npinned=0\n");
         assert_eq!(s.pos, Some((1, 2)));
         assert!(s.tabs.is_empty(), "no tabs recorded");
-        assert!(!s.sidebar_open, "columns default shut");
+        assert!(s.sidebar_open, "the explore column defaults open");
+        assert!(!s.context_open, "the context column defaults shut");
         assert!(!s.maximized);
         assert_eq!(s.tab, 0);
     }

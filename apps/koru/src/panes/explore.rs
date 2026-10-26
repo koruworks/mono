@@ -5374,6 +5374,8 @@ impl ExploreView {
             (Kind::Image, _) => Outcome::RenameImage(row.node),
             (Kind::File, FileState::Remote) => Outcome::DownloadFile(row.node),
             (Kind::File, FileState::Present) => Outcome::OpenFile(row.node),
+            // A page or a canvas: as a tab of its own (the CTO's note).
+            (Kind::Document | Kind::Canvas, _) => Outcome::OpenNodeInNewTab(row.node),
             _ => Outcome::Consumed,
         }
     }

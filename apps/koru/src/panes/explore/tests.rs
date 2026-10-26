@@ -336,6 +336,19 @@ fn double_clicking_an_image_row_requests_rename() {
     );
 }
 
+/// A double-click on a document row asks for it as a tab of its own (the
+/// CTO's note); the first click already opened it.
+#[test]
+fn double_clicking_a_document_row_asks_for_its_own_tab() {
+    let v = with_rows(1);
+    let node = v.rows[0].node;
+    let (_, r) = v.row_rects(area()).into_iter().next().unwrap();
+    assert_eq!(
+        v.mouse_double_click(area(), VIEW, on_label(r), r.centre().1),
+        Outcome::OpenNodeInNewTab(node)
+    );
+}
+
 /// A leaf has no caret, so its whole row is a target — a zero-sized caret rect
 /// is what makes that fall out rather than needing a second code path.
 #[test]

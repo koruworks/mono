@@ -7085,7 +7085,7 @@ impl MainView {
             // open by the shell. It only looks like a file row because the
             // glyph that offered it sits on one.
             Outcome::OpenNote(id) => self.open_from_explore(ws, id),
-            Outcome::OpenNodeInNewTab(_) => true, // retired: double-click no longer opens a tab
+            Outcome::OpenNodeInNewTab(id) => self.keep_open_from_explore(ws, id),
             // The Agents navigator: focus the tab already on this session,
             // else open one bound to it (never a launch).
             //

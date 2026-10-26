@@ -3406,6 +3406,51 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     (v, workspace, row, doc)
 }
 
+/// **A double-click opens the row as a tab of its own** (the CTO's note):
+/// the first click reused the working tab, the second keeps it, so the next
+/// click on another row opens beside it rather than over it. Nothing is
+/// doubled.
+#[test]
+fn a_double_click_keeps_the_rows_tab() {
+    let (mut v, mut workspace, row, doc) = sidebar_with_a_document();
+    let (x, y) = (row.x + row.w * 0.4, row.centre().1);
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.document_root(), Some(doc), "a click opens it");
+    assert!(
+        v.tabs().active_tab().is_reusable(),
+        "in the working tab, which the next click may reuse"
+    );
+    let tabs = v.tabs().len();
+    assert!(v.mouse_double_click(&workspace.ws, x, y));
+    assert_eq!(v.tabs().len(), tabs, "no second tab on the same document");
+    assert_eq!(v.document_root(), Some(doc));
+    assert!(
+        !v.tabs().active_tab().is_reusable(),
+        "kept: the next click opens beside it"
+    );
+
+    let other = a_document(&mut workspace.ws, "Other");
+    v.adopt(&workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    let (_, r) = v
+        .explore
+        .row_rects(v.explore_area())
+        .into_iter()
+        .find(|(i, _)| v.explore.row_node(*i) == Some(other))
+        .expect("Other has a row");
+    // A click commits on release: the press only arms a possible drag.
+    v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.document_root(), Some(other));
+    assert_eq!(v.tabs().len(), tabs + 1, "beside the kept tab, not over it");
+    assert!(
+        labels(&v).contains(&"Brief".to_string()),
+        "the kept tab is still there: {:?}",
+        labels(&v)
+    );
+}
+
 /// Press a row, arm the drag inside the column, and carry it out.
 fn drag_row_out(v: &mut MainView, ws: &mut WorkspaceDoc, row: Rect) -> (f32, f32) {
     let (x, y) = row.centre();

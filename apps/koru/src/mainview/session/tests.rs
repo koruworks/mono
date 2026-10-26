@@ -222,7 +222,8 @@ fn an_empty_session_reopens_on_a_welcome_tab() {
         Some("Welcome")
     );
     assert!(back.tabs().active() < back.tabs().len());
-    assert!(!back.sidebar.is_open());
+    // A new window starts with the explore column open (the CTO's note).
+    assert!(back.sidebar.is_open());
 }
 
 #[test]
