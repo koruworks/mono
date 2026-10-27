@@ -176,9 +176,10 @@ fn a_click_on_a_canvas_row_opens_it() {
 }
 
 /// **Never reordered, never nested.** A drag released over the list is no
-/// move at all; the same drag released on the Trash row bins the canvas.
+/// move at all. (The Trash row it could once be dropped on left the nav's
+/// foot for the floor menu, E63.)
 #[test]
-fn a_canvas_drag_moves_nothing_in_the_list_and_bins_on_the_trash() {
+fn a_canvas_drag_moves_nothing_in_the_list() {
     let rows = a_workspace();
     let mut view = ExploreView::new();
     view.show_canvases();
@@ -191,13 +192,6 @@ fn a_canvas_drag_moves_nothing_in_the_list_and_bins_on_the_trash() {
     view.mouse_move(a, VIEW, x, view.rows_top(a) + 2.0);
     assert!(view.drag_armed());
     assert_eq!(view.mouse_up(), Outcome::Consumed, "no MoveNodes");
-
-    view.rebuild_from_entries(&rows);
-    view.mouse_down(a, VIEW, x, row_centre(&view, a, 0), false);
-    let t = view.trash_rect(a);
-    view.mouse_move(a, VIEW, x, t.centre().1);
-    assert!(view.trash_is_drop_target(a));
-    assert_eq!(view.mouse_up(), Outcome::TrashNodes(vec![node(&rows[2])]));
 }
 
 /// The empty section says what would put something in it, and its button

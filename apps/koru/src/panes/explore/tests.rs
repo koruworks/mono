@@ -221,9 +221,8 @@ fn the_actions_menu_hangs_under_its_button_at_a_menus_width() {
     assert_eq!(panel.w, ACTIONS_POPOVER_W);
     assert!(panel.w < a.w - theme::NAV_PAD * 2.0, "not the pane's width");
     assert_eq!(
-        panel.x + panel.w,
-        button.x + button.w,
-        "right edge at the button's"
+        panel.x, button.x,
+        "its left edge at the button's: it opens to the right (the CTO's note)"
     );
     assert!(panel.y >= button.y + button.h, "under it");
 }
@@ -1620,18 +1619,15 @@ fn the_heading_has_no_buttons_and_the_floor_dots_open_the_menu() {
     // pressed while the page is up, it shuts the page too.
     let dots = crate::panes::sidebar::floor::solve(a).dots;
     let (x, y) = dots.centre();
+    let at = (dots.x + dots.w + super::POPOVER_GAP, dots.y);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::FloorMenu {
-            at: (dots.x + dots.w, dots.y)
-        }
+        Outcome::FloorMenu { at }
     );
     assert!(!v.popover_open(), "the page shut under the menu");
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::FloorMenu {
-            at: (dots.x + dots.w, dots.y)
-        },
+        Outcome::FloorMenu { at },
         "and with no page up, the same"
     );
     assert_eq!(
@@ -2931,49 +2927,6 @@ fn drag_auto_scroll_moves_toward_the_edge_the_pointer_is_in() {
     );
 }
 
-/// The edge band is the library rows, not the pinned Trash footer: parking a
-/// drag on the bin must stop the auto-scroll, not keep the list crawling
-/// underneath the pointer.
-#[test]
-fn drag_auto_scroll_stops_over_the_trash() {
-    let (mut v, ids) = flat_rows(80);
-    let a = area();
-    v.scroll_by(a, -theme::NAV_ROW_H * 20.0);
-    let mid = v.scroll;
-    assert!(mid > 0.0, "start mid-list");
-
-    let trash = v.trash_rect(a);
-    let y = trash.y + trash.h * 0.5;
-    v.drag = Some(RowDrag {
-        grab: ids[0],
-        index: 0,
-        grab_dy: 0.0,
-        origin_y: y,
-        pressed_at: Instant::now(),
-        y,
-        area: a,
-        armed: true,
-        select_only: false,
-        click: ClickAction::Open,
-        carried: HashSet::from([ids[0]]),
-        carried_order: vec![ids[0]],
-        item_count: 1,
-        last: None,
-        spring: None,
-    });
-    v.drag_tick = None;
-
-    let t0 = Instant::now();
-    let ws = doc_ws();
-    v.advance_drag(&ws, t0);
-    v.advance_drag(&ws, t0 + std::time::Duration::from_millis(200));
-    assert_eq!(
-        v.scroll, mid,
-        "over the trash the list must not scroll: was {mid}, now {}",
-        v.scroll
-    );
-}
-
 /// A Nest target that is collapsed becomes a spring-open candidate, so resting
 /// on it will open it; a Before/After target does not.
 #[test]
@@ -3211,64 +3164,51 @@ fn workspace_ids(v: &ExploreView, a: Rect) -> Vec<WorkspaceId> {
 // The pinned row and the reserved `…`: a row's right-hand end and the column's
 // floor now belong to something, and everything else has to keep clear of them.
 
-/// **Pinned means reserved out of the band, not drawn on top of it.** Scrolled
-/// to the very end, the last library row still stops above the Trash row. The
+/// **The floor is reserved out of the band, not drawn on top of it.** Scrolled
+/// to the very end, the last library row still stops above the floor band. The
 /// draw clip uses the same floor (`rows_bottom`), so a straddling row is cut
-/// rather than painted into the trash band.
+/// rather than painted into it.
 #[test]
-fn the_trash_row_is_pinned_to_the_floor_and_does_not_scroll() {
+fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
     let mut v = with_rows(60);
     let a = area();
-    let before = v.trash_rect(a);
     let floor = v.rows_bottom(a);
-    assert_eq!(floor, before.y, "library band ends where trash begins");
+    assert_eq!(
+        floor,
+        a.y + a.h - floor::H,
+        "the band ends where the floor begins"
+    );
 
     v.scroll_by(a, -100_000.0);
-    assert_eq!(v.trash_rect(a), before, "it does not move with the list");
-    assert_eq!(v.rows_bottom(a), floor);
+    assert_eq!(
+        v.rows_bottom(a),
+        floor,
+        "the floor does not move with the list"
+    );
 
     for (_, r) in v.row_rects(a) {
-        assert!(
-            r.y < floor,
-            "a library row's top ran under the pinned Trash row"
-        );
+        assert!(r.y < floor, "a library row's top ran under the floor");
     }
-}
-
-/// **A floating row, not a block.** It sits off the floor rather than on it,
-/// and it is an ordinary nav row's height — no separator, no band. A row that
-/// filled the bottom edge would read as a different kind of thing from the
-/// library above it, which is the opposite of what it is.
-#[test]
-fn the_trash_row_floats_off_the_floor_rather_than_filling_it() {
-    let v = with_rows(3);
-    let a = area();
-    let t = v.trash_rect(a);
-    assert!(t.w > 0.0);
-    assert_eq!(t.h, theme::NAV_ROW_H, "an ordinary nav row");
-    assert!(t.y + t.h < a.y + a.h, "air below it");
-    assert_eq!(v.rows_bottom(a), t.y, "and the library stops above it");
 }
 
 /// **A list, not a special case.** The footer is whatever `footer_rows` says,
 /// bottom-anchored, so adding one grows the stack upward and the library's band
-/// shrinks by exactly that much. This is the test that keeps that true when the
-/// second one arrives.
+/// shrinks by exactly that much. Nothing is pinned since the Trash row left for
+/// the floor menu (E63); the library's band runs to the floor.
 #[test]
 fn the_footer_is_a_bottom_anchored_stack() {
     let v = with_rows(3);
     let a = area();
     let rows = v.footer_rects(a);
-    assert_eq!(rows.len(), 1, "one for now");
-    assert_eq!(rows[0].0, FooterRow::Trash);
-
-    // Each is a nav row tall, they are contiguous, and the topmost is where the
-    // library band ends.
-    for (_, r) in &rows {
-        assert_eq!(r.h, theme::NAV_ROW_H);
-        assert_eq!(r.w, a.w);
-    }
-    assert_eq!(v.rows_bottom(a), rows[0].1.y);
+    assert!(
+        rows.is_empty(),
+        "nothing pinned: the Trash is the floor menu's"
+    );
+    assert_eq!(
+        v.rows_bottom(a),
+        a.y + a.h - floor::H,
+        "the band runs to the floor"
+    );
 }
 
 /// A pinned row lines up with the rows above it. Drifting a few pixels left
@@ -3385,68 +3325,6 @@ fn a_documents_rows_slot_folds_it_and_its_plus_asks_for_a_child() {
     let mut file = row.clone();
     file.kind = Kind::File;
     assert_eq!(v.row_parts(&file, r).plus.w, 0.0);
-}
-
-/// A collapsed column has no Trash row to press.
-///
-/// **The guard is `area.w > 0.0` at the call site, not the rect.**
-/// `Rect::contains` is inclusive on every edge, so the zero-sized rect a shut
-/// column returns *does* contain its own origin — which is why every hit test in
-/// this file declines a zero-width column rather than trusting the rectangle.
-#[test]
-fn a_collapsed_column_offers_no_trash_row() {
-    let mut v = with_rows(3);
-    v.trash_count = 5;
-    let shut = Rect::new(0.0, 0.0, 0.0, 700.0);
-    let t = v.trash_rect(shut);
-    assert_eq!((t.w, t.h), (0.0, 0.0));
-    assert!(
-        t.contains(0.0, 0.0),
-        "the rect alone is not the guard — this is why"
-    );
-    assert_eq!(
-        v.mouse_down(shut, VIEW, 0.0, 0.0, false),
-        Outcome::Consumed,
-        "and the press opens nothing"
-    );
-}
-
-/// **The Trash row always opens**, empty or not.
-///
-/// It used to dim and refuse when the bin was empty, which made sense while a
-/// count sat beside it saying why. With the count gone there is nothing to
-/// explain a row that will not respond, and the Trash says "The Trash is empty"
-/// perfectly well once you are in it — which is a better answer than silence.
-#[test]
-fn the_trash_row_opens_even_when_it_is_empty() {
-    let mut v = with_rows(2);
-    let a = area();
-    let t = v.trash_rect(a);
-    assert_eq!(v.trash_count(), 0);
-    assert_eq!(
-        v.mouse_down(a, VIEW, t.centre().0, t.centre().1, false),
-        Outcome::OpenTrash
-    );
-    v.mouse_move(a, VIEW, t.centre().0, t.centre().1);
-    assert_eq!(
-        v.cursor_icon(),
-        koru_ui::cursor::PRESS,
-        "and it is the plain arrow: Koru does not use the hand cursor"
-    );
-}
-
-#[test]
-fn a_full_trash_row_opens_the_trash() {
-    let mut v = with_rows(2);
-    v.trash_count = 5;
-    let a = area();
-    let t = v.trash_rect(a);
-    assert_eq!(
-        v.mouse_down(a, VIEW, t.centre().0, t.centre().1, false),
-        Outcome::OpenTrash
-    );
-    v.mouse_move(a, VIEW, t.centre().0, t.centre().1);
-    assert_eq!(v.cursor_icon(), koru_ui::cursor::PRESS);
 }
 
 /// **The reflow guard.** The label's width must not depend on whether the
@@ -3591,25 +3469,6 @@ fn delete_does_nothing_when_the_tree_does_not_hold_the_keyboard() {
 
 // ------------------------------------------------------- the empty column
 
-/// **The bug this pins:** an empty library used to `return` out of `draw`
-/// before the pinned rows, so a Trash row with seven things in it vanished the
-/// moment you deleted your last document — exactly when you most needed it.
-#[test]
-fn an_empty_library_still_shows_the_pinned_rows() {
-    let mut v = with_rows(0);
-    v.trash_count = 7;
-    let a = area();
-
-    assert!(v.row_rects(a).is_empty(), "the fixture is empty");
-    let rows = v.footer_rects(a);
-    assert_eq!(rows.len(), 1, "the footer does not go with the library");
-    assert_eq!(
-        v.mouse_down(a, VIEW, rows[0].1.centre().0, rows[0].1.centre().1, false),
-        Outcome::OpenTrash,
-        "and it still opens"
-    );
-}
-
 /// A column that only explains why it is empty leaves you to find the way out
 /// somewhere else. The button is laid out at draw time — its position depends on
 /// how the sentence wraps — so it is not a target until the column has drawn.
@@ -3697,43 +3556,6 @@ fn a_column_with_rows_offers_no_call_to_action() {
     assert_eq!(v.empty_cta, None);
 }
 
-// ------------------------------------------------- dragging into the trash
-
-/// Dropping a row on the Trash row bins it. Same gesture as a reorder, different
-/// landing — which is why it is answered before `drop_target_for` gets a look.
-#[test]
-fn dropping_a_row_on_the_trash_bins_it() {
-    let (mut v, ids) = flat_rows(3);
-    let a = area();
-    let press_y = row_centre(&v, a, 0);
-    v.mouse_down(a, VIEW, on_label(a), press_y, false);
-
-    // Drag down onto the pinned row.
-    let t = v.trash_rect(a);
-    v.mouse_move(a, VIEW, on_label(a), t.centre().1);
-    assert!(v.drag_armed(), "the move crossed the threshold");
-    assert!(v.trash_is_drop_target(a), "and it reads as a target");
-
-    assert_eq!(v.mouse_up(), Outcome::TrashNodes(vec![ids[0]]));
-}
-
-/// **The pinned row is below the library's band**, and `drop_target_for` only
-/// knows about rows in it — left to itself it answers "after the last one" for a
-/// pointer down here, which would quietly reorder instead of binning.
-#[test]
-fn a_drop_below_the_library_bins_rather_than_reorders() {
-    let (mut v, ids) = flat_rows(3);
-    let a = area();
-    v.mouse_down(a, VIEW, on_label(a), row_centre(&v, a, 2), false);
-    let t = v.trash_rect(a);
-    v.mouse_move(a, VIEW, on_label(a), t.centre().1);
-
-    match v.mouse_up() {
-        Outcome::TrashNodes(nodes) => assert_eq!(nodes, vec![ids[2]]),
-        other => panic!("reordered instead of binning: {other:?}"),
-    }
-}
-
 /// A drag that ends anywhere else still reorders, so the new landing has not
 /// swallowed the old one.
 #[test]
@@ -3767,18 +3589,6 @@ fn the_active_pinned_row_is_told_which_one_it_is() {
     assert!(v.set_footer_active(Some(FooterRow::Trash)));
     assert!(!v.set_footer_active(Some(FooterRow::Trash)), "idempotent");
     assert!(v.set_footer_active(None));
-}
-
-/// Every row in the column is drawn on one shape.
-#[test]
-fn a_pinned_row_and_a_library_row_share_a_chip() {
-    let v = with_rows(2);
-    let a = area();
-    let (_, lib) = v.row_rects(a).into_iter().next().unwrap();
-    let trash = v.trash_rect(a);
-    // Same inset and same width, whatever the row is about.
-    assert_eq!(row_chip(lib).rect().x0, row_chip(trash).rect().x0);
-    assert_eq!(row_chip(lib).rect().width(), row_chip(trash).rect().width());
 }
 
 #[test]
@@ -5637,31 +5447,6 @@ fn a_right_click_reports_the_whole_run_selection() {
     assert_eq!(v.selection, HashSet::from([run_node(runs[2])]));
 }
 
-/// **Dragging one of several selected runs onto the bin takes them all.**
-/// `arm_drag` lifts the set and the ghost counts it; a drop that binned only
-/// the row under the pointer would be the gesture doing less than it showed.
-#[test]
-fn dragging_a_selected_run_onto_the_trash_row_takes_the_whole_selection() {
-    let (mut v, runs) = agents_pane_with_runs(3);
-    let a = area();
-    for run in [runs[0], runs[2]] {
-        let y = row_centre(&v, a, run_row_index(&v, run));
-        v.mouse_down(a, VIEW, on_label(a), y, true);
-        v.mouse_up();
-    }
-
-    let trash = v.trash_rect(a);
-    let onto_trash = trash.y + trash.h * 0.5;
-    let grab = row_centre(&v, a, run_row_index(&v, runs[2]));
-    // A plain press inside the visible selection keeps it, exactly as it does
-    // in the library.
-    v.mouse_down(a, VIEW, on_label(a), grab, false);
-    v.mouse_move(a, VIEW, on_label(a), onto_trash);
-    assert!(v.drag_armed());
-    assert_eq!(v.mouse_up(), Outcome::TrashRuns(vec![runs[0], runs[2]]));
-    assert!(v.selection.is_empty(), "the set went; nothing stays lit");
-}
-
 /// **Leaving the Agents column puts the run selection down.** A set of runs
 /// is not a set of documents, and a `NodeId` that survived the switch would
 /// tint whatever row it happened to name.
@@ -5722,65 +5507,6 @@ fn a_run_row_raises_its_own_menu() {
         v.context_menu(a, on_label(a), heading),
         Outcome::AgentTreeMenu { .. }
     ));
-}
-
-/// **Dragging a run onto the Trash row is the menu's Delete.** The same
-/// gesture the document tree already has, on the one row in this tree that
-/// can be binned: a session is a process and a project is a registry record,
-/// and each has its own verb elsewhere.
-#[test]
-fn dragging_a_run_onto_the_trash_row_reports_it() {
-    let (mut v, here) = agents_pane();
-    let run = koru_delegate_core::RunId::from_uuid(uuid::Uuid::from_u128(0x72));
-    let project = a_project("Alpha", Some(here));
-    let one = a_session("one", Some(project.id), 1);
-    let session = one.id;
-    v.set_agent_projects(vec![project]);
-    v.set_agent_sessions(vec![one]);
-    v.set_agent_runs(vec![koru_runs_ui::RunRow {
-        run,
-        name: run_name(run),
-        objective: "Write the quarterly summary".into(),
-        status: "Finished".into(),
-        needs_attention: false,
-        session: None,
-        created_at_ms: 10,
-        motion: koru_runs_ui::Motion::Still,
-        results: 0,
-    }]);
-
-    let a = area();
-    let trash = v.trash_rect(a);
-    let onto_trash = trash.y + trash.h * 0.5;
-    let placed: Vec<(NodeId, Rect)> = v
-        .row_rects(a)
-        .into_iter()
-        .filter_map(|(i, r)| v.row_node(i).map(|node| (node, r)))
-        .collect();
-    let rect_of = |find: &dyn Fn(NodeId) -> bool| {
-        placed
-            .iter()
-            .find(|(node, _)| find(*node))
-            .map(|(_, r)| *r)
-            .expect("the row is there")
-    };
-    let run_rect = rect_of(&|node| v.agent_run(node) == Some(run));
-    v.mouse_down(a, VIEW, on_label(run_rect), run_rect.centre().1, false);
-    v.mouse_move(a, VIEW, on_label(run_rect), onto_trash);
-    assert_eq!(v.mouse_up(), Outcome::TrashRuns(vec![run]));
-
-    // A session dropped there is not binned: it is a process, and the tree
-    // says so by doing nothing rather than by reporting a trash of nothing.
-    let session_rect = rect_of(&|node| v.agent_session_id(node) == Some(session));
-    v.mouse_down(
-        a,
-        VIEW,
-        on_label(session_rect),
-        session_rect.centre().1,
-        false,
-    );
-    v.mouse_move(a, VIEW, on_label(session_rect), onto_trash);
-    assert_eq!(v.mouse_up(), Outcome::Consumed);
 }
 
 // --------------------------------------------------- what a row is wearing

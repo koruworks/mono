@@ -597,10 +597,12 @@ pub struct WorkspaceRowParts {
 
 /// A row pinned to the floor of the column, below the library.
 ///
-/// **A list, not a special case.** Trash is the first of these and there will be
-/// more — the column's standing places, as against the library's contents. They
-/// are reserved out of the rows' band, so the library scrolls *above* them, and
-/// adding one grows the stack upward without a second draw path.
+/// **A list, not a special case.** The column's standing places, as against
+/// the library's contents. They are reserved out of the rows' band, so the
+/// library scrolls *above* them, and adding one grows the stack upward without
+/// a second draw path. Trash was the first and is pinned no more (E63): it is
+/// the floor menu's row, and the Trash tab still names itself through
+/// [`ExploreView::set_footer_active`].
 ///
 /// They are ordinary nav rows: no separator, no panel, the same hover fill and
 /// the same icon lane as a document row. A band with a rule over it would read
@@ -3469,10 +3471,10 @@ impl ExploreView {
                 rail.x + rail.w + POPOVER_GAP
             }
             PopoverKind::Summary | PopoverKind::Profiles => chip.x,
-            PopoverKind::LibraryActions => {
-                let button = self.actions_button(area);
-                (button.x + button.w - w).max(POPOVER_EDGE)
-            }
+            // Under its button and off to the right (the CTO's note), the
+            // way the floor's menu and the Profiles page open beside what
+            // raised them.
+            PopoverKind::LibraryActions => self.actions_button(area).x.max(POPOVER_EDGE),
         };
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
         let y = match p.kind {
@@ -3517,6 +3519,9 @@ impl ExploreView {
     }
 
     /// One row's rect, when the open page lists it.
+    /// Test-driven since the WORKSPACES heading lost its buttons (E60): the
+    /// Profiles title's `+` is pressed through it in the suites.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn popover_row_rect(
         &self,
         area: Rect,
@@ -3531,6 +3536,7 @@ impl ExploreView {
 
     /// Where the heading's ⋯ is, when the main page is showing — what the
     /// container hangs the New workspace / Import… menu off.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn popover_head_button_rect(
         &self,
         area: Rect,
@@ -4072,13 +4078,13 @@ impl ExploreView {
         true
     }
 
-    /// The floor's `…` was pressed: the workspace's menu, hung from the
-    /// button's top-right corner so it rises above the button at the
-    /// window's foot (the CTO's artboard).
+    /// The floor's `…` was pressed: the workspace's menu, beside the button
+    /// to its right (the CTO's note), level with its top; at the window's
+    /// foot the menu lifts itself to stay on screen.
     pub fn floor_menu(&self, area: Rect) -> Outcome {
         let r = floor::solve(area);
         Outcome::FloorMenu {
-            at: (r.dots.x + r.dots.w, r.dots.y),
+            at: (r.dots.x + r.dots.w + POPOVER_GAP, r.dots.y),
         }
     }
 
@@ -4511,14 +4517,13 @@ impl ExploreView {
     /// row at `x = 0` would answer for a click meant for the view beside it.
     /// Which rows are pinned to the floor, top to bottom.
     ///
-    /// One place to add the next one. Everything else — the band the library
-    /// gets, the hit test, the hover, the drawing — follows from this.
+    /// **None, since the Trash row left** (the CTO's note, E63): the Trash is
+    /// the floor menu's row now, with its count, and a second door at the
+    /// nav's foot was one more thing on every glance. The stack stays —
+    /// the band the library gets, the hit test, the hover, the drawing all
+    /// follow from this one list — for the next standing place.
     fn footer_rows(&self) -> &'static [FooterRow] {
-        if self.showing_socials() {
-            &[]
-        } else {
-            &[FooterRow::Trash]
-        }
+        &[]
     }
 
     /// Where each pinned row sits.
@@ -4570,18 +4575,6 @@ impl ExploreView {
             .into_iter()
             .find(|(_, r)| r.contains(x, y))
             .map(|(row, _)| row)
-    }
-
-    /// Where the Trash row is. Kept as its own name because it is the one the
-    /// container and the tests ask about by name.
-    // Test-driven only since the ADR-262 move; kept as the documented seam.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn trash_rect(&self, area: Rect) -> Rect {
-        self.footer_rects(area)
-            .into_iter()
-            .find(|(row, _)| *row == FooterRow::Trash)
-            .map(|(_, r)| r)
-            .unwrap_or_else(|| Rect::new(area.x, area.y, 0.0, 0.0))
     }
 
     /// Where the library rows end. Four places used to say `area.y + area.h`;
@@ -6885,9 +6878,25 @@ impl ExploreView {
             );
         }
         if r.chevron.w > 0.0 {
+            // The chevron turns over as the switcher rises and back as it
+            // goes (the CTO's note): a half turn about its own centre, off
+            // the popover's eased `progress`, so the two move as one.
+            let turn = self
+                .popover
+                .as_ref()
+                .filter(|x| {
+                    x.kind != PopoverKind::LibraryActions && x.anchor == PopoverAnchor::Chip
+                })
+                .map_or(0.0, |x| x.progress);
+            let (cx, cy) = r.chevron.centre();
+            let turned = root
+                * Affine::rotate_about(
+                    f64::from(turn) * std::f64::consts::PI,
+                    vello::kurbo::Point::new(f64::from(cx), f64::from(cy)),
+                );
             draw_icon(
                 scene,
-                root,
+                turned,
                 engine,
                 icons::CARET_DOWN,
                 r.chevron,

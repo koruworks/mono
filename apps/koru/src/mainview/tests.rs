@@ -6327,8 +6327,8 @@ fn the_floor_dots_open_the_workspace_menu() {
     assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
     assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
     assert!(
-        m.x + m.w <= dots.x + dots.w + 0.5,
-        "its right edge at the button's: {m:?} vs {dots:?}"
+        m.x >= dots.x + dots.w - 0.5,
+        "beside the button, to its right (the CTO's note): {m:?} vs {dots:?}"
     );
     let enabled = v.enabled_items(menu);
     let dimmed: Vec<_> = menu

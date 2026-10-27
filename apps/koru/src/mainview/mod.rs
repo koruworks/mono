@@ -6881,8 +6881,9 @@ impl MainView {
     /// format shuts the page, since it is the end of the interaction.
     /// The floor's `…` (the CTO's artboard, E60): New workspace, Import…
     /// with its formats as a flyout, Invite people, and Trash with its
-    /// count. Hung from the button's top-right corner; the menu lifts itself
-    /// to stay on screen at the window's foot.
+    /// count. Beside the button to its right (the CTO's note), level with
+    /// its top; the menu lifts itself to stay on screen at the window's
+    /// foot.
     fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
         context_menu::set_trash_count(self.explore.trash_count());
         let mut menu = ContextMenu::aligned(
@@ -6890,7 +6891,7 @@ impl MainView {
             MenuSubject::Floor,
             at,
             context_menu::floor_items(),
-            MenuAnchor::ButtonRight,
+            MenuAnchor::Cursor,
         );
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
