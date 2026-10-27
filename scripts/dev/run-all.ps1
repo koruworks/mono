@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # Start this worktree's complete debug stack after `koru.bat` has stopped its
-# exact-path images. Agent supervises API Gateway exactly as it does in the
-# product; Store is an in-gateway worker, never a separately launched daemon.
+# exact-path images - and, on the shared internal-debug channel, every other
+# checkout's debug stack (`stop-worktree.ps1 -SharedChannel`). Agent supervises
+# API Gateway exactly as it does in the product; Store is an in-gateway worker,
+# never a separately launched daemon.
 # -Ai also opens the standalone chat after Gateway readiness. The services stay
 # up while either Koru UI is open; closing every UI or pressing Ctrl+C runs the
 # exact-path stop helper.
