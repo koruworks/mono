@@ -296,6 +296,11 @@ pub const USER_PLUS: char = '\u{E4D0}';
 pub const DEVICES: char = '\u{EBA4}';
 /// This computer — `ph-desktop`: the Manage nav's *Linked devices* row.
 pub const DESKTOP: char = '\u{E560}';
+/// The Documents view — `ph-files`: two sheets, the one ChatGPT's library
+/// wears (the CTO's note).
+pub const FILES: char = '\u{E710}';
+/// The Tasks view — `ph-check-square-offset` (the CTO's pick).
+pub const CHECK_SQUARE_OFFSET: char = '\u{E188}';
 /// Send feedback — `ph-user-sound`. A person with sound waves; the same
 /// glyph the overflow menu and the Feedback tab share.
 pub const USER_SOUND: char = '\u{ECA8}';
@@ -542,7 +547,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 138] = [
+pub const ALL: [(&str, char); 140] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -621,6 +626,8 @@ pub const ALL: [(&str, char); 138] = [
     ("USER_PLUS", USER_PLUS),
     ("DEVICES", DEVICES),
     ("DESKTOP", DESKTOP),
+    ("FILES", FILES),
+    ("CHECK_SQUARE_OFFSET", CHECK_SQUARE_OFFSET),
     ("USER_SOUND", USER_SOUND),
     ("HEADSET", HEADSET),
     ("QUESTION", QUESTION),

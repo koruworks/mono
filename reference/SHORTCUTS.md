@@ -42,6 +42,7 @@ Chords are shown as this platform writes them.
 | `Ctrl+Shift+W` | Close all tabs |
 | `Ctrl+P` | Search |
 | `Ctrl+Shift+E` | Explore |
+| `Alt+H` | Home |
 | `Alt+1` | Documents |
 | `Alt+2` | Files |
 | `Alt+3` | Tasks |

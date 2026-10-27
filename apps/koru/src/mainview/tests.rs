@@ -7797,13 +7797,17 @@ fn following_a_link_in_place_is_recorded_in_the_history() {
 }
 
 /// **Home is one tab**, opened from the nav's Today row and reused after
-/// that: the Settings tab's rule. Home leads the apps row, with no chord.
+/// that: the Settings tab's rule. Home leads the apps row, on `Alt+H`
+/// (the CTO's note, E69).
 #[test]
 fn the_home_tab_is_a_singleton_opened_from_the_nav() {
     use crate::panes::explore::NavigatorMode;
     let (mut view, mut workspace) = container();
     assert_eq!(NavigatorMode::visible()[0], NavigatorMode::Home);
-    assert_eq!(NavigatorMode::Home.shortcut(), None);
+    assert_eq!(
+        NavigatorMode::Home.shortcut(),
+        Some(koru_keys::ShortcutId::ShowHome)
+    );
     let before = view.tabs().len();
     assert!(view.apply(&mut workspace.ws, Outcome::OpenHome));
     assert_eq!(view.tabs().len(), before + 1);

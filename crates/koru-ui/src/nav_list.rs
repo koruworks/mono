@@ -110,6 +110,9 @@ impl NavList {
     pub const TILE: f32 = 18.0;
     /// The rule down the row's left edge, and the label's distance from it.
     const RULE_W: f32 = 2.0;
+    /// Air between the rule and the focus ring, so the two do not touch
+    /// (the CTO's note).
+    const RULE_GAP: f32 = 4.0;
     const LABEL_X: f32 = 12.0;
     /// The trailing marks' distance from the row's right end, and the focus
     /// ring's corner radius.
@@ -232,7 +235,8 @@ impl NavList {
             &scene::rect(row.x, row.y, Self::RULE_W, row.h),
         );
         if state.focused {
-            let (x, w) = (row.x + Self::RULE_W, row.w - Self::RULE_W);
+            let x = row.x + Self::RULE_W + Self::RULE_GAP;
+            let w = (row.w - Self::RULE_W - Self::RULE_GAP).max(0.0);
             scene::stroke(
                 canvas,
                 root,

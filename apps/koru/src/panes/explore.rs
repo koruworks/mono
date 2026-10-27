@@ -148,7 +148,8 @@ pub struct Row {
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub enum NavigatorMode {
     /// **Home**: Today, with Inbox and Upcoming to come (workspace
-    /// foundation, rung 5). First in the row; it has no chord (Q-C).
+    /// foundation, rung 5). First in the row; `Alt+H` (the CTO's note, E69
+    /// — Q-C had left it without one).
     Home,
     #[default]
     Documents,
@@ -247,8 +248,9 @@ impl NavigatorMode {
     /// The chord that shows this view, by its registry id.
     pub fn shortcut(self) -> Option<koru_keys::ShortcutId> {
         Some(match self {
-            // No digit: `Alt+0` is free and stays free (QUESTIONS.md Q-C).
-            Self::Home => return None,
+            // Not a digit: `Alt+0` stays free (QUESTIONS.md Q-C); Home is
+            // its letter (E69).
+            Self::Home => koru_keys::ShortcutId::ShowHome,
             Self::Documents => koru_keys::ShortcutId::ShowDocuments,
             Self::Files => koru_keys::ShortcutId::ShowFiles,
             Self::Tasks => koru_keys::ShortcutId::ShowTasks,
@@ -4289,9 +4291,11 @@ impl ExploreView {
     /// (Q-E7 P7), the per-row session icons are the products' own marks (P6).
     fn navigator_mode_icon(mode: NavigatorMode) -> char {
         match mode {
-            NavigatorMode::Documents => icons::DOCUMENT,
-            NavigatorMode::Files => icons::FILE,
-            NavigatorMode::Tasks => icons::LIST_CHECKS,
+            // Two sheets, a folder, an offset check (the CTO's notes, E69):
+            // marks that read as places rather than as one page each.
+            NavigatorMode::Documents => icons::FILES,
+            NavigatorMode::Files => icons::FOLDER,
+            NavigatorMode::Tasks => icons::CHECK_SQUARE_OFFSET,
             NavigatorMode::Agents => icons::ROBOT,
             // Named by the surface, so the mode row and the column cannot
             // disagree about which picture means *artifacts*.
@@ -4372,6 +4376,8 @@ impl ExploreView {
                     &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             }
+            // The app you are in wears the Fill weight (the CTO's note):
+            // the fill is the signal, on top of the card.
             draw_rail_glyph(
                 scene,
                 root,
@@ -4379,6 +4385,7 @@ impl ExploreView {
                 Self::navigator_mode_icon(*mode),
                 *square,
                 if active { p.text } else { p.text_dim },
+                active,
             );
             if self.chrome_focus == Some(ExploreChromeFocus::App(i)) {
                 draw_focus_ring(scene, root, *square, p);
@@ -4406,7 +4413,7 @@ impl ExploreView {
                     &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             }
-            draw_rail_glyph(scene, root, engine, glyph, square, p.text_dim);
+            draw_rail_glyph(scene, root, engine, glyph, square, p.text_dim, false);
             if self.chrome_focus == Some(focus) {
                 draw_focus_ring(scene, root, square, p);
             }
@@ -8434,11 +8441,16 @@ fn draw_rail_glyph(
     glyph: char,
     at: Rect,
     colour: peniko::Color,
+    filled: bool,
 ) {
     if at.w <= 0.0 {
         return;
     }
-    let layout = engine.icon_layout(glyph, apps_rail::GLYPH);
+    let layout = if filled {
+        engine.icon_layout_filled(glyph, apps_rail::GLYPH)
+    } else {
+        engine.icon_layout(glyph, apps_rail::GLYPH)
+    };
     let (w, h) = (layout.width(), layout.height());
     scene::draw_layout(
         scene,
