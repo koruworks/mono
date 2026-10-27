@@ -4110,7 +4110,7 @@ impl ExploreView {
     /// instead, so opening one moves nothing. The trailing `NAV_PAD` is the gap
     /// between the tab row and the nodes content — the same gap the header and
     /// the tab row have, owned by the shell's stack and visible in the
-    /// inspector as an `ExploreSpacer`.
+    /// inspector as a `Gap`.
     fn rows_top(&self, area: Rect) -> f32 {
         self.heading_band(area).y + HEADER_H + theme::NAV_PAD
     }
@@ -4200,7 +4200,9 @@ impl ExploreView {
         if band.w <= 0.0 {
             return band;
         }
-        let x = self.modes_right(area);
+        // Where the rows' glyphs start, not the band's pad: the title and
+        // the icons under it share a left edge (the CTO's note, E76).
+        let x = leading_x(area.x);
         let right = self.actions_button(area).x - theme::NAV_PAD;
         Rect::new(x, band.y, (right - x).max(0.0), band.h)
     }
@@ -6795,7 +6797,7 @@ impl ExploreView {
         // `rows_top`.
         if area.w > 0.0 {
             let _gap = koru_draw::inspect::scope(
-                "ExploreSpacer",
+                "Gap",
                 "part",
                 root,
                 scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, HEADER_PAD),
@@ -6840,13 +6842,19 @@ impl ExploreView {
                     );
                 }
             } else {
-                actions::draw_button(scene, root, self.actions_button(area), self.actions_hover);
+                actions::draw_button(
+                    scene,
+                    root,
+                    engine,
+                    self.actions_button(area),
+                    self.actions_hover,
+                );
             }
         }
         if area.w > 0.0 {
             let top = self.rows_top(area);
             let _gap = koru_draw::inspect::scope(
-                "ExploreSpacer",
+                "Gap",
                 "part",
                 root,
                 scene::rect(area.x, top - theme::NAV_PAD, area.w, theme::NAV_PAD),
@@ -6983,16 +6991,10 @@ impl ExploreView {
         if r.dots.w > 0.0 {
             // The workspace's menu, right of the chip (the CTO's artboard):
             // the heading's `…`, one row down.
+            // The shared icon button: its own hover chip, `KoruIconButton`
+            // in the inspector (the CTO's note, E76).
             let hot = self.floor_hover == Some(floor::Hit::Dots);
-            if hot {
-                scene::fill(
-                    scene,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(r.dots.x, r.dots.y, r.dots.w, r.dots.h, 7.0),
-                );
-            }
-            scene::dots_three(scene, root, r.dots, if hot { p.text } else { p.text_dim });
+            actions::draw_dots(scene, root, engine, r.dots, hot);
         }
         if self.chrome_focus == Some(ExploreChromeFocus::FloorChip) && r.chip.w > 0.0 {
             draw_focus_ring(scene, root, r.chip, p);
@@ -7586,7 +7588,7 @@ impl ExploreView {
         // Never in Agents mode: its menus open by right-click (Koru Terminal's
         // shape), and the trailing lane there belongs to the heading's `+`.
         if self.mode != NavigatorMode::Agents && (hovered || self.menu_row == Some(row.node)) {
-            scene::dots_three(scene, root, parts.dots, p.text_dim);
+            actions::draw_dots(scene, root, engine, parts.dots, false);
             if parts.plus.w > 0.0 {
                 draw_icon(scene, root, engine, icons::PLUS, parts.plus, p.text_dim);
             }
@@ -8551,6 +8553,14 @@ const HEAD_BUTTON_GAP: f32 = 4.0;
 /// Shared by the tree rows and the pinned footer rows, so the two **cannot**
 /// drift out of alignment — a Trash row that sat a few pixels left of every
 /// row above it reads as a different kind of list.
+/// Where a depth-0 row's glyph is drawn: the icon lane plus the glyph's
+/// centring in its slot. The heading's title and Home's RECENT heading
+/// start here too, so a column's words and marks share one left edge (the
+/// CTO's note, E76).
+fn leading_x(x: f32) -> f32 {
+    icon_lane(x, 0, false) + (PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5
+}
+
 fn icon_lane(x: f32, depth: u16, caret: bool) -> f32 {
     // `caret` is true only for an Agents row with children now (the CTO's
     // note): a Documents row shows its chevron in the icon's slot on hover.

@@ -194,7 +194,11 @@ fn the_heading_band_names_the_app() {
         v.set_navigator_mode(mode);
         let title = v.heading_title_rect(a);
         assert!(title.w > 0.0, "{mode:?} has a title");
-        assert_eq!(title.x, a.x + theme::NAV_PAD, "{mode:?}: at the band's pad");
+        assert_eq!(
+            title.x,
+            super::leading_x(a.x),
+            "{mode:?}: where the rows' glyphs start (E76)"
+        );
         let dots = v.actions_button(a);
         if dots.w > 0.0 {
             assert!(
@@ -829,6 +833,45 @@ fn nothing_in_the_floor_is_hit_in_a_collapsed_column() {
     assert_eq!(v.popover_panel(shut, VIEW), None);
     assert!(v.popover_rects(shut, VIEW).is_empty());
     assert!(v.row_rects(shut).is_empty());
+}
+
+/// **The heading's title starts where the rows' glyphs start** (the CTO's
+/// note, E76), in the library and in Home's nav alike. Measured off the
+/// inspector's records rather than the constants, so the glyph's centring
+/// in its slot is in the sum.
+#[test]
+fn the_heading_title_starts_where_the_row_icons_do() {
+    for mode in [NavigatorMode::Documents, NavigatorMode::Home] {
+        let mut v = with_rows(3);
+        v.mode = mode;
+        let a = area();
+        let mut scene = vello::Scene::new();
+        let mut engine = TextEngine::new();
+        let root = vello::kurbo::Affine::IDENTITY;
+        let capture =
+            koru_draw::inspect::Frame::begin(1, root, koru_draw::scene::rect(a.x, a.y, a.w, a.h));
+        v.draw(&mut scene, root, &mut engine, a);
+        let records = capture.finish().records;
+        let band = v.heading_title_rect(a);
+        let (top, bottom) = (f64::from(band.y), f64::from(band.y + band.h));
+        let title = records
+            .iter()
+            .find(|r| r.name == "label line" && r.rect().y0 >= top && r.rect().y1 <= bottom)
+            .expect("the title's line");
+        let icon = records
+            .iter()
+            .filter(|r| {
+                r.name == "text line" && r.source.contains("tabs.rs") && r.rect().y0 >= bottom
+            })
+            .min_by(|p, q| p.rect().y0.total_cmp(&q.rect().y0))
+            .expect("the first row's glyph");
+        assert!(
+            (title.rect().x0 - icon.rect().x0).abs() < 0.51,
+            "{mode:?}: the title starts at {} and the first glyph at {}",
+            title.rect().x0,
+            icon.rect().x0
+        );
+    }
 }
 
 /// The pane grew a header; the library sits under it and the shell's gap.
@@ -6041,7 +6084,7 @@ fn long_arabic_schedule_words_stay_inside_the_agents_column() {
 /// row, the tab row, and the nodes band — named in the inspector so the pane
 /// reads as three rows around the mode's content, not one flat container.
 /// The gaps between the rows are the stack's own geometry, visible as
-/// ExploreSpacer parts.
+/// Gap parts.
 #[test]
 fn the_shell_captures_its_three_sections_around_the_nodes_band() {
     for mode in [
@@ -6092,10 +6135,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         // The section gaps are named geometry: lane-to-heading is the rail's
         // pad, so the heading sits level with the Home square (E72), and
         // heading-to-nodes the shell's NAV_PAD.
-        let spacers: Vec<_> = records
-            .iter()
-            .filter(|r| r.name == "ExploreSpacer")
-            .collect();
+        let spacers: Vec<_> = records.iter().filter(|r| r.name == "Gap").collect();
         assert_eq!(spacers.len(), 2, "one gap per seam in {mode:?}");
         assert_eq!(spacers[0].rect().height(), apps_rail::PAD_TOP as f64);
         assert_eq!(spacers[1].rect().height(), theme::NAV_PAD as f64);

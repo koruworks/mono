@@ -16,12 +16,13 @@ use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
 use koru_i18n::{Key, t};
 use koru_shell_chrome::tabs::draw_icon;
+use koru_shell_chrome::title_icon::PAGE_ICON_SLOT;
 use koru_workspace_host::accessibility::{ControlPart, Occurrence, SemanticNode};
 use vello::Scene;
 use vello::kurbo::Affine;
 
 use super::accessibility::Context;
-use super::{draw_row_card, row_chip};
+use super::{draw_row_card, icon_lane, leading_x, row_chip};
 use crate::panes::Outcome;
 
 /// How many recents the nav lists. Frame 1 draws three; the page's Continue
@@ -30,7 +31,6 @@ pub const RECENT_MAX: usize = 3;
 
 const SECTION_GAP: f32 = 10.0;
 const HEADING_H: f32 = 20.0;
-const ICON_W: f32 = 16.0;
 const SURFACE: &str = "home-nav";
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -93,8 +93,11 @@ impl HomeNav {
     /// a gap, RECENT and its documents. The nav never scrolls — it is six
     /// rows at most.
     pub fn rows(&self, area: Rect, top: f32) -> Vec<(HomeRow, Rect)> {
-        let x = area.x + theme::NAV_PAD;
-        let w = (area.w - theme::NAV_PAD * 2.0).max(0.0);
+        // The library's row band — the pane's width, the chip inset by
+        // `row_chip` — so Home's glyphs sit on the library's icon lane and
+        // under the heading's title (the CTO's note, E76).
+        let x = area.x;
+        let w = area.w.max(0.0);
         let mut out = Vec::with_capacity(5 + self.recents.len());
         let mut y = top;
         for row in [HomeRow::Inbox, HomeRow::Today, HomeRow::Upcoming] {
@@ -183,7 +186,7 @@ impl HomeNav {
                     scene,
                     root,
                     &heading,
-                    r.x + theme::NAV_PAD,
+                    leading_x(r.x),
                     r.y + (r.h - scene::first_line_height(&heading)) * 0.5,
                     Some(p.row_hint),
                 );
@@ -203,13 +206,13 @@ impl HomeNav {
                 HomeRow::Recent(_) => (icons::DOCUMENT, p.text_dim),
                 HomeRow::RecentHeading => unreachable!("drawn above"),
             };
-            let icon_x = r.x + theme::NAV_PAD;
+            let icon_x = icon_lane(r.x, 0, false);
             draw_icon(
                 scene,
                 root,
                 engine,
                 glyph,
-                Rect::new(icon_x, r.y, ICON_W, r.h),
+                Rect::new(icon_x, r.y, PAGE_ICON_SLOT, r.h),
                 glyph_colour,
             );
             // The library's ink rule: full strength only on the card, dim
@@ -221,8 +224,8 @@ impl HomeNav {
             } else {
                 p.text_dim
             };
-            let text_x = icon_x + ICON_W + 8.0;
-            let right = r.x + r.w - theme::NAV_PAD;
+            let text_x = icon_x + PAGE_ICON_SLOT + 4.0;
+            let right = r.x + r.w - theme::NAV_PAD * 2.0;
             let mut label_right = right;
             if dimmed {
                 // Why it is dimmed, at the row's end: the rung it waits for.

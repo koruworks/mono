@@ -2001,6 +2001,12 @@ pub mod text_metrics {
     pub const XS: TextMetrics = TextMetrics::new(12.0, 16.0);
     pub const SM: TextMetrics = TextMetrics::new(13.0, 18.0);
     pub const UI_BODY: TextMetrics = TextMetrics::new(14.0, 20.0);
+    /// A chrome heading — a popover page's *WORKSPACES · n*. Chrome leading,
+    /// tighter than the document's at the same size (E74).
+    pub const UI_HEADING: TextMetrics = TextMetrics::new(16.0, 22.0);
+    /// A chrome title — the explore pane's app name, level with the rail's
+    /// Home square (E74).
+    pub const UI_TITLE: TextMetrics = TextMetrics::new(22.0, 28.0);
     pub const DOC_BODY: TextMetrics = TextMetrics::new(16.0, 24.0);
     pub const DOC_BODY_COMPACT: TextMetrics = TextMetrics::new(14.0, 21.0);
     pub const DOC_BODY_COMFORTABLE: TextMetrics = TextMetrics::new(18.0, 27.0);
@@ -2050,17 +2056,16 @@ pub mod role {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
     }
     /// The explore pane's title — the app's name over its nav, level with
-    /// the rail's Home square: 22/30 at [`FontWeight::SemiBold`] (the CTO's
-    /// note, E72, after ChatGPT's sidebar title). Between `XL` and `_2XL`:
-    /// a size of its own rather than a tier, because the band it sits in is
-    /// the square's height and nothing else is this size.
+    /// the rail's Home square: `UI_TITLE` 22/28, Medium (the CTO's notes,
+    /// E72 and E74, after ChatGPT's sidebar title).
     pub const fn pane_title() -> TextStyle {
-        TextStyle::new(TextMetrics::new(22.0, 30.0), FontWeight::SemiBold)
+        TextStyle::new(text_metrics::UI_TITLE, MEDIUM)
     }
-    /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*: 16/24
-    /// at the chrome's weight (the CTO's note, E73; it was `hint`, 11 px).
+    /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*:
+    /// `UI_HEADING` 16/22, Medium (the CTO's notes, E73 and E74; it was
+    /// `hint`, 11 px).
     pub const fn popover_heading() -> TextStyle {
-        TextStyle::new(text_metrics::DOC_BODY, MEDIUM)
+        TextStyle::new(text_metrics::UI_HEADING, MEDIUM)
     }
     /// The default application UI — dialogs, settings, prominent controls.
     /// Compact steps it down to `SM` (13/18); Normal and Comfortable keep
@@ -2708,19 +2713,29 @@ mod tests {
     }
 
     /// The size scale is monotonic: each tier's size and line height step up.
-    /// `DOC_BODY_COMPACT` and `DOC_BODY_COMFORTABLE` are density variants of
-    /// the document body, checked separately rather than as rungs on the ladder.
+    /// Two ladders, because the chrome and the document tiers are named by
+    /// domain and keep their own leading — `UI_HEADING` is 16/22 beside
+    /// `DOC_BODY`'s 16/24 (E74). `DOC_BODY_COMPACT` and
+    /// `DOC_BODY_COMFORTABLE` are density variants of the document body,
+    /// checked separately rather than as rungs on the ladder.
     #[test]
     fn text_metrics_form_a_monotonic_scale() {
         use text_metrics::*;
-        let ladder = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
-        for w in ladder.windows(2) {
-            assert!(w[0].size < w[1].size, "size must increase across the scale");
-            assert!(
-                w[0].line_height < w[1].line_height,
-                "line height must increase across the scale"
-            );
+        let document = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
+        let chrome = [MICRO, XS, SM, UI_BODY, UI_HEADING, UI_TITLE, _2XL];
+        for ladder in [&document[..], &chrome[..]] {
+            for w in ladder.windows(2) {
+                assert!(w[0].size < w[1].size, "size must increase across the scale");
+                assert!(
+                    w[0].line_height < w[1].line_height,
+                    "line height must increase across the scale"
+                );
+            }
         }
+        assert!(
+            UI_HEADING.line_height < DOC_BODY.line_height,
+            "chrome leading is tighter than the document's at the same size"
+        );
         // Document-body density variants: compact is smaller than normal,
         // comfortable is larger.
         assert!(DOC_BODY_COMPACT.size < DOC_BODY.size);

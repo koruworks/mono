@@ -397,13 +397,6 @@ impl MainView {
 
         let sb = self.sidebar_rect();
         if sb.w > 0.0 {
-            let _inspect_sidebar = koru_draw::inspect::scope(
-                "Explore sidebar",
-                "container",
-                root,
-                scene::rect(sb.x, sb.y, sb.w, sb.h),
-                |r| r.property("layout", "Column / vertical", "explore host"),
-            );
             // The ring a chrome stop wears is drawn by whoever draws the
             // control: the column for its chips and floor, the window for
             // the lane.
@@ -416,12 +409,24 @@ impl MainView {
                 scene::fade_layer(scene, root, alpha, &scene::rect(sb.x, sb.y, sb.w, sb.h));
             }
             // The rail and the pane, cut from the drawn column the way the
-            // settled one is (`layout::pane_of`, `rail_of`).
+            // settled one is (`layout::pane_of`, `rail_of`). In the
+            // inspector the rail is the pane's sibling, not its child (the
+            // CTO's note, E75): `KoruRail` is recorded first, on its own,
+            // and the *Explore sidebar* record is the pane's.
             let pane = Self::pane_of(sb);
             let rail = Self::rail_of(sb);
-            self.explore.draw(scene, root, &mut self.engine, pane);
             self.explore
                 .draw_apps_rail(scene, root, &mut self.engine, rail);
+            {
+                let _inspect_sidebar = koru_draw::inspect::scope(
+                    "Explore sidebar",
+                    "container",
+                    root,
+                    scene::rect(pane.x, pane.y, pane.w, pane.h),
+                    |r| r.property("layout", "Column / vertical", "explore host"),
+                );
+                self.explore.draw(scene, root, &mut self.engine, pane);
+            }
             // The lane, over the column's top band: window chrome, so it is
             // the window that draws it.
             self.draw_lane(scene, root, sb);
@@ -807,11 +812,14 @@ impl MainView {
         if verge.w > 0.0 {
             // Only right of the pane while it slides over the lane.
             let x0 = pane.map_or(verge.x, |pane| (pane.x + pane.w).max(verge.x));
-            scene::fill(
+            let lane = Rect::new(x0, verge.y, (verge.x + verge.w - x0).max(0.0), verge.h);
+            draw_gap(
                 scene,
                 root,
                 p.ground,
-                &scene::rect(x0, verge.y, (verge.x + verge.w - x0).max(0.0), verge.h),
+                lane,
+                "window edge / document",
+                "left lane",
             );
             if let (None, Some(x)) = (pane, lane_left) {
                 scene::fill(
@@ -831,11 +839,13 @@ impl MainView {
             }
         }
         if edge.w > 0.0 {
-            scene::fill(
+            draw_gap(
                 scene,
                 root,
                 p.ground,
-                &scene::rect(edge.x, edge.y, edge.w, edge.h),
+                edge,
+                "document / window edge",
+                "right lane",
             );
             scene::fill(
                 scene,
@@ -853,11 +863,13 @@ impl MainView {
             );
         }
         if foot.h > 0.0 {
-            scene::fill(
+            draw_gap(
                 scene,
                 root,
                 p.ground,
-                &scene::rect(foot.x, foot.y, foot.w, foot.h),
+                foot,
+                "cards / window foot",
+                "foot lane",
             );
             let x0 = left.unwrap_or(foot.x);
             scene::fill(
@@ -1469,6 +1481,40 @@ impl MainView {
     }
 }
 
+/// A band of the ground that keeps two things apart — the lanes at the
+/// window's edges and foot — filled in `colour` and recorded as a **Gap**
+/// part, so the space between two components is a thing the inspector
+/// names rather than an anonymous fill (the CTO's note, E75). `separates`
+/// says what is on either side; `role` which gap it is.
+fn draw_gap(
+    scene: &mut Scene,
+    root: Affine,
+    colour: Color,
+    band: Rect,
+    separates: &'static str,
+    role: &'static str,
+) {
+    if band.w <= 0.0 || band.h <= 0.0 {
+        return;
+    }
+    let _gap = koru_draw::inspect::scope(
+        "Gap",
+        "part",
+        root,
+        scene::rect(band.x, band.y, band.w, band.h),
+        |rec| {
+            rec.property("separates", separates, "window ground");
+            rec.property("role", role, "theme::EDGE_LANE_W");
+        },
+    );
+    scene::fill(
+        scene,
+        root,
+        colour,
+        &scene::rect(band.x, band.y, band.w, band.h),
+    );
+}
+
 /// Scale a colour's alpha by `a`, to fade the zoom indicator uniformly.
 fn fade(mut c: Color, a: f32) -> Color {
     c.components[3] *= a;
@@ -1532,6 +1578,32 @@ fn draw_card_corner(
     if r <= 1.0 {
         return;
     }
+    // One part per corner in the inspector — the mask and the arc together,
+    // named for the corner they are (the CTO's note, E75) — rather than two
+    // anonymous fills at the window's level.
+    let _corner = koru_draw::inspect::scope(
+        "CardCorner",
+        "part",
+        root,
+        scene::rect(
+            if right { x - r } else { x },
+            if bottom { y - r } else { y },
+            r,
+            r,
+        ),
+        |rec| {
+            rec.property(
+                "corner",
+                format!(
+                    "{}-{}",
+                    if bottom { "bottom" } else { "top" },
+                    if right { "right" } else { "left" }
+                ),
+                "draw_card_corner",
+            );
+            rec.property("radius", r, "theme::PAGE_RADIUS");
+        },
+    );
     // Quarter-circle as one cubic, the usual constant.
     const K: f64 = 0.552_284_75;
     let dir_x = if right { -1.0 } else { 1.0 };

@@ -131,15 +131,27 @@ fn the_header_row_parents_the_strip_and_the_caption_furniture() {
                 "the sidebar is the HeaderRow's sibling, not its child"
             );
         }
+        if record.name == "KoruRail"
+            && let Some(sidebar) = records.iter().position(|r| r.name == "Explore sidebar")
+        {
+            assert!(
+                !inside(&records, sidebar, i),
+                "the rail is the sidebar's sibling, not its child (E75)"
+            );
+        }
         if record.name == "KoruIconButton" {
             let panes: Vec<usize> = records
                 .iter()
                 .enumerate()
                 .filter_map(|(p, r)| (r.name == "Content pane").then_some(p))
                 .collect();
+            // The explore column's `…` buttons are icon buttons too (E76).
+            let sidebar = records.iter().position(|r| r.name == "Explore sidebar");
             assert!(
-                inside(&records, header, i) || panes.iter().any(|&p| inside(&records, p, i)),
-                "a KoruIconButton answers to neither the HeaderRow nor a Content pane"
+                inside(&records, header, i)
+                    || panes.iter().any(|&p| inside(&records, p, i))
+                    || sidebar.is_some_and(|s| inside(&records, s, i)),
+                "a KoruIconButton answers to neither the HeaderRow, a Content pane nor the sidebar"
             );
         }
     }
