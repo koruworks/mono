@@ -17,7 +17,7 @@ fn routes() -> Vec<(AcpRoute, &'static str)> {
 }
 
 #[test]
-fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_release() {
+fn version_carriers_accept_pinned_output_and_refuse_adornments() {
     for (route, output) in routes() {
         let version = route.parse_version(&format!("{output}\r\n")).unwrap();
         assert_eq!(
@@ -36,8 +36,7 @@ fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_rele
         }
     }
     // The versions admitted on the maintainers' instruction after their no-prompt
-    // handshake passed (AGENTUX, 2026-09-25) parse to themselves; a release
-    // nobody admitted is still refused, adorned or not.
+    // handshake passed (AGENTUX, 2026-09-25) parse to themselves.
     assert_eq!(
         AcpRoute::kimi().parse_version("2.0.0\n").unwrap().as_str(),
         "2.0.0"
@@ -49,17 +48,71 @@ fn exact_version_carriers_accept_pinned_output_and_refuse_adornments_or_new_rele
             .as_str(),
         "1.0.34"
     );
-    assert!(AcpRoute::kimi().parse_version("2.0.1").is_err());
-    assert!(
-        AcpRoute::grok()
-            .parse_version("grok 1.0.26 (f7e67d6988e2) [stable]")
-            .is_err()
+}
+
+/// **A release at or above the qualified pin is admitted** (the CTO's note,
+/// 2026-10-26): the installed CLIs had moved past the pins. The pin stays
+/// the floor, an adorned print is still refused, and Antigravity — known by
+/// its digest, not a number — admits nothing it was not pinned to.
+#[test]
+fn a_release_above_the_pin_is_admitted_and_one_below_it_is_not() {
+    assert_eq!(
+        AcpRoute::kimi().parse_version("2.0.1").unwrap().as_str(),
+        "2.0.1"
+    );
+    assert_eq!(
+        AcpRoute::kimi().parse_version("v2.3.0\n").unwrap().as_str(),
+        "2.3.0"
     );
     assert!(
+        AcpRoute::kimi().parse_version("0.41.9").is_err(),
+        "below the pin"
+    );
+    assert_eq!(
+        AcpRoute::claude_code()
+            .parse_version("0.77.2")
+            .unwrap()
+            .as_str(),
+        "0.77.2"
+    );
+    assert!(AcpRoute::claude_code().parse_version("0.75.9").is_err());
+    assert_eq!(
+        AcpRoute::opencode()
+            .parse_version("1.19.0")
+            .unwrap()
+            .as_str(),
+        "1.19.0"
+    );
+    assert_eq!(
+        AcpRoute::grok()
+            .parse_version("grok 1.0.40 (0123456789ab) [stable]")
+            .unwrap()
+            .as_str(),
+        "1.0.40"
+    );
+    assert_eq!(
         AcpRoute::grok()
             .parse_version("grok 1.0.25 (other) [stable]")
+            .unwrap()
+            .as_str(),
+        "1.0.25",
+        "the hash is not the version"
+    );
+    assert!(
+        AcpRoute::grok()
+            .parse_version("grok 1.0.24 (x) [stable]")
             .is_err()
     );
+    assert!(
+        AcpRoute::grok().parse_version("1.0.40").is_err(),
+        "not grok's print"
+    );
+    assert!(AcpRoute::antigravity().parse_version("1.2.2").is_err());
+    let route = AcpRoute::kimi();
+    assert!(route.supports(&ProviderVersion::from_str("2.0.0").unwrap()));
+    assert!(route.supports(&ProviderVersion::from_str("3.0").unwrap()));
+    assert!(!route.supports(&ProviderVersion::from_str("0.1.0").unwrap()));
+    assert!(!route.supports(&ProviderVersion::from_str("beta").unwrap()));
 }
 
 #[test]
@@ -144,7 +197,7 @@ fn experimental_routes_accept_delegation_without_claiming_native_child_control()
 }
 
 #[test]
-fn experimental_routes_still_require_http_protocol_and_exact_version() {
+fn experimental_routes_still_require_http_protocol_and_a_version_at_the_pin() {
     for route in [AcpRoute::opencode(), AcpRoute::kimi()] {
         for (http, protocol) in [(false, 1), (true, 2)] {
             let mut h = harness(
@@ -169,7 +222,9 @@ fn experimental_routes_still_require_http_protocol_and_exact_version() {
                     .any(|frame| frame["method"] == "session/new")
             );
         }
+        // A release below the pin: refused before anything is sent.
         let mut h = harness(FakeAcpConfig::default(), None, None);
+        h.control.config.executable_version = ProviderVersion::from_str("0.0.1").unwrap();
         h.control.config.route = route;
         h.control.config.delegation = Some(delegation());
         let error = h

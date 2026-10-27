@@ -32,6 +32,25 @@ pub struct AcpRoute {
 }
 
 impl AcpRoute {
+    /// Whether `version` may start under this route: one of the listed
+    /// versions, or — for a named CLI whose version is a number rather than
+    /// a digest — any release **at or above the qualified pin**, the first
+    /// listed (the CTO's note, 2026-10-26: the installed CLIs had moved past
+    /// the pins and every agent read *Needs a supported version*). A pin
+    /// stays the floor: a release older than what was qualified is refused,
+    /// and a route built by hand with its own list admits only that list.
+    pub fn supports(&self, version: &ProviderVersion) -> bool {
+        if self.supported_versions.contains(version) {
+            return true;
+        }
+        if !self.dialect.admits_newer_releases() {
+            return false;
+        }
+        self.supported_versions
+            .first()
+            .is_some_and(|pin| version_at_least(version.as_str(), pin.as_str()))
+    }
+
     pub fn new(
         provider: ProviderKind,
         supported_versions: Vec<ProviderVersion>,
@@ -161,5 +180,33 @@ impl AcpConfig {
         self.shutdown_timeout = limits.timeout;
         self.maximum_frame_bytes = limits.maximum_output_bytes;
         Ok(self)
+    }
+}
+
+/// `candidate >= floor` as dotted numbers: each component's leading digits,
+/// missing components as zero, so `1.0.34 >= 1.0.25`, `2.0 >= 2.0.0` and
+/// `0.76.1-beta >= 0.76.0`. A candidate with no number in front is not at
+/// least anything.
+pub(super) fn version_at_least(candidate: &str, floor: &str) -> bool {
+    fn component(part: &str) -> Option<u64> {
+        let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+    let mut a = candidate.split('.').map(component);
+    let mut b = floor.split('.').map(component);
+    let Some(Some(_)) = candidate.split('.').map(component).next() else {
+        return false;
+    };
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => return true,
+            (x, y) => {
+                let x = x.flatten().unwrap_or(0);
+                let y = y.flatten().unwrap_or(0);
+                if x != y {
+                    return x > y;
+                }
+            }
+        }
     }
 }

@@ -6724,19 +6724,22 @@ impl ChatSurface {
                 role::meta(),
                 (content.w - if retryable { 52.0 } else { 0.0 }).max(1.0),
             );
+            // Under the cards, and under the *Local agents* list when that is
+            // what is open: the list grows with the agents installed, and the
+            // line was drawn across its fourth row (the CTO's note).
             scene::draw_layout(
                 canvas,
                 root,
                 &layout,
                 content.x,
-                self.viewport.y + 454.0 + self.ollama_catalog_gap(),
+                self.viewport.y + 454.0 + self.ollama_catalog_gap() + self.agents_gap(),
                 Some(p.text_dim),
             );
             if retryable {
                 let retry = self.engine.simple_layout("Retry", role::meta());
                 let x =
                     (content.x + layout.width() + 8.0).min(content.x + content.w - retry.width());
-                let y = self.viewport.y + 454.0 + self.ollama_catalog_gap();
+                let y = self.viewport.y + 454.0 + self.ollama_catalog_gap() + self.agents_gap();
                 let hit = Rect::new(x - 3.0, y - 3.0, retry.width() + 6.0, retry.height() + 6.0);
                 if hit.contains(self.pointer.0, self.pointer.1) {
                     scene::fill(
