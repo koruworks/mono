@@ -96,8 +96,6 @@ pub(crate) mod parts {
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
     pub const PROFILE_DEVICES: ControlPart = ControlPart::new("profile-devices");
     pub const PROFILE_STATUS: ControlPart = ControlPart::new("profile-status");
-    /// Your card's sliders at the page's head.
-    pub const PROFILE_SETTINGS: ControlPart = ControlPart::new("profile-settings");
     /// The chip's page's heading `+`, and its import button.
     pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
 }
@@ -642,7 +640,7 @@ impl ExploreView {
         let mut children = Vec::with_capacity(rects.len());
         for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
             match row {
-                PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter => {
+                PopoverRow::ProfilesFooter => {
                     for (button, bounds) in super::head_button_rects(*rect, *row) {
                         let (part, label) = self.head_button_identity(button, cx.lang);
                         children.push(
@@ -701,8 +699,7 @@ impl ExploreView {
             // A fixed row's buttons publish themselves; the row is what
             // Enter presses on it.
             PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::NEW_WORKSPACE),
-            PopoverRow::ProfilesHead => cx.surface(POPOVER, parts::PROFILE_SETTINGS),
-            PopoverRow::ProfilesSwitch => cx.surface(POPOVER, parts::POPOVER),
+            PopoverRow::ProfilesHeading => cx.surface(POPOVER, parts::POPOVER),
             PopoverRow::ProfilesFooter => cx.surface(POPOVER, parts::NEW_PROFILE),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
@@ -715,10 +712,6 @@ impl ExploreView {
         use koru_i18n::fill;
         match button {
             super::HeadButton::New => (parts::NEW_PROFILE, t(lang, Key::NewProfile).to_string()),
-            super::HeadButton::Settings => (
-                parts::PROFILE_SETTINGS,
-                t(lang, Key::SettingsTab).to_string(),
-            ),
             super::HeadButton::Devices => {
                 let n = self.linked_count;
                 let key = if n == 1 {
@@ -747,8 +740,6 @@ impl ExploreView {
     fn head_button_of(part: ControlPart) -> Option<super::HeadButton> {
         if part == parts::NEW_PROFILE {
             Some(super::HeadButton::New)
-        } else if part == parts::PROFILE_SETTINGS {
-            Some(super::HeadButton::Settings)
         } else if part == parts::PROFILE_DEVICES {
             Some(super::HeadButton::Devices)
         } else if part == parts::PROFILE_STATUS {
@@ -771,8 +762,7 @@ impl ExploreView {
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
             PopoverRow::WorkspacesHeading => t(lang, Key::TerminalNewWorkspace).to_string(),
-            PopoverRow::ProfilesHead => self.profile().map(|p| p.name.clone()).unwrap_or_default(),
-            PopoverRow::ProfilesSwitch => t(lang, Key::ProfilesSwitchTo).to_string(),
+            PopoverRow::ProfilesHeading => t(lang, Key::WorkspacesProfiles).to_string(),
             PopoverRow::ProfilesFooter => t(lang, Key::NewProfile).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
@@ -809,10 +799,7 @@ impl ExploreView {
             Action::Click => {
                 popover.hover = Some(index);
                 if let Some(button) = Self::head_button_of(target.part)
-                    && matches!(
-                        rows[index],
-                        PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter
-                    )
+                    && matches!(rows[index], PopoverRow::ProfilesFooter)
                 {
                     return Some(self.press(rows[index], super::PopoverPart::Button(button)));
                 }
@@ -833,8 +820,7 @@ impl ExploreView {
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
             PopoverRow::WorkspacesHeading => target.part == parts::NEW_WORKSPACE,
-            PopoverRow::ProfilesHead => target.part == parts::PROFILE_SETTINGS,
-            PopoverRow::ProfilesSwitch => false,
+            PopoverRow::ProfilesHeading => false,
             PopoverRow::ProfilesFooter => {
                 target.part == parts::NEW_PROFILE
                     || target.part == parts::PROFILE_DEVICES

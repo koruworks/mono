@@ -2005,8 +2005,8 @@ pub mod text_metrics {
     /// tighter than the document's at the same size (E74).
     pub const UI_HEADING: TextMetrics = TextMetrics::new(16.0, 22.0);
     /// A chrome title — the explore pane's app name, level with the rail's
-    /// Home square (E74).
-    pub const UI_TITLE: TextMetrics = TextMetrics::new(22.0, 28.0);
+    /// Home square (E74; 18 after 22 read too large on screen, E77).
+    pub const UI_TITLE: TextMetrics = TextMetrics::new(18.0, 24.0);
     pub const DOC_BODY: TextMetrics = TextMetrics::new(16.0, 24.0);
     pub const DOC_BODY_COMPACT: TextMetrics = TextMetrics::new(14.0, 21.0);
     pub const DOC_BODY_COMFORTABLE: TextMetrics = TextMetrics::new(18.0, 27.0);
@@ -2056,8 +2056,9 @@ pub mod role {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
     }
     /// The explore pane's title — the app's name over its nav, level with
-    /// the rail's Home square: `UI_TITLE` 22/28, Medium (the CTO's notes,
-    /// E72 and E74, after ChatGPT's sidebar title).
+    /// the rail's Home square: `UI_TITLE` 18/24, Medium (the CTO's notes,
+    /// E72, E74 and E77, after ChatGPT's sidebar title). Drawn in the rows'
+    /// ink, `text_dim`, so the name and its rows read as one column.
     pub const fn pane_title() -> TextStyle {
         TextStyle::new(text_metrics::UI_TITLE, MEDIUM)
     }

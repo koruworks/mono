@@ -977,12 +977,8 @@ fn a_profile_row_is_two_lines_and_the_linked_count_is_set_from_outside() {
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
     assert_eq!(h(PopoverRow::Profile(0)), Some(super::PROFILE_ROW_H));
     assert!(
-        h(PopoverRow::Profile(0)) > h(PopoverRow::ProfilesSwitch),
+        h(PopoverRow::Profile(0)) > h(PopoverRow::ProfilesHeading),
         "taller than a one-line row"
-    );
-    assert!(
-        h(PopoverRow::ProfilesHead) > h(PopoverRow::Profile(0)),
-        "and your card is taller still"
     );
     assert!(v.set_linked_count(2), "a new count is a change");
     assert!(!v.set_linked_count(2), "the same count is not");
@@ -1157,10 +1153,8 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
         Some(PopoverKind::Profiles)
     );
     let rows = v.popover_rows();
-    assert_eq!(rows[0], PopoverRow::ProfilesHead);
-    assert!(rows[0].selectable(), "your card carries the sliders");
-    assert_eq!(rows[1], PopoverRow::ProfilesSwitch);
-    assert!(!rows[1].selectable(), "the heading is furniture");
+    assert_eq!(rows[0], PopoverRow::ProfilesHeading);
+    assert!(!rows[0].selectable(), "the heading is furniture");
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(rows.last(), Some(&PopoverRow::ProfilesFooter));
     // The square shuts it.
@@ -1187,8 +1181,8 @@ fn the_chords_open_their_pages_on_where_you_are() {
     );
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfilesHead),
-        "on your card, which is the open Profile"
+        Some(PopoverRow::Profile(1)),
+        "on the Profile you are in, a row with its tick (E78)"
     );
     assert!(!v.open_popover(PopoverKind::Profiles), "already showing");
 }
@@ -1519,13 +1513,13 @@ fn every_known_profile_gets_a_row() {
         .collect();
     assert_eq!(
         listed.len(),
-        profiles.len() - 1,
-        "one row per other profile: the one you are in is the head"
+        profiles.len(),
+        "one row per profile, the one you are in among them (E78)"
     );
-    assert_eq!(listed.len(), 2);
+    assert_eq!(listed.len(), 3);
     assert!(
-        !listed.contains(&PopoverRow::Profile(1)),
-        "profiles[1] is current"
+        listed.contains(&PopoverRow::Profile(1)),
+        "profiles[1] is current, and listed with its tick"
     );
 }
 
@@ -1542,13 +1536,8 @@ fn choosing_a_profile_switches_to_it_and_leaves_the_list_up() {
 
     for (i, want) in profiles.iter().enumerate() {
         v.toggle_popover(PopoverKind::Profiles);
-        // The one you are in is your card at the head, not a row: a press
-        // on its words does nothing.
-        let row = if want.id == current {
-            PopoverRow::ProfilesHead
-        } else {
-            PopoverRow::Profile(i)
-        };
+        // The one you are in is a row too (E78): a press on it does nothing.
+        let row = PopoverRow::Profile(i);
         let (_, r) = *v
             .popover_rects(a, VIEW)
             .iter()
@@ -1585,13 +1574,13 @@ fn the_profiles_page_has_no_page_behind_it() {
     let (_, r) = *v
         .popover_rects(a, VIEW)
         .iter()
-        .find(|(row, _)| *row == PopoverRow::ProfilesHead)
-        .expect("your card");
+        .find(|(row, _)| *row == PopoverRow::ProfilesHeading)
+        .expect("the heading");
     let (x, y) = r.centre();
     assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert!(
         v.popover_open(),
-        "your card's words are furniture, not a way out"
+        "the heading's words are furniture, not a way out"
     );
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
@@ -1602,25 +1591,24 @@ fn the_profiles_page_has_no_page_behind_it() {
     assert!(v.popover_open());
 }
 
-/// The keyboard's stops on the Profiles page (the CTO's artboard): your
-/// card, the other Profiles, the foot — *SWITCH TO* is skipped. Enter on the
-/// card is its sliders; Enter on the foot is its `+`; Up from the card wraps
-/// to the foot.
+/// The keyboard's stops on the Profiles page: every Profile, then the
+/// foot — *PROFILES · n* is skipped (E78). Enter on a Profile switches;
+/// Enter on the foot is its `+`; Up from the first row wraps to the foot.
 #[test]
-fn the_arrows_walk_the_card_the_profiles_and_the_foot() {
+fn the_arrows_walk_the_profiles_and_the_foot() {
     use winit::keyboard::{Key, NamedKey};
-    let (mut v, _, _) = with_context(0);
+    let (mut v, profiles, _) = with_context(0);
     v.toggle_profile_popover();
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfilesHead)
+        Some(PopoverRow::Profile(0)),
+        "PROFILES is skipped"
     );
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::Profile(0)),
-        "SWITCH TO is skipped"
+        Some(PopoverRow::Profile(1))
     );
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
@@ -1640,10 +1628,10 @@ fn the_arrows_walk_the_card_the_profiles_and_the_foot() {
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSettings),
-        "Enter on your card presses its sliders"
+        Some(Outcome::SwitchProfile(profiles[0].id)),
+        "Enter on a Profile switches to it"
     );
-    assert!(!v.popover_open());
+    assert!(v.popover_open(), "and the list stays up");
 }
 
 /// **The foot's three buttons** (the CTO's artboard): the sync state's
@@ -1684,10 +1672,6 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
         Outcome::ManageDevices,
         "the devices open Manage on Linked devices (the CTO's note)"
     );
-    v.advance_popover(Instant::now() + Duration::from_secs(1));
-    v.toggle_profile_popover();
-    let (x, y) = button(&v, HeadButton::Settings);
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::OpenSettings);
 }
 
 #[test]
@@ -1696,8 +1680,8 @@ fn ctrl_alt_p_lands_the_keyboard_on_the_profile_you_are_in() {
     assert!(v.open_popover(PopoverKind::Profiles));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfilesHead),
-        "on your card, the open Profile"
+        Some(PopoverRow::Profile(1)),
+        "on the Profile you are in"
     );
 }
 
@@ -1922,13 +1906,13 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
     assert_eq!(
         v.popover_rows(),
         vec![
-            PopoverRow::ProfilesHead,
-            PopoverRow::ProfilesSwitch,
+            PopoverRow::ProfilesHeading,
             PopoverRow::Profile(0),
+            PopoverRow::Profile(1),
             PopoverRow::Profile(2),
             PopoverRow::ProfilesFooter,
         ],
-        "your card, SWITCH TO, the other Profiles, the foot"
+        "PROFILES, every Profile, the foot (E78)"
     );
     // The chip's page: the heading and the workspaces, nothing else.
     v.toggle_popover(PopoverKind::Summary);
@@ -2119,10 +2103,7 @@ fn the_profiles_page_offers_no_folder_actions() {
         PopoverRow::ProfilesFooter.head_buttons(),
         &[HeadButton::Status, HeadButton::Devices, HeadButton::New]
     );
-    assert_eq!(
-        PopoverRow::ProfilesHead.head_buttons(),
-        &[HeadButton::Settings]
-    );
+    assert!(PopoverRow::ProfilesHeading.head_buttons().is_empty());
 }
 
 // ------------------------------------------------------------------ the fade

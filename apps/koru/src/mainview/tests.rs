@@ -4033,7 +4033,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
     assert!(v.explore.popover_open(), "the list stays up");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::ProfilesHead),
+        Some(crate::panes::explore::PopoverRow::ProfilesHeading),
         "still the Profiles page"
     );
 }
@@ -4062,7 +4062,7 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(v.explore.popover_open(), "the square opens its page");
     assert_eq!(
         first(&v),
-        Some(PopoverRow::ProfilesHead),
+        Some(PopoverRow::ProfilesHeading),
         "the Profiles page"
     );
 

@@ -419,14 +419,11 @@ pub enum PopoverRow {
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
-    /// The Profiles page's head (the CTO's artboard): **your card** — the
-    /// Profile you are in, its tile, name and where it syncs, with a sliders
-    /// button at its trailing end that opens Settings. No page is behind it
-    /// to go back to.
-    ProfilesHead,
-    /// *SWITCH TO · n* over the other Profiles, the chord at its trailing
-    /// end. Furniture: the keyboard skips it.
-    ProfilesSwitch,
+    /// *PROFILES · n* over every Profile, the way *WORKSPACES · n* heads
+    /// the chip's page (the CTO's note, E78: your card and *SWITCH TO*
+    /// are gone; the Profile you are in is a row with a tick). Furniture:
+    /// the keyboard skips it.
+    ProfilesHeading,
     /// The page's foot: the sync state (or the offer to subscribe to Koru
     /// Cloud when there is none), the linked devices with their count, and
     /// the `+` (New profile).
@@ -441,31 +438,29 @@ pub enum PopoverRow {
 
 impl PopoverRow {
     /// Whether the keyboard may land on it. A heading with nothing to press
-    /// is furniture: *WORKSPACES · n* and *SWITCH TO · n* are skipped; your
-    /// card (its sliders) and the foot (its `+`) are stops.
+    /// is furniture: *WORKSPACES · n* and *PROFILES · n* are skipped; the
+    /// foot (its `+`) is a stop.
     fn selectable(self) -> bool {
-        !matches!(self, Self::WorkspacesHeading | Self::ProfilesSwitch)
+        !matches!(self, Self::WorkspacesHeading | Self::ProfilesHeading)
     }
 
     /// The buttons a fixed row carries, leading to trailing.
     fn head_buttons(self) -> &'static [HeadButton] {
         match self {
-            Self::ProfilesHead => &[HeadButton::Settings],
             Self::ProfilesFooter => &[HeadButton::Status, HeadButton::Devices, HeadButton::New],
             _ => &[],
         }
     }
 }
 
-/// A button on one of a page's fixed rows (the CTO's artboard): your card's
-/// sliders, and the foot's status, devices and `+`. The WORKSPACES heading's
-/// `+` and import button went to the floor's `…` menu (E60).
+/// A button on the Profiles page's foot (the CTO's artboard): the status,
+/// the devices and the `+`. The WORKSPACES heading's `+` and import button
+/// went to the floor's `…` menu (E60); your card's sliders went with the
+/// card (E78).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum HeadButton {
     /// New profile, at the foot's trailing end.
     New,
-    /// Settings, at your card's trailing end.
-    Settings,
     /// The linked devices, with their count: the Manage tab on the Profile.
     Devices,
     /// The sync state's words at the foot's leading end — or, with no cloud
@@ -3392,16 +3387,12 @@ impl ExploreView {
                 // and help are the rail's now (the CTO's note).
                 out
             }
-            // Your card, *SWITCH TO · n*, the **other** Profiles, and the
-            // foot (the CTO's artboard): the Profile you are in is the head,
-            // not a row.
+            // *PROFILES · n*, **every** Profile — the one you are in with
+            // its tick, as the chip's page lists workspaces — and the foot
+            // (the CTO's note, E78).
             PopoverKind::Profiles => {
-                let mut out = vec![PopoverRow::ProfilesHead, PopoverRow::ProfilesSwitch];
-                out.extend(
-                    (0..self.profiles.len())
-                        .filter(|&i| Some(self.profiles[i].id) != self.current_profile)
-                        .map(PopoverRow::Profile),
-                );
+                let mut out = vec![PopoverRow::ProfilesHeading];
+                out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
                 out.push(PopoverRow::ProfilesFooter);
                 out
             }
@@ -3416,7 +3407,6 @@ impl ExploreView {
     fn popover_row_h(row: PopoverRow) -> f32 {
         match row {
             PopoverRow::Profile(_) => PROFILE_ROW_H,
-            PopoverRow::ProfilesHead => PROFILE_HEAD_H,
             PopoverRow::ProfilesFooter => PROFILE_FOOT_H,
             _ => POPOVER_ROW_H,
         }
@@ -3426,7 +3416,7 @@ impl ExploreView {
     fn page_head(row: PopoverRow) -> bool {
         matches!(
             row,
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHead | PopoverRow::ProfilesSwitch
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading
         )
     }
 
@@ -3893,7 +3883,7 @@ impl ExploreView {
             {
                 PopoverPart::Gear
             }
-            PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter => head_button_rects(r, row)
+            PopoverRow::ProfilesFooter => head_button_rects(r, row)
                 .into_iter()
                 .find(|(_, b)| b.contains(x, y))
                 .map_or(PopoverPart::Row, |(b, _)| PopoverPart::Button(b)),
@@ -3910,10 +3900,10 @@ impl ExploreView {
     /// everything else is a destination.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesSwitch => true,
-            // A card's or the foot's words do nothing; each button is a
-            // destination — Settings, the Manage tab, the website, a creator.
-            PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter => part == PopoverPart::Row,
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => true,
+            // The foot's words do nothing; each button is a destination —
+            // Settings, the Manage tab, the website, a creator.
+            PopoverRow::ProfilesFooter => part == PopoverPart::Row,
             PopoverRow::Profile(_) => part == PopoverPart::Row,
             PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => false,
         }
@@ -3929,11 +3919,9 @@ impl ExploreView {
         self.choose(row, part)
     }
 
-    /// What Enter means on `row`: your card's sliders, the foot's `+`, else
-    /// the row itself.
+    /// What Enter means on `row`: the foot's `+`, else the row itself.
     fn keyboard_part(row: PopoverRow) -> PopoverPart {
         match row {
-            PopoverRow::ProfilesHead => PopoverPart::Button(HeadButton::Settings),
             PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
             _ => PopoverPart::Row,
         }
@@ -3969,13 +3957,8 @@ impl ExploreView {
                     Outcome::SwitchProfile(id)
                 }
             }
-            // A heading's words do nothing; the Profiles title's `+` acts.
-            PopoverRow::WorkspacesHeading => Outcome::Consumed,
-            PopoverRow::ProfilesHead => match part {
-                PopoverPart::Button(HeadButton::Settings) => Outcome::OpenSettings,
-                _ => Outcome::Consumed,
-            },
-            PopoverRow::ProfilesSwitch => Outcome::Consumed,
+            // A heading's words do nothing.
+            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => Outcome::Consumed,
             PopoverRow::ProfilesFooter => match part {
                 PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
                 // With no cloud set up the words are the offer (the CTO's
@@ -4082,14 +4065,13 @@ impl ExploreView {
         true
     }
 
-    /// The keyboard on your card — the Profile you are in is the page's
-    /// head, not a row (the CTO's artboard).
+    /// The keyboard on the Profile you are in — its row, with the tick
+    /// (E78), the way the chip's page lands on the open workspace.
     fn hover_current_profile(&mut self) -> bool {
-        let Some(index) = self
-            .popover_rows()
-            .iter()
-            .position(|row| *row == PopoverRow::ProfilesHead)
-        else {
+        let Some(index) = self.popover_rows().iter().position(|row| {
+            matches!(row, PopoverRow::Profile(i)
+                if self.profiles.get(*i).map(|p| p.id) == self.current_profile)
+        }) else {
             return false;
         };
         if let Some(p) = self.popover.as_mut() {
@@ -6822,7 +6804,9 @@ impl ExploreView {
             if title.w > 0.0 {
                 let style = theme::role::pane_title();
                 let fitted = engine.elided(self.mode.label(), style, title.w);
-                draw_middle(scene, root, engine, &fitted, title, style, p.text);
+                // The rows' ink and weight (the CTO's note, E77): the
+                // name is the column's, not a heading over it.
+                draw_middle(scene, root, engine, &fitted, title, style, p.text_dim);
             }
             if self.mode == NavigatorMode::Chats {
                 // *New chat*, a compose mark where the library's `…` sits.
@@ -7830,14 +7814,26 @@ impl ExploreView {
                 );
             }
             let hot = hover == Some(i);
+            // **Every row is a `Row` part** in the inspector (the CTO's
+            // note, E79) — heading, list row and foot alike — so the air
+            // between rows is read off named rects, not loose primitives.
+            let _row = koru_draw::inspect::scope(
+                "Row",
+                "part",
+                root,
+                scene::rect(r.x, r.y, r.w, r.h),
+                |rec| {
+                    rec.property("row", format!("{row:?}"), "PopoverRow");
+                    rec.property("height", r.h, "popover_row_h");
+                },
+            );
             // A head lights the button the pointer is on — its `+` for the
             // keyboard — not the row.
             if hot
                 && !matches!(
                     row,
                     PopoverRow::WorkspacesHeading
-                        | PopoverRow::ProfilesHead
-                        | PopoverRow::ProfilesSwitch
+                        | PopoverRow::ProfilesHeading
                         | PopoverRow::ProfilesFooter
                 )
             {
@@ -7875,87 +7871,9 @@ impl ExploreView {
                     );
                     self.draw_head_buttons(scene, root, engine, &buttons, hot, HeadButton::New);
                 }
-                PopoverRow::ProfilesHead => {
-                    // **Your card** (the CTO's artboard): the tile, the name,
-                    // where it syncs, and the sliders. A hairline under it.
-                    let buttons = head_button_rects(r, row);
-                    let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
-                    // At the other tiles' left edge (E73).
-                    let tile = Rect::new(
-                        icon_x,
-                        r.y + (r.h - PROFILE_HEAD_TILE) * 0.5,
-                        PROFILE_HEAD_TILE,
-                        PROFILE_HEAD_TILE,
-                    );
-                    let (name, email, icon, color) = self.profile().map_or(
-                        (String::new(), String::new(), None, None),
-                        |profile| {
-                            (
-                                profile.name.clone(),
-                                profile.email.clone(),
-                                profile.icon.clone(),
-                                profile.color.clone(),
-                            )
-                        },
-                    );
-                    if avatar.is_some() && icon.is_none() {
-                        koru_ui::profile_picker::draw_avatar(
-                            scene,
-                            root,
-                            engine,
-                            tile,
-                            avatar,
-                            &name,
-                            &email,
-                            theme::role::row(),
-                        );
-                    } else {
-                        koru_draw::tile::Tile {
-                            icon: icon.as_deref(),
-                            color: color.as_deref(),
-                            name: &name,
-                        }
-                        .draw(scene, root, engine, tile);
-                    }
-                    let where_ = if self.sync_status() == SyncStatus::NotSetUp {
-                        koru_i18n::t(lang, koru_i18n::Key::OnThisComputer)
-                    } else {
-                        koru_i18n::t(lang, koru_i18n::Key::CloudTitle)
-                    };
-                    draw_two_lines(
-                        scene,
-                        root,
-                        engine,
-                        Rect::new(
-                            tile.x + tile.w + 10.0,
-                            r.y,
-                            (first - 8.0 - tile.x - tile.w - 10.0).max(1.0),
-                            r.h,
-                        ),
-                        &label_fit(&name),
-                        where_,
-                        true,
-                        p,
-                    );
-                    self.draw_head_buttons(
-                        scene,
-                        root,
-                        engine,
-                        &buttons,
-                        hot,
-                        HeadButton::Settings,
-                    );
-                    scene::fill(
-                        scene,
-                        root,
-                        p.panel_border,
-                        &scene::rect(r.x + 8.0, r.y + r.h - 1.0, (r.w - 16.0).max(0.0), 1.0),
-                    );
-                }
-                PopoverRow::ProfilesSwitch => {
-                    // *SWITCH TO · n*, at the tiles' left edge, 16 px. The
-                    // chord's chip at its trailing end is out for now (the
-                    // CTO's note, E73); `Ctrl+Alt+P` itself still works.
+                PopoverRow::ProfilesHeading => {
+                    // *PROFILES · n*, at the tiles' left edge, as the
+                    // chip's page is headed (the CTO's note, E78).
                     let n = self
                         .rows_for(kind)
                         .iter()
@@ -7963,7 +7881,7 @@ impl ExploreView {
                         .count();
                     let label = format!(
                         "{} · {n}",
-                        koru_i18n::t(lang, koru_i18n::Key::ProfilesSwitchTo).to_uppercase()
+                        koru_i18n::t(lang, koru_i18n::Key::WorkspacesProfiles).to_uppercase()
                     );
                     draw_middle(
                         scene,
@@ -8235,7 +8153,6 @@ impl ExploreView {
                 *rect,
                 match button {
                     HeadButton::New => icons::PLUS,
-                    HeadButton::Settings => icons::FADERS,
                     HeadButton::Devices => icons::DEVICES,
                     HeadButton::Status => unreachable!("drawn by its row"),
                 },
@@ -8528,9 +8445,6 @@ const SWITCHER_MAX_H: f32 = 500.0;
 const WORKSPACE_CHIP: f32 = 20.0;
 /// A Profile row on the Profiles page: two lines, the tile beside them.
 const PROFILE_ROW_H: f32 = 44.0;
-/// Your card at the Profiles page's head: a larger tile, two lines, air.
-const PROFILE_HEAD_H: f32 = 60.0;
-const PROFILE_HEAD_TILE: f32 = 32.0;
 /// The Profiles page's foot: the sync state, the devices, the `+`.
 const PROFILE_FOOT_H: f32 = 44.0;
 const PROFILE_TILE: f32 = 24.0;
