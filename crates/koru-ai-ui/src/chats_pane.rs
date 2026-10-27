@@ -340,16 +340,20 @@ mod tests {
         surface.mouse_down(button.x + 4.0, button.y + 4.0)
     }
 
-    /// **The workspace has the navigator.** In the context pane and a tab, the
-    /// *Chats* button asks the host for its Chats view — no list inside the
-    /// chat (R1).
+    /// **The workspace has the navigator.** In the context pane and a tab
+    /// the header carries no *Chats* button at all (the CTO's note): the
+    /// rail's Chats square is the door, and a press where the button would
+    /// be reaches nothing.
     #[test]
-    fn the_chats_button_asks_a_workspace_host_for_its_view() {
+    fn a_workspace_hosted_header_has_no_chats_button() {
         let mut surface = ready(SurfaceMode::ContextPane);
-        assert!(press_chats(&mut surface));
+        assert!(!surface.hosts_header_buttons());
+        assert!(!press_chats(&mut surface) || !surface.history_open);
+        assert!(
+            !surface.take_wants_chats_view(),
+            "nothing asked for the view"
+        );
         assert!(!surface.history_open, "no popover inside the chat");
-        assert!(surface.take_wants_chats_view());
-        assert!(!surface.take_wants_chats_view(), "a one-shot drain");
     }
 
     /// In the standalone window the same button opens the floating pane, and

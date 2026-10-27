@@ -105,6 +105,14 @@ const COMPOSER_TOOLBAR_H: f32 = 32.0;
 const COMPOSER_INSET: f32 = 4.0;
 /// Where the setup fields start: below four provider cards.
 const SETUP_FIELDS_Y: f32 = 330.0;
+/// The title a chat is made with, until its first message names it.
+const DEFAULT_CHAT_TITLE: &str = "New chat";
+/// The private mark's square at the title's left.
+const PRIVACY_ICON_W: f32 = 28.0;
+/// The rename field's width: a title's worth, not the row's.
+const RENAME_FIELD_W: f32 = 320.0;
+/// How long a title made from a first message may be, in characters.
+const AUTO_TITLE_CHARS: usize = 48;
 const TOOL_ACTIVITY_ROW_H: f32 = 34.0;
 const TOOL_ACTIVITY_MIN_EXPANDED_H: f32 = 60.0;
 const TOOL_ACCESS_WORKSPACE_ROW_H: f32 = 32.0;
@@ -335,6 +343,11 @@ pub struct ChatSurface {
     chat_title: TextInput,
     workspace_search: TextInput,
     renaming_chat: bool,
+    /// Asked for a fresh chat before the service answered the boot (a new
+    /// tab, the CTO's note): the boot's snapshot carries the service's
+    /// current chat, and a tab that wanted a new one must not take it.
+    /// Cleared when the chat it asked for arrives.
+    fresh_chat_wanted: bool,
     openai_key: TextInput,
     openai_model: TextInput,
     ollama_endpoint: TextInput,
@@ -536,6 +549,7 @@ impl ChatSurface {
             chat_title,
             workspace_search,
             renaming_chat: false,
+            fresh_chat_wanted: false,
             openai_key,
             openai_model,
             ollama_endpoint,
@@ -642,12 +656,20 @@ impl ChatSurface {
     /// chat so it begins empty (workspace context still applies).
     pub fn start_new_chat(&mut self) -> bool {
         self.suppress_next_document_context = true;
+        self.fresh_chat_wanted = true;
+        // Before the boot has answered there is no provider to create under:
+        // the intent is kept, and the boot's snapshot creates the chat
+        // instead of handing this tab the service's current one.
+        if self.settings.is_none() {
+            return true;
+        }
         self.create_chat()
     }
 
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
         self.pending_question_anchor = None;
@@ -1192,8 +1214,8 @@ impl ChatSurface {
             return true;
         }
         if self.renaming_chat {
-            let title_rect = self.title_rect();
-            if self.chat_title.click(&mut self.engine, title_rect, x, y) {
+            let field = self.rename_rect();
+            if self.chat_title.click(&mut self.engine, field, x, y) {
                 self.focus = Focus::ChatTitle;
                 return true;
             }
@@ -1366,13 +1388,13 @@ impl ChatSurface {
             }
             return true;
         }
-        if self.history_button().contains(x, y) {
+        if self.hosts_header_buttons() && self.history_button().contains(x, y) {
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
             return self.press_chats_button();
         }
-        if self.settings_button().contains(x, y) {
+        if self.hosts_header_buttons() && self.settings_button().contains(x, y) {
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
@@ -1381,7 +1403,7 @@ impl ChatSurface {
             self.focus = Focus::None;
             return true;
         }
-        if self.new_chat_button().contains(x, y) {
+        if self.hosts_header_buttons() && self.new_chat_button().contains(x, y) {
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
@@ -1638,8 +1660,8 @@ impl ChatSurface {
             self.tool_group_at(x, y)
         };
         let dragged = if self.focus == Focus::ChatTitle {
-            let title_rect = self.title_rect();
-            self.chat_title.drag(&mut self.engine, title_rect, x)
+            let field = self.rename_rect();
+            self.chat_title.drag(&mut self.engine, field, x)
         } else if self.focus == Focus::WorkspaceSearch {
             self.tool_access_search_rect()
                 .is_some_and(|rect| self.workspace_search.drag(&mut self.engine, rect, x))
@@ -1729,10 +1751,8 @@ impl ChatSurface {
             return false;
         }
         if self.renaming_chat {
-            let title_rect = self.title_rect();
-            return self
-                .chat_title
-                .double_click(&mut self.engine, title_rect, x, y);
+            let field = self.rename_rect();
+            return self.chat_title.double_click(&mut self.engine, field, x, y);
         }
         self.start_chat_rename()
     }
@@ -2024,6 +2044,7 @@ impl ChatSurface {
                 self.validate_models_after_settings(selected);
             }
             Update::Created(transcript) => {
+                self.fresh_chat_wanted = false;
                 self.retain_staged_quotes_for(transcript.chat.id);
                 self.waiting = false;
                 self.attempt = None;
@@ -2151,6 +2172,14 @@ impl ChatSurface {
                 self.status = Some("Private local usage — no provider was contacted.".into());
             }
             Update::HistoryChanged { chats, transcript } => {
+                // A tab that asked for a new chat does not take the
+                // service's current one (the CTO's note): the snapshot's
+                // chat is dropped and a chat is created below.
+                let transcript = if self.fresh_chat_wanted {
+                    None
+                } else {
+                    transcript
+                };
                 if let Some(current) = &transcript {
                     self.retain_staged_quotes_for(current.chat.id);
                 } else {
@@ -2377,6 +2406,11 @@ impl ChatSurface {
                     // A daemon or catalog that disappears during the session
                     // must revoke an earlier successful validation.
                     self.validated_ready = validation.status == ProviderValidationStatus::Ready;
+                    // The provider is ready now and the tab still owes the
+                    // fresh chat it was opened for.
+                    if self.validated_ready && self.fresh_chat_wanted && self.transcript.is_none() {
+                        self.create_chat();
+                    }
                 }
                 self.constrain_reasoning(&validation);
                 let mut discovered_model = false;
@@ -2685,7 +2719,7 @@ impl ChatSurface {
         };
         self.send_command(Command::Create(CreateChatRequest {
             chat_id: ChatId::new(),
-            title: "New chat".into(),
+            title: DEFAULT_CHAT_TITLE.into(),
             model: selection,
         }))
     }
@@ -2858,6 +2892,14 @@ impl ChatSurface {
         if markdown.is_empty() {
             return false;
         }
+        // A chat still called *New chat* takes its name from this, its
+        // first message (the CTO's note): the way ChatGPT names a chat,
+        // without a model call — the first line, cut at a word.
+        let auto_title = self
+            .transcript
+            .as_ref()
+            .filter(|transcript| transcript.chat.title == DEFAULT_CHAT_TITLE)
+            .and_then(|_| title_from_message(&typed));
         self.usage_report = None;
         // A chip's caption is the document's title as it was chosen: the sent
         // card reads it at once, before any lookup.
@@ -2918,6 +2960,9 @@ impl ChatSurface {
         } else {
             self.send_command(Command::Send(request))
         };
+        if sent && let Some(title) = auto_title {
+            self.send_command(Command::Rename(chat_id, RenameChatRequest { title }));
+        }
         // After the send, which clears the status line on success.
         if overflowed {
             self.too_many_documents();
@@ -3440,13 +3485,54 @@ impl ChatSurface {
         )
     }
 
+    /// Whether the header carries *Chats*, *New chat* and *Settings*: the
+    /// standalone window's does; in a workspace those doors are the rail's,
+    /// the Chats heading's and the rail's again (the CTO's note), and the
+    /// header is the title alone.
+    fn hosts_header_buttons(&self) -> bool {
+        self.mode == SurfaceMode::Standalone
+    }
+
+    /// The title's row: the private mark, the title, an agent's folder. In a
+    /// workspace it starts at the body's left margin (the CTO's note); in
+    /// the standalone window after its *Chats* button.
     fn title_rect(&self) -> Rect {
+        if !self.hosts_header_buttons() {
+            let content = self.content_rect();
+            return Rect::new(content.x, self.viewport.y + 7.0, content.w, BUTTON_H);
+        }
         Rect::new(
             self.history_button().x + self.history_button().w + 8.0,
             self.viewport.y + 7.0,
             (self.new_chat_button().x - self.history_button().x - self.history_button().w - 16.0)
                 .max(1.0),
             BUTTON_H,
+        )
+    }
+
+    /// Where the title's words start: after the private mark when there is
+    /// a chat to be private.
+    fn title_text_x(&self) -> f32 {
+        let title_rect = self.title_rect();
+        if self.transcript.is_some() {
+            title_rect.x + PRIVACY_ICON_W + 6.0
+        } else {
+            title_rect.x + 2.0
+        }
+    }
+
+    /// The rename field: over the title's words, capped at `RENAME_FIELD_W`
+    /// rather than the whole row (the CTO's note).
+    fn rename_rect(&self) -> Rect {
+        let title_rect = self.title_rect();
+        let x = self.title_text_x();
+        Rect::new(
+            x,
+            title_rect.y,
+            (title_rect.x + title_rect.w - x)
+                .min(RENAME_FIELD_W)
+                .max(1.0),
+            title_rect.h,
         )
     }
 
@@ -4265,6 +4351,7 @@ impl ChatSurface {
             {
                 return Some((9, index));
             }
+            let header = self.hosts_header_buttons();
             for (index, rect) in [
                 self.history_button(),
                 self.new_chat_button(),
@@ -4274,7 +4361,7 @@ impl ChatSurface {
             .into_iter()
             .enumerate()
             {
-                if rect.contains(x, y) {
+                if (header || index == 3) && rect.contains(x, y) {
                     return Some((5, index + 1));
                 }
             }
@@ -4291,12 +4378,35 @@ impl ChatSurface {
         let p = theme::p();
         let title_rect = self.title_rect();
         self.privacy_button_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+        // The private mark left of the title (the CTO's note), on the row
+        // whether the title is read or being renamed.
+        if self.transcript.is_some() {
+            let private = self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| transcript.chat.private);
+            let icon = Rect::new(
+                title_rect.x,
+                title_rect.y + (title_rect.h - PRIVACY_ICON_W) * 0.5,
+                PRIVACY_ICON_W,
+                PRIVACY_ICON_W,
+            );
+            self.privacy_button_rect = icon;
+            IconButton::new(icons::DETECTIVE, icon)
+                .with_state(IconButtonState {
+                    hovered: icon.contains(self.pointer.0, self.pointer.1),
+                    active: private,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
         if self.renaming_chat {
+            let field = self.rename_rect();
             self.chat_title.draw(
                 canvas,
                 root,
                 &mut self.engine,
-                title_rect,
+                field,
                 InputStyle::inline(),
                 None,
                 self.focus == Focus::ChatTitle,
@@ -4316,21 +4426,16 @@ impl ChatSurface {
                     ),
                 );
             }
-            let private = self
-                .transcript
-                .as_ref()
-                .is_some_and(|transcript| transcript.chat.private);
             let title = self
                 .transcript
                 .as_ref()
                 .map(|t| t.chat.title.as_str())
                 .unwrap_or("Koru AI");
-            let title_x = title_rect.x + 2.0;
-            let privacy_w = if self.transcript.is_some() { 32.0 } else { 0.0 };
+            let title_x = self.title_text_x();
             let title = self.engine.simple_layout_wrapped(
                 title,
                 role::section_heading(),
-                (title_rect.x + title_rect.w - title_x - privacy_w).max(1.0),
+                (title_rect.x + title_rect.w - title_x).max(1.0),
             );
             scene::draw_layout_first_line(
                 canvas,
@@ -4341,23 +4446,6 @@ impl ChatSurface {
                 Some(p.text),
             );
             if self.transcript.is_some() {
-                let icon_w = 28.0;
-                let icon_x =
-                    (title_x + title.width() + 4.0).min(title_rect.x + title_rect.w - icon_w);
-                let icon = Rect::new(
-                    icon_x,
-                    title_rect.y + (title_rect.h - icon_w) * 0.5,
-                    icon_w,
-                    icon_w,
-                );
-                self.privacy_button_rect = icon;
-                IconButton::new(icons::DETECTIVE, icon)
-                    .with_state(IconButtonState {
-                        hovered: icon.contains(self.pointer.0, self.pointer.1),
-                        active: private,
-                        disabled: false,
-                    })
-                    .draw(canvas, root, &mut self.engine);
                 // An agent chat names its folder in the header (UC8); the
                 // home folder is the default and is not named.
                 let folder = self
@@ -4365,7 +4453,7 @@ impl ChatSurface {
                     .as_ref()
                     .and_then(|transcript| transcript.chat.agent_working_folder.clone());
                 if let Some(folder) = folder {
-                    let x = icon.x + icon.w + 6.0;
+                    let x = title_x + title.width() + 10.0;
                     let width = title_rect.x + title_rect.w - x;
                     if width > 40.0 {
                         let line = self.engine.simple_layout_wrapped(
@@ -4385,31 +4473,33 @@ impl ChatSurface {
                 }
             }
         }
-        let history = self.history_button();
-        draw_surface_button(
-            canvas,
-            root,
-            &mut self.engine,
-            history,
-            "Chats",
-            ButtonRole::Secondary,
-            history.contains(self.pointer.0, self.pointer.1),
-            self.history_open,
-        );
-        for (rect, label) in [
-            (self.new_chat_button(), "New chat"),
-            (self.settings_button(), "Settings"),
-        ] {
+        if self.hosts_header_buttons() {
+            let history = self.history_button();
             draw_surface_button(
                 canvas,
                 root,
                 &mut self.engine,
-                rect,
-                label,
+                history,
+                "Chats",
                 ButtonRole::Secondary,
-                rect.contains(self.pointer.0, self.pointer.1),
-                false,
+                history.contains(self.pointer.0, self.pointer.1),
+                self.history_open,
             );
+            for (rect, label) in [
+                (self.new_chat_button(), "New chat"),
+                (self.settings_button(), "Settings"),
+            ] {
+                draw_surface_button(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    rect,
+                    label,
+                    ButtonRole::Secondary,
+                    rect.contains(self.pointer.0, self.pointer.1),
+                    false,
+                );
+            }
         }
         self.draw_messages(canvas, root);
         let composer = self.composer_rect();
@@ -7346,6 +7436,41 @@ fn selected_setup_provider(settings: &ProviderSettingsResponse) -> SetupProvider
     }
 }
 
+/// A chat's name from its first message (the CTO's note): the first line
+/// that says something, its Markdown marks stripped, cut at a word before
+/// `AUTO_TITLE_CHARS` with an ellipsis. `None` when nothing is left.
+fn title_from_message(markdown: &str) -> Option<String> {
+    let line = markdown
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches(|c: char| matches!(c, '#' | '>' | '-' | '*' | '`'))
+                .trim()
+        })
+        .find(|line| !line.is_empty())?;
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let mut title = String::new();
+    for word in &words {
+        let next = if title.is_empty() {
+            (*word).to_owned()
+        } else {
+            format!("{title} {word}")
+        };
+        if next.chars().count() > AUTO_TITLE_CHARS {
+            break;
+        }
+        title = next;
+    }
+    if title.is_empty() {
+        title = line.chars().take(AUTO_TITLE_CHARS).collect();
+    }
+    let cut = title.chars().count() < line.chars().count();
+    if cut {
+        title.push('…');
+    }
+    Some(title)
+}
+
 fn validation_status_text(status: ProviderValidationStatus) -> &'static str {
     match status {
         ProviderValidationStatus::Unconfigured => "Finish configuring this provider.",
@@ -7681,6 +7806,112 @@ mod tests {
             }
             _ => panic!("composer send must issue a turn"),
         }
+    }
+
+    /// **A tab opened for a new chat gets one** (the CTO's note): the boot
+    /// answers with the service's current chat, and before that answer there
+    /// is no provider to create under. The intent is kept, the snapshot's
+    /// chat is dropped, and the chat this tab asked for is the one it shows.
+    #[test]
+    fn a_tab_asked_for_a_new_chat_does_not_take_the_services_current_one() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        assert!(surface.start_new_chat(), "the intent is kept");
+        assert!(
+            commands.try_recv().is_err(),
+            "nothing to create under before the boot answers"
+        );
+        assert!(!surface.setup_open, "and no setup is forced open");
+        let existing = transcript();
+        surface.apply_update(Update::HistoryChanged {
+            chats: vec![existing.chat.clone()],
+            transcript: Some(existing.clone()),
+        });
+        assert!(
+            surface.transcript.is_none(),
+            "the service's current chat is not this tab's"
+        );
+        assert_eq!(surface.chats.len(), 1, "the list is still the list");
+        let mut fresh = transcript();
+        fresh.chat.id = ChatId::new();
+        surface.apply_update(Update::Created(fresh.clone()));
+        assert_eq!(
+            surface.transcript.as_ref().map(|t| t.chat.id),
+            Some(fresh.chat.id)
+        );
+        assert!(!surface.fresh_chat_wanted, "the debt is paid");
+        surface.apply_update(Update::HistoryChanged {
+            chats: vec![existing.chat.clone()],
+            transcript: Some(existing.clone()),
+        });
+        assert_eq!(
+            surface.transcript.as_ref().map(|t| t.chat.id),
+            Some(existing.chat.id),
+            "a later snapshot applies as it always did"
+        );
+    }
+
+    /// **A chat's first message names it** (the CTO's note), the way ChatGPT
+    /// names a chat: the first line, cut at a word, Markdown marks stripped.
+    /// A chat already named keeps its name.
+    #[test]
+    fn the_first_message_names_a_new_chat() {
+        assert_eq!(
+            title_from_message("# Plan the launch\n\nmore"),
+            Some("Plan the launch".into())
+        );
+        assert_eq!(
+            title_from_message(
+                "Write a release note for the workspace foundation that covers the rail and the floor"
+            ),
+            Some("Write a release note for the workspace…".into())
+        );
+        assert_eq!(title_from_message("   \n\n"), None);
+        assert_eq!(
+            title_from_message("> quoted question?"),
+            Some("quoted question?".into())
+        );
+
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        chat.chat.title = DEFAULT_CHAT_TITLE.into();
+        let id = chat.chat.id;
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        assert!(surface.key(
+            &Key::Character("h".into()),
+            Some("How do I pin a tab"),
+            ModifiersState::empty(),
+        ));
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
+        let Command::Send(_) = commands.recv_timeout(Duration::from_millis(50)).unwrap() else {
+            panic!("expected a send command");
+        };
+        let Command::Rename(renamed, request) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("expected the rename after the send");
+        };
+        assert_eq!(renamed, id);
+        assert_eq!(request.title, "How do I pin a tab");
+
+        // Named already: no rename rides the next send.
+        let mut chat = transcript();
+        chat.chat.title = "Pins".into();
+        surface.transcript = Some(chat);
+        assert!(surface.key(
+            &Key::Character("a".into()),
+            Some("and again"),
+            ModifiersState::empty(),
+        ));
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
+        let Command::Send(_) = commands.recv_timeout(Duration::from_millis(50)).unwrap() else {
+            panic!("expected a send command");
+        };
+        assert!(commands.try_recv().is_err(), "no rename for a named chat");
     }
 
     #[test]
@@ -9291,7 +9522,8 @@ mod tests {
         surface.validated_ready = true;
         let title = surface.title_rect();
 
-        assert!(surface.mouse_double_click(title.x + 4.0, title.y + title.h * 0.5));
+        // Past the private mark, which sits left of the title now.
+        assert!(surface.mouse_double_click(title.x + 40.0, title.y + title.h * 0.5));
         assert!(surface.renaming_chat);
         assert_eq!(surface.focus, Focus::ChatTitle);
         assert!(surface.key(
