@@ -2469,6 +2469,11 @@ pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.
 pub const CONTENT_MIN_W: f32 = 320.0;
+/// The lane at the window's right edge, in the rail's colour, that the
+/// right-most card stops short of (the CTO's artboard: the explore pane and
+/// the document are cards on the window's ground, and a card needs ground
+/// on both sides). The main window's `Regions::with_edge_lane` carves it.
+pub const EDGE_LANE_W: f32 = 8.0;
 /// How long a side column takes to slide in or out.
 pub const PANEL_SLIDE_MS: f32 = 140.0;
 

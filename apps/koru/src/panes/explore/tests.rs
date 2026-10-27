@@ -208,6 +208,26 @@ fn the_heading_band_names_the_app() {
     assert_eq!(v.heading_title_rect(shut).w, 0.0, "no band, no title");
 }
 
+/// **The actions menu is a menu's width, under its `…`** (the CTO's note):
+/// its right edge is the button's, and it does not grow with the pane.
+#[test]
+fn the_actions_menu_hangs_under_its_button_at_a_menus_width() {
+    let mut v = with_rows(3);
+    let a = Rect::new(area().x, area().y, 420.0, area().h);
+    let button = v.actions_button(a);
+    let (x, y) = button.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
+    let panel = v.popover_panel(a, VIEW).expect("the menu is open");
+    assert_eq!(panel.w, ACTIONS_POPOVER_W);
+    assert!(panel.w < a.w - theme::NAV_PAD * 2.0, "not the pane's width");
+    assert_eq!(
+        panel.x + panel.w,
+        button.x + button.w,
+        "right edge at the button's"
+    );
+    assert!(panel.y >= button.y + button.h, "under it");
+}
+
 #[test]
 fn documents_actions_menu_opens_and_routes_every_action() {
     let mut v = with_rows(3);

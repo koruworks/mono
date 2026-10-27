@@ -351,6 +351,7 @@ impl MainView {
             }
             self.draw_caption(scene, root, &workspace.ws);
         }
+        self.draw_cards(scene, root);
 
         // Pane dividers: over every pane's content (a pane never reaches into
         // the divider's pixel — `split_with_divider` carved it out). A divider
@@ -749,10 +750,13 @@ impl MainView {
         // drawn right edge, so the logo and the tabs slide along with the pane
         // instead of jumping when it lands.
         let cap = self.drawn_caption();
+        // **The rail's colour** (the CTO's artboard): the header, the rail
+        // and the edge lane are the window's ground, one tint; the explore
+        // pane and the document are cards on it.
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            p.chip_bg,
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
         scene::fill(
@@ -761,6 +765,51 @@ impl MainView {
             p.panel_border,
             &scene::rect(cap.x, cap.y + cap.h - 1.0, cap.w, 1.0),
         );
+    }
+
+    /// The ground the cards sit on, and their top corners: the lane at the
+    /// right edge in the rail's colour with the right-most card's border
+    /// down its inside, then a rounded top corner on the explore pane's
+    /// left, the document's left and the right-most card's right (the CTO's
+    /// artboard). Drawn after the columns and the header, which laid the
+    /// straight hairlines: each corner masks the square outside its arc in
+    /// the ground's colour and strokes the arc in the hairline's.
+    ///
+    /// **Drawn edges**, not settled ones: the pane slides, and the
+    /// document's left corner rides its edge the way the caption does.
+    fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
+        let p = theme::p();
+        let edge = self.regions.edge;
+        if edge.w > 0.0 {
+            scene::fill(
+                scene,
+                root,
+                p.chip_bg,
+                &scene::rect(edge.x, edge.y, edge.w, edge.h),
+            );
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(edge.x, edge.y, 1.0, edge.h),
+            );
+        }
+        let top = self.content().y - 1.0;
+        let r = theme::PAGE_RADIUS;
+        let sb = self.sidebar_rect();
+        if sb.w > 0.0 {
+            let pane = Self::pane_of(sb);
+            if pane.w > 0.0 {
+                draw_card_corner(scene, root, pane.x - 1.0, top, r, false, p);
+            }
+        }
+        let cap = self.drawn_caption();
+        if cap.x > 0.0 {
+            draw_card_corner(scene, root, cap.x - 1.0, top, r, false, p);
+        }
+        if edge.w > 0.0 {
+            draw_card_corner(scene, root, edge.x + 1.0, top, r, true, p);
+        }
     }
 
     /// Takes the document because a tab's *icon* can depend on it: a document
@@ -875,31 +924,32 @@ impl MainView {
             },
         );
         let p = theme::p();
+        // The lane is the header's: the rail's colour, like the caption
+        // beside it (the CTO's artboard). Its hairline is the explore
+        // card's top border, so it runs from the rail's edge, not over the
+        // rail — the rail and the header are one ground. The mark's slot
+        // no longer needs a fill or a hairline of its own (E37): the ground
+        // is already its colour, and a hairline up through the header would
+        // cut the ground in two.
+        scene::fill(
+            scene,
+            root,
+            p.chip_bg,
+            &scene::rect(lane.x, lane.y, lane.w, lane.h),
+        );
+        let rects = koru_shell_chrome::lane::solve(lane, leading);
+        let from = rects.leading.x + rects.leading.w;
         scene::fill(
             scene,
             root,
             p.panel_border,
-            &scene::rect(lane.x, lane.y + lane.h - 1.0, lane.w, 1.0),
+            &scene::rect(
+                from,
+                lane.y + lane.h - 1.0,
+                (lane.x + lane.w - from).max(0.0),
+                1.0,
+            ),
         );
-        let rects = koru_shell_chrome::lane::solve(lane, leading);
-        // **The mark's slot wears the rail's colour** (the CTO's note): the
-        // slot is the rail's width and sits over it, so the rail's band and
-        // its hairline run up through the lane and the column reads as one.
-        if rects.leading.w > 0.0 {
-            let slot = rects.leading;
-            scene::fill(
-                scene,
-                root,
-                p.chip_bg,
-                &scene::rect(slot.x, slot.y, slot.w, slot.h),
-            );
-            scene::fill(
-                scene,
-                root,
-                p.panel_border,
-                &scene::rect(slot.x + slot.w - 1.0, slot.y, 1.0, slot.h),
-            );
-        }
         let hovered = |h: Hit| self.hover == Some(h);
         self.draw_lane_controls(
             scene,
@@ -1381,4 +1431,47 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
         }
     }
     (missing, waiting)
+}
+
+/// One rounded top corner of a card whose straight hairlines are already
+/// drawn. `(x, y)` is the card's **outer** corner — the hairline's outside
+/// edge — and `right` picks the top-right corner, whose square extends
+/// leftwards from `x`. The square outside the arc is masked in `ground`, which
+/// also covers the straight hairlines' ends inside it; the arc is then
+/// stroked one pixel wide along the hairline's centre, so it meets the
+/// straight runs where they leave the square. The ground is the rail's
+/// colour and the border the hairline's, read from the palette.
+fn draw_card_corner(
+    scene: &mut Scene,
+    root: Affine,
+    x: f32,
+    y: f32,
+    r: f32,
+    right: bool,
+    p: &theme::Palette,
+) {
+    use vello::kurbo::{BezPath, Point};
+    let (ground, border) = (p.chip_bg, p.panel_border);
+    if r <= 1.0 {
+        return;
+    }
+    // Quarter-circle as one cubic, the usual constant.
+    const K: f64 = 0.552_284_75;
+    let dir = if right { -1.0 } else { 1.0 };
+    let (x, y, r) = (x as f64, y as f64, r as f64);
+    let pt = |dx: f64, dy: f64| Point::new(x + dir * dx, y + dy);
+    // The mask: the top edge out to the arc's start, the arc back to the
+    // side edge, and the side edge up to the corner.
+    let mut mask = BezPath::new();
+    mask.move_to(pt(0.0, 0.0));
+    mask.line_to(pt(r, 0.0));
+    mask.curve_to(pt(r - K * r, 0.0), pt(0.0, r - K * r), pt(0.0, r));
+    mask.close_path();
+    scene::fill(scene, root, ground, &mask);
+    // The border's centre runs half a pixel inside the outer edge.
+    let rr = r - 0.5;
+    let mut arc = BezPath::new();
+    arc.move_to(pt(r, 0.5));
+    arc.curve_to(pt(r - K * rr, 0.5), pt(0.5, r - K * rr), pt(0.5, r));
+    scene::stroke(scene, root, border, 1.0, &arc);
 }

@@ -849,12 +849,12 @@ fn the_ai_pane_uses_the_right_slot_and_clamps_its_drag_width() {
     assert_eq!(v.content().w, full - 480.0);
     assert_eq!(
         v.ai_rect().x,
-        v.viewport.0,
-        "the pane begins just beyond the right edge"
+        v.regions.edge.x,
+        "the pane begins just beyond the right edge, where the lane is"
     );
     v.ai_panel
         .advance(Instant::now() + std::time::Duration::from_secs(1));
-    assert_eq!(v.ai_rect().x, v.viewport.0 - 480.0);
+    assert_eq!(v.ai_rect().x, v.regions.edge.x - 480.0);
     assert_eq!(v.ai_rect().w, 480.0);
 
     assert!(v.set_ai_width(2_000.0));
@@ -909,7 +909,7 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     assert_eq!(c.x, theme::SIDEBAR_W + theme::RAIL_W);
     assert_eq!(
         c.w,
-        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W
+        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W - theme::EDGE_LANE_W
     );
 
     let view = v.focused_view_rect();
@@ -1097,7 +1097,11 @@ fn the_content_rect_sits_below_the_caption() {
     let r: Rect = v.content();
     assert_eq!(r.y, v.regions.caption.h);
     assert_eq!(r.x, 0.0, "both columns are collapsed for now");
-    assert_eq!(r.w, 1200.0);
+    assert_eq!(
+        r.w,
+        1200.0 - theme::EDGE_LANE_W,
+        "the edge lane is the window's"
+    );
 }
 
 // ============================================================ drag-to-move
@@ -1301,4 +1305,22 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
         workspace.ws.children(Parent::Root).unwrap(),
         vec![parent, existing, child]
     );
+}
+
+/// **The window keeps a lane at its right edge** (the CTO's artboard): the
+/// content stops `EDGE_LANE_W` short of the window, the caption does not,
+/// and the context column, when open, ends where the lane begins.
+#[test]
+fn the_window_keeps_an_edge_lane() {
+    let (mut v, _) = on_document();
+    let edge = v.regions.edge;
+    assert_eq!(edge.w, theme::EDGE_LANE_W);
+    assert_eq!(edge.x + edge.w, v.viewport.0);
+    assert_eq!(v.content().x + v.content().w, edge.x);
+    assert_eq!(v.regions.caption.x + v.regions.caption.w, v.viewport.0);
+    assert!(v.toggle_context());
+    let done = Instant::now() + std::time::Duration::from_millis(theme::PANEL_SLIDE_MS as u64 * 4);
+    v.context.advance(done);
+    assert_eq!(v.regions.context.x + v.regions.context.w, v.regions.edge.x);
+    assert_eq!(v.context_rect().x + v.context_rect().w, v.regions.edge.x);
 }

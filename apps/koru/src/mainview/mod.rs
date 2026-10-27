@@ -15456,7 +15456,7 @@ impl MainView {
             return self.set_sidebar_width(x - grab);
         }
         if let Some(grab) = self.ai_drag {
-            return self.set_ai_width(self.viewport.0 - (x - grab));
+            return self.set_ai_width(self.regions.edge.x - (x - grab));
         }
         // The same contract as the two pane edges above: the ratio is cheap
         // geometry, so the hairline and the strips follow the pointer live;

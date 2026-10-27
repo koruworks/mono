@@ -106,7 +106,10 @@ impl MainView {
             self.viewport.1,
             sidebar_w,
             ai_w.max(self.context.layout_width()),
-        );
+        )
+        // The lane at the right edge, in the rail's colour (the CTO's
+        // artboard): the right-most card stops short of the window.
+        .with_edge_lane(koru_draw::theme::EDGE_LANE_W);
     }
 
     pub(super) fn content(&self) -> Rect {
@@ -324,7 +327,7 @@ impl MainView {
         let r = self.regions.context;
         let w = self.ai_panel.drawn_width();
         Rect::new(
-            self.viewport.0 - w + self.ai_panel.slide_offset(),
+            self.regions.edge.x - w + self.ai_panel.slide_offset(),
             r.y,
             w,
             r.h,
@@ -404,7 +407,7 @@ impl MainView {
         let r = self.regions.context;
         let w = self.context.drawn_width();
         Rect::new(
-            self.viewport.0 - w + self.context.slide_offset(),
+            self.regions.edge.x - w + self.context.slide_offset(),
             r.y,
             w,
             r.h,

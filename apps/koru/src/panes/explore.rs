@@ -3457,7 +3457,9 @@ impl ExploreView {
             main + (profiles - main) * page
         };
         let beside_rail = p.kind != PopoverKind::LibraryActions && p.anchor == PopoverAnchor::Rail;
-        let w = if beside_rail {
+        let w = if p.kind == PopoverKind::LibraryActions {
+            ACTIONS_POPOVER_W
+        } else if beside_rail {
             POPOVER_W
         } else {
             POPOVER_W.max(area.w - theme::NAV_PAD * 2.0)
@@ -6685,12 +6687,20 @@ impl ExploreView {
             p.status_bg,
             &scene::rect(area.x, area.y, area.w, area.h),
         );
-        // Hairline down the inside edge, separating the column from the view.
+        // Hairline down the inside edge, separating the column from the view
+        // — from under the lane, which is the header's ground and has no
+        // seam in it (the CTO's artboard); the card's corner meets it there.
+        let lane_h = theme::CAPTION_H.min(area.h);
         scene::fill(
             scene,
             root,
             p.panel_border,
-            &scene::rect(area.x + area.w - 1.0, area.y, 1.0, area.h),
+            &scene::rect(
+                area.x + area.w - 1.0,
+                area.y + lane_h,
+                1.0,
+                (area.h - lane_h).max(0.0),
+            ),
         );
 
         // The explore shell is one section structure for every tab: the
@@ -8296,6 +8306,10 @@ const SUBSCRIBE_GAP: f32 = 8.0;
 /// The floating panel: at least this wide, and never narrower than the pane it
 /// hangs from.
 const POPOVER_W: f32 = theme::PANEL_W;
+/// The library's actions menu: a menu's width, hung under its `…` with its
+/// right edge at the button's (the CTO's note: it grew with the pane and
+/// read as a sheet rather than a menu).
+const ACTIONS_POPOVER_W: f32 = 200.0;
 const POPOVER_PAD: f32 = theme::PANEL_PAD;
 const POPOVER_RADIUS: f32 = 8.0;
 /// How far below the header the panel sits, and how close to the window's edge

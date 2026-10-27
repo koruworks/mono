@@ -36,6 +36,31 @@ pub struct Regions {
     pub content: Rect,
     /// The context column, on the right.
     pub context: Rect,
+    /// The lane at the window's right edge, below the caption, that no
+    /// column reaches into: zero-width unless [`with_edge_lane`] carved it.
+    ///
+    /// [`with_edge_lane`]: Self::with_edge_lane
+    pub edge: Rect,
+}
+
+impl Regions {
+    /// Carve a lane `w` wide off the right edge, below the caption. The
+    /// content gives it up and a context column keeps its width and shifts
+    /// left with it, so `CONTEXT_W` stays true. The caption keeps its full
+    /// width — the window buttons sit over the lane, which is theirs to sit
+    /// over.
+    pub fn with_edge_lane(mut self, w: f32) -> Self {
+        let w = w.max(0.0).min(self.content.w);
+        self.content.w -= w;
+        self.context.x -= w;
+        self.edge = Rect::new(
+            self.context.x + self.context.w,
+            self.content.y,
+            w,
+            self.content.h,
+        );
+        self
+    }
 }
 
 /// Cut a `w` × `h` window given the two columns' current widths.
@@ -85,6 +110,7 @@ pub fn solve(w: f32, h: f32, sidebar_w: f32, context_w: f32) -> Regions {
         sidebar: Rect::new(0.0, 0.0, sw, h),
         content: Rect::new(sw, caption_h, content_w, below),
         context: Rect::new(w - cw, caption_h, cw, below),
+        edge: Rect::new(w, caption_h, 0.0, below),
     }
 }
 
