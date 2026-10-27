@@ -310,7 +310,12 @@ pub enum Outcome {
     /// The who/where popover's heading import button: the container hangs
     /// the import formats beside the page, which stays (the CTO's note:
     /// the heading's ⋯ became a `+` and an import button).
-    WorkspacesImport,
+    /// The floor's `…` was pressed (the CTO's artboard): the workspace's
+    /// menu — New workspace, Import…, Invite people, Trash — hung from the
+    /// button's top-right corner, which `at` names.
+    FloorMenu {
+        at: (f32, f32),
+    },
     /// Home's Today row: the Home tab, a singleton.
     OpenHome,
     /// A recent document, from Home's nav.

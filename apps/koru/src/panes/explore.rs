@@ -411,8 +411,8 @@ fn page_of(kind: PopoverKind) -> f32 {
 /// One row of an open popover, in the order it is listed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
-    /// *WORKSPACES · n*, with a `+` (New workspace) and an import button at
-    /// its trailing end (the CTO's note: no ⋯ menu).
+    /// *WORKSPACES · n*. Its `+` and import button moved into the floor's
+    /// `…` menu (the CTO's artboard, E60); a press on it does nothing.
     WorkspacesHeading,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
@@ -441,7 +441,6 @@ impl PopoverRow {
     /// The buttons at a head row's trailing end, leading to trailing.
     fn head_buttons(self) -> &'static [HeadButton] {
         match self {
-            Self::WorkspacesHeading => &[HeadButton::New, HeadButton::Import],
             Self::ProfilesTitle => &[HeadButton::New],
             _ => &[],
         }
@@ -449,14 +448,12 @@ impl PopoverRow {
 }
 
 /// A button at a head row's trailing end (the CTO's note: the `+` moved up
-/// into the Profiles title; the workspaces heading's ⋯ became a `+` and an
-/// import button).
+/// into the Profiles title). The WORKSPACES heading's `+` and import button
+/// went to the floor's `…` menu (E60).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum HeadButton {
-    /// New workspace, or New profile.
+    /// New profile.
     New,
-    /// The import formats, beside the page.
-    Import,
 }
 
 /// Which part of a popover row a point is on.
@@ -3861,9 +3858,8 @@ impl ExploreView {
     /// everything else is a destination.
     fn stays_open(row: PopoverRow, part: PopoverPart) -> bool {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
-                part != PopoverPart::Button(HeadButton::New)
-            }
+            PopoverRow::WorkspacesHeading => true,
+            PopoverRow::ProfilesTitle => part != PopoverPart::Button(HeadButton::New),
             PopoverRow::Profile(_) => part == PopoverPart::Row,
             PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => false,
         }
@@ -3879,12 +3875,11 @@ impl ExploreView {
         self.choose(row, part)
     }
 
-    /// What Enter means on `row`: a head's `+`, else the row itself.
+    /// What Enter means on `row`: the Profiles title's `+`, else the row
+    /// itself.
     fn keyboard_part(row: PopoverRow) -> PopoverPart {
         match row {
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
-                PopoverPart::Button(HeadButton::New)
-            }
+            PopoverRow::ProfilesTitle => PopoverPart::Button(HeadButton::New),
             _ => PopoverPart::Row,
         }
     }
@@ -3919,12 +3914,8 @@ impl ExploreView {
                     Outcome::SwitchProfile(id)
                 }
             }
-            // A head's buttons act; a press on its words does nothing.
-            PopoverRow::WorkspacesHeading => match part {
-                PopoverPart::Button(HeadButton::New) => Outcome::NewWorkspace,
-                PopoverPart::Button(HeadButton::Import) => Outcome::WorkspacesImport,
-                PopoverPart::Row | PopoverPart::Gear => Outcome::Consumed,
-            },
+            // A heading's words do nothing; the Profiles title's `+` acts.
+            PopoverRow::WorkspacesHeading => Outcome::Consumed,
             PopoverRow::ProfilesTitle => match part {
                 PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
                 _ => Outcome::Consumed,
@@ -4079,6 +4070,16 @@ impl ExploreView {
         }
         self.chrome_focus = focus;
         true
+    }
+
+    /// The floor's `…` was pressed: the workspace's menu, hung from the
+    /// button's top-right corner so it rises above the button at the
+    /// window's foot (the CTO's artboard).
+    pub fn floor_menu(&self, area: Rect) -> Outcome {
+        let r = floor::solve(area);
+        Outcome::FloorMenu {
+            at: (r.dots.x + r.dots.w, r.dots.y),
+        }
     }
 
     /// The band the library's heading and its `…` sit in: under the lane
@@ -4735,9 +4736,17 @@ impl ExploreView {
             }
             // The floor chip shuts the switcher it opened — whichever page is
             // showing; falling through would reopen it on the same press.
-            if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
-                self.close_popover();
-                return Outcome::Consumed;
+            // The `…` beside it shuts it too, and opens its own menu.
+            match floor::hit(area, x, y) {
+                Some(floor::Hit::Chip) => {
+                    self.close_popover();
+                    return Outcome::Consumed;
+                }
+                Some(floor::Hit::Dots) => {
+                    self.close_popover();
+                    return self.floor_menu(area);
+                }
+                None => {}
             }
             // Anywhere else shuts it.
             self.close_popover();
@@ -4766,6 +4775,9 @@ impl ExploreView {
         // Socials each claim every press below the heading, and the floor
         // asked after them was unreachable in those modes — the chip and
         // the `?` worked on Files and did nothing on Home.
+        if floor::hit(area, x, y) == Some(floor::Hit::Dots) {
+            return self.floor_menu(area);
+        }
         if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
             // One control, one popover: a press while it shows any page
             // shuts it (QUESTIONS.md E2); otherwise the main page opens.
@@ -6886,6 +6898,20 @@ impl ExploreView {
                 },
             );
         }
+        if r.dots.w > 0.0 {
+            // The workspace's menu, right of the chip (the CTO's artboard):
+            // the heading's `…`, one row down.
+            let hot = self.floor_hover == Some(floor::Hit::Dots);
+            if hot {
+                scene::fill(
+                    scene,
+                    root,
+                    p.hover_tint,
+                    &scene::rrect(r.dots.x, r.dots.y, r.dots.w, r.dots.h, 7.0),
+                );
+            }
+            scene::dots_three(scene, root, r.dots, if hot { p.text } else { p.text_dim });
+        }
         if self.chrome_focus == Some(ExploreChromeFocus::FloorChip) && r.chip.w > 0.0 {
             draw_focus_ring(scene, root, r.chip, p);
         }
@@ -7925,7 +7951,6 @@ impl ExploreView {
                 *rect,
                 match button {
                     HeadButton::New => icons::PLUS,
-                    HeadButton::Import => icons::IMPORT,
                 },
                 koru_ui::icon_button::State {
                     hovered: lit,

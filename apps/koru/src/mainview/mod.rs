@@ -4269,6 +4269,8 @@ impl MainView {
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
+            // *Invite people* waits for an invite flow (E60); the rest act.
+            MenuSubject::Floor => !matches!(action, MenuAction::InvitePeople),
             // The help popover's rows are always there. The card's Download
             // is a control, gated by its own `enabled` rather than here.
             MenuSubject::Help => matches!(
@@ -4740,6 +4742,18 @@ impl MainView {
             MenuSubject::Trash => match action {
                 MenuAction::EmptyTrash => {
                     self.pending_empty_trash = Some(false);
+                    true
+                }
+                _ => false,
+            },
+            MenuSubject::Floor => match action {
+                MenuAction::NewWorkspace => self.prompt_new_workspace(),
+                MenuAction::OpenTrash => self.open_trash_tab(),
+                MenuAction::ImportFormat(format) => {
+                    self.ask_pane(PaneRequest::ImportContent {
+                        format,
+                        source: koru_workspace_host::ImportSourceSelection::Picker,
+                    });
                     true
                 }
                 _ => false,
@@ -6865,25 +6879,18 @@ impl MainView {
     /// off the panel's right edge level with the button, with the page
     /// still under it (the CTO's notes, QUESTIONS.md E29 and E37). A chosen
     /// format shuts the page, since it is the end of the interaction.
-    fn open_workspaces_import_menu(&mut self) -> bool {
-        let area = self.explore_popover_area();
-        let Some(panel) = self.explore.popover_panel(area, self.viewport) else {
-            return false;
-        };
-        let Some(button) = self.explore.popover_head_button_rect(
-            area,
-            self.viewport,
-            crate::panes::explore::HeadButton::Import,
-        ) else {
-            return false;
-        };
-        let at = (panel.x + panel.w + koru_app_shell::popover::GAP, button.y);
+    /// The floor's `…` (the CTO's artboard, E60): New workspace, Import…
+    /// with its formats as a flyout, Invite people, and Trash with its
+    /// count. Hung from the button's top-right corner; the menu lifts itself
+    /// to stay on screen at the window's foot.
+    fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
+        context_menu::set_trash_count(self.explore.trash_count());
         let mut menu = ContextMenu::aligned(
             &mut self.engine,
-            MenuSubject::NewTab,
+            MenuSubject::Floor,
             at,
-            context_menu::import_items(),
-            MenuAnchor::Cursor,
+            context_menu::floor_items(),
+            MenuAnchor::ButtonRight,
         );
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
@@ -7201,7 +7208,7 @@ impl MainView {
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
-            Outcome::WorkspacesImport => self.open_workspaces_import_menu(),
+            Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
             }

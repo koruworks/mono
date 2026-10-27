@@ -5,14 +5,15 @@
 //!
 //! ```text
 //! ────────────────────────────────  hairline
-//!  (AL) Acme Labs                 ⌄
-//!       Steven Liechti · Syncing
+//!  (AL) Acme Labs            ⌄   …
 //! ```
 //!
 //! The chip is one control that opens one popover — the two-page who/where
-//! switcher the pane already has — anchored **above** it. The `?` that sat
-//! beside it moved into that popover's toolbar (the CTO's artboard,
-//! QUESTIONS.md E30), so the chip has the band to itself. It hides with the
+//! switcher the pane already has — anchored **above** it. Right of it, a
+//! `…` opens the workspace's menu: New workspace, Import…, Invite people
+//! and Trash (the CTO's artboard, QUESTIONS.md E60); the `+` and the import
+//! button the popover's WORKSPACES heading carried moved into it. The `?`
+//! that sat beside the chip is the rail's (E30). The floor hides with the
 //! pane (frame 9): who/where stays one chord away, and the floor needs no
 //! chrome of its own in the caption.
 //!
@@ -30,6 +31,8 @@ pub const CHIP_H: f32 = 34.0;
 pub const AVATAR: f32 = 24.0;
 /// The chevron at the chip's right.
 pub const CHEVRON: f32 = 14.0;
+/// The `…` right of the chip: a square the chip's height.
+pub const DOTS: f32 = CHIP_H;
 /// Inside the band and inside the chip.
 const PAD: f32 = 6.0;
 const CHIP_PAD: f32 = 7.0;
@@ -42,9 +45,11 @@ pub struct Rects {
     pub band: Rect,
     pub chip: Rect,
     pub avatar: Rect,
-    /// The two text lines: the workspace's name over the person's.
+    /// The workspace's name.
     pub text: Rect,
     pub chevron: Rect,
+    /// The `…` right of the chip, which opens the workspace's menu.
+    pub dots: Rect,
 }
 
 /// Lay the floor out at the foot of `area`.
@@ -58,11 +63,19 @@ pub fn solve(area: Rect) -> Rects {
             avatar: z,
             text: z,
             chevron: z,
+            dots: z,
         };
     }
     let right = band.x + band.w;
     let chip_x = band.x + PAD;
-    let chip_w = (right - PAD - chip_x).max(0.0);
+    let dots_w = DOTS.min((right - PAD - chip_x).max(0.0));
+    let dots = Rect::new(
+        right - PAD - dots_w,
+        band.y + (H - CHIP_H) * 0.5,
+        dots_w,
+        CHIP_H,
+    );
+    let chip_w = (dots.x - GAP - chip_x).max(0.0);
     let chip = Rect::new(chip_x, band.y + (H - CHIP_H) * 0.5, chip_w, CHIP_H);
     let avatar = Rect::new(
         chip.x + CHIP_PAD,
@@ -89,6 +102,7 @@ pub fn solve(area: Rect) -> Rects {
         avatar,
         text,
         chevron,
+        dots,
     }
 }
 
@@ -96,13 +110,21 @@ pub fn solve(area: Rect) -> Rects {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Hit {
     Chip,
+    /// The `…`: the workspace's menu.
+    Dots,
 }
 
 /// Resolve a point. `None` is the band's empty part, which is the pane's.
 pub fn hit(area: Rect, x: f32, y: f32) -> Option<Hit> {
     let r = solve(area);
     let owns = |rect: Rect| rect.w > 0.0 && rect.contains(x, y);
-    if owns(r.chip) { Some(Hit::Chip) } else { None }
+    if owns(r.dots) {
+        Some(Hit::Dots)
+    } else if owns(r.chip) {
+        Some(Hit::Chip)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

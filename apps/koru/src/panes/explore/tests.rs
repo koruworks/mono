@@ -1165,27 +1165,10 @@ fn every_popover_part_hit_tests_back_to_itself() {
         Some((PopoverRow::Workspace(0), PopoverPart::Row))
     );
     let r = find(&v, PopoverRow::WorkspacesHeading);
-    let buttons = super::head_button_rects(r, PopoverRow::WorkspacesHeading);
-    assert_eq!(
-        buttons.iter().map(|(b, _)| *b).collect::<Vec<_>>(),
-        vec![HeadButton::New, HeadButton::Import],
-        "a `+`, then import, at the trailing end"
-    );
-    assert!(buttons[0].1.x + buttons[0].1.w <= buttons[1].1.x);
     assert!(
-        (buttons[1].1.x + buttons[1].1.w - (super::trailing_lane(r).x + super::trailing_lane(r).w))
-            .abs()
-            < 0.5,
-        "the last button ends where every row's control does"
+        super::head_button_rects(r, PopoverRow::WorkspacesHeading).is_empty(),
+        "the heading's `+` and import button moved to the floor's `…` (E60)"
     );
-    for (button, rect) in &buttons {
-        let (x, y) = rect.centre();
-        assert_eq!(
-            v.popover_part_at(a, VIEW, x, y)
-                .map(|(_, row, part)| (row, part)),
-            Some((PopoverRow::WorkspacesHeading, PopoverPart::Button(*button)))
-        );
-    }
     let (x, y) = (r.x + 30.0, r.centre().1);
     assert_eq!(
         v.popover_part_at(a, VIEW, x, y)
@@ -1597,24 +1580,20 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     assert!(v.popover_open(), "and neither dismissed it");
 }
 
-/// The heading's import button asks the container for the formats and keeps
-/// the page; its `+` asks for a workspace and shuts it, and Enter on the
-/// heading is the `+`. A press on the heading's words does nothing.
+/// The WORKSPACES heading carries no buttons now (the CTO's artboard, E60):
+/// a press on its words does nothing and keeps the page, and so does Enter
+/// on it. New workspace and Import… are the floor's `…` menu's.
 #[test]
-fn the_headings_buttons_report_themselves() {
+fn the_heading_has_no_buttons_and_the_floor_dots_open_the_menu() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
     let a = area();
     v.toggle_popover(PopoverKind::Summary);
-    let import = v
-        .popover_head_button_rect(a, VIEW, HeadButton::Import)
-        .expect("the import button");
-    let (x, y) = import.centre();
-    assert_eq!(
-        v.mouse_down(a, VIEW, x, y, false),
-        Outcome::WorkspacesImport
+    assert!(
+        v.popover_head_button_rect(a, VIEW, HeadButton::New)
+            .is_none(),
+        "no `+` on the WORKSPACES heading"
     );
-    assert!(v.popover_open(), "the page stays under the formats");
     let (_, r) = *v
         .popover_rects(a, VIEW)
         .iter()
@@ -1633,18 +1612,32 @@ fn the_headings_buttons_report_themselves() {
     );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::NewWorkspace),
-        "Enter on the heading is its `+`"
+        Some(Outcome::Consumed),
+        "Enter on the heading does nothing"
     );
-    assert!(!v.popover_open(), "the creator is the end of it");
-    v.advance_popover(Instant::now() + Duration::from_secs(1));
-    v.toggle_popover(PopoverKind::Summary);
-    let plus = v
-        .popover_head_button_rect(a, VIEW, HeadButton::New)
-        .expect("the `+`");
-    let (x, y) = plus.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewWorkspace);
-    assert!(!v.popover_open());
+    assert!(v.popover_open(), "and keeps the page");
+    // The floor's `…`: the workspace's menu, hung from its top-right corner;
+    // pressed while the page is up, it shuts the page too.
+    let dots = crate::panes::sidebar::floor::solve(a).dots;
+    let (x, y) = dots.centre();
+    assert_eq!(
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::FloorMenu {
+            at: (dots.x + dots.w, dots.y)
+        }
+    );
+    assert!(!v.popover_open(), "the page shut under the menu");
+    assert_eq!(
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::FloorMenu {
+            at: (dots.x + dots.w, dots.y)
+        },
+        "and with no page up, the same"
+    );
+    assert_eq!(
+        crate::panes::sidebar::floor::hit(a, x, y),
+        Some(crate::panes::sidebar::floor::Hit::Dots)
+    );
 }
 
 /// After Back, the chip shuts the main page — it must not need a second
@@ -1740,11 +1733,6 @@ fn the_titles_plus_reports_new_profile() {
     let a = area();
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    assert!(
-        v.popover_head_button_rect(a, VIEW, HeadButton::Import)
-            .is_none(),
-        "the Profiles title has no import"
-    );
     let plus = v
         .popover_head_button_rect(a, VIEW, HeadButton::New)
         .expect("the `+`");
@@ -1968,14 +1956,13 @@ fn a_dismissed_popover_goes_deaf_before_it_goes_away() {
     let a = area();
     let vp = (900.0, 700.0);
     v.toggle_popover(PopoverKind::Summary);
+    // A workspace row: the heading carries no button any more (E60).
     let (_, r) = v
         .popover_rects(a, vp)
         .into_iter()
-        .find(|(row, _)| *row == PopoverRow::WorkspacesHeading)
-        .expect("the heading");
-    let (x, y) = super::head_button_rects(r, PopoverRow::WorkspacesHeading)[0]
-        .1
-        .centre();
+        .find(|(row, _)| *row == PopoverRow::Workspace(0))
+        .expect("a workspace row");
+    let (x, y) = r.centre();
     assert!(v.close_popover());
 
     assert!(!v.popover_open(), "deaf immediately");

@@ -84,6 +84,8 @@ pub(crate) mod parts {
     /// The pinned floor row.
     pub const TRASH: ControlPart = ControlPart::new("trash");
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
+    /// The `…` right of the chip: the workspace's menu.
+    pub const FLOOR_MENU: ControlPart = ControlPart::new("floor-menu");
     pub const MANAGE_APPS: ControlPart = ControlPart::new("manage-apps");
     /// The rail's foot: Settings, Help and the profile square.
     pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
@@ -95,7 +97,6 @@ pub(crate) mod parts {
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
     /// The chip's page's heading `+`, and its import button.
     pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
-    pub const IMPORT_CONTENT: ControlPart = ControlPart::new("import-content");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -614,6 +615,11 @@ impl ExploreView {
                 .with_label(format!("{workspace}, {person}"))
                 .with_bounds(r.chip)
                 .with_action(Action::Click),
+            // The `…` beside it: the workspace's menu (the CTO's artboard).
+            SemanticNode::new(cx.surface(EXPLORE, parts::FLOOR_MENU), Role::Button)
+                .with_label(t(cx.lang, Key::A11yMoreActions))
+                .with_bounds(r.dots)
+                .with_action(Action::Click),
         ]
     }
 
@@ -714,7 +720,6 @@ impl ExploreView {
                 parts::NEW_WORKSPACE,
                 t(lang, Key::TerminalNewWorkspace).to_string(),
             ),
-            (_, super::HeadButton::Import) => (parts::IMPORT_CONTENT, "Import\u{2026}".into()),
         }
     }
 
@@ -762,16 +767,8 @@ impl ExploreView {
                 popover.hover = Some(index);
                 Some(Outcome::Consumed)
             }
-            // Enter, except that a head's import button is not what Enter
-            // presses there: it is pressed as itself.
             Action::Click => {
                 popover.hover = Some(index);
-                if target.part == parts::IMPORT_CONTENT {
-                    return Some(self.press(
-                        rows[index],
-                        super::PopoverPart::Button(super::HeadButton::Import),
-                    ));
-                }
                 self.popover_key(&WKey::Named(NamedKey::Enter))
             }
             _ => None,
@@ -788,9 +785,7 @@ impl ExploreView {
                 .profiles
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
-            PopoverRow::WorkspacesHeading => {
-                target.part == parts::NEW_WORKSPACE || target.part == parts::IMPORT_CONTENT
-            }
+            PopoverRow::WorkspacesHeading => target.part == parts::NEW_WORKSPACE,
             PopoverRow::ProfilesTitle => target.part == parts::NEW_PROFILE,
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
@@ -835,6 +830,7 @@ impl ExploreView {
                     self.toggle_popover(PopoverKind::Summary);
                     Some(Outcome::Consumed)
                 }
+                p if p == parts::FLOOR_MENU => Some(self.floor_menu(area)),
                 p if p == parts::RAIL_SETTINGS => Some(Outcome::OpenSettings),
                 p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
                 p if p == parts::RAIL_PROFILE => {

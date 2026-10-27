@@ -22,9 +22,15 @@ fn the_floor_sits_at_the_foot_and_its_parts_nest_in_order() {
     assert!(r.text.x + r.text.w <= r.chevron.x);
     assert!(r.chevron.x + r.chevron.w <= r.chip.x + r.chip.w);
     assert_eq!(r.avatar.w, AVATAR);
+    // The `…` sits right of the chip, a square the chip's height, inside
+    // the band's pad (the CTO's artboard).
+    assert_eq!(r.dots.w, DOTS);
+    assert_eq!(r.dots.h, CHIP_H);
+    assert_eq!(r.dots.y, r.chip.y, "level with the chip");
+    assert!(r.chip.x + r.chip.w < r.dots.x, "the chip stops before it");
     assert!(
-        r.chip.x + r.chip.w >= r.band.x + r.band.w - 8.0,
-        "the chip runs to the band's end: the ? moved into the popover"
+        r.dots.x + r.dots.w <= r.band.x + r.band.w - 4.0,
+        "inside the band's pad"
     );
 }
 
@@ -41,6 +47,8 @@ fn every_floor_control_hit_tests_back_to_itself() {
         Some(Hit::Chip),
         "the avatar is part of the chip"
     );
+    let (x, y) = r.dots.centre();
+    assert_eq!(hit(a, x, y), Some(Hit::Dots), "the `…` is its own control");
     assert_eq!(
         hit(a, r.band.x + 1.0, r.band.y + 1.0),
         None,
@@ -58,7 +66,7 @@ fn every_floor_control_hit_tests_back_to_itself() {
 fn a_shut_pane_has_no_floor() {
     let shut = Rect::new(0.0, 0.0, 0.0, 600.0);
     let r = solve(shut);
-    for rect in [r.chip, r.avatar, r.text, r.chevron] {
+    for rect in [r.chip, r.avatar, r.text, r.chevron, r.dots] {
         assert_eq!(rect.w, 0.0);
     }
     assert_eq!(hit(shut, 0.0, 580.0), None);

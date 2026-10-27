@@ -6306,68 +6306,53 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
     assert!(!v.explore.popover_open(), "the chip's page was not opened");
 }
 
-/// **The WORKSPACES heading's import button hangs the formats beside the
-/// page, and the page stays** (the CTO's note: a `+` and an import button
-/// where the ⋯ was): the menu hangs level with the button off the panel's
-/// right edge; choosing a format shuts the page. The `+` opens the name
-/// prompt and shuts the page, since the creator is the end of it.
+/// **The floor's `…` opens the workspace's menu** (the CTO's artboard, E60):
+/// New workspace, Import… with the formats behind it, Invite people (dimmed
+/// until there is a flow), Trash. It hangs from the button's top-right
+/// corner and lifts itself to stay on screen at the window's foot; a chosen
+/// format imports, Trash opens the tab, New workspace the name prompt.
 #[test]
-fn the_headings_import_hangs_beside_the_page_and_its_plus_creates() {
+fn the_floor_dots_open_the_workspace_menu() {
     use crate::mainview::context_menu::{MenuAction, MenuSubject};
-    use crate::panes::explore::HeadButton;
     let (mut v, mut w, _) = with_summary_open();
     let vp = v.viewport;
-    let area = v.explore_popover_area();
-    let button = v
-        .explore
-        .popover_head_button_rect(area, vp, HeadButton::Import)
-        .expect("the heading's import button");
-    let (x, y) = button.centre();
+    let dots = crate::panes::sidebar::floor::solve(v.explore_area()).dots;
+    let (x, y) = dots.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open(), "the page stays");
+    assert!(!v.explore.popover_open(), "the page shut under the menu");
     let menu = v.menu.as_ref().expect("the menu opened");
-    assert_eq!(menu.subject, MenuSubject::NewTab);
-    assert_eq!(menu.items(), context_menu::import_items(), "the formats");
-    let panel = v.explore.popover_panel(area, vp).expect("the page's panel");
+    assert_eq!(menu.subject, MenuSubject::Floor);
+    assert_eq!(menu.items(), context_menu::floor_items());
     let m = menu.panel(vp);
-    assert!(
-        m.x >= panel.x + panel.w - 0.5,
-        "beside the panel: {m:?} vs {panel:?}"
-    );
-    // Level with the button when the formats fit under it; a long list near
-    // the window's foot is lifted to stay on screen, the button's line still
-    // inside it.
-    assert!(
-        m.y <= button.y + 0.5 && m.y + m.h >= button.y + button.h - 0.5,
-        "spans the button's line: {m:?} vs {button:?}"
-    );
     assert!(m.y + m.h <= vp.1 + 0.5, "on screen: {m:?} vs {vp:?}");
-    // A format is the end of it.
-    let format = koru_workspace_host::formats::import_menu_formats()[0].id;
-    v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::ImportFormat(format));
+    assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
     assert!(
-        !v.explore.popover_open(),
-        "choosing a format shuts the page"
+        m.x + m.w <= dots.x + dots.w + 0.5,
+        "its right edge at the button's: {m:?} vs {dots:?}"
+    );
+    let enabled = v.enabled_items(menu);
+    let dimmed: Vec<_> = menu
+        .items()
+        .iter()
+        .zip(enabled)
+        .filter(|(_, on)| !on)
+        .map(|(item, _)| *item)
+        .collect();
+    assert_eq!(
+        dimmed,
+        vec![MenuAction::InvitePeople],
+        "only Invite people waits"
     );
 
-    // And so is the creator. (The test ran the action without the menu's
-    // own dismissal, so take the menu down the way a choice would.)
-    v.menu = None;
-    v.submenu = None;
-    v.explore
-        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = crate::panes::sidebar::floor::solve(v.explore_area()).chip;
-    let (cx, cy) = chip.centre();
-    v.mouse_down(&mut w.ws, cx, cy, false);
-    assert!(v.explore.popover_open());
-    let plus = v
-        .explore
-        .popover_head_button_rect(area, vp, HeadButton::New)
-        .expect("the heading's `+`");
-    let (px, py) = plus.centre();
-    v.mouse_down(&mut w.ws, px, py, false);
-    assert!(!v.explore.popover_open(), "the creator shuts the page");
-    assert!(v.new_document.is_some(), "and the name prompt is open");
+    let format = koru_workspace_host::formats::import_menu_formats()[0].id;
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::ImportFormat(format)));
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::OpenTrash));
+    assert!(
+        matches!(v.tabs().active_tab().view, TabView::Trash(_)),
+        "Trash opened its tab"
+    );
+    assert!(v.run_menu_action_for_test(MenuSubject::Floor, MenuAction::NewWorkspace));
+    assert!(v.new_document.is_some(), "the name prompt is open");
 }
 
 /// **The toolbar's sync icon opens the Sync settings tab**, once; the
