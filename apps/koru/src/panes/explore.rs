@@ -4367,30 +4367,10 @@ impl ExploreView {
             name: profile.map_or("", |p| p.name.as_str()),
         }
         .draw(scene, root, engine, tile);
-        let dot = match self.sync_status() {
-            SyncStatus::NotSetUp => None,
-            SyncStatus::UpToDate | SyncStatus::Syncing => Some(p.accent),
-            SyncStatus::Offline => Some(p.row_hint),
-            SyncStatus::NeedsAttention => {
-                Some(theme::accent_tone("red").map_or(p.text, |tone| tone.swatch))
-            }
-        };
-        if let Some(colour) = dot {
-            const DOT: f32 = 10.0;
-            let (dx, dy) = (tile.x + tile.w - DOT + 2.0, tile.y + tile.h - DOT + 2.0);
-            scene::fill(
-                scene,
-                root,
-                p.chip_bg,
-                &scene::rrect(dx - 2.0, dy - 2.0, DOT + 4.0, DOT + 4.0, (DOT + 4.0) * 0.5),
-            );
-            scene::fill(
-                scene,
-                root,
-                colour,
-                &scene::rrect(dx, dy, DOT, DOT, DOT * 0.5),
-            );
-        }
+        // No sync dot at the tile's corner (the CTO's note): there is no
+        // status to show yet, and a red dot with nothing behind it is a
+        // false alarm. The floor chip's second line still names the sync
+        // state in words when there is one.
         if self.chrome_focus == Some(ExploreChromeFocus::RailProfile) {
             draw_focus_ring(scene, root, square, p);
         }
@@ -6811,11 +6791,14 @@ impl ExploreView {
         // the pane's bottom and are not cut at `rows_bottom` the way the
         // library's rows are, so the chip was sitting on top of them (the
         // CTO's note). The floor is drawn last; this is what makes it a floor.
+        // One column short of the band's right edge: that column is the
+        // pane's own hairline, drawn before the modes, and the first build
+        // of this fill painted it out beside the chip (the CTO's note).
         scene::fill(
             scene,
             root,
             p.status_bg,
-            &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
+            &scene::rect(r.band.x, r.band.y, (r.band.w - 1.0).max(0.0), r.band.h),
         );
         scene::fill(
             scene,

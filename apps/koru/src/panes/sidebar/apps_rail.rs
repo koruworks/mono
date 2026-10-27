@@ -13,7 +13,7 @@
 //! │    │
 //! │ ⚙  │  Settings
 //! │ ?  │  Help
-//! │(S) │  the profile, with its sync dot — opens the who/where popover
+//! │(S) │  the profile's tile — opens the who/where popover
 //! └────┴──────────────────
 //! ```
 //!
