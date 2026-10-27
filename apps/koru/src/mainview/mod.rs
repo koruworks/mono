@@ -7209,6 +7209,7 @@ impl MainView {
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
+            Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
             Outcome::FloorMenu { at } => self.open_floor_menu(at),
             Outcome::WorkspaceMenu { workspace, at } => {
                 self.open_workspace_menu(workspace, at, false)
@@ -15803,12 +15804,6 @@ impl MainView {
                     5,
                     floor.chip,
                     koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
-                ))
-            } else if on(rail.manage) {
-                Some(TooltipContent::new(
-                    7,
-                    rail.manage,
-                    koru_i18n::t(lang, koru_i18n::Key::ComingLater),
                 ))
             } else if on(rail.settings) {
                 // The chord rides the tooltip (the CTO's note), the way the

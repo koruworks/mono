@@ -1546,7 +1546,7 @@ fn the_arrows_walk_the_card_the_profiles_and_the_foot() {
 /// **The foot's three buttons** (the CTO's artboard): the sync state's
 /// words lead to Settings — or, with no cloud set up, to the subscription
 /// (the CTO's note: the option re-enabled); the devices open the Manage tab
-/// on the Profile you are in; the `+` creates.
+/// on *Linked devices*; the `+` creates.
 #[test]
 fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (mut v, profiles, _) = with_context(0);
@@ -1578,7 +1578,8 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     let (x, y) = button(&v, HeadButton::Devices);
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::ManageProfile(profiles[1].id)
+        Outcome::ManageDevices,
+        "the devices open Manage on Linked devices (the CTO's note)"
     );
     v.advance_popover(Instant::now() + Duration::from_secs(1));
     v.toggle_profile_popover();
@@ -3733,9 +3734,9 @@ fn navigator_modes_project_pages_and_files_from_one_manifest_cache() {
 /// §5.2), under the header and above the heading band.
 ///
 /// **The apps are squares down the rail**, whatever the pane's width: each
-/// inside the rail, each hit-testing to its own mode, *Manage apps* under
-/// the last, and the heading's `…` untouched by any of them (the CTO's
-/// artboard 11).
+/// inside the rail, each hit-testing to its own mode, nothing under the
+/// last (the *Manage apps* `+` is out, E68), and the heading's `…`
+/// untouched by any of them (the CTO's artboard 11).
 #[test]
 fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
     let view = ExploreView::new();
@@ -3761,13 +3762,9 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
             assert_eq!(mode_at(&view, a, x, y), Some(mode), "{mode:?}");
             assert!(!view.actions_at(a, x, y), "{mode:?} is not the ... button");
         }
-        let manage = view.apps_rail_rects(rail).manage;
         let last = rects.last().unwrap().1;
-        assert_eq!(
-            manage.y,
-            last.y + last.h + apps_rail::GAP,
-            "Manage apps under the last"
-        );
+        let foot = view.apps_rail_rects(rail).settings;
+        assert!(last.y + last.h < foot.y, "nothing under the last app");
         assert!(view.actions_button(a).w > 0.0, "the `…` shows at {width}");
     }
 }

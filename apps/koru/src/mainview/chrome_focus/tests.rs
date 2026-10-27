@@ -82,15 +82,15 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
             shown[documents + 1],
             "Enter shows the app"
         );
-        // Past the last app are Manage apps, Settings, Help and the profile
-        // square, then it wraps. ↓ walks the rail as → does.
-        for _ in 0..shown.len() + 3 {
+        // Past the last app are Settings, Help and the profile square, then
+        // it wraps. ↓ walks the rail as → does.
+        for _ in 0..shown.len() + 2 {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
         }
         assert_eq!(
             v.chrome_focus,
             Some(ChromeStop::Apps(documents)),
-            "wrapped past Manage apps"
+            "wrapped past the foot"
         );
         // Floor: the chip is its one control (the ? lives in the popover's
         // toolbar now); Enter on it opens the switcher.

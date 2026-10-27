@@ -22,9 +22,9 @@ use super::{MainView, WorkspaceDoc};
 use crate::panes::explore::{ExploreChromeFocus, NavigatorMode};
 
 /// Where the keyboard is, when it is on the sidebar's chrome.
-/// The rail's controls after the apps: *Manage apps*, Settings, Help, the
-/// profile square.
-const RAIL_FOOT: usize = 4;
+/// The rail's controls after the apps: Settings, Help, the profile square.
+/// (*Manage apps* is out until the manager lands, E68.)
+const RAIL_FOOT: usize = 3;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ChromeStop {
@@ -201,8 +201,8 @@ impl MainView {
                 ChromeStop::Lane(shown.get(j).copied().unwrap_or(LaneControl::Toggle))
             }
             ChromeStop::Apps(i) => {
-                // The apps, Manage apps, then the foot: Settings, Help, the
-                // profile square.
+                // The apps, then the foot: Settings, Help, the profile
+                // square.
                 let n = NavigatorMode::visible().len() + RAIL_FOOT;
                 ChromeStop::Apps(if forward {
                     (i + 1) % n
@@ -259,8 +259,8 @@ impl MainView {
         let _ = ws;
     }
 
-    /// The part of the focus the explore column draws: an apps-row chip,
-    /// *Manage apps*, or a floor control. The lane's ring is the window's.
+    /// The part of the focus the explore column draws: an apps-row chip or
+    /// a floor control. The lane's ring is the window's.
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
             ChromeStop::Apps(i) => {
@@ -269,9 +269,8 @@ impl MainView {
                     ExploreChromeFocus::App(i)
                 } else {
                     match i - apps {
-                        0 => ExploreChromeFocus::Manage,
-                        1 => ExploreChromeFocus::RailSettings,
-                        2 => ExploreChromeFocus::RailHelp,
+                        0 => ExploreChromeFocus::RailSettings,
+                        1 => ExploreChromeFocus::RailHelp,
                         _ => ExploreChromeFocus::RailProfile,
                     }
                 })

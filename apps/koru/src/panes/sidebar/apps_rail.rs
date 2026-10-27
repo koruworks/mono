@@ -9,7 +9,6 @@
 //! │ ⌂  │  nav…
 //! │ ▤  │
 //! │ ☑  │
-//! │ ⊞  │  ← Manage apps, inert until the manager lands
 //! │    │
 //! │ ⚙  │  Settings
 //! │ ?  │  Help
@@ -49,9 +48,9 @@ pub const PROFILE_TILE: f32 = super::floor::AVATAR;
 pub struct Rects {
     pub band: Rect,
     /// One square per app the build shows, in `NavigatorMode::visible` order.
+    /// Nothing under the last: the *Manage apps* `+` is out until the
+    /// manager lands (the CTO's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,
-    /// *Manage apps*, under the last app.
-    pub manage: Rect,
     pub settings: Rect,
     pub help: Rect,
     /// The profile square at the foot.
@@ -66,7 +65,6 @@ pub fn solve(rail: Rect, apps: &[NavigatorMode]) -> Rects {
         return Rects {
             band,
             apps: apps.iter().map(|m| (*m, zero(band.y))).collect(),
-            manage: zero(band.y),
             settings: zero(band.y),
             help: zero(band.y),
             profile: zero(band.y),
@@ -81,7 +79,6 @@ pub fn solve(rail: Rect, apps: &[NavigatorMode]) -> Rects {
         r
     };
     let apps = apps.iter().map(|m| (*m, place(&mut y))).collect();
-    let manage = place(&mut y);
     // The foot, bottom up: the profile square on the band's floor, Help
     // over it, Settings over that — the same order as the popover's strip.
     let foot = band.y + band.h - PAD_BOTTOM;
@@ -91,7 +88,6 @@ pub fn solve(rail: Rect, apps: &[NavigatorMode]) -> Rects {
     Rects {
         band,
         apps,
-        manage,
         settings,
         help,
         profile,
@@ -102,7 +98,6 @@ pub fn solve(rail: Rect, apps: &[NavigatorMode]) -> Rects {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Hit {
     App(NavigatorMode),
-    Manage,
     Settings,
     Help,
     Profile,
@@ -114,9 +109,7 @@ pub fn hit(r: &Rects, x: f32, y: f32) -> Option<Hit> {
     if let Some((mode, _)) = r.apps.iter().find(|(_, rect)| owns(*rect)) {
         return Some(Hit::App(*mode));
     }
-    if owns(r.manage) {
-        Some(Hit::Manage)
-    } else if owns(r.settings) {
+    if owns(r.settings) {
         Some(Hit::Settings)
     } else if owns(r.help) {
         Some(Hit::Help)
@@ -153,16 +146,15 @@ mod tests {
             assert_eq!(pair[1].1.y, pair[0].1.y + SQUARE + GAP);
         }
         let last = r.apps.last().unwrap().1;
-        assert_eq!(r.manage.y, last.y + SQUARE + GAP);
         assert_eq!(r.profile.y + r.profile.h, r.band.y + r.band.h - PAD_BOTTOM);
         assert!(r.help.y + r.help.h <= r.profile.y);
         assert!(r.settings.y + r.settings.h <= r.help.y);
-        assert!(r.manage.y + r.manage.h <= r.settings.y, "room between");
+        assert!(last.y + last.h <= r.settings.y, "room between");
         for rect in r
             .apps
             .iter()
             .map(|(_, r)| *r)
-            .chain([r.manage, r.settings, r.help, r.profile])
+            .chain([r.settings, r.help, r.profile])
         {
             assert_eq!(rect.w, SQUARE);
             assert!(rect.x >= r.band.x && rect.x + rect.w <= r.band.x + r.band.w);
@@ -178,7 +170,6 @@ mod tests {
             assert_eq!(hit(&r, x, y), Some(Hit::App(*mode)));
         }
         for (rect, want) in [
-            (r.manage, Hit::Manage),
             (r.settings, Hit::Settings),
             (r.help, Hit::Help),
             (r.profile, Hit::Profile),
@@ -186,7 +177,8 @@ mod tests {
             let (x, y) = rect.centre();
             assert_eq!(hit(&r, x, y), Some(want));
         }
-        let gap_y = (r.manage.y + r.manage.h + r.settings.y) * 0.5;
+        let last = r.apps.last().unwrap().1;
+        let gap_y = (last.y + last.h + r.settings.y) * 0.5;
         assert_eq!(hit(&r, r.band.x + 2.0, gap_y), None, "the gap is nobody's");
     }
 
@@ -195,7 +187,7 @@ mod tests {
         let shut = Rect::new(0.0, theme::CAPTION_H, 0.0, 500.0);
         let r = solve(shut, &NavigatorMode::visible());
         assert!(r.apps.iter().all(|(_, rect)| rect.w == 0.0));
-        for rect in [r.manage, r.settings, r.help, r.profile] {
+        for rect in [r.settings, r.help, r.profile] {
             assert_eq!(rect.w, 0.0);
         }
         assert_eq!(hit(&r, 0.0, 300.0), None);

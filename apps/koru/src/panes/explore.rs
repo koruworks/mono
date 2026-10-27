@@ -582,13 +582,12 @@ struct RowDrag {
     spring: Option<(NodeId, Instant)>,
 }
 
-/// The part of `F6`'s focus the column draws a ring for: an apps-row chip,
-/// *Manage apps*, or a floor control (`mainview/chrome_focus.rs`). The
-/// window decides where the keyboard is; the column only paints it.
+/// The part of `F6`'s focus the column draws a ring for: an apps-row chip
+/// or a floor control (`mainview/chrome_focus.rs`). The window decides where
+/// the keyboard is; the column only paints it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ExploreChromeFocus {
     App(usize),
-    Manage,
     RailSettings,
     RailHelp,
     RailProfile,
@@ -3987,10 +3986,9 @@ impl ExploreView {
                         Outcome::OpenSettings
                     }
                 }
-                PopoverPart::Button(HeadButton::Devices) => match self.current_profile {
-                    Some(id) => Outcome::ManageProfile(id),
-                    None => Outcome::Consumed,
-                },
+                // The Manage tab on *Linked devices* (the CTO's note), not
+                // on the Profile.
+                PopoverPart::Button(HeadButton::Devices) => Outcome::ManageDevices,
                 _ => Outcome::Consumed,
             },
             PopoverRow::LibraryAction(action) => self.choose_library_action(action),
@@ -4244,8 +4242,6 @@ impl ExploreView {
                     Outcome::Consumed
                 }
             }
-            // Inert until the manager lands (PLAN.final P11).
-            Some(apps_rail::Hit::Manage) => Outcome::Consumed,
             Some(apps_rail::Hit::Settings) => {
                 self.close_popover();
                 Outcome::OpenSettings
@@ -4337,7 +4333,7 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            p.chip_bg,
+            p.ground,
             &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
         );
         // Hairline between the rail and the pane.
@@ -4388,8 +4384,6 @@ impl ExploreView {
                 draw_focus_ring(scene, root, *square, p);
             }
         }
-        // Manage apps: dimmed, inert, a grid-plus.
-        draw_rail_glyph(scene, root, engine, icons::PLUS, r.manage, p.row_hint);
         for (square, glyph, hit, focus) in [
             (
                 r.settings,

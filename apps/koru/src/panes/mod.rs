@@ -307,6 +307,9 @@ pub enum Outcome {
     ManageWorkspace(WorkspaceId),
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
+    /// The Profiles page's devices button (the CTO's note): the Manage tab
+    /// on *Linked devices*.
+    ManageDevices,
     /// The who/where popover's heading import button: the container hangs
     /// the import formats beside the page, which stays (the CTO's note:
     /// the heading's ⋯ became a `+` and an import button).

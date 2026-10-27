@@ -38,6 +38,9 @@ pub enum NavLeading<'a> {
     /// The dashed square with a plus that a *New…* row wears. Its name is
     /// drawn muted, because the row is an action rather than a place.
     Add,
+    /// An icon glyph in the tile's slot — a computer, a cloud — for a row
+    /// that is a place but has no tile of its own (the CTO's note).
+    Glyph(char),
 }
 
 /// One destination.
@@ -73,6 +76,11 @@ impl<'a> NavItem<'a> {
 
     pub const fn with_add(mut self) -> Self {
         self.leading = Some(NavLeading::Add);
+        self
+    }
+
+    pub const fn with_glyph(mut self, glyph: char) -> Self {
+        self.leading = Some(NavLeading::Glyph(glyph));
         self
     }
 
@@ -249,6 +257,17 @@ impl NavList {
                     face.draw(canvas, root, engine, tile);
                 }
                 NavLeading::Add => Self::draw_add(canvas, root, engine, tile),
+                NavLeading::Glyph(glyph) => {
+                    let p = theme::p();
+                    let icon = engine.icon_layout(glyph, tile.w * 0.9);
+                    let (x, y) = scene::centre_in(&icon, tile);
+                    let color = if state.here || state.hovered {
+                        p.text
+                    } else {
+                        p.text_dim
+                    };
+                    scene::draw_layout(canvas, root, &icon, x, y, Some(color));
+                }
             }
             label_x = tile.x + tile.w + Self::GAP;
         }

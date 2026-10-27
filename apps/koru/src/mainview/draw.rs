@@ -760,7 +760,7 @@ impl MainView {
         scene::fill(
             scene,
             root,
-            p.chip_bg,
+            p.ground,
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
         scene::fill(
@@ -801,7 +801,7 @@ impl MainView {
             scene::fill(
                 scene,
                 root,
-                p.chip_bg,
+                p.ground,
                 &scene::rect(edge.x, edge.y, edge.w, edge.h),
             );
             scene::fill(
@@ -815,7 +815,7 @@ impl MainView {
             scene::fill(
                 scene,
                 root,
-                p.chip_bg,
+                p.ground,
                 &scene::rect(edge.x + 1.0, top, (edge.w - 1.0).max(0.0), 1.0),
             );
         }
@@ -823,7 +823,7 @@ impl MainView {
             scene::fill(
                 scene,
                 root,
-                p.chip_bg,
+                p.ground,
                 &scene::rect(foot.x, foot.y, foot.w, foot.h),
             );
             let x0 = left.unwrap_or(foot.x);
@@ -975,7 +975,7 @@ impl MainView {
         scene::fill(
             scene,
             root,
-            p.chip_bg,
+            p.ground,
             &scene::rect(lane.x, lane.y, lane.w, lane.h),
         );
         let rects = koru_shell_chrome::lane::solve(lane, leading);
@@ -1481,8 +1481,8 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
 /// one. The square outside the arc is masked in `ground`, which
 /// also covers the straight hairlines' ends inside it; the arc is then
 /// stroked one pixel wide along the hairline's centre, so it meets the
-/// straight runs where they leave the square. The ground is the rail's
-/// colour and the border the hairline's, read from the palette.
+/// straight runs where they leave the square. The ground is the palette's
+/// `ground` and the border the hairline's.
 fn draw_card_corner(
     scene: &mut Scene,
     root: Affine,
@@ -1493,7 +1493,7 @@ fn draw_card_corner(
     p: &theme::Palette,
 ) {
     use vello::kurbo::{BezPath, Point};
-    let (ground, border) = (p.chip_bg, p.panel_border);
+    let (ground, border) = (p.ground, p.panel_border);
     if r <= 1.0 {
         return;
     }

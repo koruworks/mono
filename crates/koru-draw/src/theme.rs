@@ -140,6 +140,11 @@ pub struct Palette {
     pub status_bg: Color,
     /// Backing for the level-name chip on a group row.
     pub chip_bg: Color,
+    /// The window's ground — the title bar, the lane, the rail and the
+    /// edge lanes the cards sit on (E57). `chip_bg` with a fifth of its
+    /// grey taken out (the CTO's note, after ChatGPT's sidebar), so the
+    /// cards lift off it without the ground reading as a panel.
+    pub ground: Color,
     /// The tint behind a code block and an inline-code span — one colour so the
     /// two read as the same feature. Chrome only; not a name a document stores.
     pub code_bg: Color,
@@ -345,6 +350,7 @@ pub static LIGHT: Palette = Palette {
 
     status_bg: rgb(0xF6, 0xF6, 0xF6),
     chip_bg: rgb(0xEA, 0xEA, 0xEA),
+    ground: rgb(0xEE, 0xEE, 0xEE),
     code_bg: rgb(0xF1, 0xF1, 0xF3),
     highlights: [
         ("yellow", Color::from_rgba8(0xFF, 0xE0, 0x66, 0x8C)),
@@ -495,6 +501,7 @@ pub static DARK: Palette = Palette {
 
     status_bg: rgb(0x1A, 0x1A, 0x1A),
     chip_bg: rgb(0x33, 0x33, 0x33),
+    ground: rgb(0x2E, 0x2E, 0x2E),
     code_bg: rgb(0x23, 0x23, 0x23),
     // Dimmer and more transparent than the light set: a highlight has to sit
     // behind pale text without drowning it.
@@ -2464,7 +2471,9 @@ pub const SIDEBAR_MAX_W: f32 = 600.0;
 /// The rail at the sidebar's left edge — the apps, and at its foot Settings,
 /// Help and the profile (the CTO's artboard 11). The pane and its widths
 /// above are what sits after it; the sidebar as a whole is the two together.
-pub const RAIL_W: f32 = 56.0;
+/// 48, not 56: four pixels off each side (the CTO's note); a 36 px square
+/// keeps six pixels of air either side.
+pub const RAIL_W: f32 = 48.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.

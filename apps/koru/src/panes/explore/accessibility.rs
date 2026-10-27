@@ -86,7 +86,6 @@ pub(crate) mod parts {
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
     /// The `…` right of the chip: the workspace's menu.
     pub const FLOOR_MENU: ControlPart = ControlPart::new("floor-menu");
-    pub const MANAGE_APPS: ControlPart = ControlPart::new("manage-apps");
     /// The rail's foot: Settings, Help and the profile square.
     pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
     pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
@@ -559,7 +558,6 @@ impl ExploreView {
                 let mode = *NavigatorMode::visible().get(i)?;
                 cx.surface(MODE, ControlPart::new(mode.token()))
             }
-            ExploreChromeFocus::Manage => cx.surface(EXPLORE, parts::MANAGE_APPS),
             ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
@@ -568,8 +566,7 @@ impl ExploreView {
     }
 
     /// The rail's foot: Settings, Help and the profile square, each a
-    /// button with its name. *Manage apps* is inert until the manager lands
-    /// and is not offered.
+    /// button with its name.
     fn rail_foot_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let r = self.apps_rail_rects(cx.rail);
         if r.band.w <= 0.0 {
