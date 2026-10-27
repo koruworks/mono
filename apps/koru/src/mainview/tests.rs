@@ -3958,6 +3958,11 @@ fn with_profiles_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>)
     let (mut v, w, profiles) = with_summary_open();
     v.explore
         .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    // The slide from the chip's page to the Profiles page, finished: the
+    // window hit-tests the panel where it is *drawn*, and mid-slide that is
+    // still the shorter page's panel.
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     (v, w, profiles)
 }
 
@@ -4028,7 +4033,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
     assert!(v.explore.popover_open(), "the list stays up");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::ProfilesTitle),
+        Some(crate::panes::explore::PopoverRow::ProfilesHead),
         "still the Profiles page"
     );
 }
@@ -4057,7 +4062,7 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(v.explore.popover_open(), "the square opens its page");
     assert_eq!(
         first(&v),
-        Some(PopoverRow::ProfilesTitle),
+        Some(PopoverRow::ProfilesHead),
         "the Profiles page"
     );
 

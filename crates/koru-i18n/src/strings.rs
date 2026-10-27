@@ -2448,13 +2448,16 @@ pub enum Key {
     /// the confirmation's sentence (the CTO's note).
     ChatsDeleteMany,
     ChatsDeleteManyBody,
+    /// The Profiles page's heading over the other Profiles (the CTO's
+    /// artboard): *SWITCH TO · n*.
+    ProfilesSwitchTo,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1679] = [
+    pub const ALL: [Key; 1680] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4134,6 +4137,7 @@ impl Key {
         Key::Download,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
+        Key::ProfilesSwitchTo,
     ];
 }
 
@@ -12591,4 +12595,5 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         zh_hans: "{} 个聊天及其消息将被删除。如果有本地智能体在其中任一聊天中回答，Koru 会先停止该智能体。",
         ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
     },
+    Row { key: Key::ProfilesSwitchTo, en: "Switch to", es: "Cambiar a", pt_br: "Trocar para", de: "Wechseln zu", fr: "Passer à", ar: "التبديل إلى", zh_hans: "切换到", ja: "切り替え先" },
 ];

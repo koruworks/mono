@@ -292,6 +292,8 @@ pub const CHATS_CIRCLE: char = '\u{E17E}';
 pub const NOTE_PENCIL: char = '\u{E34C}';
 /// Invite people — `ph-user-plus`: the floor menu's row.
 pub const USER_PLUS: char = '\u{E4D0}';
+/// Linked devices — `ph-devices`: the Profiles page's footer button.
+pub const DEVICES: char = '\u{EBA4}';
 /// Send feedback — `ph-user-sound`. A person with sound waves; the same
 /// glyph the overflow menu and the Feedback tab share.
 pub const USER_SOUND: char = '\u{ECA8}';
@@ -538,7 +540,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 136] = [
+pub const ALL: [(&str, char); 137] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -615,6 +617,7 @@ pub const ALL: [(&str, char); 136] = [
     ("CHATS_CIRCLE", CHATS_CIRCLE),
     ("NOTE_PENCIL", NOTE_PENCIL),
     ("USER_PLUS", USER_PLUS),
+    ("DEVICES", DEVICES),
     ("USER_SOUND", USER_SOUND),
     ("HEADSET", HEADSET),
     ("QUESTION", QUESTION),

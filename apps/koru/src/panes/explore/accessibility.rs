@@ -93,8 +93,12 @@ pub(crate) mod parts {
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
     pub const POPOVER: ControlPart = ControlPart::new("popover");
-    /// The Profiles title's `+`.
+    /// The Profiles page's foot: its `+`, its devices and its sync state.
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
+    pub const PROFILE_DEVICES: ControlPart = ControlPart::new("profile-devices");
+    pub const PROFILE_STATUS: ControlPart = ControlPart::new("profile-status");
+    /// Your card's sliders at the page's head.
+    pub const PROFILE_SETTINGS: ControlPart = ControlPart::new("profile-settings");
     /// The chip's page's heading `+`, and its import button.
     pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
 }
@@ -641,9 +645,9 @@ impl ExploreView {
         let mut children = Vec::with_capacity(rects.len());
         for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
             match row {
-                PopoverRow::WorkspacesHeading | PopoverRow::ProfilesTitle => {
+                PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter => {
                     for (button, bounds) in super::head_button_rects(*rect, *row) {
-                        let (part, label) = Self::head_button_identity(*row, button, cx.lang);
+                        let (part, label) = self.head_button_identity(button, cx.lang);
                         children.push(
                             SemanticNode::new(cx.surface(POPOVER, part), Role::MenuItem)
                                 .with_label(label)
@@ -697,29 +701,63 @@ impl ExploreView {
                 Some(p) => cx.model(p.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
-            // A head's buttons publish themselves; the row is its `+`.
+            // A fixed row's buttons publish themselves; the row is what
+            // Enter presses on it.
             PopoverRow::WorkspacesHeading => cx.surface(POPOVER, parts::NEW_WORKSPACE),
-            PopoverRow::ProfilesTitle => cx.surface(POPOVER, parts::NEW_PROFILE),
+            PopoverRow::ProfilesHead => cx.surface(POPOVER, parts::PROFILE_SETTINGS),
+            PopoverRow::ProfilesSwitch => cx.surface(POPOVER, parts::POPOVER),
+            PopoverRow::ProfilesFooter => cx.surface(POPOVER, parts::NEW_PROFILE),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
             }
         }
     }
 
-    /// A head button's part and name.
-    fn head_button_identity(
-        row: PopoverRow,
-        button: super::HeadButton,
-        lang: Lang,
-    ) -> (ControlPart, String) {
-        match (row, button) {
-            (PopoverRow::ProfilesTitle, _) => {
-                (parts::NEW_PROFILE, t(lang, Key::NewProfile).to_string())
-            }
-            (_, super::HeadButton::New) => (
-                parts::NEW_WORKSPACE,
-                t(lang, Key::TerminalNewWorkspace).to_string(),
+    /// A fixed row's button: its part and its name.
+    fn head_button_identity(&self, button: super::HeadButton, lang: Lang) -> (ControlPart, String) {
+        use koru_i18n::fill;
+        match button {
+            super::HeadButton::New => (parts::NEW_PROFILE, t(lang, Key::NewProfile).to_string()),
+            super::HeadButton::Settings => (
+                parts::PROFILE_SETTINGS,
+                t(lang, Key::SettingsTab).to_string(),
             ),
+            super::HeadButton::Devices => {
+                let n = self.linked_count;
+                let key = if n == 1 {
+                    Key::DevicesCountOne
+                } else {
+                    Key::DevicesCountMany
+                };
+                (
+                    parts::PROFILE_DEVICES,
+                    fill(t(lang, key), &[&n.to_string()]),
+                )
+            }
+            super::HeadButton::Status => {
+                let state = self.sync_status();
+                let words = if state == super::SyncStatus::NotSetUp {
+                    t(lang, Key::CloudSubscribe)
+                } else {
+                    t(lang, state.key())
+                };
+                (parts::PROFILE_STATUS, words.to_string())
+            }
+        }
+    }
+
+    /// Which of a fixed row's buttons an accessibility target names.
+    fn head_button_of(part: ControlPart) -> Option<super::HeadButton> {
+        if part == parts::NEW_PROFILE {
+            Some(super::HeadButton::New)
+        } else if part == parts::PROFILE_SETTINGS {
+            Some(super::HeadButton::Settings)
+        } else if part == parts::PROFILE_DEVICES {
+            Some(super::HeadButton::Devices)
+        } else if part == parts::PROFILE_STATUS {
+            Some(super::HeadButton::Status)
+        } else {
+            None
         }
     }
 
@@ -736,7 +774,9 @@ impl ExploreView {
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
             PopoverRow::WorkspacesHeading => t(lang, Key::TerminalNewWorkspace).to_string(),
-            PopoverRow::ProfilesTitle => t(lang, Key::NewProfile).to_string(),
+            PopoverRow::ProfilesHead => self.profile().map(|p| p.name.clone()).unwrap_or_default(),
+            PopoverRow::ProfilesSwitch => t(lang, Key::ProfilesSwitchTo).to_string(),
+            PopoverRow::ProfilesFooter => t(lang, Key::NewProfile).to_string(),
             PopoverRow::LibraryAction(action) => {
                 super::actions::label(action, self.mode).to_string()
             }
@@ -767,8 +807,18 @@ impl ExploreView {
                 popover.hover = Some(index);
                 Some(Outcome::Consumed)
             }
+            // Enter, except that a fixed row's other buttons are not what
+            // Enter presses there: each is pressed as itself.
             Action::Click => {
                 popover.hover = Some(index);
+                if let Some(button) = Self::head_button_of(target.part)
+                    && matches!(
+                        rows[index],
+                        PopoverRow::ProfilesHead | PopoverRow::ProfilesFooter
+                    )
+                {
+                    return Some(self.press(rows[index], super::PopoverPart::Button(button)));
+                }
                 self.popover_key(&WKey::Named(NamedKey::Enter))
             }
             _ => None,
@@ -786,7 +836,13 @@ impl ExploreView {
                 .get(i)
                 .is_some_and(|p| target.object == object_of(p.id.as_uuid())),
             PopoverRow::WorkspacesHeading => target.part == parts::NEW_WORKSPACE,
-            PopoverRow::ProfilesTitle => target.part == parts::NEW_PROFILE,
+            PopoverRow::ProfilesHead => target.part == parts::PROFILE_SETTINGS,
+            PopoverRow::ProfilesSwitch => false,
+            PopoverRow::ProfilesFooter => {
+                target.part == parts::NEW_PROFILE
+                    || target.part == parts::PROFILE_DEVICES
+                    || target.part == parts::PROFILE_STATUS
+            }
             PopoverRow::LibraryAction(action) => {
                 target.part.name() == super::actions::token(action)
             }
