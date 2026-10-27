@@ -7085,7 +7085,7 @@ impl MainView {
             // open by the shell. It only looks like a file row because the
             // glyph that offered it sits on one.
             Outcome::OpenNote(id) => self.open_from_explore(ws, id),
-            Outcome::OpenNodeInNewTab(id) => self.keep_open_from_explore(ws, id),
+            Outcome::OpenNodeInBackgroundTab(id) => self.open_in_background_from_explore(ws, id),
             // The Agents navigator: focus the tab already on this session,
             // else open one bound to it (never a launch).
             //
@@ -9059,13 +9059,16 @@ impl MainView {
             // anchor may be virtual while Explore itself is shut.
             self.refresh_explore(ws, true);
             let area = self.explore_popover_area();
-            let out = self.explore.mouse_down_with_modifiers(
+            let out = self.explore.mouse_down_with(
                 area,
                 self.viewport,
                 x,
                 y,
-                ctrl,
-                self.mods.shift_key(),
+                crate::panes::explore::PressMods {
+                    ctrl,
+                    shift: self.mods.shift_key(),
+                    alt: self.mods.alt_key(),
+                },
             );
             self.refresh_drag_item_count(ws);
             self.explore_stale = true;
@@ -9117,13 +9120,16 @@ impl MainView {
             // Reached only by a press that landed in the column, so it is on
             // screen and its rows have to be current before they are hit-tested.
             self.refresh_explore(ws, true);
-            let out = self.explore.mouse_down_with_modifiers(
+            let out = self.explore.mouse_down_with(
                 self.explore_area(),
                 self.viewport,
                 x,
                 y,
-                ctrl,
-                self.mods.shift_key(),
+                crate::panes::explore::PressMods {
+                    ctrl,
+                    shift: self.mods.shift_key(),
+                    alt: self.mods.alt_key(),
+                },
             );
             self.refresh_drag_item_count(ws);
             // Expanding a row changes the tree, and the tree is a cache.

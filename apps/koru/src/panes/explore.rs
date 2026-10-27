@@ -68,6 +68,17 @@ const DRAG_HOLD_MS: f32 = 100.0;
 /// a deliberate pause.
 const SPRING_OPEN_SECS: f32 = 0.3;
 
+/// The keys held on a press, as the press reads them.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct PressMods {
+    /// Toggles the row in the selection.
+    pub ctrl: bool,
+    /// Extends the selection from its anchor.
+    pub shift: bool,
+    /// A document or canvas row: a background tab (the CTO's note).
+    pub alt: bool,
+}
+
 /// What a plain click on a row does when it turns out not to be a drag.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum ClickAction {
@@ -4679,12 +4690,20 @@ impl ExploreView {
         y: f32,
         ctrl: bool,
     ) -> Outcome {
-        self.mouse_down_with_modifiers(area, viewport, x, y, ctrl, false)
+        self.mouse_down_with(
+            area,
+            viewport,
+            x,
+            y,
+            PressMods {
+                ctrl,
+                ..PressMods::default()
+            },
+        )
     }
 
-    /// Pointer press with the complete selection modifiers supplied by the
-    /// container. Shift arrives through `View::set_mods`, while Ctrl is part of
-    /// the shell's established pointer vocabulary.
+    /// Pointer press with the selection modifiers, and no Alt.
+    #[cfg(test)]
     pub fn mouse_down_with_modifiers(
         &mut self,
         area: Rect,
@@ -4694,6 +4713,34 @@ impl ExploreView {
         ctrl: bool,
         shift: bool,
     ) -> Outcome {
+        self.mouse_down_with(
+            area,
+            viewport,
+            x,
+            y,
+            PressMods {
+                ctrl,
+                shift,
+                alt: false,
+            },
+        )
+    }
+
+    /// Pointer press with the complete selection modifiers supplied by the
+    /// container. Shift arrives through `View::set_mods`, while Ctrl is part of
+    /// the shell's established pointer vocabulary.
+    /// …and with every key the press reads, Alt among them: on a document
+    /// or canvas row it means *open it in a background tab* (the CTO's note)
+    /// rather than select or open here.
+    pub fn mouse_down_with(
+        &mut self,
+        area: Rect,
+        viewport: (f32, f32),
+        x: f32,
+        y: f32,
+        mods: PressMods,
+    ) -> Outcome {
+        let PressMods { ctrl, shift, alt } = mods;
         // The popover first: it floats *over* the pane, so a row underneath it
         // would otherwise answer for a press meant for a menu item — the same
         // ordering a tab's close box needs against the tab it sits in.
@@ -4970,6 +5017,12 @@ impl ExploreView {
             self.selection.clear();
             self.selection_anchor = None;
             return self.agents_row_pressed(row.node);
+        }
+        // Alt+click on a page or a canvas: a new tab beside the active one,
+        // not activated (the CTO's note). Answered on the press, before any
+        // drag is seeded, so the release has nothing to open.
+        if alt && matches!(row.kind, Kind::Document | Kind::Canvas) {
+            return Outcome::OpenNodeInBackgroundTab(row.node);
         }
         // Manifest rows may be dragged. Seed a **latent** drag — it stays a
         // click until the pointer crosses `DRAG_ARM_PX`. Documents activate on
@@ -5389,8 +5442,9 @@ impl ExploreView {
             (Kind::Image, _) => Outcome::RenameImage(row.node),
             (Kind::File, FileState::Remote) => Outcome::DownloadFile(row.node),
             (Kind::File, FileState::Present) => Outcome::OpenFile(row.node),
-            // A page or a canvas: as a tab of its own (the CTO's note).
-            (Kind::Document | Kind::Canvas, _) => Outcome::OpenNodeInNewTab(row.node),
+            // A page or a canvas: nothing beyond the first click. A tab of
+            // its own is Alt+click's (the CTO's note, after a day of the
+            // double-click doing it).
             _ => Outcome::Consumed,
         }
     }
@@ -6741,6 +6795,17 @@ impl ExploreView {
             |rec| {
                 rec.property("height", floor::H, "floor band");
             },
+        );
+        // The band's own fill, the column's colour, under the hairline: the
+        // surfaces that own their mode's rows (Chats, Tasks, Home…) draw to
+        // the pane's bottom and are not cut at `rows_bottom` the way the
+        // library's rows are, so the chip was sitting on top of them (the
+        // CTO's note). The floor is drawn last; this is what makes it a floor.
+        scene::fill(
+            scene,
+            root,
+            p.status_bg,
+            &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
         );
         scene::fill(
             scene,

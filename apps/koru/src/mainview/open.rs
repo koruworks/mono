@@ -155,19 +155,42 @@ impl MainView {
         self.push_document_tab(ws, root, reveal, None)
     }
 
-    /// Explore double-click (the CTO's note): the document in a **new** tab
-    /// of its own, kept — the next Explore click opens beside it rather than
-    /// over it. The first click of the pair showed it in the working tab,
-    /// which stays the working tab; a new tab appearing is what the gesture
-    /// promises, and keeping that tab silently read as nothing happening.
-    /// A document the shell is still fetching is asked for in a new tab the
-    /// same way (`OpenWhere::NewTab`) and lands later, unkept.
-    pub(super) fn keep_open_from_explore(&mut self, ws: &WorkspaceDoc, node: NodeId) -> bool {
-        if self.open_node_in_new_tab(ws, node) {
-            self.tabs_mut().active_mut().keep();
+    /// Explore Alt+click (the CTO's note): the document in a new tab beside
+    /// the active one, **not activated** — the active tab and the document
+    /// under the pointer's focus stay what they were. A document already in
+    /// hand goes in through [`open_node_in_background_tab`]; one the shell
+    /// holds as its own store is asked for with `PaneRequest::OpenBackground`,
+    /// which loads it into the parked tabs and inserts the tab without
+    /// making it the active document. A tab already on it is only scrolled
+    /// into view.
+    ///
+    /// [`open_node_in_background_tab`]: Self::open_node_in_background_tab
+    pub(super) fn open_in_background_from_explore(
+        &mut self,
+        ws: &WorkspaceDoc,
+        node: NodeId,
+    ) -> bool {
+        if self.open_node_in_background_tab(ws, node) {
             return true;
         }
-        self.request_new_tab_document(node)
+        let Some(entries) = &self.entries else {
+            return false;
+        };
+        let Some(entry) = entries.iter().find(|e| e.id.as_uuid() == node.as_uuid()) else {
+            return false;
+        };
+        let id = entry.id;
+        if let Some(i) = self.tabs().showing_document(id) {
+            Self::log_open(node, "already-showing", "explore-background");
+            self.ensure_tab_visible(i);
+            return true;
+        }
+        Self::log_open(node, "open-background", "explore-store");
+        self.ask_pane(koru_workspace_host::PaneRequest::OpenBackground {
+            document: id,
+            node: None,
+        });
+        true
     }
 
     /// Explore's *Open in new tab*: ask the shell and land with [`OpenWhere::NewTab`].

@@ -3406,29 +3406,20 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     (v, workspace, row, doc)
 }
 
-/// **A double-click opens the row in a new tab of its own** (the CTO's
-/// note): the first click showed it in the working tab, the second opens a
-/// new tab on it and keeps that one, so the next click on another row
-/// reuses the working tab and leaves the kept one standing.
+/// **Alt+click opens the row in a background tab** (the CTO's note): a new
+/// tab appears beside the active one on the document, and the active tab
+/// stays what it was. A double-click opens nothing beyond the first click.
 #[test]
-fn a_double_click_opens_the_row_in_a_new_kept_tab() {
+fn an_alt_click_opens_the_row_in_a_background_tab() {
     let (mut v, mut workspace, row, doc) = sidebar_with_a_document();
     let (x, y) = (row.x + row.w * 0.4, row.centre().1);
     v.mouse_down(&mut workspace.ws, x, y, false);
     v.mouse_up(&mut workspace.ws);
     assert_eq!(v.document_root(), Some(doc), "a click opens it");
-    assert!(
-        v.tabs().active_tab().is_reusable(),
-        "in the working tab, which the next click may reuse"
-    );
     let tabs = v.tabs().len();
-    assert!(v.mouse_double_click(&workspace.ws, x, y));
-    assert_eq!(v.tabs().len(), tabs + 1, "a new tab appeared");
-    assert_eq!(v.document_root(), Some(doc), "on the document");
-    assert!(
-        !v.tabs().active_tab().is_reusable(),
-        "kept: the next click opens elsewhere"
-    );
+    // Consumed, so the press does not fall through — but nothing opens.
+    v.mouse_double_click(&workspace.ws, x, y);
+    assert_eq!(v.tabs().len(), tabs, "a double-click opens nothing more");
 
     let other = a_document(&mut workspace.ws, "Other");
     v.adopt(&workspace.ws);
@@ -3439,18 +3430,28 @@ fn a_double_click_opens_the_row_in_a_new_kept_tab() {
         .into_iter()
         .find(|(i, _)| v.explore.row_node(*i) == Some(other))
         .expect("Other has a row");
-    // A click commits on release: the press only arms a possible drag.
+    v.set_mods(winit::keyboard::ModifiersState::ALT);
     v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
     v.mouse_up(&mut workspace.ws);
-    assert_eq!(v.document_root(), Some(other));
-    // The kept tab was the active one, and the strip reuses only Main's
-    // last-active tab: the click opens beside it, as it would beside a pin.
-    assert_eq!(v.tabs().len(), tabs + 2, "beside the kept tab");
+    v.set_mods(winit::keyboard::ModifiersState::empty());
+    assert_eq!(v.tabs().len(), tabs + 1, "a tab appeared");
+    assert_eq!(
+        v.document_root(),
+        Some(doc),
+        "the active tab is still Brief"
+    );
     assert!(
-        labels(&v).contains(&"Brief".to_string()),
-        "the kept tab is still there: {:?}",
+        labels(&v).contains(&"Other".to_string()),
+        "the new tab is Other's: {:?}",
         labels(&v)
     );
+    // Again: the tab already there is reused, not doubled.
+    v.set_mods(winit::keyboard::ModifiersState::ALT);
+    v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
+    v.mouse_up(&mut workspace.ws);
+    v.set_mods(winit::keyboard::ModifiersState::empty());
+    assert_eq!(v.tabs().len(), tabs + 1, "no second tab on Other");
+    assert_eq!(v.document_root(), Some(doc));
 }
 
 /// Press a row, arm the drag inside the column, and carry it out.
