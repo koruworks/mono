@@ -107,9 +107,10 @@ impl MainView {
             sidebar_w,
             ai_w.max(self.context.layout_width()),
         )
-        // The lane at the right edge, in the rail's colour (the CTO's
-        // artboard): the right-most card stops short of the window.
-        .with_edge_lane(koru_draw::theme::EDGE_LANE_W);
+        // The ground's lanes at the right edge and the foot, in the rail's
+        // colour (the CTO's artboard and his note): the cards stop short of
+        // the window.
+        .with_ground(koru_draw::theme::EDGE_LANE_W);
     }
 
     pub(super) fn content(&self) -> Rect {

@@ -507,7 +507,11 @@ fn opening_the_pane_pushes_the_caption_and_its_toggle_right() {
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
 
     assert_eq!(v.regions.sidebar.y, 0.0, "the pane starts at the top");
-    assert_eq!(v.regions.sidebar.h, v.viewport.1, "and runs to the bottom");
+    assert_eq!(
+        v.regions.sidebar.h,
+        v.viewport.1 - theme::EDGE_LANE_W,
+        "and runs to the foot lane"
+    );
     assert_eq!(v.regions.caption.x, theme::SIDEBAR_W + theme::RAIL_W);
     let open_toggle = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption);
     assert_eq!(
@@ -1307,9 +1311,10 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
     );
 }
 
-/// **The window keeps a lane at its right edge** (the CTO's artboard): the
-/// content stops `EDGE_LANE_W` short of the window, the caption does not,
-/// and the context column, when open, ends where the lane begins.
+/// **The window keeps a lane at its right edge and along its foot** (the
+/// CTO's artboard and his note): the content stops `EDGE_LANE_W` short of
+/// the window on both sides, the caption does not, and the context column,
+/// when open, ends where the lanes begin.
 #[test]
 fn the_window_keeps_an_edge_lane() {
     let (mut v, _) = on_document();
@@ -1317,10 +1322,16 @@ fn the_window_keeps_an_edge_lane() {
     assert_eq!(edge.w, theme::EDGE_LANE_W);
     assert_eq!(edge.x + edge.w, v.viewport.0);
     assert_eq!(v.content().x + v.content().w, edge.x);
+    let foot = v.regions.foot;
+    assert_eq!(foot.h, theme::EDGE_LANE_W);
+    assert_eq!(foot.y + foot.h, v.viewport.1);
+    assert_eq!(v.content().y + v.content().h, foot.y);
+    assert_eq!(edge.y + edge.h, foot.y);
     assert_eq!(v.regions.caption.x + v.regions.caption.w, v.viewport.0);
     assert!(v.toggle_context());
     let done = Instant::now() + std::time::Duration::from_millis(theme::PANEL_SLIDE_MS as u64 * 4);
     v.context.advance(done);
     assert_eq!(v.regions.context.x + v.regions.context.w, v.regions.edge.x);
     assert_eq!(v.context_rect().x + v.context_rect().w, v.regions.edge.x);
+    assert_eq!(v.context_rect().y + v.context_rect().h, v.regions.foot.y);
 }

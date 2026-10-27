@@ -351,7 +351,6 @@ impl MainView {
             }
             self.draw_caption(scene, root, &workspace.ws);
         }
-        self.draw_cards(scene, root);
 
         // Pane dividers: over every pane's content (a pane never reaches into
         // the divider's pixel — `split_with_divider` carved it out). A divider
@@ -510,6 +509,11 @@ impl MainView {
             self.context_view
                 .draw(scene, root, &mut self.engine, cx, subject, &workspace.ws);
         }
+        // **After every column**, because it paints over their edges: the
+        // ground's lanes, the cards' outer borders and their rounded corners.
+        // Before it, the sidebar's own fill and the lane's were painting the
+        // pane's corner back square (the CTO's note).
+        self.draw_cards(scene, root);
         // **After both columns**, and deliberately not from inside the pane's
         // own `draw`: a popover hangs over the active view, so where it lands in
         // the frame is a z-order decision worth making out loud. It lives
@@ -767,19 +771,32 @@ impl MainView {
         );
     }
 
-    /// The ground the cards sit on, and their top corners: the lane at the
-    /// right edge in the rail's colour with the right-most card's border
-    /// down its inside, then a rounded top corner on the explore pane's
-    /// left, the document's left and the right-most card's right (the CTO's
-    /// artboard). Drawn after the columns and the header, which laid the
-    /// straight hairlines: each corner masks the square outside its arc in
-    /// the ground's colour and strokes the arc in the hairline's.
+    /// The ground the cards sit on, and their outer edges: the lanes at the
+    /// right edge and the foot in the rail's colour, the right-most card's
+    /// border down the one and every card's along the other, then a rounded
+    /// corner at each outer corner — the explore pane's left pair, the
+    /// document's top-left where it meets the pane, and the right-most
+    /// card's right pair (the CTO's artboard and his notes). Drawn after
+    /// every column and the header, which laid the straight hairlines: each
+    /// corner masks the square outside its arc in the ground's colour and
+    /// strokes the arc in the hairline's.
     ///
     /// **Drawn edges**, not settled ones: the pane slides, and the
     /// document's left corner rides its edge the way the caption does.
     fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
         let p = theme::p();
         let edge = self.regions.edge;
+        let foot = self.regions.foot;
+        let top = self.content().y - 1.0;
+        let r = theme::PAGE_RADIUS;
+        let sb = self.sidebar_rect();
+        let pane = (sb.w > 0.0)
+            .then(|| Self::pane_of(sb))
+            .filter(|pane| pane.w > 0.0);
+        // The cards' left edge: the pane's outer border, or the window's
+        // edge with the pane shut — a card flush with the window has no
+        // border and no corner on that side.
+        let left = pane.map(|pane| pane.x - 1.0);
         if edge.w > 0.0 {
             scene::fill(
                 scene,
@@ -793,22 +810,46 @@ impl MainView {
                 p.panel_border,
                 &scene::rect(edge.x, edge.y, 1.0, edge.h),
             );
+            // The caption's hairline runs to the window's edge; over the
+            // lane it is a stray (the CTO's note), so the ground covers it.
+            scene::fill(
+                scene,
+                root,
+                p.chip_bg,
+                &scene::rect(edge.x + 1.0, top, (edge.w - 1.0).max(0.0), 1.0),
+            );
         }
-        let top = self.content().y - 1.0;
-        let r = theme::PAGE_RADIUS;
-        let sb = self.sidebar_rect();
-        if sb.w > 0.0 {
-            let pane = Self::pane_of(sb);
-            if pane.w > 0.0 {
-                draw_card_corner(scene, root, pane.x - 1.0, top, r, false, p);
+        if foot.h > 0.0 {
+            scene::fill(
+                scene,
+                root,
+                p.chip_bg,
+                &scene::rect(foot.x, foot.y, foot.w, foot.h),
+            );
+            let x0 = left.unwrap_or(foot.x);
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(x0, foot.y, (edge.x + 1.0 - x0).max(0.0), 1.0),
+            );
+        }
+        let bottom = foot.y + 1.0;
+        if let Some(x) = left {
+            draw_card_corner(scene, root, x, top, r, (false, false), p);
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, x, bottom, r, (false, true), p);
             }
         }
         let cap = self.drawn_caption();
         if cap.x > 0.0 {
-            draw_card_corner(scene, root, cap.x - 1.0, top, r, false, p);
+            draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), p);
         }
         if edge.w > 0.0 {
-            draw_card_corner(scene, root, edge.x + 1.0, top, r, true, p);
+            draw_card_corner(scene, root, edge.x + 1.0, top, r, (true, false), p);
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, edge.x + 1.0, bottom, r, (true, true), p);
+            }
         }
     }
 
@@ -1433,10 +1474,11 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
     (missing, waiting)
 }
 
-/// One rounded top corner of a card whose straight hairlines are already
-/// drawn. `(x, y)` is the card's **outer** corner — the hairline's outside
-/// edge — and `right` picks the top-right corner, whose square extends
-/// leftwards from `x`. The square outside the arc is masked in `ground`, which
+/// One rounded corner of a card whose straight hairlines are already drawn.
+/// `(x, y)` is the card's **outer** corner — the hairline's outside edge —
+/// and `(right, bottom)` says which corner it is: the square extends
+/// leftwards from `x` for a right corner and upwards from `y` for a bottom
+/// one. The square outside the arc is masked in `ground`, which
 /// also covers the straight hairlines' ends inside it; the arc is then
 /// stroked one pixel wide along the hairline's centre, so it meets the
 /// straight runs where they leave the square. The ground is the rail's
@@ -1447,7 +1489,7 @@ fn draw_card_corner(
     x: f32,
     y: f32,
     r: f32,
-    right: bool,
+    (right, bottom): (bool, bool),
     p: &theme::Palette,
 ) {
     use vello::kurbo::{BezPath, Point};
@@ -1457,9 +1499,10 @@ fn draw_card_corner(
     }
     // Quarter-circle as one cubic, the usual constant.
     const K: f64 = 0.552_284_75;
-    let dir = if right { -1.0 } else { 1.0 };
+    let dir_x = if right { -1.0 } else { 1.0 };
+    let dir_y = if bottom { -1.0 } else { 1.0 };
     let (x, y, r) = (x as f64, y as f64, r as f64);
-    let pt = |dx: f64, dy: f64| Point::new(x + dir * dx, y + dy);
+    let pt = |dx: f64, dy: f64| Point::new(x + dir_x * dx, y + dir_y * dy);
     // The mask: the top edge out to the arc's start, the arc back to the
     // side edge, and the side edge up to the corner.
     let mut mask = BezPath::new();

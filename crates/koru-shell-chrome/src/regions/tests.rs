@@ -769,20 +769,30 @@ fn a_hidden_context_toggle_beside_settings_gives_its_room_to_the_tabs() {
     );
 }
 
-/// **The edge lane comes off the content** and the caption keeps its width:
-/// a context column keeps `CONTEXT_W` and shifts left. The lane sits where
-/// the columns end, and the columns and the lane still add up to the window.
+/// **The ground's lanes come off the content and the foot** and the caption
+/// keeps its width: a context column keeps `CONTEXT_W` and shifts left; every
+/// column stops at the foot. The lanes sit where the columns end, and the
+/// columns and the lanes still add up to the window.
 #[test]
 fn the_edge_lane_comes_off_the_right() {
     let plain = solve(1200.0, 800.0, 300.0, 0.0);
     assert_eq!(plain.edge.w, 0.0, "nothing carved until asked");
-    let r = plain.with_edge_lane(8.0);
+    assert_eq!(plain.foot.h, 0.0);
+    let r = plain.with_ground(8.0);
     assert_eq!(r.edge, Rect::new(1192.0, r.content.y, 8.0, r.content.h));
     assert_eq!(r.content.x + r.content.w, r.edge.x);
     assert_eq!(r.caption.x + r.caption.w, 1200.0, "the caption is not cut");
     assert_eq!(r.sidebar.w + r.content.w + r.context.w + r.edge.w, 1200.0);
+    assert_eq!(r.foot, Rect::new(0.0, 792.0, 1200.0, 8.0));
+    assert_eq!(r.content.y + r.content.h, r.foot.y);
+    assert_eq!(
+        r.sidebar.y + r.sidebar.h,
+        r.foot.y,
+        "the sidebar stops at the foot"
+    );
+    assert_eq!(r.edge.y + r.edge.h, r.foot.y, "so does the edge lane");
 
-    let r = solve(1200.0, 800.0, 300.0, 268.0).with_edge_lane(8.0);
+    let r = solve(1200.0, 800.0, 300.0, 268.0).with_ground(8.0);
     assert_eq!(
         r.content.w,
         1200.0 - 300.0 - 268.0 - 8.0,
@@ -791,4 +801,5 @@ fn the_edge_lane_comes_off_the_right() {
     assert_eq!(r.context.w, 268.0, "the context column keeps its width");
     assert_eq!(r.context.x + r.context.w, r.edge.x);
     assert_eq!(r.content.x + r.content.w, r.context.x);
+    assert_eq!(r.context.y + r.context.h, r.foot.y);
 }
