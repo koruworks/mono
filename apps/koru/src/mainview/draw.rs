@@ -772,31 +772,64 @@ impl MainView {
     }
 
     /// The ground the cards sit on, and their outer edges: the lanes at the
-    /// right edge and the foot in the rail's colour, the right-most card's
-    /// border down the one and every card's along the other, then a rounded
-    /// corner at each outer corner — the explore pane's left pair, the
-    /// document's top-left where it meets the pane, and the right-most
-    /// card's right pair (the CTO's artboard and his notes). Drawn after
-    /// every column and the header, which laid the straight hairlines: each
-    /// corner masks the square outside its arc in the ground's colour and
-    /// strokes the arc in the hairline's.
+    /// right edge and the foot in the rail's colour — and at the left edge
+    /// while the pane is shut (E71) — the outer cards' borders down the
+    /// side lanes and every card's along the foot, then a rounded corner at
+    /// each outer corner — the explore pane's left pair, or the document's
+    /// with the pane shut; the document's top-left where it meets the pane;
+    /// and the right-most card's right pair (the CTO's artboard and his
+    /// notes). Drawn after every column and the header, which laid the
+    /// straight hairlines: each corner masks the square outside its arc in
+    /// the ground's colour and strokes the arc in the hairline's.
     ///
     /// **Drawn edges**, not settled ones: the pane slides, and the
-    /// document's left corner rides its edge the way the caption does.
+    /// document's left corner rides its edge the way the caption does. The
+    /// left lane is the pane's for the slide: it shows only right of the
+    /// pane's drawn edge, and wears the document's border and corners once
+    /// the pane is gone.
     fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
         let p = theme::p();
         let edge = self.regions.edge;
         let foot = self.regions.foot;
+        let verge = self.regions.left_edge;
         let top = self.content().y - 1.0;
         let r = theme::PAGE_RADIUS;
         let sb = self.sidebar_rect();
         let pane = (sb.w > 0.0)
             .then(|| Self::pane_of(sb))
             .filter(|pane| pane.w > 0.0);
-        // The cards' left edge: the pane's outer border, or the window's
-        // edge with the pane shut — a card flush with the window has no
-        // border and no corner on that side.
-        let left = pane.map(|pane| pane.x - 1.0);
+        // The cards' left edge: the pane's outer border while it is drawn,
+        // or the left lane's inner column once it is gone — the document is
+        // then the left-most card, and wears the same border and corners as
+        // the right-most does at the right.
+        let lane_left = (verge.w > 0.0).then(|| verge.x + verge.w - 1.0);
+        let left = pane.map(|pane| pane.x - 1.0).or(lane_left);
+        if verge.w > 0.0 {
+            // Only right of the pane while it slides over the lane.
+            let x0 = pane.map_or(verge.x, |pane| (pane.x + pane.w).max(verge.x));
+            scene::fill(
+                scene,
+                root,
+                p.ground,
+                &scene::rect(x0, verge.y, (verge.x + verge.w - x0).max(0.0), verge.h),
+            );
+            if let (None, Some(x)) = (pane, lane_left) {
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_border,
+                    &scene::rect(x, verge.y, 1.0, verge.h),
+                );
+                // The caption's hairline strays over this lane as over the
+                // right one; the ground covers it up to the border.
+                scene::fill(
+                    scene,
+                    root,
+                    p.ground,
+                    &scene::rect(verge.x, top, (x - verge.x).max(0.0), 1.0),
+                );
+            }
+        }
         if edge.w > 0.0 {
             scene::fill(
                 scene,
@@ -841,8 +874,10 @@ impl MainView {
                 draw_card_corner(scene, root, x, bottom, r, (false, true), p);
             }
         }
+        // The document's top-left where it meets the pane; with the pane
+        // gone that corner is the lane's, drawn above.
         let cap = self.drawn_caption();
-        if cap.x > 0.0 {
+        if pane.is_some() && cap.x > 0.0 {
             draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), p);
         }
         if edge.w > 0.0 {

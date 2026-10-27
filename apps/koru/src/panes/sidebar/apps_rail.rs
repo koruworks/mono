@@ -28,8 +28,9 @@ use crate::panes::explore::NavigatorMode;
 pub const SQUARE: f32 = 36.0;
 /// Between squares.
 pub const GAP: f32 = 4.0;
-/// Above the first app.
-const PAD_TOP: f32 = 10.0;
+/// Above the first app — and above the pane's heading band beside it, which
+/// is the square's height, so the app's name reads level with Home (E72).
+pub const PAD_TOP: f32 = 10.0;
 /// Under the profile square: what centres the square — and so the Profile's
 /// tile in it — on the floor chip's tile beside it, so the two tiles share
 /// a baseline (the CTO's note). The chip's tile is centred in the floor's

@@ -2049,6 +2049,19 @@ pub mod role {
     pub const fn section_heading() -> TextStyle {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
     }
+    /// The explore pane's title — the app's name over its nav, level with
+    /// the rail's Home square: 22/30 at [`FontWeight::SemiBold`] (the CTO's
+    /// note, E72, after ChatGPT's sidebar title). Between `XL` and `_2XL`:
+    /// a size of its own rather than a tier, because the band it sits in is
+    /// the square's height and nothing else is this size.
+    pub const fn pane_title() -> TextStyle {
+        TextStyle::new(TextMetrics::new(22.0, 30.0), FontWeight::SemiBold)
+    }
+    /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*: 16/24
+    /// at the chrome's weight (the CTO's note, E73; it was `hint`, 11 px).
+    pub const fn popover_heading() -> TextStyle {
+        TextStyle::new(text_metrics::DOC_BODY, MEDIUM)
+    }
     /// The default application UI — dialogs, settings, prominent controls.
     /// Compact steps it down to `SM` (13/18); Normal and Comfortable keep
     /// `UI_BODY` (14/20).

@@ -803,3 +803,25 @@ fn the_edge_lane_comes_off_the_right() {
     assert_eq!(r.content.x + r.content.w, r.context.x);
     assert_eq!(r.context.y + r.context.h, r.foot.y);
 }
+
+/// **A shut pane leaves a lane on the left too** (the CTO's note, E71): the
+/// content card then has the same air off the window on both sides, and
+/// the same corners. With the pane open its card is the window's left and
+/// the left lane is zero-width — the content still begins at the pane.
+#[test]
+fn a_shut_pane_leaves_a_lane_on_the_left() {
+    let r = solve(1200.0, 800.0, 0.0, 0.0).with_ground(8.0);
+    assert_eq!(r.left_edge, Rect::new(0.0, r.content.y, 8.0, r.content.h));
+    assert_eq!(r.content.x, 8.0, "the content gives up the left lane");
+    assert_eq!(r.content.x + r.content.w, r.edge.x);
+    assert_eq!(r.content.w, 1200.0 - 16.0);
+    assert_eq!(r.caption.x, 0.0, "the caption is not cut");
+    assert_eq!(r.left_edge.y + r.left_edge.h, r.foot.y);
+    assert_eq!(r.foot.x, 0.0, "the foot runs under the lane");
+
+    let r = solve(1200.0, 800.0, 300.0, 0.0).with_ground(8.0);
+    assert_eq!(r.left_edge.w, 0.0, "the pane is the window's left");
+    assert_eq!(r.content.x, 300.0);
+    let plain = solve(1200.0, 800.0, 0.0, 0.0);
+    assert_eq!(plain.left_edge.w, 0.0, "nothing carved until asked");
+}

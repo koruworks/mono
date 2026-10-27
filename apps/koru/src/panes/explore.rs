@@ -4158,7 +4158,8 @@ impl ExploreView {
     }
 
     /// The band the library's heading and its `…` sit in: under the lane
-    /// and the shell's gap.
+    /// and the rail's pad, the rail's square's height — the same row as the
+    /// Home square beside it (E72).
     ///
     /// Zero-width in a collapsed column, so heading actions decline it — the same
     /// guard `row_rects` and `header_at` use, and for the same reason.
@@ -4168,7 +4169,7 @@ impl ExploreView {
         }
         Rect::new(
             area.x,
-            area.y + WORKSPACE_ROW_H + theme::NAV_PAD,
+            area.y + WORKSPACE_ROW_H + HEADER_PAD,
             area.w,
             HEADER_H,
         )
@@ -4188,10 +4189,12 @@ impl ExploreView {
     }
 
     /// Where the band's title sits: the app's name (*Home*, *Documents*,
-    /// *Files*, *Tasks*, *Chats*…) at the band's left pad, out to the `…`.
-    /// The band held the mode icons once; with those on the rail it had only
-    /// the `…` left, and a row that names nothing above a list is a row the
-    /// eye has to work out (the CTO's note). Zero-sized when the band is.
+    /// *Files*, *Tasks*, *Chats*…) at the band's left pad, out to the `…`,
+    /// in `role::pane_title` — 22 px, level with the rail's Home square
+    /// (E72). The band held the mode icons once; with those on the rail it
+    /// had only the `…` left, and a row that names nothing above a list is
+    /// a row the eye has to work out (the CTO's note). Zero-sized when the
+    /// band is.
     pub fn heading_title_rect(&self, area: Rect) -> Rect {
         let band = self.heading_band(area);
         if band.w <= 0.0 {
@@ -6795,9 +6798,9 @@ impl ExploreView {
                 "ExploreSpacer",
                 "part",
                 root,
-                scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, theme::NAV_PAD),
+                scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, HEADER_PAD),
                 |r| {
-                    r.property("height", theme::NAV_PAD, "shell section gap");
+                    r.property("height", HEADER_PAD, "the rail's pad");
                     r.property("separates", "KoruLane / ExploreTabs", "shell stack");
                 },
             );
@@ -6811,11 +6814,11 @@ impl ExploreView {
                 scene::rect(band.x, band.y, band.w, band.h),
                 |_| {},
             );
-            // The app's name, a section heading, elided before it reaches
+            // The app's name, the pane's title, elided before it reaches
             // the `…`. See `heading_title_rect`.
             let title = self.heading_title_rect(area);
             if title.w > 0.0 {
-                let style = theme::role::section_heading();
+                let style = theme::role::pane_title();
                 let fitted = engine.elided(self.mode.label(), style, title.w);
                 draw_middle(scene, root, engine, &fitted, title, style, p.text);
             }
@@ -7711,8 +7714,10 @@ impl ExploreView {
         }
         // The frame every floating thing wears. The shadow is a soft falloff
         // rather than one offset rect — a slab with a hard edge reads as a
-        // second panel behind the first rather than as depth.
-        scene::floating_panel(
+        // second panel behind the first rather than as depth. The record is
+        // held open to the end so the pages' rows nest under the panel in
+        // the inspector instead of lying beside it (the CTO's note, E73).
+        let _panelled = scene::floating_panel_scope(
             scene,
             root,
             panel.x,
@@ -7855,14 +7860,15 @@ impl ExploreView {
                     let label = format!("WORKSPACES · {n}");
                     let buttons = head_button_rects(r, row);
                     let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
-                    let x = r.x + theme::NAV_PAD * 2.0;
+                    // At the tiles' left edge, 16 px (the CTO's note, E73).
+                    let x = icon_x;
                     draw_middle(
                         scene,
                         root,
                         engine,
                         &label,
                         Rect::new(x, r.y, (first - 8.0 - x).max(1.0), r.h),
-                        theme::role::hint(),
+                        theme::role::popover_heading(),
                         p.row_hint,
                     );
                     self.draw_head_buttons(scene, root, engine, &buttons, hot, HeadButton::New);
@@ -7872,8 +7878,9 @@ impl ExploreView {
                     // where it syncs, and the sliders. A hairline under it.
                     let buttons = head_button_rects(r, row);
                     let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
+                    // At the other tiles' left edge (E73).
                     let tile = Rect::new(
-                        r.x + theme::NAV_PAD * 2.0,
+                        icon_x,
                         r.y + (r.h - PROFILE_HEAD_TILE) * 0.5,
                         PROFILE_HEAD_TILE,
                         PROFILE_HEAD_TILE,
@@ -7944,7 +7951,9 @@ impl ExploreView {
                     );
                 }
                 PopoverRow::ProfilesSwitch => {
-                    // *SWITCH TO · n*, the chord in a chip at its trailing end.
+                    // *SWITCH TO · n*, at the tiles' left edge, 16 px. The
+                    // chord's chip at its trailing end is out for now (the
+                    // CTO's note, E73); `Ctrl+Alt+P` itself still works.
                     let n = self
                         .rows_for(kind)
                         .iter()
@@ -7954,39 +7963,13 @@ impl ExploreView {
                         "{} · {n}",
                         koru_i18n::t(lang, koru_i18n::Key::ProfilesSwitchTo).to_uppercase()
                     );
-                    let chord = koru_keys::label_of(koru_keys::ShortcutId::SwitchProfile);
-                    let chord_layout = engine.simple_layout(&chord, theme::role::hint());
-                    let chip_w = chord_layout.width() + 12.0;
-                    let chip = Rect::new(
-                        r.x + r.w - theme::NAV_PAD * 2.0 - chip_w,
-                        r.y + (r.h - CHORD_CHIP_H) * 0.5,
-                        chip_w,
-                        CHORD_CHIP_H,
-                    );
-                    scene::stroke(
-                        scene,
-                        root,
-                        p.panel_border,
-                        theme::BORDER_W,
-                        &scene::rrect(chip.x, chip.y, chip.w, chip.h, 4.0),
-                    );
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        &chord,
-                        Rect::new(chip.x + 6.0, chip.y, (chip.w - 12.0).max(1.0), chip.h),
-                        theme::role::hint(),
-                        p.row_hint,
-                    );
-                    let x = r.x + theme::NAV_PAD * 2.0;
                     draw_middle(
                         scene,
                         root,
                         engine,
                         &label,
-                        Rect::new(x, r.y, (chip.x - 8.0 - x).max(1.0), r.h),
-                        theme::role::hint(),
+                        text(icon_x),
+                        theme::role::popover_heading(),
                         p.row_hint,
                     );
                 }
@@ -8286,7 +8269,8 @@ pub(crate) fn head_button_rects(r: Rect, row: PopoverRow) -> Vec<(HeadButton, Re
         .collect();
     out.reverse();
     if row.head_buttons().contains(&HeadButton::Status) {
-        let left = r.x + theme::NAV_PAD * 2.0;
+        // From the tiles' left edge, like every row's leading mark (E73).
+        let left = r.x + theme::NAV_PAD;
         let right = out.first().map_or(lane.x + lane.w, |(_, b)| b.x) - HEAD_BUTTON_GAP * 2.0;
         out.insert(
             0,
@@ -8514,8 +8498,13 @@ fn next_selectable(rows: &[PopoverRow], from: Option<usize>, forward: bool) -> O
     None
 }
 
-/// Room above the first row, for the column's own heading.
-const HEADER_H: f32 = 24.0;
+/// Room above the first row, for the column's own heading: **the rail's
+/// square's height**, placed the rail's pad under the lane, so the app's
+/// name sits level with the Home square beside it (the CTO's note, E72,
+/// after ChatGPT's sidebar, where the mark and the title share a row).
+const HEADER_H: f32 = apps_rail::SQUARE;
+/// Above the heading band: the rail's own pad, for the same reason.
+const HEADER_PAD: f32 = apps_rail::PAD_TOP;
 
 /// The lane's band at the top of the pane: `CAPTION_H` tall, one row with the
 /// caption across the divide, drawn by the window (`MainView::draw_lane`).
@@ -8542,8 +8531,6 @@ const PROFILE_HEAD_H: f32 = 60.0;
 const PROFILE_HEAD_TILE: f32 = 32.0;
 /// The Profiles page's foot: the sync state, the devices, the `+`.
 const PROFILE_FOOT_H: f32 = 44.0;
-/// The chord chip on *SWITCH TO · n*.
-const CHORD_CHIP_H: f32 = 20.0;
 const PROFILE_TILE: f32 = 24.0;
 const HEADING_BUTTON_H: f32 = 20.0;
 /// Between two of a head row's buttons.

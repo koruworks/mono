@@ -475,7 +475,7 @@ fn pressing_a_tab_in_the_title_bar_focuses_its_pane() {
 fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
     let (mut v, mut workspace) = container();
     assert_eq!(v.regions.sidebar.w, 0.0, "shut by default");
-    assert_eq!(v.content().x, 0.0);
+    assert_eq!(v.content().x, theme::EDGE_LANE_W, "the left lane's width");
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
@@ -491,7 +491,7 @@ fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(!v.sidebar.is_open());
-    assert_eq!(v.content().x, 0.0, "and took it back");
+    assert_eq!(v.content().x, theme::EDGE_LANE_W, "and took it back");
 }
 
 /// The pane runs the full height of the window and pushes the caption — logo,
@@ -1100,11 +1100,15 @@ fn the_content_rect_sits_below_the_caption() {
     let (v, _w) = container();
     let r: Rect = v.content();
     assert_eq!(r.y, v.regions.caption.h);
-    assert_eq!(r.x, 0.0, "both columns are collapsed for now");
+    assert_eq!(
+        r.x,
+        theme::EDGE_LANE_W,
+        "both columns are collapsed for now: the left lane is the window's"
+    );
     assert_eq!(
         r.w,
-        1200.0 - theme::EDGE_LANE_W,
-        "the edge lane is the window's"
+        1200.0 - 2.0 * theme::EDGE_LANE_W,
+        "and so is the right"
     );
 }
 
@@ -1312,16 +1316,27 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
 }
 
 /// **The window keeps a lane at its right edge and along its foot** (the
-/// CTO's artboard and his note): the content stops `EDGE_LANE_W` short of
-/// the window on both sides, the caption does not, and the context column,
-/// when open, ends where the lanes begin.
+/// CTO's artboard and his note), **and at its left while the pane is shut**
+/// (his note, E71): the content stops `EDGE_LANE_W` short of the window on
+/// every side it reaches, the caption does not, and the context column,
+/// when open, ends where the lanes begin. Open the pane and the left lane
+/// goes: the pane's card is the window's left.
 #[test]
 fn the_window_keeps_an_edge_lane() {
-    let (mut v, _) = on_document();
+    let (mut v, mut workspace) = on_document();
     let edge = v.regions.edge;
     assert_eq!(edge.w, theme::EDGE_LANE_W);
     assert_eq!(edge.x + edge.w, v.viewport.0);
     assert_eq!(v.content().x + v.content().w, edge.x);
+    let verge = v.regions.left_edge;
+    assert_eq!(verge, Rect::new(0.0, edge.y, theme::EDGE_LANE_W, edge.h));
+    assert_eq!(v.content().x, verge.x + verge.w, "the same air on the left");
+    assert!(v.toggle_sidebar());
+    assert_eq!(v.regions.left_edge.w, 0.0, "the pane is the window's left");
+    assert_eq!(v.content().x, v.regions.sidebar.w);
+    assert!(v.toggle_sidebar());
+    assert_eq!(v.regions.left_edge.w, theme::EDGE_LANE_W);
+    v.adopt(&mut workspace.ws);
     let foot = v.regions.foot;
     assert_eq!(foot.h, theme::EDGE_LANE_W);
     assert_eq!(foot.y + foot.h, v.viewport.1);

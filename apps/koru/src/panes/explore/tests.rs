@@ -831,17 +831,24 @@ fn nothing_in_the_floor_is_hit_in_a_collapsed_column() {
     assert!(v.row_rects(shut).is_empty());
 }
 
-/// The pane grew a header; the library moved only by the shell's section gap.
+/// The pane grew a header; the library sits under it and the shell's gap.
+/// The header is the rail's square's height and sits the rail's pad under
+/// the lane, so the app's name is level with the Home square (E72).
 #[test]
 fn the_first_library_row_sits_where_it_always_did() {
     let (v, _, _) = with_context(4);
     let a = Rect::new(0.0, 0.0, theme::SIDEBAR_W, 600.0);
-    // Lane, gap, heading band, gap: the trailing NAV_PAD is the deliberate
-    // section gap between the heading band and the nodes content — the same
-    // gap every band of the stack has. The apps are in the rail beside the
-    // pane, so no band of theirs sits in the stack any more.
-    let stacked = theme::CAPTION_H + theme::NAV_PAD + HEADER_H + theme::NAV_PAD;
+    // Lane, the rail's pad, heading band, gap: the trailing NAV_PAD is the
+    // deliberate section gap between the heading band and the nodes content.
+    // The apps are in the rail beside the pane, so no band of theirs sits in
+    // the stack any more.
+    let stacked = theme::CAPTION_H + apps_rail::PAD_TOP + HEADER_H + theme::NAV_PAD;
     assert_eq!(v.row_rects(a)[0].1.y, stacked);
+    let rail = v.rail_of(Rect::new(theme::RAIL_W, 0.0, theme::SIDEBAR_W, 600.0));
+    let home = v.navigator_mode_rects(rail)[0].1;
+    let title = v.heading_title_rect(Rect::new(theme::RAIL_W, 0.0, theme::SIDEBAR_W, 600.0));
+    assert_eq!(title.y, home.y, "the title's band starts with the square");
+    assert_eq!(title.h, home.h, "and is its height");
 }
 
 /// **And an open popover does not move it either** — that is the whole reason it
@@ -1017,6 +1024,59 @@ fn the_sync_status_reads_the_account_state() {
         ..Default::default()
     });
     assert_eq!(v.sync_status(), SyncStatus::NotSetUp);
+}
+
+/// **Everything a popover page draws nests under its `FloatingPanel`** in
+/// the inspector (the CTO's note, E73): the rows' text and fills were
+/// lying beside the panel's record, as if they were the pane's own.
+#[test]
+fn the_popovers_primitives_nest_under_the_floating_panel() {
+    for kind in [PopoverKind::Summary, PopoverKind::Profiles] {
+        let (mut v, _, _) = with_context(3);
+        v.toggle_popover(kind);
+        v.advance_popover(Instant::now() + Duration::from_secs(1));
+        let a = area();
+        let mut scene = vello::Scene::new();
+        let mut engine = TextEngine::new();
+        let root = vello::kurbo::Affine::IDENTITY;
+        let capture = koru_draw::inspect::Frame::begin(
+            1,
+            root,
+            koru_draw::scene::rect(0.0, 0.0, VIEW.0, VIEW.1),
+        );
+        v.draw_popover(&mut scene, root, &mut engine, a, VIEW, None);
+        let records = capture.finish().records;
+        let panel = records
+            .iter()
+            .position(|r| r.name == "FloatingPanel")
+            .expect("the panel's record");
+        let under_panel = |mut at: usize| {
+            while let Some(parent) = records[at].parent {
+                if parent == panel {
+                    return true;
+                }
+                at = parent;
+            }
+            false
+        };
+        let strays: Vec<_> = records
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i > panel && !under_panel(*i))
+            .map(|(_, r)| r.name)
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "{kind:?} drew beside its panel: {strays:?}"
+        );
+        assert!(
+            records
+                .iter()
+                .skip(panel + 1)
+                .any(|r| r.name == "label line"),
+            "{kind:?} drew its rows under the panel"
+        );
+    }
 }
 
 /// The floor chip opens the main page, and pressing it again shuts it — one
@@ -6029,16 +6089,16 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
             "the band says which tab's view it holds"
         );
 
-        // The section gaps are named geometry, and both are the shell's
-        // NAV_PAD: header-to-tabs and tabs-to-nodes alike.
+        // The section gaps are named geometry: lane-to-heading is the rail's
+        // pad, so the heading sits level with the Home square (E72), and
+        // heading-to-nodes the shell's NAV_PAD.
         let spacers: Vec<_> = records
             .iter()
             .filter(|r| r.name == "ExploreSpacer")
             .collect();
         assert_eq!(spacers.len(), 2, "one gap per seam in {mode:?}");
-        for spacer in &spacers {
-            assert_eq!(spacer.rect().height(), theme::NAV_PAD as f64);
-        }
+        assert_eq!(spacers[0].rect().height(), apps_rail::PAD_TOP as f64);
+        assert_eq!(spacers[1].rect().height(), theme::NAV_PAD as f64);
         let (first, second) = (spacers[0].rect(), spacers[1].rect());
         assert_eq!(first.y0, header.y1, "the first gap follows the header");
         assert_eq!(first.y1, tabs.y0, "the first gap meets the tab row");

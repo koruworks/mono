@@ -47,15 +47,25 @@ pub struct Regions {
     ///
     /// [`with_ground`]: Self::with_ground
     pub foot: Rect,
+    /// The lane at the window's **left** edge, `edge`'s mirror, carved by
+    /// [`with_ground`] only while the explore column is shut: the content is
+    /// then the window's left-most card and keeps the same air off the
+    /// window as off the right (the CTO's note, E71). With the column open
+    /// its card is the window's left and this is zero-width.
+    ///
+    /// [`with_ground`]: Self::with_ground
+    pub left_edge: Rect,
 }
 
 impl Regions {
-    /// Carve the ground's two lanes, `w` wide: one off the right edge below
-    /// the caption, one along the foot. The content gives up the right lane
-    /// and a context column keeps its width and shifts left, so `CONTEXT_W`
-    /// stays true; every column gives up the foot. The caption keeps its
-    /// full width — the window buttons sit over the lane, which is theirs to
-    /// sit over.
+    /// Carve the ground's lanes, `w` wide: one off the right edge below the
+    /// caption, one along the foot, and — while the explore column is shut —
+    /// one off the left edge too, so the content card has the same air on
+    /// both sides (E71). The content gives up the side lanes and a context
+    /// column keeps its width and shifts left, so `CONTEXT_W` stays true;
+    /// every column gives up the foot. The caption keeps its full width —
+    /// the window buttons sit over the right lane, which is theirs to sit
+    /// over, and the leading chain over the left.
     pub fn with_ground(mut self, w: f32) -> Self {
         let w = w.max(0.0).min(self.content.w).min(self.content.h);
         self.content.w -= w;
@@ -71,6 +81,14 @@ impl Regions {
         );
         let bottom = self.content.y + self.content.h;
         self.foot = Rect::new(0.0, bottom, self.edge.x + self.edge.w, w);
+        let left = if self.sidebar.w > 0.0 {
+            0.0
+        } else {
+            w.min(self.content.w)
+        };
+        self.content.x += left;
+        self.content.w -= left;
+        self.left_edge = Rect::new(0.0, self.content.y, left, self.content.h);
         self
     }
 }
@@ -124,6 +142,7 @@ pub fn solve(w: f32, h: f32, sidebar_w: f32, context_w: f32) -> Regions {
         context: Rect::new(w - cw, caption_h, cw, below),
         edge: Rect::new(w, caption_h, 0.0, below),
         foot: Rect::new(0.0, h, w, 0.0),
+        left_edge: Rect::new(0.0, caption_h, 0.0, below),
     }
 }
 
