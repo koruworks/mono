@@ -393,9 +393,15 @@ impl ExploreView {
         }
         let actions = self.actions_button(cx.area);
         if actions.w > 0.0 {
+            // The Chats heading's button is *New chat* (the CTO's note).
+            let label = if self.mode == NavigatorMode::Chats {
+                Key::ChatsNew
+            } else {
+                Key::A11yMoreActions
+            };
             out.push(
                 SemanticNode::new(cx.surface(EXPLORE, parts::ACTIONS), Role::Button)
-                    .with_label(t(cx.lang, Key::A11yMoreActions))
+                    .with_label(t(cx.lang, label))
                     .with_bounds(actions)
                     .with_action(Action::Click),
             );

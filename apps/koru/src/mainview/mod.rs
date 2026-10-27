@@ -4460,8 +4460,8 @@ impl MainView {
                 MenuAction::DeleteRun => self.queue_run_trash(runs),
                 _ => false,
             },
-            MenuSubject::AiChat { chat } => match action {
-                MenuAction::DeleteAiChat => self.ask_delete_chat(chat),
+            MenuSubject::AiChat { chats } => match action {
+                MenuAction::DeleteAiChat => self.ask_delete_chats(chats.clone()),
                 _ => false,
             },
             MenuSubject::AgentSchedules { schedules } => match action {
@@ -5666,35 +5666,59 @@ impl MainView {
     /// the Chats view sends the delete on *yes*, through `settle_confirm`,
     /// which is what makes the dialog the one door. The title is the chat's
     /// own: shown, never logged.
-    fn ask_delete_chat(&mut self, chat: koru_ai_ui::ChatId) -> bool {
+    /// Ask before deleting one chat or the pick (the CTO's note): one is
+    /// named, several are counted, and a yes deletes each.
+    fn ask_delete_chats(&mut self, chats: Vec<koru_ai_ui::ChatId>) -> bool {
+        let Some(&first) = chats.first() else {
+            return false;
+        };
         let lang = crate::format::lang();
-        let title = self
-            .explore
-            .chats_mut()
-            .chats()
-            .iter()
-            .find(|candidate| candidate.id == chat)
-            .map(|candidate| koru_chats_ui::text::title(lang, candidate).to_owned())
-            .unwrap_or_default();
-        self.confirm = Some((
-            koru_ui::Confirm::new(
-                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteTitle),
+        let (title, body, verb) = if chats.len() == 1 {
+            let name = self
+                .explore
+                .chats_mut()
+                .chats()
+                .iter()
+                .find(|candidate| candidate.id == first)
+                .map(|candidate| koru_chats_ui::text::title(lang, candidate).to_owned())
+                .unwrap_or_default();
+            (
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteTitle).to_owned(),
                 koru_i18n::fill(
                     koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteBody),
-                    &[&title],
+                    &[&name],
                 ),
-                koru_i18n::t(lang, koru_i18n::Key::ChatsDelete),
-            ),
-            trash::ConfirmSubject::DeleteChat(chat),
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDelete).to_owned(),
+            )
+        } else {
+            let count = koru_i18n::number::decimal(lang, chats.len() as u64);
+            let verb = koru_i18n::fill(
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                &[&count],
+            );
+            (
+                format!("{verb}?"),
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteManyBody),
+                    &[&count],
+                ),
+                verb,
+            )
+        };
+        self.confirm = Some((
+            koru_ui::Confirm::new(title, body, verb),
+            trash::ConfirmSubject::DeleteChats(chats),
         ));
         true
     }
 
     /// A chat row's menu: one verb, *Delete chat*.
-    fn open_chat_menu(&mut self, chat: koru_ai_ui::ChatId, at: (f32, f32)) -> bool {
+    fn open_chat_menu(&mut self, chats: Vec<koru_ai_ui::ChatId>, at: (f32, f32)) -> bool {
+        // The row counts the pick, the way *Delete run* does.
+        context_menu::set_chat_delete_count(chats.len());
         let mut menu = ContextMenu::new(
             &mut self.engine,
-            MenuSubject::AiChat { chat },
+            MenuSubject::AiChat { chats },
             at,
             context_menu::ai_chat_items(),
         );
@@ -7111,8 +7135,8 @@ impl MainView {
                 self.show_navigator(crate::panes::explore::NavigatorMode::Socials)
             }
             Outcome::NewAiChat => self.open_ai_chat_tab(),
-            Outcome::DeleteAiChat(chat) => self.ask_delete_chat(chat),
-            Outcome::AiChatMenu { chat, at } => self.open_chat_menu(chat, at),
+            Outcome::DeleteAiChats(chats) => self.ask_delete_chats(chats),
+            Outcome::AiChatMenu { chats, at } => self.open_chat_menu(chats, at),
             // The Agents tree's mutations: every one a typed verb to the
             // session host, with the tree reflecting the catalog that answers
             // — the container keeps no project truth (ADR-264, Q-E6).

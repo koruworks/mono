@@ -97,7 +97,8 @@ pub enum MenuSubject {
     /// The chat's id, never a row index: the list is a cache of an answer
     /// the AI service rewrites whenever a chat changes.
     AiChat {
-        chat: koru_ai_ui::ChatId,
+        /// The picked chats, in list order.
+        chats: Vec<koru_ai_ui::ChatId>,
     },
     /// A schedule row or one of its metadata rows, captured by stable id.
     AgentSchedules {
@@ -618,6 +619,8 @@ thread_local! {
     /// than one counts them, so the menu says what it will do before it is
     /// pressed rather than in the dialog afterwards.
     static RUN_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
+    /// The same for *Delete chat*: how many chats the menu is about.
+    static CHAT_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
     /// What the run whose pill was right-clicked has produced — one title per
     /// row, snapshotted when the menu opens for `SESSION_PROJECT_NAMES`'
     /// reason and one more: a run that is still working registers results
@@ -762,6 +765,11 @@ pub fn set_session_project_names(names: Vec<(ProjectId, String)>) {
 /// Snapshot why *Delete run* is refused for the runs the menu is about.
 pub fn set_run_delete_refusal(reason: Option<&'static str>) {
     RUN_DELETE_REFUSAL.with(|cell| *cell.borrow_mut() = reason);
+}
+
+/// Snapshot how many chats *Delete chat* is about, so the row can count them.
+pub fn set_chat_delete_count(count: usize) {
+    CHAT_DELETE_COUNT.with(|cell| *cell.borrow_mut() = count.max(1));
 }
 
 /// Snapshot how many runs *Delete run* is about, so the row can count them.
@@ -945,9 +953,16 @@ impl MenuAction {
                 ));
             }
             MenuAction::DeleteAiChat => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::ChatsDelete,
+                let lang = crate::format::lang();
+                let count = CHAT_DELETE_COUNT.with(|cell| *cell.borrow());
+                if count <= 1 {
+                    return Cow::Borrowed(koru_i18n::t(lang, koru_i18n::Key::ChatsDelete));
+                }
+                // The row says how many, the way *Delete run* does (the
+                // CTO's note: delete several chats as several documents).
+                return Cow::Owned(koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                    &[&koru_i18n::number::decimal(lang, count as u64)],
                 ));
             }
             MenuAction::DeleteRun => {
@@ -1255,7 +1270,7 @@ impl MenuAction {
                 Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => Some(glyph),
                 _ => None,
             },
-            MenuAction::NewAiChat => Some(koru_draw::icons::SPARKLE),
+            MenuAction::NewAiChat => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
             MenuAction::ImportAs => Some(koru_draw::icons::IMPORT),
@@ -1264,7 +1279,7 @@ impl MenuAction {
             MenuAction::Delegate | MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
             // A result is a document, and it opens as one.
             MenuAction::OpenRunResult(_) => Some(koru_draw::icons::FILE),
-            MenuAction::Chats => Some(koru_draw::icons::SPARKLE),
+            MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
             // The help popover's rows, as the artboard draws them.

@@ -6583,26 +6583,55 @@ fn a_press_in_the_chats_view_is_reported_as_what_it_asks_for() {
     let a = area();
     let top = view.rows_top(a);
     let rows = view.chats_mut().layout(a, top);
-    let (_, new_rect) = rows[0];
     let (_, newest) = rows
         .iter()
         .copied()
         .find(|(row, _)| *row == koru_chats_ui::Row::Chat(0))
         .unwrap();
+    let (_, oldest) = rows
+        .iter()
+        .copied()
+        .find(|(row, _)| *row == koru_chats_ui::Row::Chat(1))
+        .unwrap();
     let newer = koru_chats_ui::ChatId::from_uuid(uuid::Uuid::from_u128(2));
+    let older = koru_chats_ui::ChatId::from_uuid(uuid::Uuid::from_u128(1));
     assert_eq!(
         view.mouse_down(a, (1200.0, 800.0), a.x + 60.0, newest.y + 6.0, false),
         Outcome::OpenAiChat(newer)
     );
+    // *New chat* is the heading's button now (the CTO's note), where the
+    // library's `…` sits.
+    let button = view.actions_button(a);
+    assert!(button.w > 0.0, "the Chats heading has its button");
+    let (bx, by) = button.centre();
     assert_eq!(
-        view.mouse_down(a, (1200.0, 800.0), a.x + 60.0, new_rect.y + 6.0, false),
+        view.mouse_down(a, (1200.0, 800.0), bx, by, false),
         Outcome::NewAiChat
     );
     assert_eq!(
         view.context_menu(a, a.x + 60.0, newest.y + 6.0),
         Outcome::AiChatMenu {
-            chat: newer,
+            chats: vec![newer],
             at: (a.x + 60.0, newest.y + 6.0)
+        }
+    );
+    // Shift+click extends the pick; the menu on a picked row is about the
+    // pick, in list order (the CTO's note).
+    view.mouse_down_with(
+        a,
+        (1200.0, 800.0),
+        a.x + 60.0,
+        oldest.y + 6.0,
+        PressMods {
+            shift: true,
+            ..PressMods::default()
+        },
+    );
+    assert_eq!(
+        view.context_menu(a, a.x + 60.0, oldest.y + 6.0),
+        Outcome::AiChatMenu {
+            chats: vec![newer, older],
+            at: (a.x + 60.0, oldest.y + 6.0)
         }
     );
 }
@@ -6627,7 +6656,7 @@ fn the_chats_view_keeps_the_interaction_contract() {
     );
     assert_eq!(
         view.nav_key(a, &Key::Named(NamedKey::Delete)),
-        Some(Outcome::DeleteAiChat(older))
+        Some(Outcome::DeleteAiChats(vec![older]))
     );
     assert!(view.nav_key(a, &Key::Character("a".into())).is_none());
     assert!(view.nav_key(a, &Key::Named(NamedKey::Tab)).is_none());
@@ -6651,9 +6680,9 @@ fn reveal_chat_shows_the_view_with_the_chat_focused() {
     assert!(view.has_focus());
 }
 
-/// The accessibility projection: a list named *Chats*, *New chat* first, and
-/// one row per chat named by title, who answered and time, with a Delete
-/// button under it.
+/// The accessibility projection: a list named *Chats* with one row per chat
+/// named by title, who answered and time, with a Delete button under it —
+/// and *New chat* as the heading's button beside the list (the CTO's note).
 #[test]
 fn the_chats_view_publishes_a_row_per_chat_with_open_and_delete() {
     let view = showing_chats(vec![a_chat(1, "Release notes", 1_000)]);
@@ -6672,9 +6701,20 @@ fn the_chats_view_publishes_a_row_per_chat_with_open_and_delete() {
         .find(|node| node.role == accesskit::Role::List)
         .expect("the Chats view publishes a list");
     assert_eq!(list.label.as_deref(), Some("Chats"));
-    assert_eq!(list.children.len(), 2, "New chat, then the one chat");
-    assert_eq!(list.children[0].label.as_deref(), Some("New chat"));
-    let row = &list.children[1];
+    assert_eq!(
+        list.children.len(),
+        1,
+        "the one chat; New chat is the heading's"
+    );
+    assert!(
+        column
+            .children
+            .iter()
+            .any(|node| node.role == accesskit::Role::Button
+                && node.label.as_deref() == Some("New chat")),
+        "the heading's New chat button is published"
+    );
+    let row = &list.children[0];
     assert_eq!(row.role, accesskit::Role::ListItem);
     let name = row.label.as_deref().unwrap_or_default();
     assert!(name.starts_with("Release notes, gpt-test, "), "{name}");

@@ -99,11 +99,11 @@ pub(super) enum ConfirmSubject {
     /// session, since the person may have switched tabs while the dialog stood
     /// open. Distinct from closing a tab (detach) and a process ending itself.
     TerminateSession(koru_session_protocol::SessionId),
-    /// **A chat in the Chats navigator** (AGENTUX I5). A yes hands the delete
-    /// to the Chats view, which sends it and keeps the row, with a sentence
-    /// under it, if the service refuses — a chat whose agent could not be
-    /// stopped is not gone (UC13).
-    DeleteChat(koru_ai_ui::ChatId),
+    /// **Chats in the Chats navigator** (AGENTUX I5) — one, or the pick. A
+    /// yes hands each delete to the Chats view, which sends it and keeps the
+    /// row, with a sentence under it, if the service refuses — a chat whose
+    /// agent could not be stopped is not gone (UC13).
+    DeleteChats(Vec<koru_ai_ui::ChatId>),
 }
 
 /// More nested documents than this and the deletion is confirmed first.
@@ -791,7 +791,11 @@ impl MainView {
                     koru_workspace_host::spelling::SpellEdit::ClearPersonal,
                 );
             }
-            ConfirmSubject::DeleteChat(chat) => self.explore.chats_mut().delete(chat),
+            ConfirmSubject::DeleteChats(chats) => {
+                for chat in chats {
+                    self.explore.chats_mut().delete(chat);
+                }
+            }
         }
         true
     }

@@ -173,30 +173,20 @@ fn every_line_fits_its_row_in_every_language_at_a_narrow_width() {
             narrow,
             TOP,
         );
-        assert!(surface.work().layouts >= 6, "{}", lang.tag());
+        // Two titles and the note under the refused one: the second line
+        // left the row (the CTO's note).
+        assert!(surface.work().layouts >= 3, "{}", lang.tag());
         for (row, rect) in surface.rows(narrow, TOP) {
             let parts = surface.row_parts(row, rect);
             assert!(parts.title.x + parts.title.w <= narrow.x + narrow.w);
             let lines: Vec<(String, Rect, koru_draw::theme::TextStyle)> = match row {
-                Row::New => vec![(
-                    t(lang, Key::ChatsNew).to_owned(),
-                    parts.title,
-                    koru_draw::theme::role::row(),
-                )],
                 Row::Chat(index) => {
                     let chat = &surface.chats()[index];
-                    vec![
-                        (
-                            crate::text::title(lang, chat).to_owned(),
-                            parts.title,
-                            koru_draw::theme::role::row(),
-                        ),
-                        (
-                            crate::text::meta_line(lang, chat, surface.agents(), NOW),
-                            parts.meta,
-                            koru_draw::theme::role::meta(),
-                        ),
-                    ]
+                    vec![(
+                        crate::text::title(lang, chat).to_owned(),
+                        parts.title,
+                        koru_draw::theme::role::row(),
+                    )]
                 }
                 Row::Note(_) => vec![(
                     t(lang, Key::ChatsRefusedAgent).to_owned(),

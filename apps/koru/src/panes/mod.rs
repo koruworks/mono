@@ -129,11 +129,13 @@ pub enum Outcome {
     /// The Delete key on a chat row. **Nothing is deleted yet**: the
     /// container asks through its confirmation and, on yes, the Chats
     /// surface sends the delete itself.
-    DeleteAiChat(koru_chats_ui::ChatId),
+    DeleteAiChats(Vec<koru_chats_ui::ChatId>),
     /// A right-click on a chat row. The pane reports which chat; the
     /// container builds the menu, whose one verb is *Delete chat*.
     AiChatMenu {
-        chat: koru_chats_ui::ChatId,
+        /// The picked chats, in list order — one, or a multi-selection (the
+        /// CTO's note: delete several as several documents).
+        chats: Vec<koru_chats_ui::ChatId>,
         at: (f32, f32),
     },
     /// A right-click in the Agents navigator. `Some` is a project row's menu

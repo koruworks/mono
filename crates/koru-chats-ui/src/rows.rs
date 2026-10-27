@@ -16,15 +16,19 @@ use koru_draw::theme;
 
 use crate::{ChatsSurface, Focus, Load};
 
-/// A chat row: the title on one line, who answered and when on the next.
-pub(crate) const CHAT_H: f32 = 40.0;
+/// A chat row: its title on one line, the library row's height, so the list
+/// reads at the Documents list's pitch (the CTO's note). Who answered and
+/// when left the row; the accessible name still says it.
+pub(crate) const CHAT_H: f32 = theme::NAV_ROW_H;
 /// A sentence under a row — *Deleting…*, or why a delete was refused.
 const NOTE_H: f32 = 17.0;
-/// Air between *New chat* and the first chat.
-const NEW_GAP: f32 = 4.0;
-/// The leading lane: *New chat*'s plus, a private chat's mark, and nothing
-/// for the rest — reserved on every row, so every label starts on one line.
-const LEAD_W: f32 = 16.0;
+/// Air above a notice.
+const NOTICE_GAP: f32 = 4.0;
+/// A private chat's mark, left of its title in the slot a page icon takes —
+/// only on a private row, so every other title starts at the pad, as a
+/// Documents label starts after its icon (the CTO's note).
+const LEAD_W: f32 = koru_shell_chrome::PAGE_ICON_SLOT;
+const LEAD_GAP: f32 = 4.0;
 /// Air under the last row, so the list does not end flush against the edge.
 pub(crate) const FOOTER_PAD: f32 = 8.0;
 
@@ -42,8 +46,6 @@ pub enum Notice {
 /// held by id on the surface.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Row {
-    /// *New chat*, at the head of the list.
-    New,
     Notice(Notice),
     Chat(usize),
     /// The line under a chat whose delete is being sent or was refused.
@@ -53,12 +55,11 @@ pub enum Row {
 impl Row {
     /// Whether the keyboard and the pointer can choose this row.
     pub fn pressable(&self) -> bool {
-        matches!(self, Self::New | Self::Chat(_))
+        matches!(self, Self::Chat(_))
     }
 
     fn height(&self) -> f32 {
         match self {
-            Self::New => theme::NAV_ROW_H,
             Self::Chat(_) => CHAT_H,
             Self::Note(_) => NOTE_H,
             Self::Notice(_) => NOTE_H * 2.0,
@@ -67,7 +68,7 @@ impl Row {
 
     fn gap_above(&self) -> f32 {
         match self {
-            Self::Chat(0) | Self::Notice(_) => NEW_GAP,
+            Self::Notice(_) => NOTICE_GAP,
             _ => 0.0,
         }
     }
@@ -76,12 +77,10 @@ impl Row {
 /// Every rect inside a row. See [`ChatsSurface::row_parts`].
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct RowParts {
-    /// The leading lane. Reserved always.
+    /// A private chat's mark. Zero-width on every other row.
     pub lead: Rect,
-    /// The title — *New chat*'s label, a chat's title, a note's sentence.
+    /// The title — a chat's title, a note's sentence.
     pub title: Rect,
-    /// Who answered and when. Zero-height on every row but a chat.
-    pub meta: Rect,
 }
 
 impl ChatsSurface {
@@ -110,7 +109,7 @@ impl ChatsSurface {
 
     /// The rows, with nothing said about where they are.
     fn plan(&self) -> Vec<Row> {
-        let mut plan = vec![Row::New];
+        let mut plan = Vec::new();
         match self.load {
             Load::Cold | Load::Loading if self.chats.is_empty() => {
                 plan.push(Row::Notice(Notice::Loading));
@@ -154,47 +153,37 @@ impl ChatsSurface {
             .collect()
     }
 
-    /// Every rect inside a row, from the row's own rect alone.
+    /// Every rect inside a row: the full width inside the pad, the way a
+    /// Documents row is laid, with the private mark's slot taken only on a
+    /// private row.
     pub fn row_parts(&self, row: Row, r: Rect) -> RowParts {
         let inner_x = r.x + theme::NAV_PAD;
         let inner_w = (r.w - theme::NAV_PAD * 2.0).max(0.0);
-        let lead = Rect::new(inner_x, r.y, LEAD_W.min(inner_w), theme::NAV_ROW_H);
-        let text_x = inner_x + LEAD_W + 6.0;
+        let private = match row {
+            Row::Chat(index) => self.chats.get(index).is_some_and(|chat| chat.private),
+            _ => false,
+        };
+        let lead_w = if private { LEAD_W.min(inner_w) } else { 0.0 };
+        let lead = Rect::new(inner_x, r.y, lead_w, r.h);
+        let text_x = if private {
+            inner_x + lead_w + LEAD_GAP
+        } else {
+            inner_x
+        };
         let text_w = (inner_x + inner_w - text_x).max(0.0);
-        match row {
-            Row::Chat(_) => {
-                let title_h = theme::NAV_ROW_H - 2.0;
-                let title = Rect::new(text_x, r.y + 2.0, text_w, title_h);
-                let meta = Rect::new(
-                    text_x,
-                    title.y + title.h,
-                    text_w,
-                    (r.h - title_h - 4.0).max(0.0),
-                );
-                RowParts {
-                    lead: Rect::new(lead.x, title.y, lead.w, title.h),
-                    title,
-                    meta,
-                }
-            }
-            _ => RowParts {
-                lead: Rect::new(lead.x, r.y, lead.w, r.h),
-                title: Rect::new(text_x, r.y, text_w, r.h),
-                meta: Rect::new(text_x, r.y + r.h, text_w, 0.0),
-            },
+        RowParts {
+            lead,
+            title: Rect::new(text_x, r.y, text_w, r.h),
         }
     }
 
     /// The row the keyboard is on, if it is on one that exists.
     pub(crate) fn focus_row(&self) -> Option<Row> {
-        match self.focus? {
-            Focus::New => Some(Row::New),
-            Focus::Chat(id) => self
-                .chats
-                .iter()
-                .position(|chat| chat.id == id)
-                .map(Row::Chat),
-        }
+        let Focus::Chat(id) = self.focus?;
+        self.chats
+            .iter()
+            .position(|chat| chat.id == id)
+            .map(Row::Chat)
     }
 
     /// How tall the list is at this width, unscrolled.
@@ -244,13 +233,6 @@ impl ChatsSurface {
         self.rows(area, top)
             .into_iter()
             .find(|(_, r)| y >= r.y && y < r.y + r.h)
-    }
-
-    /// Where *New chat* sits, unculled — for the accessibility projection.
-    pub fn new_chat_rect(&self, area: Rect, top: f32) -> Option<Rect> {
-        self.layout(area, top)
-            .into_iter()
-            .find_map(|(row, rect)| (row == Row::New).then_some(rect))
     }
 
     /// Every chat and where its row sits, unculled and in order — what a

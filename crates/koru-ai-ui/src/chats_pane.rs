@@ -208,8 +208,8 @@ impl ChatSurface {
             return Some(true);
         }
         let (area, top) = self.chats_area();
-        if let Some(chat) = self.chats_pane.context_menu(area, top, x, y) {
-            self.open_confirmation(DestructiveAction::DeleteChat(chat));
+        if let Some(chats) = self.chats_pane.context_menu(area, top, x, y) {
+            self.open_confirmation(DestructiveAction::DeleteChats(chats));
         }
         Some(true)
     }
@@ -252,8 +252,9 @@ impl ChatSurface {
             self.create_chat();
             changed = true;
         }
-        if let Some(chat) = self.chats_pane.take_wants_delete() {
-            self.open_confirmation(DestructiveAction::DeleteChat(chat));
+        let asked = self.chats_pane.take_wants_delete();
+        if !asked.is_empty() {
+            self.open_confirmation(DestructiveAction::DeleteChats(asked));
             changed = true;
         }
         changed
@@ -356,6 +357,12 @@ mod tests {
     #[test]
     fn the_standalone_window_opens_the_pane_and_escape_closes_it() {
         let mut surface = ready(SurfaceMode::Standalone);
+        // A list with a row to land on: *New chat* left the list for the
+        // heading, so an empty one has nowhere for the keyboard to enter.
+        surface.chats_pane.take_listing(Ok(koru_chats_ui::Listing {
+            chats: vec![chat("One")],
+            agents: Vec::new(),
+        }));
         assert!(press_chats(&mut surface));
         assert!(surface.history_open);
         assert!(!surface.take_wants_chats_view());

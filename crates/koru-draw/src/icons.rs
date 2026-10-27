@@ -285,6 +285,11 @@ pub const CIRCLE_NOTCH: char = '\u{EB44}';
 pub const LIST_CHECKS: char = '\u{EADC}';
 /// Comments and threads — `ph-chat-circle`
 pub const CHAT_CIRCLE: char = '\u{E168}';
+/// The Chats view — `ph-chats-circle`: two bubbles, the CTO's pick for the
+/// rail's square, the chat tab and the menu rows that lead there.
+pub const CHATS_CIRCLE: char = '\u{E17E}';
+/// Compose — `ph-note-pencil`: the Chats heading's *New chat* button.
+pub const NOTE_PENCIL: char = '\u{E34C}';
 /// Send feedback — `ph-user-sound`. A person with sound waves; the same
 /// glyph the overflow menu and the Feedback tab share.
 pub const USER_SOUND: char = '\u{ECA8}';
@@ -531,7 +536,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 133] = [
+pub const ALL: [(&str, char); 135] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -605,6 +610,8 @@ pub const ALL: [(&str, char); 133] = [
     ("CIRCLE_NOTCH", CIRCLE_NOTCH),
     ("LIST_CHECKS", LIST_CHECKS),
     ("CHAT_CIRCLE", CHAT_CIRCLE),
+    ("CHATS_CIRCLE", CHATS_CIRCLE),
+    ("NOTE_PENCIL", NOTE_PENCIL),
     ("USER_SOUND", USER_SOUND),
     ("HEADSET", HEADSET),
     ("QUESTION", QUESTION),

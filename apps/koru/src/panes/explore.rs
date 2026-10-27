@@ -1126,8 +1126,9 @@ impl ExploreView {
         if self.chats.take_wants_new() {
             return Outcome::NewAiChat;
         }
-        if let Some(chat) = self.chats.take_wants_delete() {
-            return Outcome::DeleteAiChat(chat);
+        let chats = self.chats.take_wants_delete();
+        if !chats.is_empty() {
+            return Outcome::DeleteAiChats(chats);
         }
         Outcome::Consumed
     }
@@ -4125,14 +4126,16 @@ impl ExploreView {
         Rect::new(x, band.y, (right - x).max(0.0), band.h)
     }
 
-    /// The library heading's compact actions button. It yields instead of
-    /// overlapping the mode selectors while a narrow pane is animating.
+    /// The heading's trailing button: the library's compact `…` in a mode
+    /// with actions, *New chat* in the Chats view (the CTO's note). It
+    /// yields instead of overlapping the title while a narrow pane is
+    /// animating.
     fn actions_button(&self, area: Rect) -> Rect {
         let band = self.heading_band(area);
         // A mode with no actions has no button — a zero-width rect, the same
         // idiom a collapsed column and a hidden context toggle both use, so the
         // search icon takes the room back with no second code path.
-        if actions::available(self.mode).is_empty() {
+        if actions::available(self.mode).is_empty() && self.mode != NavigatorMode::Chats {
             return Rect::new(band.x + band.w, band.y, 0.0, band.h);
         }
         actions::button(band, self.modes_right(area))
@@ -4778,6 +4781,11 @@ impl ExploreView {
         }
 
         if self.actions_at(area, x, y) {
+            // The Chats heading's button is *New chat* (the CTO's note), not
+            // a menu: the row that was at the list's head moved up here.
+            if self.mode == NavigatorMode::Chats {
+                return Outcome::NewAiChat;
+            }
             self.toggle_popover(PopoverKind::LibraryActions);
             return Outcome::Consumed;
         }
@@ -4810,7 +4818,7 @@ impl ExploreView {
         // reports what it cannot do itself.
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            self.chats.mouse_down(area, top, x, y);
+            self.chats.mouse_down_with(area, top, x, y, ctrl, shift);
             return self.chats_outcome();
         }
 
@@ -5240,7 +5248,7 @@ impl ExploreView {
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
             return match self.chats.context_menu(area, top, x, y) {
-                Some(chat) => Outcome::AiChatMenu { chat, at: (x, y) },
+                Some(chats) => Outcome::AiChatMenu { chats, at: (x, y) },
                 None => Outcome::Consumed,
             };
         }
@@ -6736,7 +6744,26 @@ impl ExploreView {
                 let fitted = engine.elided(self.mode.label(), style, title.w);
                 draw_middle(scene, root, engine, &fitted, title, style, p.text);
             }
-            actions::draw_button(scene, root, self.actions_button(area), self.actions_hover);
+            if self.mode == NavigatorMode::Chats {
+                // *New chat*, a compose mark where the library's `…` sits.
+                let button = self.actions_button(area);
+                if button.w > 0.0 {
+                    draw_icon(
+                        scene,
+                        root,
+                        engine,
+                        icons::NOTE_PENCIL,
+                        button,
+                        if self.actions_hover {
+                            p.text
+                        } else {
+                            p.text_dim
+                        },
+                    );
+                }
+            } else {
+                actions::draw_button(scene, root, self.actions_button(area), self.actions_hover);
+            }
         }
         if area.w > 0.0 {
             let top = self.rows_top(area);

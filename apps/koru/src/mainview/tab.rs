@@ -334,7 +334,7 @@ impl TabView {
             Self::Reminders(_) => Some(koru_draw::icons::BELL),
             Self::Feedback(_) => Some(koru_draw::icons::USER_SOUND),
             Self::Diff(_) => Some(crate::diff::tab_icon()),
-            Self::AiChat(_) => Some(koru_draw::icons::SPARKLE),
+            Self::AiChat(_) => Some(koru_draw::icons::CHATS_CIRCLE),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
             // glyph: the label names it, and the glyph says it is not a page.

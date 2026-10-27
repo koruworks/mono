@@ -6,12 +6,12 @@
 //! [`ChatsSurface::row_parts`] — the functions the hit test uses — and the
 //! draw is clipped to the same band, so a row cannot be drawn anywhere other
 //! than where it is pressable. A title that will not fit is **elided, not
-//! wrapped**: a row is two lines tall and stays two lines tall.
+//! wrapped**: a row is one line tall and stays one line tall.
 //!
-//! **The library's treatments, one column over**: the open chat wears the
-//! card, the pointer's row the hover tint, the keyboard's row the ring — and a
-//! title is dim at rest and full-strength on the card, so the list does not
-//! tell the same story in two greys.
+//! **The library's treatments, one column over**: the open chat and the
+//! picked ones wear the card, the pointer's row the hover tint, the
+//! keyboard's row the ring — and a title is dim at rest and full-strength on
+//! the card, so the list does not tell the same story in two greys.
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
@@ -27,8 +27,9 @@ use crate::{ChatsSurface, Deleting};
 
 /// The icon the navigator's mode row draws for this view. The same mark the
 /// `+` menu's *Chats* row and an AI chat tab wear, so the three places a
-/// chat is reached from agree about what one looks like.
-pub const MODE_ICON: char = icons::SPARKLE;
+/// chat is reached from agree about what one looks like — two bubbles (the
+/// CTO's pick: `chats-circle`).
+pub const MODE_ICON: char = icons::CHATS_CIRCLE;
 
 impl ChatsSurface {
     /// The whole list below its host's heading, from `top` down to the
@@ -107,18 +108,6 @@ impl ChatsSurface {
             );
         }
         match row {
-            Row::New => {
-                draw_icon(scene, root, engine, icons::PLUS, parts.lead, p.accent);
-                self.line(
-                    scene,
-                    root,
-                    engine,
-                    parts.title,
-                    t(lang, Key::ChatsNew),
-                    theme::role::row(),
-                    p.accent,
-                );
-            }
             Row::Notice(notice) => {
                 let key = match notice {
                     Notice::Loading => Key::ChatsLoading,
@@ -146,22 +135,17 @@ impl ChatsSurface {
                 };
                 let private = chat.private;
                 let title = crate::text::title(lang, chat).to_owned();
-                let meta = crate::text::meta_line(lang, chat, &self.agents, self.now_ms);
-                if private {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        icons::DETECTIVE,
-                        parts.lead,
-                        p.text_dim,
-                    );
-                }
                 let ink = if treatment == "Card" {
                     p.text
                 } else {
                     p.text_dim
                 };
+                // The private mark left of the title, in a page icon's slot
+                // (the CTO's note). Who answered and when is the accessible
+                // name's, not the row's.
+                if private && parts.lead.w > 0.0 {
+                    draw_icon(scene, root, engine, icons::DETECTIVE, parts.lead, ink);
+                }
                 self.line(
                     scene,
                     root,
@@ -170,15 +154,6 @@ impl ChatsSurface {
                     &title,
                     theme::role::row(),
                     ink,
-                );
-                self.line(
-                    scene,
-                    root,
-                    engine,
-                    parts.meta,
-                    &meta,
-                    theme::role::meta(),
-                    p.text_dim,
                 );
             }
             Row::Note(index) => {
@@ -206,13 +181,15 @@ impl ChatsSurface {
         }
     }
 
-    /// What a row is wearing, in the library's vocabulary.
+    /// What a row is wearing, in the library's vocabulary. Open **or**
+    /// picked wear the card — one treatment, as the library's rows: a
+    /// multi-selection and the chat you have open are the same claim.
     fn row_treatment(&self, row: Row) -> &'static str {
         let open = match row {
             Row::Chat(index) => self
                 .chats
                 .get(index)
-                .is_some_and(|chat| self.current == Some(chat.id)),
+                .is_some_and(|chat| self.current == Some(chat.id) || self.is_selected(chat.id)),
             _ => false,
         };
         if open {

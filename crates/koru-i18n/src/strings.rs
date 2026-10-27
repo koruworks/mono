@@ -2444,13 +2444,17 @@ pub enum Key {
     /// The help popover's rows and its card's button (the CTO's artboard).
     SendFeedback,
     Download,
+    /// The Chats view's *Delete chat* over a selection: the menu row, and
+    /// the confirmation's sentence (the CTO's note).
+    ChatsDeleteMany,
+    ChatsDeleteManyBody,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1677] = [
+    pub const ALL: [Key; 1679] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4128,6 +4132,8 @@ impl Key {
         Key::NewProfile,
         Key::SendFeedback,
         Key::Download,
+        Key::ChatsDeleteMany,
+        Key::ChatsDeleteManyBody,
     ];
 }
 
@@ -12573,4 +12579,16 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::NewProfile, en: "New profile", es: "Nuevo perfil", pt_br: "Novo perfil", de: "Neues Profil", fr: "Nouveau profil", ar: "ملف تعريف جديد", zh_hans: "新建配置文件", ja: "新しいプロファイル" },
     Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
     Row { key: Key::Download, en: "Download", es: "Descargar", pt_br: "Baixar", de: "Herunterladen", fr: "Télécharger", ar: "تنزيل", zh_hans: "下载", ja: "ダウンロード" },
+    Row { key: Key::ChatsDeleteMany, en: "Delete {} chats", es: "Eliminar {} chats", pt_br: "Excluir {} chats", de: "{} Chats löschen", fr: "Supprimer {} discussions", ar: "حذف {} محادثات", zh_hans: "删除 {} 个聊天", ja: "{} 件のチャットを削除" },
+    Row {
+        key: Key::ChatsDeleteManyBody,
+        en: "{} chats and their messages will be removed. If a local agent answers any of them, Koru stops the agent first.",
+        es: "Se eliminarán {} chats y sus mensajes. Si un agente local responde en alguno, Koru detiene primero el agente.",
+        pt_br: "{} chats e suas mensagens serão removidos. Se um agente local responde em algum deles, o Koru para o agente primeiro.",
+        de: "{} Chats und ihre Nachrichten werden entfernt. Antwortet ein lokaler Agent in einem davon, beendet Koru ihn zuerst.",
+        fr: "{} discussions et leurs messages seront supprimés. Si un agent local répond dans l’une d’elles, Koru l’arrête d’abord.",
+        ar: "ستتم إزالة {} محادثات ورسائلها. إذا كان وكيل محلي يجيب في أي منها، يوقفه Koru أولًا.",
+        zh_hans: "{} 个聊天及其消息将被删除。如果有本地智能体在其中任一聊天中回答，Koru 会先停止该智能体。",
+        ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
+    },
 ];

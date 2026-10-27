@@ -188,9 +188,10 @@ enum SetupProvider {
     Agents,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum DestructiveAction {
-    DeleteChat(ChatId),
+    /// One chat, or the pane's pick (the CTO's note: several at once).
+    DeleteChats(Vec<ChatId>),
     ClearHistory,
     ClearUsage,
 }
@@ -1910,11 +1911,16 @@ impl ChatSurface {
     }
 
     fn open_confirmation(&mut self, action: DestructiveAction) {
-        let (title, body, label) = match action {
-            DestructiveAction::DeleteChat(_) => (
+        let (title, body, label) = match &action {
+            DestructiveAction::DeleteChats(chats) if chats.len() <= 1 => (
                 "Delete this chat?",
                 "Its messages and search results will be removed. Anonymous usage and feedback totals remain.",
                 "Delete chat",
+            ),
+            DestructiveAction::DeleteChats(_) => (
+                "Delete these chats?",
+                "Their messages and search results will be removed. Anonymous usage and feedback totals remain.",
+                "Delete chats",
             ),
             DestructiveAction::ClearHistory => (
                 "Clear all chat history?",
@@ -1950,9 +1956,11 @@ impl ChatSurface {
                     // The pane stays open when it asked: the row leaves it
                     // once the list is asked again, and a refusal is said on
                     // the status line.
-                    DestructiveAction::DeleteChat(chat) => {
-                        self.send_command(Command::DeleteChat(chat))
-                    }
+                    DestructiveAction::DeleteChats(chats) => chats
+                        .into_iter()
+                        .map(|chat| self.send_command(Command::DeleteChat(chat)))
+                        .last()
+                        .unwrap_or_default(),
                     DestructiveAction::ClearHistory => {
                         self.setup_open = false;
                         self.send_command(Command::ClearHistory)

@@ -141,11 +141,11 @@ pub struct Listing {
 }
 
 /// Where the keyboard is. An id rather than a row index, so a refresh that
-/// reorders the list does not move the keyboard to another chat.
+/// reorders the list does not move the keyboard to another chat. One
+/// variant since *New chat* left the list for the heading's button (the
+/// CTO's note); kept as an enum so a host's match reads the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Focus {
-    /// The *New chat* row at the head of the list.
-    New,
     Chat(ChatId),
 }
 
@@ -184,7 +184,14 @@ pub struct ChatsSurface {
     pub(crate) reveal_owed: bool,
     pub(crate) wants_open: Option<ChatId>,
     pub(crate) wants_new: bool,
-    pub(crate) wants_delete: Option<ChatId>,
+    /// The chats a delete was asked for — one, or the selection.
+    pub(crate) wants_delete: Vec<ChatId>,
+    /// **The picked chats**, the library's multi-selection one column over
+    /// (the CTO's note): a plain press picks one, Ctrl toggles, Shift
+    /// extends from the anchor, and a right-click on a picked row raises
+    /// the menu about all of them. Kept as ids; read in list order.
+    pub(crate) selection: Vec<ChatId>,
+    pub(crate) anchor: Option<ChatId>,
     pub(crate) deleted: Vec<ChatId>,
     pub(crate) scroll: f32,
     pub(crate) work: Work,
@@ -240,7 +247,9 @@ impl ChatsSurface {
             reveal_owed: false,
             wants_open: None,
             wants_new: false,
-            wants_delete: None,
+            wants_delete: Vec::new(),
+            selection: Vec::new(),
+            anchor: None,
             deleted: Vec::new(),
             scroll: 0.0,
             work: Work::default(),
@@ -417,9 +426,9 @@ impl ChatsSurface {
 
     /// Replace the rows, newest first, keeping the keyboard on the same chat
     /// — or, when that chat has gone, on **its neighbour**: the chat that took
-    /// its place, else the one above it, else *New chat*. A list that dropped
+    /// its place, else the one above it, else nowhere. A list that dropped
     /// the keyboard on a delete would send a keyboard-only person back to the
-    /// top of it.
+    /// top of it. The selection keeps what is still listed.
     fn replace_chats(&mut self, mut chats: Vec<Chat>) {
         chats.sort_by(|a, b| b.updated_at.millis().cmp(&a.updated_at.millis()));
         if let Some(Focus::Chat(focused)) = self.focus
@@ -430,11 +439,18 @@ impl ChatsSurface {
                 .iter()
                 .position(|chat| chat.id == focused)
                 .unwrap_or(0);
-            self.focus = Some(match chats.get(was.min(chats.len().saturating_sub(1))) {
-                Some(neighbour) => Focus::Chat(neighbour.id),
-                None => Focus::New,
-            });
+            self.focus = chats
+                .get(was.min(chats.len().saturating_sub(1)))
+                .map(|neighbour| Focus::Chat(neighbour.id));
             self.reveal_owed = true;
+        }
+        self.selection
+            .retain(|picked| chats.iter().any(|chat| chat.id == *picked));
+        if self
+            .anchor
+            .is_some_and(|anchor| !chats.iter().any(|chat| chat.id == anchor))
+        {
+            self.anchor = None;
         }
         self.chats = chats;
         // The rows moved under the pointer; an index into them means
@@ -467,10 +483,56 @@ impl ChatsSurface {
         std::mem::take(&mut self.wants_new)
     }
 
-    /// A chat the person asked to delete. **Nothing is deleted yet**: the host
-    /// asks in its own confirmation and calls [`delete`](Self::delete) on yes.
-    pub fn take_wants_delete(&mut self) -> Option<ChatId> {
-        self.wants_delete.take()
+    /// The chats the person asked to delete — one, or the selection; empty
+    /// most of the time. **Nothing is deleted yet**: the host asks in its own
+    /// confirmation and calls [`delete`](Self::delete) for each on yes.
+    pub fn take_wants_delete(&mut self) -> Vec<ChatId> {
+        std::mem::take(&mut self.wants_delete)
+    }
+
+    /// The picked chats, in list order.
+    pub fn selected(&self) -> Vec<ChatId> {
+        self.chats
+            .iter()
+            .map(|chat| chat.id)
+            .filter(|chat| self.selection.contains(chat))
+            .collect()
+    }
+
+    pub fn is_selected(&self, chat: ChatId) -> bool {
+        self.selection.contains(&chat)
+    }
+
+    /// Pick `chat` alone, and anchor a later Shift there.
+    pub fn select_only(&mut self, chat: ChatId) {
+        if self.chats.iter().any(|candidate| candidate.id == chat) {
+            self.selection = vec![chat];
+            self.anchor = Some(chat);
+            self.focus = Some(Focus::Chat(chat));
+        }
+    }
+
+    /// Ctrl+click: in or out of the pick, and the anchor moves here.
+    pub(crate) fn toggle_selected(&mut self, chat: ChatId) {
+        if let Some(at) = self.selection.iter().position(|picked| *picked == chat) {
+            self.selection.remove(at);
+        } else {
+            self.selection.push(chat);
+        }
+        self.anchor = Some(chat);
+        self.focus = Some(Focus::Chat(chat));
+    }
+
+    /// Shift+click: every chat between the anchor and `chat`, in list order.
+    pub(crate) fn select_through(&mut self, chat: ChatId) {
+        let index = |id: ChatId| self.chats.iter().position(|candidate| candidate.id == id);
+        let (Some(to), Some(from)) = (index(chat), self.anchor.and_then(index)) else {
+            self.select_only(chat);
+            return;
+        };
+        let (first, last) = if from <= to { (from, to) } else { (to, from) };
+        self.selection = self.chats[first..=last].iter().map(|c| c.id).collect();
+        self.focus = Some(Focus::Chat(chat));
     }
 
     /// Chats this surface deleted since the last call, so a host can close
@@ -488,17 +550,36 @@ impl ChatsSurface {
         }
     }
 
-    /// Ask to delete `chat` — the Delete key, the context menu and an
-    /// accessibility client's *Delete chat*.
+    /// Ask to delete `chat` alone — an accessibility client's *Delete chat*.
     pub fn ask_delete(&mut self, chat: ChatId) {
         if self.chats.iter().any(|candidate| candidate.id == chat) {
             self.focus = Some(Focus::Chat(chat));
-            self.wants_delete = Some(chat);
+            self.wants_delete = vec![chat];
         }
     }
 
+    /// Ask to delete what is picked — the Delete key and the context menu:
+    /// the selection when the chat under the keyboard is in it, else that
+    /// chat alone. `false` with nothing to delete.
+    pub fn ask_delete_selected(&mut self) -> bool {
+        let Some(Focus::Chat(focused)) = self.focus else {
+            return false;
+        };
+        let chats = if self.selection.contains(&focused) {
+            self.selected()
+        } else {
+            vec![focused]
+        };
+        if chats.is_empty() {
+            return false;
+        }
+        self.wants_delete = chats;
+        true
+    }
+
+    /// *New chat* was asked for — by the host's heading button, or an
+    /// accessibility client. The keyboard stays where it is.
     pub fn ask_new(&mut self) {
-        self.focus = Some(Focus::New);
         self.wants_new = true;
     }
 
