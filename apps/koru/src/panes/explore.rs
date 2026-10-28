@@ -7902,6 +7902,7 @@ fn label_for(node: &koru_core::node::Node, image_no: usize, code_no: usize) -> S
                 .to_string();
         }
         Kind::ListBlock => format!("List {image_no}"),
+        Kind::Callout => "Callout".to_string(),
         _ => {
             return node
                 .content

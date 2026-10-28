@@ -42,84 +42,71 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, ViewMode};
 use koru_draw::{ImageCache, icons};
 
-/// The callout heads whose box is drawn at row `i`: the head itself when `i`
-/// is a head row, and — on the first visible row only — every box that is
-/// open over `i` from a head above the window, outermost first so a nested
-/// box paints over the one around it.
-fn callout_heads_at(outline: &Body, i: usize, first_visible: bool) -> Vec<NodeId> {
-    let row = &outline.rows[i];
-    let Some(innermost) = row.callout else {
-        return Vec::new();
-    };
-    if !first_visible {
-        return if innermost == row.id {
-            vec![row.id]
-        } else {
-            Vec::new()
-        };
-    }
-    // The run of boxed rows ending at `i` holds every head that could be
-    // open over it; the ones whose span reaches `i` are.
-    let mut heads: Vec<NodeId> = (0..=i)
-        .rev()
-        .take_while(|&j| outline.rows[j].callout.is_some())
-        .map(|j| &outline.rows[j])
-        .filter(|row| row.kind == Kind::Callout && row.callout == Some(row.id))
-        .filter(|row| {
-            outline
-                .callout_span(row.id)
-                .is_some_and(|span| span.contains(&i))
-        })
-        .map(|row| row.id)
-        .collect();
-    heads.reverse();
-    heads
-}
-
-/// One callout box: the tinted panel from the head row through the last row
-/// of the box, and the icon beside the head's first line. Both come from the
-/// head — the box's look lives nowhere else.
-fn draw_callout_box(
+/// Every callout box with a row in `visible`: one tinted panel per container,
+/// from its first row through its last — a box that begins above the window
+/// still paints from its top, which the clip takes care of — and the icon
+/// beside the first row only. Both come from the box itself
+/// (`Body::callout_box`): the look lives on the container and nowhere else.
+///
+/// Painted before the rows, under everything they draw — a picture, a divider
+/// or a table inside the box is still inside it. Outermost first, so a box
+/// nested inside paints over the one around it.
+fn draw_callout_boxes(
     scene: &mut Scene,
     root: Affine,
     outline: &Body,
     engine: &mut TextEngine,
-    head: NodeId,
     scroll: f32,
     vw: f32,
+    visible: &Range<usize>,
 ) {
-    let Some(span) = outline.callout_span(head) else {
-        return;
-    };
-    let (first, last) = (&outline.rows[*span.start()], &outline.rows[*span.end()]);
-    let r = rowlayout::callout_panel_rect(first, first.y - scroll, last, last.y - scroll, vw);
-    let panel = rrect(r.x, r.y, r.w, r.h, 8.0);
-    let tint = koru_core::callout::tint_of(first.colour.as_deref());
-    let tone = theme::accent_tone(tint.map_or("yellow", |t| t.as_str()));
-    fill(
-        scene,
-        root,
-        tone.map_or(theme::p().code_bg, |t| t.fill),
-        &panel,
-    );
-    let slot = rowlayout::callout_icon_rect(first, first.y - scroll);
-    // No icon set draws the lightbulb glyph; a chosen one — the default emoji
-    // included — draws as the emoji itself.
-    let (layout, brush) = match first.icon.as_deref().filter(|icon| !icon.is_empty()) {
-        Some(icon) => (engine.emoji_layout(icon, slot.w), None),
-        None => (
-            engine.icon_layout(icons::LIGHTBULB, slot.w),
-            Some(tone.map_or(theme::p().text_dim, |t| t.ink)),
-        ),
-    };
-    draw_layout(
-        scene,
-        root,
-        &layout,
-        slot.x + (slot.w - layout.width()) * 0.5,
-        slot.y + (slot.h - layout.height()) * 0.5,
-        brush,
-    );
+    let mut boxes: Vec<&crate::body::CalloutBox> = outline
+        .callout_boxes()
+        // A box with no rows (its lines were just deleted and the model has
+        // not pruned it yet) has nothing to draw around.
+        .filter(|callout| {
+            !callout.rows.is_empty()
+                && callout.rows.start < visible.end
+                && callout.rows.end > visible.start
+        })
+        .collect();
+    // The box that starts first is outermost; of two starting on the same
+    // row, the one that reaches further down holds the other.
+    boxes.sort_by_key(|callout| (callout.rows.start, std::cmp::Reverse(callout.rows.end)));
+    for callout in boxes {
+        let (first, last) = (
+            &outline.rows[callout.rows.start],
+            &outline.rows[callout.rows.end - 1],
+        );
+        let r = rowlayout::callout_panel_rect(first, first.y - scroll, last, last.y - scroll, vw);
+        let panel = rrect(r.x, r.y, r.w, r.h, 8.0);
+        let tint = koru_core::callout::tint_of(callout.colour.as_deref());
+        let tone = theme::accent_tone(tint.map_or("yellow", |t| t.as_str()));
+        fill(
+            scene,
+            root,
+            tone.map_or(theme::p().code_bg, |t| t.fill),
+            &panel,
+        );
+        let slot = rowlayout::callout_icon_rect(first, first.y - scroll);
+        // No icon set draws the lightbulb glyph; a chosen one — the default
+        // emoji included — draws as the emoji itself.
+        let (layout, brush) = match callout.icon.as_deref().filter(|icon| !icon.is_empty()) {
+            Some(icon) => (engine.emoji_layout(icon, slot.w), None),
+            None => (
+                engine.icon_layout(icons::LIGHTBULB, slot.w),
+                Some(tone.map_or(theme::p().text_dim, |t| t.ink)),
+            ),
+        };
+        draw_layout(
+            scene,
+            root,
+            &layout,
+            slot.x + (slot.w - layout.width()) * 0.5,
+            slot.y + (slot.h - layout.height()) * 0.5,
+            brush,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -158,18 +145,12 @@ pub fn draw_document(
     // document. The index is the *real* one, since a row's identity — focus,
     // hover — is its position in the body rather than its position in the loop.
     let visible = rowlayout::visible_range(outline, scroll, vh);
+    // Callout boxes go down first, under everything the rows inside them draw.
+    draw_callout_boxes(scene, root, outline, engine, scroll, vw, &visible);
     for i in visible.clone() {
         let row = &outline.rows[i];
         let oy = row.y - scroll;
         let ox = row.text_x();
-        // A callout's box goes down first, under everything the rows inside
-        // it draw — a picture, a divider or a table inside the box is still
-        // inside it. One box per head, from the head row through the last row
-        // of the box; a box whose head scrolled above the window is drawn
-        // from its first visible row, the way the quote rule is.
-        for head in callout_heads_at(outline, i, i == visible.start) {
-            draw_callout_box(scene, root, outline, engine, head, scroll, vw);
-        }
         // An image row is a picture (or a placeholder), not text: it has no
         // caret or text-selection rect. It is still a movable block, so its
         // grip follows the same hover and selection rules as every other row.

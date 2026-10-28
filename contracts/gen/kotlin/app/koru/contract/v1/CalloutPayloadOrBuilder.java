@@ -9,15 +9,4 @@ package app.koru.contract.v1;
 public interface CalloutPayloadOrBuilder extends
     // @@protoc_insertion_point(interface_extends:koru.v1.CalloutPayload)
     com.google.protobuf.MessageLiteOrBuilder {
-
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   * @return Whether the richText field is set.
-   */
-  boolean hasRichText();
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   * @return The richText.
-   */
-  app.koru.contract.v1.RichText getRichText();
 }

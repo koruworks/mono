@@ -138,14 +138,11 @@ pub struct Paragraph {
     /// empty vec draws nothing: unset attributes are invisible.
     pub chips: Vec<crate::chips::ChipSpec>,
     pub icon: Option<String>,
-    /// `NodeMeta::colour`: a callout's tint token, read on the head row of a
-    /// box through [`koru_core::callout::tint_of`].
-    pub colour: Option<String>,
     pub level_name: Option<String>,
-    /// The head of the callout box this row is in — its own id on the head
-    /// row — or `None` outside every box. Derived from the tree by
-    /// `Body::rebuild`, never stored: a callout's children *are* its box, and
-    /// the innermost box wins when callouts nest.
+    /// The callout box this row is in, or `None` outside every box. Derived
+    /// from the tree by `Body::rebuild`, never stored: a callout's children
+    /// *are* its box, and the innermost box wins when callouts nest. The box
+    /// itself is no row; its look and extent are `Body::callout_box`'s.
     pub callout: Option<NodeId>,
 
     /// The image this row renders instead of text. `None` for every text row;
@@ -301,7 +298,6 @@ impl Paragraph {
             pills,
             chips: crate::chips::attribute_chips(node),
             icon: node.meta.icon.clone(),
-            colour: node.meta.colour.clone(),
             level_name: node.meta.level_name.clone(),
             callout: None,
             image: image_of(&node.content, &node.meta),
@@ -337,8 +333,8 @@ impl Paragraph {
     /// too, and a call site that remembered one and forgot the other would draw
     /// the glyphs somewhere the clicks do not land.
     ///
-    /// Every row of a callout box — head and children alike — takes the
-    /// box's inset, so the text inside a box is one column.
+    /// Every row of a callout box takes the box's inset, so the text inside
+    /// a box is one column and the icon has its room beside the first row.
     pub fn text_x(&self) -> f32 {
         text_x(self.depth, self.is_task() || self.list_style.is_some())
             + if self.kind == Kind::Quote {
@@ -517,7 +513,6 @@ impl Paragraph {
         self.language = language;
         self.table_layout = table_layout;
         self.icon = node.meta.icon.clone();
-        self.colour = node.meta.colour.clone();
         self.level_name = node.meta.level_name.clone();
         // **A row carrying a dictation splice is always re-read.** `same`
         // compares `self.text` — which is the *composed* string while a

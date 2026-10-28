@@ -137,9 +137,9 @@ pub enum Action {
     /// block with newlines cannot go back (the one-line rule would refuse it),
     /// so in that case it is a no-op. Reached via `Ctrl+` `` ` ``.
     CodeBlock,
-    /// Make the selected rows one callout box — the first becomes the head
-    /// and the rest go inside it — or the focused row alone a head, or take
-    /// the box away when the focused row is already in one. One control for
+    /// Put the selected rows into one callout box, in order — or the focused
+    /// row alone into a box of its own — or take the box away when the
+    /// focused row is already in one. One control for
     /// apply and undo, like [`SetHeading`](Action::SetHeading). Reached via
     /// `Ctrl+Shift+6`, beside the three list digits, and shared with the
     /// Callout row of the selection bubble's list menu.

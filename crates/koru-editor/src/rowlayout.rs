@@ -498,6 +498,19 @@ pub(crate) fn reflow_all(
 /// a dirty text row (not yet in the shape band) uses an estimate so the scroll
 /// position and shape band stay approximately right. Cheap — no shaping here.
 fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &PillCache) {
+    // How many callout boxes begin and end at each row. A box's tinted panel
+    // is painted around its rows, so the first row needs room above it and
+    // the last room below, or the panel paints into the paragraph beside it.
+    // One pass over the boxes, so the loop below pays nothing per row.
+    let mut boxes_opening = vec![0u8; outline.rows.len()];
+    let mut boxes_closing = vec![0u8; outline.rows.len()];
+    for callout in outline.callout_boxes() {
+        if callout.rows.is_empty() {
+            continue;
+        }
+        boxes_opening[callout.rows.start] += 1;
+        boxes_closing[callout.rows.end - 1] += 1;
+    }
     // Chrome above the rows — a toolbar, a breadcrumb — pushes them all down.
     let mut y = theme::MARGIN_TOP + top_inset;
     for (i, row) in outline.rows.iter_mut().enumerate() {
@@ -549,7 +562,7 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         // an image need enough room not to paint over neighbouring ink; a table
         // needs a quieter four-pixel edge so adjacent grids do not fuse into
         // one. Keeping it external preserves the exact border for hit-testing.
-        let gap_above = if row.kind == Kind::Code {
+        let block_pad = if row.kind == Kind::Code {
             theme::CODE_PAD
         } else if row.image.is_some() {
             theme::IMAGE_PAD
@@ -558,6 +571,12 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         } else {
             0.0
         };
+        // A callout's panel is the same shape as a code block's, around the
+        // rows of the box rather than one row: its first row takes the pad
+        // above and its last the pad below, once per box that starts or ends
+        // there. `callout_panel_rect` keeps its own padding inside this room.
+        let gap_above = block_pad + theme::CODE_PAD * f32::from(boxes_opening[i]);
+        let gap_below = block_pad + theme::CODE_PAD * f32::from(boxes_closing[i]);
         row.y += gap_above;
         y += gap_above;
         // List styling must not change the document's vertical rhythm. A row
@@ -568,7 +587,7 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         } else {
             theme::TASK_GAP
         };
-        y += row.height + gap + gap_above;
+        y += row.height + gap + gap_below;
         // The title owns the air below it — prose has no depth to separate the
         // name from the first paragraph, so the gap is the separation. It is
         // outside `height` for the same reason a heading's `space_above` is
@@ -737,10 +756,12 @@ pub fn code_panel_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
     )
 }
 
-/// The tinted box behind a callout, from its head `first` (drawn at
-/// `first_oy`) through the last row inside it, `last` (at `last_oy`). Its
-/// left edge derives from `text_x`, so the box, the icon and the text cannot
-/// drift apart.
+/// The tinted box behind a callout, from its first row `first` (drawn at
+/// `first_oy`) through its last, `last` (at `last_oy`). Its left edge derives
+/// from `text_x`, so the box, the icon and the text cannot drift apart; its
+/// vertical padding stays inside the `CODE_PAD` that `position_rows` opens
+/// above the first row and below the last, so it never paints into the rows
+/// beside the box.
 pub fn callout_panel_rect(
     first: &Paragraph,
     first_oy: f32,
@@ -748,7 +769,7 @@ pub fn callout_panel_rect(
     last_oy: f32,
     layout_w: f32,
 ) -> Rect {
-    const PAD_Y: f32 = 6.0;
+    const PAD_Y: f32 = theme::CODE_PAD - 2.0;
     let left = first.text_x() - crate::paragraph::CALLOUT_INSET_X;
     let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
     let top = first_oy - PAD_Y;
@@ -1373,6 +1394,58 @@ mod tests {
             (image.height - 100.0).abs() < 0.5,
             "pad is outside height, not inside: {}",
             image.height
+        );
+    }
+
+    /// A callout's panel is painted around the rows of its box, so the box
+    /// gets air above its first row and below its last — the pattern a code
+    /// block uses — and the panel stays inside that air: its top is below the
+    /// paragraph above, its bottom above the paragraph below, with room to
+    /// spare. The rows inside keep the ordinary rhythm.
+    #[test]
+    fn a_callout_box_keeps_its_panel_clear_of_the_rows_around_it() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::paragraph("above").unwrap())
+            .unwrap();
+        let callout = ws
+            .insert(Parent::Root, Node::callout(None, None).unwrap())
+            .unwrap();
+        let first = ws
+            .insert(Parent::Node(callout), Node::paragraph("first").unwrap())
+            .unwrap();
+        let last = ws
+            .insert(Parent::Node(callout), Node::paragraph("last").unwrap())
+            .unwrap();
+        ws.insert(Parent::Root, Node::paragraph("below").unwrap())
+            .unwrap();
+        let mut body = Body::new(&ws);
+        let mut engine = TextEngine::new();
+        reflow_all(&mut engine, &mut body, 1000.0, 0.0);
+
+        let above = body.rows.iter().find(|r| r.text == "above").unwrap();
+        let first = body.rows.iter().find(|r| r.id == first).unwrap();
+        let last = body.rows.iter().find(|r| r.id == last).unwrap();
+        let below = body.rows.iter().find(|r| r.text == "below").unwrap();
+        assert_eq!(body.callout_span(callout), Some(1..=2));
+
+        let panel = callout_panel_rect(first, first.y, last, last.y, 1000.0);
+        assert!(
+            panel.y >= above.y + above.height + 2.0,
+            "the panel's top ({}) clears the row above (bottom {})",
+            panel.y,
+            above.y + above.height
+        );
+        assert!(
+            below.y >= panel.y + panel.h + 2.0,
+            "the row below ({}) clears the panel's bottom ({})",
+            below.y,
+            panel.y + panel.h
+        );
+        assert!(panel.y <= first.y && panel.y + panel.h >= last.y + last.height);
+        let inside = last.y - (first.y + first.height);
+        assert!(
+            (inside - theme::TASK_GAP).abs() < 0.5,
+            "no extra air between the rows inside the box: {inside}"
         );
     }
 

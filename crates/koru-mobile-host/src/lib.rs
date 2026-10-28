@@ -2967,7 +2967,6 @@ fn view_block(
                 node.kind,
                 koru_core::Kind::Paragraph
                     | koru_core::Kind::Quote
-                    | koru_core::Kind::Callout
                     | koru_core::Kind::Task
                     | koru_core::Kind::Code
                     | koru_core::Kind::Table
@@ -4712,13 +4711,19 @@ mod tests {
         let callout = model
             .insert(
                 Parent::Node(root),
-                Node::callout("Heads up", Some("⚠️"), Some("red")).unwrap(),
+                Node::callout(Some("⚠️"), Some("red")).unwrap(),
             )
             .unwrap();
-        let callout_body = model
+        let callout_first = model
             .insert(
                 Parent::Node(callout),
                 Node::paragraph("Inside the box").unwrap(),
+            )
+            .unwrap();
+        let callout_second = model
+            .insert(
+                Parent::Node(callout),
+                Node::paragraph("Second line").unwrap(),
             )
             .unwrap();
         model
@@ -4823,26 +4828,38 @@ mod tests {
         ] {
             assert!(kinds.contains(&kind), "missing {kind}: {kinds:?}");
         }
-        // A callout is a box: the head carries the icon and tint and its
-        // text, and the lines inside it are its children.
-        let head = view
+        // A callout is a box like a list block: the container carries the
+        // icon and tint and no text, and the lines inside it are its
+        // children, in order.
+        let (box_index, callout_box) = view
             .blocks
             .iter()
-            .find(|block| block.kind == "callout")
+            .enumerate()
+            .find(|(_, block)| block.kind == "callout")
             .unwrap();
-        assert_eq!(head.id, callout.to_storage());
-        assert_eq!(head.parent_id, None);
-        assert_eq!(head.properties.icon.as_deref(), Some("⚠️"));
-        assert_eq!(head.properties.color.as_deref(), Some("red"));
-        assert_eq!(head.rich_text.as_ref().unwrap().text, "Heads up");
-        let body = view
+        assert_eq!(callout_box.id, callout.to_storage());
+        assert_eq!(callout_box.parent_id, None);
+        assert_eq!(callout_box.properties.icon.as_deref(), Some("⚠️"));
+        assert_eq!(callout_box.properties.color.as_deref(), Some("red"));
+        assert!(callout_box.rich_text.is_none());
+        let lines: Vec<&ViewBlock> = view
             .blocks
             .iter()
-            .find(|block| block.id == callout_body.to_storage())
+            .filter(|block| block.parent_id.as_deref() == Some(callout_box.id.as_str()))
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].id, callout_first.to_storage());
+        assert_eq!(lines[1].id, callout_second.to_storage());
+        for (line, text) in lines.iter().zip(["Inside the box", "Second line"]) {
+            assert_eq!(line.kind, "paragraph");
+            assert_eq!(line.rich_text.as_ref().unwrap().text, text);
+        }
+        let first_index = view
+            .blocks
+            .iter()
+            .position(|block| block.id == lines[0].id)
             .unwrap();
-        assert_eq!(body.kind, "paragraph");
-        assert_eq!(body.parent_id.as_deref(), Some(head.id.as_str()));
-        assert_eq!(body.rich_text.as_ref().unwrap().text, "Inside the box");
+        assert!(first_index > box_index, "a box's lines follow the box");
         let link = view.blocks[0]
             .rich_text
             .as_ref()

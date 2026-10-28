@@ -169,23 +169,37 @@ impl InlineState {
     }
 }
 
-/// An `<aside>` that is open: a callout box. Its first plain paragraph is
-/// the box's head, led by its icon; everything after it, until `</aside>`,
-/// is inside the box.
+/// An `<aside>` that is open: a callout box. Its first paragraph settles
+/// the icon — a leading emoji, which is not prose — and everything inside
+/// it, until `</aside>`, follows the box's start marker.
 #[derive(Default)]
 struct OpenBox {
     icon: Option<String>,
     /// Whether the icon has been settled — only the first line can carry it.
     settled: bool,
-    /// Whether the head is in the stream; what follows is inside the box.
-    head_emitted: bool,
+    /// Whether the start marker is in the stream; what follows is inside.
+    started: bool,
+}
+
+/// Put the open box's start marker in the stream, once, before its first
+/// block.
+fn start_box(open: &mut Option<OpenBox>, blocks: &mut Vec<RawBlock>) {
+    if let Some(open) = open
+        && !open.started
+    {
+        open.started = true;
+        blocks.push(RawBlock::CalloutStart {
+            icon: open.icon.clone(),
+            tint: None,
+        });
+    }
 }
 
 /// Close the open box, if any: its end marker follows what was inside it. A
-/// box that never got a head leaves nothing behind.
+/// box that never started — nothing was inside it — leaves nothing behind.
 fn close_box(open: &mut Option<OpenBox>, blocks: &mut Vec<RawBlock>) {
     if let Some(open) = open.take()
-        && open.head_emitted
+        && open.started
     {
         blocks.push(RawBlock::CalloutEnd);
     }
@@ -285,48 +299,34 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
             || callout.is_some()
             || !runs.is_empty()
             || !links.is_empty();
-        let mut kind = if quote_depth > 0 {
+        let kind = if quote_depth > 0 {
             RichTextKind::Quote
         } else {
             RichTextKind::Paragraph
         };
-        // Inside an open box the first plain paragraph is the head, led by
-        // its icon. A block before it that cannot be a head — a list item, a
-        // heading — gets an empty head in front, so nothing is lost.
+        // The first paragraph inside an open box settles its icon: a plain
+        // one's leading emoji is the icon, not prose. Then the box starts,
+        // and this block and everything after it are inside.
         if let Some(open) = callout
-            && !open.head_emitted
+            && !open.started
+            && !open.settled
         {
+            open.settled = true;
             let plain = list_stack.is_empty() && pending_heading.is_none() && quote_depth == 0;
-            if plain {
-                if !open.settled {
-                    open.settled = true;
-                    if let Some((icon, cut)) = koru_import_markdown::leading_icon(text) {
-                        open.icon = Some(icon);
-                        strip_front(text, runs, links, cut);
-                    }
-                }
+            if plain && let Some((icon, cut)) = koru_import_markdown::leading_icon(text) {
+                open.icon = Some(icon);
+                strip_front(text, runs, links, cut);
                 if text.trim().is_empty() {
-                    // The icon alone in its paragraph: the next one is the head.
+                    // The icon alone in its paragraph: the box's first line
+                    // is the next one.
                     text.clear();
                     runs.clear();
                     links.clear();
                     return;
                 }
-                kind = RichTextKind::Callout {
-                    icon: open.icon.clone(),
-                    tint: None,
-                };
-            } else {
-                blocks.push(RawBlock::Text(RichTextBlock {
-                    kind: RichTextKind::Callout {
-                        icon: open.icon.clone(),
-                        tint: None,
-                    },
-                    ..Default::default()
-                }));
             }
-            open.head_emitted = true;
         }
+        start_box(callout, blocks);
         let block = RichTextBlock {
             text: std::mem::take(text),
             list: list_stack.last().map(|f| RichListSpec {
@@ -364,6 +364,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                             &mut callout,
                             &mut saw_structured,
                         );
+                        start_box(&mut callout, &mut blocks);
                         blocks.push(RawBlock::Picture(pic));
                         saw_picture = true;
                     }
@@ -951,7 +952,7 @@ mod tests {
             .iter()
             .filter_map(|block| match block {
                 RawBlock::Text(text) => Some(text.kind.clone()),
-                RawBlock::Picture(_) | RawBlock::CalloutEnd => None,
+                RawBlock::Picture(_) | RawBlock::CalloutStart { .. } | RawBlock::CalloutEnd => None,
             })
             .collect();
         assert_eq!(
@@ -965,10 +966,10 @@ mod tests {
         );
     }
 
-    /// An `<aside>` pastes as a callout box: its first paragraph is the head,
-    /// led by its icon; the paragraphs and lists after it are inside the box,
-    /// which ends where the aside does. The marks around the icon survive
-    /// the icon being cut away.
+    /// An `<aside>` pastes as a callout box: its start marker carries the
+    /// icon the first paragraph led with; that paragraph and the paragraphs
+    /// and lists after it are inside the box, which ends where the aside
+    /// does. The marks around the icon survive the icon being cut away.
     #[test]
     fn an_html_aside_pastes_as_a_callout_box() {
         let html = concat!(
@@ -977,27 +978,27 @@ mod tests {
             "<p>after</p>",
         );
         let blocks = extract(html).expect("a callout is structured");
-        assert_eq!(blocks.len(), 6, "{blocks:?}");
-        let head = RichTextKind::Callout {
-            icon: Some("💡".into()),
-            tint: None,
-        };
+        assert_eq!(blocks.len(), 7, "{blocks:?}");
         assert!(
             matches!(&blocks[0], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "before")
         );
-        let RawBlock::Text(text) = &blocks[1] else {
-            panic!("expected the head, got {:?}", blocks[1]);
+        assert!(matches!(
+            &blocks[1],
+            RawBlock::CalloutStart { icon: Some(icon), tint: None } if icon == "💡"
+        ));
+        let RawBlock::Text(text) = &blocks[2] else {
+            panic!("expected the first line, got {:?}", blocks[2]);
         };
-        assert_eq!(text.kind, head);
+        assert_eq!(text.kind, RichTextKind::Paragraph);
         assert_eq!(text.text, "Keep it");
         assert_eq!(&text.text[text.runs[0].start..text.runs[0].end], "Keep");
         assert!(
-            matches!(&blocks[2], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
+            matches!(&blocks[3], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
         );
-        assert!(matches!(&blocks[3], RawBlock::Text(t) if t.list.is_some() && t.text == "one"));
-        assert!(matches!(&blocks[4], RawBlock::CalloutEnd));
+        assert!(matches!(&blocks[4], RawBlock::Text(t) if t.list.is_some() && t.text == "one"));
+        assert!(matches!(&blocks[5], RawBlock::CalloutEnd));
         assert!(
-            matches!(&blocks[5], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "after")
+            matches!(&blocks[6], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "after")
         );
     }
 
@@ -1021,7 +1022,7 @@ mod tests {
             .iter()
             .filter_map(|block| match block {
                 RawBlock::Text(text) => text.heading,
-                RawBlock::Picture(_) | RawBlock::CalloutEnd => None,
+                RawBlock::Picture(_) | RawBlock::CalloutStart { .. } | RawBlock::CalloutEnd => None,
             })
             .collect();
 

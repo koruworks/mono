@@ -87,8 +87,18 @@ fun DocumentViewer(
             document.blocks + Block(BlockId(newParagraph), content = BlockContent.Paragraph(RichText(""))) else document.blocks
         withPendingParagraphs(base, paragraphs.filterKeys { it.document == document.id }.values.toList())
     }
-    val visible = remember(all) { all.filterNot { it.content is BlockContent.ListContainer } }
+    // A list block and a callout box are containers: their lines are the
+    // rows, and the container itself is not one.
+    val visible = remember(all) {
+        all.filterNot { it.content is BlockContent.ListContainer || it.content is BlockContent.Callout }
+    }
     val depths = remember(all) { all.associate { block -> block.id to depth(all, block) } }
+    // The first row inside each callout box is the one that shows its icon.
+    val calloutHeads = remember(all) {
+        val heads = mutableMapOf<BlockId, BlockId>()
+        for (block in visible) calloutBox(all, block)?.let { heads.putIfAbsent(it.id, block.id) }
+        heads
+    }
     var focusBlock by remember(document.id) { mutableStateOf<BlockId?>(null) }
     LaunchedEffect(focusBlock) {
         val index = visible.indexOfFirst { it.id == focusBlock }
@@ -178,7 +188,8 @@ fun DocumentViewer(
             verticalArrangement = Arrangement.spacedBy(KoruSpacing.sm),
         ) {
             itemsIndexed(visible, key = { _, block -> block.id.value }) { _, block ->
-                BlockRow(block, all, depths[block.id] ?: 0, document.runs, model, follow,
+                BlockRow(block, all, depths[block.id] ?: 0, calloutHeads.containsValue(block.id),
+                    document.runs, model, follow,
                     editing, localDrafts[BlockEditKey(document.id, block.id)],
                     { before, text ->
                         finishRequested = false
@@ -218,6 +229,7 @@ private fun BlockRow(
     block: Block,
     all: List<Block>,
     depth: Int,
+    calloutHead: Boolean,
     runs: Map<DocumentId, RunSnapshot>,
     model: AppViewModel,
     follow: (EntityReference) -> Unit,
@@ -240,10 +252,25 @@ private fun BlockRow(
     } else null
     val listParent = block.parentId
         ?.let { id -> all.firstOrNull { it.id == id }?.content as? BlockContent.ListContainer }
+    // A line inside a callout box draws on the box's tint, the way a list
+    // item finds its container; the box's first line leads with its icon and
+    // the others keep the icon's column so the text lines up under it.
+    val calloutBox = calloutBox(all, block)
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val tint = calloutBox?.let { calloutTint(it.properties.color, dark) ?: MaterialTheme.colorScheme.surfaceVariant }
     Row(
-        Modifier.fillMaxWidth().padding(start = (depth * 16).dp),
+        Modifier.fillMaxWidth().padding(start = (depth * 16).dp).then(
+            if (tint != null) Modifier.background(tint, MaterialTheme.shapes.small)
+                .padding(horizontal = KoruSpacing.md, vertical = KoruSpacing.sm)
+            else Modifier,
+        ),
         verticalAlignment = Alignment.Top,
     ) {
+        if (calloutBox != null) {
+            Box(Modifier.width(30.dp)) {
+                if (calloutHead) Text(calloutBox.properties.calloutIcon(), style = MaterialTheme.typography.bodyLarge)
+            }
+        }
         Marker(block, all, listParent)
         Box(Modifier.weight(1f)) {
             when (val content = block.content) {
@@ -261,35 +288,6 @@ private fun BlockRow(
                         pillLabel = pillLabel,
                         editor = editor,
                     )
-                }
-                // A callout is a box: this row is its head line, tinted and led
-                // by its icon; the lines inside the box are the blocks whose
-                // parent this is, and they follow as rows one depth deeper.
-                is BlockContent.Callout -> {
-                    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-                    Surface(
-                        color = calloutTint(block.properties.color, dark) ?: MaterialTheme.colorScheme.surfaceVariant,
-                        shape = MaterialTheme.shapes.small,
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = KoruSpacing.md, vertical = KoruSpacing.sm),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            Text(
-                                block.properties.calloutIcon(),
-                                Modifier.padding(end = KoruSpacing.sm),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                            RichTextBlock(
-                                content.richText,
-                                block.properties,
-                                follow,
-                                Modifier.weight(1f),
-                                pillLabel = pillLabel,
-                                editor = editor,
-                            )
-                        }
-                    }
                 }
                 is BlockContent.Task -> RichTextBlock(content.richText, block.properties, follow, pillLabel = pillLabel, editor = editor)
                 is BlockContent.Code -> CodeBlock(content, block.properties, follow, pillLabel, editor)
@@ -312,6 +310,7 @@ private fun BlockRow(
                     )
                 }
                 is BlockContent.ListContainer -> Unit
+                is BlockContent.Callout -> Unit
             }
         }
     }
@@ -694,10 +693,24 @@ private fun depth(all: List<Block>, block: Block): Int {
     var parent = block.parentId
     val seen = mutableSetOf<BlockId>()
     while (parent != null && seen.add(parent)) {
-        result++
-        parent = all.firstOrNull { it.id == parent }?.parentId
+        val node = all.firstOrNull { it.id == parent }
+        // A callout box is a tint, not an indent: its lines sit where it does.
+        if (node?.content !is BlockContent.Callout) result++
+        parent = node?.parentId
     }
     return result
+}
+
+/** The callout box a block is inside — its nearest ancestor that is one. */
+private fun calloutBox(all: List<Block>, block: Block): Block? {
+    var parent = block.parentId
+    val seen = mutableSetOf<BlockId>()
+    while (parent != null && seen.add(parent)) {
+        val node = all.firstOrNull { it.id == parent } ?: return null
+        if (node.content is BlockContent.Callout) return node
+        parent = node.parentId
+    }
+    return null
 }
 
 private fun ordinal(all: List<Block>, block: Block) =

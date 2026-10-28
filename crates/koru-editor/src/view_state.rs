@@ -265,8 +265,8 @@ pub enum Hover {
     /// yet.
     Plus(usize),
     Checkbox(usize),
-    /// The icon at the head of a callout box. Pressing it opens the emoji
-    /// picker for the box.
+    /// The icon beside the first row of a callout box. Pressing it opens the
+    /// look picker for the box.
     CalloutIcon(usize),
     Pill {
         row: usize,

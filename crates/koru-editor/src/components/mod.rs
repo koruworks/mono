@@ -102,8 +102,8 @@ pub enum Outcome {
     SetAttr(Vec<koru_core::NodeId>, String, koru_core::node::AttrValue),
     /// Dismiss and remove every value under this key from these nodes.
     ClearAttr(Vec<koru_core::NodeId>, String),
-    /// Give these callout heads this tint, `None` being the default tint; the
-    /// box draws from its head. Not an attribute: a callout's tint is
+    /// Give these callout boxes this tint, `None` being the default tint; the
+    /// rows inside draw from it. Not an attribute: a callout's tint is
     /// presentation in `NodeMeta::colour`, like a page's icon. The `/color`
     /// picker dismisses on it; the look picker stays open for the emoji.
     SetCalloutTint(Vec<koru_core::NodeId>, Option<koru_core::AccentColor>),

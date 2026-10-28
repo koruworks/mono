@@ -249,14 +249,12 @@ pub struct ParagraphPayload {
     #[prost(message, optional, tag="1")]
     pub rich_text: ::core::option::Option<RichText>,
 }
-/// The head line of a callout box. Its icon and tint are BlockProperties
-/// (icon, color); the lines inside the box are the blocks whose parent_id is
-/// this block.
+/// A callout box. It has no text of its own: its icon and tint are
+/// BlockProperties (icon, color), and the lines inside the box are the blocks
+/// whose parent_id is this block, as with a list.
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct CalloutPayload {
-    #[prost(message, optional, tag="1")]
-    pub rich_text: ::core::option::Option<RichText>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

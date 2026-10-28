@@ -1616,6 +1616,54 @@ impl WorkspaceDoc {
         })
     }
 
+    /// Put contiguous siblings into one new [`Kind::Callout`] box, created at
+    /// the first target's position with the targets as its children in order
+    /// — the callout counterpart of [`wrap_in_list_block_many`](Self::wrap_in_list_block_many),
+    /// with the same all-or-nothing validation. The box starts with the
+    /// default look; [`set_icon`](Self::set_icon) and
+    /// [`set_colour`](Self::set_colour) change it.
+    pub fn wrap_in_callout_many(&mut self, targets: &[NodeId]) -> Result<NodeId> {
+        self.atomic(|ws| {
+            let first = *targets
+                .first()
+                .ok_or(StoreError::Malformed("empty callout selection"))?;
+            let parent = ws.parent(first)?;
+            let index = ws.sibling_index(first)?;
+            for (offset, &target) in targets.iter().enumerate() {
+                if ws.parent(target)? != parent || ws.sibling_index(target)? != index + offset {
+                    return Err(StoreError::Malformed(
+                        "callout selection must be contiguous siblings",
+                    ));
+                }
+            }
+            let callout = ws.insert(parent, Node::callout(None, None)?)?;
+            ws.move_node(callout, parent, index)?;
+            for (at, &target) in targets.iter().enumerate() {
+                ws.move_node(target, Parent::Node(callout), at)?;
+            }
+            Ok(callout)
+        })
+    }
+
+    /// Take a [`Kind::Callout`] box away and keep its lines: the children
+    /// move into the box's own slot, in order, and the empty box is deleted.
+    /// Returns the lines, now siblings where the box was.
+    pub fn dissolve_callout(&mut self, callout: NodeId) -> Result<Vec<NodeId>> {
+        self.atomic(|ws| {
+            if ws.kind_of(callout) != Some(Kind::Callout) {
+                return Err(StoreError::Malformed("not a callout"));
+            }
+            let parent = ws.parent(callout)?;
+            let index = ws.sibling_index(callout)?;
+            let children = ws.children(Parent::Node(callout))?;
+            for (offset, &child) in children.iter().enumerate() {
+                ws.move_node(child, parent, index + 1 + offset)?;
+            }
+            ws.delete(callout)?;
+            Ok(children)
+        })
+    }
+
     /// Merge a ListBlock with compatible ListBlock siblings immediately before
     /// and after it. The surviving container keeps every item in visible order.
     ///
@@ -2981,24 +3029,13 @@ impl WorkspaceDoc {
             let at = at.min(len);
 
             let has_children = !ws.children(Parent::Node(target))?.is_empty();
-            // A callout's box is its children, so Enter in the head line
-            // writes the next line *inside* the box — a paragraph under it,
-            // whether or not it has children yet. Every other kind nests a
-            // tail only once it already has children, so Enter at the end of
-            // a childless task still makes a sibling task.
-            let is_callout = node.kind == Kind::Callout;
-            let (parent, index) = if is_callout || (has_children && node.kind.accepts_children()) {
+            let (parent, index) = if has_children && node.kind.accepts_children() {
                 (Parent::Node(target), 0)
             } else {
                 (ws.parent(target)?, ws.sibling_index(target)? + 1)
             };
 
-            let tail_kind = if is_callout {
-                Kind::Paragraph
-            } else {
-                node.kind
-            };
-            let mut tail_node = Node::new(tail_kind, Content::text(""))?;
+            let mut tail_node = Node::new(node.kind, Content::text(""))?;
             tail_node.id = tail_id;
             let tail = ws.insert(parent, tail_node)?;
             ws.move_node(tail, parent, index)?;
@@ -3505,8 +3542,7 @@ impl WorkspaceDoc {
         let Ok(node) = self.read(target) else {
             return (None, None);
         };
-        let kind =
-            matches!(node.kind, Kind::Task | Kind::Quote | Kind::Callout).then_some(node.kind);
+        let kind = matches!(node.kind, Kind::Task | Kind::Quote).then_some(node.kind);
         (kind, node.meta.heading)
     }
 
@@ -3862,16 +3898,38 @@ impl WorkspaceDoc {
         Ok((out, repeats))
     }
 
-    /// Delete every `Kind::ListBlock` that has no children — a cleanup pass for
-    /// lists left empty when their last item exited. Called on document open so
-    /// stale containers from a previous session do not accumulate in explore.
-    pub fn prune_empty_list_blocks(&mut self) -> Result<()> {
+    /// Delete `parent` when it is a [`Kind::Callout`] left with no children —
+    /// a box with nothing inside has no row to reach it from — and the box
+    /// around it when that is now empty too. The edits that can empty a box
+    /// (joining its last line into the row above, deleting its rows) call
+    /// this with the parent the rows had. Returns how many boxes went.
+    pub fn prune_empty_callout(&mut self, parent: Parent) -> Result<usize> {
+        let mut pruned = 0;
+        let mut at = parent;
+        while let Parent::Node(id) = at {
+            if self.kind_of(id) != Some(Kind::Callout) || !self.children(at)?.is_empty() {
+                break;
+            }
+            let above = self.parent(id)?;
+            self.delete(id)?;
+            pruned += 1;
+            at = above;
+        }
+        Ok(pruned)
+    }
+
+    /// Delete every container — a `Kind::ListBlock` or a `Kind::Callout` —
+    /// that has no children: a cleanup pass for lists left empty when their
+    /// last item exited and boxes left empty by an older build. Called on
+    /// document open so stale containers from a previous session do not
+    /// accumulate in explore.
+    pub fn prune_empty_containers(&mut self) -> Result<()> {
         let empty: Vec<NodeId> = self
             .walk_all()?
             .into_iter()
             .filter_map(|(id, _)| {
                 let node = self.read(id).ok()?;
-                (node.kind == Kind::ListBlock
+                (matches!(node.kind, Kind::ListBlock | Kind::Callout)
                     && self
                         .children(Parent::Node(id))
                         .unwrap_or_default()

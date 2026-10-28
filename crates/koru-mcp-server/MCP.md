@@ -294,18 +294,22 @@ need not resolve a private `$ref` to discover their fields. All request
 objects deny unknown fields; a misspelling is an error, never a successful
 no-op.
 
-**A callout is a box, and the box is a subtree.** The `callout` node is the
-box's head line; the paragraphs and list blocks inserted under it, with the
-callout as `parent_id`, are the rest of the box's content. Its look lives on
-the head alone: a read reports the node as `"kind": "callout"` with
-`metadata.icon` (one emoji, or `null` for the default 💡) and
+**A callout is a box, and the box is a subtree.** The `callout` node is a
+container with no text of its own: a read reports it as `"kind": "callout"`
+with an empty `content.text`, and its children — the paragraphs and list
+blocks whose `parent_id` is the box — are its lines. Its look lives on the
+box: `metadata.icon` (one emoji, or `null` for the default 💡) and
 `metadata.colour` (an accent token — `red`, `orange`, `yellow`, `green`,
 `teal`, `blue`, `purple`, `pink`, `gray` — or `null` for the default tint),
-the same two metadata fields every other node reports. `insert` carries a
-text and nothing else, so a callout inserted through this surface gets the
-default icon and tint; no operation here changes either yet, and
-`set_attribute` of `koru.color` is a different thing — a content attribute
-on the node, reported under `attributes`, not the box's tint.
+the same two metadata fields every other node reports. An `insert` of kind
+`callout` creates the box under `node_id` and, when its `text` is non-empty,
+a first paragraph inside it with that text, so one call still makes a
+one-line callout; an empty `text` makes an empty box. To add more lines,
+insert paragraphs or list blocks with the box as `parent_id`. A callout
+inserted through this surface gets the default icon and tint; no operation
+here changes either yet, and `set_attribute` of `koru.color` is a different
+thing — a content attribute on the node, reported under `attributes`, not
+the box's tint.
 
 Text positions exposed by MCP are UTF-8 byte boundaries because that is what
 the editor and returned runs use. Loro indexes Unicode scalars; conversion stays

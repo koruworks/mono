@@ -77,7 +77,8 @@ object ContractMapper {
             }
             BlockKind.BLOCK_KIND_CALLOUT_VALUE -> {
                 requireType(payload.typeUrl, "koru.v1.CalloutPayload")
-                BlockContent.Callout(richText(CalloutPayload.parseFrom(payload.value).richText))
+                CalloutPayload.parseFrom(payload.value)
+                BlockContent.Callout
             }
             BlockKind.BLOCK_KIND_TASK_VALUE -> {
                 requireType(payload.typeUrl, "koru.v1.TaskPayload")

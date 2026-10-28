@@ -66,6 +66,26 @@ pub struct CopiedListSpec {
     pub depth: u16,
 }
 
+/// The callout box a copied row was inside, modelled on [`CopiedListSpec`]
+/// for the same reason: the box is an invisible container (`Kind::Callout`)
+/// whose look lives on it, and the rows inside are ordinary paragraphs and
+/// list items. Set on every row inside a box, so a paste can rebuild the
+/// container — the way [`paste_rows`] rebuilds list blocks.
+///
+/// A run of rows carrying the same spec at one depth is one box; a row
+/// whose spec differs opens another at that depth, and a row with none
+/// closes every box. Two boxes of the same look side by side therefore
+/// paste as one, which is the trade a list's spec makes too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopiedCalloutSpec {
+    /// The box's icon as stored — `None` is [`koru_core::callout::DEFAULT_ICON`].
+    pub icon: Option<String>,
+    /// The box's tint token as stored — `None` is the default tint.
+    pub colour: Option<String>,
+    /// Nest level of the enclosing box (0 = a box with no box around it).
+    pub depth: u16,
+}
+
 /// One **node-level** attribute a copy took with it: a `koru.due`, `koru.tag`,
 /// `koru.color` or `koru.priority` value, or a **custom** key the workspace
 /// defined. These are the attributes with no pill anchor in the row's text —
@@ -109,10 +129,10 @@ pub struct CopiedRow {
     pub kind: Kind,
     pub done: bool,
     pub level_name: Option<String>,
-    /// A callout's icon and tint ([`koru_core::callout`]), carried so a
-    /// copied callout pastes with its look. Ignored on every other kind.
-    pub icon: Option<String>,
-    pub colour: Option<String>,
+    /// The callout box this row was inside, when it was in one — its look
+    /// and nesting, so the paste rebuilds the box around the rows that carry
+    /// it. The box itself is never a row, so this is where it travels.
+    pub callout: Option<CopiedCalloutSpec>,
     pub align: Option<Align>,
     pub heading: Option<Heading>,
     pub table_layout: Option<TableLayout>,
@@ -128,11 +148,6 @@ pub struct CopiedRow {
 }
 
 impl CopiedRow {
-    /// The icon this row leaves with when it is a callout.
-    fn callout_icon(&self) -> &str {
-        koru_core::callout::icon_of(self.icon.as_deref())
-    }
-
     /// The text alone, with each pill replaced by the label it draws.
     ///
     /// The anchor character is invisible and means nothing outside this
@@ -164,9 +179,6 @@ impl CopiedRow {
     fn markdown_prefix(&self) -> String {
         if self.kind == Kind::Quote {
             return "> ".into();
-        }
-        if self.kind == Kind::Callout {
-            return format!("> {} ", self.callout_icon());
         }
         if let Some(spec) = self.list {
             let indent = "  ".repeat(spec.depth as usize);
@@ -698,12 +710,13 @@ fn rows_to_copy<E: Editing + ?Sized>(e: &E, ws: &WorkspaceDoc) -> Vec<CopiedRow>
     out
 }
 
-/// How many `ListBlock` ancestors `id` has (the enclosing list's nest level + 1).
-fn list_block_ancestor_count(ws: &WorkspaceDoc, id: NodeId) -> u16 {
+/// How many ancestors of `kind` `id` has — for a list block or a callout,
+/// the enclosing container's nest level + 1.
+fn ancestor_count(ws: &WorkspaceDoc, id: NodeId, kind: Kind) -> u16 {
     let mut n = 0u16;
     let mut at = id;
     while let Ok(Parent::Node(p)) = ws.parent(at) {
-        if ws.read(p).is_ok_and(|node| node.kind == Kind::ListBlock) {
+        if ws.kind_of(p) == Some(kind) {
             n = n.saturating_add(1);
         }
         at = p;
@@ -712,7 +725,8 @@ fn list_block_ancestor_count(ws: &WorkspaceDoc, id: NodeId) -> u16 {
 }
 
 /// Read one row out of the document, whole. `None` for invisible containers
-/// (`ListBlock`) — those are rebuilt from item [`CopiedRow::list`] on paste.
+/// (`ListBlock`, `Callout`) — those are rebuilt on paste from the
+/// [`CopiedRow::list`] and [`CopiedRow::callout`] of the rows inside them.
 fn read_row<E: Editing + ?Sized>(
     e: &E,
     ws: &WorkspaceDoc,
@@ -720,9 +734,21 @@ fn read_row<E: Editing + ?Sized>(
     depth: u16,
 ) -> Option<CopiedRow> {
     let node = ws.read(id).ok()?;
-    if node.kind == Kind::ListBlock {
+    if matches!(node.kind, Kind::ListBlock | Kind::Callout) {
         return None;
     }
+    // The box this row is in, with its look: the body keeps that on the
+    // box, since the container draws no row of its own.
+    let callout = e
+        .body()
+        .row(id)
+        .and_then(|r| r.callout)
+        .and_then(|callout| e.body().callout_box(callout))
+        .map(|found| CopiedCalloutSpec {
+            icon: found.icon.clone(),
+            colour: found.colour.clone(),
+            depth: ancestor_count(ws, id, Kind::Callout).saturating_sub(1),
+        });
     let image = match &node.content {
         koru_core::Content::Blob {
             hash,
@@ -742,7 +768,7 @@ fn read_row<E: Editing + ?Sized>(
     // List style is on the enclosing ListBlock; the body caches it on the row.
     let list = e.body().row(id).and_then(|r| {
         r.list_style.map(|style| {
-            let nest = list_block_ancestor_count(ws, id).saturating_sub(1);
+            let nest = ancestor_count(ws, id, Kind::ListBlock).saturating_sub(1);
             CopiedListSpec { style, depth: nest }
         })
     });
@@ -755,8 +781,7 @@ fn read_row<E: Editing + ?Sized>(
         kind: node.kind,
         done: node.meta.done,
         level_name: node.meta.level_name.clone(),
-        icon: node.meta.icon.clone(),
-        colour: node.meta.colour.clone(),
+        callout,
         align: node.meta.align,
         heading: node.meta.heading,
         table_layout: node.meta.table_layout,
@@ -914,18 +939,20 @@ fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
     match payload {
         Payload::Rows(rows, _) => {
             let mut out: Vec<String> = Vec::with_capacity(rows.len());
-            // The depth of the open callout's head. Rows deeper than it are
-            // inside its box until the depth comes back up, and every line
-            // inside leaves quoted, the way a blockquote's lines all do.
-            let mut boxed: Option<u16> = None;
+            // The callout boxes open around the row, outermost first. Every
+            // line inside a box leaves quoted, the way a blockquote's lines
+            // all do, and the first line of a box carries the box's icon.
+            let mut boxes: Vec<CopiedCalloutSpec> = Vec::new();
             for r in rows {
-                if boxed.is_some_and(|head| r.depth <= head) {
-                    boxed = None;
-                }
-                let inside = boxed.is_some();
-                if r.kind == Kind::Callout && !inside {
-                    boxed = Some(r.depth);
-                }
+                let (keep, opens) = callout_box_change(boxes.iter(), r.callout.as_ref());
+                boxes.truncate(keep);
+                let icon = match (&r.callout, opens) {
+                    (Some(spec), true) => {
+                        boxes.push(spec.clone());
+                        format!("{} ", koru_core::callout::icon_of(spec.icon.as_deref()))
+                    }
+                    _ => String::new(),
+                };
                 // A divider is the one row whose text is empty on purpose: it
                 // leaves as a thematic break rather than as a blank line.
                 if r.kind == Kind::Divider {
@@ -938,16 +965,16 @@ fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
                     out.push(String::new());
                     continue;
                 }
-                // Inside a box every line sits at the head's depth behind a
-                // `>`; a list keeps its marker behind it. Outside, list items
-                // carry their indent in `markdown_prefix` already.
-                let (tabs, quoted) = match boxed {
-                    Some(head) if inside => ("\t".repeat(head as usize), "> "),
-                    _ if r.list.is_some() => (String::new(), ""),
-                    _ => ("\t".repeat(r.depth as usize), ""),
+                // List items carry indent in `markdown_prefix` already; a
+                // box's `>` sits before the marker, a nested box's before that.
+                let tabs = if r.list.is_some() {
+                    String::new()
+                } else {
+                    "\t".repeat(r.depth as usize)
                 };
                 out.push(format!(
-                    "{tabs}{quoted}{}{}",
+                    "{tabs}{}{}{icon}{}",
+                    "> ".repeat(boxes.len()),
                     r.markdown_prefix(),
                     r.to_text(&label)
                 ));
@@ -964,8 +991,7 @@ fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
-                icon: None,
-                colour: None,
+                callout: None,
                 align: None,
                 // A fragment of a heading is not a heading.
                 heading: None,
@@ -1005,8 +1031,7 @@ pub fn cf_html(ws: &WorkspaceDoc, payload: &Payload) -> Option<String> {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
-                icon: None,
-                colour: None,
+                callout: None,
                 align: None,
                 heading: None,
                 table_layout: None,
@@ -1028,7 +1053,29 @@ fn list_tag(style: ListStyle) -> &'static str {
     }
 }
 
-/// Emit rows as HTML, nesting `<ul>`/`<ol>` from [`CopiedRow::list`].
+/// What a row's [`CopiedRow::callout`] does to the boxes open around the row
+/// before it, `open` (outermost first): how many of them stay open, and
+/// whether the row opens a new one. A spec continues the box at its depth
+/// when the look matches, opens a new box there when it does not, and no
+/// spec closes every box. Shared by the text and HTML flavours and by
+/// [`paste_rows`], so the three read a run of rows the same way.
+fn callout_box_change<'a>(
+    mut open: impl ExactSizeIterator<Item = &'a CopiedCalloutSpec>,
+    spec: Option<&CopiedCalloutSpec>,
+) -> (usize, bool) {
+    let Some(spec) = spec else {
+        return (0, false);
+    };
+    let depth = (spec.depth as usize).min(open.len());
+    if open.len() > depth && open.nth(depth) == Some(spec) {
+        (depth + 1, false)
+    } else {
+        (depth, true)
+    }
+}
+
+/// Emit rows as HTML, nesting `<ul>`/`<ol>` from [`CopiedRow::list`] and
+/// `<aside>` from [`CopiedRow::callout`].
 fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
     let mut out = String::new();
     // Each open list also has an open `<li>`. A child list belongs *inside*
@@ -1042,26 +1089,32 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
             }
         }
     };
-    // The depth of the open callout's head: its box is an `<aside>` holding
-    // every deeper row, lists included, until the depth comes back up.
-    let mut aside: Option<u16> = None;
+    // The callout boxes open around the row, outermost first: each is an
+    // `<aside>` — what other apps' exports write for a callout — holding
+    // every row inside it, lists included, with the box's icon leading its
+    // first row.
+    let mut boxes: Vec<CopiedCalloutSpec> = Vec::new();
     for row in rows {
-        if aside.is_some_and(|head| row.depth <= head) {
+        let (keep, opens) = callout_box_change(boxes.iter(), row.callout.as_ref());
+        if keep < boxes.len() || opens {
+            // A list ends with the box it is in.
             close_to(&mut out, &mut open, 0);
+        }
+        while boxes.len() > keep {
+            boxes.pop();
             out.push_str("</aside>");
-            aside = None;
         }
-        if row.kind == Kind::Callout && aside.is_none() {
-            close_to(&mut out, &mut open, 0);
-            // `<aside>` is what other apps' exports write for a callout.
-            out.push_str("<aside><p>");
-            out.push_str(&html_escape(row.callout_icon()));
-            out.push(' ');
-            out.push_str(&html_runs(row, label));
-            out.push_str("</p>");
-            aside = Some(row.depth);
-            continue;
-        }
+        let lead = match (&row.callout, opens) {
+            (Some(spec), true) => {
+                boxes.push(spec.clone());
+                out.push_str("<aside>");
+                format!(
+                    "{} ",
+                    html_escape(koru_core::callout::icon_of(spec.icon.as_deref()))
+                )
+            }
+            _ => String::new(),
+        };
         if let Some(img) = &row.image {
             close_to(&mut out, &mut open, 0);
             out.push_str(&html_image_placeholder(img));
@@ -1083,6 +1136,7 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                 // Same list, next sibling item.
                 out.push_str("</li><li>");
             }
+            out.push_str(&lead);
             out.push_str(&html_runs(row, label));
             continue;
         }
@@ -1090,6 +1144,7 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
         match row.heading.map(Heading::level) {
             Some(l @ 1..=6) => {
                 out.push_str(&format!("<h{l}>"));
+                out.push_str(&lead);
                 out.push_str(&html_runs(row, label));
                 out.push_str(&format!("</h{l}>"));
             }
@@ -1102,18 +1157,12 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                 }
                 if row.kind == Kind::Quote {
                     out.push_str("<blockquote><p>");
+                    out.push_str(&lead);
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p></blockquote>");
-                } else if row.kind == Kind::Callout {
-                    // A callout nested inside another's box: its line, with
-                    // its icon, inside the one `<aside>` rather than a second.
-                    out.push_str("<p>");
-                    out.push_str(&html_escape(row.callout_icon()));
-                    out.push(' ');
-                    out.push_str(&html_runs(row, label));
-                    out.push_str("</p>");
                 } else {
                     out.push_str("<p>");
+                    out.push_str(&lead);
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p>");
                 }
@@ -1121,7 +1170,7 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
         }
     }
     close_to(&mut out, &mut open, 0);
-    if aside.is_some() {
+    for _ in boxes.drain(..) {
         out.push_str("</aside>");
     }
     out
@@ -1315,10 +1364,6 @@ fn apply_meta(ws: &mut WorkspaceDoc, id: NodeId, row: &CopiedRow, kind: Kind) {
     }
     if kind == Kind::Table {
         let _ = ws.set_table_layout(id, row.table_layout.unwrap_or_default());
-    }
-    if kind == Kind::Callout {
-        let _ = ws.set_icon(id, row.icon.as_deref());
-        let _ = ws.set_colour(id, row.colour.as_deref());
     }
 }
 
@@ -1601,8 +1646,7 @@ fn unformatted_text(ws: &WorkspaceDoc) -> Option<String> {
             kind: Kind::Task,
             done: false,
             level_name: None,
-            icon: None,
-            colour: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -1797,8 +1841,7 @@ pub fn paste_plain_text<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc, t
             kind: Kind::Task,
             done: false,
             level_name: None,
-            icon: None,
-            colour: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -1860,8 +1903,7 @@ fn paste_inline<E: Editing + ?Sized>(
             kind: Kind::Task,
             done: false,
             level_name: None,
-            icon: None,
-            colour: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -2001,6 +2043,9 @@ fn paste_rows<E: Editing + ?Sized>(
     }
     let flat = e.body().flat;
     let rebuild_lists = flat && rows.iter().any(|r| r.list.is_some());
+    // A callout is meaningful wherever quotes are. A view that offers
+    // neither (the task outline) takes the rows inside a box as prose.
+    let rebuild_callouts = e.view().quotes_enabled && rows.iter().any(|r| r.callout.is_some());
     let same_workspace = source.is_some() && source == e.view().workspace;
     // Tags are resolved against the destination's table first, while `e` can
     // still be borrowed for reading. Rows that carry none cost an empty `Vec`.
@@ -2044,9 +2089,15 @@ fn paste_rows<E: Editing + ?Sized>(
         };
         (landing.id, kind, landing.text.is_empty())
     };
-    // A blank row cannot absorb a list item in place — lists need a ListBlock.
+    // A blank row cannot absorb a list item in place — lists need a ListBlock
+    // — nor a line from inside a callout, which needs its box around it.
     let first_is_list = rows.first().is_some_and(|r| r.list.is_some());
-    let reuse = blank && !replacing && e.body().rows[at].kind != Kind::Divider && !first_is_list;
+    let first_is_boxed = rebuild_callouts && rows.first().is_some_and(|r| r.callout.is_some());
+    let reuse = blank
+        && !replacing
+        && e.body().rows[at].kind != Kind::Divider
+        && !first_is_list
+        && !first_is_boxed;
 
     ws.checkpoint();
     ws.begin_group();
@@ -2073,28 +2124,46 @@ fn paste_rows<E: Editing + ?Sized>(
     // Top-level insert_after cursor for list containers (and non-list blocks
     // after a list ends).
     let mut list_anchor: Option<NodeId> = if replacing { None } else { Some(anchor) };
-    // The callout boxes being pasted into, innermost last, as
-    // `(head, head_depth)`. Rows deeper than a head go under it — in a flat
-    // body too, because a box is structure like a list, not the outline
-    // nesting ADR-23 flattens — until a row at the head's depth or above ends
-    // that box, and with it every box opened inside it.
-    let mut callouts: Vec<(NodeId, u16)> = Vec::new();
+    // The callout boxes being pasted into, outermost first, each with the
+    // spec that opened it. Rows carrying a box's spec go under it — in a
+    // flat body too, because a box is structure like a list's, not the
+    // outline nesting ADR-23 flattens — until a row whose spec differs, or
+    // carries none, closes it and every box opened inside it. Only where
+    // callouts are offered; elsewhere the rows land as the prose they are.
+    let mut callouts: Vec<(NodeId, CopiedCalloutSpec)> = Vec::new();
 
     for (n, row) in rows.iter().enumerate() {
-        if callouts
-            .last()
-            .is_some_and(|&(_, head_depth)| row.depth <= head_depth)
-        {
-            while callouts
-                .last()
-                .is_some_and(|&(_, head_depth)| row.depth <= head_depth)
-            {
-                callouts.pop();
-            }
-            // The box's lists end with it; a list after the box is a new one.
+        let spec = row.callout.as_ref().filter(|_| rebuild_callouts);
+        let (keep, opens) = callout_box_change(callouts.iter().map(|(_, spec)| spec), spec);
+        if keep < callouts.len() || opens {
+            callouts.truncate(keep);
+            // A box's lists end with it; a list after the box, or in a new
+            // one, is a new list.
             list_levels.clear();
         }
-        let boxed = callouts.last().map(|&(head, _)| head);
+        if opens && let Some(spec) = spec {
+            let Ok(node) = Node::callout(spec.icon.as_deref(), spec.colour.as_deref()) else {
+                continue;
+            };
+            // A box inside a box goes under it; a top-level box takes the
+            // slot the paste is filling, the way a list container does.
+            let id = match callouts.last() {
+                Some(&(outer, _)) => ws.insert(Parent::Node(outer), node).ok(),
+                None => {
+                    let Ok(id) = ws.insert(parent, node) else {
+                        continue;
+                    };
+                    let _ = ws.move_node(id, parent, index);
+                    index += 1;
+                    list_anchor = Some(id);
+                    Some(id)
+                }
+            };
+            let Some(id) = id else { continue };
+            pasted.push(id);
+            callouts.push((id, spec.clone()));
+        }
+        let boxed = callouts.last().map(|&(callout, _)| callout);
 
         // --- list items in a flat document: rebuild ListBlock containers -----
         if rebuild_lists && let Some(spec) = row.list {
@@ -2119,10 +2188,10 @@ fn paste_rows<E: Editing + ?Sized>(
                 };
                 let list_id = if let Some(parent_item) = parent_item {
                     ws.insert(Parent::Node(parent_item), list_node).ok()
-                } else if let Some(head) = boxed {
+                } else if let Some(callout) = boxed {
                     // A list inside a callout is the box's: its container
-                    // goes under the head, after whatever is already there.
-                    ws.insert(Parent::Node(head), list_node).ok()
+                    // goes under the box, after whatever is already there.
+                    ws.insert(Parent::Node(callout), list_node).ok()
                 } else {
                     let Ok(id) = ws.insert(parent, list_node) else {
                         continue;
@@ -2186,8 +2255,8 @@ fn paste_rows<E: Editing + ?Sized>(
         // still adapt it to their own row kind, the same way they adapt prose.
         let row_kind = if row.kind == Kind::Table && e.view().tables_enabled {
             Kind::Table
-        } else if matches!(row.kind, Kind::Quote | Kind::Callout) && e.view().quotes_enabled {
-            row.kind
+        } else if row.kind == Kind::Quote && e.view().quotes_enabled {
+            Kind::Quote
         } else {
             kind
         };
@@ -2218,10 +2287,10 @@ fn paste_rows<E: Editing + ?Sized>(
                     Err(_) => continue,
                 }
             };
-            // Inside a box the row belongs to the head, appended after what is
+            // Inside a box the row belongs to the box, appended after what is
             // already in it; outside, its depth says where it goes.
             let under = match (boxed, depth) {
-                (Some(head), _) => Parent::Node(head),
+                (Some(callout), _) => Parent::Node(callout),
                 (None, 0) => parent,
                 (None, d) => Parent::Node(stack[d - 1]),
             };
@@ -2268,11 +2337,6 @@ fn paste_rows<E: Editing + ?Sized>(
         pasted.push(id);
         last = Some(id);
         let _ = list_anchor;
-        // A pasted head opens its box: the deeper rows that follow it on the
-        // clipboard are what was inside it.
-        if row_kind == Kind::Callout {
-            callouts.push((id, row.depth));
-        }
     }
 
     // Linkify every pasted *text* row's URLs, still inside the paste group.
@@ -2282,7 +2346,9 @@ fn paste_rows<E: Editing + ?Sized>(
             .ok()
             .and_then(|n| n.content.as_text().map(|_| ()))
             .is_some()
-            && ws.read(id).is_ok_and(|n| n.kind != Kind::ListBlock)
+            && ws
+                .read(id)
+                .is_ok_and(|n| !matches!(n.kind, Kind::ListBlock | Kind::Callout))
         {
             let _ = linkify_urls_in_node(ws, id);
         }
@@ -3464,8 +3530,7 @@ mod tests {
             kind: Kind::Task,
             done: false,
             level_name: None,
-            icon: None,
-            colour: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
@@ -3475,27 +3540,28 @@ mod tests {
         }
     }
 
-    /// A callout box leaves whole and lands whole: the head with its look,
-    /// the line inside it and the list inside it — under the head even in a
-    /// flat body, because a box is structure like a list's, not the outline
-    /// nesting the body flattens — and the text and HTML flavours carry the
-    /// box too.
+    /// A callout box leaves whole and lands whole: the lines inside it carry
+    /// the box's look, the list inside it its list, and the paste rebuilds
+    /// the container around them — in a flat body too, because a box is
+    /// structure like a list's, not the outline nesting the body flattens.
+    /// The text and HTML flavours carry the box as well, its icon leading
+    /// the first line.
     #[test]
     fn copy_paste_keeps_a_callout_box_and_the_list_inside_it() {
         let mut src = WorkspaceDoc::create(WorkspaceId::new(), "src").unwrap();
         let doc_a = src
             .insert(Parent::Root, Node::document("A").unwrap())
             .unwrap();
-        let head = src
+        let callout = src
             .insert(
                 Parent::Node(doc_a),
-                Node::callout("Head", Some("⚠️"), Some("red")).unwrap(),
+                Node::callout(Some("⚠️"), Some("red")).unwrap(),
             )
             .unwrap();
-        src.insert(Parent::Node(head), Node::paragraph("inside").unwrap())
+        src.insert(Parent::Node(callout), Node::paragraph("first").unwrap())
             .unwrap();
         let list = src
-            .insert(Parent::Node(head), Node::list_block().unwrap())
+            .insert(Parent::Node(callout), Node::list_block().unwrap())
             .unwrap();
         src.set_list_style(list, Some(ListStyle::Bullet)).unwrap();
         src.insert(Parent::Node(list), Node::paragraph("item").unwrap())
@@ -3512,20 +3578,26 @@ mod tests {
         let Payload::Rows(rows, source) = payload.clone() else {
             panic!("expected whole rows");
         };
+        let spec = CopiedCalloutSpec {
+            icon: Some("⚠️".into()),
+            colour: Some("red".into()),
+            depth: 0,
+        };
         assert_eq!(
-            rows.iter().map(|r| r.depth).collect::<Vec<_>>(),
-            vec![0, 1, 2, 0],
-            "the box's rows sit under the head: {rows:?}"
+            rows.iter()
+                .map(|r| (r.callout.clone(), r.list.map(|l| l.style)))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(spec.clone()), None),
+                (Some(spec), Some(ListStyle::Bullet)),
+                (None, None),
+            ],
+            "every row inside carries the box: {rows:?}"
         );
-        assert_eq!(
-            render(&src, &payload),
-            "> ⚠️ Head\n> inside\n> - item\nafter"
-        );
+        assert_eq!(render(&src, &payload), "> ⚠️ first\n> - item\nafter");
         let html = cf_html(&src, &payload).unwrap();
         assert!(
-            html.contains(
-                "<aside><p>⚠️ Head</p><p>inside</p><ul><li>item</li></ul></aside><p>after</p>"
-            ),
+            html.contains("<aside><p>⚠️ first</p><ul><li>item</li></ul></aside><p>after</p>"),
             "{html}"
         );
 
@@ -3546,17 +3618,21 @@ mod tests {
             "paste into the other document"
         );
 
-        let pasted = e_dst
+        let first = e_dst
             .body
             .rows
             .iter()
-            .find(|r| r.text == "Head")
-            .expect("the head")
+            .find(|r| r.text == "first")
+            .expect("the first line")
             .id;
+        let Parent::Node(pasted) = dst.parent(first).unwrap() else {
+            panic!("the line is in a box");
+        };
         let node = dst.read(pasted).unwrap();
         assert_eq!(node.kind, Kind::Callout);
         assert_eq!(node.meta.icon.as_deref(), Some("⚠️"));
         assert_eq!(node.meta.colour.as_deref(), Some("red"));
+        assert_eq!(dst.parent(pasted).unwrap(), Parent::Node(doc_b));
         let rows: Vec<(String, Option<NodeId>, Option<ListStyle>)> = e_dst
             .body
             .rows
@@ -3567,11 +3643,12 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                ("Head".into(), Some(pasted), None),
-                ("inside".into(), Some(pasted), None),
+                (String::new(), None, None),
+                ("first".into(), Some(pasted), None),
                 ("item".into(), Some(pasted), Some(ListStyle::Bullet)),
                 ("after".into(), None, None),
-            ]
+            ],
+            "the blank landing row stays, since a boxed line cannot fill it"
         );
         let children = dst.children(Parent::Node(pasted)).unwrap();
         assert_eq!(
@@ -3579,7 +3656,10 @@ mod tests {
             2,
             "the line and the list block: {children:?}"
         );
+        assert_eq!(children[0], first);
         assert_eq!(dst.read(children[1]).unwrap().kind, Kind::ListBlock);
+        let found = e_dst.body.callout_box(pasted).expect("the box draws");
+        assert_eq!(found.colour.as_deref(), Some("red"));
         let after = e_dst
             .body
             .rows

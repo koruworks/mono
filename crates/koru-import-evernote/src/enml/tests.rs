@@ -478,9 +478,9 @@ fn evernote_link_guid_accepts_the_standard_repeated_route_only_once() {
 
 /// Evernote's callout is a `div` marked `--en-callout`, its icon in
 /// `--en-emoji`; an older one has no emoji and means the 💡 default. It
-/// imports as a box: its first prose line is the head carrying the icon,
-/// everything else inside the div — a second line, a list, a heading — is
-/// under the head in order, and the text around the div stays prose.
+/// imports as a box carrying the icon and no text of its own, with
+/// everything inside the div — a first line, a second, a list, a heading —
+/// under the box in order, and the text around the div stays prose.
 #[test]
 fn an_evernote_callout_imports_as_a_box_with_its_lines_inside() {
     let (document, warnings) = convert_enml(
@@ -504,32 +504,38 @@ fn an_evernote_callout_imports_as_a_box_with_its_lines_inside() {
         shape(body.clone()),
         vec![
             (Kind::Paragraph, "before".into(), None),
-            (Kind::Callout, "First line".into(), Some("🤖".into())),
-            (Kind::Callout, "Default icon".into(), None),
+            (Kind::Callout, String::new(), Some("🤖".into())),
+            (Kind::Callout, String::new(), None),
             (Kind::Callout, String::new(), None),
             (Kind::Paragraph, "after".into(), None),
         ]
     );
 
-    let head = body[1];
-    let inside = document.children(Parent::Node(head)).unwrap();
+    let callout = body[1];
+    let inside = document.children(Parent::Node(callout)).unwrap();
     assert_eq!(
         shape(inside.clone()),
         vec![
+            (Kind::Paragraph, "First line".into(), None),
             (Kind::Paragraph, "Second line".into(), None),
             (Kind::ListBlock, String::new(), None),
             (Kind::Paragraph, "Inside heading".into(), None),
         ]
     );
     assert_eq!(
-        document.read(inside[2]).unwrap().meta.heading,
+        document.read(inside[3]).unwrap().meta.heading,
         Heading::from_level(2)
     );
-    let items = shape(document.children(Parent::Node(inside[1])).unwrap());
+    let items = shape(document.children(Parent::Node(inside[2])).unwrap());
     assert_eq!(items[0].1, "one");
     assert_eq!(items[1].1, "two");
 
-    // A callout holding only a list: the list is inside an empty head.
+    // A callout with the default icon around one line.
+    assert_eq!(
+        shape(document.children(Parent::Node(body[2])).unwrap()),
+        vec![(Kind::Paragraph, "Default icon".into(), None)]
+    );
+    // A callout holding only a list: the list is inside the box, alone.
     let only_list = document.children(Parent::Node(body[3])).unwrap();
     assert_eq!(only_list.len(), 1);
     assert_eq!(document.read(only_list[0]).unwrap().kind, Kind::ListBlock);

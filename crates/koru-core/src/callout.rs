@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! What a [`Kind::Callout`](crate::Kind::Callout) carries beyond its text.
+//! What a [`Kind::Callout`](crate::Kind::Callout) carries beyond its children.
 //!
-//! A callout is a box. Its node is the box's **head line**, and its children
-//! are the rest of what was typed inside: paragraphs, and lists with their
-//! items. The box's look lives on the head and nowhere else: the **icon** in
+//! A callout is a box: a container like a list block, with no text of its
+//! own, whose children are the lines inside it — paragraphs, and lists with
+//! their items. The box's look lives on the container: the **icon** in
 //! [`NodeMeta::icon`] (one emoji; absent means [`DEFAULT_ICON`]) and the
 //! **tint** in [`NodeMeta::colour`] (an [`AccentColor`] token; absent means
 //! the default tint). Both are keys every build already reads, so neither
 //! needed a schema step of its own beyond the one `Kind::Callout` took.
 //!
-//! Enter in the head writes a paragraph under it — `split` does that — so
-//! typing never leaves the box; Enter on an empty last line inside, and
-//! Backspace at the head's start, are the editor's ways out.
+//! `WorkspaceDoc::wrap_in_callout_many` puts lines into a new box and
+//! `dissolve_callout` takes the box away and keeps them; Enter inside is an
+//! ordinary paragraph split, and the editor's ways out are Enter on the empty
+//! last line and Backspace at the start of the first.
 
 use crate::attributes::AccentColor;
 use crate::node::NodeMeta;

@@ -708,21 +708,18 @@ fn rich_paste_rebuilds_numbered_and_nested_bullet_lists() {
     );
 }
 
-/// A pasted callout box lands as its head with what was inside it as the
-/// head's children — a paragraph and a list — and the block after the box's
-/// end as the head's sibling.
+/// A pasted callout box lands as a box node carrying the look, with what
+/// was inside it as the box's children — its lines and a list — and the
+/// block after the box's end as the box's sibling.
 #[test]
-fn rich_paste_nests_a_callout_box_under_its_head() {
+fn rich_paste_nests_a_callout_box_under_its_node() {
     let (mut ws, mut view) = document();
     let blocks = vec![
-        RichBlock::Text(RichTextBlock {
-            text: "Keep it".into(),
-            kind: RichTextKind::Callout {
-                icon: Some("💡".into()),
-                tint: Some("red".into()),
-            },
-            ..Default::default()
-        }),
+        RichBlock::CalloutStart {
+            icon: Some("💡".into()),
+            tint: Some("red".into()),
+        },
+        RichBlock::Text(RichTextBlock::from_text("Keep it")),
         RichBlock::Text(RichTextBlock::from_text("inside")),
         RichBlock::Text(RichTextBlock {
             text: "one".into(),
@@ -747,20 +744,27 @@ fn rich_paste_nests_a_callout_box_under_its_head() {
             .unwrap_or_else(|| panic!("no row {text:?}"))
             .id
     };
-    let head = row("Keep it");
-    let node = ws.read(head).unwrap();
+    let Parent::Node(callout) = ws.parent(row("Keep it")).unwrap() else {
+        panic!("the first line is inside the box");
+    };
+    let node = ws.read(callout).unwrap();
     assert_eq!(node.kind, Kind::Callout);
+    assert_eq!(node.content.as_text(), Some(""), "the box carries no text");
     assert_eq!(koru_core::callout::icon(&node.meta), "💡");
     assert_eq!(
         koru_core::callout::tint(&node.meta),
         Some(koru_core::AccentColor::Red)
     );
-    let inside = ws.children(Parent::Node(head)).unwrap();
-    assert_eq!(inside.len(), 2, "a paragraph and a list block");
-    assert_eq!(inside[0], row("inside"));
-    assert_eq!(ws.read(inside[1]).unwrap().kind, Kind::ListBlock);
-    assert_eq!(ws.parent(row("one")).unwrap(), Parent::Node(inside[1]));
-    assert_eq!(ws.parent(row("after")).unwrap(), ws.parent(head).unwrap());
+    let inside = ws.children(Parent::Node(callout)).unwrap();
+    assert_eq!(inside.len(), 3, "two paragraphs and a list block");
+    assert_eq!(inside[0], row("Keep it"));
+    assert_eq!(inside[1], row("inside"));
+    assert_eq!(ws.read(inside[2]).unwrap().kind, Kind::ListBlock);
+    assert_eq!(ws.parent(row("one")).unwrap(), Parent::Node(inside[2]));
+    assert_eq!(
+        ws.parent(row("after")).unwrap(),
+        ws.parent(callout).unwrap()
+    );
 }
 
 #[test]

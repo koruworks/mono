@@ -162,6 +162,29 @@ pub struct Body {
     /// [`ChangeTracker`]: koru_core::change::ChangeTracker
     /// [ADR-286]: ../../../docs/decisions/ADR-276-300.md#adr-286-taskboundary--six-canonical-commands-own-task-state-and-every-host-is-a-thin-wrapper-around-them
     pub task_text_edits: crate::tasks::TaskTextEdits,
+    /// Every callout box the rows are in, by the box's node id — the one
+    /// place the box's look and extent are kept for drawing and hit-testing.
+    /// Filled by [`rebuild`](Self::rebuild) from the walk, which reads every
+    /// container's meta anyway; a box is never a row of its own, so nothing
+    /// on a row could hold this without copying it onto every line inside.
+    callout_boxes: HashMap<NodeId, CalloutBox>,
+}
+
+/// A callout box as the rows see it: a [`Kind::Callout`] container whose
+/// children are the rows inside it. Derived by `Body::rebuild`, never stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CalloutBox {
+    pub id: NodeId,
+    /// The box this one is inside, when callouts nest.
+    pub parent: Option<NodeId>,
+    /// `NodeMeta::icon`, read with [`koru_core::callout::icon_of`].
+    pub icon: Option<String>,
+    /// `NodeMeta::colour`, read with [`koru_core::callout::tint_of`].
+    pub colour: Option<String>,
+    /// The rows inside the box, nested boxes' rows included: consecutive,
+    /// because they are the container's subtree in a depth-first walk. Empty
+    /// for a box with nothing visible in it.
+    pub rows: std::ops::Range<usize>,
 }
 
 /// Changes owed to the rows.
@@ -253,6 +276,7 @@ impl Body {
         let focused = self.focused_id();
         let mut previous: HashMap<NodeId, Paragraph> =
             self.rows.drain(..).map(|r| (r.id, r)).collect();
+        self.callout_boxes.clear();
         let mut reread = 0usize;
 
         // The title is the root's own text, and `walk_under` starts at its
@@ -317,10 +341,13 @@ impl Body {
         // is a `Document` and a `ListBlock` at once.
         let mut list_stack: Vec<(usize, koru_core::ListStyle, Vec<usize>)> = Vec::new();
 
-        // The callout-box stack: `(head_depth, head)`. A callout's children are
-        // its box, so every row the walk yields deeper than a head is inside
-        // that head's box until the depth comes back to the head's. Innermost
-        // wins when callouts nest, which is what `Paragraph::callout` records.
+        // The callout-box stack: `(child_depth, box)`, the walk depth of the
+        // box's *direct* children and the box's id — the shape `list_stack`
+        // has, for the same reason: a callout is a container like a list
+        // block, never a row, and every row the walk yields at or below its
+        // children's depth is inside it until the depth comes back up.
+        // Innermost wins when callouts nest, which is what
+        // `Paragraph::callout` records.
         let mut callout_stack: Vec<(usize, NodeId)> = Vec::new();
 
         // **A view rooted *at* a list block never walks the block**, because
@@ -372,19 +399,37 @@ impl Body {
                     break;
                 }
             }
-            // A box ends where the walk comes back up to its head's depth —
-            // a sibling of the head, or anything shallower, is outside it.
-            while callout_stack
-                .last()
-                .is_some_and(|(head_depth, _)| walk_depth <= *head_depth)
-            {
-                callout_stack.pop();
+            // A box ends where the walk comes back above its children's
+            // depth — a sibling of the box, or anything shallower, is outside
+            // it. `<`, like the list stack: a direct child sits exactly at
+            // `child_depth`. The box's extent closes here, at the first row
+            // outside it.
+            while let Some((child_depth, _)) = callout_stack.last() {
+                if walk_depth < *child_depth {
+                    self.close_callout_box(&mut callout_stack);
+                } else {
+                    break;
+                }
             }
-            let callout = if node.kind == Kind::Callout {
-                Some(id)
-            } else {
-                callout_stack.last().map(|(_, head)| *head)
-            };
+            let callout = callout_stack.last().map(|(_, id)| *id);
+            if node.kind == Kind::Callout {
+                // A callout is a container, not a row: the rows inside it
+                // draw its box around themselves, the way a list block's
+                // items carry its markers. Its look is kept here, once.
+                let _ = previous.remove(&id);
+                self.callout_boxes.insert(
+                    id,
+                    CalloutBox {
+                        id,
+                        parent: callout,
+                        icon: node.meta.icon.clone(),
+                        colour: node.meta.colour.clone(),
+                        rows: self.rows.len()..self.rows.len(),
+                    },
+                );
+                callout_stack.push((walk_depth + 1, id));
+                continue;
+            }
             if node.kind == koru_core::Kind::ListBlock {
                 // A ListBlock is a container, not a row. Push its style so its
                 // visible children render markers and derive their ordinals.
@@ -422,8 +467,13 @@ impl Body {
                 // A nested source list is represented by a nested ListBlock so
                 // each level can keep its own marker style. Those containers
                 // do not draw rows; subtract all but the outer one so hiding a
-                // container never adds a phantom indentation level.
-                walk_depth.saturating_sub(list_stack.len().saturating_sub(1)) as u16
+                // container never adds a phantom indentation level. A callout
+                // box draws no row either, and its inset is `text_x`'s, so
+                // every box above the row comes off too — a list inside a box
+                // indents exactly as the same list outside it.
+                walk_depth
+                    .saturating_sub(list_stack.len().saturating_sub(1))
+                    .saturating_sub(callout_stack.len()) as u16
             };
             // The whole point: an untouched row at an unmoved depth with the
             // same list context is already correct, so it is moved across
@@ -439,9 +489,6 @@ impl Body {
                     && row.list_index == list_index
                     && row.callout == callout
             }) {
-                if node.kind == Kind::Callout {
-                    callout_stack.push((walk_depth, id));
-                }
                 self.rows.push(row);
                 continue;
             }
@@ -455,10 +502,11 @@ impl Body {
             };
             row.callout = callout;
             note_unfinished_children(ws, &mut row);
-            if node.kind == Kind::Callout {
-                callout_stack.push((walk_depth, id));
-            }
             self.rows.push(row);
+        }
+        // A box the walk ended inside closes at the last row.
+        while !callout_stack.is_empty() {
+            self.close_callout_box(&mut callout_stack);
         }
 
         // Keep the caret on the same node where possible; the row it lives on
@@ -1062,15 +1110,8 @@ impl Body {
         }
         // An empty quote ends the quotation instead of creating an endless
         // run of empty quoted rows. A non-empty quote still goes through the
-        // ordinary split below, which preserves its kind. An empty callout
-        // head with nothing in its box is the same gesture; a head that has
-        // children splits like any other, writing a paragraph into the box.
-        let empty_leaf = row.kind == koru_core::node::Kind::Quote
-            || (row.kind == Kind::Callout
-                && ws
-                    .children(Parent::Node(id))
-                    .is_ok_and(|children| children.is_empty()));
-        if at == 0 && empty_leaf && row.text.is_empty() {
+        // ordinary split below, which preserves its kind.
+        if at == 0 && row.kind == koru_core::node::Kind::Quote && row.text.is_empty() {
             let _ = ws.set_kind(id, koru_core::node::Kind::Paragraph);
             self.rebuild(ws);
             self.focus_on(id);
@@ -1082,21 +1123,26 @@ impl Body {
         }
         // Enter on the empty last line of a callout box steps out of it — the
         // rule lists have for their empty last item. Only a *direct* child
-        // paragraph of the head leaves; an empty list item inside the box
-        // first takes the list exit below, which makes it exactly that.
+        // paragraph of the box leaves; an empty list item inside the box
+        // first takes the list exit below, which makes it exactly that. The
+        // only line of a box stepping out would leave an empty box nothing
+        // can reach — no row draws it — so the box goes with it.
         if at == 0
             && row.kind == Kind::Paragraph
             && row.list_style.is_none()
             && row.text.is_empty()
-            && let Some(head) = row.callout.filter(|head| *head != id)
-            && ws
-                .parent(id)
-                .is_ok_and(|parent| parent == Parent::Node(head))
-            && self.callout_rows(head).last() == Some(&id)
-            && let Ok(parent) = ws.parent(head)
-            && let Ok(index) = ws.sibling_index(head)
+            && let Some(callout) = row.callout
+            && let Ok(children) = ws.children(Parent::Node(callout))
+            && children.last() == Some(&id)
+            && let Ok(parent) = ws.parent(callout)
+            && let Ok(index) = ws.sibling_index(callout)
         {
-            if ws.move_node(id, parent, index + 1).is_err() {
+            let moved = if children.len() == 1 {
+                ws.dissolve_callout(callout).is_ok()
+            } else {
+                ws.move_node(id, parent, index + 1).is_ok()
+            };
+            if !moved {
                 return false;
             }
             self.rebuild(ws);
@@ -1284,17 +1330,17 @@ impl Body {
         {
             return Some(0);
         }
-        // Backspace at the start of a callout's head takes the box away and
-        // keeps everything in it, the way it takes a list marker away before
-        // it joins anything: the head becomes a paragraph and what was inside
-        // the box follows it as siblings, in order.
+        // Backspace at the start of a callout box's first row takes the box
+        // away and keeps everything in it, the way it takes a list marker
+        // away before it joins anything: the lines become siblings where the
+        // box stood, in order, and the caret stays on this one.
         if backwards
-            && self
-                .rows
-                .get(index)
-                .is_some_and(|row| row.kind == Kind::Callout && row.range() == (0..0))
+            && let Some(row) = self.rows.get(index)
+            && row.caret() == 0
+            && let Some(callout) = row.callout
+            && self.callout_span(callout).map(|span| *span.start()) == Some(index)
         {
-            return self.unwrap_callout(ws, id);
+            return self.dissolve_callout(ws, callout);
         }
         // Neither direction across the title seam. Backspace *in* the title has
         // nothing above it to join; Delete at its end would pull the first
@@ -1309,29 +1355,13 @@ impl Body {
         } else {
             (id, self.rows.get(index + 1)?.id)
         };
-        // Backspace at the start of a box's first child joins it into the
-        // head, which is the row above it. `merge_into` carries the vanishing
-        // row's children along, but it *appends* them under the survivor —
-        // which for a parent swallowing its own first child puts them after
-        // every other child rather than where that child stood. Lifting them
-        // to siblings right after it first means the join leaves them exactly
-        // where they were, and does the same for any parent joining a child.
-        let seam = if ws
-            .parent(gone)
-            .is_ok_and(|parent| parent == Parent::Node(keep))
-        {
-            let children = ws.children(Parent::Node(gone)).unwrap_or_default();
-            let at = ws.sibling_index(gone).ok()?;
-            ws.begin_group();
-            for (offset, child) in children.into_iter().enumerate() {
-                let _ = ws.move_node(child, Parent::Node(keep), at + 1 + offset);
-            }
-            let seam = ws.merge_into(keep, gone);
-            ws.checkpoint();
-            seam.ok()?
-        } else {
-            ws.merge_into(keep, gone).ok()?
-        };
+        // The box the vanishing row leaves, if it was its last line: a box
+        // with nothing inside has no row to reach it from.
+        let emptied = ws.parent(gone).ok();
+        let seam = ws.merge_into(keep, gone).ok()?;
+        if let Some(parent) = emptied {
+            let _ = ws.prune_empty_callout(parent);
+        }
         // The surviving row gained the other's text. The row that went is a
         // deletion and owes a `task.removed` if it was one, which is the
         // command's business rather than a burst's.
@@ -1419,71 +1449,95 @@ impl Body {
         self.rows.iter_mut().find(|r| r.id == id)
     }
 
-    /// The row indices a callout box covers, from its head row through the
-    /// last row inside it. `None` when `head` is not a callout head in this
-    /// body.
-    ///
-    /// A box's rows are consecutive — they are the head's subtree in a
-    /// depth-first walk — except that a box nested inside carries its own
-    /// head's id. The scan therefore runs over the whole run of boxed rows
-    /// that begins at `head` and keeps the last one that answers to `head`,
-    /// so a nested box in the middle neither ends the outer box early nor
-    /// extends it. It stops at the first unboxed row, so the cost is the size
-    /// of the boxes, never the document's.
-    pub fn callout_span(&self, head: NodeId) -> Option<std::ops::RangeInclusive<usize>> {
-        let start = self.index_of(head)?;
-        if self.rows[start].callout != Some(head) || self.rows[start].kind != Kind::Callout {
-            return None;
+    /// Close the innermost open box at the current end of the rows: its
+    /// extent runs up to, not including, the next row pushed.
+    fn close_callout_box(&mut self, callout_stack: &mut Vec<(usize, NodeId)>) {
+        if let Some((_, id)) = callout_stack.pop()
+            && let Some(callout) = self.callout_boxes.get_mut(&id)
+        {
+            callout.rows.end = self.rows.len();
         }
-        let mut end = start;
-        for (i, row) in self.rows.iter().enumerate().skip(start + 1) {
-            if row.callout.is_none() {
-                break;
-            }
-            if row.callout == Some(head) {
-                end = i;
-            }
-        }
-        Some(start..=end)
     }
 
-    /// Every row of the callout box headed by `head`, top to bottom, the head
-    /// first. Rows of a box nested inside belong to that box, not this one.
-    /// Empty when `head` is not a callout head in this body.
-    pub fn callout_rows(&self, head: NodeId) -> Vec<NodeId> {
-        self.callout_span(head)
+    /// The callout box `id` names, when its rows are in this body.
+    pub fn callout_box(&self, id: NodeId) -> Option<&CalloutBox> {
+        self.callout_boxes.get(&id)
+    }
+
+    /// Every callout box with rows in this body, in no particular order.
+    pub fn callout_boxes(&self) -> impl Iterator<Item = &CalloutBox> {
+        self.callout_boxes.values()
+    }
+
+    /// The row indices a callout box covers, from its first row through its
+    /// last, the rows of a box nested inside included. `None` when `id` is
+    /// not a box in this body or nothing in it is visible.
+    ///
+    /// The rows are consecutive — they are the container's subtree in a
+    /// depth-first walk — and the walk recorded them, so this costs nothing
+    /// per row.
+    pub fn callout_span(&self, id: NodeId) -> Option<std::ops::RangeInclusive<usize>> {
+        let rows = &self.callout_box(id)?.rows;
+        (!rows.is_empty()).then(|| rows.start..=rows.end - 1)
+    }
+
+    /// Every row directly inside the callout box `id`, top to bottom. Rows of
+    /// a box nested inside belong to that box, not this one. Empty when `id`
+    /// is not a box in this body.
+    pub fn callout_rows(&self, id: NodeId) -> Vec<NodeId> {
+        self.callout_span(id)
             .map(|span| {
                 self.rows[span]
                     .iter()
-                    .filter(|row| row.callout == Some(head))
+                    .filter(|row| row.callout == Some(id))
                     .map(|row| row.id)
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// Take the box away from the callout headed by `head`: the head becomes
-    /// a paragraph and its children — the rest of the box — become its
-    /// following siblings, in order. One undo step. The caret lands at the
-    /// head's start, which is the seam of nothing having moved.
-    pub fn unwrap_callout(&mut self, ws: &mut WorkspaceDoc, head: NodeId) -> Option<usize> {
-        let parent = ws.parent(head).ok()?;
-        let index = ws.sibling_index(head).ok()?;
-        let children = ws.children(Parent::Node(head)).unwrap_or_default();
-        ws.checkpoint();
-        ws.begin_group();
-        let relabelled = ws.set_kind(head, Kind::Paragraph).is_ok();
-        if relabelled {
-            for (offset, child) in children.into_iter().enumerate() {
-                let _ = ws.move_node(child, parent, index + 1 + offset);
+    /// Whether row `i` is the first row of the box it is in — the row the
+    /// box's icon sits beside, and the one Backspace-at-start dissolves from.
+    pub fn is_callout_first_row(&self, i: usize) -> bool {
+        self.rows
+            .get(i)
+            .and_then(|row| row.callout)
+            .and_then(|callout| self.callout_span(callout))
+            .is_some_and(|span| *span.start() == i)
+    }
+
+    /// The outermost box whose rows begin at row `i`, if any — what a drag of
+    /// that row's grip moves: the whole container, with everything inside.
+    pub fn callout_starting_at(&self, i: usize) -> Option<NodeId> {
+        let mut callout = self.rows.get(i)?.callout?;
+        let mut outermost = None;
+        while let Some(found) = self.callout_box(callout) {
+            if found.rows.start != i {
+                break;
+            }
+            outermost = Some(found.id);
+            match found.parent {
+                Some(parent) => callout = parent,
+                None => break,
             }
         }
+        outermost
+    }
+
+    /// Take the callout box `id` away and keep its lines: they become
+    /// siblings where the box stood, in order. One undo step. The caret stays
+    /// on the row it was on, at its start — the seam of nothing having moved.
+    pub fn dissolve_callout(&mut self, ws: &mut WorkspaceDoc, id: NodeId) -> Option<usize> {
+        let focused = self.focused_id();
         ws.checkpoint();
-        if !relabelled {
-            return None;
-        }
+        ws.begin_group();
+        let lines = ws.dissolve_callout(id);
+        ws.checkpoint();
+        let lines = lines.ok()?;
         self.rebuild(ws);
-        self.focus_on(head);
+        if let Some(back) = focused.or(lines.first().copied()) {
+            self.focus_on(back);
+        }
         if let Some(row) = self.focused_mut() {
             row.place_caret(0);
         }
@@ -1853,20 +1907,24 @@ mod tests {
         o.rows.iter().map(|r| (r.text.clone(), r.depth)).collect()
     }
 
-    /// A callout's children are its box: every row the walk yields under the
-    /// head answers to it, a list inside included; a callout nested inside
-    /// is a box of its own without ending the outer one; and a row moved out
-    /// of the box stops answering to it.
+    /// A callout is a container: it draws no row, every row the walk yields
+    /// under it answers to it — a list inside included — and its look and
+    /// extent are kept on the body. A callout nested inside is a box of its
+    /// own without ending the outer one, and a row moved out of the box stops
+    /// answering to it.
     #[test]
-    fn a_callout_box_is_its_heads_subtree_and_the_innermost_box_wins() {
+    fn a_callout_box_is_a_container_whose_rows_answer_to_it() {
         let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
         let doc = ws
             .insert(Parent::Root, Node::document("d").unwrap())
             .unwrap();
+        let before = ws
+            .insert(Parent::Node(doc), Node::paragraph("before").unwrap())
+            .unwrap();
         let outer = ws
             .insert(
                 Parent::Node(doc),
-                Node::callout("outer", None, None).unwrap(),
+                Node::callout(Some("⚠️"), Some("red")).unwrap(),
             )
             .unwrap();
         let line = ws
@@ -1879,10 +1937,7 @@ mod tests {
             .insert(Parent::Node(list), Node::paragraph("item").unwrap())
             .unwrap();
         let inner = ws
-            .insert(
-                Parent::Node(outer),
-                Node::callout("inner", None, None).unwrap(),
-            )
+            .insert(Parent::Node(outer), Node::callout(None, None).unwrap())
             .unwrap();
         let deep = ws
             .insert(Parent::Node(inner), Node::paragraph("deep").unwrap())
@@ -1897,39 +1952,65 @@ mod tests {
         body.flat = true;
         body.zoom_to(&ws, Some(doc));
 
+        assert!(body.row(outer).is_none(), "a box is not a row");
+        assert!(body.row(inner).is_none());
         let boxed = |body: &Body, id| body.row(id).unwrap().callout;
-        assert_eq!(boxed(&body, outer), Some(outer));
+        assert_eq!(boxed(&body, before), None);
         assert_eq!(boxed(&body, line), Some(outer));
         assert_eq!(boxed(&body, item), Some(outer));
-        assert_eq!(boxed(&body, inner), Some(inner));
         assert_eq!(boxed(&body, deep), Some(inner));
         assert_eq!(boxed(&body, last), Some(outer));
         assert_eq!(boxed(&body, after), None);
-        // The nested head is a row of *its* box, not the outer one's; the
-        // outer box still reaches past it to `last`.
-        assert_eq!(body.callout_rows(outer), vec![outer, line, item, last]);
-        assert_eq!(body.callout_rows(inner), vec![inner, deep]);
+        // The look is the container's, kept once on the body.
+        let found = body.callout_box(outer).expect("the box");
+        assert_eq!(found.icon.as_deref(), Some("⚠️"));
+        assert_eq!(found.colour.as_deref(), Some("red"));
+        assert_eq!(found.parent, None);
+        assert_eq!(body.callout_box(inner).unwrap().parent, Some(outer));
+        assert!(body.callout_box(line).is_none(), "a row is not a box");
+        // The nested box's row is in the outer box's span but not among its
+        // own rows; the outer box reaches past it to `last`.
+        assert_eq!(body.callout_rows(outer), vec![line, item, last]);
+        assert_eq!(body.callout_rows(inner), vec![deep]);
         assert_eq!(
             body.callout_span(outer),
-            Some(body.index_of(outer).unwrap()..=body.index_of(last).unwrap())
+            Some(body.index_of(line).unwrap()..=body.index_of(last).unwrap())
         );
-        assert!(
-            body.callout_rows(line).is_empty(),
-            "a row inside is not a head"
+        assert_eq!(
+            body.callout_span(inner),
+            Some(body.index_of(deep).unwrap()..=body.index_of(deep).unwrap())
         );
-        // Prose inside keeps the flat body's depth and the list its own; the
-        // box insets every row in it.
+        assert!(body.is_callout_first_row(body.index_of(line).unwrap()));
+        assert!(body.is_callout_first_row(body.index_of(deep).unwrap()));
+        assert!(!body.is_callout_first_row(body.index_of(item).unwrap()));
+        assert_eq!(
+            body.callout_starting_at(body.index_of(line).unwrap()),
+            Some(outer)
+        );
+        assert_eq!(
+            body.callout_starting_at(body.index_of(deep).unwrap()),
+            Some(inner),
+            "the inner box starts there, the outer one does not"
+        );
+        // Prose inside keeps the flat body's depth, a list inside indents as
+        // a list outside does, and the box insets every row in it.
         assert_eq!(body.row(line).unwrap().depth, 0);
         assert_eq!(
             body.row(item).unwrap().list_style,
             Some(koru_core::ListStyle::Bullet)
         );
+        assert_eq!(body.row(item).unwrap().depth, 1);
         assert!(body.row(line).unwrap().text_x() > body.row(after).unwrap().text_x());
 
-        ws.move_node(last, Parent::Node(doc), 1).unwrap();
+        ws.move_node(last, Parent::Node(doc), 2).unwrap();
         body.rebuild(&ws);
         assert_eq!(boxed(&body, last), None);
-        assert_eq!(body.callout_rows(outer), vec![outer, line, item]);
+        assert_eq!(body.callout_rows(outer), vec![line, item]);
+        assert_eq!(
+            body.callout_span(outer),
+            Some(body.index_of(line).unwrap()..=body.index_of(deep).unwrap()),
+            "the span still covers the nested box at its end"
+        );
     }
 
     /// Clicking past a code block continues prose — `append_row` makes a

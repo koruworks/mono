@@ -28,11 +28,12 @@ pub enum Kind {
     /// it into another quote, but hierarchy belongs to structural blocks
     /// rather than to the quotation's visual inset.
     Quote,
-    /// The head line of a highlighted box in a document, drawn tinted with
-    /// an icon. Its children are the rest of the box: paragraphs and lists
-    /// typed inside it. Enter in the head writes the next line *inside* the
-    /// box, as a paragraph under it; the icon and tint live on the head
-    /// ([`crate::callout`]).
+    /// A highlighted box in a document, drawn tinted with an icon. A
+    /// container like [`ListBlock`](Kind::ListBlock): it carries no text of
+    /// its own, and its children are the lines inside it — paragraphs, and
+    /// lists with their items. The icon and tint live on the container
+    /// ([`crate::callout`]). Never a row of its own; the editor draws the
+    /// box around its children's rows.
     Callout,
     /// Its text is the title; its children are the body.
     Document,
@@ -893,15 +894,11 @@ impl Node {
         Self::new(Kind::Quote, Content::text(text))
     }
 
-    /// A callout line in a document, carrying `icon` (one emoji; `None` is
-    /// the default) and `tint` (an `AccentColor` token; `None` is the
-    /// default) — see [`crate::callout`].
-    pub fn callout(
-        text: impl Into<String>,
-        icon: Option<&str>,
-        tint: Option<&str>,
-    ) -> Result<Self, ShapeError> {
-        let mut node = Self::new(Kind::Callout, Content::text(text))?;
+    /// A callout box, empty: its lines are inserted under it. `icon` is one
+    /// emoji (`None` is the default) and `tint` an `AccentColor` token
+    /// (`None` is the default) — see [`crate::callout`].
+    pub fn callout(icon: Option<&str>, tint: Option<&str>) -> Result<Self, ShapeError> {
+        let mut node = Self::new(Kind::Callout, Content::text(""))?;
         node.meta.icon = icon.filter(|icon| !icon.is_empty()).map(str::to_owned);
         node.meta.colour = tint.filter(|tint| !tint.is_empty()).map(str::to_owned);
         Ok(node)
@@ -983,8 +980,11 @@ impl Node {
                 return Err(ShapeError::NewlineInText);
             }
             // A divider is text-shaped so it can sit in a body, but it carries
-            // no text of its own — a rule with prose on it is not a rule.
-            if kind == Kind::Divider && !text.is_empty() {
+            // no text of its own — a rule with prose on it is not a rule. A
+            // callout is a container the same way: its lines are its
+            // children, and text on the box itself would be a line nothing
+            // can edit.
+            if matches!(kind, Kind::Divider | Kind::Callout) && !text.is_empty() {
                 return Err(ShapeError::NonEmptyText { kind });
             }
         }

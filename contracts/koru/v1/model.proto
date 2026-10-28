@@ -128,12 +128,10 @@ message BlockProperties {
 message ParagraphPayload {
   RichText rich_text = 1;
 }
-// The head line of a callout box. Its icon and tint are BlockProperties
-// (icon, color); the lines inside the box are the blocks whose parent_id is
-// this block.
-message CalloutPayload {
-  RichText rich_text = 1;
-}
+// A callout box. It has no text of its own: its icon and tint are
+// BlockProperties (icon, color), and the lines inside the box are the blocks
+// whose parent_id is this block, as with a list.
+message CalloutPayload {}
 message TaskPayload {
   RichText rich_text = 1;
 }

@@ -106,6 +106,9 @@ pub fn parse(text: &str) -> Vec<RichBlock> {
                 RichBlock::Table(RichTableBlock { source })
             }
             koru_import_markdown::Block::Rule => RichBlock::Text(RichTextBlock::from_text("—")),
+            koru_import_markdown::Block::CalloutStart { icon, tint } => {
+                RichBlock::CalloutStart { icon, tint }
+            }
             koru_import_markdown::Block::CalloutEnd => RichBlock::CalloutEnd,
             koru_import_markdown::Block::Image(image) => {
                 let label = if image.alt.is_empty() {
@@ -145,9 +148,6 @@ pub fn parse(text: &str) -> Vec<RichBlock> {
                         koru_import_markdown::TextKind::Quote => RichTextKind::Quote,
                         koru_import_markdown::TextKind::Code { language } => {
                             RichTextKind::Code { language }
-                        }
-                        koru_import_markdown::TextKind::Callout { icon, tint } => {
-                            RichTextKind::Callout { icon, tint }
                         }
                     },
                     runs: block
@@ -215,25 +215,27 @@ mod tests {
         assert!(table.source.contains("[1]: https://example.com \"Docs\""));
     }
 
-    /// A callout box pastes as its head, the blocks inside it, and the end
-    /// marker the document nests them by.
+    /// A callout box pastes as its start marker carrying the look, the
+    /// blocks inside it, and the end marker the document nests them by.
     #[test]
-    fn a_callout_box_carries_its_head_and_its_end() {
+    fn a_callout_box_carries_its_start_and_its_end() {
         let blocks = parse("> 💡 Keep it\n>\n> inside\n>\n> - one\n\nafter");
-        let head = RichTextKind::Callout {
-            icon: Some("💡".into()),
-            tint: None,
-        };
-        assert_eq!(blocks.len(), 5);
-        assert!(matches!(&blocks[0], RichBlock::Text(t) if t.kind == head && t.text == "Keep it"));
+        assert_eq!(blocks.len(), 6);
+        assert!(matches!(
+            &blocks[0],
+            RichBlock::CalloutStart { icon: Some(icon), tint: None } if icon == "💡"
+        ));
         assert!(
-            matches!(&blocks[1], RichBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
+            matches!(&blocks[1], RichBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "Keep it")
         );
         assert!(
-            matches!(&blocks[2], RichBlock::Text(t) if t.list.is_some_and(|l| l.style == ListStyle::Bullet) && t.text == "one")
+            matches!(&blocks[2], RichBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
         );
-        assert!(matches!(&blocks[3], RichBlock::CalloutEnd));
-        assert!(matches!(&blocks[4], RichBlock::Text(t) if t.text == "after"));
+        assert!(
+            matches!(&blocks[3], RichBlock::Text(t) if t.list.is_some_and(|l| l.style == ListStyle::Bullet) && t.text == "one")
+        );
+        assert!(matches!(&blocks[4], RichBlock::CalloutEnd));
+        assert!(matches!(&blocks[5], RichBlock::Text(t) if t.text == "after"));
     }
 
     #[test]

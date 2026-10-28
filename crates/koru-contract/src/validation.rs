@@ -284,12 +284,6 @@ fn validate_block(block: &BlockEnvelope) -> Result<(), ValidationError> {
                 .name
                 .as_ref(),
         )?,
-        BlockKind::Callout => validate_rich_text(
-            crate::proto::CalloutPayload::decode(payload.value.as_slice())
-                .map_err(|_| ValidationError::InvalidPayload)?
-                .rich_text
-                .as_ref(),
-        )?,
         BlockKind::Image => validate_blob(
             crate::proto::ImagePayload::decode(payload.value.as_slice())
                 .map_err(|_| ValidationError::InvalidPayload)?
@@ -302,6 +296,10 @@ fn validate_block(block: &BlockEnvelope) -> Result<(), ValidationError> {
         }
         BlockKind::Divider => {
             crate::proto::DividerPayload::decode(payload.value.as_slice())
+                .map_err(|_| ValidationError::InvalidPayload)?;
+        }
+        BlockKind::Callout => {
+            crate::proto::CalloutPayload::decode(payload.value.as_slice())
                 .map_err(|_| ValidationError::InvalidPayload)?;
         }
         BlockKind::Embed => {

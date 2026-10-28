@@ -7,9 +7,9 @@ package app.koru.contract.v1;
 
 /**
  * <pre>
- * The head line of a callout box. Its icon and tint are BlockProperties
- * (icon, color); the lines inside the box are the blocks whose parent_id is
- * this block.
+ * A callout box. It has no text of its own: its icon and tint are
+ * BlockProperties (icon, color), and the lines inside the box are the blocks
+ * whose parent_id is this block, as with a list.
  * </pre>
  *
  * Protobuf type {@code koru.v1.CalloutPayload}
@@ -22,55 +22,6 @@ public  final class CalloutPayload extends
     CalloutPayloadOrBuilder {
   private CalloutPayload() {
   }
-  private int bitField0_;
-  public static final int RICH_TEXT_FIELD_NUMBER = 1;
-  private app.koru.contract.v1.RichText richText_;
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   */
-  @java.lang.Override
-  public boolean hasRichText() {
-    return ((bitField0_ & 0x00000001) != 0);
-  }
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   */
-  @java.lang.Override
-  public app.koru.contract.v1.RichText getRichText() {
-    return richText_ == null ? app.koru.contract.v1.RichText.getDefaultInstance() : richText_;
-  }
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   */
-  @java.lang.SuppressWarnings("ReturnValueIgnored")
-  private void setRichText(app.koru.contract.v1.RichText value) {
-    value.getClass();  // minimal bytecode null check
-    richText_ = value;
-    bitField0_ |= 0x00000001;
-  }
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   */
-  @java.lang.SuppressWarnings({"ReferenceEquality", "ReturnValueIgnored"})
-  private void mergeRichText(app.koru.contract.v1.RichText value) {
-    value.getClass();  // minimal bytecode null check
-    if (richText_ != null &&
-        richText_ != app.koru.contract.v1.RichText.getDefaultInstance()) {
-      richText_ =
-        app.koru.contract.v1.RichText.newBuilder(richText_).mergeFrom(value).buildPartial();
-    } else {
-      richText_ = value;
-    }
-    bitField0_ |= 0x00000001;
-  }
-  /**
-   * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-   */
-  private void clearRichText() {
-    richText_ = null;
-    bitField0_ = (bitField0_ & ~0x00000001);
-  }
-
   public static app.koru.contract.v1.CalloutPayload parseFrom(
       java.nio.ByteBuffer data)
       throws com.google.protobuf.InvalidProtocolBufferException {
@@ -156,9 +107,9 @@ public  final class CalloutPayload extends
 
   /**
    * <pre>
-   * The head line of a callout box. Its icon and tint are BlockProperties
-   * (icon, color); the lines inside the box are the blocks whose parent_id is
-   * this block.
+   * A callout box. It has no text of its own: its icon and tint are
+   * BlockProperties (icon, color), and the lines inside the box are the blocks
+   * whose parent_id is this block, as with a list.
    * </pre>
    *
    * Protobuf type {@code koru.v1.CalloutPayload}
@@ -173,53 +124,6 @@ public  final class CalloutPayload extends
       super(DEFAULT_INSTANCE);
     }
 
-
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    @java.lang.Override
-    public boolean hasRichText() {
-      return instance.hasRichText();
-    }
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    @java.lang.Override
-    public app.koru.contract.v1.RichText getRichText() {
-      return instance.getRichText();
-    }
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    public Builder setRichText(app.koru.contract.v1.RichText value) {
-      copyOnWrite();
-      instance.setRichText(value);
-      return this;
-      }
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    public Builder setRichText(
-        app.koru.contract.v1.RichText.Builder builderForValue) {
-      copyOnWrite();
-      instance.setRichText(builderForValue.build());
-      return this;
-    }
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    public Builder mergeRichText(app.koru.contract.v1.RichText value) {
-      copyOnWrite();
-      instance.mergeRichText(value);
-      return this;
-    }
-    /**
-     * <code>.koru.v1.RichText rich_text = 1 [json_name = "richText"];</code>
-     */
-    public Builder clearRichText() {  copyOnWrite();
-      instance.clearRichText();
-      return this;
-    }
 
     // @@protoc_insertion_point(builder_scope:koru.v1.CalloutPayload)
   }
@@ -236,12 +140,9 @@ public  final class CalloutPayload extends
         return new Builder();
       }
       case BUILD_MESSAGE_INFO: {
-          java.lang.Object[] objects = new java.lang.Object[] {
-            "bitField0_",
-            "richText_",
-          };
+          java.lang.Object[] objects = null;
           java.lang.String info =
-              "\u0000\u0001\u0000\u0001\u0001\u0001\u0001\u0000\u0000\u0000\u0001\u1009\u0000";
+              "\u0000\u0000";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

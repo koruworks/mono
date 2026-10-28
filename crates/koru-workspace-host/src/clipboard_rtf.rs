@@ -85,7 +85,7 @@ pub(crate) struct RawPicture {
 }
 
 /// A piece of the document in arrival order: a paragraph of text, a picture,
-/// or the end of a callout box (which only HTML carries).
+/// or an edge of a callout box (which only HTML carries).
 #[derive(Debug)]
 pub(crate) enum RawBlock {
     // The append-after paste reads pictures only (the text is already pasted by
@@ -94,7 +94,13 @@ pub(crate) enum RawBlock {
     #[allow(dead_code)]
     Text(crate::RichTextBlock),
     Picture(RawPicture),
-    /// The blocks since the last `Text` of kind `Callout` are inside that box.
+    /// A callout box opens; the blocks up to its end are inside it. `icon`
+    /// is an emoji and `tint` an `AccentColor` token, `None` the default.
+    CalloutStart {
+        icon: Option<String>,
+        tint: Option<String>,
+    },
+    /// The box closes.
     CalloutEnd,
 }
 
@@ -514,7 +520,7 @@ mod tests {
             .map(|b| match b {
                 RawBlock::Text(t) => t.text.as_str(),
                 RawBlock::Picture(p) => p.mime,
-                RawBlock::CalloutEnd => "",
+                RawBlock::CalloutStart { .. } | RawBlock::CalloutEnd => "",
             })
             .collect();
         assert_eq!(kinds, vec!["one", "image/png", "two", "image/jpeg"]);

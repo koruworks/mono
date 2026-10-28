@@ -1087,19 +1087,10 @@ mod tests {
         assert_eq!(nested.parent, Some(workspace_page.id));
     }
 
-    /// **An import restores; it never commands** (SPEC §5, ADR-273).
-    ///
-    /// A Notion to-do is a checked box, which is content, and never a completed
-    /// task: writing a marker would invent a creation reason the export never
-    /// recorded, and a completed task over an unchecked child would then raise
-    /// the question of whether the child reopens it. Neither question arises,
-    /// because an importer's exemption is that the classification entry point
-    /// and the six canonical commands are simply not on this path — which this
-    /// test reads off the crate itself rather than taking on trust.
     /// A Notion callout survives the export: the `<aside>` Notion's Markdown
-    /// writes lands as a callout box whose head carries the icon, emoji or
-    /// built-in, and whose other blocks — a paragraph, a bullet list — are
-    /// the head's children.
+    /// writes lands as a callout box carrying the icon, emoji or built-in,
+    /// with its blocks — the first line, a paragraph, a bullet list — as the
+    /// box's children, and the text on the children only.
     #[test]
     fn a_notion_callout_lands_as_a_callout_with_its_icon() {
         let id = "22222222222222222222222222222222";
@@ -1137,15 +1128,15 @@ mod tests {
             .unwrap();
         let doc = WorkspaceDoc::from_snapshot(&page.snapshot).unwrap();
         let root = doc.children(Parent::Root).unwrap()[0];
-        // The page's heading row stays in the body; the heads are the rows
-        // after it.
-        let heads: Vec<NodeId> = doc
+        // The page's heading row stays in the body; the boxes are the rows
+        // after it. A box carries the look and no text of its own.
+        let boxes: Vec<NodeId> = doc
             .children(Parent::Node(root))
             .unwrap()
             .into_iter()
             .filter(|&id| doc.read(id).unwrap().kind == koru_core::Kind::Callout)
             .collect();
-        let callouts: Vec<_> = heads
+        let callouts: Vec<_> = boxes
             .iter()
             .map(|&id| doc.read(id).unwrap())
             .map(|node| {
@@ -1159,56 +1150,62 @@ mod tests {
         assert_eq!(
             callouts,
             vec![
-                ("Back up first".to_owned(), Some("⚠️".to_owned()), None),
+                (String::new(), Some("⚠️".to_owned()), None),
                 (
-                    "Built-in icon".to_owned(),
+                    String::new(),
                     Some("ℹ️".to_owned()),
                     Some("blue".to_owned())
                 ),
             ]
         );
 
-        // What else was in the first callout is under its head, in order.
-        let inside: Vec<_> = doc
-            .children(Parent::Node(heads[0]))
-            .unwrap()
-            .into_iter()
-            .map(|id| {
-                let node = doc.read(id).unwrap();
-                (
-                    node.kind,
-                    node.content.as_text().unwrap_or_default().to_owned(),
-                )
-            })
-            .collect();
+        // What was in each callout is under its box, in order, with the
+        // text on the children only.
+        let shape = |parent: NodeId| -> Vec<(koru_core::Kind, String)> {
+            doc.children(Parent::Node(parent))
+                .unwrap()
+                .into_iter()
+                .map(|id| {
+                    let node = doc.read(id).unwrap();
+                    (
+                        node.kind,
+                        node.content.as_text().unwrap_or_default().to_owned(),
+                    )
+                })
+                .collect()
+        };
         assert_eq!(
-            inside,
+            shape(boxes[0]),
             vec![
+                (koru_core::Kind::Paragraph, "Back up first".to_owned()),
                 (koru_core::Kind::Paragraph, "Then check the copy".to_owned()),
                 (koru_core::Kind::ListBlock, String::new()),
             ]
         );
-        let list = doc.children(Parent::Node(heads[0])).unwrap()[1];
-        let items: Vec<_> = doc
-            .children(Parent::Node(list))
-            .unwrap()
-            .into_iter()
-            .map(|id| {
-                doc.read(id)
-                    .unwrap()
-                    .content
-                    .as_text()
-                    .unwrap_or_default()
-                    .to_owned()
-            })
-            .collect();
-        assert_eq!(items, vec!["nightly".to_owned(), "weekly".to_owned()]);
-        assert!(
-            doc.children(Parent::Node(heads[1])).unwrap().is_empty(),
-            "the second callout has nothing inside"
+        let list = doc.children(Parent::Node(boxes[0])).unwrap()[2];
+        assert_eq!(
+            shape(list),
+            vec![
+                (koru_core::Kind::Paragraph, "nightly".to_owned()),
+                (koru_core::Kind::Paragraph, "weekly".to_owned()),
+            ]
+        );
+        assert_eq!(
+            shape(boxes[1]),
+            vec![(koru_core::Kind::Paragraph, "Built-in icon".to_owned())],
+            "the second callout holds its one line"
         );
     }
 
+    /// **An import restores; it never commands** (SPEC §5, ADR-273).
+    ///
+    /// A Notion to-do is a checked box, which is content, and never a completed
+    /// task: writing a marker would invent a creation reason the export never
+    /// recorded, and a completed task over an unchecked child would then raise
+    /// the question of whether the child reopens it. Neither question arises,
+    /// because an importer's exemption is that the classification entry point
+    /// and the six canonical commands are simply not on this path — which this
+    /// test reads off the crate itself rather than taking on trust.
     #[test]
     fn a_notion_to_do_lands_verbatim_and_no_task_is_invented() {
         let id = "11111111111111111111111111111111";

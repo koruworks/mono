@@ -227,7 +227,7 @@ impl EmojiPicker {
 
     /// Offer a callout box's tint above the grid, `current` being the tint
     /// it has now. From then on a swatch commits
-    /// [`Outcome::SetCalloutTint`] for the trigger's node — the box's head —
+    /// [`Outcome::SetCalloutTint`] for the trigger's node — the box itself —
     /// and the picker stays open; the grid still commits an emoji.
     pub fn offer_tints(&mut self, current: Option<AccentColor>) {
         self.tints = Some(TintStrip {

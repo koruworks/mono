@@ -56,20 +56,24 @@ fn heading_quote_code_divider_and_table() {
     assert!(md.contains("| a | b |"));
 }
 
-/// A box: the head as a quote led by its icon (the default when none is
-/// set), its children as further lines of the same quote.
+/// Two boxes: one with the default look around one line, one with a chosen
+/// icon and tint around a line, a paragraph, a list and a heading. Each is
+/// a quote led by its icon (the default when none is set), its first line
+/// on the icon's line, the rest as further lines of the same quote.
 fn boxed_doc() -> WorkspaceDoc {
     let (mut ws, root) = with_doc("Doc");
-    ws.insert(
-        Parent::Node(root),
-        Node::callout("plain", None, None).unwrap(),
-    )
-    .unwrap();
+    let plain = ws
+        .insert(Parent::Node(root), Node::callout(None, None).unwrap())
+        .unwrap();
+    ws.insert(Parent::Node(plain), Node::paragraph("plain").unwrap())
+        .unwrap();
     let head = ws
         .insert(
             Parent::Node(root),
-            Node::callout("careful", Some("⚠️"), Some("red")).unwrap(),
+            Node::callout(Some("⚠️"), Some("red")).unwrap(),
         )
+        .unwrap();
+    ws.insert(Parent::Node(head), Node::paragraph("careful").unwrap())
         .unwrap();
     ws.insert(Parent::Node(head), Node::paragraph("Second line").unwrap())
         .unwrap();
@@ -146,24 +150,30 @@ fn a_callout_round_trips_through_markdown_with_its_lines_inside() {
             })
             .collect()
     };
-    // Markdown has to write an emoji to mark the box, so a head with no icon
+    // Markdown has to write an emoji to mark the box, so a box with no icon
     // set comes back with the default stored — and draws, and exports,
-    // exactly as before.
+    // exactly as before. The box carries no text; its lines are under it.
     assert_eq!(
         shape(root),
         vec![
-            (Kind::Callout, "plain".into(), Some("💡".into())),
-            (Kind::Callout, "careful".into(), Some("⚠️".into())),
+            (Kind::Callout, String::new(), Some("💡".into())),
+            (Kind::Callout, String::new(), Some("⚠️".into())),
             (Kind::Paragraph, "after".into(), None),
         ]
     );
-    let head = doc.children(Parent::Node(root)).unwrap()[1];
+    let boxes = doc.children(Parent::Node(root)).unwrap();
+    assert_eq!(
+        shape(boxes[0]),
+        vec![(Kind::Paragraph, "plain".into(), None)]
+    );
+    let head = boxes[1];
     let inside = shape(head);
-    assert_eq!(inside[0], (Kind::Paragraph, "Second line".into(), None));
-    assert_eq!(inside[1].0, Kind::ListBlock);
-    assert_eq!(inside[2], (Kind::Paragraph, "Title".into(), None));
-    assert_eq!(inside.len(), 3, "{inside:?}");
-    let list = doc.children(Parent::Node(head)).unwrap()[1];
+    assert_eq!(inside[0], (Kind::Paragraph, "careful".into(), None));
+    assert_eq!(inside[1], (Kind::Paragraph, "Second line".into(), None));
+    assert_eq!(inside[2].0, Kind::ListBlock);
+    assert_eq!(inside[3], (Kind::Paragraph, "Title".into(), None));
+    assert_eq!(inside.len(), 4, "{inside:?}");
+    let list = doc.children(Parent::Node(head)).unwrap()[2];
     assert_eq!(
         shape(list),
         vec![
@@ -176,6 +186,54 @@ fn a_callout_round_trips_through_markdown_with_its_lines_inside() {
         .unwrap()
         .markdown;
     assert_eq!(again, BOXED_MARKDOWN);
+}
+
+/// A box whose first line is not prose — a list — leads with the icon
+/// alone, so the list is not written onto the icon's line, and comes back
+/// as the same box around the same list.
+#[test]
+fn a_callout_that_opens_with_a_list_leads_with_its_icon_alone() {
+    use koru_core::Kind;
+    let (mut ws, root) = with_doc("Doc");
+    let callout = ws
+        .insert(Parent::Node(root), Node::callout(None, None).unwrap())
+        .unwrap();
+    let list = ws
+        .insert(Parent::Node(callout), Node::list_block().unwrap())
+        .unwrap();
+    ws.set_list_style(list, Some(ListStyle::Bullet)).unwrap();
+    ws.insert(Parent::Node(list), Node::paragraph("one").unwrap())
+        .unwrap();
+    ws.insert(Parent::Node(list), Node::paragraph("two").unwrap())
+        .unwrap();
+    const LED_BY_THE_ICON_ALONE: &str = "> 💡\n>\n> - one\n> - two\n";
+    let md = render_document(&ws, &NoBlobs, "x.assets").unwrap().markdown;
+    assert_eq!(md, format!("# Doc\n\n{LED_BY_THE_ICON_ALONE}"));
+
+    let context = koru_import::ImportContext {
+        target_profile: None,
+        target_workspace: None,
+        occupied_titles: &std::collections::BTreeSet::new(),
+        blobs: &koru_import::NoBlobSink,
+        tags: &koru_import::NoTagSink,
+    };
+    let (_, snapshot, _) = koru_import_markdown::build_document_from_text(
+        WorkspaceId::new(),
+        "Doc",
+        "doc.md",
+        LED_BY_THE_ICON_ALONE,
+        &context,
+        &koru_import::NoProgress,
+    )
+    .unwrap();
+    let doc = WorkspaceDoc::from_snapshot(&snapshot).unwrap();
+    let root = doc.children(Parent::Root).unwrap()[0];
+    let body = doc.children(Parent::Node(root)).unwrap();
+    assert_eq!(body.len(), 1);
+    assert_eq!(doc.read(body[0]).unwrap().kind, Kind::Callout);
+    let inside = doc.children(Parent::Node(body[0])).unwrap();
+    assert_eq!(inside.len(), 1, "only the list is inside");
+    assert_eq!(doc.read(inside[0]).unwrap().kind, Kind::ListBlock);
 }
 
 #[test]

@@ -12,9 +12,9 @@ public inline fun calloutPayload(block: app.koru.contract.v1.CalloutPayloadKt.Ds
   app.koru.contract.v1.CalloutPayloadKt.Dsl._create(app.koru.contract.v1.CalloutPayload.newBuilder()).apply { block() }._build()
 /**
  * ```
- * The head line of a callout box. Its icon and tint are BlockProperties
- * (icon, color); the lines inside the box are the blocks whose parent_id is
- * this block.
+ * A callout box. It has no text of its own: its icon and tint are
+ * BlockProperties (icon, color), and the lines inside the box are the blocks
+ * whose parent_id is this block, as with a list.
  * ```
  *
  * Protobuf type `koru.v1.CalloutPayload`
@@ -34,38 +34,8 @@ public object CalloutPayloadKt {
     @kotlin.jvm.JvmSynthetic
   @kotlin.PublishedApi
     internal fun _build(): app.koru.contract.v1.CalloutPayload = _builder.build()
-
-    /**
-     * `.koru.v1.RichText rich_text = 1 [json_name = "richText"];`
-     */
-    public var richText: app.koru.contract.v1.RichText
-      @kotlin.jvm.JvmName("getRichText")
-        get() = _builder.richText
-      @kotlin.jvm.JvmName("setRichText")
-        set(value) {
-        _builder.richText = value
-      }
-    /**
-     * `.koru.v1.RichText rich_text = 1 [json_name = "richText"];`
-     */
-    public fun clearRichText() {
-      _builder.clearRichText()
-    }
-    /**
-     * `.koru.v1.RichText rich_text = 1 [json_name = "richText"];`
-     * @return Whether the richText field is set.
-     */
-    public fun hasRichText(): kotlin.Boolean {
-      return _builder.hasRichText()
-    }
-
-    public val CalloutPayloadKt.Dsl.richTextOrNull: app.koru.contract.v1.RichText?
-      get() = _builder.richTextOrNull
   }
 }
 public inline fun app.koru.contract.v1.CalloutPayload.copy(block: `app.koru.contract.v1`.CalloutPayloadKt.Dsl.() -> kotlin.Unit): app.koru.contract.v1.CalloutPayload =
   `app.koru.contract.v1`.CalloutPayloadKt.Dsl._create(this.toBuilder()).apply { block() }._build()
-
-public val app.koru.contract.v1.CalloutPayloadOrBuilder.richTextOrNull: app.koru.contract.v1.RichText?
-  get() = if (hasRichText()) getRichText() else null
 

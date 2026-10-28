@@ -319,10 +319,10 @@ fn emit_node(
                 out.push('\n');
             }
         }
-        Kind::Callout if parent_list.is_none() => {
-            emit_callout(ws, id, node, blobs, assets_rel, out, assets)?;
+        Kind::Callout => {
+            emit_callout(ws, id, node, list_depth, blobs, assets_rel, out, assets)?;
         }
-        Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Callout | Kind::Contact => {
+        Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Contact => {
             if let Some(style) = parent_list {
                 let indent = "  ".repeat(list_depth);
                 let marker = list_marker(style, item_index, node.meta.done);
@@ -437,29 +437,40 @@ fn emit_node(
 }
 
 /// A callout box. Markdown has no box, so it is written as one blockquote
-/// that any viewer draws as one: the head as `> 💡 head text`, then every
-/// child — paragraphs, lists with their nesting, headings, code — as further
-/// lines of the same quote, with a bare `>` between blocks. The importer
-/// reads a blockquote whose first line leads with an emoji back as a box
+/// that any viewer draws as one, led by the box's icon: `> 💡 first line`
+/// when the first line inside is a plain paragraph, or `> 💡` alone when it
+/// is not (a list, a heading, code), then every line inside — paragraphs,
+/// lists with their nesting, headings, code — as further lines of the same
+/// quote, with a bare `>` between blocks. The importer reads a blockquote
+/// whose first line leads with an emoji back as a box
 /// (`koru-import-markdown`), so a document round-trips. The tint has no
-/// Markdown form and is not written.
+/// Markdown form and is not written. Under a list item the quote is
+/// indented like the item's other nested blocks.
 fn emit_callout(
     ws: &WorkspaceDoc,
     id: NodeId,
     node: &Node,
+    list_depth: usize,
     blobs: &dyn BlobSource,
     assets_rel: &str,
     out: &mut String,
     assets: &mut Vec<RenderedAsset>,
 ) -> Result<(), ExportError> {
-    out.push_str("> ");
-    out.push_str(koru_core::callout::icon(&node.meta));
-    let head = inline_line(ws, id, node)?;
-    if !head.is_empty() {
-        out.push(' ');
-        out.push_str(&head);
-    }
-    out.push('\n');
+    let indent = "  ".repeat(list_depth);
+    let children = ws
+        .children(Parent::Node(id))
+        .map_err(|e| ExportError::new(e.to_string()))?;
+    let first_is_line = match children.first() {
+        Some(&first) => {
+            let first = ws
+                .read(first)
+                .map_err(|e| ExportError::new(e.to_string()))?;
+            first.kind == Kind::Paragraph
+                && first.meta.heading.is_none()
+                && !matches!(first.content, Content::Embed { .. })
+        }
+        None => false,
+    };
     let mut inside = String::new();
     emit_children(
         ws,
@@ -472,18 +483,34 @@ fn emit_callout(
         assets,
     )?;
     let inside = inside.trim_end();
-    if !inside.is_empty() {
-        // A bare `>` after the head, or the first child would continue the
-        // head's paragraph.
-        out.push_str(">\n");
-        for line in inside.lines() {
-            out.push('>');
-            if !line.is_empty() {
-                out.push(' ');
-                out.push_str(line);
-            }
-            out.push('\n');
+    let mut lines = inside.lines();
+    out.push_str(&indent);
+    out.push_str("> ");
+    out.push_str(koru_core::callout::icon(&node.meta));
+    let first = if first_is_line { lines.next() } else { None };
+    if let Some(first) = first {
+        if !first.is_empty() {
+            out.push(' ');
+            out.push_str(first);
         }
+        out.push('\n');
+    } else {
+        // The icon alone on its line, and a bare `>` after it — or the first
+        // line inside would continue the icon's paragraph.
+        out.push('\n');
+        if !inside.is_empty() {
+            out.push_str(&indent);
+            out.push_str(">\n");
+        }
+    }
+    for line in lines {
+        out.push_str(&indent);
+        out.push('>');
+        if !line.is_empty() {
+            out.push(' ');
+            out.push_str(line);
+        }
+        out.push('\n');
     }
     out.push('\n');
     Ok(())

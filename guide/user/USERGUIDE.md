@@ -4215,15 +4215,16 @@ aside takes. Three ways to make one:
 
 | | |
 | --- | --- |
-| typing `/` | choose `/callout` from the block menu; the current line becomes the box's first line |
-| a selection, then `Ctrl+Shift+6` | select several lines and press `Ctrl+Shift+6`, or choose **Callout** in the selection bubble's list menu; the first becomes the box's first line and the rest go inside it. The same key on a line inside a box takes the box away |
+| typing `/` | choose `/callout` from the block menu; the current line goes into a new box |
+| a selection, then `Ctrl+Shift+6` | select several lines and press `Ctrl+Shift+6`, or choose **Callout** in the selection bubble's list menu; the lines go into one box, in order. The same key on a line inside a box takes the box away |
 | paste | copy a rendered callout from a rich source and paste normally |
 
-The first line is the head of the box and carries the icon. Enter inside the
-box stays inside: the next line is another line of the same box. Press Enter
-on an empty last line to step out below it. Backspace at the start of the first
-line turns the box back into ordinary text, and whatever was inside becomes
-ordinary lines after it.
+The box holds ordinary lines — paragraphs, headings, lists — and the icon
+sits beside the first of them. Enter inside the box stays inside: the next
+line is another line of the same box. Press Enter on an empty last line to
+step out below it. Backspace at the start of the first line takes the box
+away and leaves its lines in place as ordinary text. `Ctrl+Shift+↑` / `↓` on
+the first line, or dragging its grip, moves the whole box.
 
 Lists work inside a callout as anywhere else: type `- `, `1. ` or `[]` then
 Space on a line inside the box. Bold, italic, links, pills and tags all work
@@ -4235,8 +4236,8 @@ same nine colours the rest of Koru uses; a callout without a chosen icon shows
 that colour and that icon.
 
 Copying a callout preserves it as a box for rich destinations. Markdown export
-writes it as a blockquote whose first line starts with the icon — `> 💡 Head`,
-then `> ` before each line inside — and Markdown import reads such a blockquote
+writes it as a blockquote whose first line starts with the icon — `> 💡 First
+line`, then `> ` before each further line — and Markdown import reads such a blockquote
 back as a callout, so a file round-trips. A quote whose first line does not
 start with an emoji stays a quote.
 

@@ -2826,9 +2826,11 @@ enum InsertKind {
     Code,
     Contact,
     Divider,
-    /// A callout box: the inserted node is its head line, and later inserts
-    /// under it are the box's content. It arrives with the default icon and
-    /// tint; no operation here sets either yet (see MCP.md).
+    /// A callout box: a container with no text of its own. The inserted node
+    /// is the box; a non-empty `text` becomes a first paragraph inside it,
+    /// and later inserts under it are the rest of the box's lines. It
+    /// arrives with the default icon and tint; no operation here sets either
+    /// yet (see MCP.md).
     Callout,
 }
 
@@ -3320,12 +3322,28 @@ fn apply_ops(
                 text,
             } => {
                 let kind = Kind::from(*kind);
-                let mut value = Node::new(kind, Content::text(text))?;
+                // A callout is a container with no text of its own: its lines
+                // are its children (MCP.md, "A callout is a box"). One `insert`
+                // still makes a one-line callout — the box, and when `text` is
+                // non-empty, a first paragraph inside it — so `node_id` names
+                // the box, which is what the caller asked for and what later
+                // inserts use as `parent_id`.
+                let (mut value, first_line) = if kind == Kind::Callout {
+                    let line = (!text.is_empty())
+                        .then(|| Node::paragraph(text.as_str()))
+                        .transpose()?;
+                    (Node::callout(None, None)?, line)
+                } else {
+                    (Node::new(kind, Content::text(text))?, None)
+                };
                 value.id = node(node_id)?;
                 let parent = parent(parent_id)?;
                 let index = after_index(doc, parent, after_node_id.as_deref())?;
                 let id = doc.insert(parent, value)?;
                 doc.move_node(id, parent, index)?;
+                if let Some(line) = first_line {
+                    doc.insert(Parent::Node(id), line)?;
+                }
                 // **And what it was created in** (D-2c, SPEC §5(d), ADR-272).
                 // D-2b wired the arrival half of `Move` and parked this arm as
                 // "a separate question nobody has asked yet"; the answer is the
@@ -5756,6 +5774,73 @@ mod tests {
         .unwrap();
 
         assert_eq!(doc.children(Parent::Node(root)).unwrap(), vec![b, c, a]);
+    }
+
+    /// One `insert` of kind `callout` still makes a one-line callout: the
+    /// box under the asked-for id, with the text as a first paragraph inside
+    /// it, read back as a container with no text and one child.
+    #[test]
+    fn insert_callout_with_text_makes_a_box_with_one_paragraph_inside() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Boxes").unwrap())
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let box_id = NodeId::new();
+        let empty_id = NodeId::new();
+
+        apply_ops(
+            &mut doc,
+            &[
+                EditOperation::Insert {
+                    node_id: box_id.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: None,
+                    kind: InsertKind::Callout,
+                    text: "Mind the gap".into(),
+                },
+                EditOperation::Insert {
+                    node_id: empty_id.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: Some(box_id.to_storage()),
+                    kind: InsertKind::Callout,
+                    text: String::new(),
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.children(Parent::Node(root)).unwrap(),
+            vec![box_id, empty_id]
+        );
+        let callout = doc.read(box_id).unwrap();
+        assert_eq!(callout.kind, Kind::Callout);
+        assert_eq!(callout.content.as_text(), Some(""));
+        let lines = doc.children(Parent::Node(box_id)).unwrap();
+        assert_eq!(lines.len(), 1, "one paragraph inside the box");
+        let line = doc.read(lines[0]).unwrap();
+        assert_eq!(line.kind, Kind::Paragraph);
+        assert_eq!(line.content.as_text(), Some("Mind the gap"));
+        assert_eq!(doc.parent(lines[0]).unwrap(), Parent::Node(box_id));
+
+        // What a client reads back: the box's kind and look are on the box.
+        let read = node_json(&callout, Parent::Node(root), 0, 1, &[]);
+        assert_eq!(read["kind"], "callout");
+        assert!(read["metadata"]["icon"].is_null());
+        assert!(read["metadata"]["colour"].is_null());
+        assert_eq!(read["content"]["text"], "");
+
+        // An empty text is just the box.
+        assert!(doc.children(Parent::Node(empty_id)).unwrap().is_empty());
+        assert_eq!(doc.read(empty_id).unwrap().kind, Kind::Callout);
     }
 
     #[test]
