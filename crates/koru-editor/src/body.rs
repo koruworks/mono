@@ -180,7 +180,7 @@ pub struct CalloutBox {
     /// `NodeMeta::icon`, read with [`koru_core::callout::icon_of`].
     pub icon: Option<String>,
     /// `NodeMeta::colour`, read with [`koru_core::callout::tint_of`].
-    pub colour: Option<String>,
+    pub color: Option<String>,
     /// The rows inside the box, nested boxes' rows included: consecutive,
     /// because they are the container's subtree in a depth-first walk. Empty
     /// for a box with nothing visible in it.
@@ -423,7 +423,7 @@ impl Body {
                         id,
                         parent: callout,
                         icon: node.meta.icon.clone(),
-                        colour: node.meta.colour.clone(),
+                        color: node.meta.colour.clone(),
                         rows: self.rows.len()..self.rows.len(),
                     },
                 );
@@ -657,6 +657,19 @@ impl Body {
             return;
         };
         let batch = tracker.drain(ws);
+        // **A callout box is no row, but it draws from its own meta.** Its
+        // icon and color are a map diff that names only the box, and the
+        // row filter below drops what it cannot find a row for — so an agent
+        // or a peer restyling a box left it showing the old look until the
+        // page was reopened. A touched box is a rebuild; the rows keep the
+        // paragraphs they have, because the walk re-reads only the boxes.
+        if batch
+            .touched
+            .iter()
+            .any(|id| self.callout_boxes.contains_key(id))
+        {
+            self.pending.structural = true;
+        }
         // Scoped: a change under another document is not this view's business.
         // `structural_touches` answers conservatively — an unnameable change
         // counts as ours.
@@ -1964,7 +1977,7 @@ mod tests {
         // The look is the container's, kept once on the body.
         let found = body.callout_box(outer).expect("the box");
         assert_eq!(found.icon.as_deref(), Some("⚠️"));
-        assert_eq!(found.colour.as_deref(), Some("red"));
+        assert_eq!(found.color.as_deref(), Some("red"));
         assert_eq!(found.parent, None);
         assert_eq!(body.callout_box(inner).unwrap().parent, Some(outer));
         assert!(body.callout_box(line).is_none(), "a row is not a box");
@@ -2967,6 +2980,33 @@ mod sync_tests {
         assert!(body.is_stale());
         body.catch_up(&ws);
         assert!(body.rows.iter().any(|r| r.text == "mine"));
+    }
+
+    /// **A box restyled by a peer or an agent shows its new look.** The look
+    /// is the box's own meta, a map diff that names a node with no row, so the
+    /// row filter used to drop it and the page kept the old icon and tint until
+    /// it was reopened.
+    #[test]
+    fn a_remote_restyle_of_a_callout_box_reaches_the_body_showing_it() {
+        let (mut ws, one, _two) = two_documents(4);
+        let lines = ws.children(Parent::Node(one)).unwrap();
+        let callout = ws.wrap_in_callout_many(&lines[1..3]).unwrap();
+        let mut body = body_over(&ws, one);
+        assert_eq!(body.callout_box(callout).unwrap().color, None);
+        assert!(!body.is_stale());
+
+        ws.set_icon(callout, Some("🚀")).unwrap();
+        ws.set_color(callout, Some("red")).unwrap();
+        body.defer_pending(&ws);
+        assert!(
+            body.is_stale(),
+            "the restyle must reach the view showing it"
+        );
+
+        body.catch_up(&ws);
+        let found = body.callout_box(callout).unwrap();
+        assert_eq!(found.icon.as_deref(), Some("🚀"));
+        assert_eq!(found.color.as_deref(), Some("red"));
     }
 
     /// **A delete is the case the parent recording exists for.** By the time

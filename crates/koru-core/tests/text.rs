@@ -646,7 +646,7 @@ fn a_callout_box_wraps_lines_and_dissolves_back_into_them() {
     assert!(ws.effective_schema_version() >= 5);
 
     ws.set_icon(callout, Some("⚠️")).unwrap();
-    ws.set_colour(callout, Some("red")).unwrap();
+    ws.set_color(callout, Some("red")).unwrap();
     let node = ws.read(callout).unwrap();
     assert_eq!(koru_core::callout::icon(&node.meta), "⚠️");
     assert_eq!(

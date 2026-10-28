@@ -546,7 +546,7 @@ impl TextEngine {
         size
     }
 
-    /// A colour emoji sized into a square icon `slot` — a page emoji in a
+    /// A color emoji sized into a square icon `slot` — a page emoji in a
     /// pill's icon band, a callout's icon in its box.
     pub fn emoji_layout(&mut self, emoji: &str, slot: f32) -> Layout<Brush> {
         // Colour emoji fill their em box more than outline icons — a touch

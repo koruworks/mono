@@ -76,13 +76,13 @@ private val accentDark = mapOf(
 
 /**
  * The background a callout box draws for its accent token: the token's
- * colour washed over the surface, so the text keeps the surface's contrast.
+ * color washed over the surface, so the text keeps the surface's contrast.
  * `null` is the default tint — the token is absent, or comes from a newer
  * palette than this build knows, which reads as the default rather than as
  * an error, as koru-core's `callout::tint` does.
  */
 // No token is the default tint, which the desktop draws as the yellow tone;
-// a token this build does not know draws the surface colour instead.
+// a token this build does not know draws the surface color instead.
 internal fun calloutTint(token: String?, dark: Boolean): Color? =
     (if (dark) accentDark else accentLight)[token?.trim()?.lowercase() ?: "yellow"]
         ?.copy(alpha = if (dark) 0.24f else 0.14f)

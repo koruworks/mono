@@ -5351,7 +5351,7 @@ pub trait Editing {
     /// closes the picker (`commit_unicode`); a swatch sets the box's tint at
     /// once and leaves the picker open, so both halves of the look can be
     /// chosen in one visit — the way the profile and workspace pickers offer
-    /// an emoji and a colour together.
+    /// an emoji and a color together.
     fn open_callout_look_picker(&mut self, ws: &WorkspaceDoc, callout: NodeId) {
         let current = ws
             .read(callout)
@@ -6339,7 +6339,7 @@ pub trait Editing {
                     picker.set_current_tint(*tint);
                     ws.checkpoint();
                     for &node in nodes {
-                        let _ = ws.set_colour(node, token);
+                        let _ = ws.set_color(node, token);
                     }
                     ws.checkpoint();
                     // The box is no row, so no row re-read carries its new
@@ -6351,9 +6351,7 @@ pub trait Editing {
                 // From `/color`: the same undo bracket and trigger removal an
                 // attribute gets; the write is the box's tint.
                 self.commit_attribute(ws, trigger, nodes, &mut |ws| {
-                    nodes
-                        .iter()
-                        .try_for_each(|&node| ws.set_colour(node, token))
+                    nodes.iter().try_for_each(|&node| ws.set_color(node, token))
                 });
             }
             Outcome::AddTag(nodes, tag) => {
@@ -6765,7 +6763,7 @@ pub trait Editing {
             let _ = ws.set_icon(callout, Some(icon));
         }
         if let Some(tint) = tint {
-            let _ = ws.set_colour(callout, tint.map(koru_core::AccentColor::as_str));
+            let _ = ws.set_color(callout, tint.map(koru_core::AccentColor::as_str));
         }
         ws.checkpoint();
         if wrap {
@@ -7086,6 +7084,35 @@ pub trait Editing {
                 top
             } else {
                 (chip.y - self.view().scroll - h - 4.0).clamp(floor, ceiling)
+            };
+            return Some(Rect::new(x, y, w, h));
+        }
+
+        // The look picker hangs off the icon it was opened from, the way an
+        // attribute chip's picker hangs off its chip. A callout is a
+        // container with no row of its own, so the generic arm below, which
+        // anchors to the trigger node's row, has nothing to find for it and
+        // would answer no panel at all: the picker would be open and neither
+        // drawn nor clickable. The icon sits beside the box's first row.
+        if let Anchor::CalloutIcon(callout) = trigger.anchor {
+            let span = self.body().callout_span(callout)?;
+            let first = self.body().rows.get(*span.start())?;
+            let icon = rowlayout::callout_icon_rect(first, first.y);
+            let (w, h) = self.view().overlay.panel_size();
+            let x = (cx + icon.x).clamp(8.0, (vw - w - 8.0).max(8.0));
+            let icon_top = icon.y - self.view().scroll;
+            // Below the icon when the whole panel fits there, above it when
+            // that fits, and otherwise pinned inside the viewport.
+            let floor = self.view().chrome_h + 8.0;
+            let limit = self.view().viewport.1 - 8.0;
+            let below = icon_top + icon.h + 4.0;
+            let above = icon_top - h - 4.0;
+            let y = if below + h <= limit {
+                below
+            } else if above >= floor {
+                above
+            } else {
+                below.min((limit - h).max(floor))
             };
             return Some(Rect::new(x, y, w, h));
         }
@@ -12652,7 +12679,7 @@ mod tests {
             koru_core::callout::icon_of(found.icon.as_deref()),
             koru_core::callout::DEFAULT_ICON
         );
-        assert_eq!(found.colour, None);
+        assert_eq!(found.color, None);
         assert!(e.body.is_callout_first_row(e.body.index_of(line).unwrap()));
         assert_eq!(e.body.focused().unwrap().id, line);
 
@@ -13017,7 +13044,7 @@ mod tests {
     }
 
     /// `/callout blue ⚠️` makes a box with that look. Inside a box,
-    /// `/callout red` recolours the box and leaves the line alone, and a
+    /// `/callout red` recolors the box and leaves the line alone, and a
     /// bare `/callout` opens the look picker for the box rather than nesting
     /// a second one.
     #[test]
@@ -13037,7 +13064,7 @@ mod tests {
         assert_eq!(node.meta.icon.as_deref(), Some("⚠️"));
         assert_eq!(ws.read(line).unwrap().content.as_text(), Some(""));
         let found = e.body.callout_box(callout).unwrap();
-        assert_eq!(found.colour.as_deref(), Some("blue"));
+        assert_eq!(found.color.as_deref(), Some("blue"));
         assert_eq!(found.icon.as_deref(), Some("⚠️"));
 
         e.type_text(&mut ws, "Mind the gap");
@@ -13103,6 +13130,20 @@ mod tests {
         let trigger = e.view.overlay.trigger().expect("the look picker is open");
         assert_eq!(trigger.anchor, Anchor::CalloutIcon(callout));
         assert!(matches!(&e.view.overlay, Overlay::Emoji(p) if p.offers_tints()));
+        // It also has a panel to draw and to click. The box is no row, so the
+        // picker is placed from the icon; with no anchor it was open and
+        // nowhere on screen.
+        let panel = e
+            .overlay_panel_rect()
+            .expect("the look picker has a panel beside the icon it hangs from");
+        let (icon_top, icon_bottom) = (icon.y - e.view.scroll, icon.y + icon.h - e.view.scroll);
+        assert!(
+            panel.y >= icon_bottom || panel.y + panel.h <= icon_top,
+            "the panel ({}..{}) does not cover its icon ({icon_top}..{icon_bottom})",
+            panel.y,
+            panel.y + panel.h
+        );
+        assert!(panel.x >= 0.0 && panel.x + panel.w <= e.view.viewport.0);
         e.commit_unicode(&mut ws, trigger, "🚀");
         assert!(matches!(e.view.overlay, Overlay::None));
         assert_eq!(ws.read(callout).unwrap().meta.icon.as_deref(), Some("🚀"));
@@ -13162,13 +13203,13 @@ mod tests {
             "the look lives on the box only"
         );
         assert_eq!(
-            e.body.callout_box(callout).unwrap().colour.as_deref(),
+            e.body.callout_box(callout).unwrap().color.as_deref(),
             Some("red"),
             "the rows draw the new tint"
         );
         choose(&mut e, &mut ws, 0);
         assert_eq!(ws.read(callout).unwrap().meta.colour, None);
-        assert_eq!(e.body.callout_box(callout).unwrap().colour, None);
+        assert_eq!(e.body.callout_box(callout).unwrap().color, None);
         assert!(matches!(e.view.overlay, Overlay::Emoji(_)));
 
         assert!(e.act(&mut ws, Action::Undo));
@@ -14870,7 +14911,7 @@ mod tests {
         );
     }
 
-    /// `/color` anywhere inside a callout opens the same nine colours for the
+    /// `/color` anywhere inside a callout opens the same nine colors for the
     /// box: the choice tints the container, which every row inside draws
     /// from, sets no `koru.color`, and takes the typed `/color` back out.
     #[test]
@@ -14888,7 +14929,7 @@ mod tests {
         type_str(&mut e, &mut ws, "/color");
         enter(&mut e, &mut ws);
         let Overlay::Color(picker) = &e.view.overlay else {
-            panic!("the colour picker is open");
+            panic!("the color picker is open");
         };
         assert!(picker.callout);
         assert_eq!(picker.nodes, vec![callout], "the box itself");
@@ -14906,7 +14947,7 @@ mod tests {
             "still one box"
         );
         assert_eq!(
-            e.body.callout_box(callout).unwrap().colour.as_deref(),
+            e.body.callout_box(callout).unwrap().color.as_deref(),
             Some("red"),
             "the rows draw the new tint"
         );

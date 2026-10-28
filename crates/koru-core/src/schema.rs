@@ -1621,7 +1621,7 @@ impl WorkspaceDoc {
     /// — the callout counterpart of [`wrap_in_list_block_many`](Self::wrap_in_list_block_many),
     /// with the same all-or-nothing validation. The box starts with the
     /// default look; [`set_icon`](Self::set_icon) and
-    /// [`set_colour`](Self::set_colour) change it.
+    /// [`set_color`](Self::set_color) change it.
     pub fn wrap_in_callout_many(&mut self, targets: &[NodeId]) -> Result<NodeId> {
         self.atomic(|ws| {
             let first = *targets
@@ -2678,14 +2678,14 @@ impl WorkspaceDoc {
         Ok(())
     }
 
-    /// Set a node's presentation colour — an `AccentColor` token, never RGB.
+    /// Set a node's presentation color — an `AccentColor` token, never RGB.
     /// A callout's tint is the one reader today ([`crate::callout`]). `None`
     /// (or empty) removes it, which draws the default.
-    pub fn set_colour(&mut self, target: NodeId, colour: Option<&str>) -> Result<()> {
+    pub fn set_color(&mut self, target: NodeId, color: Option<&str>) -> Result<()> {
         let tid = self.tree_id(target)?;
         let meta = self.nodes().get_meta(tid)?;
-        match colour {
-            Some(colour) if !colour.is_empty() => meta.insert(K_COLOUR, colour)?,
+        match color {
+            Some(color) if !color.is_empty() => meta.insert(K_COLOUR, color)?,
             Some(_) | None if meta.get(K_COLOUR).is_some() => meta.delete(K_COLOUR)?,
             Some(_) | None => {}
         }
@@ -3715,7 +3715,7 @@ impl WorkspaceDoc {
     /// **The library root's list omits the trash.** That single omission is what
     /// makes the trash invisible everywhere else: `walk_from` is built on this,
     /// and so is every enumerating consumer — the explore column, `backlinks`,
-    /// `walk_all`, `prune_empty_list_blocks`, find-or-create, the document
+    /// `walk_all`, `prune_empty_containers`, find-or-create, the document
     /// count. One filter here rather than a check at each of them, because a
     /// check at each of them is a check somebody will forget to add to the
     /// eighth.

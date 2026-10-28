@@ -39,18 +39,18 @@ pub fn icon_of(icon: Option<&str>) -> &str {
 }
 
 /// [`tint`] over the stored value alone.
-pub fn tint_of(colour: Option<&str>) -> Option<AccentColor> {
-    colour.and_then(AccentColor::parse)
+pub fn tint_of(color: Option<&str>) -> Option<AccentColor> {
+    color.and_then(AccentColor::parse)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn meta(icon: Option<&str>, colour: Option<&str>) -> NodeMeta {
+    fn meta(icon: Option<&str>, color: Option<&str>) -> NodeMeta {
         NodeMeta {
             icon: icon.map(str::to_owned),
-            colour: colour.map(str::to_owned),
+            colour: color.map(str::to_owned),
             ..NodeMeta::default()
         }
     }

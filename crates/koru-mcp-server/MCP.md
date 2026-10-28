@@ -282,8 +282,9 @@ insertion makes a remembered number unstable while sibling identity remains
 meaningful.
 
 The live-edit operation vocabulary is `replace_text`, `insert`, `insert_inline`,
-`move`, `remove`, `set_done`, `set_language`, `set_attribute`,
-`clear_attribute`, `add_tag`, and `remove_tag`. The last four are described
+`move`, `remove`, `set_done`, `set_language`, `set_callout_look`,
+`set_attribute`, `clear_attribute`, `add_tag`, and `remove_tag`. The last four
+are described
 under [Attributes and tags](#attributes-and-tags), and what `set_done` and a
 `koru.due` write mean on a **task** is under [Tasks](#tasks).
 
@@ -305,11 +306,22 @@ the same two metadata fields every other node reports. An `insert` of kind
 `callout` creates the box under `node_id` and, when its `text` is non-empty,
 a first paragraph inside it with that text, so one call still makes a
 one-line callout; an empty `text` makes an empty box. To add more lines,
-insert paragraphs or list blocks with the box as `parent_id`. A callout
-inserted through this surface gets the default icon and tint; no operation
-here changes either yet, and `set_attribute` of `koru.color` is a different
-thing — a content attribute on the node, reported under `attributes`, not
-the box's tint.
+insert paragraphs or list blocks with the box as `parent_id`. A new callout
+has the default icon and tint until `set_callout_look` changes them.
+
+`set_callout_look` sets the look:
+`{"op": "set_callout_look", "node_id": "<the box>", "expected": "", "icon": "⚠️", "color": "red"}`.
+`node_id` is the box, never one of its lines, and `expected` is the box's own
+text, which is empty. Each field stands alone: leave it out to keep it, send
+`null` to restore the default (💡, the default tint), or send a value to set
+it. At least one is required. `icon` is one emoji, stored in its fully
+qualified spelling. `color` is one of `red`, `orange`, `yellow`, `green`,
+`teal`, `blue`, `purple`, `pink` or `gray`, which a read reports as
+`metadata.colour`; `colour` names the same field. A target that is not a
+callout, an `icon` that is not one emoji and a `color` outside the nine are
+`invalid_request` and write nothing, and a look the box already has writes
+nothing either. `set_attribute` of `koru.color` is a different thing: a content
+attribute on the node, reported under `attributes`, not the box's tint.
 
 Text positions exposed by MCP are UTF-8 byte boundaries because that is what
 the editor and returned runs use. Loro indexes Unicode scalars; conversion stays
@@ -350,11 +362,12 @@ When `initial_operations` is present:
 - it must be non-empty and `root_node_id` must be a fresh client-minted UUID;
 - Koru does not add the default paragraph;
 - the caller supplies every body `node_id`;
-- only `insert`, `insert_inline`, `set_done`, and `set_language` are legal;
+- only `insert`, `insert_inline`, `set_done`, `set_language`, and
+  `set_callout_look` are legal;
 - `parent_id` names the supplied root or an earlier inserted node;
 - `after_node_id` is `null` for first or names an earlier inserted sibling; and
-- inline, completion, and language operations can target only a node inserted
-  earlier in the same array.
+- inline, completion, language, and callout-look operations can target only a
+  node inserted earlier in the same array.
 
 Forward references, duplicate ids, unknown fields, and edit-only operations
 such as `replace_text`, `move`, or `remove` fail loudly. Operations execute in

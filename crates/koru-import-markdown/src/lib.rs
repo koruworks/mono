@@ -861,11 +861,11 @@ pub fn leading_icon(text: &str) -> Option<(String, usize)> {
     Some((word.to_owned(), start + word_end + space))
 }
 
-/// A colour name as an export writes it — a Koru token, or a `<hue>`,
-/// `<hue>_background` or `<hue>_bg` block colour — as the tint Koru stores.
+/// A color name as an export writes it — a Koru token, or a `<hue>`,
+/// `<hue>_background` or `<hue>_bg` block color — as the tint Koru stores.
 /// `Some(None)` is an explicit *default*; `None` means the name is not a
-/// colour at all. `brown` has no Koru tone and lands on orange, the nearest.
-fn colour_name(name: &str) -> Option<Option<koru_core::AccentColor>> {
+/// color at all. `brown` has no Koru tone and lands on orange, the nearest.
+fn color_name(name: &str) -> Option<Option<koru_core::AccentColor>> {
     use koru_core::AccentColor;
     let name = name.trim().to_ascii_lowercase();
     let hue = name
@@ -881,15 +881,15 @@ fn colour_name(name: &str) -> Option<Option<koru_core::AccentColor>> {
 }
 
 /// The icon and tint behind a built-in icon address of the shape
-/// `…/icons/<name>_<colour>.svg`, which is what an export writes for a
+/// `…/icons/<name>_<color>.svg`, which is what an export writes for a
 /// callout whose icon is one of the app's own rather than an emoji. Koru
 /// stores an emoji, so the common shapes map onto the nearest one; a shape
-/// with no near emoji keeps the default. The colour suffix is the tint.
+/// with no near emoji keeps the default. The color suffix is the tint.
 fn builtin_icon(url: &str) -> Option<(Option<&'static str>, Option<koru_core::AccentColor>)> {
     let (_, file) = url.rsplit_once("/icons/")?;
     let stem = file.strip_suffix(".svg").unwrap_or(file);
-    let (name, colour) = match stem.rsplit_once('_') {
-        Some((name, colour)) => (name, colour_name(colour).flatten()),
+    let (name, color) = match stem.rsplit_once('_') {
+        Some((name, color)) => (name, color_name(color).flatten()),
         None => (stem, None),
     };
     let base = name.split('-').next().unwrap_or(name);
@@ -919,7 +919,7 @@ fn builtin_icon(url: &str) -> Option<(Option<&'static str>, Option<koru_core::Ac
         "cursor" => Some("👉"),
         _ => None,
     };
-    Some((emoji, colour))
+    Some((emoji, color))
 }
 
 /// The value of `name="…"` in one HTML tag.
@@ -1933,7 +1933,7 @@ mod tests {
     }
 
     /// A built-in icon arrives as an `<img>` of an icon set; its name picks
-    /// the emoji and its colour the tint.
+    /// the emoji and its color the tint.
     #[test]
     fn an_icon_image_becomes_the_icon_and_the_tint() {
         let blocks = parse(
@@ -2039,17 +2039,14 @@ mod tests {
     }
 
     #[test]
-    fn exported_colour_names_map_onto_koru_tints() {
+    fn exported_color_names_map_onto_koru_tints() {
         use koru_core::AccentColor;
-        assert_eq!(
-            colour_name("blue_background"),
-            Some(Some(AccentColor::Blue))
-        );
-        assert_eq!(colour_name("red_bg"), Some(Some(AccentColor::Red)));
-        assert_eq!(colour_name("Brown"), Some(Some(AccentColor::Orange)));
-        assert_eq!(colour_name("default"), Some(None));
-        assert_eq!(colour_name("teal"), Some(Some(AccentColor::Teal)));
-        assert_eq!(colour_name("🔥"), None);
+        assert_eq!(color_name("blue_background"), Some(Some(AccentColor::Blue)));
+        assert_eq!(color_name("red_bg"), Some(Some(AccentColor::Red)));
+        assert_eq!(color_name("Brown"), Some(Some(AccentColor::Orange)));
+        assert_eq!(color_name("default"), Some(None));
+        assert_eq!(color_name("teal"), Some(Some(AccentColor::Teal)));
+        assert_eq!(color_name("🔥"), None);
     }
 
     #[test]

@@ -80,7 +80,7 @@ fn draw_callout_boxes(
         );
         let r = rowlayout::callout_panel_rect(first, first.y - scroll, last, last.y - scroll, vw);
         let panel = rrect(r.x, r.y, r.w, r.h, 8.0);
-        let tint = koru_core::callout::tint_of(callout.colour.as_deref());
+        let tint = koru_core::callout::tint_of(callout.color.as_deref());
         let tone = theme::accent_tone(tint.map_or("yellow", |t| t.as_str()));
         fill(
             scene,
@@ -98,12 +98,23 @@ fn draw_callout_boxes(
                 Some(tone.map_or(theme::p().text_dim, |t| t.ink)),
             ),
         };
+        // On the text's baseline, by the icon's **own** baseline rather than
+        // the bottom of its line box. Phosphor's ink ends exactly on its
+        // baseline and the line box reaches a sixteenth of an em below it, so
+        // standing the box on the text's baseline floats the lightbulb above
+        // the letters' feet. An emoji is placed the same way, which is where
+        // the paragraph would put it typed inline.
+        let gy = slot.y + slot.h
+            - layout
+                .lines()
+                .next()
+                .map_or(layout.height(), |line| line.metrics().baseline);
         draw_layout(
             scene,
             root,
             &layout,
             slot.x + (slot.w - layout.width()) * 0.5,
-            slot.y + (slot.h - layout.height()) * 0.5,
+            gy,
             brush,
         );
     }

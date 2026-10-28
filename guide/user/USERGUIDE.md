@@ -4231,9 +4231,9 @@ Space on a line inside the box. Bold, italic, links, pills and tags all work
 inside it too.
 
 Click the icon to change the look. The picker offers an emoji and one of the
-same nine colours the rest of Koru uses; a callout without a chosen icon shows
+same nine colors the rest of Koru uses; a callout without a chosen icon shows
 💡. The keyboard does the same in one go: `/callout red ⚠️` makes the box with
-that colour and that icon.
+that color and that icon.
 
 Copying a callout preserves it as a box for rich destinations. Markdown export
 writes it as a blockquote whose first line starts with the icon — `> 💡 First

@@ -1266,7 +1266,7 @@ pub fn draw_emoji_picker_surface(
     let geometry = picker.geometry();
     let _ = pw;
     // The look picker's tint strip: the shared swatch row, so the chosen
-    // tint is ringed the way every other colour choice in the app is.
+    // tint is ringed the way every other color choice in the app is.
     if let Some(strip) = picker.tints
         && let Some(rect) = geometry.tint_strip_rect()
     {

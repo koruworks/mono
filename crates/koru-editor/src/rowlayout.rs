@@ -778,16 +778,22 @@ pub fn callout_panel_rect(
 }
 
 /// The square slot a callout's icon is drawn in, at the leading edge of its
-/// box and level with the first line of `row`.
+/// box, its bottom on the **baseline** of the first line of `row` — the way
+/// a pill's icon sits on its label's baseline — so the icon reads as part of
+/// that line rather than floating above it.
 pub fn callout_icon_rect(row: &Paragraph, oy: f32) -> Rect {
     const SIDE: f32 = 18.0;
-    let line_h = row
-        .layout
+    let x = row.text_x() - crate::paragraph::CALLOUT_INSET_X + 12.0;
+    Rect::new(x, oy + first_baseline(row) - SIDE, SIDE, SIDE)
+}
+
+/// Where the first line of `row` puts its baseline, below the row's top.
+/// An unshaped row has no lines yet; the estimate is the body face's ascent.
+pub fn first_baseline(row: &Paragraph) -> f32 {
+    row.layout
         .lines()
         .next()
-        .map_or(row.height, |line| line.metrics().line_height);
-    let x = row.text_x() - crate::paragraph::CALLOUT_INSET_X + 12.0;
-    Rect::new(x, oy + (line_h - SIDE) * 0.5, SIDE, SIDE)
+        .map_or(theme::FONT_SIZE, |line| line.metrics().baseline)
 }
 
 /// The semantic quote rule beside `row`, in the same window-space coordinate
@@ -1394,6 +1400,32 @@ mod tests {
             (image.height - 100.0).abs() < 0.5,
             "pad is outside height, not inside: {}",
             image.height
+        );
+    }
+
+    /// The icon sits on the first line's baseline, like a pill's icon on its
+    /// label's: its slot ends where the glyphs' feet are, not in the middle
+    /// of the line box.
+    #[test]
+    fn a_callout_icon_stands_on_the_first_lines_baseline() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let callout = ws
+            .insert(Parent::Root, Node::callout(None, None).unwrap())
+            .unwrap();
+        let first = ws
+            .insert(Parent::Node(callout), Node::paragraph("first").unwrap())
+            .unwrap();
+        let mut body = Body::new(&ws);
+        let mut engine = TextEngine::new();
+        reflow_all(&mut engine, &mut body, 1000.0, 0.0);
+        let first = body.rows.iter().find(|r| r.id == first).unwrap();
+        let baseline = first.layout.lines().next().unwrap().metrics().baseline;
+        let slot = callout_icon_rect(first, first.y);
+        assert!(
+            (slot.y + slot.h - (first.y + baseline)).abs() < 0.01,
+            "slot bottom {} is the baseline {}",
+            slot.y + slot.h,
+            first.y + baseline
         );
     }
 

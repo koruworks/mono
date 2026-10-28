@@ -81,7 +81,7 @@ pub struct CopiedCalloutSpec {
     /// The box's icon as stored — `None` is [`koru_core::callout::DEFAULT_ICON`].
     pub icon: Option<String>,
     /// The box's tint token as stored — `None` is the default tint.
-    pub colour: Option<String>,
+    pub color: Option<String>,
     /// Nest level of the enclosing box (0 = a box with no box around it).
     pub depth: u16,
 }
@@ -746,7 +746,7 @@ fn read_row<E: Editing + ?Sized>(
         .and_then(|callout| e.body().callout_box(callout))
         .map(|found| CopiedCalloutSpec {
             icon: found.icon.clone(),
-            colour: found.colour.clone(),
+            color: found.color.clone(),
             depth: ancestor_count(ws, id, Kind::Callout).saturating_sub(1),
         });
     let image = match &node.content {
@@ -2142,7 +2142,7 @@ fn paste_rows<E: Editing + ?Sized>(
             list_levels.clear();
         }
         if opens && let Some(spec) = spec {
-            let Ok(node) = Node::callout(spec.icon.as_deref(), spec.colour.as_deref()) else {
+            let Ok(node) = Node::callout(spec.icon.as_deref(), spec.color.as_deref()) else {
                 continue;
             };
             // A box inside a box goes under it; a top-level box takes the
@@ -3580,7 +3580,7 @@ mod tests {
         };
         let spec = CopiedCalloutSpec {
             icon: Some("⚠️".into()),
-            colour: Some("red".into()),
+            color: Some("red".into()),
             depth: 0,
         };
         assert_eq!(
@@ -3659,7 +3659,7 @@ mod tests {
         assert_eq!(children[0], first);
         assert_eq!(dst.read(children[1]).unwrap().kind, Kind::ListBlock);
         let found = e_dst.body.callout_box(pasted).expect("the box draws");
-        assert_eq!(found.colour.as_deref(), Some("red"));
+        assert_eq!(found.color.as_deref(), Some("red"));
         let after = e_dst
             .body
             .rows
