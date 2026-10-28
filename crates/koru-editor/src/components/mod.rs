@@ -102,9 +102,10 @@ pub enum Outcome {
     SetAttr(Vec<koru_core::NodeId>, String, koru_core::node::AttrValue),
     /// Dismiss and remove every value under this key from these nodes.
     ClearAttr(Vec<koru_core::NodeId>, String),
-    /// Dismiss and give these callout rows — one callout's box — this tint.
-    /// `None` is the default tint. Not an attribute: a callout's tint is
-    /// presentation in `NodeMeta::colour`, like a page's icon.
+    /// Give these callout heads this tint, `None` being the default tint; the
+    /// box draws from its head. Not an attribute: a callout's tint is
+    /// presentation in `NodeMeta::colour`, like a page's icon. The `/color`
+    /// picker dismisses on it; the look picker stays open for the emoji.
     SetCalloutTint(Vec<koru_core::NodeId>, Option<koru_core::AccentColor>),
     /// Dismiss and put these nodes in a list — making each a task first when
     /// it is not one. `/task_list`'s pick of an existing list.
@@ -314,6 +315,11 @@ impl Overlay {
                 // Tone strip first: it floats over the grid, so a hover there
                 // must not move the grid selection underneath.
                 if picker.tone_strip_contains(local_x, local_y) {
+                    return Some(PanelPart::Button);
+                }
+                // The look picker's tint swatches are controls too: a hover
+                // there must not read as a grid row.
+                if picker.tint_at(local_x, local_y).is_some() {
                     return Some(PanelPart::Button);
                 }
                 if picker.scrolls()

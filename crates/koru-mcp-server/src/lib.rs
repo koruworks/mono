@@ -2826,6 +2826,10 @@ enum InsertKind {
     Code,
     Contact,
     Divider,
+    /// A callout box: the inserted node is its head line, and later inserts
+    /// under it are the box's content. It arrives with the default icon and
+    /// tint; no operation here sets either yet (see MCP.md).
+    Callout,
 }
 
 impl From<InsertKind> for Kind {
@@ -2839,6 +2843,7 @@ impl From<InsertKind> for Kind {
             InsertKind::Code => Self::Code,
             InsertKind::Contact => Self::Contact,
             InsertKind::Divider => Self::Divider,
+            InsertKind::Callout => Self::Callout,
         }
     }
 }
@@ -5533,6 +5538,7 @@ mod tests {
             "code",
             "contact",
             "divider",
+            "callout",
         ] {
             assert!(encoded.contains(&format!("\"{kind}\"")), "missing {kind}");
         }

@@ -349,6 +349,7 @@ class MockKoruStore(private val logger: AppLogger) {
         val next = when (val content = block.content) {
             is BlockContent.Paragraph -> block.copy(content = BlockContent.Paragraph(update(content.richText)))
             is BlockContent.Quote -> block.copy(content = BlockContent.Quote(update(content.richText)))
+            is BlockContent.Callout -> block.copy(content = BlockContent.Callout(update(content.richText)))
             is BlockContent.Task -> block.copy(content = BlockContent.Task(update(content.richText)))
             is BlockContent.Code -> block.copy(content = BlockContent.Code(update(content.richText)))
             is BlockContent.Table -> block.copy(content = BlockContent.Table(update(content.richText)))

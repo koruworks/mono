@@ -244,6 +244,7 @@ fn validate_block(block: &BlockEnvelope) -> Result<(), ValidationError> {
         BlockKind::Divider => Some("koru.v1.DividerPayload"),
         BlockKind::Embed => Some("koru.v1.EmbedPayload"),
         BlockKind::Contact => Some("koru.v1.ContactPayload"),
+        BlockKind::Callout => Some("koru.v1.CalloutPayload"),
         BlockKind::Canvas | BlockKind::Unspecified => None,
     };
     if let Some(expected) = expected
@@ -281,6 +282,12 @@ fn validate_block(block: &BlockEnvelope) -> Result<(), ValidationError> {
             crate::proto::ContactPayload::decode(payload.value.as_slice())
                 .map_err(|_| ValidationError::InvalidPayload)?
                 .name
+                .as_ref(),
+        )?,
+        BlockKind::Callout => validate_rich_text(
+            crate::proto::CalloutPayload::decode(payload.value.as_slice())
+                .map_err(|_| ValidationError::InvalidPayload)?
+                .rich_text
                 .as_ref(),
         )?,
         BlockKind::Image => validate_blob(

@@ -288,10 +288,24 @@ under [Attributes and tags](#attributes-and-tags), and what `set_done` and a
 `koru.due` write mean on a **task** is under [Tasks](#tasks).
 
 The `insert` schema enumerates every accepted body kind: `task`, `paragraph`,
-`quote`, `listblock`, `table`, `code`, `contact`, and `divider`. Operation
-variants are inlined in the published tool schema so an MCP host need not
-resolve a private `$ref` to discover their fields. All request objects deny
-unknown fields; a misspelling is an error, never a successful no-op.
+`quote`, `listblock`, `table`, `code`, `contact`, `divider`, and `callout`.
+Operation variants are inlined in the published tool schema so an MCP host
+need not resolve a private `$ref` to discover their fields. All request
+objects deny unknown fields; a misspelling is an error, never a successful
+no-op.
+
+**A callout is a box, and the box is a subtree.** The `callout` node is the
+box's head line; the paragraphs and list blocks inserted under it, with the
+callout as `parent_id`, are the rest of the box's content. Its look lives on
+the head alone: a read reports the node as `"kind": "callout"` with
+`metadata.icon` (one emoji, or `null` for the default 💡) and
+`metadata.colour` (an accent token — `red`, `orange`, `yellow`, `green`,
+`teal`, `blue`, `purple`, `pink`, `gray` — or `null` for the default tint),
+the same two metadata fields every other node reports. `insert` carries a
+text and nothing else, so a callout inserted through this surface gets the
+default icon and tint; no operation here changes either yet, and
+`set_attribute` of `koru.color` is a different thing — a content attribute
+on the node, reported under `attributes`, not the box's tint.
 
 Text positions exposed by MCP are UTF-8 byte boundaries because that is what
 the editor and returned runs use. Loro indexes Unicode scalars; conversion stays
@@ -523,8 +537,9 @@ priority.
 
 **Not every kind can carry task state.** A task lives on a paragraph — which is
 what a checklist item is — a `task` node, a document, an image or a file.
-`quote`, `listblock`, `table`, `code`, `canvas`, `contact` and `divider` cannot,
-and a deadline aimed at one of them is refused rather than quietly dropped:
+`quote`, `callout`, `listblock`, `table`, `code`, `canvas`, `contact` and
+`divider` cannot, and a deadline aimed at one of them is refused rather than
+quietly dropped:
 
 | Attempt | Error | `details` |
 | --- | --- | --- |

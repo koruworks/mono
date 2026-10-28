@@ -120,11 +120,20 @@ pub fn render_parsed(
                 alt: image.alt,
             },
             Block::Rule => Rendered::Rule,
+            // The end of a box draws as an empty line, which is also what
+            // closes the box to the eye.
+            Block::CalloutEnd => {
+                text_layout(engine, String::new(), max_w, styles, Vec::new(), None)
+            }
             Block::Text(_) => unreachable!(),
         };
     };
 
     let mut prefix = String::new();
+    // A line inside a callout box sits in from the box's head.
+    if block.in_callout {
+        prefix.push_str("   ");
+    }
     if let Some(list) = block.list {
         prefix.push_str(&"  ".repeat(list.depth as usize));
         prefix.push_str(match block.task {
@@ -136,8 +145,9 @@ pub fn render_parsed(
     if matches!(block.kind, TextKind::Quote) {
         prefix.push_str("\u{2502} ");
     }
+    // The head of a box leads with its icon.
     if let TextKind::Callout { icon, .. } = &block.kind {
-        prefix.push_str(icon.as_deref().unwrap_or(koru_core::callout::DEFAULT_ICON));
+        prefix.push_str(koru_core::callout::icon_of(icon.as_deref()));
         prefix.push(' ');
     }
     let prefix_len = prefix.len();
@@ -274,6 +284,42 @@ mod tests {
         };
         assert_eq!(text, "\u{2502} Koru");
         assert_eq!(&text[links[0].range.clone()], "Koru");
+    }
+
+    /// A box's head leads with its icon, the lines inside it sit in from
+    /// the head, and the box's end is an empty line.
+    #[test]
+    fn a_callout_box_reads_as_a_head_with_its_lines_inside() {
+        use koru_import_markdown::{Block, parse};
+        let mut engine = TextEngine::new();
+        let blocks = parse("> 💡 Keep [this](https://koru.test)\n>\n> inside\n>\n> - item");
+        let texts: Vec<_> = blocks
+            .into_iter()
+            .map(
+                |block| match render_parsed(&mut engine, block, 300.0, &Styles::ui()) {
+                    Rendered::Text { text, links, .. } => {
+                        let linked = links
+                            .first()
+                            .map(|link| text[link.range.clone()].to_owned());
+                        (text, linked)
+                    }
+                    _ => panic!("text"),
+                },
+            )
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                ("💡 Keep this".to_owned(), Some("this".to_owned())),
+                ("   inside".to_owned(), None),
+                ("   \u{2022} item".to_owned(), None),
+                (String::new(), None),
+            ]
+        );
+        assert!(matches!(
+            render_parsed(&mut engine, Block::CalloutEnd, 300.0, &Styles::ui()),
+            Rendered::Text { text, .. } if text.is_empty()
+        ));
     }
 
     #[test]

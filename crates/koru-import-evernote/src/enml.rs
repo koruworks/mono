@@ -508,10 +508,12 @@ impl Converter<'_> {
     }
 
     /// An Evernote callout — `<div style="--en-callout:true; --en-emoji:🤖">`
-    /// around its blocks. Its prose lines become callout lines carrying the
-    /// emoji (absent means Evernote's 💡, which is also Koru's default); a
-    /// list, a table or code inside keeps its own kind, since a Koru callout
-    /// is a line, not a container.
+    /// around its blocks — is a Koru callout box: its first block, when it
+    /// is a line of prose, becomes the head, carrying the emoji (absent means Evernote's 💡,
+    /// which is also Koru's default), and everything else rendered inside
+    /// the div — paragraphs, lists, tables, headings — moves under the head
+    /// in the order it was written. A callout with no prose in it (a list on
+    /// its own) gets an empty head, so what was inside is still inside.
     fn render_callout(&mut self, element: &EnmlElement, parent: NodeId) -> Result<bool, EnmlError> {
         let before = self
             .document
@@ -523,19 +525,53 @@ impl Converter<'_> {
             .style_value("--en-emoji")
             .map(|value| value.trim_matches(['"', '\'']).trim())
             .filter(|value| !value.is_empty());
-        let rows = self
+        let rows: Vec<NodeId> = self
             .document
             .children(Parent::Node(parent))
-            .map_err(build_error)?;
-        for id in rows.into_iter().skip(before) {
-            let node = self.document.read(id).map_err(build_error)?;
-            if node.kind != Kind::Paragraph || node.meta.heading.is_some() {
+            .map_err(build_error)?
+            .into_iter()
+            .skip(before)
+            .collect();
+        // Only the first block can head the box: a callout that opens with
+        // a list keeps the list first, under an empty head, rather than
+        // lifting a later paragraph above it — the order inside is the
+        // author's, and the Markdown importer keeps it the same way.
+        let mut head = None;
+        if let Some(&first) = rows.first() {
+            let node = self.document.read(first).map_err(build_error)?;
+            if node.kind == Kind::Paragraph && node.meta.heading.is_none() {
+                self.document
+                    .set_kind(first, Kind::Callout)
+                    .map_err(build_error)?;
+                head = Some(first);
+            }
+        }
+        let head = match head {
+            Some(head) => head,
+            None => {
+                let head = self
+                    .document
+                    .insert(
+                        Parent::Node(parent),
+                        Node::callout("", None, None).map_err(build_error)?,
+                    )
+                    .map_err(build_error)?;
+                self.document
+                    .move_node(head, Parent::Node(parent), before)
+                    .map_err(build_error)?;
+                head
+            }
+        };
+        self.document.set_icon(head, icon).map_err(build_error)?;
+        let mut index = 0;
+        for id in rows {
+            if id == head {
                 continue;
             }
             self.document
-                .set_kind(id, Kind::Callout)
+                .move_node(id, Parent::Node(head), index)
                 .map_err(build_error)?;
-            self.document.set_icon(id, icon).map_err(build_error)?;
+            index += 1;
         }
         Ok(true)
     }

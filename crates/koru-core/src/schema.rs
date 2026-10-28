@@ -2981,13 +2981,24 @@ impl WorkspaceDoc {
             let at = at.min(len);
 
             let has_children = !ws.children(Parent::Node(target))?.is_empty();
-            let (parent, index) = if has_children && node.kind.accepts_children() {
+            // A callout's box is its children, so Enter in the head line
+            // writes the next line *inside* the box — a paragraph under it,
+            // whether or not it has children yet. Every other kind nests a
+            // tail only once it already has children, so Enter at the end of
+            // a childless task still makes a sibling task.
+            let is_callout = node.kind == Kind::Callout;
+            let (parent, index) = if is_callout || (has_children && node.kind.accepts_children()) {
                 (Parent::Node(target), 0)
             } else {
                 (ws.parent(target)?, ws.sibling_index(target)? + 1)
             };
 
-            let mut tail_node = Node::new(node.kind, Content::text(""))?;
+            let tail_kind = if is_callout {
+                Kind::Paragraph
+            } else {
+                node.kind
+            };
+            let mut tail_node = Node::new(tail_kind, Content::text(""))?;
             tail_node.id = tail_id;
             let tail = ws.insert(parent, tail_node)?;
             ws.move_node(tail, parent, index)?;
@@ -3000,13 +3011,6 @@ impl WorkspaceDoc {
                 if let Some(heading) = node.meta.heading {
                     ws.set_heading(tail, Some(heading))?;
                 }
-            }
-            // A callout's look carries wherever the split falls: the new row
-            // is the next line of the same box, and a box is the rows that
-            // share an icon and a tint (`callout::continues`).
-            if node.kind == Kind::Callout {
-                ws.set_icon(tail, node.meta.icon.as_deref())?;
-                ws.set_colour(tail, node.meta.colour.as_deref())?;
             }
             ws.transplant(target, at..len, tail, 0)?;
             ws.delete_text(target, at..len)?;

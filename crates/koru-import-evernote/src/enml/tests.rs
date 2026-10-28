@@ -477,38 +477,61 @@ fn evernote_link_guid_accepts_the_standard_repeated_route_only_once() {
 }
 
 /// Evernote's callout is a `div` marked `--en-callout`, its icon in
-/// `--en-emoji`; an older one has no emoji and means the 💡 default. Its
-/// prose lines become callout lines carrying the icon, and the text around
-/// it stays prose.
+/// `--en-emoji`; an older one has no emoji and means the 💡 default. It
+/// imports as a box: its first prose line is the head carrying the icon,
+/// everything else inside the div — a second line, a list, a heading — is
+/// under the head in order, and the text around the div stays prose.
 #[test]
-fn an_evernote_callout_imports_as_callout_lines_with_its_emoji() {
+fn an_evernote_callout_imports_as_a_box_with_its_lines_inside() {
     let (document, warnings) = convert_enml(
-        r#"<en-note><div>before</div><div style="--en-callout:true; --en-emoji:🤖;--en-requiredFeatures:&quot;[\&quot;callout\&quot;]&quot;;"><div>First <b>line</b></div><div>Second line</div></div><div style="--en-callout:true;"><div>Default icon</div></div><div>after</div></en-note>"#,
+        r#"<en-note><div>before</div><div style="--en-callout:true; --en-emoji:🤖;--en-requiredFeatures:&quot;[\&quot;callout\&quot;]&quot;;"><div>First <b>line</b></div><div>Second line</div><ul><li>one</li><li>two</li></ul><h2>Inside heading</h2></div><div style="--en-callout:true;"><div>Default icon</div></div><div style="--en-callout:true;"><ul><li>only a list</li></ul></div><div>after</div></en-note>"#,
     );
     assert!(warnings.is_empty(), "{warnings:?}");
-    let rows: Vec<_> = body_rows(&document)
-        .into_iter()
-        .map(|row| document.read(row).unwrap())
-        .collect();
-    let shape: Vec<_> = rows
-        .iter()
-        .map(|node| {
-            (
-                node.kind,
-                node.content.as_text().unwrap_or_default(),
-                node.meta.icon.as_deref(),
-            )
-        })
-        .collect();
+    let shape = |rows: Vec<NodeId>| -> Vec<(Kind, String, Option<String>)> {
+        rows.into_iter()
+            .map(|row| {
+                let node = document.read(row).unwrap();
+                (
+                    node.kind,
+                    node.content.as_text().unwrap_or_default().to_owned(),
+                    node.meta.icon,
+                )
+            })
+            .collect()
+    };
+    let body = body_rows(&document);
     assert_eq!(
-        shape,
+        shape(body.clone()),
         vec![
-            (Kind::Paragraph, "before", None),
-            (Kind::Callout, "First line", Some("🤖")),
-            (Kind::Callout, "Second line", Some("🤖")),
-            (Kind::Callout, "Default icon", None),
-            (Kind::Paragraph, "after", None),
+            (Kind::Paragraph, "before".into(), None),
+            (Kind::Callout, "First line".into(), Some("🤖".into())),
+            (Kind::Callout, "Default icon".into(), None),
+            (Kind::Callout, String::new(), None),
+            (Kind::Paragraph, "after".into(), None),
         ]
     );
+
+    let head = body[1];
+    let inside = document.children(Parent::Node(head)).unwrap();
+    assert_eq!(
+        shape(inside.clone()),
+        vec![
+            (Kind::Paragraph, "Second line".into(), None),
+            (Kind::ListBlock, String::new(), None),
+            (Kind::Paragraph, "Inside heading".into(), None),
+        ]
+    );
+    assert_eq!(
+        document.read(inside[2]).unwrap().meta.heading,
+        Heading::from_level(2)
+    );
+    let items = shape(document.children(Parent::Node(inside[1])).unwrap());
+    assert_eq!(items[0].1, "one");
+    assert_eq!(items[1].1, "two");
+
+    // A callout holding only a list: the list is inside an empty head.
+    let only_list = document.children(Parent::Node(body[3])).unwrap();
+    assert_eq!(only_list.len(), 1);
+    assert_eq!(document.read(only_list[0]).unwrap().kind, Kind::ListBlock);
     assert!(document.effective_schema_version() >= 5);
 }

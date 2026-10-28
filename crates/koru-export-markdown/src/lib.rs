@@ -319,6 +319,9 @@ fn emit_node(
                 out.push('\n');
             }
         }
+        Kind::Callout if parent_list.is_none() => {
+            emit_callout(ws, id, node, blobs, assets_rel, out, assets)?;
+        }
         Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Callout | Kind::Contact => {
             if let Some(style) = parent_list {
                 let indent = "  ".repeat(list_depth);
@@ -361,8 +364,7 @@ fn emit_node(
                     out.push('\n');
                 }
             } else {
-                let prefix = block_prefix(node);
-                out.push_str(&prefix);
+                out.push_str(block_prefix(node));
                 out.push_str(&inline_line(ws, id, node)?);
                 out.push_str("\n\n");
                 emit_children(
@@ -434,14 +436,62 @@ fn emit_node(
     Ok(())
 }
 
-fn block_prefix(node: &Node) -> std::borrow::Cow<'static, str> {
-    if node.kind == Kind::Quote {
-        return "> ".into();
+/// A callout box. Markdown has no box, so it is written as one blockquote
+/// that any viewer draws as one: the head as `> 💡 head text`, then every
+/// child — paragraphs, lists with their nesting, headings, code — as further
+/// lines of the same quote, with a bare `>` between blocks. The importer
+/// reads a blockquote whose first line leads with an emoji back as a box
+/// (`koru-import-markdown`), so a document round-trips. The tint has no
+/// Markdown form and is not written.
+fn emit_callout(
+    ws: &WorkspaceDoc,
+    id: NodeId,
+    node: &Node,
+    blobs: &dyn BlobSource,
+    assets_rel: &str,
+    out: &mut String,
+    assets: &mut Vec<RenderedAsset>,
+) -> Result<(), ExportError> {
+    out.push_str("> ");
+    out.push_str(koru_core::callout::icon(&node.meta));
+    let head = inline_line(ws, id, node)?;
+    if !head.is_empty() {
+        out.push(' ');
+        out.push_str(&head);
     }
-    // A callout has no CommonMark form; a quote led by its icon reads the
-    // same in any viewer.
-    if node.kind == Kind::Callout {
-        return format!("> {} ", koru_core::callout::icon(&node.meta)).into();
+    out.push('\n');
+    let mut inside = String::new();
+    emit_children(
+        ws,
+        Parent::Node(id),
+        0,
+        None,
+        blobs,
+        assets_rel,
+        &mut inside,
+        assets,
+    )?;
+    let inside = inside.trim_end();
+    if !inside.is_empty() {
+        // A bare `>` after the head, or the first child would continue the
+        // head's paragraph.
+        out.push_str(">\n");
+        for line in inside.lines() {
+            out.push('>');
+            if !line.is_empty() {
+                out.push(' ');
+                out.push_str(line);
+            }
+            out.push('\n');
+        }
+    }
+    out.push('\n');
+    Ok(())
+}
+
+fn block_prefix(node: &Node) -> &'static str {
+    if node.kind == Kind::Quote {
+        return "> ";
     }
     match node.meta.heading {
         Some(Heading::H1) => "# ",
@@ -452,7 +502,6 @@ fn block_prefix(node: &Node) -> std::borrow::Cow<'static, str> {
         Some(Heading::H6) => "###### ",
         None => "",
     }
-    .into()
 }
 
 fn list_marker(style: ListStyle, index: usize, done: bool) -> String {

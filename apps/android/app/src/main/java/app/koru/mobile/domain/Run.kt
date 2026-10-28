@@ -159,6 +159,7 @@ fun DocumentSnapshot.runReferences(): Set<DocumentId> = blocks.flatMap { block -
     val inline = when (val content = block.content) {
         is BlockContent.Paragraph -> content.richText.inlineObjects
         is BlockContent.Quote -> content.richText.inlineObjects
+        is BlockContent.Callout -> content.richText.inlineObjects
         is BlockContent.Task -> content.richText.inlineObjects
         is BlockContent.Code -> content.richText.inlineObjects
         is BlockContent.Table -> content.richText.inlineObjects

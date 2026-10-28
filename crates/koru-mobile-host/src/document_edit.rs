@@ -150,7 +150,7 @@ fn apply_block_text(
     }
     if !matches!(
         model.kind_of(block),
-        Some(Kind::Paragraph | Kind::Quote | Kind::Task | Kind::Code)
+        Some(Kind::Paragraph | Kind::Quote | Kind::Callout | Kind::Task | Kind::Code)
     ) {
         return Err("block_read_only".into());
     }

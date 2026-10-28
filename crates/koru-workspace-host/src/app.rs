@@ -6509,6 +6509,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 for block in raw {
                     match block {
                         crate::clipboard_rtf::RawBlock::Text(t) => out.push(RichBlock::Text(t)),
+                        crate::clipboard_rtf::RawBlock::CalloutEnd => {
+                            out.push(RichBlock::CalloutEnd)
+                        }
                         crate::clipboard_rtf::RawBlock::Picture(p) => {
                             match self.store_image_bytes(&p.bytes) {
                                 Some(mut img) => {
@@ -6562,6 +6565,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     match block {
                         crate::clipboard_rtf::RawBlock::Text(t) => {
                             out.push(RichBlock::Text(t));
+                        }
+                        crate::clipboard_rtf::RawBlock::CalloutEnd => {
+                            out.push(RichBlock::CalloutEnd);
                         }
                         crate::clipboard_rtf::RawBlock::Picture(p) => {
                             match self.store_image_bytes(&p.bytes) {

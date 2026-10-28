@@ -290,8 +290,11 @@ pub enum RichTextKind {
     Code {
         language: Option<String>,
     },
-    /// A callout line: `icon` an emoji, `tint` an `AccentColor` token, `None`
-    /// the default for either. Markdown carries one as Notion's `<aside>`.
+    /// The head line of a callout box: `icon` an emoji, `tint` an
+    /// `AccentColor` token, `None` the default for either. The blocks after
+    /// it, up to the [`RichBlock::CalloutEnd`], are inside the box. HTML
+    /// carries a box as an `<aside>`; Markdown as the `<aside>` an export
+    /// writes or as a blockquote led by the icon.
     Callout {
         icon: Option<String>,
         tint: Option<String>,
@@ -317,6 +320,9 @@ pub enum RichBlock {
     Table(RichTableBlock),
     /// A decoded image, bytes already stored under `hash`.
     Image(PastedImage),
+    /// The end of a callout box: the blocks since its head (a `Text` of kind
+    /// [`RichTextKind::Callout`]) are the head's children.
+    CalloutEnd,
 }
 
 /// Whether a view already has a document open as a tab.

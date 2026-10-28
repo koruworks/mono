@@ -84,7 +84,8 @@ pub(crate) struct RawPicture {
     pub name: Option<String>,
 }
 
-/// A piece of the document in arrival order: a paragraph of text, or a picture.
+/// A piece of the document in arrival order: a paragraph of text, a picture,
+/// or the end of a callout box (which only HTML carries).
 #[derive(Debug)]
 pub(crate) enum RawBlock {
     // The append-after paste reads pictures only (the text is already pasted by
@@ -93,6 +94,8 @@ pub(crate) enum RawBlock {
     #[allow(dead_code)]
     Text(crate::RichTextBlock),
     Picture(RawPicture),
+    /// The blocks since the last `Text` of kind `Callout` are inside that box.
+    CalloutEnd,
 }
 
 /// Read raw platform RTF through the shared clipboard mechanism. Interpretation
@@ -511,6 +514,7 @@ mod tests {
             .map(|b| match b {
                 RawBlock::Text(t) => t.text.as_str(),
                 RawBlock::Picture(p) => p.mime,
+                RawBlock::CalloutEnd => "",
             })
             .collect();
         assert_eq!(kinds, vec!["one", "image/png", "two", "image/jpeg"]);

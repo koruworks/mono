@@ -28,9 +28,11 @@ pub enum Kind {
     /// it into another quote, but hierarchy belongs to structural blocks
     /// rather than to the quotation's visual inset.
     Quote,
-    /// A highlighted line in a document, drawn in a tinted box with an icon.
-    /// A text-shaped leaf like [`Quote`](Kind::Quote): Enter may split it
-    /// into another callout, and adjacent callouts draw as one box.
+    /// The head line of a highlighted box in a document, drawn tinted with
+    /// an icon. Its children are the rest of the box: paragraphs and lists
+    /// typed inside it. Enter in the head writes the next line *inside* the
+    /// box, as a paragraph under it; the icon and tint live on the head
+    /// ([`crate::callout`]).
     Callout,
     /// Its text is the title; its children are the body.
     Document,
@@ -85,7 +87,12 @@ impl Kind {
     pub fn accepts_children(self) -> bool {
         matches!(
             self,
-            Self::Task | Self::Paragraph | Self::Document | Self::ListBlock | Self::Trash
+            Self::Task
+                | Self::Paragraph
+                | Self::Callout
+                | Self::Document
+                | Self::ListBlock
+                | Self::Trash
         )
     }
 

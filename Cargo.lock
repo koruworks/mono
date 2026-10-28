@@ -5939,6 +5939,8 @@ dependencies = [
  "chrono",
  "koru-core",
  "koru-export",
+ "koru-import",
+ "koru-import-markdown",
  "koru-link",
  "tempfile",
 ]
@@ -5992,7 +5994,6 @@ version = "0.0.3"
 name = "koru-import"
 version = "0.0.3"
 dependencies = [
- "emojis",
  "koru-store-core",
 ]
 
@@ -6056,6 +6057,7 @@ name = "koru-import-markdown"
 version = "0.0.3"
 dependencies = [
  "base64 0.22.1",
+ "emojis",
  "image",
  "koru-core",
  "koru-import",

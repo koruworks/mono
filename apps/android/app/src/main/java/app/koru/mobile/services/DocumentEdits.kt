@@ -67,9 +67,12 @@ class DocumentEdits(
         val id = BlockId.new()
         val childKey = BlockEditKey(key.document, id)
         val tail = current.base.withDraftText(text).slice(at, text.length)
-        val next = block.copy(id = id, parentId = if (hasChildren) block.id else block.parentId,
+        // Enter in a callout's head writes a paragraph inside the box, which
+        // is what the host's split does; every other kind continues itself.
+        val inside = block.content is BlockContent.Callout
+        val next = block.copy(id = id, parentId = if (inside || hasChildren) block.id else block.parentId,
             properties = BlockProperties(headingLevel = block.properties.headingLevel.takeIf { at < text.length }),
-            content = block.content.withText(tail))
+            content = if (inside) BlockContent.Paragraph(tail) else block.content.withText(tail))
         mutableParagraphs.value += childKey to PendingParagraph(block.id, next)
         blockedBy[childKey] = key
         put(childKey, BlockDraft(tail, tail.text, saving = true))
@@ -208,6 +211,7 @@ class DocumentEdits(
 fun BlockContent.editableText(): RichText? = when (this) {
     is BlockContent.Paragraph -> richText
     is BlockContent.Quote -> richText
+    is BlockContent.Callout -> richText
     is BlockContent.Task -> richText
     is BlockContent.Code -> richText
     else -> null
@@ -216,6 +220,7 @@ fun BlockContent.editableText(): RichText? = when (this) {
 fun BlockContent.withText(text: RichText): BlockContent = when (this) {
     is BlockContent.Paragraph -> BlockContent.Paragraph(text)
     is BlockContent.Quote -> BlockContent.Quote(text)
+    is BlockContent.Callout -> BlockContent.Callout(text)
     is BlockContent.Task -> BlockContent.Task(text)
     is BlockContent.Code -> BlockContent.Code(text)
     else -> error("block has no editable text")

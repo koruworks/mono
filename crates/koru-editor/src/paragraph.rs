@@ -138,9 +138,15 @@ pub struct Paragraph {
     /// empty vec draws nothing: unset attributes are invisible.
     pub chips: Vec<crate::chips::ChipSpec>,
     pub icon: Option<String>,
-    /// `NodeMeta::colour`: a callout's tint token. See [`Paragraph::callout_look`].
+    /// `NodeMeta::colour`: a callout's tint token, read on the head row of a
+    /// box through [`koru_core::callout::tint_of`].
     pub colour: Option<String>,
     pub level_name: Option<String>,
+    /// The head of the callout box this row is in — its own id on the head
+    /// row — or `None` outside every box. Derived from the tree by
+    /// `Body::rebuild`, never stored: a callout's children *are* its box, and
+    /// the innermost box wins when callouts nest.
+    pub callout: Option<NodeId>,
 
     /// The image this row renders instead of text. `None` for every text row;
     /// the one content shape a `Paragraph` may carry besides text.
@@ -297,6 +303,7 @@ impl Paragraph {
             icon: node.meta.icon.clone(),
             colour: node.meta.colour.clone(),
             level_name: node.meta.level_name.clone(),
+            callout: None,
             image: image_of(&node.content, &node.meta),
             layout: Layout::new(),
             selection: Selection::default(),
@@ -329,33 +336,20 @@ impl Paragraph {
     /// `geometry::text_x` with a depth: the column now depends on the checkbox
     /// too, and a call site that remembered one and forgot the other would draw
     /// the glyphs somewhere the clicks do not land.
-    /// The icon and tint this row draws when it is a callout, defaults filled
-    /// in — the pair [`koru_core::callout::continues`] compares, so a box here
-    /// is exactly the run the document model means.
-    pub fn callout_look(&self) -> (&str, Option<koru_core::AccentColor>) {
-        (
-            self.icon
-                .as_deref()
-                .unwrap_or(koru_core::callout::DEFAULT_ICON),
-            self.colour
-                .as_deref()
-                .and_then(koru_core::AccentColor::parse),
-        )
-    }
-
-    /// Whether this callout row continues the box of the callout row `above`.
-    pub fn continues_callout(&self, above: &Paragraph) -> bool {
-        self.kind == Kind::Callout
-            && above.kind == Kind::Callout
-            && self.callout_look() == above.callout_look()
-    }
-
+    ///
+    /// Every row of a callout box — head and children alike — takes the
+    /// box's inset, so the text inside a box is one column.
     pub fn text_x(&self) -> f32 {
         text_x(self.depth, self.is_task() || self.list_style.is_some())
-            + match self.kind {
-                Kind::Quote => QUOTE_INSET_X,
-                Kind::Callout => CALLOUT_INSET_X,
-                _ => 0.0,
+            + if self.kind == Kind::Quote {
+                QUOTE_INSET_X
+            } else {
+                0.0
+            }
+            + if self.callout.is_some() {
+                CALLOUT_INSET_X
+            } else {
+                0.0
             }
     }
 

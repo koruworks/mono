@@ -56,22 +56,126 @@ fn heading_quote_code_divider_and_table() {
     assert!(md.contains("| a | b |"));
 }
 
-#[test]
-fn a_callout_leaves_as_a_quote_led_by_its_own_icon() {
+/// A box: the head as a quote led by its icon (the default when none is
+/// set), its children as further lines of the same quote.
+fn boxed_doc() -> WorkspaceDoc {
     let (mut ws, root) = with_doc("Doc");
     ws.insert(
         Parent::Node(root),
         Node::callout("plain", None, None).unwrap(),
     )
     .unwrap();
-    ws.insert(
-        Parent::Node(root),
-        Node::callout("careful", Some("⚠️"), Some("red")).unwrap(),
+    let head = ws
+        .insert(
+            Parent::Node(root),
+            Node::callout("careful", Some("⚠️"), Some("red")).unwrap(),
+        )
+        .unwrap();
+    ws.insert(Parent::Node(head), Node::paragraph("Second line").unwrap())
+        .unwrap();
+    let list = ws
+        .insert(Parent::Node(head), Node::list_block().unwrap())
+        .unwrap();
+    ws.set_list_style(list, Some(ListStyle::Bullet)).unwrap();
+    let one = ws
+        .insert(Parent::Node(list), Node::paragraph("one").unwrap())
+        .unwrap();
+    let nested = ws
+        .insert(Parent::Node(one), Node::list_block().unwrap())
+        .unwrap();
+    ws.set_list_style(nested, Some(ListStyle::Bullet)).unwrap();
+    ws.insert(Parent::Node(nested), Node::paragraph("deeper").unwrap())
+        .unwrap();
+    ws.insert(Parent::Node(list), Node::paragraph("two").unwrap())
+        .unwrap();
+    let mut title = Node::paragraph("Title").unwrap();
+    title.meta.heading = Some(Heading::H2);
+    ws.insert(Parent::Node(head), title).unwrap();
+    ws.insert(Parent::Node(root), Node::paragraph("after").unwrap())
+        .unwrap();
+    ws
+}
+
+const BOXED_MARKDOWN: &str = "# Doc\n\n> 💡 plain\n\n> ⚠️ careful\n>\n> Second line\n>\n> - one\n>   - deeper\n> - two\n>\n> ## Title\n\nafter\n";
+
+#[test]
+fn a_callout_leaves_as_one_quote_led_by_its_icon_with_its_lines_inside() {
+    let md = render_document(&boxed_doc(), &NoBlobs, "x.assets")
+        .unwrap()
+        .markdown;
+    assert_eq!(md, BOXED_MARKDOWN);
+}
+
+/// The round trip: the box the importer reads back out of that quote has
+/// the same shape — head, then its lines as children — and exports to the
+/// same text.
+#[test]
+fn a_callout_round_trips_through_markdown_with_its_lines_inside() {
+    use koru_core::Kind;
+    let body = BOXED_MARKDOWN.strip_prefix("# Doc\n\n").unwrap();
+    let context = koru_import::ImportContext {
+        target_profile: None,
+        target_workspace: None,
+        occupied_titles: &std::collections::BTreeSet::new(),
+        blobs: &koru_import::NoBlobSink,
+        tags: &koru_import::NoTagSink,
+    };
+    let (_, snapshot, warnings) = koru_import_markdown::build_document_from_text(
+        WorkspaceId::new(),
+        "Doc",
+        "doc.md",
+        body,
+        &context,
+        &koru_import::NoProgress,
     )
     .unwrap();
-    let md = render_document(&ws, &NoBlobs, "x.assets").unwrap().markdown;
-    assert!(md.contains("> 💡 plain"));
-    assert!(md.contains("> ⚠️ careful"));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let doc = WorkspaceDoc::from_snapshot(&snapshot).unwrap();
+    let root = doc.children(Parent::Root).unwrap()[0];
+    let shape = |parent: NodeId| -> Vec<(Kind, String, Option<String>)> {
+        doc.children(Parent::Node(parent))
+            .unwrap()
+            .into_iter()
+            .map(|id| {
+                let node = doc.read(id).unwrap();
+                (
+                    node.kind,
+                    node.content.as_text().unwrap_or_default().to_owned(),
+                    node.meta.icon,
+                )
+            })
+            .collect()
+    };
+    // Markdown has to write an emoji to mark the box, so a head with no icon
+    // set comes back with the default stored — and draws, and exports,
+    // exactly as before.
+    assert_eq!(
+        shape(root),
+        vec![
+            (Kind::Callout, "plain".into(), Some("💡".into())),
+            (Kind::Callout, "careful".into(), Some("⚠️".into())),
+            (Kind::Paragraph, "after".into(), None),
+        ]
+    );
+    let head = doc.children(Parent::Node(root)).unwrap()[1];
+    let inside = shape(head);
+    assert_eq!(inside[0], (Kind::Paragraph, "Second line".into(), None));
+    assert_eq!(inside[1].0, Kind::ListBlock);
+    assert_eq!(inside[2], (Kind::Paragraph, "Title".into(), None));
+    assert_eq!(inside.len(), 3, "{inside:?}");
+    let list = doc.children(Parent::Node(head)).unwrap()[1];
+    assert_eq!(
+        shape(list),
+        vec![
+            (Kind::Paragraph, "one".into(), None),
+            (Kind::Paragraph, "two".into(), None),
+        ]
+    );
+
+    let again = render_document(&doc, &NoBlobs, "x.assets")
+        .unwrap()
+        .markdown;
+    assert_eq!(again, BOXED_MARKDOWN);
 }
 
 #[test]

@@ -106,6 +106,7 @@ pub fn parse(text: &str) -> Vec<RichBlock> {
                 RichBlock::Table(RichTableBlock { source })
             }
             koru_import_markdown::Block::Rule => RichBlock::Text(RichTextBlock::from_text("—")),
+            koru_import_markdown::Block::CalloutEnd => RichBlock::CalloutEnd,
             koru_import_markdown::Block::Image(image) => {
                 let label = if image.alt.is_empty() {
                     image.destination.clone()
@@ -212,6 +213,27 @@ mod tests {
             })
             .unwrap();
         assert!(table.source.contains("[1]: https://example.com \"Docs\""));
+    }
+
+    /// A callout box pastes as its head, the blocks inside it, and the end
+    /// marker the document nests them by.
+    #[test]
+    fn a_callout_box_carries_its_head_and_its_end() {
+        let blocks = parse("> 💡 Keep it\n>\n> inside\n>\n> - one\n\nafter");
+        let head = RichTextKind::Callout {
+            icon: Some("💡".into()),
+            tint: None,
+        };
+        assert_eq!(blocks.len(), 5);
+        assert!(matches!(&blocks[0], RichBlock::Text(t) if t.kind == head && t.text == "Keep it"));
+        assert!(
+            matches!(&blocks[1], RichBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
+        );
+        assert!(
+            matches!(&blocks[2], RichBlock::Text(t) if t.list.is_some_and(|l| l.style == ListStyle::Bullet) && t.text == "one")
+        );
+        assert!(matches!(&blocks[3], RichBlock::CalloutEnd));
+        assert!(matches!(&blocks[4], RichBlock::Text(t) if t.text == "after"));
     }
 
     #[test]

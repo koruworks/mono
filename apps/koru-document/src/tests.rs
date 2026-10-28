@@ -4,6 +4,7 @@
 
 use super::*;
 use koru_core::node::{AttrValue, Kind, Node};
+use koru_core::schema::Parent;
 use koru_core::{Heading, Mark, MarkSet, WorkspaceId};
 use koru_draw::theme::ViewMode;
 use koru_window::snap;
@@ -705,6 +706,61 @@ fn rich_paste_rebuilds_numbered_and_nested_bullet_lists() {
         Some("after"),
         "the caret lands on the final visible block, not a hidden list container"
     );
+}
+
+/// A pasted callout box lands as its head with what was inside it as the
+/// head's children — a paragraph and a list — and the block after the box's
+/// end as the head's sibling.
+#[test]
+fn rich_paste_nests_a_callout_box_under_its_head() {
+    let (mut ws, mut view) = document();
+    let blocks = vec![
+        RichBlock::Text(RichTextBlock {
+            text: "Keep it".into(),
+            kind: RichTextKind::Callout {
+                icon: Some("💡".into()),
+                tint: Some("red".into()),
+            },
+            ..Default::default()
+        }),
+        RichBlock::Text(RichTextBlock::from_text("inside")),
+        RichBlock::Text(RichTextBlock {
+            text: "one".into(),
+            list: Some(RichListSpec {
+                style: koru_core::ListStyle::Bullet,
+                depth: 0,
+            }),
+            ..Default::default()
+        }),
+        RichBlock::CalloutEnd,
+        RichBlock::Text(RichTextBlock::from_text("after")),
+    ];
+
+    View::paste_rich(&mut view, &mut ws, None, &blocks);
+
+    let row = |text: &str| {
+        view.editor
+            .body
+            .rows
+            .iter()
+            .find(|row| row.text == text)
+            .unwrap_or_else(|| panic!("no row {text:?}"))
+            .id
+    };
+    let head = row("Keep it");
+    let node = ws.read(head).unwrap();
+    assert_eq!(node.kind, Kind::Callout);
+    assert_eq!(koru_core::callout::icon(&node.meta), "💡");
+    assert_eq!(
+        koru_core::callout::tint(&node.meta),
+        Some(koru_core::AccentColor::Red)
+    );
+    let inside = ws.children(Parent::Node(head)).unwrap();
+    assert_eq!(inside.len(), 2, "a paragraph and a list block");
+    assert_eq!(inside[0], row("inside"));
+    assert_eq!(ws.read(inside[1]).unwrap().kind, Kind::ListBlock);
+    assert_eq!(ws.parent(row("one")).unwrap(), Parent::Node(inside[1]));
+    assert_eq!(ws.parent(row("after")).unwrap(), ws.parent(head).unwrap());
 }
 
 #[test]

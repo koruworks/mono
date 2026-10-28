@@ -2967,6 +2967,7 @@ fn view_block(
                 node.kind,
                 koru_core::Kind::Paragraph
                     | koru_core::Kind::Quote
+                    | koru_core::Kind::Callout
                     | koru_core::Kind::Task
                     | koru_core::Kind::Code
                     | koru_core::Kind::Table
@@ -4708,6 +4709,18 @@ mod tests {
         model
             .insert(Parent::Node(root), Node::quote("Quoted").unwrap())
             .unwrap();
+        let callout = model
+            .insert(
+                Parent::Node(root),
+                Node::callout("Heads up", Some("⚠️"), Some("red")).unwrap(),
+            )
+            .unwrap();
+        let callout_body = model
+            .insert(
+                Parent::Node(callout),
+                Node::paragraph("Inside the box").unwrap(),
+            )
+            .unwrap();
         model
             .insert(Parent::Node(root), Node::task("Task").unwrap())
             .unwrap();
@@ -4797,6 +4810,7 @@ mod tests {
         for kind in [
             "paragraph",
             "quote",
+            "callout",
             "task",
             "listblock",
             "code",
@@ -4809,6 +4823,26 @@ mod tests {
         ] {
             assert!(kinds.contains(&kind), "missing {kind}: {kinds:?}");
         }
+        // A callout is a box: the head carries the icon and tint and its
+        // text, and the lines inside it are its children.
+        let head = view
+            .blocks
+            .iter()
+            .find(|block| block.kind == "callout")
+            .unwrap();
+        assert_eq!(head.id, callout.to_storage());
+        assert_eq!(head.parent_id, None);
+        assert_eq!(head.properties.icon.as_deref(), Some("⚠️"));
+        assert_eq!(head.properties.color.as_deref(), Some("red"));
+        assert_eq!(head.rich_text.as_ref().unwrap().text, "Heads up");
+        let body = view
+            .blocks
+            .iter()
+            .find(|block| block.id == callout_body.to_storage())
+            .unwrap();
+        assert_eq!(body.kind, "paragraph");
+        assert_eq!(body.parent_id.as_deref(), Some(head.id.as_str()));
+        assert_eq!(body.rich_text.as_ref().unwrap().text, "Inside the box");
         let link = view.blocks[0]
             .rich_text
             .as_ref()

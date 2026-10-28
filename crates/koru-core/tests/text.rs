@@ -614,8 +614,11 @@ fn a_page_icon_replicates_as_node_metadata() {
     assert_eq!(a.read(page).unwrap().meta.icon.as_deref(), Some("🔥"));
 }
 
+/// A callout is a box whose head carries the look and whose children are
+/// the lines inside it: Enter in the head writes a paragraph under it, and
+/// Enter again writes above that one, so the lines stay in order.
 #[test]
-fn a_callout_split_keeps_its_icon_and_tint_on_both_rows() {
+fn a_callout_head_splits_into_a_paragraph_inside_its_box() {
     let mut ws = ws();
     let id = ws
         .insert(
@@ -624,11 +627,20 @@ fn a_callout_split_keeps_its_icon_and_tint_on_both_rows() {
         )
         .unwrap();
     let tail = ws.split(id, 4).unwrap();
-    let (head, tail) = (ws.read(id).unwrap(), ws.read(tail).unwrap());
-    assert_eq!(tail.kind, koru_core::Kind::Callout);
-    assert_eq!(tail.meta.icon.as_deref(), Some("⚠️"));
-    assert_eq!(tail.meta.colour.as_deref(), Some("red"));
-    assert!(koru_core::callout::continues(&head.meta, &tail.meta));
+    assert_eq!(ws.parent(tail).unwrap(), Parent::Node(id));
+    let tail_node = ws.read(tail).unwrap();
+    assert_eq!(tail_node.kind, koru_core::Kind::Paragraph);
+    assert_eq!(tail_node.content.as_text(), Some(" tickets early"));
+    let head = ws.read(id).unwrap();
+    assert_eq!(head.content.as_text(), Some("Book"));
+    assert_eq!(koru_core::callout::icon(&head.meta), "⚠️");
+    assert_eq!(
+        koru_core::callout::tint(&head.meta),
+        Some(koru_core::AccentColor::Red)
+    );
+
+    let second = ws.split(id, 4).unwrap();
+    assert_eq!(ws.children(Parent::Node(id)).unwrap(), vec![second, tail]);
 
     ws.set_colour(id, None).unwrap();
     assert_eq!(ws.read(id).unwrap().meta.colour, None);

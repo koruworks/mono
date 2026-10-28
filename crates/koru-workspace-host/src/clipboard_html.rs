@@ -169,6 +169,42 @@ impl InlineState {
     }
 }
 
+/// An `<aside>` that is open: a callout box. Its first plain paragraph is
+/// the box's head, led by its icon; everything after it, until `</aside>`,
+/// is inside the box.
+#[derive(Default)]
+struct OpenBox {
+    icon: Option<String>,
+    /// Whether the icon has been settled — only the first line can carry it.
+    settled: bool,
+    /// Whether the head is in the stream; what follows is inside the box.
+    head_emitted: bool,
+}
+
+/// Close the open box, if any: its end marker follows what was inside it. A
+/// box that never got a head leaves nothing behind.
+fn close_box(open: &mut Option<OpenBox>, blocks: &mut Vec<RawBlock>) {
+    if let Some(open) = open.take()
+        && open.head_emitted
+    {
+        blocks.push(RawBlock::CalloutEnd);
+    }
+}
+
+/// Drop the first `cut` bytes of a paragraph — the icon its text led with is
+/// not prose — moving its runs and links with it.
+fn strip_front(
+    text: &mut String,
+    runs: &mut Vec<RichTextRun>,
+    links: &mut Vec<RichTextLink>,
+    cut: usize,
+) {
+    use koru_import_markdown::shift_span;
+    text.drain(..cut);
+    runs.retain_mut(|run| shift_span(&mut run.start, &mut run.end, cut));
+    links.retain_mut(|link| shift_span(&mut link.start, &mut link.end, cut));
+}
+
 /// Move one raw HTML text segment into the decoded paragraph and record its
 /// formatted byte range. Adjacent segments with identical marks are coalesced.
 fn append_inline(
@@ -223,6 +259,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
     let mut list_stack: Vec<ListFrame> = Vec::new();
     let mut pending_heading: Option<Heading> = None;
     let mut quote_depth = 0_u16;
+    let mut callout: Option<OpenBox> = None;
     let mut inline = InlineState::default();
     let mut open_links: Vec<(usize, String)> = Vec::new();
 
@@ -233,6 +270,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                  list_stack: &[ListFrame],
                  quote_depth: u16,
                  pending_heading: &mut Option<Heading>,
+                 callout: &mut Option<OpenBox>,
                  saw_structured: &mut bool| {
         if text.trim().is_empty() {
             text.clear();
@@ -244,8 +282,51 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
         let structured = !list_stack.is_empty()
             || pending_heading.is_some()
             || quote_depth > 0
+            || callout.is_some()
             || !runs.is_empty()
             || !links.is_empty();
+        let mut kind = if quote_depth > 0 {
+            RichTextKind::Quote
+        } else {
+            RichTextKind::Paragraph
+        };
+        // Inside an open box the first plain paragraph is the head, led by
+        // its icon. A block before it that cannot be a head — a list item, a
+        // heading — gets an empty head in front, so nothing is lost.
+        if let Some(open) = callout
+            && !open.head_emitted
+        {
+            let plain = list_stack.is_empty() && pending_heading.is_none() && quote_depth == 0;
+            if plain {
+                if !open.settled {
+                    open.settled = true;
+                    if let Some((icon, cut)) = koru_import_markdown::leading_icon(text) {
+                        open.icon = Some(icon);
+                        strip_front(text, runs, links, cut);
+                    }
+                }
+                if text.trim().is_empty() {
+                    // The icon alone in its paragraph: the next one is the head.
+                    text.clear();
+                    runs.clear();
+                    links.clear();
+                    return;
+                }
+                kind = RichTextKind::Callout {
+                    icon: open.icon.clone(),
+                    tint: None,
+                };
+            } else {
+                blocks.push(RawBlock::Text(RichTextBlock {
+                    kind: RichTextKind::Callout {
+                        icon: open.icon.clone(),
+                        tint: None,
+                    },
+                    ..Default::default()
+                }));
+            }
+            open.head_emitted = true;
+        }
         let block = RichTextBlock {
             text: std::mem::take(text),
             list: list_stack.last().map(|f| RichListSpec {
@@ -253,11 +334,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                 depth: (list_stack.len() - 1) as u16,
             }),
             heading: pending_heading.take(),
-            kind: if quote_depth > 0 {
-                RichTextKind::Quote
-            } else {
-                RichTextKind::Paragraph
-            },
+            kind,
             runs: std::mem::take(runs),
             links: std::mem::take(links),
         };
@@ -284,6 +361,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                             &list_stack,
                             quote_depth,
                             &mut pending_heading,
+                            &mut callout,
                             &mut saw_structured,
                         );
                         blocks.push(RawBlock::Picture(pic));
@@ -310,6 +388,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                             &list_stack,
                             quote_depth,
                             &mut pending_heading,
+                            &mut callout,
                             &mut saw_structured,
                         ),
                         // Seal the pending text at the *current* depth before
@@ -325,6 +404,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                                 &list_stack,
                                 quote_depth,
                                 &mut pending_heading,
+                                &mut callout,
                                 &mut saw_structured,
                             );
                             list_stack.push(ListFrame { style });
@@ -344,6 +424,7 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                                 &list_stack,
                                 quote_depth,
                                 &mut pending_heading,
+                                &mut callout,
                                 &mut saw_structured,
                             );
                             quote_depth = quote_depth.saturating_add(1);
@@ -357,9 +438,41 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
                                 &list_stack,
                                 quote_depth,
                                 &mut pending_heading,
+                                &mut callout,
                                 &mut saw_structured,
                             );
                             quote_depth = quote_depth.saturating_sub(1);
+                        }
+                        // A box does not nest in a box: an aside inside one
+                        // closes it first.
+                        TagAction::CalloutOpen => {
+                            flush(
+                                &mut text,
+                                &mut runs,
+                                &mut links,
+                                &mut blocks,
+                                &list_stack,
+                                quote_depth,
+                                &mut pending_heading,
+                                &mut callout,
+                                &mut saw_structured,
+                            );
+                            close_box(&mut callout, &mut blocks);
+                            callout = Some(OpenBox::default());
+                        }
+                        TagAction::CalloutClose => {
+                            flush(
+                                &mut text,
+                                &mut runs,
+                                &mut links,
+                                &mut blocks,
+                                &list_stack,
+                                quote_depth,
+                                &mut pending_heading,
+                                &mut callout,
+                                &mut saw_structured,
+                            );
+                            close_box(&mut callout, &mut blocks);
                         }
                     }
                 }
@@ -386,9 +499,12 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
             &list_stack,
             quote_depth,
             &mut pending_heading,
+            &mut callout,
             &mut saw_structured,
         );
     }
+    // An `<aside>` nobody closed still ends with the fragment.
+    close_box(&mut callout, &mut blocks);
 
     if saw_picture || saw_structured {
         Some(blocks)
@@ -399,17 +515,26 @@ pub(crate) fn extract(html: &str) -> Option<Vec<RawBlock>> {
 
 /// Opening anchors carry the destination; closing anchors merely seal the byte
 /// range accumulated since that opening tag. Unknown/missing hrefs stay text.
+/// The name is matched whole: `</aside>` and `</abbr>` are not anchors.
 fn link_action(tag: &str) -> Option<(String, bool)> {
     let trimmed = tag.trim();
-    if trimmed.to_ascii_lowercase().starts_with("/a") {
-        return Some((String::new(), false));
-    }
-    let name = trimmed
+    let (closing, rest) = match trimmed.strip_prefix('/') {
+        Some(rest) => (true, rest),
+        None => (false, trimmed),
+    };
+    let name = rest
         .split_ascii_whitespace()
         .next()?
         .trim_end_matches('/')
         .to_ascii_lowercase();
-    (name == "a").then(|| (attr_value(tag, "href").unwrap_or_default(), true))
+    if name != "a" {
+        return None;
+    }
+    Some(if closing {
+        (String::new(), false)
+    } else {
+        (attr_value(tag, "href").unwrap_or_default(), true)
+    })
 }
 
 /// What a tag means to the block structure: a paragraph break, a list
@@ -426,6 +551,9 @@ enum TagAction {
     /// Opens or closes a semantic block quotation.
     QuoteOpen,
     QuoteClose,
+    /// Opens or closes a callout box — an `<aside>`.
+    CalloutOpen,
+    CalloutClose,
 }
 
 /// Map semantic inline HTML onto the mark vocabulary the editor already uses.
@@ -457,6 +585,9 @@ fn tag_action(lower: &str) -> Option<TagAction> {
     if lower.starts_with("/blockquote") {
         return Some(TagAction::QuoteClose);
     }
+    if lower.starts_with("/aside") {
+        return Some(TagAction::CalloutClose);
+    }
     if lower.starts_with("/p")
         || lower.starts_with("/div")
         || lower.starts_with("br")
@@ -477,6 +608,9 @@ fn tag_action(lower: &str) -> Option<TagAction> {
     }
     if lower == "blockquote" || lower.starts_with("blockquote ") {
         return Some(TagAction::QuoteOpen);
+    }
+    if lower == "aside" || lower.starts_with("aside ") {
+        return Some(TagAction::CalloutOpen);
     }
     // Opening heading tags.
     let h = if lower.starts_with("h1") {
@@ -817,7 +951,7 @@ mod tests {
             .iter()
             .filter_map(|block| match block {
                 RawBlock::Text(text) => Some(text.kind.clone()),
-                RawBlock::Picture(_) => None,
+                RawBlock::Picture(_) | RawBlock::CalloutEnd => None,
             })
             .collect();
         assert_eq!(
@@ -828,6 +962,42 @@ mod tests {
                 RichTextKind::Quote,
                 RichTextKind::Paragraph,
             ]
+        );
+    }
+
+    /// An `<aside>` pastes as a callout box: its first paragraph is the head,
+    /// led by its icon; the paragraphs and lists after it are inside the box,
+    /// which ends where the aside does. The marks around the icon survive
+    /// the icon being cut away.
+    #[test]
+    fn an_html_aside_pastes_as_a_callout_box() {
+        let html = concat!(
+            "<p>before</p>",
+            "<aside><p>💡 <b>Keep</b> it</p><p>inside</p><ul><li>one</li></ul></aside>",
+            "<p>after</p>",
+        );
+        let blocks = extract(html).expect("a callout is structured");
+        assert_eq!(blocks.len(), 6, "{blocks:?}");
+        let head = RichTextKind::Callout {
+            icon: Some("💡".into()),
+            tint: None,
+        };
+        assert!(
+            matches!(&blocks[0], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "before")
+        );
+        let RawBlock::Text(text) = &blocks[1] else {
+            panic!("expected the head, got {:?}", blocks[1]);
+        };
+        assert_eq!(text.kind, head);
+        assert_eq!(text.text, "Keep it");
+        assert_eq!(&text.text[text.runs[0].start..text.runs[0].end], "Keep");
+        assert!(
+            matches!(&blocks[2], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "inside")
+        );
+        assert!(matches!(&blocks[3], RawBlock::Text(t) if t.list.is_some() && t.text == "one"));
+        assert!(matches!(&blocks[4], RawBlock::CalloutEnd));
+        assert!(
+            matches!(&blocks[5], RawBlock::Text(t) if t.kind == RichTextKind::Paragraph && t.text == "after")
         );
     }
 
@@ -851,7 +1021,7 @@ mod tests {
             .iter()
             .filter_map(|block| match block {
                 RawBlock::Text(text) => text.heading,
-                RawBlock::Picture(_) => None,
+                RawBlock::Picture(_) | RawBlock::CalloutEnd => None,
             })
             .collect();
 

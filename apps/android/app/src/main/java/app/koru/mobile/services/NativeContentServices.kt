@@ -706,6 +706,7 @@ internal fun NativeInventoryProfile.toProfile() = Profile(
 private fun BlockContent.diagnosticRichText(): RichText? = when (this) {
     is BlockContent.Paragraph -> richText
     is BlockContent.Quote -> richText
+    is BlockContent.Callout -> richText
     is BlockContent.Task -> richText
     is BlockContent.Code -> richText
     is BlockContent.Table -> richText

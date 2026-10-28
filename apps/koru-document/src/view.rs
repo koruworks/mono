@@ -806,6 +806,9 @@ impl View for BuiltInDocument {
         let mut last_visible = None;
         let mut invalid_table = None;
         let mut list_levels: Vec<RichListLevel> = Vec::new();
+        // The head of the open callout box: every block up to the box's end
+        // lands under it rather than at the cursor.
+        let mut callout_head: Option<NodeId> = None;
         for block in blocks {
             if let RichBlock::Text(rt) = block
                 && let Some(spec) = rt.list
@@ -836,8 +839,8 @@ impl View for BuiltInDocument {
                     let Ok(list_node) = Node::list_block() else {
                         continue;
                     };
-                    let list_id = if let Some(parent_item) = parent_item {
-                        ws.insert(Parent::Node(parent_item), list_node).ok()
+                    let list_id = if let Some(parent) = parent_item.or(callout_head) {
+                        ws.insert(Parent::Node(parent), list_node).ok()
                     } else {
                         cursor.insert(ws, list_node)
                     };
@@ -878,6 +881,10 @@ impl View for BuiltInDocument {
             // lands after the entire list rather than inside its final item.
             list_levels.clear();
             let (node, heading, language) = match block {
+                RichBlock::CalloutEnd => {
+                    callout_head = None;
+                    continue;
+                }
                 RichBlock::Table(table) => (Node::table(table.source.clone()), None, None),
                 RichBlock::Image(img) => (
                     Node::image(
@@ -914,8 +921,20 @@ impl View for BuiltInDocument {
             let Ok(node) = node else {
                 continue;
             };
-            let id = cursor.insert(ws, node);
+            // A box opens at the cursor — a box does not nest in a box — and
+            // what follows it, up to its end, goes inside.
+            let is_head = matches!(
+                block,
+                RichBlock::Text(rt) if matches!(rt.kind, RichTextKind::Callout { .. })
+            );
+            let id = match callout_head.filter(|_| !is_head) {
+                Some(head) => ws.insert(Parent::Node(head), node).ok(),
+                None => cursor.insert(ws, node),
+            };
             let Some(id) = id else { continue };
+            if is_head {
+                callout_head = Some(id);
+            }
             if let RichBlock::Table(table) = block
                 && koru_editor::table::parse_source(&table.source).is_err()
             {

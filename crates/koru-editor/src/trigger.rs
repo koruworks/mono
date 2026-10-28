@@ -95,8 +95,8 @@ pub enum Anchor {
     RenameImage(NodeId),
     /// A page node's metadata icon, selected by the Unicode picker.
     PageIcon(NodeId),
-    /// A callout's icon, opened by pressing it. Committing sets the icon on
-    /// every row of the callout's box, which is what keeps it one box.
+    /// A callout box's head, whose icon was pressed. Committing sets the
+    /// head's icon; the box's look lives on the head and nowhere else.
     CalloutIcon(NodeId),
     /// An attribute chip that was clicked. Nothing in the document stands in
     /// for the picker — the chip is presentation of node state, not text — so

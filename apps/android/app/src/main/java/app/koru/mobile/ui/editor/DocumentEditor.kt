@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
@@ -53,6 +54,7 @@ import app.koru.mobile.R
 import app.koru.mobile.domain.*
 import app.koru.mobile.services.BlobLoadState
 import app.koru.mobile.ui.run.runPillLabel
+import app.koru.mobile.ui.calloutTint
 import app.koru.mobile.services.BlockEditKey
 import app.koru.mobile.services.BlockDraft
 import app.koru.mobile.services.editableText
@@ -259,6 +261,35 @@ private fun BlockRow(
                         pillLabel = pillLabel,
                         editor = editor,
                     )
+                }
+                // A callout is a box: this row is its head line, tinted and led
+                // by its icon; the lines inside the box are the blocks whose
+                // parent this is, and they follow as rows one depth deeper.
+                is BlockContent.Callout -> {
+                    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                    Surface(
+                        color = calloutTint(block.properties.color, dark) ?: MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = KoruSpacing.md, vertical = KoruSpacing.sm),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Text(
+                                block.properties.calloutIcon(),
+                                Modifier.padding(end = KoruSpacing.sm),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            RichTextBlock(
+                                content.richText,
+                                block.properties,
+                                follow,
+                                Modifier.weight(1f),
+                                pillLabel = pillLabel,
+                                editor = editor,
+                            )
+                        }
+                    }
                 }
                 is BlockContent.Task -> RichTextBlock(content.richText, block.properties, follow, pillLabel = pillLabel, editor = editor)
                 is BlockContent.Code -> CodeBlock(content, block.properties, follow, pillLabel, editor)

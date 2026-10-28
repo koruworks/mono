@@ -12,7 +12,7 @@ class NativeDocumentReadModelTest {
         val snapshot = parseNativeDocument(documentJson())
 
         assertEquals("Complete", snapshot.title)
-        assertEquals(11, snapshot.blocks.size)
+        assertEquals(12, snapshot.blocks.size)
         assertTrue(snapshot.blocks[0].content is BlockContent.Paragraph)
         assertTrue(snapshot.blocks[1].content is BlockContent.Quote)
         assertTrue(snapshot.blocks[2].content is BlockContent.Task)
@@ -24,6 +24,13 @@ class NativeDocumentReadModelTest {
         assertTrue(snapshot.blocks[8].content is BlockContent.Canvas)
         assertTrue(snapshot.blocks[9].content is BlockContent.Contact)
         assertTrue(snapshot.blocks[10].content is BlockContent.Embed)
+        assertTrue(snapshot.blocks[11].content is BlockContent.Callout)
+
+        val callout = snapshot.blocks[11]
+        assertEquals("Heads up", (callout.content as BlockContent.Callout).richText.text)
+        assertEquals("⚠️", callout.properties.calloutIcon())
+        assertEquals("red", callout.properties.color)
+        assertEquals(BlockContent.Callout.DEFAULT_ICON, snapshot.blocks[0].properties.calloutIcon())
 
         val paragraph = snapshot.blocks[0].content as BlockContent.Paragraph
         assertEquals(MarkKind.Bold, paragraph.richText.marks.single().kind)
@@ -50,10 +57,12 @@ class NativeDocumentReadModelTest {
             "canvas" to "",
             "contact" to rich("Ada"),
             "embed" to "",
+            "callout" to rich("Heads up"),
         )
         val blocks = kinds.mapIndexed { index, (kind, rich) ->
             val id = "10000000-0000-4000-8000-${(index + 10).toString().padStart(12, '0')}"
-            val properties = """{"name":null,"icon":null,"color":null,"done":false,"alignment":"start","heading_level":null,"list_style":${if (kind == "listblock") "\"roman\"" else "null"},"image_width":null,"image_height":null,"language":${if (kind == "code") "\"kotlin\"" else "null"}}"""
+            val callout = kind == "callout"
+            val properties = """{"name":null,"icon":${if (callout) "\"⚠️\"" else "null"},"color":${if (callout) "\"red\"" else "null"},"done":false,"alignment":"start","heading_level":null,"list_style":${if (kind == "listblock") "\"roman\"" else "null"},"image_width":null,"image_height":null,"language":${if (kind == "code") "\"kotlin\"" else "null"}}"""
             val extra = when (kind) {
                 "image", "canvas" -> ""","blob":{"id":"b3:aaaa","mime_type":"image/png","size":42,"width":10,"height":20}"""
                 "embed" -> ""","reference":{"kind":"document","document_id":"10000000-0000-4000-8000-000000000099"}"""

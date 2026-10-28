@@ -1097,13 +1097,15 @@ mod tests {
     /// and the six canonical commands are simply not on this path — which this
     /// test reads off the crate itself rather than taking on trust.
     /// A Notion callout survives the export: the `<aside>` Notion's Markdown
-    /// writes lands as callout rows carrying the icon, emoji or built-in.
+    /// writes lands as a callout box whose head carries the icon, emoji or
+    /// built-in, and whose other blocks — a paragraph, a bullet list — are
+    /// the head's children.
     #[test]
     fn a_notion_callout_lands_as_a_callout_with_its_icon() {
         let id = "22222222222222222222222222222222";
         let (_dir, zip) = write_zip(&[(
             &format!("Guide {id}.md"),
-            "# Guide\n\n<aside>\n⚠️ Back up first\n\n</aside>\n\n<aside>\n<img src=\"https://www.notion.so/icons/info-alternate_blue.svg\" alt=\"i\" width=\"40px\" /> Built-in icon\n\n</aside>\n",
+            "# Guide\n\n<aside>\n⚠️ Back up first\n\nThen check the copy\n\n- nightly\n- weekly\n\n</aside>\n\n<aside>\n<img src=\"https://www.notion.so/icons/info-alternate_blue.svg\" alt=\"i\" width=\"40px\" /> Built-in icon\n\n</aside>\n",
         )]);
         let prepared = NotionImporter
             .inspect(ImportSource::Files(vec![zip]), &NoProgress)
@@ -1134,12 +1136,18 @@ mod tests {
             .find(|d| d.title == "Guide")
             .unwrap();
         let doc = WorkspaceDoc::from_snapshot(&page.snapshot).unwrap();
-        let callouts: Vec<_> = doc
-            .walk_all()
+        let root = doc.children(Parent::Root).unwrap()[0];
+        // The page's heading row stays in the body; the heads are the rows
+        // after it.
+        let heads: Vec<NodeId> = doc
+            .children(Parent::Node(root))
             .unwrap()
             .into_iter()
-            .map(|(id, _)| doc.read(id).unwrap())
-            .filter(|node| node.kind == koru_core::Kind::Callout)
+            .filter(|&id| doc.read(id).unwrap().kind == koru_core::Kind::Callout)
+            .collect();
+        let callouts: Vec<_> = heads
+            .iter()
+            .map(|&id| doc.read(id).unwrap())
             .map(|node| {
                 (
                     node.content.as_text().unwrap_or_default().to_owned(),
@@ -1158,6 +1166,46 @@ mod tests {
                     Some("blue".to_owned())
                 ),
             ]
+        );
+
+        // What else was in the first callout is under its head, in order.
+        let inside: Vec<_> = doc
+            .children(Parent::Node(heads[0]))
+            .unwrap()
+            .into_iter()
+            .map(|id| {
+                let node = doc.read(id).unwrap();
+                (
+                    node.kind,
+                    node.content.as_text().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            inside,
+            vec![
+                (koru_core::Kind::Paragraph, "Then check the copy".to_owned()),
+                (koru_core::Kind::ListBlock, String::new()),
+            ]
+        );
+        let list = doc.children(Parent::Node(heads[0])).unwrap()[1];
+        let items: Vec<_> = doc
+            .children(Parent::Node(list))
+            .unwrap()
+            .into_iter()
+            .map(|id| {
+                doc.read(id)
+                    .unwrap()
+                    .content
+                    .as_text()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(items, vec!["nightly".to_owned(), "weekly".to_owned()]);
+        assert!(
+            doc.children(Parent::Node(heads[1])).unwrap().is_empty(),
+            "the second callout has nothing inside"
         );
     }
 

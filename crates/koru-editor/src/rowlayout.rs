@@ -737,9 +737,10 @@ pub fn code_panel_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
     )
 }
 
-/// The tinted box behind a run of adjacent callouts, from `first` (drawn at
-/// `first_oy`) through `last` (at `last_oy`). Its left edge derives from
-/// `text_x`, so the box, the icon and the text cannot drift apart.
+/// The tinted box behind a callout, from its head `first` (drawn at
+/// `first_oy`) through the last row inside it, `last` (at `last_oy`). Its
+/// left edge derives from `text_x`, so the box, the icon and the text cannot
+/// drift apart.
 pub fn callout_panel_rect(
     first: &Paragraph,
     first_oy: f32,
