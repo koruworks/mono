@@ -39,11 +39,16 @@ const MONOGRAM_OF_TILE: f32 = 0.52;
 /// a large one is not a square.
 const RADIUS_OF_TILE: f32 = 0.22;
 
-fn appearance(color: Option<&str>) -> (Color, bool) {
-    let p = theme::p();
+fn appearance(color: Option<&str>, p: &theme::Palette) -> (Color, bool) {
     match color {
         None => (p.panel_bg, true),
-        Some(name) => (theme::workspace_color(name).unwrap_or(p.chip_bg), false),
+        Some(name) => (
+            p.workspace_colors
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or(p.chip_bg, |(_, c)| *c),
+            false,
+        ),
     }
 }
 
@@ -63,9 +68,21 @@ pub struct Tile<'a> {
 impl Tile<'_> {
     /// Draw it filling `at`. Square is assumed; pass a square rect.
     pub fn draw(&self, scene: &mut Scene, root: Affine, engine: &mut TextEngine, at: Rect) {
-        let p = theme::p();
+        self.draw_in(scene, root, engine, at, theme::p());
+    }
+
+    /// [`draw`](Self::draw) in `p`, the table of the theme it is shown
+    /// under: an element subtree with its own theme paints its tiles in it.
+    pub fn draw_in(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        p: &theme::Palette,
+    ) {
         let size = at.w.min(at.h);
-        let (tint, bordered) = appearance(self.color);
+        let (tint, bordered) = appearance(self.color, p);
         scene::fill(
             scene,
             root,
@@ -128,7 +145,7 @@ mod tests {
     #[test]
     fn unset_is_the_adaptive_panel_surface_but_unknown_remains_neutral() {
         let p = theme::p();
-        assert_eq!(appearance(None), (p.panel_bg, true));
-        assert_eq!(appearance(Some("future-color")), (p.chip_bg, false));
+        assert_eq!(appearance(None, p), (p.panel_bg, true));
+        assert_eq!(appearance(Some("future-color"), p), (p.chip_bg, false));
     }
 }

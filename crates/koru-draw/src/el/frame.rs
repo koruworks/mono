@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The one record a layout produces, and the paint that reads it.
+//! The one record a layout produces, and everything that reads it: paint,
+//! pointer targets, the accessibility tree and the inspector (§3.6). None of
+//! them repeats placement arithmetic.
 //!
 //! Paint uses the text layouts measured during layout and never re-breaks
-//! them; colours resolve through the frame's own theme and contrast, so two
+//! them; colours resolve through each node's own theme and contrast, so two
 //! subtrees laid out under two themes paint as two themes.
 
 use std::collections::HashMap;
@@ -12,7 +14,7 @@ use parley::Layout;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::{Axis, El, FrameCx, Kind, TextEl, TextMode};
+use super::{Action, Axis, El, ElState, FrameCx, Key, Kind, Look, Name, Role, TextEl, TextMode};
 use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::{Brush, Contrast, TextStyle};
@@ -22,6 +24,7 @@ use crate::{inspect, scene};
 pub struct Node {
     pub name: &'static str,
     pub parent: Option<usize>,
+    pub key: Option<Key>,
     /// The allocated border box, logical units.
     pub rect: Rect,
     /// The viewport clipping it, when a scroll ancestor has one.
@@ -31,6 +34,25 @@ pub struct Node {
     pub overflow: bool,
     /// A scroll viewport's content extent and its clamped offset.
     pub scroll: Option<(f32, f32)>,
+    /// The theme, contrast and interaction this node resolved under.
+    pub cx: FrameCx,
+    pub state: ElState,
+    /// What its state recipe painted, and the rule that won.
+    pub look: Look,
+    pub rule: &'static str,
+    /// Where a pointer reaches it, before clipping; `None` for a node that
+    /// is not a target.
+    pub hit: Option<Rect>,
+    /// The key that region presses: its own, or the target a neutral box
+    /// presses for (`El::hit_as`).
+    pub hit_key: Option<Key>,
+    pub role: Option<Role>,
+    pub label: Option<Name>,
+    pub selected: Option<bool>,
+    pub disabled: bool,
+    pub focusable: bool,
+    pub actions: Vec<Action>,
+    pub decorative: bool,
     pub(crate) text: Option<Layout<Brush>>,
 }
 
@@ -39,19 +61,51 @@ impl Node {
     pub fn lines(&self) -> Option<usize> {
         self.text.as_ref().map(|layout| layout.lines().count())
     }
+
+    /// Its pointer region, limited by the viewport clipping it.
+    pub fn hit_region(&self) -> Option<Rect> {
+        let region = self.hit?;
+        Some(match self.clip {
+            Some(clip) => intersect(region, clip),
+            None => region,
+        })
+    }
 }
 
-/// A layout constraint the solver could not honour, said by element and axis
-/// rather than silently repaired.
+/// A constraint or declaration the frame could not honour, said by element
+/// (and axis, for layout) rather than silently repaired.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Diagnostic {
     pub element: &'static str,
-    pub axis: Axis,
+    pub axis: Option<Axis>,
     pub message: &'static str,
 }
 
-/// What `El::layout` produced: every element's allocation, and the
-/// diagnostics, under one frame context.
+/// One pointer target: a key and where it can be pressed.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct HitRegion {
+    pub key: Key,
+    pub region: Rect,
+}
+
+/// One accessibility node: what the host composes into its window's tree.
+/// Structural boxes are transparent, so a node's children are its nearest
+/// semantic descendants in reading order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SemNode {
+    pub key: Option<Key>,
+    pub role: Role,
+    pub name: Option<Name>,
+    pub bounds: Rect,
+    pub selected: Option<bool>,
+    pub disabled: bool,
+    pub focusable: bool,
+    pub actions: Vec<Action>,
+    pub children: Vec<SemNode>,
+}
+
+/// What `El::layout` produced: every element's allocation, state, target and
+/// declarations, and the diagnostics.
 pub struct Frame {
     pub cx: FrameCx,
     pub nodes: Vec<Node>,
@@ -77,6 +131,114 @@ impl Frame {
         self.named(name).next().map(|node| node.rect)
     }
 
+    /// The node `key` identifies, when this frame shows it.
+    pub fn node(&self, key: Key) -> Option<&Node> {
+        self.nodes.iter().find(|node| node.key == Some(key))
+    }
+
+    /// Whether `key` is still shown: a press or focus held on a key this
+    /// frame no longer has is the host's to drop, never to move to whatever
+    /// took its place.
+    pub fn contains(&self, key: Key) -> bool {
+        self.node(key).is_some()
+    }
+
+    /// Every pointer target in paint order, clipped to its viewport.
+    pub fn hits(&self) -> Vec<HitRegion> {
+        self.nodes
+            .iter()
+            .filter_map(|node| {
+                let region = node.hit_region()?;
+                let key = node.hit_key?;
+                (region.w > 0.0 && region.h > 0.0).then_some(HitRegion { key, region })
+            })
+            .collect()
+    }
+
+    /// The foremost target under a point in the frame's logical
+    /// coordinates: the last painted wins where targets overlap. A region
+    /// owns its start edges and not its end edges, so two rows that share
+    /// an edge never both claim the line between them.
+    pub fn hit_at(&self, x: f32, y: f32) -> Option<Key> {
+        self.hits()
+            .into_iter()
+            .rev()
+            .find(|hit| {
+                let r = hit.region;
+                x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+            })
+            .map(|hit| hit.key)
+    }
+
+    /// The accessibility tree: semantic nodes nested under their nearest
+    /// semantic ancestor, in reading order.
+    pub fn semantics(&self) -> Vec<SemNode> {
+        // Children of each semantic node, by the index of that node; roots
+        // under `usize::MAX`.
+        let semantic = |i: usize| self.nodes[i].role.is_some() && !self.nodes[i].decorative;
+        let owner = |mut i: usize| loop {
+            match self.nodes[i].parent {
+                Some(parent) if semantic(parent) => return parent,
+                Some(parent) => i = parent,
+                None => return usize::MAX,
+            }
+        };
+        let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
+        for i in (0..self.nodes.len()).filter(|i| semantic(*i)) {
+            children.entry(owner(i)).or_default().push(i);
+        }
+        fn build(frame: &Frame, children: &HashMap<usize, Vec<usize>>, i: usize) -> SemNode {
+            let node = &frame.nodes[i];
+            SemNode {
+                key: node.key,
+                role: node.role.expect("a semantic node has a role"),
+                name: node.label.clone(),
+                bounds: node.rect,
+                selected: node.selected,
+                disabled: node.disabled,
+                focusable: node.focusable,
+                actions: node.actions.clone(),
+                children: children
+                    .get(&i)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| build(frame, children, *c))
+                    .collect(),
+            }
+        }
+        children
+            .get(&usize::MAX)
+            .into_iter()
+            .flatten()
+            .map(|i| build(self, &children, *i))
+            .collect()
+    }
+
+    /// The offset `key`'s scroll viewport needs to show it whole, when it
+    /// is in one and is not showing whole now. The host stores the offset;
+    /// it is never asked to substitute another item.
+    pub fn reveal(&self, key: Key) -> Option<(usize, f32)> {
+        let index = self.nodes.iter().position(|node| node.key == Some(key))?;
+        let target = self.nodes[index].rect;
+        let mut at = self.nodes[index].parent;
+        while let Some(i) = at {
+            let node = &self.nodes[i];
+            if let Some((_, offset)) = node.scroll {
+                let view = node.rect;
+                let delta = if target.y < view.y {
+                    target.y - view.y
+                } else if target.y + target.h > view.y + view.h {
+                    target.y + target.h - (view.y + view.h)
+                } else {
+                    return None;
+                };
+                return Some((i, offset + delta));
+            }
+            at = node.parent;
+        }
+        None
+    }
+
     /// Paint `root`, the tree this frame was laid out from.
     pub fn paint(&self, root: &El, scene: &mut Scene, transform: Affine, engine: &mut TextEngine) {
         let mut next = 0;
@@ -97,24 +259,35 @@ impl Frame {
             return;
         };
         let r = node.rect;
-        let palette = self.cx.palette();
+        let cx = node.cx;
+        let palette = cx.palette();
+        // The minimal element record (P2): developer name, key, bounds,
+        // theme with its appearance and contrast, semantic role.
         let _record = inspect::scope(
             el.name,
             "element",
             transform,
             scene::rect(r.x, r.y, r.w, r.h),
             |record| {
-                record.property("theme", self.cx.theme.key, "FrameCx::theme");
-                record.property(
-                    "appearance",
-                    self.cx.theme.appearance.key(),
-                    "Theme::appearance",
-                );
-                record.property("contrast", self.cx.contrast.key(), "FrameCx::contrast");
+                if let Some(key) = node.key {
+                    record.property("key", format!("{:?}/{}", key.object, key.part), "El::id");
+                }
+                record.property("theme", cx.theme.key, "FrameCx::theme");
+                record.property("appearance", cx.theme.appearance.key(), "Theme::appearance");
+                record.property("contrast", cx.contrast.key(), "FrameCx::contrast");
+                let role = match (node.role, node.decorative) {
+                    (_, true) => "decorative".to_string(),
+                    (Some(role), false) => format!("{role:?}"),
+                    (None, false) => "none".to_string(),
+                };
+                record.property("semantics", role, "El::semantics");
+                if el.states.is_some() {
+                    record.property("state rule", node.rule, "El::states");
+                }
             },
         );
-        if let Some(surface) = el.bg {
-            let radius = el.radius.px(self.cx.profile, r.w, r.h);
+        if let Some(surface) = node.look.bg {
+            let radius = el.radius.px(cx.profile, r.w, r.h);
             scene::fill(
                 scene,
                 transform,
@@ -122,7 +295,7 @@ impl Frame {
                 &scene::rrect(r.x, r.y, r.w, r.h, radius),
             );
         }
-        let [start, top, end, bottom] = el.pad.map(|space| space.px(self.cx.profile));
+        let [start, top, end, bottom] = el.pad.map(|space| space.px(cx.profile));
         let inner = Rect::new(
             r.x + start,
             r.y + top,
@@ -132,7 +305,7 @@ impl Frame {
         match &el.kind {
             Kind::Text(t) => {
                 if let Some(layout) = &node.text {
-                    let colour = t.ink.of(palette);
+                    let colour = node.look.ink.unwrap_or(t.ink).of(palette);
                     match t.mode {
                         TextMode::Wrap => scene::draw_layout(
                             scene,
@@ -159,17 +332,17 @@ impl Frame {
                 }
             }
             Kind::Icon(i) => {
-                let layout = engine.icon_layout(i.glyph, i.size.px(self.cx.profile));
+                let layout = engine.icon_layout(i.glyph, i.size.px(cx.profile));
                 scene::draw_layout(
                     scene,
                     transform,
                     &layout,
                     inner.x + (inner.w - layout.width()) * 0.5,
                     inner.y + (inner.h - layout.height()) * 0.5,
-                    Some(i.ink.of(palette)),
+                    Some(node.look.ink.unwrap_or(i.ink).of(palette)),
                 );
             }
-            Kind::Leaf(adapter) => adapter.paint(scene, transform, engine, r, &self.cx),
+            Kind::Leaf(adapter) => adapter.paint(scene, transform, engine, r, &cx, node.state),
             Kind::Divider(line) => {
                 scene::fill(
                     scene,
@@ -201,6 +374,14 @@ impl Frame {
 
 fn line_height(t: &TextEl) -> f32 {
     t.role.style().metrics.line_height
+}
+
+pub(crate) fn intersect(a: Rect, b: Rect) -> Rect {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.w).min(b.x + b.w);
+    let y1 = (a.y + a.h).min(b.y + b.h);
+    Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]

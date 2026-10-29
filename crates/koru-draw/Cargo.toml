@@ -35,6 +35,9 @@ koru-title = { path = "../koru-title" }
 # The mark wears its channel's color — the tint is applied once to the decoded
 # master in `brand.rs`. A leaf crate, so this costs no transitive weight.
 koru-channel = { path = "../koru-channel" }
+# An element's accessible name is a translation key, so a literal cannot
+# pass as chrome (ELEMENTS.final §3.8). A leaf crate with no dependencies.
+koru-i18n = { path = "../koru-i18n" }
 
 [features]
 # The third theme that proves there can be more than two (ELEMENTS.final

@@ -98,6 +98,9 @@ pub(crate) mod parts {
     pub const PROFILE_STATUS: ControlPart = ControlPart::new("profile-status");
     /// The chip's page's heading `+`, and its import button.
     pub const NEW_WORKSPACE: ControlPart = ControlPart::new("new-workspace");
+    /// A workspace's or Profile's gear: the Manage tab on it
+    /// (ELEMENTS.final D2). The row's own part stays `root`.
+    pub const MANAGE: ControlPart = ControlPart::new("manage");
 }
 
 /// Everything the pane needs from the window it is drawn in, which is nothing
@@ -786,12 +789,36 @@ impl ExploreView {
         let index = rows
             .iter()
             .position(|row| row.selectable() && self.popover_row_matches(*row, target))?;
+        // **A request for the gear acts on the gear** (ELEMENTS.final D2):
+        // Focus lights it without choosing anything, Click opens Manage on
+        // that row, whatever the keyboard was on.
+        if target.part == parts::MANAGE
+            && matches!(
+                rows[index],
+                PopoverRow::Workspace(_) | PopoverRow::Profile(_)
+            )
+        {
+            return match action {
+                Action::Focus => {
+                    self.popover.as_mut()?.hover = Some(index);
+                    self.popover_part = Some(super::PopoverPart::Gear);
+                    Some(Outcome::Consumed)
+                }
+                Action::Click => {
+                    self.popover.as_mut()?.hover = Some(index);
+                    Some(self.press(rows[index], super::PopoverPart::Gear))
+                }
+                _ => None,
+            };
+        }
         let popover = self.popover.as_mut()?;
         match action {
             // The highlight the arrows move — the popover's own keyboard
             // state, not a second one.
             Action::Focus => {
                 popover.hover = Some(index);
+                // The row itself, not its gear: the keyboard's lit part.
+                self.popover_part = None;
                 Some(Outcome::Consumed)
             }
             // Enter, except that a fixed row's other buttons are not what
@@ -898,6 +925,91 @@ impl ExploreView {
             _ => None,
         }
     }
+}
+
+impl ExploreView {
+    /// An element frame's accessibility tree as this window's nodes: each
+    /// element key becomes the occurrence it names — a model's part, or a
+    /// surface's — and a Menu's items carry their place in the set.
+    // Read by the element pages' tests until P4 publishes from it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn element_semantics(
+        &self,
+        cx: &Context,
+        frame: &koru_draw::el::Frame,
+    ) -> Vec<SemanticNode> {
+        frame
+            .semantics()
+            .iter()
+            .map(|node| element_node(cx, node))
+            .collect()
+    }
+}
+
+// Read by the element pages' tests until P4 publishes from it.
+#[cfg_attr(not(test), allow(dead_code))]
+fn element_occurrence(cx: &Context, key: koru_draw::el::Key) -> Occurrence {
+    let part = ControlPart::new(key.part);
+    match key.object {
+        koru_draw::el::Object::Surface(name) => cx.surface(name, part),
+        koru_draw::el::Object::Model(id) => cx.model(uuid::Uuid::from_u128(id), part),
+    }
+}
+
+// Read by the element pages' tests until P4 publishes from it.
+#[cfg_attr(not(test), allow(dead_code))]
+fn element_node(cx: &Context, node: &koru_draw::el::SemNode) -> SemanticNode {
+    use koru_draw::el;
+    let role = match node.role {
+        el::Role::Menu => Role::Menu,
+        el::Role::MenuItem => Role::MenuItem,
+        el::Role::Heading => Role::Heading,
+        el::Role::Button => Role::Button,
+        el::Role::Group => Role::Group,
+        el::Role::List => Role::List,
+        el::Role::ListItem => Role::ListItem,
+        el::Role::Image => Role::Image,
+    };
+    let occurrence = match node.key {
+        Some(key) => element_occurrence(cx, key),
+        None => cx.surface(POPOVER, parts::POPOVER),
+    };
+    let mut out = SemanticNode::new(occurrence, role).with_bounds(node.bounds);
+    match &node.name {
+        Some(el::Name::Key(key)) => out = out.with_label(t(cx.lang, *key)),
+        Some(el::Name::Text(content)) => out = out.with_label(content.clone()),
+        None => {}
+    }
+    if let Some(selected) = node.selected {
+        out = out.with_selected(selected);
+    }
+    out = out.with_actions(node.actions.iter().map(|action| match action {
+        el::Action::Click => Action::Click,
+        el::Action::Focus => Action::Focus,
+    }));
+    let items = node
+        .children
+        .iter()
+        .filter(|child| child.role == el::Role::MenuItem)
+        .count();
+    let mut position = 0;
+    let children = node
+        .children
+        .iter()
+        .map(|child| {
+            let built = element_node(cx, child);
+            if node.role == el::Role::Menu && child.role == el::Role::MenuItem {
+                position += 1;
+                built.with_position(position - 1)
+            } else {
+                built
+            }
+        })
+        .collect();
+    if node.role == el::Role::Menu {
+        out = out.with_size_of_set(items);
+    }
+    out.with_children(children)
 }
 
 fn object_of(id: uuid::Uuid) -> koru_workspace_host::accessibility::ObjectKey {

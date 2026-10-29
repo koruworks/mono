@@ -123,8 +123,9 @@ impl Space {
     }
 }
 
-/// A corner radius. `Full` is half the box's smaller side; `Px` is the
-/// escape path, as for [`Space`].
+/// A corner radius. `Full` is half the box's smaller side; `Metric` is a
+/// tagged legacy value the inspector names (the gear's 5); `Px` is the escape
+/// path, as for [`Space`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Radius {
     None,
@@ -134,6 +135,7 @@ pub enum Radius {
     XL,
     XXL,
     Full,
+    Metric(Metric),
     Px(f32),
 }
 
@@ -157,6 +159,7 @@ impl Radius {
             Self::XL => "XL",
             Self::XXL => "XXL",
             Self::Full => "Full",
+            Self::Metric(metric) => metric.name,
             Self::Px(_) => "Px",
         }
     }
@@ -172,6 +175,7 @@ impl Radius {
             Self::XL => 10.0,
             Self::XXL => 16.0,
             Self::Full => (w.min(h) * 0.5).max(0.0),
+            Self::Metric(metric) => metric.value,
             Self::Px(v) => v,
         }
     }

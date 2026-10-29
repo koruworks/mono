@@ -8703,6 +8703,7 @@ mod slides;
 
 use slides::RowSlides;
 
+pub(crate) mod popover_elements;
 #[cfg(test)]
 mod popover_baseline;
 #[cfg(test)]

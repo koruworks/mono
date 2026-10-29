@@ -7,8 +7,10 @@
 
 use parley::Layout;
 
-use super::frame::{Diagnostic, Frame, Node, TextCache};
-use super::{Align, Axis, El, FrameCx, Kind, Length, TextEl, TextMode};
+use std::collections::HashSet;
+
+use super::frame::{Diagnostic, Frame, Node, TextCache, intersect};
+use super::{Align, Axis, El, ElState, FrameCx, Kind, Length, Look, Role, TextEl, TextMode};
 use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::{BORDER_W, Brush, Space, TextStyle};
@@ -27,6 +29,7 @@ pub(super) fn layout(
         frame: Frame::new(cx),
     };
     solver.place(root, area, None, None);
+    solver.validate();
     solver.frame
 }
 
@@ -83,8 +86,12 @@ impl Solver<'_> {
     }
 
     fn diagnose(&mut self, el: &El, axis: Axis, message: &'static str) {
+        self.report(el.name, Some(axis), message);
+    }
+
+    fn report(&mut self, element: &'static str, axis: Option<Axis>, message: &'static str) {
         let diagnostic = Diagnostic {
-            element: el.name,
+            element,
             axis,
             message,
         };
@@ -302,15 +309,84 @@ impl Solver<'_> {
         }
     }
 
+    /// `el`'s state this frame: its own declarations, and the host's
+    /// pointer and keyboard state on its key or on any key it is lit by.
+    fn state_of(&self, el: &El, cx: &FrameCx) -> ElState {
+        let mine = |key: Option<super::Key>| {
+            key.is_some_and(|key| el.key == Some(key) || el.activity.contains(&key))
+        };
+        let disabled = el.disabled;
+        ElState {
+            hovered: !disabled && mine(cx.interaction.hot),
+            pressed: !disabled && mine(cx.interaction.pressed),
+            focused: mine(cx.interaction.focused),
+            selected: el.selected.unwrap_or(false),
+            disabled,
+        }
+    }
+
     fn place(&mut self, el: &El, rect: Rect, parent: Option<usize>, clip: Option<Rect>) -> usize {
+        // A subtree may carry its own theme; everything under it resolves,
+        // shapes and paints under that one.
+        let outer = self.cx;
+        if let Some(theme) = el.theme {
+            self.cx.theme = theme;
+        }
+        let cx = self.cx;
+        let state = self.state_of(el, &cx);
+        let (look, rule) = match el.states {
+            Some(recipe) => {
+                let (mut look, rule) = recipe.resolve(state);
+                look.bg = look.bg.or(el.bg);
+                (look, rule)
+            }
+            None => (
+                Look {
+                    bg: el.bg,
+                    ink: None,
+                },
+                "base",
+            ),
+        };
+        let hit_key = if el.decorative {
+            None
+        } else if el.hit_as.is_some() {
+            el.hit_as
+        } else if el.hit {
+            el.key
+        } else {
+            None
+        };
+        let hit = ((el.hit || el.hit_as.is_some()) && !el.decorative).then(|| match &el.kind {
+            Kind::Leaf(adapter) => adapter.hit_region(rect),
+            _ => rect,
+        });
         let index = self.frame.nodes.len();
         self.frame.nodes.push(Node {
             name: el.name,
             parent,
+            key: el.key,
             rect,
             clip,
             overflow: false,
             scroll: None,
+            cx,
+            state,
+            look,
+            rule,
+            hit,
+            hit_key,
+            role: if el.decorative { None } else { el.role },
+            label: el.label.clone(),
+            selected: el.selected,
+            disabled: el.disabled,
+            focusable: el.focusable && !el.decorative,
+            actions: if el.decorative {
+                Vec::new()
+            } else {
+                el.actions.clone()
+            },
+            decorative: el.decorative,
             text: None,
         });
         let [start, top, end, bottom] = self.pad(el);
@@ -329,7 +405,52 @@ impl Solver<'_> {
             Kind::Scroll { offset } => self.place_scroll(el, index, rect, inner, *offset, clip),
             Kind::Icon(_) | Kind::Leaf(_) | Kind::Divider(_) => {}
         }
+        self.cx = outer;
         index
+    }
+
+    /// Final-tree validation (§4, layer 2): what composition got wrong, said
+    /// by element, never silently repaired.
+    fn validate(&mut self) {
+        let mut seen = HashSet::new();
+        let mut found = Vec::new();
+        for node in &self.frame.nodes {
+            if let Some(key) = node.key
+                && !seen.insert(key)
+            {
+                found.push((node.name, "a key is used twice in one frame"));
+            }
+            let target = (node.hit.is_some() && node.hit_key == node.key)
+                || node.focusable
+                || !node.actions.is_empty();
+            if (node.role.is_some() || target) && node.key.is_none() {
+                found.push((node.name, "a node, target or action needs a stable key"));
+            }
+            if node.decorative && (node.label.is_some() || node.role.is_some()) {
+                found.push((node.name, "a decorative element has no name or role"));
+            }
+            if let Some(role) = node.role
+                && role != Role::Group
+                && node.label.is_none()
+            {
+                found.push((node.name, "a semantic node needs a name"));
+            }
+        }
+        // A box that presses for another target must name one that exists.
+        for node in &self.frame.nodes {
+            if let Some(target) = node.hit_key
+                && node.key != Some(target)
+                && !self.frame.nodes.iter().any(|n| n.key == Some(target))
+            {
+                found.push((
+                    node.name,
+                    "a box presses for a target that is not in the frame",
+                ));
+            }
+        }
+        for (element, message) in found {
+            self.report(element, None, message);
+        }
     }
 
     fn place_stack(&mut self, el: &El, index: usize, inner: Rect, axis: Axis, clip: Option<Rect>) {
@@ -472,12 +593,4 @@ fn distribute(claims: &[Claim], avail: f32) -> Vec<f32> {
         break;
     }
     sizes
-}
-
-fn intersect(a: Rect, b: Rect) -> Rect {
-    let x0 = a.x.max(b.x);
-    let y0 = a.y.max(b.y);
-    let x1 = (a.x + a.w).min(b.x + b.w);
-    let y1 = (a.y + a.h).min(b.y + b.h);
-    Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0))
 }

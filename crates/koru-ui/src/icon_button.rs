@@ -202,6 +202,7 @@ pub fn draw_toned(
         state,
         Metrics::STANDARD,
         tone,
+        theme::p(),
     );
 }
 
@@ -225,6 +226,34 @@ pub fn draw_with(
         state,
         metrics,
         Tone::Default,
+        theme::p(),
+    );
+}
+
+/// [`draw_with`] in `palette`, the table of the theme the control is shown
+/// under: an element subtree with its own theme paints its buttons in it.
+#[allow(clippy::too_many_arguments)]
+#[track_caller]
+pub fn draw_with_in(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    glyph: char,
+    state: State,
+    metrics: Metrics,
+    palette: &theme::Palette,
+) {
+    paint(
+        canvas,
+        root,
+        engine,
+        slot,
+        glyph,
+        state,
+        metrics,
+        Tone::Default,
+        palette,
     );
 }
 
@@ -238,6 +267,7 @@ fn paint(
     state: State,
     metrics: Metrics,
     tone: Tone,
+    palette: &theme::Palette,
 ) {
     let _inspection = inspect_icon(root, slot, state, metrics, tone, Some(glyph));
     let chip = hover_chip_with(slot, metrics);
@@ -246,7 +276,7 @@ fn paint(
         scene::fill(
             canvas,
             root,
-            theme::p()
+            palette
                 .accent
                 .multiply_alpha(if state.hovered { 0.20 } else { 0.12 }),
             &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
@@ -256,9 +286,9 @@ fn paint(
             canvas,
             root,
             if danger {
-                theme::p().close_hover
+                palette.close_hover
             } else {
-                theme::p().hover_tint
+                palette.hover_tint
             },
             &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
         );
@@ -269,17 +299,17 @@ fn paint(
         engine.icon_layout(glyph, metrics.icon_size)
     };
     let colour = if state.disabled {
-        theme::p().text_dim.multiply_alpha(0.45)
+        palette.text_dim.multiply_alpha(0.45)
     } else if state.active {
-        theme::p().accent
+        palette.accent
     } else if state.hovered {
         if danger {
-            theme::p().close_hover_fg
+            palette.close_hover_fg
         } else {
-            theme::p().text
+            palette.text
         }
     } else {
-        theme::p().text_dim
+        palette.text_dim
     };
     scene::draw_layout(
         canvas,

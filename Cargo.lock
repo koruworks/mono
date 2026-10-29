@@ -5990,6 +5990,7 @@ dependencies = [
  "image",
  "koru-channel",
  "koru-diagram",
+ "koru-i18n",
  "koru-title",
  "kurbo",
  "parley",

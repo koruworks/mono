@@ -2,14 +2,12 @@
 
 //! **Elements**: a surface written as a short tree of named boxes, text,
 //! icons, scroll viewports and leaves, laid out by one bounded stack solver
-//! and painted from the one frame that layout produced.
+//! into one frame that paint, pointer targets, accessibility and the
+//! inspector all read.
 //!
 //! The contract is `docs/contributing/refactor-ui/ELEMENTS.final.md`: §3 for
-//! the authoring API and its defaults, §5 for what the solver promises. This
-//! is rung 1's first increment (ELEMENTS-PLAN P1): the vocabulary and the
-//! solver, and only as much of each as the four gate fixtures in `tests.rs`
-//! need. Identity, hit targets, semantics and the inspector's full record
-//! arrive with the frame contract (P2).
+//! the authoring API and its defaults, §5 for what the solver promises. The
+//! authoring guide is `docs/features/koruui/ELEMENTS-GUIDE.md`.
 //!
 //! ```text
 //! row("Workspace row")            a neutral layout box
@@ -18,14 +16,20 @@
 //!     .child(text(&name).fill().truncate())
 //! ```
 //!
-//! Every size is a typed [`Length`] so the frame can say where it came from;
-//! a raw number is either runtime geometry, named for its source, or an
-//! exception (`Space::Px`, `Length::Px`) the source scanner will hold to an
-//! allowance.
+//! Every size is a typed [`Length`] and every colour a role, so the frame can
+//! say where a value came from; a raw number is either runtime geometry,
+//! named for its source, or an exception (`Space::Px`, `Length::Px`) the
+//! source scanner holds to an allowance.
+//!
+//! **Identity is the host's.** A [`Key`] names a model object or a fixed
+//! surface plus a control part; it is what a pointer target, a pressed or
+//! focused state and an accessibility node are about, and it survives
+//! reordering, renaming and translation. A list position never is one.
 
 use vello::Scene;
 use vello::kurbo::Affine;
 
+use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::themes::{self, Contrast, Theme};
 use crate::theme::{
@@ -36,16 +40,179 @@ use crate::theme::{
 mod frame;
 mod solve;
 
-pub use frame::{Diagnostic, Frame, Node, TextCache};
+pub use frame::{Diagnostic, Frame, HitRegion, Node, SemNode, TextCache};
+
+/// What an element stands for: a model object or a fixed surface.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Object {
+    /// A part of a surface no model object stands behind, by code keyword.
+    Surface(&'static str),
+    /// A model object, by the id it already has.
+    Model(u128),
+}
+
+/// A stable identity within the host's occurrence: an object and one of its
+/// control parts. Never a label, never a list position.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Key {
+    pub object: Object,
+    pub part: &'static str,
+}
+
+impl Key {
+    pub const fn surface(name: &'static str, part: &'static str) -> Self {
+        Self {
+            object: Object::Surface(name),
+            part,
+        }
+    }
+
+    pub const fn model(id: u128, part: &'static str) -> Self {
+        Self {
+            object: Object::Model(id),
+            part,
+        }
+    }
+}
+
+/// A node's native role. The host maps it to its platform's (accesskit's).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Role {
+    Menu,
+    MenuItem,
+    Heading,
+    Button,
+    Group,
+    List,
+    ListItem,
+    Image,
+}
+
+/// A request a node advertises and the host implements for its key.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    Click,
+    Focus,
+}
+
+/// What a node is called: application chrome by translation key, or model
+/// content by its own text. A literal is not a key, so chrome cannot slip
+/// through as content by type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Name {
+    Key(koru_i18n::Key),
+    Text(String),
+}
+
+/// The host's pointer and keyboard state this frame, by key.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct Interaction {
+    /// Under the pointer, or lit by the keyboard where the two share one.
+    pub hot: Option<Key>,
+    pub pressed: Option<Key>,
+    pub focused: Option<Key>,
+}
+
+/// One element's resolved state, from its persistent declarations and the
+/// host's interaction state.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ElState {
+    pub hovered: bool,
+    pub pressed: bool,
+    pub focused: bool,
+    pub selected: bool,
+    pub disabled: bool,
+}
+
+/// What a state rule paints: a fill and an ink, either left as they were.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct Look {
+    pub bg: Option<Surface>,
+    pub ink: Option<Ink>,
+}
+
+impl Look {
+    pub const NONE: Self = Self {
+        bg: None,
+        ink: None,
+    };
+
+    pub const fn bg(surface: Surface) -> Self {
+        Self {
+            bg: Some(surface),
+            ink: None,
+        }
+    }
+}
+
+/// A control's state table (§3.7). Base, then selected, hover and pressed
+/// over it in that order, pressed winning; the explicit selected+hover and
+/// selected+pressed rules over those; disabled alone suppresses hover and
+/// press. Focus is decoration and changes nothing here.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct StateRecipe {
+    pub name: &'static str,
+    pub base: Look,
+    pub selected: Look,
+    pub hover: Look,
+    pub pressed: Look,
+    pub selected_hover: Look,
+    pub selected_pressed: Look,
+    pub disabled: Look,
+}
+
+impl StateRecipe {
+    /// The look `state` resolves to, and the rule that won.
+    pub fn resolve(&self, state: ElState) -> (Look, &'static str) {
+        fn over(look: &mut Look, top: Look) -> bool {
+            let mut changed = false;
+            if top.bg.is_some() {
+                look.bg = top.bg;
+                changed = true;
+            }
+            if top.ink.is_some() {
+                look.ink = top.ink;
+                changed = true;
+            }
+            changed
+        }
+        let mut look = self.base;
+        let mut rule = "base";
+        if state.disabled {
+            if over(&mut look, self.disabled) {
+                rule = "disabled";
+            }
+            return (look, rule);
+        }
+        if state.selected && over(&mut look, self.selected) {
+            rule = "selected";
+        }
+        if state.hovered && over(&mut look, self.hover) {
+            rule = "hover";
+        }
+        if state.pressed && over(&mut look, self.pressed) {
+            rule = "pressed";
+        }
+        if state.selected && state.hovered && over(&mut look, self.selected_hover) {
+            rule = "selected+hover";
+        }
+        if state.selected && state.pressed && over(&mut look, self.selected_pressed) {
+            rule = "selected+pressed";
+        }
+        (look, rule)
+    }
+}
 
 /// What a frame is resolved against: the theme and contrast its colours come
-/// from, and the profile its dimensions come from. A subtree can be laid out
-/// and painted under another (D3: theme is scope context, not a global).
+/// from, the profile its dimensions come from, and the host's interaction
+/// state. A subtree can carry another theme (D3: scope context, not a
+/// global).
 #[derive(Copy, Clone, Debug)]
 pub struct FrameCx {
     pub theme: &'static Theme,
     pub contrast: Contrast,
     pub profile: Profile,
+    pub interaction: Interaction,
 }
 
 impl FrameCx {
@@ -54,12 +221,18 @@ impl FrameCx {
             theme,
             contrast,
             profile: Profile::Desktop,
+            interaction: Interaction::default(),
         }
     }
 
     /// The host's root theme and contrast.
     pub fn root() -> Self {
         Self::new(themes::active(), themes::contrast())
+    }
+
+    pub fn with_interaction(mut self, interaction: Interaction) -> Self {
+        self.interaction = interaction;
+        self
     }
 
     pub fn palette(&self) -> &'static Palette {
@@ -87,6 +260,16 @@ impl Length {
             Self::Space(space) => space.px(profile),
             Self::Metric(metric) => metric.value,
             Self::Runtime(value, _) | Self::Px(value) => value,
+        }
+    }
+
+    /// Where the length came from, for the inspector.
+    pub fn provenance(self) -> String {
+        match self {
+            Self::Space(space) => format!("Space::{}", space.name()),
+            Self::Metric(metric) => format!("metrics::{}", metric.name),
+            Self::Runtime(_, source) => format!("runtime: {source}"),
+            Self::Px(v) => format!("Px({v}) exception"),
         }
     }
 }
@@ -135,18 +318,27 @@ pub enum TextMode {
 /// An existing drawable placed by the solver: a tile, a lane, a picture.
 ///
 /// Width first (§5.2): the natural size when `width` is `None`, and the
-/// height it needs at an assigned width otherwise. Paint gets the allocation
-/// and the frame context and reads its colours from the latter.
+/// height it needs at an assigned width otherwise. Paint gets the allocation,
+/// the frame context its colours come from, and the element's resolved
+/// state, so a paint-only reveal (the gear on a lit row) needs no second
+/// element.
 pub trait Leaf {
     fn measure(&self, width: Option<f32>) -> (f32, f32);
+
+    /// The pointer region inside the allocation `at`; the whole allocation
+    /// unless the adapter says otherwise.
+    fn hit_region(&self, at: Rect) -> Rect {
+        at
+    }
 
     fn paint(
         &self,
         _scene: &mut Scene,
         _root: Affine,
         _engine: &mut TextEngine,
-        _at: crate::geometry::Rect,
+        _at: Rect,
         _cx: &FrameCx,
+        _state: ElState,
     ) {
     }
 }
@@ -195,6 +387,25 @@ pub struct El {
     pub(crate) align_self: Option<Align>,
     pub(crate) bg: Option<Surface>,
     pub(crate) radius: Radius,
+    pub(crate) states: Option<&'static StateRecipe>,
+    pub(crate) theme: Option<&'static Theme>,
+    pub(crate) key: Option<Key>,
+    /// Keys whose interaction drives this element's state besides its own:
+    /// a neutral row lit by its primary or its gear.
+    pub(crate) activity: Vec<Key>,
+    pub(crate) hit: bool,
+    /// This box's allocation presses another element's target: a row whose
+    /// margins press its primary, the existing hit policy kept explicit.
+    pub(crate) hit_as: Option<Key>,
+    pub(crate) focusable: bool,
+    pub(crate) actions: Vec<Action>,
+    pub(crate) role: Option<Role>,
+    pub(crate) label: Option<Name>,
+    pub(crate) selected: Option<bool>,
+    pub(crate) disabled: bool,
+    /// Declared decorative: laid out and painted, never announced, never a
+    /// target.
+    pub(crate) decorative: bool,
     pub(crate) children: Vec<El>,
 }
 
@@ -217,6 +428,19 @@ fn element(name: &'static str, kind: Kind) -> El {
         align_self: None,
         bg: None,
         radius: Radius::None,
+        states: None,
+        theme: None,
+        key: None,
+        activity: Vec::new(),
+        hit: false,
+        hit_as: None,
+        focusable: false,
+        actions: Vec::new(),
+        role: None,
+        label: None,
+        selected: None,
+        disabled: false,
+        decorative: false,
         children: Vec::new(),
     }
 }
@@ -242,7 +466,8 @@ pub fn scroll_y(name: &'static str) -> El {
     element(name, Kind::Scroll { offset: 0.0 })
 }
 
-/// Text in a role, Primary ink, single-line unless asked.
+/// Text in a role, Primary ink, single-line unless asked. Its words are
+/// paint; the control that holds it owns the accessible name.
 pub fn text(content: impl Into<String>) -> El {
     element(
         "Text",
@@ -256,21 +481,50 @@ pub fn text(content: impl Into<String>) -> El {
     )
 }
 
-/// A glyph in a named icon size, Secondary ink.
-pub fn icon(glyph: char, size: IconSize) -> El {
-    element(
+/// A glyph in a named icon size. **Not an element until it is classified**:
+/// [`Unclassified::decorative`] or [`Unclassified::alt`].
+pub fn icon(glyph: char, size: IconSize) -> Unclassified {
+    Unclassified(element(
         "Icon",
         Kind::Icon(IconEl {
             glyph,
             size,
             ink: Ink::Secondary,
         }),
-    )
+    ))
 }
 
-/// An existing drawable, measured and placed like any element.
-pub fn leaf(name: &'static str, adapter: impl Leaf + 'static) -> El {
-    element(name, Kind::Leaf(Box::new(adapter)))
+/// An existing drawable, measured and placed like any element. **Not an
+/// element until it is classified**: decorative, or a simple semantic node.
+pub fn leaf(name: &'static str, adapter: impl Leaf + 'static) -> Unclassified {
+    Unclassified(element(name, Kind::Leaf(Box::new(adapter))))
+}
+
+/// An icon or leaf that has not said whether it means anything (§4, the
+/// typed insertion gate). It has no `child`-able form: only classifying it
+/// produces an [`El`].
+#[must_use = "an icon or leaf is inserted only once it is classified"]
+pub struct Unclassified(El);
+
+impl Unclassified {
+    /// Laid out and painted, never announced, never a target. Its control
+    /// owns the name and the action.
+    pub fn decorative(mut self) -> El {
+        self.0.decorative = true;
+        self.0
+    }
+
+    /// A simple meaningful image, named by a translation key.
+    pub fn alt(mut self, name: koru_i18n::Key) -> El {
+        self.0.role = Some(Role::Image);
+        self.0.label = Some(Name::Key(name));
+        self.0
+    }
+
+    /// A control of its own: it declares its role, name and actions next.
+    pub fn semantic(self) -> El {
+        self.0
+    }
 }
 
 /// Space that takes what its stack leaves over.
@@ -425,6 +679,89 @@ impl El {
         self
     }
 
+    /// The control's state table: its fill and ink by state.
+    pub fn states(mut self, recipe: &'static StateRecipe) -> Self {
+        self.states = Some(recipe);
+        self
+    }
+
+    /// Lay out and paint this subtree under `theme` (D3: a subtree may
+    /// override the frame's).
+    pub fn theme(mut self, theme: &'static Theme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// A stable local key. It does not make a target, a tab stop or a node.
+    pub fn id(mut self, key: Key) -> Self {
+        self.key = Some(key);
+        self
+    }
+
+    /// Other keys whose hover, press or focus light this element.
+    pub fn activity(mut self, keys: impl IntoIterator<Item = Key>) -> Self {
+        self.activity.extend(keys);
+        self
+    }
+
+    /// A pointer target for this element's key.
+    pub fn hit(mut self) -> Self {
+        self.hit = true;
+        self
+    }
+
+    /// Make this box's whole allocation a pointer region of `target`, the
+    /// key of an element inside it (§3.6: an existing hit policy stays
+    /// explicit). The box itself stays neutral: no node, no action. A
+    /// target painted later inside it, a row's gear, is still the one
+    /// pressed there.
+    pub fn hit_as(mut self, target: Key) -> Self {
+        self.hit_as = Some(target);
+        self
+    }
+
+    /// Eligible for keyboard focus within the host's policy.
+    pub fn focusable(mut self) -> Self {
+        self.focusable = true;
+        self
+    }
+
+    /// Advertise a request the host implements for this key.
+    pub fn action(mut self, action: Action) -> Self {
+        if !self.actions.contains(&action) {
+            self.actions.push(action);
+        }
+        self
+    }
+
+    /// This element's native role: it becomes an accessibility node.
+    pub fn semantics(mut self, role: Role) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    /// Its application-owned name, by translation key.
+    pub fn name(mut self, key: koru_i18n::Key) -> Self {
+        self.label = Some(Name::Key(key));
+        self
+    }
+
+    /// Its name from model content: a workspace's title.
+    pub fn name_text(mut self, content: impl Into<String>) -> Self {
+        self.label = Some(Name::Text(content.into()));
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = Some(selected);
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     pub fn child(mut self, child: El) -> Self {
         self.children.push(child);
         self
@@ -484,17 +821,19 @@ impl El {
 
     /// Lay the tree out in `area`, the root's definite border box, under
     /// `cx`. One public operation; the solver walks as often as width-first
-    /// measurement needs.
+    /// measurement needs, then validates the composed tree.
     pub fn layout(
         &self,
         engine: &mut TextEngine,
         cache: &mut TextCache,
-        area: crate::geometry::Rect,
+        area: Rect,
         cx: FrameCx,
     ) -> Frame {
         solve::layout(self, engine, cache, area, cx)
     }
 }
 
+#[cfg(test)]
+mod contract_tests;
 #[cfg(test)]
 mod tests;

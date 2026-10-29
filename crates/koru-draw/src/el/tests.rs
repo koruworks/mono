@@ -29,6 +29,11 @@ impl Leaf for Fixed {
     }
 }
 
+/// The P1 fixtures' stand-ins carry no meaning of their own.
+fn leaf(name: &'static str, adapter: Fixed) -> El {
+    super::leaf(name, adapter).decorative()
+}
+
 /// Every theme × contrast this build registers.
 fn contexts() -> Vec<FrameCx> {
     themes::registered()
@@ -72,7 +77,7 @@ fn workspace_row(name: &str, current: bool) -> El {
                     .pad_x(Space::S1)
                     .gap(Space::S1)
                     .bg(Surface::Hover)
-                    .radius(Radius::Px(metrics::WORKSPACE_GEAR_RADIUS.value))
+                    .radius(Radius::Metric(metrics::WORKSPACE_GEAR_RADIUS))
                     .child(
                         row("Workspace primary action")
                             .fill()
@@ -496,7 +501,7 @@ fn a_fill_in_unbounded_content_is_a_diagnostic() {
         frame.diagnostics,
         vec![Diagnostic {
             element: "Greedy",
-            axis: Axis::Vertical,
+            axis: Some(Axis::Vertical),
             message: "a Fill child needs a finite height, and scrolled content has none",
         }]
     );
