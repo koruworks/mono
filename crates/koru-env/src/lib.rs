@@ -468,6 +468,16 @@ pub const VARS: &[EnvVar] = &[
         "koru-ai-server tests",
     ),
     switch_var(
+        name::KORU_FIXTURE_THEME,
+        "Developer preview: start in the element layer's fixture theme instead of the preference and the OS, writing neither. Read only in a build with the `fixture-theme` feature (`cargo run -p koru --features fixture-theme`).",
+        "koru.exe built with the fixture-theme feature",
+    ),
+    switch_var(
+        name::KORU_FIXTURE_CONTRAST,
+        "Developer preview: with KORU_FIXTURE_THEME, use the fixture theme's high-contrast table. Not production high contrast, which is not delivered yet.",
+        "koru.exe built with the fixture-theme feature",
+    ),
+    switch_var(
         name::KORU_FRAME_STATS,
         "Where a frame's time went, summarised every 120 frames.",
         "koru.exe and every shell-based binary",
@@ -1028,6 +1038,8 @@ pub mod name {
     pub const KORU_AI_PAYLOAD_TEST_CHILD: &str = "KORU_AI_PAYLOAD_TEST_CHILD";
     pub const KORU_AI_HOST_ENDPOINT: &str = "KORU_AI_HOST_ENDPOINT";
     pub const KORU_AI_HOST_KEY: &str = "KORU_AI_HOST_KEY";
+    pub const KORU_FIXTURE_THEME: &str = "KORU_FIXTURE_THEME";
+    pub const KORU_FIXTURE_CONTRAST: &str = "KORU_FIXTURE_CONTRAST";
     pub const KORU_FRAME_STATS: &str = "KORU_FRAME_STATS";
     pub const KORU_STARTUP_STATS: &str = "KORU_STARTUP_STATS";
     pub const KORU_SESSION_STATS: &str = "KORU_SESSION_STATS";

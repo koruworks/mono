@@ -36,6 +36,14 @@ koru-title = { path = "../koru-title" }
 # master in `brand.rs`. A leaf crate, so this costs no transitive weight.
 koru-channel = { path = "../koru-channel" }
 
+[features]
+# The third theme that proves there can be more than two (ELEMENTS.final
+# D3): deliberately off colours, never in Settings or preferences. Off by
+# default and absent from release builds; the app's tests turn it on through
+# their dev-dependency, and `cargo run -p koru --features fixture-theme`
+# previews it with KORU_FIXTURE_THEME (reference/ENV.md).
+fixture-theme = []
+
 [dev-dependencies]
 # The SVG a diagram is saved as is checked as XML, not by grepping for tags:
 # the writer emits no text and no font, and a balanced document is what a

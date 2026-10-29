@@ -273,7 +273,7 @@ pub struct TerminalPalette {
     pub ansi: [Color; 16],
 }
 
-const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
+static LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0xFF, 0xFF, 0xFF),
     foreground: rgb(0x19, 0x19, 0x19),
     cursor: rgb(0x19, 0x19, 0x19),
@@ -298,7 +298,7 @@ const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     ],
 };
 
-const DARK_TERMINAL: TerminalPalette = TerminalPalette {
+static DARK_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0x19, 0x19, 0x19),
     foreground: rgb(0xF5, 0xF5, 0xF5),
     cursor: rgb(0xF5, 0xF5, 0xF5),
@@ -328,7 +328,9 @@ const DARK_TERMINAL: TerminalPalette = TerminalPalette {
 /// They were warm once, tuned against a cream `bg`. With the page white and the
 /// text a neutral near-black, a warm grey beside it reads as a yellow cast
 /// rather than as warmth, so the whole set moved together.
-pub static LIGHT: Palette = Palette {
+/// The light table as a constant, so the fixture theme can be derived from
+/// it at compile time; [`LIGHT`] is the one the program reads.
+const LIGHT_TABLE: Palette = Palette {
     bg: rgb(0xFF, 0xFF, 0xFF),
     canvas: rgb(0xED, 0xEE, 0xF0),
     text: rgb(0x19, 0x19, 0x19),
@@ -493,6 +495,8 @@ pub static LIGHT: Palette = Palette {
 /// of collapsing into greys, and the highlight swatches are tuned separately
 /// because a highlight has to sit behind pale text without drowning it. A
 /// mechanical inversion would lose both.
+pub static LIGHT: Palette = LIGHT_TABLE;
+
 pub static DARK: Palette = Palette {
     // The light theme's text, inverted into a page.
     bg: rgb(0x19, 0x19, 0x19),
@@ -659,19 +663,14 @@ pub static DARK: Palette = Palette {
     ],
 };
 
-static DARK_MODE: AtomicBool = AtomicBool::new(false);
-
-/// The active palette.
+/// The active palette: the host's root theme at its root contrast. An
+/// element reads its frame context instead (`el::FrameCx`).
 pub fn p() -> &'static Palette {
-    if DARK_MODE.load(Ordering::Relaxed) {
-        &DARK
-    } else {
-        &LIGHT
-    }
+    themes::active().palette(themes::contrast())
 }
 
 pub fn terminal_palette() -> &'static TerminalPalette {
-    terminal_palette_for(is_dark())
+    themes::active().terminal
 }
 
 /// Resolve a terminal's own theme without mutating the application's palette.
@@ -722,8 +721,11 @@ pub fn terminal_dim(foreground: Color, background: Color) -> Color {
     ])
 }
 
+/// Whether the host's root theme is a dark one: derived from the theme's
+/// appearance, never its identity (D3). Migrated code reads its frame
+/// context and never branches on this.
 pub fn is_dark() -> bool {
-    DARK_MODE.load(Ordering::Relaxed)
+    themes::active().is_dark()
 }
 
 // The host updates this from its existing OS appearance observation. Terminal
@@ -739,8 +741,15 @@ pub fn set_system_dark(dark: bool) -> bool {
     SYSTEM_DARK.swap(dark, Ordering::Relaxed) != dark
 }
 
+/// Make the built-in light or dark theme the root one: what the preference
+/// and the OS signal resolve to. Ignored while the fixture preview has pinned
+/// a theme.
 pub fn set_dark(on: bool) {
-    DARK_MODE.store(on, Ordering::Relaxed);
+    themes::set_active(if on {
+        &themes::DARK_THEME
+    } else {
+        &themes::LIGHT_THEME
+    });
 }
 
 // --------------------------------------------------------------- theme preference
@@ -818,26 +827,30 @@ impl CaretColor {
         }
     }
 
+    /// Where this colour sits in a [`themes::CaretSet`].
+    fn index(self) -> usize {
+        match self {
+            Self::Default => 0,
+            Self::Blue => 1,
+            Self::Amber => 2,
+            Self::Violet => 3,
+        }
+    }
+
     /// Concrete paint for the current theme.
     pub fn color(self) -> Color {
-        self.color_for(is_dark())
+        themes::active().carets.colors[self.index()]
     }
 
     /// A surface with its own palette must not borrow the app's dark/light
     /// choice when resolving the same semantic caret color.
     pub fn color_for(self, dark: bool) -> Color {
-        match (self, dark) {
-            (Self::Default, false) => rgb(0x19, 0x19, 0x19),
-            (Self::Default, true) => rgb(0xF4, 0xF4, 0xF5),
-            (Self::Blue, false) => rgb(0x25, 0x63, 0xEB),
-            (Self::Blue, true) => rgb(0x60, 0xA5, 0xFA),
-            (Self::Amber, false) => rgb(0xD9, 0x77, 0x06),
-            (Self::Amber, true) => rgb(0xFB, 0xBF, 0x24),
-            // Light matches the product violet; dark is a mid violet that still
-            // reads on #18181B without blowing out selection contrast.
-            (Self::Violet, false) => rgb(0x7C, 0x3A, 0xED),
-            (Self::Violet, true) => rgb(0x8B, 0x5C, 0xF6),
-        }
+        let set = if dark {
+            &themes::DARK_CARETS
+        } else {
+            &themes::LIGHT_CARETS
+        };
+        set.colors[self.index()]
     }
 
     /// Text selection fill for the current theme — same hue as [`Self::color`],
@@ -847,18 +860,7 @@ impl CaretColor {
     /// **Dark:** solid tint at ~30–40% accent strength (stronger than light so
     /// the highlight still reads on a dark ground while text stays #F4F4F5).
     pub fn selection(self) -> Color {
-        match (self, is_dark()) {
-            // Neutral caret → neutral wash (not a leftover blue).
-            (Self::Default, false) => Color::from_rgba8(0x19, 0x19, 0x19, 0x40),
-            (Self::Default, true) => rgb(0x3F, 0x3F, 0x46),
-            (Self::Blue, false) => Color::from_rgba8(0x25, 0x63, 0xEB, 0x40),
-            (Self::Blue, true) => rgb(0x1E, 0x3A, 0x5F),
-            (Self::Amber, false) => Color::from_rgba8(0xD9, 0x77, 0x06, 0x40),
-            (Self::Amber, true) => rgb(0x5C, 0x3D, 0x12),
-            (Self::Violet, false) => Color::from_rgba8(0x7C, 0x3A, 0xED, 0x40),
-            // Hand-tuned ~35% accent of #8B5CF6 on dark chrome.
-            (Self::Violet, true) => rgb(0x4C, 0x32, 0x78),
-        }
+        themes::active().carets.selections[self.index()]
     }
 }
 
@@ -2173,11 +2175,7 @@ pub const CANVAS_PRESETS_DARK: [[u8; 4]; 3] = [
 
 /// The canvas-colour presets for the active theme.
 pub fn canvas_presets() -> &'static [[u8; 4]; 3] {
-    if is_dark() {
-        &CANVAS_PRESETS_DARK
-    } else {
-        &CANVAS_PRESETS_LIGHT
-    }
+    themes::active().canvas_presets
 }
 
 impl ViewMode {
@@ -2640,6 +2638,14 @@ pub const POPOVER_FADE_MS: f32 = 90.0;
 
 pub mod motion;
 pub mod overlay;
+pub mod themes;
+pub mod tokens;
+
+pub use themes::{Appearance, Contrast, Theme};
+pub use tokens::{
+    Accent, IconSize, Ink, Line, Metric, Profile, Radius, Space, Surface, Tagged, TextRole, alias,
+    metrics, roles,
+};
 
 #[cfg(test)]
 mod token_guards;

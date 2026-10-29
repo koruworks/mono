@@ -44,6 +44,8 @@ the runtime switches one by one.
 | `KORU_AI_HOST_ENDPOINT` | an https URL ending in /v1/ | Hosted Koru AI Chat Completions base URL. Missing this leaves the Koru AI provider unconfigured. | koru-ai-server |
 | `KORU_AI_HOST_KEY` | a bearer token | Bearer token for the hosted Koru AI endpoint. Hidden in `koru.bat envs`. | koru-ai-server |
 | `KORU_AI_PAYLOAD_TEST_CHILD` | on/off | Test-only: marks the isolated child process used to prove payload-debug records are opt-in and ordinary AI lifecycle logs remain content-free. | koru-ai-server tests |
+| `KORU_FIXTURE_THEME` | on/off | Developer preview: start in the element layer's fixture theme instead of the preference and the OS, writing neither. Read only in a build with the `fixture-theme` feature (`cargo run -p koru --features fixture-theme`). | koru.exe built with the fixture-theme feature |
+| `KORU_FIXTURE_CONTRAST` | on/off | Developer preview: with KORU_FIXTURE_THEME, use the fixture theme's high-contrast table. Not production high contrast, which is not delivered yet. | koru.exe built with the fixture-theme feature |
 | `KORU_FRAME_STATS` | on/off | Where a frame's time went, summarised every 120 frames. | koru.exe and every shell-based binary |
 | `KORU_STARTUP_STATS` | on/off | Startup span timings — where the time before the first frame went; also arms the stall watch. | koru.exe and every shell-based binary |
 | `KORU_SESSION_STATS` | on/off | Fixed-size terminal-session counters and timing histograms, reported only when explicitly sampled. | koru.exe session tabs, the koru-agent sessions worker, koru-api-gateway |
