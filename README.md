@@ -102,7 +102,7 @@ experimental features.
 | Platform | Status |
 | --- | --- |
 | **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) is published as a zip that updates itself; it is not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
-| **macOS** | Builds and runs from source for development. Public macOS builds are held until a Mac verifies that they link the voice runtime's text-to-speech-free archive, which the tree now uses ([licensing/THIRD-PARTY.md](licensing/THIRD-PARTY.md#espeak-ng-gpl-30-in-three-shipped-binaries)) |
+| **macOS** (Apple silicon, macOS 12+) | Supported. A stable build is available from [koru.do](https://koru.do), and it builds and runs from source |
 | **Android** | The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |
 | **Linux** (x86-64) | Preview. A [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) is published as a tarball that updates itself; voice input and Koru Cloud are not available on Linux yet |
