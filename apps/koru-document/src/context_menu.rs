@@ -49,6 +49,9 @@ pub enum Choice {
     Copy,
     Paste,
     PastePlain,
+    /// Delete the block, or the whole block selection — what `Ctrl+D` does,
+    /// as a row, for a hand on the mouse.
+    Delete,
     /// Open the document picker in move mode over the selection — the same
     /// picker `@` over marked rows opens, hence the `@` hint on the row.
     MoveToDocument,
@@ -111,6 +114,20 @@ pub enum Choice {
     ReminderResume,
     ReminderDelete,
     Table(koru_editor::table::Edit),
+    /// Open a diagram's text for editing — the same thing Enter on the
+    /// selected drawing does; on a block that does not draw, the caret lands
+    /// on the line its reason names.
+    DiagramEditText,
+    /// Show a drawn diagram in its own view — the same thing its magnifier
+    /// control and a double click on the drawing do.
+    DiagramOpen,
+    /// Put a picture of a drawn diagram on the clipboard, through the shell,
+    /// which owns the clipboard and the raster.
+    CopyDiagram,
+    /// Save a picture of a drawn diagram through the shell's save dialog. The
+    /// view only asks (`koru_editor::SaveDiagramAs`): the dialog, the raster
+    /// and the file are the shell's.
+    SaveDiagramAs,
 }
 
 /// Which pill, if any, the context menu was opened on.
@@ -279,6 +296,15 @@ fn shift_click_hint() -> menu::Chord {
 pub struct TableContext {
     pub cell: (usize, usize),
     pub source_visible: bool,
+}
+
+/// The menu was opened on a `mermaid` code block. `drawn` is whether this
+/// view currently holds a drawing of its text, which is what *Save as…* needs
+/// and the only row of the group that comes and goes.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct DiagramContext {
+    pub node: koru_core::NodeId,
+    pub drawn: bool,
 }
 
 /// The spelling rows' input: what the snapshot holds for the clicked word.
@@ -453,6 +479,7 @@ pub fn rows(
     task: TaskContext,
     has_reminder_target: bool,
     table: Option<TableContext>,
+    diagram: Option<DiagramContext>,
     pill: PillContext,
     spell: Option<&SpellContext<'_>>,
     lang: koru_i18n::Lang,
@@ -464,11 +491,12 @@ pub fn rows(
         task,
         has_reminder_target,
         table,
+        diagram,
         pill,
         spell,
         lang,
     );
-    kept(&full, pill, spell)
+    kept(&full, pill, spell, table.is_some())
         .into_iter()
         .map(|index| full[index].clone())
         .collect()
@@ -476,10 +504,18 @@ pub fn rows(
 
 /// Which rows of `full` this build shows, as indices into it: a row whose
 /// choice is hidden goes, and so does any divider that would then lead, trail
-/// or double another. The identity when nothing is hidden.
-fn kept(full: &[menu::Row], pill: PillContext, spell: Option<&SpellContext<'_>>) -> Vec<usize> {
-    let shown =
-        |index: usize| full_choice_at(index, pill, spell).is_none_or(Choice::shown_in_product);
+/// or double another. The identity when nothing is hidden. `has_table` says
+/// whether `full` carries the table group, which decides where the rows after
+/// it sit ([`choice_at_edit`]).
+fn kept(
+    full: &[menu::Row],
+    pill: PillContext,
+    spell: Option<&SpellContext<'_>>,
+    has_table: bool,
+) -> Vec<usize> {
+    let shown = |index: usize| {
+        full_choice_at(index, pill, spell, has_table).is_none_or(Choice::shown_in_product)
+    };
     if (0..full.len()).all(shown) {
         return (0..full.len()).collect();
     }
@@ -498,8 +534,9 @@ fn kept(full: &[menu::Row], pill: PillContext, spell: Option<&SpellContext<'_>>)
 }
 
 /// Every row the menu can have, before the product filter. The shape —
-/// which rows exist and in what order — depends only on `pill`, `spell` and
-/// whether there is a `table`; the other arguments enable and annotate.
+/// which rows exist and in what order — depends only on `pill`, `spell`,
+/// whether there is a `table` and whether there is a drawn `diagram`; the
+/// other arguments enable and annotate.
 #[allow(clippy::too_many_arguments)]
 fn full_rows(
     has_target: bool,
@@ -508,6 +545,7 @@ fn full_rows(
     task: TaskContext,
     has_reminder_target: bool,
     table: Option<TableContext>,
+    diagram: Option<DiagramContext>,
     pill: PillContext,
     spell: Option<&SpellContext<'_>>,
     lang: koru_i18n::Lang,
@@ -652,7 +690,8 @@ fn full_rows(
                     .with_icon(icons::FILE)
                     .with_shortcut(click_hint()),
                 menu::Row::item("Reveal in File Explorer").with_icon(icons::FOLDER),
-                menu::Row::item("Save as\u{2026}").with_icon(icons::FILE_ARROW_UP),
+                menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::MenuSaveAs))
+                    .with_icon(icons::FILE_ARROW_UP),
                 menu::Row::Divider,
                 menu::Row::item("Remove").with_icon(icons::TRASH),
             ];
@@ -672,7 +711,7 @@ fn full_rows(
             .with_icon(icons::CUT)
             .with_shortcut(menu::Chord::Id(koru_keys::ShortcutId::Cut))
             .enabled(has_target),
-        menu::Row::item("Copy")
+        menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::MenuCopy))
             .with_icon(icons::COPY)
             .with_shortcut(menu::Chord::Id(koru_keys::ShortcutId::Copy))
             .enabled(has_target),
@@ -684,6 +723,12 @@ fn full_rows(
         menu::Row::item("Paste as plain text")
             .with_icon(icons::PASTE_PLAIN)
             .with_shortcut(menu::Chord::Id(koru_keys::ShortcutId::PastePlain))
+            .enabled(has_target),
+        // The edit group's one destructive row, last in it: the same delete
+        // `Ctrl+D` is, on the block or the selection, children outdenting.
+        menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::MenuDelete))
+            .with_icon(icons::TRASH)
+            .with_shortcut(menu::Chord::Id(koru_keys::ShortcutId::DeleteRows))
             .enabled(has_target),
         menu::Row::Divider,
         // `Literal` because `@` is a trigger *character*, not a chord: it is
@@ -827,6 +872,33 @@ fn full_rows(
                 .enabled(structure_enabled),
         ]);
     }
+    // **The diagram group follows the table group** for the same reason the
+    // table group follows the Remove row: appended last, it shifts no index
+    // anyone else relies on. A row is a table or a code block, never both, so
+    // a real menu carries at most one of the two groups — `choice_at` is told
+    // which. *Edit text* is always offered; *Open*, *Copy image* and *Save
+    // as…* only when there is a drawing, so a block that does not draw
+    // offers none of the three. *Copy* is the menu's ordinary Copy row
+    // above: on a selected drawing it takes the whole block with its
+    // language — the text; *Copy image* is the picture.
+    if let Some(diagram) = diagram {
+        rows.extend([
+            menu::Row::Divider,
+            menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::DiagramEditText))
+                .with_icon(icons::PENCIL),
+        ]);
+        if diagram.drawn {
+            rows.extend([
+                menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::DiagramOpen))
+                    .with_icon(icons::MAGNIFYING_GLASS_PLUS),
+                menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::MenuCopyImage))
+                    .with_icon(icons::IMAGE),
+                menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::MenuSaveAs))
+                    .with_icon(icons::FILE_ARROW_UP)
+                    .with_shortcut(menu::Chord::Id(koru_keys::ShortcutId::SaveDiagramAs)),
+            ]);
+        }
+    }
     rows
 }
 
@@ -835,28 +907,38 @@ fn full_rows(
 /// Maps through [`kept`] over the menu's *shape*, built with a table group so
 /// the map covers every row a menu with one has. A menu without a table is a
 /// prefix of that list — the table group is appended after every row the
-/// product can hide — so one map serves both.
+/// product can hide — so one map serves both. A menu on a `diagram` has the
+/// diagram group where the table group would be (a row is never both), so
+/// the shape is built the way that menu was drawn: no table, and the group
+/// at its full length.
 pub fn choice_at(
     index: usize,
     pill: PillContext,
     spell: Option<&SpellContext<'_>>,
+    diagram: Option<DiagramContext>,
 ) -> Option<Choice> {
+    let table = diagram.is_none().then_some(TableContext {
+        cell: (1, 0),
+        source_visible: false,
+    });
     let shape = full_rows(
         true,
         true,
         false,
         TaskContext::Open,
         true,
-        Some(TableContext {
-            cell: (1, 0),
-            source_visible: false,
+        table,
+        diagram.map(|diagram| DiagramContext {
+            drawn: true,
+            ..diagram
         }),
         pill,
         spell,
         koru_i18n::Lang::En,
     );
-    let full = *kept(&shape, pill, spell).get(index)?;
-    full_choice_at(full, pill, spell)
+    let has_table = table.is_some();
+    let full = *kept(&shape, pill, spell, has_table).get(index)?;
+    full_choice_at(full, pill, spell, has_table)
 }
 
 /// [`choice_at`] over the full, unfiltered list.
@@ -864,6 +946,7 @@ fn full_choice_at(
     index: usize,
     pill: PillContext,
     spell: Option<&SpellContext<'_>>,
+    has_table: bool,
 ) -> Option<Choice> {
     // The same gate `rows` applies, for the reason it applies it: a menu the
     // pill owns has no spelling block in it, so subtracting one here would map
@@ -919,7 +1002,7 @@ fn full_choice_at(
             0 => Some(Choice::Open),
             1 => Some(Choice::OpenInNewTab),
             2 => Some(Choice::OpenInNewWindow),
-            i => choice_at_edit(i.checked_sub(DOCUMENT_PILL_PREFIX)?),
+            i => choice_at_edit(i.checked_sub(DOCUMENT_PILL_PREFIX)?, has_table),
         },
         // The due chip's rows lead with *Go to task* and end with the red
         // *Delete task*; the other three keep the order they shipped with. Two
@@ -957,34 +1040,57 @@ fn full_choice_at(
             0 => Some(Choice::RemoveAttachment),
             _ => None,
         },
-        PillContext::None => choice_at_edit(index),
+        PillContext::None => choice_at_edit(index, has_table),
     }
 }
 
-fn choice_at_edit(index: usize) -> Option<Choice> {
+/// The first row of a block group — the table's or the diagram's — after
+/// the nineteen rows every row menu has.
+const BLOCK_GROUP_START: usize = 19;
+/// The table group's length: its divider, heading, four row commands, a
+/// divider and three column commands.
+const TABLE_GROUP_LEN: usize = 10;
+
+fn choice_at_edit(index: usize, has_table: bool) -> Option<Choice> {
     match index {
         0 => Some(Choice::Cut),
         1 => Some(Choice::Copy),
         3 => Some(Choice::Paste),
         4 => Some(Choice::PastePlain),
-        6 => Some(Choice::MoveToDocument),
-        8 => Some(Choice::GoToTask),
-        9 => Some(Choice::CompleteTask),
-        10 => Some(Choice::Tags),
-        11 => Some(Choice::Color),
-        12 => Some(Choice::Due),
-        13 => Some(Choice::Priority),
-        14 => Some(Choice::Remind),
-        15 => Some(Choice::Delegate),
-        17 => Some(Choice::RemoveFromTasks),
-        20 => Some(Choice::Table(koru_editor::table::Edit::ToggleView)),
-        21 => Some(Choice::Table(koru_editor::table::Edit::InsertRowAbove)),
-        22 => Some(Choice::Table(koru_editor::table::Edit::InsertRowBelow)),
-        23 => Some(Choice::Table(koru_editor::table::Edit::DeleteRow)),
-        25 => Some(Choice::Table(koru_editor::table::Edit::InsertColumnBefore)),
-        26 => Some(Choice::Table(koru_editor::table::Edit::InsertColumnAfter)),
-        27 => Some(Choice::Table(koru_editor::table::Edit::DeleteColumn)),
-        _ => None,
+        5 => Some(Choice::Delete),
+        7 => Some(Choice::MoveToDocument),
+        9 => Some(Choice::GoToTask),
+        10 => Some(Choice::CompleteTask),
+        11 => Some(Choice::Tags),
+        12 => Some(Choice::Color),
+        13 => Some(Choice::Due),
+        14 => Some(Choice::Priority),
+        15 => Some(Choice::Remind),
+        16 => Some(Choice::Delegate),
+        18 => Some(Choice::RemoveFromTasks),
+        21 if has_table => Some(Choice::Table(koru_editor::table::Edit::ToggleView)),
+        22 if has_table => Some(Choice::Table(koru_editor::table::Edit::InsertRowAbove)),
+        23 if has_table => Some(Choice::Table(koru_editor::table::Edit::InsertRowBelow)),
+        24 if has_table => Some(Choice::Table(koru_editor::table::Edit::DeleteRow)),
+        26 if has_table => Some(Choice::Table(koru_editor::table::Edit::InsertColumnBefore)),
+        27 if has_table => Some(Choice::Table(koru_editor::table::Edit::InsertColumnAfter)),
+        28 if has_table => Some(Choice::Table(koru_editor::table::Edit::DeleteColumn)),
+        // The diagram group: after the table group when the shape has one,
+        // in its place when it does not. Its divider is the first index.
+        _ => {
+            let start = if has_table {
+                BLOCK_GROUP_START + TABLE_GROUP_LEN
+            } else {
+                BLOCK_GROUP_START
+            };
+            match index.checked_sub(start)? {
+                1 => Some(Choice::DiagramEditText),
+                2 => Some(Choice::DiagramOpen),
+                3 => Some(Choice::CopyDiagram),
+                4 => Some(Choice::SaveDiagramAs),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -1037,6 +1143,7 @@ mod tests {
             task,
             has_reminder_target,
             table,
+            None,
             pill,
             None,
             koru_i18n::Lang::En,
@@ -1044,7 +1151,152 @@ mod tests {
     }
 
     fn choice_at(index: usize, pill: PillContext) -> Option<Choice> {
-        super::choice_at(index, pill, None)
+        super::choice_at(index, pill, None, None)
+    }
+
+    fn diagram(drawn: bool) -> Option<DiagramContext> {
+        Some(DiagramContext {
+            node: koru_core::NodeId::new(),
+            drawn,
+        })
+    }
+
+    fn label_of(row: &menu::Row) -> Option<&str> {
+        match row {
+            menu::Row::Item { label, .. } => Some(label.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// The menu drawn on a diagram: the ordinary rows, then its group.
+    fn diagram_rows(drawn: bool) -> Vec<menu::Row> {
+        super::rows(
+            true,
+            true,
+            false,
+            TaskContext::Open,
+            true,
+            None,
+            diagram(drawn),
+            PillContext::None,
+            None,
+            koru_i18n::Lang::En,
+        )
+    }
+
+    /// **The diagram group sits where the table group would**, so every
+    /// index before it keeps its meaning, and the map resolves its rows by
+    /// the context the menu was drawn with. *Open*, *Copy image* and *Save
+    /// as…* are the last three rows and come only with a drawing, so a
+    /// block that does not draw is a prefix.
+    #[test]
+    fn the_diagram_group_follows_the_ordinary_rows_and_resolves() {
+        let drawn = diagram_rows(true);
+        let plain = rows(
+            true,
+            true,
+            false,
+            TaskContext::Open,
+            true,
+            None,
+            PillContext::None,
+        );
+        assert_eq!(&drawn[..plain.len()], &plain[..], "the ordinary rows first");
+        assert_eq!(plain.len(), 19);
+        assert!(matches!(drawn[19], menu::Row::Divider));
+        let label = |row: &menu::Row| match row {
+            menu::Row::Item { label, .. } => label.to_string(),
+            other => panic!("an item, not {other:?}"),
+        };
+        assert_eq!(label(&drawn[20]), "Edit text");
+        assert_eq!(label(&drawn[21]), "Open");
+        assert_eq!(label(&drawn[22]), "Copy image");
+        assert_eq!(label(&drawn[23]), "Save as…");
+        assert_eq!(drawn.len(), 24);
+        // One Copy row, the menu's own at index 1: the group adds no second.
+        assert_eq!(
+            drawn
+                .iter()
+                .filter(|row| label_of(row) == Some("Copy"))
+                .count(),
+            1
+        );
+        let ctx = diagram(true);
+        assert_eq!(
+            super::choice_at(20, PillContext::None, None, ctx),
+            Some(Choice::DiagramEditText)
+        );
+        assert_eq!(
+            super::choice_at(21, PillContext::None, None, ctx),
+            Some(Choice::DiagramOpen)
+        );
+        assert_eq!(
+            super::choice_at(22, PillContext::None, None, ctx),
+            Some(Choice::CopyDiagram)
+        );
+        assert_eq!(
+            super::choice_at(23, PillContext::None, None, ctx),
+            Some(Choice::SaveDiagramAs)
+        );
+        assert_eq!(super::choice_at(19, PillContext::None, None, ctx), None);
+        assert_eq!(super::choice_at(24, PillContext::None, None, ctx), None);
+        // Every ordinary index still means what it meant.
+        for index in 0..18 {
+            assert_eq!(
+                super::choice_at(index, PillContext::None, None, ctx),
+                choice_at(index, PillContext::None),
+                "row {index}"
+            );
+        }
+
+        // Not drawn: no *Open*, *Copy image* or *Save as…*; nothing else
+        // moves.
+        let undrawn = diagram_rows(false);
+        assert_eq!(undrawn.len(), 21);
+        assert_eq!(&undrawn[..], &drawn[..21]);
+        assert_eq!(
+            super::choice_at(20, PillContext::None, None, diagram(false)),
+            Some(Choice::DiagramEditText)
+        );
+    }
+
+    /// With both groups in the full shape — which no real menu has — the
+    /// diagram group follows the table group, so `choice_at` for a table menu
+    /// is untouched by its existence.
+    #[test]
+    fn the_table_menu_does_not_see_the_diagram_group() {
+        let with_both = super::rows(
+            true,
+            true,
+            false,
+            TaskContext::Open,
+            true,
+            Some(TableContext {
+                cell: (1, 0),
+                source_visible: false,
+            }),
+            diagram(true),
+            PillContext::None,
+            None,
+            koru_i18n::Lang::En,
+        );
+        assert_eq!(with_both.len(), 34);
+        assert!(matches!(with_both[29], menu::Row::Divider));
+        assert_eq!(
+            choice_at(28, PillContext::None),
+            Some(Choice::Table(koru_editor::table::Edit::DeleteColumn))
+        );
+        assert_eq!(choice_at(29, PillContext::None), None);
+        assert_eq!(
+            choice_at(30, PillContext::None),
+            None,
+            "no diagram on a table menu"
+        );
+        assert_eq!(
+            super::full_choice_at(30, PillContext::None, None, true),
+            Some(Choice::DiagramEditText),
+            "but the full map knows where it would be"
+        );
     }
 
     /// **A menu the pill owns is drawn and mapped from the same list**, and a
@@ -1071,6 +1323,7 @@ mod tests {
             TaskContext::NotATask,
             true,
             None,
+            None,
             pill,
             Some(&spell),
             koru_i18n::Lang::En,
@@ -1081,6 +1334,7 @@ mod tests {
             false,
             TaskContext::NotATask,
             true,
+            None,
             None,
             pill,
             None,
@@ -1101,33 +1355,33 @@ mod tests {
         // And the map agrees with the list, spelling snapshot or not.
         for spell in [Some(&spell), None] {
             assert_eq!(
-                super::choice_at(0, pill, spell),
+                super::choice_at(0, pill, spell, None),
                 Some(Choice::GoToTask),
                 "row 0 — and once the one that pressed nothing"
             );
             assert_eq!(
-                super::choice_at(1, pill, spell),
+                super::choice_at(1, pill, spell, None),
                 Some(Choice::CompleteTask),
                 "row 1 — the verb the tick is"
             );
             assert_eq!(
-                super::choice_at(2, pill, spell),
+                super::choice_at(2, pill, spell, None),
                 Some(Choice::EditChip),
                 "row 2"
             );
             assert_eq!(
-                super::choice_at(3, pill, spell),
+                super::choice_at(3, pill, spell, None),
                 Some(Choice::ClearChip),
                 "row 3"
             );
-            assert_eq!(super::choice_at(4, pill, spell), None, "the rule");
+            assert_eq!(super::choice_at(4, pill, spell, None), None, "the rule");
             assert_eq!(
-                super::choice_at(5, pill, spell),
+                super::choice_at(5, pill, spell, None),
                 Some(Choice::RemoveFromTasks),
                 "row 5 — the marker goes, the writing stays"
             );
             assert_eq!(
-                super::choice_at(6, pill, spell),
+                super::choice_at(6, pill, spell, None),
                 Some(Choice::DeleteRow),
                 "row 6 — the red one, and the writing goes"
             );
@@ -1184,6 +1438,7 @@ mod tests {
             TaskContext::NotATask,
             true,
             None,
+            None,
             PillContext::None,
             Some(&spell),
             koru_i18n::Lang::En,
@@ -1206,13 +1461,16 @@ mod tests {
         assert!(matches!(with[1], menu::Row::Divider));
 
         assert_eq!(
-            super::choice_at(0, PillContext::None, Some(&spell)),
+            super::choice_at(0, PillContext::None, Some(&spell), None),
             Some(Choice::SpellingMenu)
         );
-        assert_eq!(super::choice_at(1, PillContext::None, Some(&spell)), None);
+        assert_eq!(
+            super::choice_at(1, PillContext::None, Some(&spell), None),
+            None
+        );
         // Cut sits at 0 in the plain menu; behind the drill-in it is 0 + 2.
         assert_eq!(
-            super::choice_at(2, PillContext::None, Some(&spell)),
+            super::choice_at(2, PillContext::None, Some(&spell), None),
             Some(Choice::Cut)
         );
     }
@@ -1234,6 +1492,7 @@ mod tests {
             TaskContext::NotATask,
             true,
             None,
+            None,
             PillContext::None,
             Some(&spell),
             koru_i18n::Lang::En,
@@ -1246,15 +1505,15 @@ mod tests {
         );
         assert!(!with.iter().any(|row| matches!(row, menu::Row::Divider)));
         assert_eq!(
-            super::choice_at(0, PillContext::None, Some(&spell)),
+            super::choice_at(0, PillContext::None, Some(&spell), None),
             Some(Choice::Spelling(0))
         );
         assert_eq!(
-            super::choice_at(1, PillContext::None, Some(&spell)),
+            super::choice_at(1, PillContext::None, Some(&spell), None),
             Some(Choice::SpellingIgnore)
         );
         assert_eq!(
-            super::choice_at(4, PillContext::None, Some(&spell)),
+            super::choice_at(4, PillContext::None, Some(&spell), None),
             Some(Choice::SpellingAddWorkspaceWord)
         );
     }
@@ -1303,6 +1562,7 @@ mod tests {
                 TaskContext::NotATask,
                 true,
                 None,
+                None,
                 PillContext::None,
                 Some(&spell),
                 koru_i18n::Lang::En,
@@ -1314,21 +1574,24 @@ mod tests {
             assert!(
                 matches!(&with[1], menu::Row::Item { label, enabled: true, .. } if label.as_ref() == "Ignore")
             );
-            assert_eq!(super::choice_at(0, PillContext::None, Some(&spell)), None);
             assert_eq!(
-                super::choice_at(1, PillContext::None, Some(&spell)),
+                super::choice_at(0, PillContext::None, Some(&spell), None),
+                None
+            );
+            assert_eq!(
+                super::choice_at(1, PillContext::None, Some(&spell), None),
                 Some(Choice::SpellingIgnore)
             );
             assert_eq!(
-                super::choice_at(2, PillContext::None, Some(&spell)),
+                super::choice_at(2, PillContext::None, Some(&spell), None),
                 Some(Choice::SpellingIgnoreDocument)
             );
             assert_eq!(
-                super::choice_at(3, PillContext::None, Some(&spell)),
+                super::choice_at(3, PillContext::None, Some(&spell), None),
                 Some(Choice::SpellingAddWord)
             );
             assert_eq!(
-                super::choice_at(4, PillContext::None, Some(&spell)),
+                super::choice_at(4, PillContext::None, Some(&spell), None),
                 Some(Choice::SpellingAddWorkspaceWord)
             );
         }
@@ -1346,7 +1609,7 @@ mod tests {
             PillContext::None,
         );
         assert!(matches!(
-            &with[6],
+            &with[7],
             menu::Row::Item {
                 label,
                 shortcut: Some(menu::Chord::Literal("@")),
@@ -1355,7 +1618,7 @@ mod tests {
             } if label.as_ref() == "Move to document…"
         ));
         assert_eq!(
-            choice_at(6, PillContext::None),
+            choice_at(7, PillContext::None),
             Some(Choice::MoveToDocument)
         );
 
@@ -1368,7 +1631,7 @@ mod tests {
             None,
             PillContext::None,
         );
-        assert!(matches!(without[6], menu::Row::Item { enabled: false, .. }));
+        assert!(matches!(without[7], menu::Row::Item { enabled: false, .. }));
     }
 
     /// The two attribute rows sit beside Move to document…, map to their
@@ -1385,7 +1648,7 @@ mod tests {
             PillContext::None,
         );
         assert!(matches!(
-            &with[10],
+            &with[11],
             menu::Row::Item {
                 label,
                 shortcut: Some(menu::Chord::Literal("#")),
@@ -1394,7 +1657,7 @@ mod tests {
             } if label.as_ref() == "Tags…"
         ));
         assert!(matches!(
-            &with[11],
+            &with[12],
             menu::Row::Item {
                 label,
                 enabled: true,
@@ -1402,7 +1665,7 @@ mod tests {
             } if label.as_ref() == "Color…"
         ));
         assert!(matches!(
-            &with[12],
+            &with[13],
             menu::Row::Item {
                 label,
                 enabled: true,
@@ -1410,21 +1673,21 @@ mod tests {
             } if label.as_ref() == "Due…"
         ));
         assert!(matches!(
-            &with[13],
+            &with[14],
             menu::Row::Item {
                 label,
                 enabled: true,
                 ..
             } if label.as_ref() == "Priority…"
         ));
-        assert_eq!(choice_at(10, PillContext::None), Some(Choice::Tags));
-        assert_eq!(choice_at(11, PillContext::None), Some(Choice::Color));
-        assert_eq!(choice_at(12, PillContext::None), Some(Choice::Due));
-        assert_eq!(choice_at(13, PillContext::None), Some(Choice::Priority));
+        assert_eq!(choice_at(11, PillContext::None), Some(Choice::Tags));
+        assert_eq!(choice_at(12, PillContext::None), Some(Choice::Color));
+        assert_eq!(choice_at(13, PillContext::None), Some(Choice::Due));
+        assert_eq!(choice_at(14, PillContext::None), Some(Choice::Priority));
         // Behind a document pill's three open rows they shift with the rest.
-        assert_eq!(choice_at(14, PillContext::Document), Some(Choice::Tags));
-        assert_eq!(choice_at(16, PillContext::Document), Some(Choice::Due));
-        assert_eq!(choice_at(17, PillContext::Document), Some(Choice::Priority));
+        assert_eq!(choice_at(15, PillContext::Document), Some(Choice::Tags));
+        assert_eq!(choice_at(17, PillContext::Document), Some(Choice::Due));
+        assert_eq!(choice_at(18, PillContext::Document), Some(Choice::Priority));
 
         let without = rows(
             false,
@@ -1435,7 +1698,7 @@ mod tests {
             None,
             PillContext::None,
         );
-        for i in [10, 11, 12, 13] {
+        for i in [11, 12, 13, 14] {
             assert!(matches!(without[i], menu::Row::Item { enabled: false, .. }));
         }
     }
@@ -1456,7 +1719,7 @@ mod tests {
             PillContext::None,
         );
         assert!(matches!(
-            &with[14],
+            &with[15],
             menu::Row::Item {
                 label: row_label,
                 icon: Some(icons::CLOCK),
@@ -1464,9 +1727,9 @@ mod tests {
                 ..
             } if row_label == label
         ));
-        assert_eq!(choice_at(12, PillContext::None), Some(Choice::Due));
-        assert_eq!(choice_at(13, PillContext::None), Some(Choice::Priority));
-        assert_eq!(choice_at(14, PillContext::None), Some(Choice::Remind));
+        assert_eq!(choice_at(13, PillContext::None), Some(Choice::Due));
+        assert_eq!(choice_at(14, PillContext::None), Some(Choice::Priority));
+        assert_eq!(choice_at(15, PillContext::None), Some(Choice::Remind));
 
         // A preserved caret is not permission to attach a reminder when the
         // right-click itself landed outside every object. Existing clipboard
@@ -1482,14 +1745,14 @@ mod tests {
         );
         assert!(matches!(without[0], menu::Row::Item { enabled: true, .. }));
         assert!(matches!(
-            without[14],
+            without[15],
             menu::Row::Item { enabled: false, .. }
         ));
 
         // A document-pill prefix shifts every edit action together.
-        assert_eq!(choice_at(16, PillContext::Document), Some(Choice::Due));
-        assert_eq!(choice_at(17, PillContext::Document), Some(Choice::Priority));
-        assert_eq!(choice_at(18, PillContext::Document), Some(Choice::Remind));
+        assert_eq!(choice_at(17, PillContext::Document), Some(Choice::Due));
+        assert_eq!(choice_at(18, PillContext::Document), Some(Choice::Priority));
+        assert_eq!(choice_at(19, PillContext::Document), Some(Choice::Remind));
     }
 
     #[test]
@@ -1630,7 +1893,7 @@ mod tests {
         );
         assert_eq!(plain.len(), mixed.len(), "dimming shifts no index");
 
-        for i in [10, 11, 12, 13] {
+        for i in [11, 12, 13, 14] {
             assert!(
                 matches!(
                     mixed[i],
@@ -1646,18 +1909,18 @@ mod tests {
         }
         // The `#` hint goes with it: the note occupies that end of the row.
         assert!(matches!(
-            &mixed[10],
+            &mixed[11],
             menu::Row::Item {
                 label,
                 shortcut: None,
                 ..
             } if label.as_ref() == "Tags…"
         ));
-        assert_eq!(choice_at(10, PillContext::None), Some(Choice::Tags));
-        assert_eq!(choice_at(13, PillContext::None), Some(Choice::Priority));
+        assert_eq!(choice_at(11, PillContext::None), Some(Choice::Tags));
+        assert_eq!(choice_at(14, PillContext::None), Some(Choice::Priority));
 
         // Nothing else in the menu is touched by it.
-        for i in [0, 1, 3, 4, 6] {
+        for i in [0, 1, 3, 4, 7] {
             assert_eq!(
                 std::mem::discriminant(&plain[i]),
                 std::mem::discriminant(&mixed[i])
@@ -1673,8 +1936,8 @@ mod tests {
     /// vanishing is what keeps [`choice_at`]'s map by index true.
     #[test]
     fn remove_from_tasks_is_the_red_last_row_below_a_hairline() {
-        const DIVIDER: usize = 16;
-        const REMOVE: usize = 17;
+        const DIVIDER: usize = 17;
+        const REMOVE: usize = 18;
 
         let on_task = rows(
             true,
@@ -1777,15 +2040,15 @@ mod tests {
         let off = with_table(TaskContext::NotATask);
         let on = with_table(TaskContext::Open);
         assert_eq!(off.len(), on.len());
-        assert!(matches!(off[17], menu::Row::Item { .. }));
-        assert!(matches!(off[18], menu::Row::Divider));
-        assert!(matches!(off[19], menu::Row::Heading("TABLE")));
+        assert!(matches!(off[18], menu::Row::Item { .. }));
+        assert!(matches!(off[19], menu::Row::Divider));
+        assert!(matches!(off[20], menu::Row::Heading("TABLE")));
         assert_eq!(
-            choice_at(20, PillContext::None),
+            choice_at(21, PillContext::None),
             Some(Choice::Table(koru_editor::table::Edit::ToggleView))
         );
         assert_eq!(
-            choice_at(27, PillContext::None),
+            choice_at(28, PillContext::None),
             Some(Choice::Table(koru_editor::table::Edit::DeleteColumn))
         );
     }
@@ -1916,7 +2179,7 @@ mod tests {
             menu::Row::Item { label, .. } if label.as_ref() == "Edit Markdown"
         )));
         assert_eq!(
-            choice_at(25, PillContext::None),
+            choice_at(26, PillContext::None),
             Some(Choice::Table(koru_editor::table::Edit::InsertColumnBefore))
         );
 
@@ -1932,7 +2195,7 @@ mod tests {
             }),
             PillContext::None,
         );
-        assert!(matches!(header[23], menu::Row::Item { enabled: false, .. }));
+        assert!(matches!(header[24], menu::Row::Item { enabled: false, .. }));
     }
 
     #[test]
@@ -1950,7 +2213,7 @@ mod tests {
             PillContext::None,
         );
         assert!(matches!(
-            &rows[20],
+            &rows[21],
             menu::Row::Item {
                 label,
                 shortcut: Some(menu::Chord::Literal("Esc")),
@@ -1958,7 +2221,7 @@ mod tests {
                 ..
             } if label.as_ref() == "Show table"
         ));
-        for index in [21, 22, 23, 25, 26, 27] {
+        for index in [22, 23, 24, 26, 27, 28] {
             assert!(matches!(
                 rows[index],
                 menu::Row::Item { enabled: false, .. }
@@ -2012,10 +2275,10 @@ mod tests {
             Some(Choice::OpenInNewWindow)
         );
         assert_eq!(
-            choice_at(10, PillContext::Document),
+            choice_at(11, PillContext::Document),
             Some(Choice::MoveToDocument)
         );
-        assert!(matches!(rows[10], menu::Row::Item { enabled: false, .. }));
+        assert!(matches!(rows[11], menu::Row::Item { enabled: false, .. }));
     }
 
     #[test]
@@ -2151,6 +2414,7 @@ mod chip_menu_tests {
                 task,
                 true,
                 None,
+                None,
                 pill,
                 None,
                 koru_i18n::Lang::En,
@@ -2195,6 +2459,7 @@ mod chip_menu_tests {
                         TaskContext::Open,
                         true,
                         table,
+                        None,
                         pill,
                         None,
                         koru_i18n::Lang::En,
@@ -2261,13 +2526,13 @@ mod chip_menu_tests {
                     for (index, row) in drawn.iter().enumerate() {
                         let Some(text) = label(row) else {
                             assert_eq!(
-                                choice_at(index, pill, None),
+                                choice_at(index, pill, None, None),
                                 None,
                                 "row {index} is not an item"
                             );
                             continue;
                         };
-                        let choice = choice_at(index, pill, None);
+                        let choice = choice_at(index, pill, None, None);
                         assert!(
                             choice.is_some_and(Choice::shown_in_product),
                             "row {index} ({text}) maps to {choice:?}"
@@ -2278,7 +2543,11 @@ mod chip_menu_tests {
                         }
                     }
                     assert!(items >= 8, "the ordinary rows are all there");
-                    assert_eq!(choice_at(drawn.len(), pill, None), None, "past the end");
+                    assert_eq!(
+                        choice_at(drawn.len(), pill, None, None),
+                        None,
+                        "past the end"
+                    );
                 }
             }
             // The due chip keeps editing its date and clearing it, and the
@@ -2291,12 +2560,14 @@ mod chip_menu_tests {
                 TaskContext::Open,
                 true,
                 None,
+                None,
                 due,
                 None,
                 koru_i18n::Lang::En,
             );
-            let mapped: Vec<Option<Choice>> =
-                (0..drawn.len()).map(|i| choice_at(i, due, None)).collect();
+            let mapped: Vec<Option<Choice>> = (0..drawn.len())
+                .map(|i| choice_at(i, due, None, None))
+                .collect();
             assert_eq!(
                 mapped,
                 [

@@ -9,10 +9,12 @@
 //! See `docs/architecture/DATAMODEL.md` for the model and the reasoning behind it.
 
 pub mod attributes;
+pub mod callout;
 pub mod canvas;
 pub mod change;
 pub mod explore;
 pub mod ids;
+pub mod markdown;
 pub mod node;
 pub mod profile;
 pub mod query;

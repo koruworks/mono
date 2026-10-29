@@ -438,7 +438,7 @@ fn only_an_installed_voice_setup_warms_the_worker_for_its_input_picker() {
     for row in [
         crate::tray::VoiceRow::NotInstalled { megabytes: None },
         crate::tray::VoiceRow::Downloading { percent: 42 },
-        crate::tray::VoiceRow::Unavailable,
+        crate::tray::VoiceRow::Unavailable(koru_voice::Off::Switch),
     ] {
         voice.row = row;
         assert!(!warms_voice_input_picker(&voice));
@@ -2559,6 +2559,32 @@ fn a_post_health_gate_retry_never_reopens_after_store_readiness_falls_away() {
     assert!(agent.startup_transition_complete);
 }
 
+/// Each platform's default origin is one that holds its feed: Windows and
+/// macOS keep `updates.koru.do`; Linux reads the nightly release on GitHub,
+/// in the flat layout that origin uses.
+#[test]
+fn the_default_update_origin_is_where_this_platforms_feed_lives() {
+    let base = url::Url::parse(DEFAULT_UPDATE_BASE_URL).unwrap();
+    let target = koru_update::UpdateTarget {
+        channel: koru_update::ReleaseChannel::Nightly,
+        platform: koru_update::build_info().platform.into(),
+        architecture: "x86_64".into(),
+    };
+    let manifest = target.manifest_url(&base).unwrap();
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            manifest.as_str(),
+            "https://github.com/koruworks/mono/releases/download/nightly/nightly-linux-x86_64.json"
+        );
+    } else {
+        assert_eq!(base.host_str(), Some("updates.koru.do"));
+        assert_eq!(
+            koru_update::FeedLayout::of(&base),
+            koru_update::FeedLayout::Channels
+        );
+    }
+}
+
 #[test]
 fn rehearsal_health_failure_cannot_affect_an_installed_or_ordinary_launch() {
     assert!(should_fail_rehearsal_health(true, true, true));
@@ -3218,4 +3244,102 @@ fn a_build_that_hides_koru_ai_opens_no_chat_from_any_door() {
             );
         }
     });
+}
+
+/// Every frame queued for one window, without waiting for more.
+fn drained(queue: &std::sync::mpsc::Receiver<FromAgent>) -> Vec<FromAgent> {
+    std::iter::from_fn(|| queue.try_recv().ok()).collect()
+}
+
+/// **The tray's *Quit* tells every window it is a quit, before it stops.**
+/// Without the notice a window takes the ended link for a crash and starts a
+/// new Agent, which is how *Quit* used to bring back what it had just stopped.
+#[test]
+fn tray_quit_tells_every_window_not_to_start_another_agent() {
+    let mut agent = agent();
+    let first = ConnectionId(90);
+    let second = ConnectionId(91);
+    let (first_connection, first_queue) = Connection::for_test(first);
+    let (second_connection, second_queue) = Connection::for_test(second);
+    agent.connections.push(first_connection);
+    agent.connections.push(second_connection);
+
+    agent.wake(AgentEvent::Tray(TrayAsk::Quit));
+
+    for queue in [&first_queue, &second_queue] {
+        assert_eq!(
+            drained(queue),
+            vec![FromAgent::Push {
+                body: Push::Quitting
+            }]
+        );
+    }
+    assert!(agent.should_exit(), "and the Agent still quits");
+}
+
+/// `koru-agent stop` is a person asking too, and says the same.
+#[test]
+fn a_shutdown_over_the_socket_tells_the_other_windows_it_is_a_quit() {
+    let mut agent = agent();
+    let window = ConnectionId(92);
+    let cli = ConnectionId(93);
+    let (window_connection, window_queue) = Connection::for_test(window);
+    let (cli_connection, _cli_queue) = Connection::for_test(cli);
+    agent.connections.push(window_connection);
+    agent.connections.push(cli_connection);
+
+    agent.said(cli, 1, Request::Shutdown, std::time::Duration::ZERO);
+
+    assert_eq!(
+        drained(&window_queue),
+        vec![FromAgent::Push {
+            body: Push::Quitting
+        }]
+    );
+    assert!(agent.should_exit());
+}
+
+/// **The windows follow the icon.** A change is told to every window, once; a
+/// window that says `Hello` while there is an icon learns it; and nothing is
+/// sent while there is none, because a window assumes none until told.
+#[test]
+fn the_windows_are_told_whether_there_is_an_icon_to_hide_behind() {
+    let mut agent = agent();
+    let early = ConnectionId(94);
+    let (early_connection, early_queue) = Connection::for_test(early);
+    agent.connections.push(early_connection);
+    workspace_hello(&mut agent, early, &early_queue);
+    assert!(drained(&early_queue).is_empty(), "no icon, nothing said");
+
+    agent.wake(AgentEvent::NotificationArea { present: true });
+    agent.wake(AgentEvent::NotificationArea { present: true });
+    assert_eq!(
+        drained(&early_queue),
+        vec![FromAgent::Push {
+            body: Push::NotificationArea { present: true }
+        }],
+        "told once, on the change"
+    );
+
+    let late = ConnectionId(95);
+    let (late_connection, late_queue) = Connection::for_test(late);
+    agent.connections.push(late_connection);
+    workspace_hello(&mut agent, late, &late_queue);
+    assert!(
+        drained(&late_queue).contains(&FromAgent::Push {
+            body: Push::NotificationArea { present: true }
+        }),
+        "a window that arrives later learns it on Hello"
+    );
+
+    // The StatusNotifierItem host went away under a running Agent.
+    agent.wake(AgentEvent::NotificationArea { present: false });
+    for queue in [&early_queue, &late_queue] {
+        assert_eq!(
+            drained(queue),
+            vec![FromAgent::Push {
+                body: Push::NotificationArea { present: false }
+            }]
+        );
+    }
 }

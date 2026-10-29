@@ -2577,6 +2577,20 @@ impl AttributeValue {
     }
 }
 
+/// A field that is **absent**, **null** or **a value**, which `Option<T>` alone
+/// cannot tell apart: serde reads absent and null both as `None`. On a field
+/// that also carries `#[serde(default)]`, absent stays `None` and anything
+/// present is wrapped: `Some(None)` for `null`, `Some(Some(value))` otherwise.
+/// Used where leaving a field alone and restoring its default are different
+/// requests, as they are for a callout's icon and color.
+fn set_or_clear<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(inline)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -2664,11 +2678,46 @@ enum EditOperation {
     },
     /// Set the grammar a code block highlights as (`"rust"`, `"py"`, …).
     /// `null` restores auto-detect. The target must be a code block.
+    /// `"mermaid"` makes the block a diagram, drawn from its text; a read then
+    /// carries `diagram`, whether it draws (`MCP.md`, Diagrams).
     SetLanguage {
         node_id: String,
         /// Exact current text returned by `read_document`.
         expected: String,
         language: Option<String>,
+    },
+    /// Set a callout box's look: the emoji beside its first line and the
+    /// accent color of its tint. Both live on the box, so `node_id` is the node
+    /// `read_document` reports as `"kind": "callout"`, never one of its lines,
+    /// and `expected` is its text, which is empty.
+    ///
+    /// Each field stands alone: leave it out to leave it as it is, send `null`
+    /// to restore the default, send a value to set it. At least one is
+    /// required. `icon` is one emoji. `color` is `red`, `orange`, `yellow`,
+    /// `green`, `teal`, `blue`, `purple`, `pink` or `gray` — what `read_document`
+    /// reports as `metadata.colour` — and `colour` is accepted as its spelling.
+    /// A target that is not a callout, a value that is not one emoji and a
+    /// color that is not one of the nine are `invalid_request`, and nothing is
+    /// written.
+    SetCalloutLook {
+        node_id: String,
+        /// Exact current text returned by `read_document`: empty for a callout.
+        expected: String,
+        /// One emoji; `null` restores the default icon.
+        #[serde(
+            default,
+            deserialize_with = "set_or_clear",
+            skip_serializing_if = "Option::is_none"
+        )]
+        icon: Option<Option<String>>,
+        /// An accent token; `null` restores the default tint.
+        #[serde(
+            default,
+            alias = "colour",
+            deserialize_with = "set_or_clear",
+            skip_serializing_if = "Option::is_none"
+        )]
+        color: Option<Option<String>>,
     },
     /// Set one typed attribute on an existing node — a due date, a priority,
     /// an accent color, or a custom key this workspace defines.
@@ -2805,11 +2854,30 @@ enum InitialOperation {
         done: bool,
     },
     /// Set the grammar of a code block inserted earlier in this batch.
-    /// `null` restores auto-detect.
+    /// `null` restores auto-detect; `"mermaid"` makes the block a diagram.
     SetLanguage {
         node_id: String,
         expected: String,
         language: Option<String>,
+    },
+    /// Set the look of a callout inserted earlier in this batch, exactly as
+    /// the edit operation of the same name does.
+    SetCalloutLook {
+        node_id: String,
+        expected: String,
+        #[serde(
+            default,
+            deserialize_with = "set_or_clear",
+            skip_serializing_if = "Option::is_none"
+        )]
+        icon: Option<Option<String>>,
+        #[serde(
+            default,
+            alias = "colour",
+            deserialize_with = "set_or_clear",
+            skip_serializing_if = "Option::is_none"
+        )]
+        color: Option<Option<String>>,
     },
 }
 
@@ -2826,6 +2894,12 @@ enum InsertKind {
     Code,
     Contact,
     Divider,
+    /// A callout box: a container with no text of its own. The inserted node
+    /// is the box; a non-empty `text` becomes a first paragraph inside it,
+    /// and later inserts under it are the rest of the box's lines. It
+    /// arrives with the default icon and tint; no operation here sets either
+    /// yet (see MCP.md).
+    Callout,
 }
 
 impl From<InsertKind> for Kind {
@@ -2839,6 +2913,7 @@ impl From<InsertKind> for Kind {
             InsertKind::Code => Self::Code,
             InsertKind::Contact => Self::Contact,
             InsertKind::Divider => Self::Divider,
+            InsertKind::Callout => Self::Callout,
         }
     }
 }
@@ -3315,12 +3390,28 @@ fn apply_ops(
                 text,
             } => {
                 let kind = Kind::from(*kind);
-                let mut value = Node::new(kind, Content::text(text))?;
+                // A callout is a container with no text of its own: its lines
+                // are its children (MCP.md, "A callout is a box"). One `insert`
+                // still makes a one-line callout — the box, and when `text` is
+                // non-empty, a first paragraph inside it — so `node_id` names
+                // the box, which is what the caller asked for and what later
+                // inserts use as `parent_id`.
+                let (mut value, first_line) = if kind == Kind::Callout {
+                    let line = (!text.is_empty())
+                        .then(|| Node::paragraph(text.as_str()))
+                        .transpose()?;
+                    (Node::callout(None, None)?, line)
+                } else {
+                    (Node::new(kind, Content::text(text))?, None)
+                };
                 value.id = node(node_id)?;
                 let parent = parent(parent_id)?;
                 let index = after_index(doc, parent, after_node_id.as_deref())?;
                 let id = doc.insert(parent, value)?;
                 doc.move_node(id, parent, index)?;
+                if let Some(line) = first_line {
+                    doc.insert(Parent::Node(id), line)?;
+                }
                 // **And what it was created in** (D-2c, SPEC §5(d), ADR-272).
                 // D-2b wired the arrival half of `Move` and parked this arm as
                 // "a separate question nobody has asked yet"; the answer is the
@@ -3469,6 +3560,49 @@ fn apply_ops(
                     ));
                 }
                 doc.set_language(id, language.as_deref())?;
+            }
+            EditOperation::SetCalloutLook {
+                node_id,
+                expected,
+                icon,
+                color,
+            } => {
+                let id = node(node_id)?;
+                validate_expected_text(doc, id, expected, "set_callout_look")?;
+                let current = doc.read(id)?;
+                if current.kind != Kind::Callout {
+                    return Err(ToolError::invalid(
+                        "set_callout_look target must be a callout, the box read_document reports as kind callout",
+                    ));
+                }
+                if icon.is_none() && color.is_none() {
+                    return Err(ToolError::invalid(
+                        "set_callout_look needs icon, color or both; null restores the default",
+                    ));
+                }
+                // Both values are read before either is written, so a color
+                // that is not one of the nine cannot leave the icon changed.
+                let icon = icon
+                    .as_ref()
+                    .map(|icon| callout_icon(icon.as_deref()))
+                    .transpose()?;
+                let color = color
+                    .as_ref()
+                    .map(|color| callout_color(color.as_deref()))
+                    .transpose()?;
+                // A guarded write, like `set_checkbox`: an agent re-asserting
+                // the look a box already has leaves no phantom undo step for
+                // the person at the keyboard.
+                if let Some(icon) = icon
+                    && icon != current.meta.icon.as_deref()
+                {
+                    doc.set_icon(id, icon)?;
+                }
+                if let Some(color) = color
+                    && color != current.meta.colour.as_deref()
+                {
+                    doc.set_color(id, color)?;
+                }
             }
             EditOperation::SetAttribute {
                 node_id,
@@ -3711,6 +3845,25 @@ fn apply_initial_ops(
                     language: language.clone(),
                 }
             }
+            InitialOperation::SetCalloutLook {
+                node_id,
+                expected,
+                icon,
+                color,
+            } => {
+                let target = node(node_id)?;
+                if !inserted.contains(&target) {
+                    return Err(ToolError::invalid(
+                        "initial set_callout_look node_id must name an earlier insert",
+                    ));
+                }
+                EditOperation::SetCalloutLook {
+                    node_id: node_id.clone(),
+                    expected: expected.clone(),
+                    icon: icon.clone(),
+                    color: color.clone(),
+                }
+            }
         };
         // Seeding produces no task activity, and cannot: `InitialOperation`
         // carries no attribute operation at all (there is nothing here that
@@ -3803,6 +3956,41 @@ fn due_value(key: &str, value: AttrValue) -> Result<koru_core::Temporal, ToolErr
         key: key.to_owned(),
         why,
     }))
+}
+
+/// The one emoji a callout's `icon` names, spelled the way Koru stores it, or
+/// `None` for the default. Anything else is refused: the box would draw a
+/// word beside its first line.
+fn callout_icon(icon: Option<&str>) -> Result<Option<&'static str>, ToolError> {
+    let Some(icon) = icon else {
+        return Ok(None);
+    };
+    emojis::get(icon.trim())
+        .map(|emoji| Some(emoji.as_str()))
+        .ok_or_else(|| {
+            ToolError::invalid(format!(
+                "set_callout_look icon must be one emoji, not {icon:?}; null restores the default"
+            ))
+        })
+}
+
+/// The accent token a callout's `color` names, or `None` for the default tint.
+fn callout_color(color: Option<&str>) -> Result<Option<&'static str>, ToolError> {
+    let Some(color) = color else {
+        return Ok(None);
+    };
+    koru_core::AccentColor::parse(color)
+        .map(|accent| Some(accent.as_str()))
+        .ok_or_else(|| {
+            let tokens: Vec<_> = koru_core::AccentColor::ALL
+                .iter()
+                .map(|accent| accent.as_str())
+                .collect();
+            ToolError::invalid(format!(
+                "set_callout_look color must be one of {}, not {color:?}; null restores the default",
+                tokens.join(", ")
+            ))
+        })
 }
 
 fn validate_expected_text(
@@ -3978,7 +4166,7 @@ fn node_json(
         } => json!({"type":"blob", "hash":&hash.0, "mime":mime, "width":width, "height":height}),
         Content::Embed { target } => json!({"type":"embed", "target":ref_json(target)}),
     };
-    json!({
+    let mut value = json!({
         "node_id":node.id.to_storage(),
         "parent_id":match parent { Parent::Root => None, Parent::Node(p) => Some(p.to_storage()) },
         "ordinal":ordinal,
@@ -4002,7 +4190,43 @@ fn node_json(
             "restored_by":node.meta.restored_by,
         },
         "content":content,
-    })
+    });
+    if let Some(diagram) = diagram_json(node) {
+        value["diagram"] = diagram;
+    }
+    value
+}
+
+/// The `language` of a code block that is a diagram. Compared exactly, case
+/// included, because it is what `set_language` stores and nothing normalises
+/// it on the way in.
+const MERMAID_LANGUAGE: &str = "mermaid";
+
+/// The `diagram` field of a `mermaid` code block: whether its text draws, in
+/// the shape `koru_diagram::Status` serialises to — `draws` with its counts,
+/// or `not_parsed` at a line, `kind_not_drawn`, `too_large` or `empty`
+/// (`MCP.md`, Diagrams). `None` for every other node, so the field is absent
+/// rather than `null` where it does not apply.
+///
+/// It is a parse and a count against the default limits, never a layout,
+/// which is what makes it affordable once per mermaid block on every read.
+/// `node_json` serves `read_document`, `create_document`'s result and the
+/// nodes of a `compare_document_versions` change, and each of them gets the
+/// field for the same reason: an agent that wrote a diagram learns whether it
+/// drew from the read it was going to make anyway. Serialising a `Status`
+/// cannot fail, so the `ok()` is a type conversion, not a swallowed error.
+fn diagram_json(node: &Node) -> Option<Value> {
+    if node.kind != Kind::Code || node.meta.language.as_deref() != Some(MERMAID_LANGUAGE) {
+        return None;
+    }
+    let Content::Text { text, .. } = &node.content else {
+        return None;
+    };
+    serde_json::to_value(koru_diagram::inspect(
+        text,
+        &koru_diagram::Limits::default(),
+    ))
+    .ok()
 }
 
 /// One page of `list_tasks`, from the store's answer.
@@ -4412,7 +4636,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Create a Koru document",
-        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done and set_language only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/model before the first mutation.",
+        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language and set_callout_look only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/model before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -4438,7 +4662,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Edit a Koru document",
-        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/model before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. Unknown fields are errors.",
+        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/model before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -5095,7 +5319,11 @@ mod tests {
     /// 1.0.34 can lose an 8,192-byte chunk of any longer line
     /// (ADR-433-compacttools); 21 typed tools cannot fit under that, so this
     /// holds what was reached and makes growth a decision rather than a drift.
-    const TOOLS_LIST_BUDGET: usize = 17_500;
+    ///
+    /// Growth decided so far: 17,500 to 17,700 for `set_callout_look`, one edit
+    /// operation and one seed operation (ADR-468-callout). The reply was 17,644
+    /// bytes with it.
+    const TOOLS_LIST_BUDGET: usize = 17_700;
 
     /// What crosses the wire is compact: no prose inside a schema except the
     /// generated union summaries, no `$ref`, `$defs`, `$schema`, `title` or
@@ -5422,6 +5650,33 @@ mod tests {
         }
     }
 
+    /// The contract teaches diagrams where an agent writing content looks: a
+    /// Diagrams section that names the language which makes a block one, and
+    /// every status a read can carry, so a client reading `diagram` finds each
+    /// value it may branch on explained.
+    #[test]
+    fn the_model_contract_explains_every_diagram_status() {
+        let guide = read_model_document().expect("canonical MCP guide");
+        let start = guide
+            .find("## Diagrams")
+            .expect("crates/koru-mcp-server/MCP.md must have a Diagrams section");
+        let section = &guide[start..];
+        assert!(section.contains("`\"mermaid\"`"), "the language is named");
+        assert!(section.contains("`diagram`"), "the field is named");
+        for status in [
+            "draws",
+            "not_parsed",
+            "kind_not_drawn",
+            "too_large",
+            "empty",
+        ] {
+            assert!(
+                section.contains(&format!("`{status}`")),
+                "crates/koru-mcp-server/MCP.md must explain the diagram status `{status}`"
+            );
+        }
+    }
+
     #[test]
     fn tool_results_have_text_and_structured_content() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
@@ -5520,6 +5775,20 @@ mod tests {
             "{encoded}"
         );
         assert!(encoded.contains("insert_inline"));
+        // A new operation is published with its fields, optional ones marked.
+        // Their order follows the JSON map in use, which is sorted when this
+        // crate is built alone and in declaration order when another crate in
+        // the same build keeps insertion order, so only the shape is pinned.
+        let summary = encoded
+            .split("set_callout_look(")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .expect("a published set_callout_look summary");
+        assert!(summary.starts_with("node_id, expected, "), "{summary}");
+        assert!(
+            summary.contains("icon?") && summary.contains("color?"),
+            "{summary}"
+        );
         assert!(
             !encoded.contains("$ref"),
             "operation variants must be inline"
@@ -5533,6 +5802,7 @@ mod tests {
             "code",
             "contact",
             "divider",
+            "callout",
         ] {
             assert!(encoded.contains(&format!("\"{kind}\"")), "missing {kind}");
         }
@@ -5551,7 +5821,13 @@ mod tests {
         let encoded = serde_json::to_string(&schema).expect("schema text");
 
         assert!(!encoded.contains("$ref"), "seed variants must be inline");
-        for operation in ["insert", "insert_inline", "set_done", "set_language"] {
+        for operation in [
+            "insert",
+            "insert_inline",
+            "set_done",
+            "set_language",
+            "set_callout_look",
+        ] {
             assert!(
                 encoded.contains(&format!("\"{operation}\"")),
                 "missing seed operation {operation}"
@@ -5752,6 +6028,73 @@ mod tests {
         assert_eq!(doc.children(Parent::Node(root)).unwrap(), vec![b, c, a]);
     }
 
+    /// One `insert` of kind `callout` still makes a one-line callout: the
+    /// box under the asked-for id, with the text as a first paragraph inside
+    /// it, read back as a container with no text and one child.
+    #[test]
+    fn insert_callout_with_text_makes_a_box_with_one_paragraph_inside() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Boxes").unwrap())
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let box_id = NodeId::new();
+        let empty_id = NodeId::new();
+
+        apply_ops(
+            &mut doc,
+            &[
+                EditOperation::Insert {
+                    node_id: box_id.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: None,
+                    kind: InsertKind::Callout,
+                    text: "Mind the gap".into(),
+                },
+                EditOperation::Insert {
+                    node_id: empty_id.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: Some(box_id.to_storage()),
+                    kind: InsertKind::Callout,
+                    text: String::new(),
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.children(Parent::Node(root)).unwrap(),
+            vec![box_id, empty_id]
+        );
+        let callout = doc.read(box_id).unwrap();
+        assert_eq!(callout.kind, Kind::Callout);
+        assert_eq!(callout.content.as_text(), Some(""));
+        let lines = doc.children(Parent::Node(box_id)).unwrap();
+        assert_eq!(lines.len(), 1, "one paragraph inside the box");
+        let line = doc.read(lines[0]).unwrap();
+        assert_eq!(line.kind, Kind::Paragraph);
+        assert_eq!(line.content.as_text(), Some("Mind the gap"));
+        assert_eq!(doc.parent(lines[0]).unwrap(), Parent::Node(box_id));
+
+        // What a client reads back: the box's kind and look are on the box.
+        let read = node_json(&callout, Parent::Node(root), 0, 1, &[]);
+        assert_eq!(read["kind"], "callout");
+        assert!(read["metadata"]["icon"].is_null());
+        assert!(read["metadata"]["colour"].is_null());
+        assert_eq!(read["content"]["text"], "");
+
+        // An empty text is just the box.
+        assert!(doc.children(Parent::Node(empty_id)).unwrap().is_empty());
+        assert_eq!(doc.read(empty_id).unwrap().kind, Kind::Callout);
+    }
+
     #[test]
     fn set_language_labels_a_code_block_and_null_restores_auto() {
         let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
@@ -5887,6 +6230,537 @@ mod tests {
         assert!(error.message.contains("earlier insert"));
     }
 
+    // ------------------------------------------------------- callout looks
+
+    /// A document holding one callout box with one line inside it, and an
+    /// empty resolution context.
+    fn a_callout_to_restyle() -> (WorkspaceDoc, NodeId, NodeId, NodeId, InlineContext) {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Looks").unwrap())
+            .unwrap();
+        let callout = doc
+            .insert(Parent::Node(root), Node::callout(None, None).unwrap())
+            .unwrap();
+        let line = doc
+            .insert(Parent::Node(callout), Node::paragraph("inside").unwrap())
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        (doc, root, callout, line, context)
+    }
+
+    fn look(
+        callout: NodeId,
+        icon: Option<Option<&str>>,
+        color: Option<Option<&str>>,
+    ) -> EditOperation {
+        EditOperation::SetCalloutLook {
+            node_id: callout.to_storage(),
+            expected: String::new(),
+            icon: icon.map(|icon| icon.map(str::to_owned)),
+            color: color.map(|color| color.map(str::to_owned)),
+        }
+    }
+
+    #[test]
+    fn set_callout_look_sets_each_field_alone_and_null_restores_the_default() {
+        let (mut doc, root, callout, _, context) = a_callout_to_restyle();
+
+        apply_ops(
+            &mut doc,
+            &[look(callout, Some(Some("⚠️")), Some(Some("red")))],
+            &context,
+        )
+        .unwrap();
+        let read = node_json(&doc.read(callout).unwrap(), Parent::Node(root), 0, 0, &[]);
+        assert_eq!(read["kind"], "callout");
+        assert_eq!(read["metadata"]["icon"], "⚠️");
+        assert_eq!(read["metadata"]["colour"], "red");
+
+        // Leaving a field out leaves it alone; `null` restores its default.
+        apply_ops(&mut doc, &[look(callout, Some(None), None)], &context).unwrap();
+        let node = doc.read(callout).unwrap();
+        assert_eq!(node.meta.icon, None);
+        assert_eq!(node.meta.colour.as_deref(), Some("red"));
+
+        apply_ops(&mut doc, &[look(callout, None, Some(None))], &context).unwrap();
+        assert_eq!(doc.read(callout).unwrap().meta.colour, None);
+    }
+
+    #[test]
+    fn set_callout_look_stores_an_emoji_the_way_koru_spells_it() {
+        let (mut doc, _, callout, _, context) = a_callout_to_restyle();
+
+        // U+26A0 alone is the unqualified spelling; the box stores the
+        // fully qualified one, which is what draws as a color emoji.
+        apply_ops(
+            &mut doc,
+            &[look(callout, Some(Some("\u{26a0}")), None)],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(
+            doc.read(callout).unwrap().meta.icon.as_deref(),
+            Some("\u{26a0}\u{fe0f}")
+        );
+
+        apply_ops(
+            &mut doc,
+            &[look(callout, Some(Some(" 🔥 ")), None)],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(doc.read(callout).unwrap().meta.icon.as_deref(), Some("🔥"));
+    }
+
+    #[test]
+    fn set_callout_look_refuses_what_it_cannot_draw_and_writes_nothing() {
+        let (mut doc, _, callout, line, context) = a_callout_to_restyle();
+        let before = doc.version().encode();
+
+        let refused = |doc: &mut WorkspaceDoc, op: EditOperation| {
+            apply_ops(doc, &[op], &context).expect_err("this look cannot be drawn")
+        };
+
+        let error = refused(&mut doc, look(callout, Some(Some("warning")), None));
+        assert!(error.message.contains("one emoji"), "{}", error.message);
+        let error = refused(&mut doc, look(callout, Some(Some("")), None));
+        assert!(error.message.contains("one emoji"), "{}", error.message);
+        let error = refused(&mut doc, look(callout, None, Some(Some("magenta"))));
+        assert!(error.message.contains("red, orange"), "{}", error.message);
+
+        // A good icon beside a bad color changes neither.
+        refused(
+            &mut doc,
+            look(callout, Some(Some("🔥")), Some(Some("magenta"))),
+        );
+        let error = refused(&mut doc, look(callout, None, None));
+        assert!(error.message.contains("icon, color or both"));
+
+        // Only a callout has a look.
+        let error = refused(&mut doc, look(line, Some(Some("🔥")), None));
+        assert!(error.message.contains("callout"), "{}", error.message);
+
+        let stale = EditOperation::SetCalloutLook {
+            node_id: callout.to_storage(),
+            expected: "not empty".into(),
+            icon: Some(Some("🔥".into())),
+            color: None,
+        };
+        assert_eq!(refused(&mut doc, stale).code, "precondition_failed");
+
+        assert_eq!(doc.read(callout).unwrap().meta.icon, None);
+        assert_eq!(
+            doc.version().encode(),
+            before,
+            "a refused look writes no operation"
+        );
+    }
+
+    #[test]
+    fn set_callout_look_leaves_no_trace_when_nothing_changes() {
+        let (mut doc, _, callout, _, context) = a_callout_to_restyle();
+        apply_ops(
+            &mut doc,
+            &[look(callout, Some(Some("🔥")), Some(Some("blue")))],
+            &context,
+        )
+        .unwrap();
+        let before = doc.version().encode();
+
+        // The same look again, and a `null` on a field that is already the
+        // default: neither writes an operation, so neither is an undo step.
+        apply_ops(
+            &mut doc,
+            &[look(callout, Some(Some("🔥")), Some(Some("blue")))],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(doc.version().encode(), before);
+        let (mut fresh, _, fresh_callout, _, context) = a_callout_to_restyle();
+        let untouched = fresh.version().encode();
+        apply_ops(
+            &mut fresh,
+            &[look(fresh_callout, Some(None), Some(None))],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(fresh.version().encode(), untouched);
+    }
+
+    #[test]
+    fn set_callout_look_tells_absent_from_null_and_accepts_the_stored_spelling() {
+        let id = NodeId::new().to_storage();
+        let parse = |fields: Value| -> EditOperation {
+            let mut op = json!({"op": "set_callout_look", "node_id": id, "expected": ""});
+            op.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            serde_json::from_value(op).expect("a well-formed look")
+        };
+        let fields = |op: EditOperation| match op {
+            EditOperation::SetCalloutLook { icon, color, .. } => (icon, color),
+            other => panic!("not a look: {other:?}"),
+        };
+
+        assert_eq!(
+            fields(parse(json!({"color": "red"}))),
+            (None, Some(Some("red".to_owned())))
+        );
+        assert_eq!(fields(parse(json!({"icon": null}))), (Some(None), None));
+        // `colour` is what `read_document` reports; it names the same field.
+        assert_eq!(
+            fields(parse(json!({"colour": "blue"}))),
+            (None, Some(Some("blue".to_owned())))
+        );
+
+        // What was sent is what is serialized: absent stays absent.
+        let sent = serde_json::to_value(parse(json!({"icon": null}))).unwrap();
+        assert!(sent["icon"].is_null() && sent.get("icon").is_some());
+        assert!(sent.get("color").is_none());
+
+        let misspelt =
+            json!({"op": "set_callout_look", "node_id": id, "expected": "", "tint": "red"});
+        assert!(serde_json::from_value::<EditOperation>(misspelt).is_err());
+    }
+
+    #[test]
+    fn a_seed_batch_can_set_the_look_of_a_callout_it_inserted() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Seeded").unwrap())
+            .unwrap();
+        let callout = NodeId::new();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+
+        apply_initial_ops(
+            &mut doc,
+            root,
+            &[
+                InitialOperation::Insert {
+                    node_id: callout.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: None,
+                    kind: InsertKind::Callout,
+                    text: "Mind the gap".into(),
+                },
+                InitialOperation::SetCalloutLook {
+                    node_id: callout.to_storage(),
+                    expected: String::new(),
+                    icon: Some(Some("⚠️".into())),
+                    color: Some(Some("orange".into())),
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+        let node = doc.read(callout).unwrap();
+        assert_eq!(node.meta.icon.as_deref(), Some("⚠️"));
+        assert_eq!(node.meta.colour.as_deref(), Some("orange"));
+        assert_eq!(doc.children(Parent::Node(callout)).unwrap().len(), 1);
+
+        // The same guard as every seeded op: an earlier insert, never the root.
+        let error = apply_initial_ops(
+            &mut doc,
+            root,
+            &[InitialOperation::SetCalloutLook {
+                node_id: root.to_storage(),
+                expected: "Seeded".into(),
+                icon: Some(Some("🔥".into())),
+                color: None,
+            }],
+            &context,
+        )
+        .expect_err("the title root is not an inserted callout");
+        assert!(error.message.contains("earlier insert"));
+    }
+
+    // -------------------------------------------------------------- diagrams
+    //
+    // A `mermaid` code block reads back with `diagram`: whether its text
+    // draws, in the shape `koru_diagram::Status` serialises to and `MCP.md`
+    // explains under Diagrams. The texts are koru-diagram's own fixtures,
+    // included rather than copied, so the two crates cannot drift apart on
+    // what a showcase contains. Nothing here touches a disk, a store or a
+    // renderer: a document in memory, projected the way a tool projects it.
+
+    const FLOWCHART_SHOWCASE: &str =
+        include_str!("../../koru-diagram/tests/fixtures/flowchart-showcase.mmd");
+    const SEQUENCE_SHOWCASE: &str =
+        include_str!("../../koru-diagram/tests/fixtures/sequence-showcase.mmd");
+    const BAD_ARROW_LINE7: &str =
+        include_str!("../../koru-diagram/tests/fixtures/bad-arrow-line7.mmd");
+    const PIE: &str = include_str!("../../koru-diagram/tests/fixtures/pie.mmd");
+    const GANTT: &str = include_str!("../../koru-diagram/tests/fixtures/gantt.mmd");
+    const EMPTY_DIAGRAM: &str = include_str!("../../koru-diagram/tests/fixtures/empty.mmd");
+
+    /// One node **as `read_document` publishes it** — through `document_json`,
+    /// so an assertion is about the projection a tool sees rather than a
+    /// second reading of the model.
+    fn published_node(doc: &WorkspaceDoc, node: NodeId) -> Value {
+        let published = document_json(StoreDocumentId::new(), doc).unwrap();
+        published["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|value| value["node_id"] == node.to_storage())
+            .expect("the node is in the projection")
+            .clone()
+    }
+
+    /// The `diagram` field of a code block holding `text` under `language`,
+    /// or `None` when the projection carries no such field.
+    fn published_diagram(language: Option<&str>, text: &str) -> Option<Value> {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Diagrams").unwrap())
+            .unwrap();
+        let block = doc
+            .insert(Parent::Node(root), Node::code(text).unwrap())
+            .unwrap();
+        doc.set_language(block, language).unwrap();
+        published_node(&doc, block).get("diagram").cloned()
+    }
+
+    /// `flowchart TD` with `n` boxes in one chain, one arrow per line.
+    fn chain(n: usize) -> String {
+        let mut text = String::from("flowchart TD\n");
+        for i in 1..n {
+            text.push_str(&format!("    N{} --> N{i}\n", i - 1));
+        }
+        text
+    }
+
+    #[test]
+    fn a_flowchart_that_draws_reads_back_with_its_counts() {
+        assert_eq!(
+            published_diagram(Some("mermaid"), FLOWCHART_SHOWCASE),
+            Some(json!({
+                "status": "draws", "kind": "flowchart", "nodes": 10, "edges": 12, "groups": 2
+            }))
+        );
+    }
+
+    #[test]
+    fn a_sequence_diagram_that_draws_reads_back_with_its_counts() {
+        assert_eq!(
+            published_diagram(Some("mermaid"), SEQUENCE_SHOWCASE),
+            Some(json!({
+                "status": "draws", "kind": "sequence",
+                "participants": 4, "messages": 12, "notes": 2
+            }))
+        );
+    }
+
+    /// The line and the code are pinned. The message is the parser's own
+    /// English, relayed and not owned here, so it is held to being present
+    /// rather than to its wording.
+    #[test]
+    fn a_diagram_that_does_not_parse_names_its_line() {
+        let diagram = published_diagram(Some("mermaid"), BAD_ARROW_LINE7).expect("a mermaid block");
+        assert_eq!(diagram["status"], "not_parsed");
+        assert_eq!(diagram["line"], 7);
+        assert_eq!(diagram["code"], "merman.parse.diagram_parse");
+        assert!(
+            diagram["message"]
+                .as_str()
+                .is_some_and(|message| !message.is_empty()),
+            "{diagram}"
+        );
+        assert_eq!(diagram.as_object().unwrap().len(), 4, "{diagram}");
+    }
+
+    #[test]
+    fn a_pie_chart_reads_back_as_drawn_with_its_slices() {
+        assert_eq!(
+            published_diagram(Some("mermaid"), PIE),
+            Some(json!({"status": "draws", "kind": "pie", "slices": 2}))
+        );
+    }
+
+    #[test]
+    fn a_kind_koru_does_not_draw_reads_back_as_such() {
+        assert_eq!(
+            published_diagram(Some("mermaid"), GANTT),
+            Some(json!({"status": "kind_not_drawn", "kind": "gantt"}))
+        );
+        // Prose under the mermaid label: no diagram keyword at all.
+        assert_eq!(
+            published_diagram(Some("mermaid"), "hello world"),
+            Some(json!({"status": "kind_not_drawn", "kind": null}))
+        );
+    }
+
+    #[test]
+    fn a_diagram_over_the_limit_reads_back_too_large() {
+        assert_eq!(
+            published_diagram(Some("mermaid"), &chain(1000)),
+            Some(json!({"status": "too_large", "kind": "flowchart", "count": 1000}))
+        );
+    }
+
+    #[test]
+    fn an_empty_diagram_block_reads_back_empty() {
+        assert_eq!(EMPTY_DIAGRAM, "");
+        assert_eq!(
+            published_diagram(Some("mermaid"), EMPTY_DIAGRAM),
+            Some(json!({"status": "empty"}))
+        );
+    }
+
+    /// Only a code block labelled exactly `mermaid` is inspected: not another
+    /// grammar holding a flowchart, not an unlabelled block, not a differently
+    /// cased label — `set_language` stores what it is given — and never a
+    /// paragraph or the title, whatever their text says.
+    #[test]
+    fn only_a_mermaid_code_block_carries_a_diagram() {
+        assert_eq!(published_diagram(Some("rust"), FLOWCHART_SHOWCASE), None);
+        assert_eq!(published_diagram(None, FLOWCHART_SHOWCASE), None);
+        assert_eq!(published_diagram(Some("Mermaid"), FLOWCHART_SHOWCASE), None);
+
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("flowchart LR").unwrap())
+            .unwrap();
+        let paragraph = doc
+            .insert(Parent::Node(root), Node::paragraph("flowchart LR").unwrap())
+            .unwrap();
+        assert!(published_node(&doc, root).get("diagram").is_none());
+        assert!(published_node(&doc, paragraph).get("diagram").is_none());
+    }
+
+    /// A seed batch is the other way a diagram is written, and
+    /// `create_document` answers with the same projection a read does, so the
+    /// status is in the creation result before any read.
+    #[test]
+    fn a_seeded_diagram_is_in_the_creation_projection() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Seeded").unwrap())
+            .unwrap();
+        let block = NodeId::new();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        apply_initial_ops(
+            &mut doc,
+            root,
+            &[
+                InitialOperation::Insert {
+                    node_id: block.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: None,
+                    kind: InsertKind::Code,
+                    text: GANTT.into(),
+                },
+                InitialOperation::SetLanguage {
+                    node_id: block.to_storage(),
+                    expected: GANTT.into(),
+                    language: Some("mermaid".into()),
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(
+            published_node(&doc, block)["diagram"],
+            json!({"status": "kind_not_drawn", "kind": "gantt"})
+        );
+    }
+
+    /// The whole path an agent takes, through the embedded store: `insert` a
+    /// code block and `set_language` it `mermaid` in one `edit_document`
+    /// batch, then read. The status rides on the read; nothing is written
+    /// back, and the nodes beside the block stay as they were.
+    #[test]
+    fn a_diagram_written_through_edit_document_reads_back_drawing() {
+        let store = MemoryStore::new();
+        let page = store.add_page("Diagrams");
+        let backend = store.backend();
+        let workspace_id = store.workspace.to_storage();
+        let document_id = page.to_storage();
+
+        let read = call(
+            &backend,
+            "read_document",
+            json!({"workspace_id": workspace_id, "document_id": document_id}),
+        )
+        .unwrap();
+        let block = NodeId::new().to_storage();
+        call(
+            &backend,
+            "edit_document",
+            json!({
+                "workspace_id": workspace_id,
+                "document_id": document_id,
+                "base_revision": read["revision"],
+                "operations": [
+                    {
+                        "op": "insert",
+                        "node_id": block,
+                        "parent_id": read["root_node_id"],
+                        "after_node_id": null,
+                        "kind": "code",
+                        "text": SEQUENCE_SHOWCASE,
+                    },
+                    {
+                        "op": "set_language",
+                        "node_id": block,
+                        "expected": SEQUENCE_SHOWCASE,
+                        "language": "mermaid",
+                    },
+                ]
+            }),
+        )
+        .unwrap();
+
+        let reread = call(
+            &backend,
+            "read_document",
+            json!({"workspace_id": workspace_id, "document_id": document_id}),
+        )
+        .unwrap();
+        let nodes = reread["nodes"].as_array().unwrap();
+        let node = nodes
+            .iter()
+            .find(|node| node["node_id"] == block)
+            .expect("the block is in the read");
+        assert_eq!(node["kind"], "code");
+        assert_eq!(node["metadata"]["language"], "mermaid");
+        assert_eq!(node["content"]["text"], SEQUENCE_SHOWCASE);
+        assert_eq!(
+            node["diagram"],
+            json!({
+                "status": "draws", "kind": "sequence",
+                "participants": 4, "messages": 12, "notes": 2
+            })
+        );
+        for other in nodes.iter().filter(|node| node["node_id"] != block) {
+            assert!(other.get("diagram").is_none(), "{other}");
+        }
+        // The store holds exactly what was written: the block and its
+        // language, and no status.
+        let stored = WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&page]).unwrap();
+        let stored_block = stored.read(NodeId::parse(&block).unwrap()).unwrap();
+        assert_eq!(stored_block.meta.language.as_deref(), Some("mermaid"));
+    }
+
     // ------------------------------------------------------------ attributes
 
     /// A document holding one task, and an empty resolution context. Every
@@ -5925,13 +6799,7 @@ mod tests {
     /// whole point of the round trip: the two functions have to agree, so the
     /// assertion must go through the projection a tool actually sees.
     fn published_attributes(doc: &WorkspaceDoc, node: NodeId) -> Vec<Value> {
-        let published = document_json(StoreDocumentId::new(), doc).unwrap();
-        published["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|value| value["node_id"] == node.to_storage())
-            .expect("the node is in the projection")["content"]["attributes"]
+        published_node(doc, node)["content"]["attributes"]
             .as_array()
             .cloned()
             .unwrap_or_default()
@@ -7848,6 +8716,19 @@ mod tests {
                 expected: expected(),
                 language: None,
             },
+            EditOperation::SetCalloutLook {
+                node_id: id(),
+                expected: expected(),
+                icon: Some(Some("⚠️".into())),
+                color: Some(Some("red".into())),
+            },
+            // `null` restores the default and must pass the published schema.
+            EditOperation::SetCalloutLook {
+                node_id: id(),
+                expected: expected(),
+                icon: Some(None),
+                color: None,
+            },
             value(AttributeValue::Date {
                 value: "2026-09-04".into(),
             }),
@@ -7950,9 +8831,15 @@ mod tests {
                 done: false,
             },
             InitialOperation::SetLanguage {
-                node_id: first,
+                node_id: first.clone(),
                 expected: "fn main() {}".into(),
                 language: Some("rust".into()),
+            },
+            InitialOperation::SetCalloutLook {
+                node_id: first,
+                expected: String::new(),
+                icon: Some(Some("🔥".into())),
+                color: Some(None),
             },
         ];
         let request = json!({
@@ -8108,6 +8995,13 @@ mod tests {
             resource_json[0]["text"]
                 .as_str()
                 .is_some_and(|text| text.contains("# MCP semantics"))
+        );
+        // The section an agent writing a diagram reads reaches it over the
+        // wire, not only from the checked-out file.
+        assert!(
+            resource_json[0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("## Diagrams"))
         );
 
         let documentation = client

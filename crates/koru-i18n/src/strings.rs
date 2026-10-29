@@ -456,6 +456,9 @@ pub enum Key {
     VoiceErrorOutdated,
     VoiceErrorSurface,
     VoiceErrorGeneric,
+    // Settings' Voice section on a platform where this build offers no
+    // dictation yet (`koru_voice::availability::Off::Platform`).
+    VoiceNotOnLinuxYet,
 
     // ------------------------------------------------ voice: consent
     // The consent step, the download's persistent progress toast, and the
@@ -1975,6 +1978,44 @@ pub enum Key {
     /// storage. The failures reuse `ReminderError*`, which already say exactly
     /// the right thing.
     A11yReminderNewsSaved,
+    // ------------------------------------------------------- a11y: diagrams
+    // What a screen reader hears on a `mermaid` block: a drawing has no text
+    // to read, so the block is one control named with its narration. The
+    // counts are One/Many pairs the caller chooses and fills with digits; the
+    // phrases take the filled fragments; the narration is the sentences
+    // joined. **A composition**, which is a known limit: it is right where a
+    // count fragment agrees on its own, and a language whose agreement
+    // reaches past the fragment (a dual, a case the phrase would govern) is
+    // approximated rather than modelled.
+    A11yDiagramBoxesOne,
+    A11yDiagramBoxesMany,
+    A11yDiagramArrowsOne,
+    A11yDiagramArrowsMany,
+    A11yDiagramParticipantsOne,
+    A11yDiagramParticipantsMany,
+    A11yDiagramMessagesOne,
+    A11yDiagramMessagesMany,
+    /// *Diagram, flowchart, {boxes}, {arrows}* — the two filled fragments.
+    A11yDiagramFlowchart,
+    /// *Diagram, sequence, {participants}: {names}; {messages}* — the names
+    /// are the participants' labels joined with a comma, in order.
+    A11yDiagramSequence,
+    /// One arrow as prose: *{from}, arrow "{label}", to {to}*.
+    A11yDiagramArrow,
+    /// An arrow with no label: *{from}, arrow to {to}*.
+    A11yDiagramArrowUnlabelled,
+    /// One message as prose: *{from}, message "{text}", to {to}*.
+    A11yDiagramMessage,
+    /// *Diagram, not drawn: {reason}* — the reason line the block shows.
+    A11yDiagramNotDrawn,
+    /// The placeholder, while the first layout of a text is in flight.
+    A11yDiagramPending,
+    /// *Diagram, pie, {slices}* — the summary of a pie chart.
+    A11yDiagramPie,
+    A11yDiagramSlicesOne,
+    A11yDiagramSlicesMany,
+    /// One slice as prose: *{label}, {value} ({percent}%)*.
+    A11yDiagramSlice,
     TrashDeleteFailedTitle,
     TrashDeleteFailedBody,
     TrashDeletePartial,
@@ -2448,13 +2489,58 @@ pub enum Key {
     /// the confirmation's sentence (the CTO's note).
     ChatsDeleteMany,
     ChatsDeleteManyBody,
+
+    // ------------------------------------------ the document's context menu
+    // The two rows a code block's menu shares with every other block. The
+    // menu's other rows (*Cut*, *Paste*, …) are still English literals and
+    // come here as they are touched.
+    MenuCopy,
+    /// *Delete* — the row menu's delete, beside Cut, Copy and Paste: the
+    /// block or the selection, what `Ctrl+D` does.
+    MenuDelete,
+    MenuSaveAs,
+    /// *Copy image* — a picture of a drawn diagram to the clipboard, beside
+    /// the ordinary *Copy*, which takes the block's text.
+    MenuCopyImage,
+
+    // ------------------------------------------------------------ diagrams
+    // A `mermaid` code block drawn in place. The control that opens its text,
+    // the one that opens the drawing in its own view, the chip's display name
+    // for that one token, the label over a retained drawing while the text is
+    // being edited, the four reasons a block is not drawn (Koru's words, never
+    // the engine's), and the hint in an empty block.
+    DiagramEditText,
+    DiagramOpen,
+    DiagramChipMermaid,
+    DiagramLastGood,
+    DiagramLineUnreadable,
+    DiagramKindNotDrawn,
+    DiagramTooLargeBoxesOne,
+    DiagramTooLargeBoxesMany,
+    DiagramTooLargeMessagesOne,
+    DiagramTooLargeMessagesMany,
+    DiagramTooLargeSlicesOne,
+    DiagramTooLargeSlicesMany,
+    /// *Too large to draw* with no count: shown when the engine refused the
+    /// text before anything could be counted — a source over its size budget —
+    /// so there is no number of boxes or messages to name.
+    DiagramTooLargeUncounted,
+    DiagramEmptyHint,
+    /// The slash menu's and the margin `+`'s row that starts a diagram.
+    DiagramCommand,
+    /// The three boxes of the example a new diagram starts with. Labels only:
+    /// the Mermaid around them is written in code, so no translation can
+    /// break the syntax. Kept free of `[`, `]` and quotes for that reason.
+    DiagramExampleStart,
+    DiagramExampleNext,
+    DiagramExampleDone,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1679] = [
+    pub const ALL: [Key; 1721] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2791,6 +2877,7 @@ impl Key {
         Key::VoiceErrorOutdated,
         Key::VoiceErrorSurface,
         Key::VoiceErrorGeneric,
+        Key::VoiceNotOnLinuxYet,
         Key::VoiceConsentTitle,
         Key::VoiceConsentBody,
         Key::VoiceConsentAccept,
@@ -3758,6 +3845,25 @@ impl Key {
         Key::A11yReminderOnThisItem,
         Key::A11yReminderUnconfirmed,
         Key::A11yReminderNewsSaved,
+        Key::A11yDiagramBoxesOne,
+        Key::A11yDiagramBoxesMany,
+        Key::A11yDiagramArrowsOne,
+        Key::A11yDiagramArrowsMany,
+        Key::A11yDiagramParticipantsOne,
+        Key::A11yDiagramParticipantsMany,
+        Key::A11yDiagramMessagesOne,
+        Key::A11yDiagramMessagesMany,
+        Key::A11yDiagramFlowchart,
+        Key::A11yDiagramSequence,
+        Key::A11yDiagramArrow,
+        Key::A11yDiagramArrowUnlabelled,
+        Key::A11yDiagramMessage,
+        Key::A11yDiagramNotDrawn,
+        Key::A11yDiagramPending,
+        Key::A11yDiagramPie,
+        Key::A11yDiagramSlicesOne,
+        Key::A11yDiagramSlicesMany,
+        Key::A11yDiagramSlice,
         Key::TrashDeleteFailedTitle,
         Key::TrashDeleteFailedBody,
         Key::TrashDeletePartial,
@@ -4134,6 +4240,28 @@ impl Key {
         Key::Download,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
+        Key::MenuCopy,
+        Key::MenuDelete,
+        Key::MenuSaveAs,
+        Key::MenuCopyImage,
+        Key::DiagramEditText,
+        Key::DiagramOpen,
+        Key::DiagramChipMermaid,
+        Key::DiagramLastGood,
+        Key::DiagramLineUnreadable,
+        Key::DiagramKindNotDrawn,
+        Key::DiagramTooLargeBoxesOne,
+        Key::DiagramTooLargeBoxesMany,
+        Key::DiagramTooLargeMessagesOne,
+        Key::DiagramTooLargeMessagesMany,
+        Key::DiagramTooLargeSlicesOne,
+        Key::DiagramTooLargeSlicesMany,
+        Key::DiagramTooLargeUncounted,
+        Key::DiagramEmptyHint,
+        Key::DiagramCommand,
+        Key::DiagramExampleStart,
+        Key::DiagramExampleNext,
+        Key::DiagramExampleDone,
     ];
 }
 
@@ -6613,6 +6741,17 @@ pub const ROWS: &[Row] = &[
         ar: "توقّف الإملاء.",
         zh_hans: "听写已停止。",
         ja: "音声入力が停止しました。",
+    },
+    Row {
+        key: Key::VoiceNotOnLinuxYet,
+        en: "Dictation isn't available on Linux yet.",
+        es: "El dictado aún no está disponible en Linux.",
+        pt_br: "O ditado ainda não está disponível no Linux.",
+        de: "Diktieren ist unter Linux noch nicht verfügbar.",
+        fr: "La dictée n’est pas encore disponible sur Linux.",
+        ar: "الإملاء غير متاح على لينكس بعد.",
+        zh_hans: "Linux 上暂不支持听写。",
+        ja: "Linux では音声入力はまだ利用できません。",
     },
     // ---------------------------------------------------- voice: consent
     Row {
@@ -12165,6 +12304,28 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::A11yReminderOnThisItem, en: "Reminders on this item", es: "Recordatorios de este elemento", pt_br: "Lembretes deste item", de: "Erinnerungen zu diesem Eintrag", fr: "Rappels sur cet élément", ar: "التذكيرات على هذا العنصر", zh_hans: "此条目的提醒", ja: "この項目のリマインダー" },
     Row { key: Key::A11yReminderUnconfirmed, en: "Not confirmed by storage yet", es: "Aún no confirmado por el almacenamiento", pt_br: "Ainda não confirmado pelo armazenamento", de: "Vom Speicher noch nicht bestätigt", fr: "Pas encore confirmé par le stockage", ar: "لم يؤكِّده التخزين بعد", zh_hans: "存储尚未确认", ja: "ストレージがまだ確認していません" },
     Row { key: Key::A11yReminderNewsSaved, en: "Reminder saved.", es: "Recordatorio guardado.", pt_br: "Lembrete salvo.", de: "Erinnerung gespeichert.", fr: "Rappel enregistré.", ar: "تم حفظ التذكير.", zh_hans: "提醒已保存。", ja: "リマインダーを保存しました。" },
+    // The count fragments a diagram's narration is built from, filled with
+    // digits, and the phrases that take them. See the `Key` block's note on
+    // what composing them can and cannot get right.
+    Row { key: Key::A11yDiagramBoxesOne, en: "{} box", es: "{} caja", pt_br: "{} caixa", de: "{} Kasten", fr: "{} boîte", ar: "{} مربع", zh_hans: "{} 个框", ja: "{} 個のボックス" },
+    Row { key: Key::A11yDiagramBoxesMany, en: "{} boxes", es: "{} cajas", pt_br: "{} caixas", de: "{} Kästen", fr: "{} boîtes", ar: "{} مربعًا", zh_hans: "{} 个框", ja: "{} 個のボックス" },
+    Row { key: Key::A11yDiagramArrowsOne, en: "{} arrow", es: "{} flecha", pt_br: "{} seta", de: "{} Pfeil", fr: "{} flèche", ar: "{} سهم", zh_hans: "{} 个箭头", ja: "{} 本の矢印" },
+    Row { key: Key::A11yDiagramArrowsMany, en: "{} arrows", es: "{} flechas", pt_br: "{} setas", de: "{} Pfeile", fr: "{} flèches", ar: "{} سهمًا", zh_hans: "{} 个箭头", ja: "{} 本の矢印" },
+    Row { key: Key::A11yDiagramParticipantsOne, en: "{} participant", es: "{} participante", pt_br: "{} participante", de: "{} Teilnehmer", fr: "{} participant", ar: "{} مشارك", zh_hans: "{} 个参与者", ja: "{} 個の参加者" },
+    Row { key: Key::A11yDiagramParticipantsMany, en: "{} participants", es: "{} participantes", pt_br: "{} participantes", de: "{} Teilnehmer", fr: "{} participants", ar: "{} مشاركًا", zh_hans: "{} 个参与者", ja: "{} 個の参加者" },
+    Row { key: Key::A11yDiagramMessagesOne, en: "{} message", es: "{} mensaje", pt_br: "{} mensagem", de: "{} Nachricht", fr: "{} message", ar: "{} رسالة", zh_hans: "{} 条消息", ja: "{} 件のメッセージ" },
+    Row { key: Key::A11yDiagramMessagesMany, en: "{} messages", es: "{} mensajes", pt_br: "{} mensagens", de: "{} Nachrichten", fr: "{} messages", ar: "{} رسالة", zh_hans: "{} 条消息", ja: "{} 件のメッセージ" },
+    Row { key: Key::A11yDiagramFlowchart, en: "Diagram, flowchart, {}, {}", es: "Diagrama, diagrama de flujo, {}, {}", pt_br: "Diagrama, fluxograma, {}, {}", de: "Diagramm, Flussdiagramm, {}, {}", fr: "Diagramme, organigramme, {}, {}", ar: "مخطط، مخطط انسيابي، {}، {}", zh_hans: "图表，流程图，{}，{}", ja: "図、フローチャート、{}、{}" },
+    Row { key: Key::A11yDiagramSequence, en: "Diagram, sequence, {}: {}; {}", es: "Diagrama, secuencia, {}: {}; {}", pt_br: "Diagrama, sequência, {}: {}; {}", de: "Diagramm, Sequenz, {}: {}; {}", fr: "Diagramme, séquence, {} : {} ; {}", ar: "مخطط، تسلسل، {}: {}؛ {}", zh_hans: "图表，时序图，{}：{}；{}", ja: "図、シーケンス、{}: {}; {}" },
+    Row { key: Key::A11yDiagramArrow, en: "{}, arrow \"{}\", to {}", es: "{}, flecha «{}», hacia {}", pt_br: "{}, seta “{}”, para {}", de: "{}, Pfeil „{}“, nach {}", fr: "{}, flèche « {} », vers {}", ar: "{}، سهم \"{}\"، إلى {}", zh_hans: "{}，箭头“{}”，到 {}", ja: "{}、矢印「{}」、{} へ" },
+    Row { key: Key::A11yDiagramArrowUnlabelled, en: "{}, arrow to {}", es: "{}, flecha hacia {}", pt_br: "{}, seta para {}", de: "{}, Pfeil nach {}", fr: "{}, flèche vers {}", ar: "{}، سهم إلى {}", zh_hans: "{}，箭头到 {}", ja: "{}、{} への矢印" },
+    Row { key: Key::A11yDiagramMessage, en: "{}, message \"{}\", to {}", es: "{}, mensaje «{}», a {}", pt_br: "{}, mensagem “{}”, para {}", de: "{}, Nachricht „{}“, an {}", fr: "{}, message « {} », à {}", ar: "{}، رسالة \"{}\"، إلى {}", zh_hans: "{}，消息“{}”，发给 {}", ja: "{}、メッセージ「{}」、{} へ" },
+    Row { key: Key::A11yDiagramNotDrawn, en: "Diagram, not drawn: {}", es: "Diagrama, no dibujado: {}", pt_br: "Diagrama, não desenhado: {}", de: "Diagramm, nicht gezeichnet: {}", fr: "Diagramme, non dessiné : {}", ar: "مخطط، غير مرسوم: {}", zh_hans: "图表，未绘制：{}", ja: "図、未描画: {}" },
+    Row { key: Key::A11yDiagramPending, en: "Diagram, drawing", es: "Diagrama, dibujando", pt_br: "Diagrama, desenhando", de: "Diagramm, wird gezeichnet", fr: "Diagramme, en cours de dessin", ar: "مخطط، قيد الرسم", zh_hans: "图表，正在绘制", ja: "図、描画中" },
+    Row { key: Key::A11yDiagramPie, en: "Diagram, pie, {}", es: "Diagrama, circular, {}", pt_br: "Diagrama, pizza, {}", de: "Diagramm, Kreis, {}", fr: "Diagramme, circulaire, {}", ar: "مخطط، دائري، {}", zh_hans: "图表，饼图，{}", ja: "図、円グラフ、{}" },
+    Row { key: Key::A11yDiagramSlicesOne, en: "{} slice", es: "{} porción", pt_br: "{} fatia", de: "{} Segment", fr: "{} part", ar: "{} شريحة", zh_hans: "{} 个扇区", ja: "{} 個の扇形" },
+    Row { key: Key::A11yDiagramSlicesMany, en: "{} slices", es: "{} porciones", pt_br: "{} fatias", de: "{} Segmente", fr: "{} parts", ar: "{} شرائح", zh_hans: "{} 个扇区", ja: "{} 個の扇形" },
+    Row { key: Key::A11yDiagramSlice, en: "{}, {} ({}%)", es: "{}, {} ({}%)", pt_br: "{}, {} ({}%)", de: "{}, {} ({}%)", fr: "{}, {} ({}%)", ar: "{}، {} ({}%)", zh_hans: "{}，{}（{}%）", ja: "{}、{}（{}%）" },
     Row {
         key: Key::TrashDeleteFailedTitle,
         en: "Could not delete all selected items",
@@ -12591,4 +12752,32 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         zh_hans: "{} 个聊天及其消息将被删除。如果有本地智能体在其中任一聊天中回答，Koru 会先停止该智能体。",
         ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
     },
+    // ------------------------------------------ the document's context menu
+    Row { key: Key::MenuCopy, en: "Copy", es: "Copiar", pt_br: "Copiar", de: "Kopieren", fr: "Copier", ar: "نسخ", zh_hans: "复制", ja: "コピー" },
+    Row { key: Key::MenuDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },
+    Row { key: Key::MenuSaveAs, en: "Save as…", es: "Guardar como…", pt_br: "Salvar como…", de: "Speichern unter…", fr: "Enregistrer sous…", ar: "حفظ باسم…", zh_hans: "另存为…", ja: "名前を付けて保存…" },
+    Row { key: Key::MenuCopyImage, en: "Copy image", es: "Copiar imagen", pt_br: "Copiar imagem", de: "Bild kopieren", fr: "Copier l’image", ar: "نسخ الصورة", zh_hans: "复制图片", ja: "画像をコピー" },
+    // ------------------------------------------------------------ diagrams
+    Row { key: Key::DiagramEditText, en: "Edit text", es: "Editar texto", pt_br: "Editar texto", de: "Text bearbeiten", fr: "Modifier le texte", ar: "تحرير النص", zh_hans: "编辑文本", ja: "テキストを編集" },
+    Row { key: Key::DiagramOpen, en: "Open", es: "Abrir", pt_br: "Abrir", de: "Öffnen", fr: "Ouvrir", ar: "فتح", zh_hans: "打开", ja: "開く" },
+    // The notation's own name, kept as it is written everywhere.
+    Row { key: Key::DiagramChipMermaid, en: "Mermaid", es: "Mermaid", pt_br: "Mermaid", de: "Mermaid", fr: "Mermaid", ar: "Mermaid", zh_hans: "Mermaid", ja: "Mermaid" },
+    Row { key: Key::DiagramLastGood, en: "Showing the last drawing that worked", es: "Se muestra el último dibujo que funcionó", pt_br: "Mostrando o último desenho que funcionou", de: "Zeigt die letzte Zeichnung, die funktioniert hat", fr: "Affichage du dernier dessin qui a fonctionné", ar: "يعرض آخر رسم نجح", zh_hans: "显示上一次成功的绘图", ja: "最後に描けた図を表示しています" },
+    Row { key: Key::DiagramLineUnreadable, en: "Line {}: this line could not be read", es: "Línea {}: no se pudo leer esta línea", pt_br: "Linha {}: não foi possível ler esta linha", de: "Zeile {}: Diese Zeile konnte nicht gelesen werden", fr: "Ligne {} : cette ligne n’a pas pu être lue", ar: "السطر {}: تعذّرت قراءة هذا السطر", zh_hans: "第 {} 行：无法读取此行", ja: "{} 行目: この行を読み取れませんでした" },
+    Row { key: Key::DiagramKindNotDrawn, en: "Koru does not draw this kind of diagram yet", es: "Koru aún no dibuja este tipo de diagrama", pt_br: "O Koru ainda não desenha este tipo de diagrama", de: "Koru zeichnet diese Art von Diagramm noch nicht", fr: "Koru ne dessine pas encore ce type de diagramme", ar: "لا يرسم Koru هذا النوع من المخططات بعد", zh_hans: "Koru 尚不绘制这种图表", ja: "Koru はこの種類の図をまだ描けません" },
+    Row { key: Key::DiagramTooLargeBoxesOne, en: "Too large to draw: {} box", es: "Demasiado grande para dibujar: {} caja", pt_br: "Grande demais para desenhar: {} caixa", de: "Zu groß zum Zeichnen: {} Kasten", fr: "Trop grand pour être dessiné : {} boîte", ar: "أكبر من أن يُرسم: {} مربع", zh_hans: "太大，无法绘制：{} 个框", ja: "大きすぎて描けません: {} 個のボックス" },
+    Row { key: Key::DiagramTooLargeBoxesMany, en: "Too large to draw: {} boxes", es: "Demasiado grande para dibujar: {} cajas", pt_br: "Grande demais para desenhar: {} caixas", de: "Zu groß zum Zeichnen: {} Kästen", fr: "Trop grand pour être dessiné : {} boîtes", ar: "أكبر من أن يُرسم: {} مربعًا", zh_hans: "太大，无法绘制：{} 个框", ja: "大きすぎて描けません: {} 個のボックス" },
+    Row { key: Key::DiagramTooLargeMessagesOne, en: "Too large to draw: {} message", es: "Demasiado grande para dibujar: {} mensaje", pt_br: "Grande demais para desenhar: {} mensagem", de: "Zu groß zum Zeichnen: {} Nachricht", fr: "Trop grand pour être dessiné : {} message", ar: "أكبر من أن يُرسم: {} رسالة", zh_hans: "太大，无法绘制：{} 条消息", ja: "大きすぎて描けません: {} 件のメッセージ" },
+    Row { key: Key::DiagramTooLargeMessagesMany, en: "Too large to draw: {} messages", es: "Demasiado grande para dibujar: {} mensajes", pt_br: "Grande demais para desenhar: {} mensagens", de: "Zu groß zum Zeichnen: {} Nachrichten", fr: "Trop grand pour être dessiné : {} messages", ar: "أكبر من أن يُرسم: {} رسالة", zh_hans: "太大，无法绘制：{} 条消息", ja: "大きすぎて描けません: {} 件のメッセージ" },
+    Row { key: Key::DiagramTooLargeSlicesOne, en: "Too large to draw: {} slice", es: "Demasiado grande para dibujar: {} porción", pt_br: "Grande demais para desenhar: {} fatia", de: "Zu groß zum Zeichnen: {} Segment", fr: "Trop grand pour être dessiné : {} part", ar: "أكبر من أن يُرسم: {} شريحة", zh_hans: "太大，无法绘制：{} 个扇区", ja: "大きすぎて描けません: {} 個の扇形" },
+    Row { key: Key::DiagramTooLargeSlicesMany, en: "Too large to draw: {} slices", es: "Demasiado grande para dibujar: {} porciones", pt_br: "Grande demais para desenhar: {} fatias", de: "Zu groß zum Zeichnen: {} Segmente", fr: "Trop grand pour être dessiné : {} parts", ar: "أكبر من أن يُرسم: {} شريحة", zh_hans: "太大，无法绘制：{} 个扇区", ja: "大きすぎて描けません: {} 個の扇形" },
+    // Shown when the engine refused the text before it could count anything
+    // (a source over its size budget), so there is no number to name.
+    Row { key: Key::DiagramTooLargeUncounted, en: "Too large to draw", es: "Demasiado grande para dibujar", pt_br: "Grande demais para desenhar", de: "Zu groß zum Zeichnen", fr: "Trop grand pour être dessiné", ar: "أكبر من أن يُرسم", zh_hans: "太大，无法绘制", ja: "大きすぎて描けません" },
+    Row { key: Key::DiagramEmptyHint, en: "Describe a flowchart or a sequence diagram here", es: "Describe aquí un diagrama de flujo o un diagrama de secuencia", pt_br: "Descreva aqui um fluxograma ou um diagrama de sequência", de: "Beschreiben Sie hier ein Flussdiagramm oder ein Sequenzdiagramm", fr: "Décrivez ici un organigramme ou un diagramme de séquence", ar: "صِف هنا مخططًا انسيابيًا أو مخططًا تسلسليًا", zh_hans: "在此描述流程图或时序图", ja: "ここにフローチャートまたはシーケンス図を記述してください" },
+    Row { key: Key::DiagramCommand, en: "Diagram", es: "Diagrama", pt_br: "Diagrama", de: "Diagramm", fr: "Diagramme", ar: "مخطط", zh_hans: "图表", ja: "図" },
+    // The example a new diagram opens on: three boxes, left to right.
+    Row { key: Key::DiagramExampleStart, en: "Start", es: "Inicio", pt_br: "Início", de: "Start", fr: "Début", ar: "البداية", zh_hans: "开始", ja: "開始" },
+    Row { key: Key::DiagramExampleNext, en: "Next step", es: "Siguiente paso", pt_br: "Próximo passo", de: "Nächster Schritt", fr: "Étape suivante", ar: "الخطوة التالية", zh_hans: "下一步", ja: "次のステップ" },
+    Row { key: Key::DiagramExampleDone, en: "Done", es: "Hecho", pt_br: "Concluído", de: "Fertig", fr: "Terminé", ar: "تم", zh_hans: "完成", ja: "完了" },
 ];

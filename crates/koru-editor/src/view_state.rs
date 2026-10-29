@@ -265,6 +265,9 @@ pub enum Hover {
     /// yet.
     Plus(usize),
     Checkbox(usize),
+    /// The icon beside the first row of a callout box. Pressing it opens the
+    /// look picker for the box.
+    CalloutIcon(usize),
     Pill {
         row: usize,
         attr: AttrId,
@@ -285,6 +288,10 @@ pub enum Hover {
     Lang(usize),
     /// The copy icon left of the language chip.
     Copy(usize),
+    /// The *Done* check left of the copy icon, on a diagram block whose text
+    /// is open: it closes the text, as Escape does, and the drawing is a
+    /// picture again.
+    DiagramDone(usize),
     /// An attribute chip trailing a row's text. `chip` indexes `row.chips`,
     /// which is what decides *which* picker a click opens; the row is carried
     /// so the row still lights the way it does under a pill.
@@ -306,6 +313,12 @@ pub enum Hover {
     TableLayout(usize),
     /// A table's source/grid mode toggle.
     TableMode(usize),
+    /// One of a drawn diagram's controls at the block's top-right: *Open*,
+    /// *Copy image*, *Save as…* or *Edit text*.
+    DiagramControl {
+        row: usize,
+        control: crate::diagram::Control,
+    },
     /// A row of an open overlay panel.
     PanelRow(usize),
     /// A text field inside an open panel.
@@ -338,14 +351,17 @@ impl Hover {
             Self::Grip(i)
             | Self::Plus(i)
             | Self::Checkbox(i)
+            | Self::CalloutIcon(i)
             | Self::Text(i)
             | Self::Emoji(i)
             | Self::Image(i)
             | Self::Lang(i)
             | Self::Copy(i)
+            | Self::DiagramDone(i)
             | Self::TaskWarning(i)
             | Self::TableLayout(i)
             | Self::TableMode(i)
+            | Self::DiagramControl { row: i, .. }
             | Self::Pill { row: i, .. }
             | Self::Chip { row: i, .. }
             | Self::Reminder { row: i, .. } => Some(i),
@@ -389,16 +405,29 @@ impl Hover {
             | Self::Reminder { .. }
             | Self::Lang(_)
             | Self::Copy(_)
+            | Self::DiagramDone(_)
             | Self::TableLayout(_)
             | Self::TableMode(_)
+            | Self::DiagramControl { .. }
             | Self::Plus(_)
             | Self::TitleMenu
             | Self::PanelRow(_)
             | Self::PanelControl
             | Self::ScrollTrack
-            | Self::Checkbox(_) => cursor::PRESS,
+            | Self::Checkbox(_)
+            | Self::CalloutIcon(_) => cursor::PRESS,
         }
     }
+}
+
+/// *Save as…* asked on a drawn diagram: which block to save a picture of.
+///
+/// The view raises it and the shell performs it — the dialog, the raster
+/// and the write are the shell's — so it carries only the node. The drawing
+/// itself is in the view's [`ViewState::diagrams`] entry for that node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SaveDiagramAs {
+    pub node: NodeId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1009,8 +1038,41 @@ pub struct ViewState {
     /// floating controls. The controls consume its opacity but draw no tooltip
     /// surface; this keeps the 400/100/75 ms contract in one implementation.
     pub table_controls: koru_ui::Tooltip,
-    /// Table whose controls are waiting, visible, or fading out.
+    /// Table — or diagram — whose controls are waiting, visible, or fading
+    /// out. A diagram's one control (*Edit text*) rides the same clock, so a
+    /// table and a drawing side by side cannot both be showing furniture.
     pub table_controls_node: Option<NodeId>,
+    /// What this view knows about each `mermaid` code block: whether its text
+    /// draws, the drawing, and the last drawing that worked. Keyed by node and
+    /// kept **here, not on the row**, because `Paragraph::adopt` clears a row's
+    /// caches on every keystroke and the last good drawing has to outlive the
+    /// keystroke that broke the text. Entries retire when their node leaves
+    /// the body (`crate::diagram::sync`). Never synced: a drawing is derived.
+    pub diagrams: HashMap<NodeId, crate::diagram::DiagramEntry>,
+    /// The diagram whose text is open for editing in this view, if any. A
+    /// reading position, like scroll — per view, never synced, and closed the
+    /// moment the focus leaves the row.
+    pub diagram_text_open: Option<NodeId>,
+    /// Layouts the editor is asking the host for, in the order it asked.
+    /// Drained by `Editing::take_diagram_requests`; the host answers each
+    /// through `Editing::diagram_result`. The editor never lays a diagram out
+    /// itself and never waits for one.
+    pub diagram_requests: Vec<crate::diagram::DiagramRequest>,
+    /// *Save as…* on a drawn diagram: the shell owns the save dialog, the
+    /// raster and the file, so the view only asks. Drained by the document
+    /// app the way `wants_file_action` is.
+    pub wants_save_diagram_as: Option<SaveDiagramAs>,
+    /// *Open* asked on a drawn diagram — its magnifier control, a double
+    /// click on the drawing, or the menu row: which block to show in the
+    /// document's viewer. The editor owns no modal, so it only asks; the
+    /// document app drains it after the press that set it and opens the
+    /// viewer over the page with the drawing from `diagrams`.
+    pub wants_open_diagram: Option<NodeId>,
+    /// *Copy image* asked on a drawn diagram from its own control: which
+    /// block's drawing to put on the clipboard. The picture is the shell's
+    /// to rasterise, so the editor only asks, the way it asks for *Open*;
+    /// the document app drains it after the press and hands the drawing on.
+    pub wants_copy_diagram: Option<NodeId>,
     /// Copy icon on a hovered code block — one clock, not per row.
     pub copy: koru_ui::CopyAffordance,
     /// The unfinished-items triangle's tooltip. One clock for the whole view:
@@ -1129,6 +1191,12 @@ impl Default for ViewState {
             table_cell: None,
             table_controls: koru_ui::Tooltip::default(),
             table_controls_node: None,
+            diagrams: HashMap::new(),
+            diagram_text_open: None,
+            diagram_requests: Vec::new(),
+            wants_save_diagram_as: None,
+            wants_open_diagram: None,
+            wants_copy_diagram: None,
             task_warning: koru_ui::Tooltip::default(),
             copy: koru_ui::CopyAffordance::default(),
             tables_enabled: false,
@@ -1552,6 +1620,7 @@ mod tests {
             },
             Hover::Chip { row: 0, chip: 0 },
             Hover::Checkbox(0),
+            Hover::CalloutIcon(0),
             Hover::TableLayout(0),
             Hover::TableMode(0),
             Hover::PanelRow(0),
@@ -1561,6 +1630,7 @@ mod tests {
             Hover::TitleMenu,
             Hover::Copy(0),
             Hover::Lang(0),
+            Hover::DiagramDone(0),
         ] {
             assert_eq!(hover.cursor_icon(), cursor::PRESS, "{hover:?}");
             assert_ne!(hover.cursor_icon(), CursorIcon::Pointer, "{hover:?}");

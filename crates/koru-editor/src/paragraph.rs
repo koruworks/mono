@@ -32,6 +32,9 @@ use koru_draw::theme::{self, Brush, FontChoice};
 /// row geometry so layout, hit-testing, selection and caret inherit one inset.
 pub const QUOTE_INSET_X: f32 = 34.0;
 pub const QUOTE_BAR_W: f32 = 4.0;
+/// Horizontal room reserved for a callout's icon and the air around it, on
+/// row geometry for the same reason as [`QUOTE_INSET_X`].
+pub const CALLOUT_INSET_X: f32 = 40.0;
 
 /// The image a row renders in place of text: enough to address its bytes and
 /// size it. The decoded pixels are fetched from the shell's `ImageCache` at draw
@@ -118,6 +121,11 @@ pub struct Paragraph {
     /// its derived grid. Local projection state, refreshed from `ViewState`
     /// before reflow so the row reserves height for the thing actually drawn.
     pub table_source_visible: bool,
+    /// What this frame shows for a `mermaid` code block: the drawing, the
+    /// placeholder, or the text with its reason. `None` on every other row.
+    /// Mirrored from `ViewState::diagrams` by `crate::diagram::sync` before
+    /// reflow, the way `table_source_visible` is; `adopt` leaves it alone.
+    pub diagram: Option<crate::diagram::DiagramRowState>,
     /// The width of the language chip for *this* row's label, measured in
     /// `build_row` so the hit-test rect and the drawn rect agree — the chip
     /// wraps its text with padding rather than a fixed width.
@@ -136,6 +144,11 @@ pub struct Paragraph {
     pub chips: Vec<crate::chips::ChipSpec>,
     pub icon: Option<String>,
     pub level_name: Option<String>,
+    /// The callout box this row is in, or `None` outside every box. Derived
+    /// from the tree by `Body::rebuild`, never stored: a callout's children
+    /// *are* its box, and the innermost box wins when callouts nest. The box
+    /// itself is no row; its look and extent are `Body::callout_box`'s.
+    pub callout: Option<NodeId>,
 
     /// The image this row renders instead of text. `None` for every text row;
     /// the one content shape a `Paragraph` may carry besides text.
@@ -284,6 +297,7 @@ impl Paragraph {
             table_layout: node.meta.table_layout.unwrap_or_default(),
             table: None,
             table_source_visible: false,
+            diagram: None,
             lang_chip_w: 0.0,
             text: node.content.as_text().unwrap_or_default().to_string(),
             runs,
@@ -291,6 +305,7 @@ impl Paragraph {
             chips: crate::chips::attribute_chips(node),
             icon: node.meta.icon.clone(),
             level_name: node.meta.level_name.clone(),
+            callout: None,
             image: image_of(&node.content, &node.meta),
             layout: Layout::new(),
             selection: Selection::default(),
@@ -317,16 +332,33 @@ impl Paragraph {
         self.kind.is_task_like() || self.list_style == Some(ListStyle::Checkbox)
     }
 
+    /// This row is a diagram showing its picture — the drawing, or the
+    /// placeholder waiting for one — rather than its text. Selected like an
+    /// image, opened with Enter, no caret, no chips.
+    pub fn diagram_shows_picture(&self) -> bool {
+        self.diagram
+            .as_ref()
+            .is_some_and(crate::diagram::DiagramRowState::shows_picture)
+    }
+
     /// Where this row's text column begins, in logical pixels.
     ///
     /// Every layout, hit-test and caret goes through here rather than calling
     /// `geometry::text_x` with a depth: the column now depends on the checkbox
     /// too, and a call site that remembered one and forgot the other would draw
     /// the glyphs somewhere the clicks do not land.
+    ///
+    /// Every row of a callout box takes the box's inset, so the text inside
+    /// a box is one column and the icon has its room beside the first row.
     pub fn text_x(&self) -> f32 {
         text_x(self.depth, self.is_task() || self.list_style.is_some())
             + if self.kind == Kind::Quote {
                 QUOTE_INSET_X
+            } else {
+                0.0
+            }
+            + if self.callout.is_some() {
+                CALLOUT_INSET_X
             } else {
                 0.0
             }
@@ -367,9 +399,19 @@ impl Paragraph {
     /// `meta.heading`, which it does not have and must not gain: a title is
     /// already the document's name, and writing a heading onto it would be a
     /// presentation choice broadcast to every peer.
+    ///
+    /// A code block has no level, whatever heading the node carried before
+    /// it became code: a heading turned into a ``` fence or a diagram would
+    /// otherwise keep the heading's size and leading, and read as a code
+    /// block set larger than every other. The heading stays on the node for
+    /// the day the block is turned back; it just does not draw while the
+    /// block is code.
     fn level(&self) -> Option<u8> {
         if self.is_title {
             return Some(theme::TITLE_LEVEL);
+        }
+        if self.kind == Kind::Code {
+            return None;
         }
         self.heading.map(Heading::level)
     }

@@ -95,6 +95,9 @@ pub enum Anchor {
     RenameImage(NodeId),
     /// A page node's metadata icon, selected by the Unicode picker.
     PageIcon(NodeId),
+    /// A callout box whose icon was pressed. Committing sets the box's
+    /// icon; the look lives on the container and nowhere else.
+    CalloutIcon(NodeId),
     /// An attribute chip that was clicked. Nothing in the document stands in
     /// for the picker — the chip is presentation of node state, not text — so
     /// committing replaces nothing, exactly like [`Insert`](Self::Insert).
@@ -476,7 +479,7 @@ pub fn for_command(engine: &mut TextEngine, trigger: Trigger, cmd: Command) -> O
         Command::Emoji => Overlay::Emoji(crate::components::emoji_picker::EmojiPicker::standalone(
             engine, trigger,
         )),
-        // Image, Code, Divider, the lists and a heading have no sub-picker —
+        // Image, Code, Diagram, Divider, the lists and a heading have no sub-picker —
         // all are intercepted in `Editing::choose_command` before this is
         // reached. The attribute commands are intercepted there too,
         // because their pickers open seeded with document state (the node's
@@ -485,9 +488,11 @@ pub fn for_command(engine: &mut TextEngine, trigger: Trigger, cmd: Command) -> O
         Command::Image
         | Command::Attachment
         | Command::Code
+        | Command::Diagram
         | Command::Table
         | Command::Divider
         | Command::Quote
+        | Command::Callout
         | Command::Tasks
         | Command::List(_)
         | Command::Attr

@@ -99,7 +99,7 @@ pub fn build_row(engine: &mut TextEngine, row: &mut Paragraph, viewport_w: f32) 
     // reserve a right gutter for it — the chip then sits in that gutter on the
     // top line, clear of the code.
     if row.kind == Kind::Code {
-        let label = row.language.as_deref().unwrap_or("Auto");
+        let label = crate::diagram::chip_label(row.language.as_deref());
         row.lang_chip_w = engine.simple_layout(label, theme::role::hint()).width() + 6.0;
     }
     let line_box = step.size * step.line_height;
@@ -498,6 +498,19 @@ pub(crate) fn reflow_all(
 /// a dirty text row (not yet in the shape band) uses an estimate so the scroll
 /// position and shape band stay approximately right. Cheap — no shaping here.
 fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &PillCache) {
+    // How many callout boxes begin and end at each row. A box's tinted panel
+    // is painted around its rows, so the first row needs room above it and
+    // the last room below, or the panel paints into the paragraph beside it.
+    // One pass over the boxes, so the loop below pays nothing per row.
+    let mut boxes_opening = vec![0u8; outline.rows.len()];
+    let mut boxes_closing = vec![0u8; outline.rows.len()];
+    for callout in outline.callout_boxes() {
+        if callout.rows.is_empty() {
+            continue;
+        }
+        boxes_opening[callout.rows.start] += 1;
+        boxes_closing[callout.rows.end - 1] += 1;
+    }
     // Chrome above the rows — a toolbar, a breadcrumb — pushes them all down.
     let mut y = theme::MARGIN_TOP + top_inset;
     for (i, row) in outline.rows.iter_mut().enumerate() {
@@ -526,6 +539,18 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
             } else {
                 table.grid.as_ref().map_or(0.0, |grid| grid.height)
             }
+        } else if let Some(diagram) = &row.diagram {
+            // A diagram row is a code row whose height depends on what it is
+            // showing this frame: the drawing scaled to the column, the
+            // placeholder at the text's height, or the text with its reason
+            // and, open, the drawing below. Decided from the mirrored state,
+            // never by laying anything out here.
+            let text_h = if row.dirty {
+                estimated_text_height(row, viewport_w)
+            } else {
+                row.layout.height().max(step.size * step.line_height)
+            };
+            diagram_layout(row, diagram, text_h, viewport_w).height
         } else if row.dirty {
             // Not shaped yet: an estimate, refined once the row enters the band.
             estimated_text_height(row, viewport_w)
@@ -549,8 +574,16 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         // an image need enough room not to paint over neighbouring ink; a table
         // needs a quieter four-pixel edge so adjacent grids do not fuse into
         // one. Keeping it external preserves the exact border for hit-testing.
-        let gap_above = if row.kind == Kind::Code {
-            theme::CODE_PAD
+        let block_pad = if row.kind == Kind::Code {
+            // A diagram row is a code row with a figure's air around its
+            // panel — `DIAGRAM_AIR`, the way an image has `IMAGE_PAD`. It is
+            // outside the panel: `code_panel_rect` still reaches `CODE_PAD`
+            // above `y`, so the air lands between the panel and the rows.
+            if row.diagram.is_some() {
+                theme::CODE_PAD + theme::DIAGRAM_AIR
+            } else {
+                theme::CODE_PAD
+            }
         } else if row.image.is_some() {
             theme::IMAGE_PAD
         } else if row.kind == Kind::Table {
@@ -558,6 +591,12 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         } else {
             0.0
         };
+        // A callout's panel is the same shape as a code block's, around the
+        // rows of the box rather than one row: its first row takes the pad
+        // above and its last the pad below, once per box that starts or ends
+        // there. `callout_panel_rect` keeps its own padding inside this room.
+        let gap_above = block_pad + theme::CODE_PAD * f32::from(boxes_opening[i]);
+        let gap_below = block_pad + theme::CODE_PAD * f32::from(boxes_closing[i]);
         row.y += gap_above;
         y += gap_above;
         // List styling must not change the document's vertical rhythm. A row
@@ -568,7 +607,7 @@ fn position_rows(outline: &mut Body, viewport_w: f32, top_inset: f32, pills: &Pi
         } else {
             theme::TASK_GAP
         };
-        y += row.height + gap + gap_above;
+        y += row.height + gap + gap_below;
         // The title owns the air below it — prose has no depth to separate the
         // name from the first paragraph, so the gap is the separation. It is
         // outside `height` for the same reason a heading's `space_above` is
@@ -631,19 +670,63 @@ pub const TITLE_ACTION_INSET: f32 = 8.0;
 /// Hit slot for the title's trailing action — the document-context toggle.
 pub const TITLE_ACTION_SIDE: f32 = 28.0;
 
+/// How far below the centre of its line box the first line's ink is centred.
+///
+/// The shaper sets a line's baseline near the bottom of its box — for the
+/// body face, 22 of 24 pixels, the leading all above — so the letters sit
+/// in the lower part of every line. A chip or a rule that follows the box
+/// has its text at the bottom; one that follows the ink, by this much,
+/// has it in the middle. Zero for a row with no shaped line.
+pub fn ink_shift(row: &Paragraph) -> f32 {
+    first_line_mid_y(row, 0.0) - first_line_h(row) * 0.5
+}
+
 /// The rounded chip drawn behind a block-selected row, in content-column x
-/// and the same y the row is painted at (`oy`).
+/// and the row's painted y (`oy`), lowered by [`ink_shift`] so each line's
+/// letters sit in the middle of their band rather than at its bottom.
 ///
 /// [`theme::ROW_SELECTED_PAD`] outside the text column on both sides. Inset
 /// half a pixel top and bottom so adjacent selected blocks keep a 1px gap.
 /// Drawing and the title's trailing action both ask this, so the icon cannot
-/// sit past the highlight it is meant to live inside.
+/// sit past the highlight it is meant to live inside; the drop line of a
+/// row drag takes its width from here too.
 pub fn row_selection_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
     let text_left = text_x(row.depth, row.is_task() || row.list_style.is_some());
     let text_right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W;
     let left = text_left - theme::ROW_SELECTED_PAD;
     let right = text_right + theme::ROW_SELECTED_PAD;
-    Rect::new(left, oy - 0.5, (right - left).max(0.0), row.height + 1.0)
+    Rect::new(
+        left,
+        oy + ink_shift(row) - 0.5,
+        (right - left).max(0.0),
+        row.height + 1.0,
+    )
+}
+
+/// Where a dragged row would land, as a 2px rule in content-column x and
+/// screen y: along the top edge of the target row's selection chip when the
+/// drag moves up, its bottom edge when it moves down. The chip's width, so
+/// the line is the same size as the row it stands for — it used to run from
+/// margin to margin, past the column a person can write in.
+pub fn drop_line_rect(
+    rows: &[Paragraph],
+    drag: crate::view_state::DragRow,
+    layout_w: f32,
+    scroll: f32,
+) -> Option<Rect> {
+    let dst = rows.get(drag.to)?;
+    let chip = row_selection_rect(dst, layout_w, dst.y - scroll);
+    // A code block's edges are its panel's, which reach past the chip: a
+    // line at the chip's edge sat inside the panel, cutting the block rather
+    // than landing beside it.
+    let (top, bottom) = if dst.kind == Kind::Code {
+        let panel = code_panel_rect(dst, layout_w, dst.y - scroll);
+        (panel.y, panel.y + panel.h)
+    } else {
+        (chip.y, chip.y + chip.h)
+    };
+    let y = if drag.to <= drag.from { top } else { bottom };
+    Some(Rect::new(chip.x, y - 1.0, chip.w, 2.0))
 }
 
 /// The trailing title action, inside [`row_selection_rect`], inset from its
@@ -711,6 +794,190 @@ fn image_row_height(image: &crate::paragraph::ImageRef, viewport_w: f32) -> f32 
         .max(theme::FONT_SIZE * theme::LINE_HEIGHT)
 }
 
+/// Air between a diagram's text (or its reason line) and the drawing under it.
+pub const DIAGRAM_GAP: f32 = 8.0;
+/// Air above a drawing shown in place of its text, inside the panel and on
+/// top of `CODE_PAD`: the controls' bar sits in the panel's top corner, and
+/// the drawing's top edge ran straight under it. The bottom keeps `CODE_PAD`.
+pub const DIAGRAM_TOP_INSET: f32 = 8.0;
+/// Air between a diagram's text and the reason line under it — the table's
+/// error line keeps the same four pixels.
+pub const DIAGRAM_LINE_GAP: f32 = 4.0;
+/// How far the controls' bar sits in from the code panel's corner.
+const DIAGRAM_BAR_INSET: f32 = 4.0;
+/// The bar's padding around the controls on it.
+pub const DIAGRAM_BAR_PAD: f32 = 3.0;
+/// Air between a drawn diagram's controls.
+const DIAGRAM_CONTROL_GAP: f32 = 2.0;
+
+/// Where a diagram's drawing goes, in content-column x and **offsets from the
+/// row's own y** — the caller adds `row.y` for hit-testing or the screen y
+/// for painting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawingBox {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// The column scale: at most 1. The painter divides every stroke by it so
+    /// a drawing scaled down to fit keeps its line weight.
+    pub scale: f32,
+}
+
+/// The vertical plan of a diagram row this frame, from the mirrored state.
+///
+/// One function answers both `position_rows` (the height) and `draw_document`
+/// (where each part goes), so the row cannot reserve one height and paint
+/// another. Every `y` is an offset from the row's `y`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiagramLayout {
+    /// The reason line under the text, when the current text does not draw.
+    pub reason_y: Option<f32>,
+    /// The *Showing the last drawing that worked* label over a retained
+    /// drawing.
+    pub label_y: Option<f32>,
+    /// The drawing — in place of the text while closed, under it while open.
+    pub drawing: Option<DrawingBox>,
+    pub height: f32,
+}
+
+/// The width a diagram may fill: the text column from the row's first glyph
+/// to the content column's right edge, with no chip gutter — a picture wears
+/// no chips.
+pub fn diagram_column_width(row: &Paragraph, viewport_w: f32) -> f32 {
+    (viewport_w - theme::MARGIN_X - theme::AFFORDANCE_W - row.text_x()).max(80.0)
+}
+
+/// A drawing of `natural` size placed in the row's column at offset `y`:
+/// natural size up to the column, scaled down to fit when wider, **never
+/// scaled up** — the `image_display_box` rule. Centred in the column: a
+/// picture narrower than the page reads as a figure in the middle of it,
+/// not as a line of text starting at the margin. The one exception is a
+/// block aligned to the end, whose drawing keeps to the right edge like
+/// its text.
+fn drawing_box(
+    row: &Paragraph,
+    natural: vello::kurbo::Size,
+    y: f32,
+    viewport_w: f32,
+) -> DrawingBox {
+    let column = diagram_column_width(row, viewport_w);
+    let (nw, nh) = (natural.width as f32, natural.height as f32);
+    let scale = if nw > column && nw > 0.0 {
+        column / nw
+    } else {
+        1.0
+    };
+    let (w, h) = (nw * scale, nh * scale);
+    let left = row.text_x();
+    let x = match row.align {
+        Align::Start | Align::Center => left + ((column - w) * 0.5).max(0.0),
+        Align::End => (left + column - w).max(left),
+    };
+    DrawingBox { x, y, w, h, scale }
+}
+
+/// Lay a diagram row out vertically: the text (`text_h`, already measured or
+/// estimated by the caller), then whatever the state adds under it.
+///
+/// Closed and drawn, the drawing stands in for the text and the row is as
+/// tall as the scaled drawing; closed and pending, the row is the text's
+/// height — the placeholder promises the text's room and nothing more. Text
+/// visible (open, or closed and failed): the text, the reason line when the
+/// current text does not draw, and — open — the label (when the drawing is
+/// the last good one) and the drawing. Reason and label are one line in the
+/// hint role; nothing here shapes.
+pub fn diagram_layout(
+    row: &Paragraph,
+    state: &crate::diagram::DiagramRowState,
+    text_h: f32,
+    viewport_w: f32,
+) -> DiagramLayout {
+    let line = theme::role::hint().metrics.line_height;
+    if state.shows_picture() {
+        let drawing = state.drawing.as_ref().map(|prepared| {
+            drawing_box(row, prepared.natural_size(), DIAGRAM_TOP_INSET, viewport_w)
+        });
+        let height = drawing.map_or(text_h, |drawing| DIAGRAM_TOP_INSET + drawing.h);
+        return DiagramLayout {
+            reason_y: None,
+            label_y: None,
+            drawing,
+            height,
+        };
+    }
+    let mut y = text_h;
+    let reason_y = state.reason.is_some().then(|| {
+        y += DIAGRAM_LINE_GAP;
+        let at = y;
+        y += line;
+        at
+    });
+    let (label_y, drawing) = match &state.drawing {
+        Some(prepared) => {
+            y += DIAGRAM_GAP;
+            let label_y = state.last_good.then(|| {
+                let at = y;
+                y += line + DIAGRAM_LINE_GAP;
+                at
+            });
+            let drawing = drawing_box(row, prepared.natural_size(), y, viewport_w);
+            y += drawing.h;
+            (label_y, Some(drawing))
+        }
+        None => (None, None),
+    };
+    DiagramLayout {
+        reason_y,
+        label_y,
+        drawing,
+        height: y,
+    }
+}
+
+/// One of a drawn diagram's controls, in document y and content-column x —
+/// inside the code panel's top-right corner, the size of a table's
+/// controls. *Edit text* keeps the corner it always had, so a person who
+/// learned where it is finds it there; the others sit to its left in
+/// [`Control::ALL`] order, one gap apart. Never left of the row's first
+/// glyph: a narrow column pushes the row of controls against the text
+/// rather than off the panel. One function for `hover_at`, `mouse_down`
+/// and the painter.
+///
+/// [`Control::ALL`]: crate::diagram::Control::ALL
+pub fn diagram_control_rect(
+    row: &Paragraph,
+    layout_w: f32,
+    control: crate::diagram::Control,
+) -> Rect {
+    let side = crate::table::CONTROL_SIZE;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
+    let inset = DIAGRAM_BAR_INSET + DIAGRAM_BAR_PAD;
+    let corner = right - inset - side;
+    let slots = control.slots_from_corner() as f32;
+    Rect::new(
+        (corner - slots * (side + DIAGRAM_CONTROL_GAP)).max(row.text_x() + DIAGRAM_BAR_PAD),
+        row.y - theme::CODE_PAD + inset,
+        side,
+        side,
+    )
+}
+
+/// The bar the four controls sit on, in the same coordinates: their union
+/// plus [`DIAGRAM_BAR_PAD`] each way. One popover panel under the controls
+/// rather than a tinted chip under each — four chips over the code panel's
+/// own tint were close to invisible, and a block's controls are a toolbar.
+pub fn diagram_controls_bar(row: &Paragraph, layout_w: f32) -> Rect {
+    let first = diagram_control_rect(row, layout_w, crate::diagram::Control::Open);
+    let last = diagram_control_rect(row, layout_w, crate::diagram::Control::Edit);
+    Rect::new(
+        first.x - DIAGRAM_BAR_PAD,
+        first.y - DIAGRAM_BAR_PAD,
+        last.x + last.w - first.x + DIAGRAM_BAR_PAD * 2.0,
+        first.h + DIAGRAM_BAR_PAD * 2.0,
+    )
+}
+
 /// The hit-rect of the language chip at the top-right of a code block, in
 /// document y and screen x (the same mix `hover_at` works in). Drawn on hover
 /// and clicked to open the language picker. The width wraps the row's label
@@ -723,18 +990,58 @@ fn image_row_height(image: &crate::paragraph::ImageRef, viewport_w: f32) -> f32 
 /// run the full width, which put it under the `+` and the drag grip — chrome
 /// that belongs to the margin, not inside a block — and left the code itself
 /// flush against the tint with nothing between them. It now begins one
-/// `CODE_PAD` left of where the glyphs do and ends one right of where they
+/// `CODE_PAD_X` left of where the glyphs do and ends one right of where they
 /// stop, which is what makes the padding *inner* rather than a gap somebody
 /// added to the outside.
 pub fn code_panel_rect(row: &Paragraph, layout_w: f32, oy: f32) -> Rect {
-    let left = row.text_x() - theme::CODE_PAD;
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
+    let left = row.text_x() - theme::CODE_PAD_X;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
     Rect::new(
         left,
         oy - theme::CODE_PAD,
         (right - left).max(0.0),
         row.height + theme::CODE_PAD * 2.0,
     )
+}
+
+/// The tinted box behind a callout, from its first row `first` (drawn at
+/// `first_oy`) through its last, `last` (at `last_oy`). Its left edge derives
+/// from `text_x`, so the box, the icon and the text cannot drift apart; its
+/// vertical padding stays inside the `CODE_PAD` that `position_rows` opens
+/// above the first row and below the last, so it never paints into the rows
+/// beside the box.
+pub fn callout_panel_rect(
+    first: &Paragraph,
+    first_oy: f32,
+    last: &Paragraph,
+    last_oy: f32,
+    layout_w: f32,
+) -> Rect {
+    const PAD_Y: f32 = theme::CODE_PAD - 2.0;
+    let left = first.text_x() - crate::paragraph::CALLOUT_INSET_X;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
+    let top = first_oy - PAD_Y;
+    let bottom = last_oy + last.height + PAD_Y;
+    Rect::new(left, top, (right - left).max(0.0), bottom - top)
+}
+
+/// The square slot a callout's icon is drawn in, at the leading edge of its
+/// box, its bottom on the **baseline** of the first line of `row` — the way
+/// a pill's icon sits on its label's baseline — so the icon reads as part of
+/// that line rather than floating above it.
+pub fn callout_icon_rect(row: &Paragraph, oy: f32) -> Rect {
+    const SIDE: f32 = 18.0;
+    let x = row.text_x() - crate::paragraph::CALLOUT_INSET_X + 12.0;
+    Rect::new(x, oy + first_baseline(row) - SIDE, SIDE, SIDE)
+}
+
+/// Where the first line of `row` puts its baseline, below the row's top.
+/// An unshaped row has no lines yet; the estimate is the body face's ascent.
+pub fn first_baseline(row: &Paragraph) -> f32 {
+    row.layout
+        .lines()
+        .next()
+        .map_or(theme::FONT_SIZE, |line| line.metrics().baseline)
 }
 
 /// The semantic quote rule beside `row`, in the same window-space coordinate
@@ -792,7 +1099,7 @@ pub fn lang_chip_rect(row: &Paragraph, layout_w: f32) -> Rect {
     // layout_w - MARGIN_X/2), 4px in — the text has already reserved a gutter
     // so it never reaches here.
     // Inside the panel's own right edge, which is where the eye expects it.
-    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD;
+    let right = layout_w - theme::MARGIN_X - theme::AFFORDANCE_W + theme::CODE_PAD_X;
     let x = (right - 4.0 - chip_w).max(theme::MARGIN_X);
     // `Rect::new` takes a width and a height. It was handed `x + chip_w` and
     // `y + chip_h`, which drew a chip as wide as the page — the grey band past
@@ -812,6 +1119,19 @@ pub fn copy_chip_rect(row: &Paragraph, layout_w: f32) -> Rect {
         lang.y,
         COPY_CHIP_SIDE,
         lang.h,
+    )
+}
+
+/// The *Done* check immediately left of [`copy_chip_rect`], same band, on
+/// a diagram block whose text is open. Meaningful only then; the hit test
+/// and the painter both ask the row's diagram state first.
+pub fn diagram_done_rect(row: &Paragraph, layout_w: f32) -> Rect {
+    let copy = copy_chip_rect(row, layout_w);
+    Rect::new(
+        copy.x - COPY_CHIP_GAP - COPY_CHIP_SIDE,
+        copy.y,
+        COPY_CHIP_SIDE,
+        copy.h,
     )
 }
 
@@ -900,9 +1220,16 @@ pub fn first_line_h(row: &Paragraph) -> f32 {
     step.size * step.line_height
 }
 
-/// Vertical centre for gutter markers, aligned with text **ink** (x-height /
-/// cap) rather than the geometric mid of the line box — so a checkbox sits
-/// with the letters, not in the padding band under them.
+/// Vertical centre for gutter markers, aligned with text **ink** rather than
+/// the geometric mid of the line box — so a checkbox sits with the letters,
+/// not in the padding band under them.
+///
+/// The cap height's middle, not the x-height's: a line of prose reads from
+/// its capitals and ascenders down to its baseline, and a marker centred on
+/// the x-height sat a pixel and a half under that — the `+`, the grip and
+/// the checkbox all looked low beside *This is a copy*. The x-height is the
+/// fallback for a face that reports no cap height; the line box for one
+/// that reports neither.
 pub fn first_line_mid_y(row: &Paragraph, oy: f32) -> f32 {
     if let Some(line) = row.layout.lines().next() {
         let m = line.metrics();
@@ -917,11 +1244,11 @@ pub fn first_line_mid_y(row: &Paragraph, oy: f32) -> f32 {
                 cap_height = cap_height.max(c);
             }
         }
-        if x_height > 0.5 {
-            return oy + m.baseline - x_height * 0.5;
-        }
         if cap_height > 0.5 {
             return oy + m.baseline - cap_height * 0.5;
+        }
+        if x_height > 0.5 {
+            return oy + m.baseline - x_height * 0.5;
         }
     }
     oy + first_line_h(row) * 0.5
@@ -1341,6 +1668,84 @@ mod tests {
             (image.height - 100.0).abs() < 0.5,
             "pad is outside height, not inside: {}",
             image.height
+        );
+    }
+
+    /// The icon sits on the first line's baseline, like a pill's icon on its
+    /// label's: its slot ends where the glyphs' feet are, not in the middle
+    /// of the line box.
+    #[test]
+    fn a_callout_icon_stands_on_the_first_lines_baseline() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let callout = ws
+            .insert(Parent::Root, Node::callout(None, None).unwrap())
+            .unwrap();
+        let first = ws
+            .insert(Parent::Node(callout), Node::paragraph("first").unwrap())
+            .unwrap();
+        let mut body = Body::new(&ws);
+        let mut engine = TextEngine::new();
+        reflow_all(&mut engine, &mut body, 1000.0, 0.0);
+        let first = body.rows.iter().find(|r| r.id == first).unwrap();
+        let baseline = first.layout.lines().next().unwrap().metrics().baseline;
+        let slot = callout_icon_rect(first, first.y);
+        assert!(
+            (slot.y + slot.h - (first.y + baseline)).abs() < 0.01,
+            "slot bottom {} is the baseline {}",
+            slot.y + slot.h,
+            first.y + baseline
+        );
+    }
+
+    /// A callout's panel is painted around the rows of its box, so the box
+    /// gets air above its first row and below its last — the pattern a code
+    /// block uses — and the panel stays inside that air: its top is below the
+    /// paragraph above, its bottom above the paragraph below, with room to
+    /// spare. The rows inside keep the ordinary rhythm.
+    #[test]
+    fn a_callout_box_keeps_its_panel_clear_of_the_rows_around_it() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::paragraph("above").unwrap())
+            .unwrap();
+        let callout = ws
+            .insert(Parent::Root, Node::callout(None, None).unwrap())
+            .unwrap();
+        let first = ws
+            .insert(Parent::Node(callout), Node::paragraph("first").unwrap())
+            .unwrap();
+        let last = ws
+            .insert(Parent::Node(callout), Node::paragraph("last").unwrap())
+            .unwrap();
+        ws.insert(Parent::Root, Node::paragraph("below").unwrap())
+            .unwrap();
+        let mut body = Body::new(&ws);
+        let mut engine = TextEngine::new();
+        reflow_all(&mut engine, &mut body, 1000.0, 0.0);
+
+        let above = body.rows.iter().find(|r| r.text == "above").unwrap();
+        let first = body.rows.iter().find(|r| r.id == first).unwrap();
+        let last = body.rows.iter().find(|r| r.id == last).unwrap();
+        let below = body.rows.iter().find(|r| r.text == "below").unwrap();
+        assert_eq!(body.callout_span(callout), Some(1..=2));
+
+        let panel = callout_panel_rect(first, first.y, last, last.y, 1000.0);
+        assert!(
+            panel.y >= above.y + above.height + 2.0,
+            "the panel's top ({}) clears the row above (bottom {})",
+            panel.y,
+            above.y + above.height
+        );
+        assert!(
+            below.y >= panel.y + panel.h + 2.0,
+            "the row below ({}) clears the panel's bottom ({})",
+            below.y,
+            panel.y + panel.h
+        );
+        assert!(panel.y <= first.y && panel.y + panel.h >= last.y + last.height);
+        let inside = last.y - (first.y + first.height);
+        assert!(
+            (inside - theme::TASK_GAP).abs() < 0.5,
+            "no extra air between the rows inside the box: {inside}"
         );
     }
 
@@ -2147,6 +2552,70 @@ mod tests {
         assert!(o.rows[0].height >= step.size * step.line_height - 0.5);
     }
 
+    /// A code block's panel ends between the drag grip and the first glyph,
+    /// with air on both sides. Reaching the full `CODE_PAD` left of the
+    /// glyphs, it sat two pixels over the grip.
+    #[test]
+    fn a_code_panel_stops_between_the_grip_and_the_glyphs() {
+        let mut engine = TextEngine::new();
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::code("fn main() {}").unwrap())
+            .unwrap();
+        let mut o = Body::new(&ws);
+        reflow_all(&mut engine, &mut o, 900.0, 0.0);
+        let row = &o.rows[0];
+        let (_, grip) = gutter_affordances(row, row.y);
+        let panel = code_panel_rect(row, 900.0, row.y);
+        assert!(
+            grip.x + grip.w < panel.x,
+            "the panel starts right of the grip: grip ends {}, panel at {}",
+            grip.x + grip.w,
+            panel.x
+        );
+        assert!(panel.x < row.text_x(), "and left of the glyphs");
+        assert!(
+            (panel.x + panel.w) - (900.0 - theme::MARGIN_X - theme::AFFORDANCE_W) < theme::CODE_PAD,
+            "the same reach on the right"
+        );
+    }
+
+    /// A code block is set at the body step whatever heading its node
+    /// carries: a heading turned into a ``` fence or a diagram keeps the
+    /// heading on the node, and used to keep the heading's size, leading and
+    /// space above too — a code block set larger than every other, with its
+    /// lines further apart.
+    #[test]
+    fn a_code_block_keeps_the_body_step_whatever_heading_it_carries() {
+        let mut engine = TextEngine::new();
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let plain = ws
+            .insert(Parent::Root, Node::code("fn main() {}").unwrap())
+            .unwrap();
+        let headed = ws
+            .insert(Parent::Root, Node::task("fn main() {}").unwrap())
+            .unwrap();
+        ws.set_heading(headed, Some(koru_core::Heading::H1))
+            .unwrap();
+        ws.set_kind(headed, Kind::Code).unwrap();
+        let _ = plain;
+        let mut o = Body::new(&ws);
+        reflow_all(&mut engine, &mut o, 900.0, 0.0);
+        let (plain, headed) = (&o.rows[0], &o.rows[1]);
+        assert_eq!(headed.kind, Kind::Code);
+        assert_eq!(headed.type_step(), plain.type_step());
+        assert_eq!(headed.type_step(), theme::type_step(None));
+        assert!(
+            (headed.height - plain.height).abs() < 0.01,
+            "{} vs {}",
+            headed.height,
+            plain.height
+        );
+        assert_eq!(
+            headed.space_above, 0.0,
+            "no heading's air above a code block"
+        );
+    }
+
     /// A heading pushes itself away from what came before — but not at the top
     /// of the document, where `MARGIN_TOP` is already the air.
     #[test]
@@ -2312,6 +2781,89 @@ mod tests {
             (chip.x - (text_x(0u32, false) - theme::ROW_SELECTED_PAD)).abs() < 0.01,
             "pads the prose column, not a quote inset"
         );
+    }
+
+    /// The chip centres the line's letters, not its box: the shaper puts
+    /// the baseline near the bottom of the box, so a chip on the box showed
+    /// its text at the bottom. A row with no shaped line keeps the box.
+    #[test]
+    fn the_selection_chip_centres_the_lines_ink() {
+        let mut engine = TextEngine::new();
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::paragraph("This is a copy").unwrap())
+            .unwrap();
+        let mut o = Body::new(&ws);
+        reflow_all(&mut engine, &mut o, 900.0, 0.0);
+        let row = &o.rows[0];
+        assert!(
+            ink_shift(row) > 1.0,
+            "the ink sits low in the box: {}",
+            ink_shift(row)
+        );
+        let chip = row_selection_rect(row, 900.0, row.y);
+        assert!(
+            (chip.y + chip.h * 0.5 - first_line_mid_y(row, row.y)).abs() < 0.01,
+            "the chip's middle is the ink's middle"
+        );
+        let unshaped = selection_chip_row(32.0);
+        assert_eq!(ink_shift(&unshaped), 0.0);
+        assert_eq!(row_selection_rect(&unshaped, 800.0, 10.0).y, 9.5);
+    }
+
+    /// The drop line of a row drag is the target row's chip edge — its width
+    /// and its x — above the target when moving up, below it when moving
+    /// down. It ran from margin to margin.
+    #[test]
+    fn the_drop_line_is_the_target_chips_edge() {
+        let mut rows = vec![selection_chip_row(24.0), selection_chip_row(24.0)];
+        rows[1].y = 40.0;
+        let chip = row_selection_rect(&rows[1], 800.0, 40.0);
+        let down = drop_line_rect(
+            &rows,
+            crate::view_state::DragRow { from: 0, to: 1 },
+            800.0,
+            0.0,
+        )
+        .unwrap();
+        assert_eq!((down.x, down.w), (chip.x, chip.w));
+        assert!(
+            (down.y + 1.0 - (chip.y + chip.h)).abs() < 0.01,
+            "below the target"
+        );
+        let up = drop_line_rect(
+            &rows,
+            crate::view_state::DragRow { from: 1, to: 0 },
+            800.0,
+            0.0,
+        )
+        .unwrap();
+        let top = row_selection_rect(&rows[0], 800.0, rows[0].y);
+        assert!((up.y + 1.0 - top.y).abs() < 0.01, "above the target");
+        assert!(
+            drop_line_rect(
+                &rows,
+                crate::view_state::DragRow { from: 0, to: 9 },
+                800.0,
+                0.0
+            )
+            .is_none()
+        );
+        // A code block's line sits at its panel's edge, above the block,
+        // not at the chip's, inside it.
+        rows[0].kind = Kind::Code;
+        let panel = code_panel_rect(&rows[0], 800.0, rows[0].y);
+        let up = drop_line_rect(
+            &rows,
+            crate::view_state::DragRow { from: 1, to: 0 },
+            800.0,
+            0.0,
+        )
+        .unwrap();
+        assert!(
+            (up.y + 1.0 - panel.y).abs() < 0.01,
+            "at the panel's top edge"
+        );
+        assert!(panel.y < top.y, "which is above the chip's");
     }
 
     /// The trailing action sits inside the chip, inset from its right edge.

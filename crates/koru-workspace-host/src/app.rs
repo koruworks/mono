@@ -946,6 +946,10 @@ pub enum Wake {
     /// The spell worker finished a batch of checks. The results are already on
     /// each asking view's own reply channel; `maintain` drains them.
     Spelling,
+    /// The diagram worker laid a `mermaid` block out. The drawing is already
+    /// on the asking view's reply channel; `maintain` lands it and asks for
+    /// the redraw. Carries nothing, like `Spelling`.
+    Diagram,
     /// The session backend queued a `BackendEvent` for a session tab. Queue
     /// first, wake second — the event is already on the owning view's queue and
     /// `maintain` drains it; nothing on the loop thread touches the session
@@ -2074,6 +2078,7 @@ impl WindowDrag {
 /// same observable failure there: a click ended physically while the field
 /// kept extending its selection on later pointer moves. `GetAsyncKeyState`
 /// gives the same non-guess answer there. Other platforms retain `false`.
+#[cfg(any(windows, target_os = "macos", test))]
 fn physically_ended(believed_pressed: bool, physically_pressed: bool) -> bool {
     believed_pressed && !physically_pressed
 }
@@ -5279,6 +5284,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
         let image_loader = crate::images::ImageLoader::spawn(&wake_proxy);
         crate::spelling::spawn(&wake_proxy, cli::root_from_args());
+        crate::diagram::spawn(&wake_proxy);
         let (clipboard_image_tx, clipboard_image_rx) = mpsc::channel();
         let (profile_cascade_tx, profile_cascade_rx) = mpsc::channel();
         let (profile_removal_tx, profile_removal_rx) = mpsc::channel();
@@ -5722,8 +5728,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
         modifiers::forget_released(mods, &mut self.down_keys);
     }
 
+    /// Every window draws its next frame. The flag is what `redraw` checks:
+    /// a bare `request_redraw` is dropped on macOS, where `RedrawRequested`
+    /// arrives whether anything changed or not.
     fn request_redraw_all(&self) {
         for pane in self.panes.values() {
+            pane.needs_frame.set(true);
             pane.window.request_redraw();
         }
     }
@@ -6282,6 +6292,35 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
             }
         }
+        // *Save as…* on a drawn diagram. The container turns it into a
+        // `PaneRequest::SaveDiagram` the way it does a file's Save; a bare
+        // document window has no container, so what is left here is served
+        // directly, against the window that asked.
+        let diagram_saves: Vec<(WindowId, crate::SaveDiagram)> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(id, pane)| {
+                pane.view
+                    .take_wants_save_diagram_as(&self.runtime.workspace.ws)
+                    .map(|request| (*id, request))
+            })
+            .collect();
+        for (id, request) in diagram_saves {
+            self.save_diagram(id, request);
+        }
+        // *Copy image* on a drawn diagram, the same way.
+        let diagram_copies: Vec<(WindowId, crate::CopyDiagram)> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(id, pane)| {
+                pane.view
+                    .take_wants_copy_diagram()
+                    .map(|request| (*id, request))
+            })
+            .collect();
+        for (id, request) in diagram_copies {
+            self.copy_diagram(id, &request);
+        }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
         // about_to_wait has failed silently on Windows), and only while no
@@ -6523,6 +6562,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 for block in raw {
                     match block {
                         crate::clipboard_rtf::RawBlock::Text(t) => out.push(RichBlock::Text(t)),
+                        crate::clipboard_rtf::RawBlock::CalloutStart { icon, tint } => {
+                            out.push(RichBlock::CalloutStart { icon, tint })
+                        }
+                        crate::clipboard_rtf::RawBlock::CalloutEnd => {
+                            out.push(RichBlock::CalloutEnd)
+                        }
                         crate::clipboard_rtf::RawBlock::Picture(p) => {
                             match self.store_image_bytes(&p.bytes) {
                                 Some(mut img) => {
@@ -6576,6 +6621,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     match block {
                         crate::clipboard_rtf::RawBlock::Text(t) => {
                             out.push(RichBlock::Text(t));
+                        }
+                        crate::clipboard_rtf::RawBlock::CalloutStart { icon, tint } => {
+                            out.push(RichBlock::CalloutStart { icon, tint });
+                        }
+                        crate::clipboard_rtf::RawBlock::CalloutEnd => {
+                            out.push(RichBlock::CalloutEnd);
                         }
                         crate::clipboard_rtf::RawBlock::Picture(p) => {
                             match self.store_image_bytes(&p.bytes) {
@@ -8915,6 +8966,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 self.save_file(id);
             }
             PaneRequest::SaveFiles(ids) => self.save_files(ids),
+            PaneRequest::SaveDiagram(request) => self.save_diagram(source, request),
+            PaneRequest::CopyDiagram(request) => self.copy_diagram(source, &request),
             PaneRequest::OpenFile(id) => {
                 crate::attach_debug!("shell drain PaneRequest::OpenFile id={}", id.to_storage());
                 self.open_file(id);
@@ -10047,6 +10100,140 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     .with_details(error),
             );
         }
+    }
+
+    /// Save a drawn diagram as the picture on screen, as a PNG or an SVG.
+    ///
+    /// The picker stays on the event thread, like every save here. **The
+    /// typed extension decides the format** (`crate::diagram::save_target`):
+    /// the SVG comes from the painter's twin and needs no GPU; the PNG is
+    /// rasterised at `SAVE_SCALE` on **this window's device, on the loop
+    /// thread** — accepted for a one-off the person has just confirmed in a
+    /// dialog, since a drawing-sized texture renders in a few milliseconds
+    /// and the renderer it uses is the one the window already holds. The PNG
+    /// encode and the atomic write go to the save worker, and the result is
+    /// the same *Saved “name”.* notice, or the same error, a workspace file's
+    /// save shows. The folder is remembered as every export's is.
+    fn save_diagram(&mut self, source: WindowId, request: crate::SaveDiagram) {
+        let Some(chosen) = crate::dialogs::pick_save_file(
+            koru_i18n::t(koru_i18n::current(), koru_i18n::Key::MenuSaveAs),
+            &crate::diagram::default_file_name(&request.title),
+            crate::diagram::SAVE_FILTERS,
+            self.runtime.settings.last_export_dir.as_deref(),
+            None,
+        ) else {
+            return;
+        };
+        let (destination, format) = crate::diagram::save_target(chosen);
+        if let Some(dir) = destination.parent() {
+            self.remember_export_dir(dir.to_path_buf());
+        }
+        let name = crate::diagram::file_name(&destination);
+        let payload = match format {
+            crate::diagram::SaveFormat::Svg => Ok(crate::diagram::SavePayload::Svg(
+                koru_draw::diagram::svg(&request.prepared, theme::p()),
+            )),
+            crate::diagram::SaveFormat::Png => self
+                .raster_diagram(source, &request.prepared)
+                .map(crate::diagram::SavePayload::Rgba),
+        };
+        let payload = match payload {
+            Ok(payload) => payload,
+            Err(error) => {
+                // No adapter, a lost device, a texture too large: the
+                // existing file-error notice, with the reason in its details.
+                eprintln!("[Koru][diagram] save failed: {error}");
+                self.handle_import_message(ImportMessage::FileSaved {
+                    name,
+                    destination,
+                    result: Err(error),
+                });
+                return;
+            }
+        };
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let worker_destination = destination.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-save-file".into())
+            .spawn(move || {
+                let result = payload.encode().and_then(|bytes| {
+                    koru_export_markdown::write_bytes_atomic(&worker_destination, &bytes)
+                        .map_err(|error| error.to_string())
+                });
+                if let Err(error) = &result {
+                    eprintln!("[Koru][diagram] save failed: {error}");
+                }
+                let _ = tx.send(ImportMessage::FileSaved {
+                    name,
+                    destination: worker_destination,
+                    result,
+                });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
+            );
+        }
+    }
+
+    /// Put a picture of a drawn diagram on the system clipboard: the same
+    /// 2× raster a saved PNG is, as a bitmap, so it pastes into a slide or a
+    /// chat as crisply as the file would. No dialog and no notice — a copy
+    /// is silent, as an image block's is; a raster that fails is logged and
+    /// leaves the clipboard as it was.
+    fn copy_diagram(&mut self, source: WindowId, request: &crate::CopyDiagram) {
+        match self.raster_diagram(source, &request.prepared) {
+            Ok(rgba) => {
+                let image = koru_clipboard::RgbaBitmap {
+                    width: rgba.width as usize,
+                    height: rgba.height as usize,
+                    bytes: rgba.bytes,
+                };
+                if let Err(error) = koru_clipboard::system().set_bitmap(&image) {
+                    eprintln!("[Koru][diagram] copy failed: {error}");
+                }
+            }
+            Err(error) => eprintln!("[Koru][diagram] copy failed: {error}"),
+        }
+    }
+
+    /// The pixels of `prepared` at `SAVE_SCALE` over the page color, drawn
+    /// with the renderer `source` draws with. A window whose device is gone
+    /// renders through a fresh renderer on the context's device instead.
+    fn raster_diagram(
+        &mut self,
+        source: WindowId,
+        prepared: &koru_draw::diagram::PreparedDiagram,
+    ) -> Result<koru_window::offscreen::Rgba, String> {
+        let palette = theme::p();
+        let scale = crate::diagram::SAVE_SCALE;
+        let size = prepared.natural_size();
+        let width = (size.width * scale).ceil() as u32;
+        let height = (size.height * scale).ceil() as u32;
+        let mut scene = Scene::new();
+        koru_draw::diagram::paint(prepared, palette, Affine::scale(scale), 1.0, &mut scene);
+        let dev_id = self.panes.get(&source).map(|pane| pane.surface.dev_id);
+        let rendered = match dev_id.and_then(|dev_id| {
+            self.renderers
+                .get_mut(&dev_id)
+                .map(|renderer| (dev_id, renderer))
+        }) {
+            Some((dev_id, renderer)) => koru_window::offscreen::raster_with(
+                renderer,
+                &self.context.devices[dev_id],
+                &scene,
+                width,
+                height,
+                palette.bg,
+            ),
+            None => {
+                koru_window::offscreen::raster(&mut self.context, &scene, width, height, palette.bg)
+            }
+        };
+        rendered.map_err(|error| error.to_string())
     }
 
     /// Save a selection into one folder, retaining each stored file name.
@@ -13085,6 +13272,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     fn invalidate_everywhere(&mut self) {
         for pane in self.panes.values_mut() {
             pane.view.invalidate();
+            pane.needs_frame.set(true);
             pane.window.request_redraw();
         }
     }
@@ -13218,7 +13406,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// machine can be shut down from, and "I put it in the tray last night" must
     /// not be how a day's work is lost.
     fn hide_to_tray(&mut self) -> bool {
-        if self.panes.is_empty() || !self.host.agent_available() {
+        // **The Agent says whether it has an icon**, rather than this build
+        // assuming one from its platform: Linux's comes and goes with its
+        // StatusNotifierItem host, and an icon can fail to appear anywhere. A
+        // window hidden with no icon is a process nobody can reach — the case
+        // `WindowRequest::HideToTray` already says must fall back to closing.
+        if self.panes.is_empty() || !self.host.agent_has_notification_area() {
             return false;
         }
         self.capture_geometry();
@@ -13469,7 +13662,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 if background && self.hide_to_tray() {
                     return;
                 }
-                if !background {
+                // With no tray, "keep running in the background" is a quit too.
+                if !background || !self.host.agent_has_notification_area() {
                     self.host.last_window_closing();
                 }
             }
@@ -18016,9 +18210,17 @@ pub fn run_with_args<H: Host, I: IntoIterator<Item = String>>(host: H, name: &st
         eprintln!("[Koru] no local settings folder available; nothing was opened");
         return;
     };
-    let event_loop = EventLoop::<Wake>::with_user_event()
-        .build()
-        .expect("create event loop");
+    let mut builder = EventLoop::<Wake>::with_user_event();
+    // **Koru's own loop, not only `koru_window`'s.** The X11 decision and its
+    // reason are at `koru_window::app::run` (D5); this is the third loop it
+    // names. Without it Koru alone came up as a Wayland client, where
+    // `set_visible(false)` does nothing — so the ✕, which hides, did nothing.
+    #[cfg(target_os = "linux")]
+    {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_x11();
+    }
+    let event_loop = builder.build().expect("create event loop");
     let proxy = event_loop.create_proxy();
     // Before `run_app`, which is what finishes launching: that is the moment
     // AppKit decides whether the delegate answers URLs.

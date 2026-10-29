@@ -4,6 +4,7 @@
 
 use super::*;
 use koru_core::node::{AttrValue, Kind, Node};
+use koru_core::schema::Parent;
 use koru_core::{Heading, Mark, MarkSet, WorkspaceId};
 use koru_draw::theme::ViewMode;
 use koru_window::snap;
@@ -704,6 +705,65 @@ fn rich_paste_rebuilds_numbered_and_nested_bullet_lists() {
         view.editor.body.focused().map(|row| row.text.as_str()),
         Some("after"),
         "the caret lands on the final visible block, not a hidden list container"
+    );
+}
+
+/// A pasted callout box lands as a box node carrying the look, with what
+/// was inside it as the box's children — its lines and a list — and the
+/// block after the box's end as the box's sibling.
+#[test]
+fn rich_paste_nests_a_callout_box_under_its_node() {
+    let (mut ws, mut view) = document();
+    let blocks = vec![
+        RichBlock::CalloutStart {
+            icon: Some("💡".into()),
+            tint: Some("red".into()),
+        },
+        RichBlock::Text(RichTextBlock::from_text("Keep it")),
+        RichBlock::Text(RichTextBlock::from_text("inside")),
+        RichBlock::Text(RichTextBlock {
+            text: "one".into(),
+            list: Some(RichListSpec {
+                style: koru_core::ListStyle::Bullet,
+                depth: 0,
+            }),
+            ..Default::default()
+        }),
+        RichBlock::CalloutEnd,
+        RichBlock::Text(RichTextBlock::from_text("after")),
+    ];
+
+    View::paste_rich(&mut view, &mut ws, None, &blocks);
+
+    let row = |text: &str| {
+        view.editor
+            .body
+            .rows
+            .iter()
+            .find(|row| row.text == text)
+            .unwrap_or_else(|| panic!("no row {text:?}"))
+            .id
+    };
+    let Parent::Node(callout) = ws.parent(row("Keep it")).unwrap() else {
+        panic!("the first line is inside the box");
+    };
+    let node = ws.read(callout).unwrap();
+    assert_eq!(node.kind, Kind::Callout);
+    assert_eq!(node.content.as_text(), Some(""), "the box carries no text");
+    assert_eq!(koru_core::callout::icon(&node.meta), "💡");
+    assert_eq!(
+        koru_core::callout::tint(&node.meta),
+        Some(koru_core::AccentColor::Red)
+    );
+    let inside = ws.children(Parent::Node(callout)).unwrap();
+    assert_eq!(inside.len(), 3, "two paragraphs and a list block");
+    assert_eq!(inside[0], row("Keep it"));
+    assert_eq!(inside[1], row("inside"));
+    assert_eq!(ws.read(inside[2]).unwrap().kind, Kind::ListBlock);
+    assert_eq!(ws.parent(row("one")).unwrap(), Parent::Node(inside[2]));
+    assert_eq!(
+        ws.parent(row("after")).unwrap(),
+        ws.parent(callout).unwrap()
     );
 }
 
@@ -3933,7 +3993,7 @@ fn attribute_rows(view: &BuiltInDocument) -> (Vec<bool>, Vec<menu::Trailing>) {
     let shape = view.menu_shape();
     let mut enabled = Vec::new();
     let mut notes = Vec::new();
-    for i in [10, 11, 12, 13] {
+    for i in [11, 12, 13, 14] {
         match shape[i] {
             menu::Row::Item {
                 enabled: on,
@@ -4378,7 +4438,7 @@ fn a_childless_tasks_box_completes_it_and_a_rich_tasks_box_only_ticks() {
 
 /// The index the Complete row sits at, asserted here rather than hard-coded
 /// twice: the menu is mapped by index and a shifted map is silent.
-const COMPLETE_ROW: usize = 9;
+const COMPLETE_ROW: usize = 10;
 
 /// **Completing from the menu is the explicit action, and it cascades.**
 ///
@@ -4480,7 +4540,7 @@ fn the_menu_row_says_reopen_on_a_completed_task_and_dims_on_a_plain_row() {
 
 /// The index the Remove from Tasks row sits at — the design's red last row,
 /// under the hairline at 13. Named once, for `COMPLETE_ROW`'s reason.
-const REMOVE_ROW: usize = 17;
+const REMOVE_ROW: usize = 18;
 
 /// A task with a due date on it, its row rebuilt so the due chip is there to
 /// be read. `spec.md` is the document, which is what the warning names.
@@ -5170,4 +5230,363 @@ fn one_adopt_is_one_title_refresh_one_search_scan_and_one_spelling_look() {
         ),
         (1, 1, 1)
     );
+}
+
+// ------------------------------------------------------------------ diagrams
+
+/// A document with one `mermaid` block, laid out once, and the block's node.
+fn diagram_document() -> (WorkspaceDoc, BuiltInDocument, koru_core::NodeId) {
+    let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+    let doc = koru_workspace::document(&mut ws, "Release plan").expect("a document");
+    let node = ws
+        .insert(
+            koru_core::schema::Parent::Node(doc),
+            Node::code("flowchart LR\n  A --> B").unwrap(),
+        )
+        .unwrap();
+    ws.set_language(node, Some(koru_editor::diagram::LANGUAGE))
+        .unwrap();
+    let mut view = BuiltInDocument::open(&ws, doc);
+    view.editor.view.code_enabled = true;
+    view.editor.body.rebuild(&ws);
+    View::set_viewport(&mut view, 900.0, 560.0);
+    (ws, view, node)
+}
+
+/// The worker's answer lands through the view the way the shell delivers it,
+/// and an answer for a block that has since been deleted is dropped: it
+/// finds no entry, changes nothing, asks for no redraw.
+#[test]
+fn a_diagram_reply_for_a_node_the_editor_no_longer_has_is_dropped() {
+    let (mut ws, mut view, node) = diagram_document();
+    let asked = view.take_diagram_requests();
+    assert_eq!(asked.len(), 1, "one layout asked for the one block");
+    assert_eq!(asked[0].node, node);
+    let late = Err(koru_editor::diagram::Status::NotParsed {
+        line: 1,
+        message: "late".into(),
+        code: "merman.parse.diagram_parse".into(),
+    });
+    // The block goes before the worker answers.
+    ws.delete(node).unwrap();
+    view.editor.body.rebuild(&ws);
+    view.editor.reflow();
+    assert!(!view.editor.view.diagrams.contains_key(&node));
+    assert!(!view.diagram_result(node, asked[0].text_hash, late));
+    // And a reply for a node that never was is the same nothing.
+    assert!(!view.diagram_result(
+        koru_core::NodeId::new(),
+        asked[0].text_hash,
+        Err(koru_editor::diagram::Status::Empty)
+    ));
+}
+
+/// No worker runs in a test process, so the document's line to it is quietly
+/// off: a maintenance pass neither sends the editor's requests nor invents
+/// answers, and the block keeps its placeholder.
+#[test]
+fn without_a_worker_a_maintenance_pass_leaves_the_diagram_pending() {
+    let (mut ws, mut view, node) = diagram_document();
+    assert!(!View::maintain(&mut view, &mut ws, Instant::now()));
+    let asked = view.take_diagram_requests();
+    assert_eq!(asked.len(), 1, "the request is still the editor's to give");
+    assert!(matches!(
+        view.editor
+            .view
+            .diagrams
+            .get(&node)
+            .map(|entry| &entry.state),
+        Some(koru_editor::DiagramState::Pending)
+    ));
+    assert!(view.drawn_diagram(node).is_none());
+}
+
+/// A view built before the worker starts — every tab the shell restores at
+/// launch — still has its diagram drawn once the worker is up: the line to
+/// it is looked up again on each pass, and the request the editor kept in
+/// the meantime goes out on the first pass that finds it.
+#[test]
+fn a_view_built_before_the_worker_starts_draws_once_it_does() {
+    use koru_workspace_host::diagram::{DiagramClient, DiagramWorker};
+    static WORKER: std::sync::OnceLock<DiagramWorker> = std::sync::OnceLock::new();
+    fn connect() -> Option<DiagramClient> {
+        WORKER.get().map(DiagramWorker::client)
+    }
+
+    let (mut ws, mut view, node) = diagram_document();
+    view.diagrams = crate::diagrams::Diagrams::connecting(connect);
+    assert!(!View::maintain(&mut view, &mut ws, Instant::now()));
+    assert!(view.drawn_diagram(node).is_none(), "no worker yet");
+
+    let measure = std::sync::Arc::new(koru_draw::diagram::InterMeasure);
+    assert!(WORKER.set(DiagramWorker::start(measure, 1, || {})).is_ok());
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    while view.drawn_diagram(node).is_none() {
+        assert!(Instant::now() < deadline, "the worker never answered");
+        View::maintain(&mut view, &mut ws, Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// *Save as…* reaches the shell only with a drawing in hand: a request
+/// raised on a block that is not drawn is dropped, and the page's name — what
+/// the default file name is made of — is read from the document, not from a
+/// caption a tab does not draw.
+#[test]
+fn save_diagram_as_is_handed_over_only_with_a_drawing() {
+    let (ws, mut view, node) = diagram_document();
+    view.editor.view.wants_save_diagram_as = Some(koru_editor::SaveDiagramAs { node });
+    assert!(
+        View::take_wants_save_diagram_as(&mut view, &ws).is_none(),
+        "a placeholder has no picture to save"
+    );
+    assert!(
+        view.editor.view.wants_save_diagram_as.is_none(),
+        "and the ask is spent"
+    );
+    assert_eq!(view.page_name(&ws), "Release plan");
+}
+
+// ------------------------------------------------------- the diagram viewer
+
+/// A prepared drawing of a given natural size with nothing in it: the view
+/// never looks inside one, only at its size.
+fn prepared_drawing(
+    width: f64,
+    height: f64,
+) -> std::sync::Arc<koru_draw::diagram::PreparedDiagram> {
+    use koru_diagram::{Counts, DiagramScene, FlowchartScene, Kind as DiagramKind, SceneBody};
+    std::sync::Arc::new(koru_draw::diagram::PreparedDiagram::new(
+        std::sync::Arc::new(DiagramScene {
+            kind: DiagramKind::Flowchart,
+            bounds: vello::kurbo::Rect::new(0.0, 0.0, width, height),
+            counts: Counts::Flowchart {
+                nodes: 0,
+                edges: 0,
+                groups: 0,
+            },
+            acc_title: None,
+            acc_descr: None,
+            body: SceneBody::Flowchart(FlowchartScene {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                clusters: Vec::new(),
+            }),
+        }),
+    ))
+}
+
+/// The diagram document with its block drawn, the way the worker's answer
+/// lands: the request taken, the result delivered.
+fn drawn_diagram_document() -> (WorkspaceDoc, BuiltInDocument, koru_core::NodeId) {
+    let (ws, mut view, node) = diagram_document();
+    let asked = view.take_diagram_requests();
+    assert_eq!(asked.len(), 1);
+    assert!(view.diagram_result(node, asked[0].text_hash, Ok(prepared_drawing(400.0, 300.0))));
+    assert!(view.drawn_diagram(node).is_some());
+    (ws, view, node)
+}
+
+/// The viewer opens only on a drawing: a placeholder has no picture to
+/// show, so the ask does nothing and the page is not covered.
+#[test]
+fn the_viewer_opens_only_on_a_drawing() {
+    let (_ws, mut view, node) = diagram_document();
+    assert!(!view.open_diagram_viewer(node));
+    assert!(!view.diagram_viewer_open());
+    assert_eq!(view.blockers(), Blockers::None);
+
+    let (_ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    assert!(view.diagram_viewer_open());
+    assert_eq!(view.blockers(), Blockers::Modal(ModalKind::DiagramViewer));
+    let viewer = view.diagram_viewer().expect("open");
+    assert_eq!(viewer.node(), node);
+    assert_eq!(viewer.zoom(), 1.0, "400 × 300 fits a 900 × 560 window");
+}
+
+/// The editor's ask — its magnifier, a double click — is drained after the
+/// press that set it, and opens the viewer on that block.
+#[test]
+fn the_editors_ask_opens_the_viewer_after_the_press() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    view.editor.view.wants_open_diagram = Some(node);
+    // Any press drains it; this one lands on the page's air.
+    view.mouse_down(&mut ws, 880.0, 540.0, false);
+    assert!(view.diagram_viewer_open());
+    assert_eq!(view.editor.view.wants_open_diagram, None, "spent");
+}
+
+/// The editor's *Copy image* control asks the same way, and the drawing it
+/// names goes on to the shell after the press — with no viewer opened.
+#[test]
+fn the_editors_copy_control_hands_the_drawing_to_the_shell() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    assert!(View::take_wants_copy_diagram(&mut view).is_none());
+    view.editor.view.wants_copy_diagram = Some(node);
+    view.mouse_down(&mut ws, 880.0, 540.0, false);
+    assert_eq!(view.editor.view.wants_copy_diagram, None, "spent");
+    let copy = View::take_wants_copy_diagram(&mut view).expect("the drawing to copy");
+    assert_eq!(copy.prepared.natural_size().width, 400.0);
+    assert!(!view.diagram_viewer_open(), "a copy opens nothing");
+}
+
+/// While the viewer is up every key is its own: `Esc` closes it and
+/// nothing reaches the page; a letter that means nothing to it is
+/// swallowed rather than typed into the block underneath.
+#[test]
+fn the_viewer_owns_the_keyboard_until_escape() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    let text_before = ws.read(node).unwrap().content.as_text().unwrap().to_owned();
+    assert!(view.key(&mut ws, &ch("q"), Some("q"), NONE));
+    assert_eq!(
+        ws.read(node).unwrap().content.as_text().unwrap(),
+        text_before,
+        "nothing was typed into the block"
+    );
+    assert!(view.diagram_viewer_open());
+    assert!(view.key(&mut ws, &named(NamedKey::Escape), None, NONE));
+    assert!(!view.diagram_viewer_open());
+    assert_eq!(view.blockers(), Blockers::None);
+}
+
+/// `Ctrl+C` in the viewer hands the drawing to the shell for the clipboard,
+/// once; the save chord raises the block's own *Save as…*, which the shell
+/// drains with the drawing and the page's name as it does from the menu.
+#[test]
+fn the_viewer_asks_the_shell_to_copy_and_to_save() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    assert!(
+        View::take_wants_copy_diagram(&mut view).is_none(),
+        "nothing asked yet"
+    );
+    assert!(view.key(&mut ws, &ch("c"), Some("c"), koru_keys::PRIMARY));
+    let copy = View::take_wants_copy_diagram(&mut view).expect("the drawing to copy");
+    assert_eq!(copy.prepared.natural_size().width, 400.0);
+    assert!(View::take_wants_copy_diagram(&mut view).is_none(), "spent");
+    assert_eq!(
+        view.editor.view.wants_toast.as_deref(),
+        Some(koru_ui::CopyAffordance::TOAST),
+        "a copy raises the toast every copy raises"
+    );
+    assert_eq!(
+        view.diagram_viewer().unwrap().copy_glyph(),
+        koru_draw::icons::CHECK,
+        "and confirms on the button"
+    );
+
+    assert!(view.key(
+        &mut ws,
+        &ch("x"),
+        Some("x"),
+        koru_keys::PRIMARY | ModifiersState::SHIFT
+    ));
+    let save = View::take_wants_save_diagram_as(&mut view, &ws).expect("the drawing to save");
+    assert_eq!(save.title, "Release plan");
+    assert!(view.diagram_viewer_open(), "asking does not close the view");
+}
+
+/// The zoom gestures the shell offers a view go to the drawing while the
+/// viewer is up, and are declined — the app's to zoom — when it is not.
+#[test]
+fn zoom_gestures_are_the_viewers_while_it_is_up() {
+    let (_ws, mut view, node) = drawn_diagram_document();
+    assert!(!View::zoom_key(
+        &mut view,
+        koru_workspace_host::ZoomIntent::In
+    ));
+    assert!(view.open_diagram_viewer(node));
+    assert!(View::zoom_key(
+        &mut view,
+        koru_workspace_host::ZoomIntent::In
+    ));
+    assert_eq!(
+        view.diagram_viewer().unwrap().zoom(),
+        crate::diagram_viewer::ZOOM_STEP
+    );
+    assert!(View::zoom_wheel(
+        &mut view,
+        winit::event::MouseScrollDelta::LineDelta(0.0, -1.0),
+        450.0,
+        280.0
+    ));
+    assert!((view.diagram_viewer().unwrap().zoom() - 1.0).abs() < 1e-9);
+    // The plain wheel is the drawing's scroll, not a zoom — and the page
+    // under the modal does not scroll.
+    let scroll_before = view.editor.view.scroll;
+    View::scroll_by(
+        &mut view,
+        winit::event::MouseScrollDelta::LineDelta(0.0, 1.0),
+    );
+    assert_eq!(view.editor.view.scroll, scroll_before);
+    assert!((view.diagram_viewer().unwrap().zoom() - 1.0).abs() < 1e-9);
+}
+
+/// Lifted by a container, the viewer takes the window: its viewport is the
+/// window's, and a press in the pane's coordinates is read in the window's.
+/// A press that lands on the toolbar only because the window is taller
+/// than the pane reaches the toolbar; in the pane's own window it would
+/// have been the scrim and closed the viewer.
+#[test]
+fn a_lifted_viewer_takes_the_window_and_reads_presses_in_it() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    assert_eq!(view.diagram_viewer().unwrap().viewport(), (900.0, 560.0));
+    view.set_viewer_lift(Some(crate::ViewerLift {
+        origin: (100.0, 50.0),
+        size: (1200.0, 700.0),
+    }));
+    let viewer = view.diagram_viewer().unwrap();
+    assert_eq!(viewer.viewport(), (1200.0, 700.0));
+    assert_eq!(viewer.zoom(), 1.0);
+    // The zoom-out button, first on the toolbar, in window coordinates —
+    // below the pane's own 560 pixels.
+    let bar = viewer.toolbar_rect();
+    let (wx, wy) = (bar.x + 10.0, bar.y + bar.h * 0.5);
+    assert!(wy > 560.0 + 50.0, "the toolbar sits past the pane: {wy}");
+    let (lx, ly) = (wx - 100.0, wy - 50.0);
+    assert!(view.mouse_down(&mut ws, lx, ly, false));
+    assert!(View::mouse_up(&mut view, &mut ws));
+    let viewer = view
+        .diagram_viewer()
+        .expect("still open: the toolbar was pressed");
+    assert!(viewer.zoom() < 1.0, "zoomed out: {}", viewer.zoom());
+    // The pane resizing does not touch a lifted viewer; lifting back down does.
+    View::set_viewport(&mut view, 800.0, 500.0);
+    assert_eq!(view.diagram_viewer().unwrap().viewport(), (1200.0, 700.0));
+    view.set_viewer_lift(None);
+    assert_eq!(view.diagram_viewer().unwrap().viewport(), (800.0, 500.0));
+}
+
+/// A click on the dimmed page closes the viewer on release; a press that
+/// starts on the drawing does not, and the page underneath hears none of
+/// it — the caret stays where it was.
+#[test]
+fn a_click_on_the_dimmed_page_closes_the_viewer() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    let focus_before = view.editor.body.focused_id();
+    assert!(view.mouse_down(&mut ws, 5.0, 5.0, false));
+    assert!(View::mouse_up(&mut view, &mut ws));
+    assert!(!view.diagram_viewer_open());
+    assert_eq!(view.editor.body.focused_id(), focus_before);
+}
+
+/// The menu on a drawn block offers *Open* and *Copy image*; *Open* raises
+/// the viewer and *Copy image* asks the shell, from the row's own drawing.
+#[test]
+fn the_menu_opens_the_viewer_and_copies_the_image() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    view.editor.body.focus_on(node);
+    view.editor.view.active = true;
+    let context = view.focused_diagram_context().expect("a diagram row");
+    assert!(context.drawn);
+    assert!(view.open_diagram_viewer(context.node));
+    assert!(view.diagram_viewer_open());
+    assert!(view.key(&mut ws, &named(NamedKey::Escape), None, NONE));
+    assert!(!view.diagram_viewer_open());
+    view.wants_copy_diagram = view.drawn_diagram(context.node);
+    assert!(View::take_wants_copy_diagram(&mut view).is_some());
 }

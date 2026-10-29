@@ -1580,9 +1580,30 @@ fn switching_workspaces_releases_old_document_rooms_before_delete() {
         .open_from_store(segment(), Some(&root), two)
         .expect("switch away");
 
-    client
-        .delete_workspace(koru_store_core::ids::WorkspaceId::from_uuid(one.as_uuid()))
-        .expect("the old workspace has no connection owned by this window");
+    // **The Store learns of a leave a moment after it is sent.** Switching drops
+    // every session, which writes the leaves and joins the socket threads, so this
+    // window's side is settled when `open_from_store` returns. The Store reads
+    // those frames on its own thread, and a delete that gets there first still
+    // counts a connection that has already gone. The app's delete waits a second
+    // for exactly this; this waits longer, because a loaded runner is slower than
+    // a person. A room that is never released does not drain, and fails below
+    // with the Store's own count.
+    let old = koru_store_core::ids::WorkspaceId::from_uuid(one.as_uuid());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match client.delete_workspace(old) {
+            Ok(_) => break,
+            Err(error)
+                if error.code() == koru_store_core::Code::WorkspaceInUse
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => {
+                panic!("the old workspace still has a connection owned by this window: {error:?}")
+            }
+        }
+    }
 }
 
 /// **A document created in one window appears in another, without being asked.**

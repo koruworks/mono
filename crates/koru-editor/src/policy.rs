@@ -86,6 +86,7 @@ impl Policy {
             | Action::SetHeading(_)
             | Action::SetListStyle(_)
             | Action::CodeBlock
+            | Action::ToggleCallout
             | Action::InsertDivider
             | Action::ClearFormatting
             | Action::OpenLinkPrompt
@@ -93,6 +94,7 @@ impl Policy {
             | Action::TogglePageTitle
             | Action::ToggleDone
             | Action::TickCheckbox
+            | Action::SaveDiagramAs
             | Action::ToggleHideCompleted
             | Action::Reorder(_)
             | Action::Indent(_)

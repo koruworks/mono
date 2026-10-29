@@ -16,6 +16,7 @@
 //! another, and the clipboard is a property of the machine rather than of a
 //! view. The lock is only ever held across a `Vec` clone and an OS call.
 
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::RefCell;
 #[cfg(not(test))]
@@ -36,6 +37,7 @@ use crate::components::link_prompt;
 use crate::editor::Editing;
 use crate::pillinfo;
 use crate::trigger;
+use crate::view_state::ViewState;
 
 /// One copied row, with everything a paste needs to rebuild it.
 ///
@@ -63,6 +65,26 @@ pub struct CopiedImage {
 pub struct CopiedListSpec {
     pub style: ListStyle,
     /// Nest level of the enclosing list (0 = top-level list in the selection).
+    pub depth: u16,
+}
+
+/// The callout box a copied row was inside, modelled on [`CopiedListSpec`]
+/// for the same reason: the box is an invisible container (`Kind::Callout`)
+/// whose look lives on it, and the rows inside are ordinary paragraphs and
+/// list items. Set on every row inside a box, so a paste can rebuild the
+/// container — the way [`paste_rows`] rebuilds list blocks.
+///
+/// A run of rows carrying the same spec at one depth is one box; a row
+/// whose spec differs opens another at that depth, and a row with none
+/// closes every box. Two boxes of the same look side by side therefore
+/// paste as one, which is the trade a list's spec makes too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopiedCalloutSpec {
+    /// The box's icon as stored — `None` is [`koru_core::callout::DEFAULT_ICON`].
+    pub icon: Option<String>,
+    /// The box's tint token as stored — `None` is the default tint.
+    pub color: Option<String>,
+    /// Nest level of the enclosing box (0 = a box with no box around it).
     pub depth: u16,
 }
 
@@ -109,9 +131,18 @@ pub struct CopiedRow {
     pub kind: Kind,
     pub done: bool,
     pub level_name: Option<String>,
+    /// The callout box this row was inside, when it was in one — its look
+    /// and nesting, so the paste rebuilds the box around the rows that carry
+    /// it. The box itself is never a row, so this is where it travels.
+    pub callout: Option<CopiedCalloutSpec>,
     pub align: Option<Align>,
     pub heading: Option<Heading>,
     pub table_layout: Option<TableLayout>,
+    /// A code block's grammar — `NodeMeta::language`, verbatim. It rides with
+    /// the row so the block is still `rust` wherever in Koru it lands, and so
+    /// the plain-text flavor can leave as a fence that names it. `None` for
+    /// every other kind, and for a code block left on auto-detect.
+    pub language: Option<String>,
     /// Depth *relative to the shallowest row copied*, so a subtree keeps its
     /// shape wherever it lands. The first row is always zero. For list items in
     /// a flat document body, nesting is carried by [`list`] instead.
@@ -686,12 +717,13 @@ fn rows_to_copy<E: Editing + ?Sized>(e: &E, ws: &WorkspaceDoc) -> Vec<CopiedRow>
     out
 }
 
-/// How many `ListBlock` ancestors `id` has (the enclosing list's nest level + 1).
-fn list_block_ancestor_count(ws: &WorkspaceDoc, id: NodeId) -> u16 {
+/// How many ancestors of `kind` `id` has — for a list block or a callout,
+/// the enclosing container's nest level + 1.
+fn ancestor_count(ws: &WorkspaceDoc, id: NodeId, kind: Kind) -> u16 {
     let mut n = 0u16;
     let mut at = id;
     while let Ok(Parent::Node(p)) = ws.parent(at) {
-        if ws.read(p).is_ok_and(|node| node.kind == Kind::ListBlock) {
+        if ws.kind_of(p) == Some(kind) {
             n = n.saturating_add(1);
         }
         at = p;
@@ -700,7 +732,8 @@ fn list_block_ancestor_count(ws: &WorkspaceDoc, id: NodeId) -> u16 {
 }
 
 /// Read one row out of the document, whole. `None` for invisible containers
-/// (`ListBlock`) — those are rebuilt from item [`CopiedRow::list`] on paste.
+/// (`ListBlock`, `Callout`) — those are rebuilt on paste from the
+/// [`CopiedRow::list`] and [`CopiedRow::callout`] of the rows inside them.
 fn read_row<E: Editing + ?Sized>(
     e: &E,
     ws: &WorkspaceDoc,
@@ -708,9 +741,21 @@ fn read_row<E: Editing + ?Sized>(
     depth: u16,
 ) -> Option<CopiedRow> {
     let node = ws.read(id).ok()?;
-    if node.kind == Kind::ListBlock {
+    if matches!(node.kind, Kind::ListBlock | Kind::Callout) {
         return None;
     }
+    // The box this row is in, with its look: the body keeps that on the
+    // box, since the container draws no row of its own.
+    let callout = e
+        .body()
+        .row(id)
+        .and_then(|r| r.callout)
+        .and_then(|callout| e.body().callout_box(callout))
+        .map(|found| CopiedCalloutSpec {
+            icon: found.icon.clone(),
+            color: found.color.clone(),
+            depth: ancestor_count(ws, id, Kind::Callout).saturating_sub(1),
+        });
     let image = match &node.content {
         koru_core::Content::Blob {
             hash,
@@ -730,7 +775,7 @@ fn read_row<E: Editing + ?Sized>(
     // List style is on the enclosing ListBlock; the body caches it on the row.
     let list = e.body().row(id).and_then(|r| {
         r.list_style.map(|style| {
-            let nest = list_block_ancestor_count(ws, id).saturating_sub(1);
+            let nest = ancestor_count(ws, id, Kind::ListBlock).saturating_sub(1);
             CopiedListSpec { style, depth: nest }
         })
     });
@@ -743,9 +788,11 @@ fn read_row<E: Editing + ?Sized>(
         kind: node.kind,
         done: node.meta.done,
         level_name: node.meta.level_name.clone(),
+        callout,
         align: node.meta.align,
         heading: node.meta.heading,
         table_layout: node.meta.table_layout,
+        language: node.meta.language.clone(),
         depth,
         image,
         list,
@@ -898,29 +945,77 @@ fn capture<E: Editing + ?Sized>(e: &E, ws: &WorkspaceDoc) -> Option<Payload> {
 fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
     let label = |attr: &Attr| pillinfo::info_for(ws, attr).label;
     match payload {
-        Payload::Rows(rows, _) => rows
-            .iter()
-            .map(|r| {
+        Payload::Rows(rows, _) => {
+            let mut out: Vec<String> = Vec::with_capacity(rows.len());
+            // The callout boxes open around the row, outermost first. Every
+            // line inside a box leaves quoted, the way a blockquote's lines
+            // all do, and the first line of a box carries the box's icon.
+            let mut boxes: Vec<CopiedCalloutSpec> = Vec::new();
+            for r in rows {
+                let (keep, opens) = callout_box_change(boxes.iter(), r.callout.as_ref());
+                boxes.truncate(keep);
+                let icon = match (&r.callout, opens) {
+                    (Some(spec), true) => {
+                        boxes.push(spec.clone());
+                        format!("{} ", koru_core::callout::icon_of(spec.icon.as_deref()))
+                    }
+                    _ => String::new(),
+                };
                 // A divider is the one row whose text is empty on purpose: it
                 // leaves as a thematic break rather than as a blank line.
                 if r.kind == Kind::Divider {
-                    return format!("{}---", "\t".repeat(r.depth as usize));
+                    out.push(format!("{}---", "\t".repeat(r.depth as usize)));
+                    continue;
                 }
                 if r.image.is_some() {
                     // Empty line keeps interleave structure without inventing
                     // a label other apps would paste as prose.
-                    return String::new();
+                    out.push(String::new());
+                    continue;
                 }
-                // List items carry indent in `markdown_prefix` already.
+                // A code block leaves as the fence the Markdown exporter
+                // writes — the same helper, so the two agree byte for byte —
+                // with its language on the opening line. Bare lines were a
+                // paragraph per line in the next editor; a fence is a code
+                // block there, and comes back as one through the Markdown
+                // reader. Never indented: a fence has to start the line, and
+                // a code block lives in a document body, which is flat.
+                if r.kind == Kind::Code {
+                    let fence = koru_core::markdown::fenced_code(
+                        r.language.as_deref().unwrap_or(""),
+                        &r.to_text(&label),
+                    );
+                    // Inside a callout box every line of the fence is quoted,
+                    // as the box's other lines are.
+                    let quote = "> ".repeat(boxes.len());
+                    out.push(
+                        fence
+                            .lines()
+                            .map(|line| format!("{quote}{line}"))
+                            .collect::<Vec<_>>()
+                            .join(
+                                "
+",
+                            ),
+                    );
+                    continue;
+                }
+                // List items carry indent in `markdown_prefix` already; a
+                // box's `>` sits before the marker, a nested box's before that.
                 let tabs = if r.list.is_some() {
                     String::new()
                 } else {
                     "\t".repeat(r.depth as usize)
                 };
-                format!("{}{}{}", tabs, r.markdown_prefix(), r.to_text(&label))
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+                out.push(format!(
+                    "{tabs}{}{}{icon}{}",
+                    "> ".repeat(boxes.len()),
+                    r.markdown_prefix(),
+                    r.to_text(&label)
+                ));
+            }
+            out.join("\n")
+        }
         Payload::Inline(runs, attrs) => {
             let one = CopiedRow {
                 runs: runs.clone(),
@@ -931,10 +1026,12 @@ fn render(ws: &WorkspaceDoc, payload: &Payload) -> String {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
+                callout: None,
                 align: None,
                 // A fragment of a heading is not a heading.
                 heading: None,
                 table_layout: None,
+                language: None,
                 depth: 0,
                 image: None,
                 list: None,
@@ -970,9 +1067,11 @@ pub fn cf_html(ws: &WorkspaceDoc, payload: &Payload) -> Option<String> {
                 kind: Kind::Task,
                 done: false,
                 level_name: None,
+                callout: None,
                 align: None,
                 heading: None,
                 table_layout: None,
+                language: None,
                 depth: 0,
                 image: None,
                 list: None,
@@ -991,7 +1090,29 @@ fn list_tag(style: ListStyle) -> &'static str {
     }
 }
 
-/// Emit rows as HTML, nesting `<ul>`/`<ol>` from [`CopiedRow::list`].
+/// What a row's [`CopiedRow::callout`] does to the boxes open around the row
+/// before it, `open` (outermost first): how many of them stay open, and
+/// whether the row opens a new one. A spec continues the box at its depth
+/// when the look matches, opens a new box there when it does not, and no
+/// spec closes every box. Shared by the text and HTML flavours and by
+/// [`paste_rows`], so the three read a run of rows the same way.
+fn callout_box_change<'a>(
+    mut open: impl ExactSizeIterator<Item = &'a CopiedCalloutSpec>,
+    spec: Option<&CopiedCalloutSpec>,
+) -> (usize, bool) {
+    let Some(spec) = spec else {
+        return (0, false);
+    };
+    let depth = (spec.depth as usize).min(open.len());
+    if open.len() > depth && open.nth(depth) == Some(spec) {
+        (depth + 1, false)
+    } else {
+        (depth, true)
+    }
+}
+
+/// Emit rows as HTML, nesting `<ul>`/`<ol>` from [`CopiedRow::list`] and
+/// `<aside>` from [`CopiedRow::callout`].
 fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
     let mut out = String::new();
     // Each open list also has an open `<li>`. A child list belongs *inside*
@@ -1005,7 +1126,32 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
             }
         }
     };
+    // The callout boxes open around the row, outermost first: each is an
+    // `<aside>` — what other apps' exports write for a callout — holding
+    // every row inside it, lists included, with the box's icon leading its
+    // first row.
+    let mut boxes: Vec<CopiedCalloutSpec> = Vec::new();
     for row in rows {
+        let (keep, opens) = callout_box_change(boxes.iter(), row.callout.as_ref());
+        if keep < boxes.len() || opens {
+            // A list ends with the box it is in.
+            close_to(&mut out, &mut open, 0);
+        }
+        while boxes.len() > keep {
+            boxes.pop();
+            out.push_str("</aside>");
+        }
+        let lead = match (&row.callout, opens) {
+            (Some(spec), true) => {
+                boxes.push(spec.clone());
+                out.push_str("<aside>");
+                format!(
+                    "{} ",
+                    html_escape(koru_core::callout::icon_of(spec.icon.as_deref()))
+                )
+            }
+            _ => String::new(),
+        };
         if let Some(img) = &row.image {
             close_to(&mut out, &mut open, 0);
             out.push_str(&html_image_placeholder(img));
@@ -1027,13 +1173,19 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                 // Same list, next sibling item.
                 out.push_str("</li><li>");
             }
+            out.push_str(&lead);
             out.push_str(&html_runs(row, label));
             continue;
         }
         close_to(&mut out, &mut open, 0);
+        if row.kind == Kind::Code {
+            out.push_str(&html_code(row, label));
+            continue;
+        }
         match row.heading.map(Heading::level) {
             Some(l @ 1..=6) => {
                 out.push_str(&format!("<h{l}>"));
+                out.push_str(&lead);
                 out.push_str(&html_runs(row, label));
                 out.push_str(&format!("</h{l}>"));
             }
@@ -1046,10 +1198,12 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
                 }
                 if row.kind == Kind::Quote {
                     out.push_str("<blockquote><p>");
+                    out.push_str(&lead);
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p></blockquote>");
                 } else {
                     out.push_str("<p>");
+                    out.push_str(&lead);
                     out.push_str(&html_runs(row, label));
                     out.push_str("</p>");
                 }
@@ -1057,6 +1211,9 @@ fn html_rows(rows: &[CopiedRow], label: &dyn Fn(&Attr) -> String) -> String {
         }
     }
     close_to(&mut out, &mut open, 0);
+    for _ in boxes.drain(..) {
+        out.push_str("</aside>");
+    }
     out
 }
 
@@ -1141,10 +1298,33 @@ fn html_runs(row: &CopiedRow, label: &dyn Fn(&Attr) -> String) -> String {
     out
 }
 
+/// A code block as `<pre><code class="language-…">`, every newline kept.
+///
+/// `<pre>` is the one block whose whitespace a reader preserves, and the
+/// `language-` class is the spelling highlighters and Markdown converters read
+/// the grammar from, so the block arrives in Word, a browser or a wiki as code
+/// in that language rather than as collapsed prose in `<p>`. A block left on
+/// auto-detect has no class at all rather than an empty one.
+fn html_code(row: &CopiedRow, label: &dyn Fn(&Attr) -> String) -> String {
+    let body = html_escape(&row.to_text(label));
+    match row.language.as_deref().filter(|l| !l.is_empty()) {
+        Some(language) => format!(
+            r#"<pre><code class="language-{}">{body}</code></pre>"#,
+            html_escape(language)
+        ),
+        None => format!("<pre><code>{body}</code></pre>"),
+    }
+}
+
+/// The four characters HTML reads as syntax, in text and in a quoted
+/// attribute alike. `"` is here for the attributes — a language token or an
+/// image name holding a quote would otherwise end the attribute early — and is
+/// harmless in text, where `&quot;` reads back as the quote it was.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 // ---------------------------------------------------------------- cutting
@@ -1248,6 +1428,13 @@ fn apply_meta(ws: &mut WorkspaceDoc, id: NodeId, row: &CopiedRow, kind: Kind) {
     }
     if kind == Kind::Table {
         let _ = ws.set_table_layout(id, row.table_layout.unwrap_or_default());
+    }
+    // A code block's grammar travels with it, auto-detect (`None`) included:
+    // the pasted row *is* the copied block, so its language replaces whatever
+    // a reused blank code row had. Only when the row was code, though — prose
+    // absorbed by a blank code row leaves that row's own language alone.
+    if kind == Kind::Code && row.kind == Kind::Code {
+        let _ = ws.set_language(id, row.language.as_deref());
     }
 }
 
@@ -1530,9 +1717,11 @@ fn unformatted_text(ws: &WorkspaceDoc) -> Option<String> {
             kind: Kind::Task,
             done: false,
             level_name: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
+            language: None,
             depth: 0,
             image: None,
             list: None,
@@ -1658,6 +1847,18 @@ fn offer_rich_paste<E: Editing + ?Sized>(
     if !e.view().images_enabled || e.view().images_offline {
         return None;
     }
+    // A code block — a diagram's text included — takes text and nothing
+    // else: a picture has no place in it, so there is nothing for the shell
+    // to interleave. Pasted plainly, at the caret, the newlines read the way
+    // `paste_plain_text` reads them; deferred, the text came back by the
+    // rows path with its Windows line endings intact.
+    if !e.body().has_row_selection()
+        && e.body()
+            .focused()
+            .is_some_and(|row| row.kind.allows_newlines())
+    {
+        return None;
+    }
     deferred_block_paste_target(e, ws)
 }
 
@@ -1695,7 +1896,12 @@ pub fn paste_plain_text<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc, t
     // often spans lines) goes in as one inline insert — newlines and all —
     // rather than becoming a paragraph per line.
     if e.body().focused().is_some_and(|r| r.kind.allows_newlines()) && !text.is_empty() {
-        return paste_inline(e, ws, &[plain_run(text.to_owned())], &[]);
+        // Read the newlines the way `split_lines` reads them for prose. A
+        // Windows clipboard brings `\r\n`, and a `\r` kept in the block is
+        // shaped as a line break of its own — every line of a pasted
+        // diagram double-spaced, with nothing on the blank lines to delete.
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        return paste_inline(e, ws, &[plain_run(text)], &[]);
     }
     let lines = split_lines(text);
     if lines.len() == 1 {
@@ -1724,9 +1930,11 @@ pub fn paste_plain_text<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc, t
             kind: Kind::Task,
             done: false,
             level_name: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
+            language: None,
             depth,
             image: None,
             list: None,
@@ -1785,9 +1993,11 @@ fn paste_inline<E: Editing + ?Sized>(
             kind: Kind::Task,
             done: false,
             level_name: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
+            language: None,
             depth: 0,
             image: None,
             list: None,
@@ -1924,10 +2134,10 @@ fn paste_rows<E: Editing + ?Sized>(
     }
     let flat = e.body().flat;
     let rebuild_lists = flat && rows.iter().any(|r| r.list.is_some());
+    // A callout is meaningful wherever quotes are. A view that offers
+    // neither (the task outline) takes the rows inside a box as prose.
+    let rebuild_callouts = e.view().quotes_enabled && rows.iter().any(|r| r.callout.is_some());
     let same_workspace = source.is_some() && source == e.view().workspace;
-    // Tags are resolved against the destination's table first, while `e` can
-    // still be borrowed for reading. Rows that carry none cost an empty `Vec`.
-    let landings = tag_landings(e, rows);
     // Tags this workspace has never seen, and the pasted nodes waiting for
     // them. Handed to the host once the paste group has closed.
     let mut to_create: Vec<(NodeId, String)> = Vec::new();
@@ -1967,9 +2177,23 @@ fn paste_rows<E: Editing + ?Sized>(
         };
         (landing.id, kind, landing.text.is_empty())
     };
-    // A blank row cannot absorb a list item in place — lists need a ListBlock.
+    // A blank row cannot absorb a list item in place — lists need a ListBlock
+    // — nor a line from inside a callout, which needs its box around it.
     let first_is_list = rows.first().is_some_and(|r| r.list.is_some());
-    let reuse = blank && !replacing && e.body().rows[at].kind != Kind::Divider && !first_is_list;
+    let first_is_boxed = rebuild_callouts && rows.first().is_some_and(|r| r.callout.is_some());
+    let reuse = blank
+        && !replacing
+        && e.body().rows[at].kind != Kind::Divider
+        && !first_is_list
+        && !first_is_boxed;
+
+    // A multi-line block this view cannot hold whole lands as one row per
+    // line, so nothing below ever pours a newline into a one-line kind.
+    let rows = one_line_rows(rows, kind, e.view());
+    let rows: &[CopiedRow] = &rows;
+    // Tags are resolved against the destination's table first, while `e` can
+    // still be borrowed for reading. Rows that carry none cost an empty `Vec`.
+    let landings = tag_landings(e, rows);
 
     ws.checkpoint();
     ws.begin_group();
@@ -1996,8 +2220,47 @@ fn paste_rows<E: Editing + ?Sized>(
     // Top-level insert_after cursor for list containers (and non-list blocks
     // after a list ends).
     let mut list_anchor: Option<NodeId> = if replacing { None } else { Some(anchor) };
+    // The callout boxes being pasted into, outermost first, each with the
+    // spec that opened it. Rows carrying a box's spec go under it — in a
+    // flat body too, because a box is structure like a list's, not the
+    // outline nesting ADR-23 flattens — until a row whose spec differs, or
+    // carries none, closes it and every box opened inside it. Only where
+    // callouts are offered; elsewhere the rows land as the prose they are.
+    let mut callouts: Vec<(NodeId, CopiedCalloutSpec)> = Vec::new();
 
     for (n, row) in rows.iter().enumerate() {
+        let spec = row.callout.as_ref().filter(|_| rebuild_callouts);
+        let (keep, opens) = callout_box_change(callouts.iter().map(|(_, spec)| spec), spec);
+        if keep < callouts.len() || opens {
+            callouts.truncate(keep);
+            // A box's lists end with it; a list after the box, or in a new
+            // one, is a new list.
+            list_levels.clear();
+        }
+        if opens && let Some(spec) = spec {
+            let Ok(node) = Node::callout(spec.icon.as_deref(), spec.color.as_deref()) else {
+                continue;
+            };
+            // A box inside a box goes under it; a top-level box takes the
+            // slot the paste is filling, the way a list container does.
+            let id = match callouts.last() {
+                Some(&(outer, _)) => ws.insert(Parent::Node(outer), node).ok(),
+                None => {
+                    let Ok(id) = ws.insert(parent, node) else {
+                        continue;
+                    };
+                    let _ = ws.move_node(id, parent, index);
+                    index += 1;
+                    list_anchor = Some(id);
+                    Some(id)
+                }
+            };
+            let Some(id) = id else { continue };
+            pasted.push(id);
+            callouts.push((id, spec.clone()));
+        }
+        let boxed = callouts.last().map(|&(callout, _)| callout);
+
         // --- list items in a flat document: rebuild ListBlock containers -----
         if rebuild_lists && let Some(spec) = row.list {
             let mut depth = (spec.depth as usize).min(list_levels.len());
@@ -2021,6 +2284,10 @@ fn paste_rows<E: Editing + ?Sized>(
                 };
                 let list_id = if let Some(parent_item) = parent_item {
                     ws.insert(Parent::Node(parent_item), list_node).ok()
+                } else if let Some(callout) = boxed {
+                    // A list inside a callout is the box's: its container
+                    // goes under the box, after whatever is already there.
+                    ws.insert(Parent::Node(callout), list_node).ok()
                 } else {
                     let Ok(id) = ws.insert(parent, list_node) else {
                         continue;
@@ -2079,16 +2346,7 @@ fn paste_rows<E: Editing + ?Sized>(
 
         let is_divider = row.kind == Kind::Divider;
         let is_image = row.image.is_some();
-        // A quote is meaningful in every document regardless of the landing
-        // paragraph's kind. Views that do not offer quotes (the task outline)
-        // still adapt it to their own row kind, the same way they adapt prose.
-        let row_kind = if row.kind == Kind::Table && e.view().tables_enabled {
-            Kind::Table
-        } else if row.kind == Kind::Quote && e.view().quotes_enabled {
-            Kind::Quote
-        } else {
-            kind
-        };
+        let row_kind = kept_kind(row, e.view()).unwrap_or(kind);
         // A blank text row can absorb plain text; it cannot become a picture or
         // a divider in place — those always insert as their own node.
         let id = if n == 0 && reuse && !is_divider && !is_image {
@@ -2116,16 +2374,19 @@ fn paste_rows<E: Editing + ?Sized>(
                     Err(_) => continue,
                 }
             };
-            let under = match depth {
-                0 => parent,
-                d => Parent::Node(stack[d - 1]),
+            // Inside a box the row belongs to the box, appended after what is
+            // already in it; outside, its depth says where it goes.
+            let under = match (boxed, depth) {
+                (Some(callout), _) => Parent::Node(callout),
+                (None, 0) => parent,
+                (None, d) => Parent::Node(stack[d - 1]),
             };
             let Ok(id) = ws.insert(under, node) else {
                 continue;
             };
             // `insert` appends; a depth-zero row belongs in the slot the paste
             // is filling, not at the end of its parent.
-            if depth == 0 {
+            if depth == 0 && boxed.is_none() {
                 let _ = ws.move_node(id, under, index);
                 index += 1;
             }
@@ -2165,14 +2426,18 @@ fn paste_rows<E: Editing + ?Sized>(
         let _ = list_anchor;
     }
 
-    // Linkify every pasted *text* row's URLs, still inside the paste group.
+    // Linkify every pasted *text* row's URLs, still inside the paste group. A
+    // code block is left alone, as `paste_inline` leaves it: source text is
+    // not an address to follow.
     for &id in &pasted {
         if ws
             .read(id)
             .ok()
             .and_then(|n| n.content.as_text().map(|_| ()))
             .is_some()
-            && ws.read(id).is_ok_and(|n| n.kind != Kind::ListBlock)
+            && ws
+                .read(id)
+                .is_ok_and(|n| !matches!(n.kind, Kind::ListBlock | Kind::Callout | Kind::Code))
         {
             let _ = linkify_urls_in_node(ws, id);
         }
@@ -2226,6 +2491,90 @@ struct PasteListLevel {
     style: ListStyle,
     parent_item: Option<NodeId>,
     last_item: Option<NodeId>,
+}
+
+/// The kind a copied block keeps where it lands, or `None` when it takes the
+/// landing row's kind instead.
+///
+/// A table, a quote and a code block mean the same thing in every document
+/// that offers them, whatever paragraph they land beside. A view that does
+/// not offer the block (the task outline) adapts it to its own row kind, the
+/// same way it adapts prose — and [`one_line_rows`] makes sure that adaptation
+/// never costs a line.
+fn kept_kind(row: &CopiedRow, view: &ViewState) -> Option<Kind> {
+    match row.kind {
+        Kind::Table if view.tables_enabled => Some(Kind::Table),
+        Kind::Quote if view.quotes_enabled => Some(Kind::Quote),
+        Kind::Code if view.code_enabled => Some(Kind::Code),
+        _ => None,
+    }
+}
+
+/// The rows as the destination can hold them, one node each.
+///
+/// A code block is one node whose text spans lines, and so is a table's
+/// source. Where the view offers the block it passes through whole. Where it
+/// does not, the block takes the landing row's kind — and a one-line kind
+/// cannot hold a newline. `insert_runs` skips a run that fails to write, so
+/// such a block used to arrive as an empty row with its text gone and nothing
+/// said. It lands instead as one row per line, which is what the same text
+/// pasted from another application already does. Borrowed, not cloned, in
+/// the common case of nothing to split.
+fn one_line_rows<'a>(
+    rows: &'a [CopiedRow],
+    landing: Kind,
+    view: &ViewState,
+) -> Cow<'a, [CopiedRow]> {
+    let needs_split = |row: &CopiedRow| {
+        kept_kind(row, view).is_none()
+            && !landing.allows_newlines()
+            && row
+                .runs
+                .iter()
+                .any(|run| !run.is_pill() && run.text.contains('\n'))
+    };
+    if !rows.iter().any(needs_split) {
+        return Cow::Borrowed(rows);
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        if !needs_split(row) {
+            out.push(row.clone());
+            continue;
+        }
+        let text: String = row
+            .runs
+            .iter()
+            .filter(|run| !run.is_pill())
+            .map(|run| run.text.as_str())
+            .collect();
+        for (n, line) in text.lines().enumerate() {
+            out.push(CopiedRow {
+                runs: vec![plain_run(line.to_owned())],
+                attrs: Vec::new(),
+                // What the block carried stays with its first line.
+                node_attrs: if n == 0 {
+                    row.node_attrs.clone()
+                } else {
+                    Vec::new()
+                },
+                // Adapted to the destination by `paste_rows`.
+                kind: Kind::Paragraph,
+                done: false,
+                level_name: None,
+                align: row.align,
+                heading: None,
+                table_layout: None,
+                language: None,
+                depth: row.depth,
+                image: None,
+                list: row.list,
+                // Every line stays inside the box the block was in.
+                callout: row.callout.clone(),
+            });
+        }
+    }
+    Cow::Owned(out)
 }
 
 #[cfg(test)]
@@ -2354,6 +2703,31 @@ mod tests {
         // Without a focus there is nowhere to anchor, so it declines.
         e.body.focus = usize::MAX;
         assert!(offer_rich_paste(&mut e, &ws).is_none());
+    }
+
+    /// Foreign text pasted into a code block is never deferred: the block
+    /// takes text only, so it pastes plainly, with its newlines read as
+    /// `paste_plain_text` reads them. Deferred, a Windows paste reached the
+    /// block with every line double-spaced, where paste-as-plain did not.
+    #[test]
+    fn foreign_text_into_a_code_block_is_pasted_plainly_not_deferred() {
+        fixture();
+        let (mut ws, mut e) = editor_over(&[("one", 0)]);
+        e.view_mut().images_enabled = true;
+        e.body.focus = 0;
+        assert!(
+            offer_rich_paste(&mut e, &ws).is_some(),
+            "a paragraph defers"
+        );
+
+        let id = e.body.rows[0].id;
+        ws.set_kind(id, Kind::Code).unwrap();
+        e.body.rebuild(&ws);
+        e.body.focus = 0;
+        assert!(
+            offer_rich_paste(&mut e, &ws).is_none(),
+            "a code block pastes plainly"
+        );
     }
 
     /// Deferred rich/image decoding must retain the selection from the paste
@@ -2543,6 +2917,29 @@ mod tests {
                 .any(|a| matches!(&a.value, AttrValue::Url(_))),
             "no link was created inside a code block"
         );
+    }
+
+    /// Windows newlines pasted into a code block arrive as Unix ones. The
+    /// block kept the `\r`, and the shaper broke the line at it and again at
+    /// the `\n`: a diagram pasted from another app showed every line
+    /// double-spaced, with no blank line in the text to delete.
+    #[test]
+    fn windows_newlines_pasted_into_a_code_block_become_unix_ones() {
+        let (mut ws, mut e) = editor_over(&[("", 0)]);
+        let id = e.body.rows[0].id;
+        ws.set_kind(id, Kind::Code).unwrap();
+        e.body.rebuild(&ws);
+        e.body.focus = 0;
+        e.place_caret(0);
+        e.reflow();
+
+        assert!(paste_plain_text(
+            &mut e,
+            &mut ws,
+            "flowchart LR\r\n  A --> B\rC"
+        ));
+        let node = ws.read(id).unwrap();
+        assert_eq!(node.content.as_text(), Some("flowchart LR\n  A --> B\nC"));
     }
 
     /// Pasting formatted runs into a code block drops the marks — code is plain
@@ -3354,13 +3751,149 @@ mod tests {
             kind: Kind::Task,
             done: false,
             level_name: None,
+            callout: None,
             align: None,
             heading: None,
             table_layout: None,
+            language: None,
             depth: 0,
             image: None,
             list: None,
         }
+    }
+
+    /// A callout box leaves whole and lands whole: the lines inside it carry
+    /// the box's look, the list inside it its list, and the paste rebuilds
+    /// the container around them — in a flat body too, because a box is
+    /// structure like a list's, not the outline nesting the body flattens.
+    /// The text and HTML flavours carry the box as well, its icon leading
+    /// the first line.
+    #[test]
+    fn copy_paste_keeps_a_callout_box_and_the_list_inside_it() {
+        let mut src = WorkspaceDoc::create(WorkspaceId::new(), "src").unwrap();
+        let doc_a = src
+            .insert(Parent::Root, Node::document("A").unwrap())
+            .unwrap();
+        let callout = src
+            .insert(
+                Parent::Node(doc_a),
+                Node::callout(Some("⚠️"), Some("red")).unwrap(),
+            )
+            .unwrap();
+        src.insert(Parent::Node(callout), Node::paragraph("first").unwrap())
+            .unwrap();
+        let list = src
+            .insert(Parent::Node(callout), Node::list_block().unwrap())
+            .unwrap();
+        src.set_list_style(list, Some(ListStyle::Bullet)).unwrap();
+        src.insert(Parent::Node(list), Node::paragraph("item").unwrap())
+            .unwrap();
+        src.insert(Parent::Node(doc_a), Node::paragraph("after").unwrap())
+            .unwrap();
+
+        let mut e_src = Editor::rooted_at(&src, doc_a, true);
+        e_src.body.rebuild(&src);
+        for row in e_src.body.rows.iter_mut().filter(|r| !r.is_title) {
+            row.selected = true;
+        }
+        let payload = capture(&e_src, &src).expect("copy the box");
+        let Payload::Rows(rows, source) = payload.clone() else {
+            panic!("expected whole rows");
+        };
+        let spec = CopiedCalloutSpec {
+            icon: Some("⚠️".into()),
+            color: Some("red".into()),
+            depth: 0,
+        };
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.callout.clone(), r.list.map(|l| l.style)))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(spec.clone()), None),
+                (Some(spec), Some(ListStyle::Bullet)),
+                (None, None),
+            ],
+            "every row inside carries the box: {rows:?}"
+        );
+        assert_eq!(render(&src, &payload), "> ⚠️ first\n> - item\nafter");
+        let html = cf_html(&src, &payload).unwrap();
+        assert!(
+            html.contains("<aside><p>⚠️ first</p><ul><li>item</li></ul></aside><p>after</p>"),
+            "{html}"
+        );
+
+        let mut dst = WorkspaceDoc::create(WorkspaceId::new(), "dst").unwrap();
+        let doc_b = dst
+            .insert(Parent::Root, Node::document("B").unwrap())
+            .unwrap();
+        let landing = dst
+            .insert(Parent::Node(doc_b), Node::paragraph("").unwrap())
+            .unwrap();
+        let mut e_dst = Editor::rooted_at(&dst, doc_b, true);
+        e_dst.view.quotes_enabled = true;
+        e_dst.body.rebuild(&dst);
+        e_dst.body.focus_on(landing);
+        e_dst.place_caret(0);
+        assert!(
+            paste_rows(&mut e_dst, &mut dst, &rows, source),
+            "paste into the other document"
+        );
+
+        let first = e_dst
+            .body
+            .rows
+            .iter()
+            .find(|r| r.text == "first")
+            .expect("the first line")
+            .id;
+        let Parent::Node(pasted) = dst.parent(first).unwrap() else {
+            panic!("the line is in a box");
+        };
+        let node = dst.read(pasted).unwrap();
+        assert_eq!(node.kind, Kind::Callout);
+        assert_eq!(node.meta.icon.as_deref(), Some("⚠️"));
+        assert_eq!(node.meta.colour.as_deref(), Some("red"));
+        assert_eq!(dst.parent(pasted).unwrap(), Parent::Node(doc_b));
+        let rows: Vec<(String, Option<NodeId>, Option<ListStyle>)> = e_dst
+            .body
+            .rows
+            .iter()
+            .filter(|r| !r.is_title)
+            .map(|r| (r.text.clone(), r.callout, r.list_style))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (String::new(), None, None),
+                ("first".into(), Some(pasted), None),
+                ("item".into(), Some(pasted), Some(ListStyle::Bullet)),
+                ("after".into(), None, None),
+            ],
+            "the blank landing row stays, since a boxed line cannot fill it"
+        );
+        let children = dst.children(Parent::Node(pasted)).unwrap();
+        assert_eq!(
+            children.len(),
+            2,
+            "the line and the list block: {children:?}"
+        );
+        assert_eq!(children[0], first);
+        assert_eq!(dst.read(children[1]).unwrap().kind, Kind::ListBlock);
+        let found = e_dst.body.callout_box(pasted).expect("the box draws");
+        assert_eq!(found.color.as_deref(), Some("red"));
+        let after = e_dst
+            .body
+            .rows
+            .iter()
+            .find(|r| r.text == "after")
+            .unwrap()
+            .id;
+        assert_eq!(
+            dst.parent(after).unwrap(),
+            Parent::Node(doc_b),
+            "the row after the box is outside it"
+        );
     }
 
     /// Nested list structure on the internal clipboard must rebuild ListBlocks
@@ -4644,6 +5177,439 @@ mod tests {
         assert!(
             ws.read(pasted).unwrap().content.attrs().is_empty(),
             "and none of it reached the pasted block, in the same workspace"
+        );
+    }
+
+    // ------------------------------------------- code blocks keep their language
+
+    /// A document body — where code blocks live — over the given rows: a code
+    /// block where a language is given (`Some("")` for one left on
+    /// auto-detect), a paragraph otherwise. Returns the body rows' ids, title
+    /// excluded.
+    fn document_over(rows: &[(&str, Option<&str>)]) -> (WorkspaceDoc, Editor, Vec<NodeId>) {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let doc = ws
+            .insert(Parent::Root, Node::document("D").unwrap())
+            .unwrap();
+        let mut ids = Vec::new();
+        for (text, code) in rows {
+            let node = match code {
+                Some(_) => Node::code(*text).unwrap(),
+                None => Node::paragraph(*text).unwrap(),
+            };
+            let id = ws.insert(Parent::Node(doc), node).unwrap();
+            if let Some(language) = code.filter(|l| !l.is_empty()) {
+                ws.set_language(id, Some(language)).unwrap();
+            }
+            ids.push(id);
+        }
+        ws.enable_undo();
+        let mut e = Editor::rooted_at(&ws, doc, true);
+        // The document app offers code blocks; the default view does not.
+        e.view.code_enabled = true;
+        e.body.rebuild(&ws);
+        (ws, e, ids)
+    }
+
+    /// The body rows, title excluded: text, kind and language.
+    fn body_rows(ws: &WorkspaceDoc, e: &Editor) -> Vec<(String, Kind, Option<String>)> {
+        e.body
+            .rows
+            .iter()
+            .filter(|r| !r.is_title)
+            .map(|r| {
+                let node = ws.read(r.id).unwrap();
+                (r.text.clone(), r.kind, node.meta.language.clone())
+            })
+            .collect()
+    }
+
+    /// Copy one row by focusing it with no selection: Ctrl+C takes the whole
+    /// block.
+    fn copy_row(e: &mut Editor, ws: &WorkspaceDoc, id: NodeId) {
+        e.body.focus_on(id);
+        e.place_caret(0);
+        assert!(copy(e, ws), "something to copy");
+    }
+
+    /// A code block pasted beside a paragraph is still a code block, with every
+    /// line and its language. It used to take the paragraph's kind, and a
+    /// paragraph cannot hold a newline: `insert_runs` dropped the run and the
+    /// block arrived as an empty row.
+    #[test]
+    fn a_code_block_pasted_beside_a_paragraph_keeps_its_lines_and_its_language() {
+        fixture();
+        let body = "fn main() {\n    run();\n}";
+        let (ws, mut e, ids) = document_over(&[("intro", None), (body, Some("rust"))]);
+        copy_row(&mut e, &ws, ids[1]);
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("landing", None)]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(usize::MAX);
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            body_rows(&ws2, &e2),
+            vec![
+                ("landing".into(), Kind::Paragraph, None),
+                (body.into(), Kind::Code, Some("rust".into())),
+            ]
+        );
+    }
+
+    /// A one-line block has no newline to lose, so it used to arrive — as a
+    /// paragraph. It is code where it lands too.
+    #[test]
+    fn a_one_line_code_block_arrives_as_code() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("x = 1", Some(""))]);
+        copy_row(&mut e, &ws, ids[0]);
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("landing", None)]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(usize::MAX);
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            body_rows(&ws2, &e2),
+            vec![
+                ("landing".into(), Kind::Paragraph, None),
+                ("x = 1".into(), Kind::Code, None),
+            ]
+        );
+    }
+
+    /// A blank code row absorbs the paste in place and takes the pasted
+    /// block's language — the row *is* the pasted block now, whatever grammar
+    /// the blank row had been set to.
+    #[test]
+    fn a_code_block_pasted_into_a_blank_code_row_keeps_its_language() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("print(1)", Some("py"))]);
+        copy_row(&mut e, &ws, ids[0]);
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("", Some("rust"))]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(0);
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            body_rows(&ws2, &e2),
+            vec![("print(1)".into(), Kind::Code, Some("py".into()))],
+            "one row, reused, with the pasted block's language"
+        );
+    }
+
+    /// Prose absorbed by a blank code row is not a code block arriving: the
+    /// row keeps its own language.
+    #[test]
+    fn prose_pasted_into_a_blank_code_row_leaves_its_language_alone() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("a note", None)]);
+        copy_row(&mut e, &ws, ids[0]);
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("", Some("rust"))]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(0);
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            body_rows(&ws2, &e2),
+            vec![("a note".into(), Kind::Code, Some("rust".into()))]
+        );
+    }
+
+    /// A paragraph, a code block and a paragraph, copied together, arrive in
+    /// that order with the code block whole between the two.
+    #[test]
+    fn a_mixed_selection_round_trips_with_the_code_block_between_the_paragraphs() {
+        fixture();
+        let body = "let x = 1;\nlet y = 2;";
+        let (ws, mut e, _) = document_over(&[("one", None), (body, Some("rust")), ("two", None)]);
+        for row in e.body.rows.iter_mut().filter(|r| !r.is_title) {
+            row.selected = true;
+        }
+        assert!(copy(&mut e, &ws));
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("", None)]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(0);
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            body_rows(&ws2, &e2),
+            vec![
+                ("one".into(), Kind::Paragraph, None),
+                (body.into(), Kind::Code, Some("rust".into())),
+                ("two".into(), Kind::Paragraph, None),
+            ]
+        );
+    }
+
+    /// Where the view does not offer code blocks — the task outline — the
+    /// block adapts to the view's rows, as prose does, and that costs no line:
+    /// one row per line, the way the same text pasted from outside lands.
+    #[test]
+    fn a_code_block_pasted_where_code_is_not_offered_lands_one_row_per_line() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("a\nb\nc", Some("rust"))]);
+        copy_row(&mut e, &ws, ids[0]);
+
+        let (mut ws2, mut e2) = editor_over(&[("task", 0)]);
+        assert!(!e2.view.code_enabled, "the outline offers no code blocks");
+        e2.body.focus = 0;
+        assert!(paste(&mut e2, &mut ws2));
+
+        assert_eq!(
+            shape(&e2),
+            vec![
+                ("task".into(), 0),
+                ("a".into(), 0),
+                ("b".into(), 0),
+                ("c".into(), 0),
+            ]
+        );
+        assert!(
+            e2.body.rows.iter().all(|r| r.kind == Kind::Task),
+            "every line took the outline's own kind"
+        );
+    }
+
+    /// Source text is not an address to follow: a URL inside a pasted code
+    /// block stays text, as it does when pasted *into* a code block.
+    #[test]
+    fn a_url_in_a_pasted_code_block_stays_text() {
+        fixture();
+        let body = "see https://example.com/path";
+        let (ws, mut e, ids) = document_over(&[(body, Some("md"))]);
+        copy_row(&mut e, &ws, ids[0]);
+
+        let (mut ws2, mut e2, ids2) = document_over(&[("landing", None)]);
+        e2.body.focus_on(ids2[0]);
+        e2.place_caret(usize::MAX);
+        assert!(paste(&mut e2, &mut ws2));
+
+        let code = e2
+            .body
+            .rows
+            .iter()
+            .find(|r| r.kind == Kind::Code)
+            .expect("the code row");
+        let node = ws2.read(code.id).unwrap();
+        assert_eq!(node.content.as_text(), Some(body));
+        assert!(
+            !node
+                .content
+                .attrs()
+                .iter()
+                .any(|a| matches!(&a.value, AttrValue::Url(_))),
+            "no link was made inside the code block"
+        );
+    }
+
+    /// The plain-text half: a code block leaves as a fence naming its
+    /// language, so the next editor reads a code block rather than bare lines.
+    #[test]
+    fn a_code_block_leaves_for_another_application_as_a_fence_naming_its_language() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("fn main() {\n}", Some("rust"))]);
+        e.body.focus_on(ids[0]);
+        e.place_caret(0);
+
+        let payload = capture(&e, &ws).expect("something to copy");
+        assert_eq!(render(&ws, &payload), "```rust\nfn main() {\n}\n```");
+    }
+
+    /// A body quoting a three-backtick fence leaves inside a four-backtick one
+    /// — the same bytes the Markdown exporter writes for the same body, since
+    /// both come from `koru_core::markdown::fenced_code`, and the exporter's
+    /// test pins this literal too.
+    #[test]
+    fn a_code_body_holding_a_fence_leaves_with_a_longer_one() {
+        fixture();
+        let body = "a\n```\nb";
+        let (ws, mut e, ids) = document_over(&[(body, Some("md"))]);
+        e.body.focus_on(ids[0]);
+        e.place_caret(0);
+
+        let payload = capture(&e, &ws).expect("something to copy");
+        let text = render(&ws, &payload);
+        assert_eq!(text, "````md\na\n```\nb\n````");
+        assert_eq!(text, koru_core::markdown::fenced_code("md", body));
+    }
+
+    /// A block left on auto-detect leaves with a bare fence.
+    #[test]
+    fn a_code_block_without_a_language_leaves_with_a_bare_fence() {
+        fixture();
+        let (ws, mut e, ids) = document_over(&[("x = 1", Some(""))]);
+        e.body.focus_on(ids[0]);
+        e.place_caret(0);
+
+        let payload = capture(&e, &ws).expect("something to copy");
+        assert_eq!(render(&ws, &payload), "```\nx = 1\n```");
+    }
+
+    /// In a mixed copy the fence sits between the paragraphs, each on its own
+    /// line.
+    #[test]
+    fn a_mixed_copy_puts_the_fence_between_the_paragraphs() {
+        fixture();
+        let (ws, mut e, _) = document_over(&[
+            ("one", None),
+            ("let x = 1;\nlet y = 2;", Some("rust")),
+            ("two", None),
+        ]);
+        for row in e.body.rows.iter_mut().filter(|r| !r.is_title) {
+            row.selected = true;
+        }
+
+        let payload = capture(&e, &ws).expect("something to copy");
+        assert_eq!(
+            render(&ws, &payload),
+            "one\n```rust\nlet x = 1;\nlet y = 2;\n```\ntwo"
+        );
+    }
+
+    /// A code block inside a callout box leaves as a fence whose every line is
+    /// quoted, as the box's other lines are, so the box and the fence both
+    /// survive a trip through plain text. The fence branch once returned out
+    /// of the whole copy, which dropped every other row.
+    #[test]
+    fn a_fence_inside_a_callout_box_is_quoted_line_by_line() {
+        fixture();
+        let (ws, _, _) = document_over(&[("x", None)]);
+        let boxed = Some(CopiedCalloutSpec {
+            icon: None,
+            color: None,
+            depth: 0,
+        });
+        let rows = vec![
+            CopiedRow {
+                runs: vec![plain_run("before".into())],
+                ..empty()
+            },
+            CopiedRow {
+                runs: vec![plain_run(
+                    "let a = 1;
+let b = 2;"
+                        .into(),
+                )],
+                kind: Kind::Code,
+                language: Some("rust".into()),
+                callout: boxed,
+                ..empty()
+            },
+            CopiedRow {
+                runs: vec![plain_run("after".into())],
+                ..empty()
+            },
+        ];
+        let text = render(&ws, &Payload::Rows(rows, None));
+        assert!(
+            text.starts_with(
+                "before
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "
+after"
+            ),
+            "{text}"
+        );
+        for line in ["> ```rust", "> let a = 1;", "> let b = 2;", "> ```"] {
+            assert!(text.contains(line), "{line:?} in {text}");
+        }
+    }
+
+    /// The HTML half: `<pre><code class="language-…">`, newlines kept, the
+    /// body escaped.
+    #[test]
+    fn cf_html_wraps_a_code_block_in_pre_code_naming_its_language() {
+        let rows = vec![CopiedRow {
+            runs: vec![plain_run("if a < b && c > d {\n    say(\"hi\");\n}".into())],
+            kind: Kind::Code,
+            language: Some("rust".into()),
+            ..empty()
+        }];
+        let html = cf_html_of(&rows).expect("some");
+        assert!(
+            html.contains(
+                "<pre><code class=\"language-rust\">if a &lt; b &amp;&amp; c &gt; d {\n    say(&quot;hi&quot;);\n}</code></pre>"
+            ),
+            "{html}"
+        );
+        assert!(
+            !html.contains("<p>if a"),
+            "not collapsed into a paragraph: {html}"
+        );
+    }
+
+    /// The language is an attribute value, so a quote or an angle bracket in
+    /// it cannot end the attribute or open a tag.
+    #[test]
+    fn cf_html_escapes_the_language_in_the_class_attribute() {
+        let rows = vec![CopiedRow {
+            runs: vec![plain_run("x".into())],
+            kind: Kind::Code,
+            language: Some("a\"b<c&d".into()),
+            ..empty()
+        }];
+        let html = cf_html_of(&rows).expect("some");
+        assert!(
+            html.contains("<pre><code class=\"language-a&quot;b&lt;c&amp;d\">x</code></pre>"),
+            "{html}"
+        );
+    }
+
+    /// No language, no class — rather than an empty `language-`.
+    #[test]
+    fn cf_html_of_a_code_block_without_a_language_has_no_class() {
+        let rows = vec![CopiedRow {
+            runs: vec![plain_run("x = 1".into())],
+            kind: Kind::Code,
+            ..empty()
+        }];
+        let html = cf_html_of(&rows).expect("some");
+        assert!(html.contains("<pre><code>x = 1</code></pre>"), "{html}");
+    }
+
+    /// A code block between two paragraphs is its own block in the HTML too.
+    #[test]
+    fn cf_html_keeps_a_code_block_between_its_paragraphs() {
+        let rows = vec![
+            CopiedRow {
+                runs: vec![plain_run("one".into())],
+                ..empty()
+            },
+            CopiedRow {
+                runs: vec![plain_run("a\nb".into())],
+                kind: Kind::Code,
+                language: Some("sh".into()),
+                ..empty()
+            },
+            CopiedRow {
+                runs: vec![plain_run("two".into())],
+                ..empty()
+            },
+        ];
+        let html = cf_html_of(&rows).expect("some");
+        assert!(
+            html.contains("<p>one</p><pre><code class=\"language-sh\">a\nb</code></pre><p>two</p>"),
+            "{html}"
+        );
+    }
+
+    /// All four characters HTML reads as syntax, so the same escape serves
+    /// text and quoted attributes.
+    #[test]
+    fn html_escape_covers_text_and_attribute_syntax() {
+        assert_eq!(
+            html_escape("<a href=\"x\">&</a>"),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"
         );
     }
 }

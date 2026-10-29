@@ -319,6 +319,9 @@ fn emit_node(
                 out.push('\n');
             }
         }
+        Kind::Callout => {
+            emit_callout(ws, id, node, list_depth, blobs, assets_rel, out, assets)?;
+        }
         Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Contact => {
             if let Some(style) = parent_list {
                 let indent = "  ".repeat(list_depth);
@@ -361,8 +364,7 @@ fn emit_node(
                     out.push('\n');
                 }
             } else {
-                let prefix = block_prefix(node);
-                out.push_str(prefix);
+                out.push_str(block_prefix(node));
                 out.push_str(&inline_line(ws, id, node)?);
                 out.push_str("\n\n");
                 emit_children(
@@ -380,14 +382,13 @@ fn emit_node(
         Kind::Code => {
             let lang = node.meta.language.as_deref().unwrap_or("");
             let body = node.content.as_text().unwrap_or("");
-            out.push_str("```");
-            out.push_str(lang);
-            out.push('\n');
-            out.push_str(body);
-            if !body.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push_str("```\n\n");
+            // The model spells the fence, and the clipboard's plain-text
+            // flavor spells it the same way, so a block exported and a block
+            // copied read alike elsewhere. It lengthens past any backtick run
+            // the body holds; three was once written unconditionally, and a
+            // body quoting a fence ended the block early.
+            out.push_str(&koru_core::markdown::fenced_code(lang, body));
+            out.push_str("\n\n");
         }
         Kind::Table => {
             let body = node.content.as_text().unwrap_or("").trim_end();
@@ -431,6 +432,86 @@ fn emit_node(
     if matches!(node.content, Content::Embed { .. }) {
         out.push_str("<!-- embed omitted -->\n\n");
     }
+    Ok(())
+}
+
+/// A callout box. Markdown has no box, so it is written as one blockquote
+/// that any viewer draws as one, led by the box's icon: `> 💡 first line`
+/// when the first line inside is a plain paragraph, or `> 💡` alone when it
+/// is not (a list, a heading, code), then every line inside — paragraphs,
+/// lists with their nesting, headings, code — as further lines of the same
+/// quote, with a bare `>` between blocks. The importer reads a blockquote
+/// whose first line leads with an emoji back as a box
+/// (`koru-import-markdown`), so a document round-trips. The tint has no
+/// Markdown form and is not written. Under a list item the quote is
+/// indented like the item's other nested blocks.
+fn emit_callout(
+    ws: &WorkspaceDoc,
+    id: NodeId,
+    node: &Node,
+    list_depth: usize,
+    blobs: &dyn BlobSource,
+    assets_rel: &str,
+    out: &mut String,
+    assets: &mut Vec<RenderedAsset>,
+) -> Result<(), ExportError> {
+    let indent = "  ".repeat(list_depth);
+    let children = ws
+        .children(Parent::Node(id))
+        .map_err(|e| ExportError::new(e.to_string()))?;
+    let first_is_line = match children.first() {
+        Some(&first) => {
+            let first = ws
+                .read(first)
+                .map_err(|e| ExportError::new(e.to_string()))?;
+            first.kind == Kind::Paragraph
+                && first.meta.heading.is_none()
+                && !matches!(first.content, Content::Embed { .. })
+        }
+        None => false,
+    };
+    let mut inside = String::new();
+    emit_children(
+        ws,
+        Parent::Node(id),
+        0,
+        None,
+        blobs,
+        assets_rel,
+        &mut inside,
+        assets,
+    )?;
+    let inside = inside.trim_end();
+    let mut lines = inside.lines();
+    out.push_str(&indent);
+    out.push_str("> ");
+    out.push_str(koru_core::callout::icon(&node.meta));
+    let first = if first_is_line { lines.next() } else { None };
+    if let Some(first) = first {
+        if !first.is_empty() {
+            out.push(' ');
+            out.push_str(first);
+        }
+        out.push('\n');
+    } else {
+        // The icon alone on its line, and a bare `>` after it — or the first
+        // line inside would continue the icon's paragraph.
+        out.push('\n');
+        if !inside.is_empty() {
+            out.push_str(&indent);
+            out.push_str(">\n");
+        }
+    }
+    for line in lines {
+        out.push_str(&indent);
+        out.push('>');
+        if !line.is_empty() {
+            out.push(' ');
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out.push('\n');
     Ok(())
 }
 
@@ -638,7 +719,13 @@ fn write_text_atomic(path: &Path, text: &str) -> Result<(), ExportError> {
     write_bytes_atomic(path, text.as_bytes())
 }
 
-fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), ExportError> {
+/// Write `bytes` to `path` so that the file is either the old one or the
+/// whole new one: into a `.part` beside it, synced, then renamed over.
+///
+/// Public because it is the one atomic file write in the tree that a save
+/// from the shell can share — a diagram saved as a PNG or an SVG goes
+/// through it, so a full disk leaves no half-written picture.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), ExportError> {
     let part = part_path(path);
     let result = (|| -> Result<(), ExportError> {
         let mut file = fs::File::create(&part).map_err(|e| ExportError::new(e.to_string()))?;

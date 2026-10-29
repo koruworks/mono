@@ -29,6 +29,10 @@ const LANGUAGES: &[(&str, &str)] = &[
     ("CSS", "css"),
     ("Bash", "bash"),
     ("Go", "go"),
+    // Last, and not a grammar: the diagram language, and the one way back
+    // for a block whose chip was switched to a grammar — the fence cannot
+    // be retyped on a block that already holds its text.
+    ("Mermaid", "mermaid"),
 ];
 
 pub struct LanguagePicker {
@@ -39,22 +43,27 @@ pub struct LanguagePicker {
     /// with padding rather than a fixed width. `0.0` until measured; `panel_size`
     /// floors it.
     pub width: f32,
+    /// The block's current grammar is one this list does not offer — a fence
+    /// token the list has never heard of. The list highlights Auto because it has nothing
+    /// better to highlight, but Auto is then **not** a choice: confirming it
+    /// would erase a language the person never saw in the list.
+    keeps_unlisted: bool,
 }
 
 impl LanguagePicker {
     /// Open for `node`, with the block's current grammar preselected — the
     /// same bargain a native dropdown makes: what the chip says is what the
     /// list highlights, and Enter (or a click) confirms it. A token the list
-    /// does not know starts at Auto rather than refusing to open; the fence
-    /// remains the way back for anything exotic.
+    /// does not know starts at Auto rather than refusing to open, and Enter
+    /// there keeps the token: the picker never clears a language it does not
+    /// list. The fence remains the way to set anything exotic.
     pub fn open_for(node: NodeId, current: Option<&str>) -> Self {
-        let sel = current
-            .and_then(|token| LANGUAGES.iter().position(|(_, t)| *t == token))
-            .unwrap_or(0);
+        let listed = current.and_then(|token| LANGUAGES.iter().position(|(_, t)| *t == token));
         Self {
             node,
-            sel,
+            sel: listed.unwrap_or(0),
             width: 0.0,
+            keeps_unlisted: current.is_some() && listed.is_none(),
         }
     }
 
@@ -97,6 +106,9 @@ impl LanguagePicker {
 
     fn choose(&self, i: usize) -> Outcome {
         match LANGUAGES.get(i) {
+            // Auto over an unlisted token is the highlight the list opened
+            // with, not a request to clear: close and keep the language.
+            Some((_, "")) if self.keeps_unlisted => Outcome::Close,
             Some((_, "")) => Outcome::SetLanguage(self.node, None),
             Some((_, token)) => Outcome::SetLanguage(self.node, Some((*token).to_string())),
             None => Outcome::Close,
@@ -156,8 +168,10 @@ mod tests {
     #[test]
     fn every_token_the_picker_offers_highlights() {
         for (name, token) in labels() {
-            if token.is_empty() {
-                continue; // Auto: no grammar by definition.
+            if token.is_empty() || *token == crate::diagram::LANGUAGE {
+                // Auto: no grammar by definition. Mermaid: drawn, not coloured —
+                // its text shows plain, as a fence's unknown language does.
+                continue;
             }
             let sample = format!("// {name}\nlet value = \"{name}\";");
             let ranges = koru_blocks::highlight(&sample, Some(token), false);
@@ -181,15 +195,62 @@ mod tests {
             Outcome::SetLanguage(_, Some(t)) if t == "python",
         ));
 
-        // No token is Auto; one the list has never heard of starts over too,
-        // and Enter there clears back to Auto rather than keeping the mystery.
-        for current in [None, Some("klingon")] {
-            let mut p = LanguagePicker::open_for(NodeId::new(), current);
-            assert_eq!(p.sel, 0, "{current:?} starts at Auto");
+        // No token is Auto, and Enter there is still Auto: nothing to keep.
+        let mut p = LanguagePicker::open_for(NodeId::new(), None);
+        assert_eq!(p.sel, 0, "no language starts at Auto");
+        assert!(matches!(
+            p.key(Some(NamedKey::Enter)),
+            Outcome::SetLanguage(_, None),
+        ));
+    }
+
+    /// **The picker never clears a language it does not list.** A block set
+    /// to a fence token the list has never heard of opens on Auto because there is nothing better to highlight, but Enter
+    /// (or a click on Auto) closes the picker and leaves the language alone.
+    /// It used to erase it, which turned a drawn diagram back into a plain
+    /// code block for pressing Enter without choosing.
+    #[test]
+    fn an_unlisted_language_survives_enter() {
+        for current in ["klingon", "cobol"] {
+            let mut p = LanguagePicker::open_for(NodeId::new(), Some(current));
+            assert_eq!(p.sel, 0, "{current} is not listed, so Auto is lit");
+            assert!(
+                matches!(p.key(Some(NamedKey::Enter)), Outcome::Close),
+                "Enter keeps {current}"
+            );
+            assert!(
+                matches!(p.click(theme::ROW_H * 0.5), Outcome::Close),
+                "a click on Auto keeps {current}"
+            );
+            // Choosing a listed grammar still changes it: that is a choice.
+            let rust = LANGUAGES.iter().position(|(n, _)| *n == "Rust").unwrap();
             assert!(matches!(
-                p.key(Some(NamedKey::Enter)),
-                Outcome::SetLanguage(_, None),
+                p.choose(rust),
+                Outcome::SetLanguage(_, Some(t)) if t == "rust",
             ));
         }
+    }
+
+    /// Mermaid is listed: a block switched to a grammar is switched back to
+    /// a diagram from the same chip. It was not, so the switch was one-way —
+    /// a drawn diagram turned into a Rust block had no way to draw again.
+    #[test]
+    fn mermaid_is_listed_so_a_diagram_can_be_chosen_back() {
+        let mermaid = LANGUAGES
+            .iter()
+            .position(|(_, t)| *t == crate::diagram::LANGUAGE)
+            .expect("Mermaid is in the list");
+        assert_eq!(LANGUAGES[mermaid].0, "Mermaid");
+        let p = LanguagePicker::open_for(NodeId::new(), Some("rust"));
+        assert!(matches!(
+            p.choose(mermaid),
+            Outcome::SetLanguage(_, Some(t)) if t == "mermaid",
+        ));
+        let mut p = LanguagePicker::open_for(NodeId::new(), Some("mermaid"));
+        assert_eq!(p.sel, mermaid, "a diagram's chip opens on Mermaid");
+        assert!(
+            matches!(p.key(Some(NamedKey::Enter)), Outcome::SetLanguage(_, Some(t)) if t == "mermaid"),
+            "and Enter confirms it, as for any listed language"
+        );
     }
 }

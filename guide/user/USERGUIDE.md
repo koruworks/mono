@@ -115,7 +115,8 @@ or mirror its layout for RTL languages.
 ## Koru Cloud
 
 Settings uses searchable Appearance, Editor, Reminders, Terminal and System
-pages. Page names, new labels/hints and search terms follow the app language.
+pages; `Ctrl+,` opens it with the keyboard already in the search box. Page
+names, new labels/hints and search terms follow the app language.
 Search also accepts the existing English technical terms. On Windows, the
 play button beside the reminder tone previews it without saving a preference.
 Terminal theme, font and zoom apply to terminal output independently of the
@@ -1730,7 +1731,8 @@ press takes the next one. Pressing the opposite way shrinks the selection rather
 than starting a new one.
 
 `Ctrl+D` deletes them all, and so do `Delete` and `Backspace` — the same
-behaviour, whichever is nearest. A selected sub-task is deleted outright; a
+behaviour, whichever is nearest — and so does **Delete** in the right-click
+menu, beside Cut, Copy and Paste. A selected sub-task is deleted outright; a
 sub-task that only came along because its parent was selected outdents instead
 of being deleted. `Tab` and `Shift+Tab` indent them, and
 `Ctrl+Shift+↑` / `↓` move the block as one. A sub-task travels with its parent
@@ -1819,7 +1821,9 @@ without that tag.
 
 Pasting into a **code block** brings the text alone: no marks, no pills and no
 attributes, because a code block holds plain text. Text copied from another
-application carries no attributes either — there are none to carry.
+application carries no attributes either — there are none to carry — and
+pastes as plain text whichever paste you use, with Windows line endings read
+as ordinary ones.
 
 **It reaches other applications.** What you copy goes to the system clipboard as
 plain text — one line per task, indented with tabs, each pill spelled out as the
@@ -1840,6 +1844,17 @@ copied, exactly where they were in the text.
 Inside Koru you get everything back exactly. Leaving through the system
 clipboard, plain text is the universal half; documents also write HTML Format
 so Word, OneNote and Google Docs keep headings, marks and embedded pictures.
+
+A **code block** leaves whole. In the plain text it is a fenced Markdown block
+— three backticks and its language on one line, every line of the block as
+written, three backticks again — so the next editor reads a code block rather
+than loose lines, and pasting that text back into Koru gives the same block
+with the same language. A block that itself contains three backticks gets a
+longer fence, so it still ends where it should. Where Koru writes HTML Format,
+the block is a `<pre><code>` element naming the language. Inside Koru, a copied
+code block keeps its language wherever it lands, alone or in the middle of a
+selection of paragraphs.
+
 Ordinary `Ctrl+V` also reads that rich HTML on the way in: semantic bold,
 italic, underline, strikethrough and inline-code spans become Koru marks, while
 headings, lists and quotes keep their block structure. Semantic HTML links
@@ -4005,12 +4020,14 @@ inline, and a paste back into Koru restores the same order.
 
 ### Code blocks
 
-Type `` ``` `` — three backticks — at the start of a line and the line becomes
-a code block on the third backtick: the fence text disappears and the block
-renders in a mono font on a tinted panel, ready to type into. (A pasted fence
-followed by `Enter` works too, and `` ```rust `` + `Enter` pasted keeps the
-language.) `Ctrl+` `` ` `` toggles the focused line between a paragraph and a
-code block, and `/code` converts without pinning a language.
+Type `` ``` `` — three backticks — at the start of a line, then `Space` or
+`Enter`, and the line becomes a code block: the fence text disappears and the
+block renders in a mono font on a tinted panel, ready to type into. Name a
+language straight after the backticks — `` ```rust `` then `Space` or
+`Enter` — and the block keeps it; a pasted fence works the same way. The
+fence waits for that last key so the language can be typed first.
+`Ctrl+` `` ` `` toggles the focused line between a paragraph and a code
+block, and `/code` converts without pinning a language.
 
 Inside a code block, `Enter` starts a new line **in the same block** rather
 than a new row — a code block is one block that holds many lines. To **leave**
@@ -4022,11 +4039,97 @@ start of an interior line joins it with the line above.
 Hover a code block and a small **language chip** appears at its corner —
 `rust`, `python`, or `Auto` when none is set — with a **copy** icon to its
 left. Click the icon to copy the block's source; a *Copied to Clipboard*
-toast confirms it. Click the chip to pick a grammar (or `Auto` to clear it).
+toast confirms it. Click the chip to pick a grammar (or `Auto` to clear it); the list ends
+with **Mermaid**, which turns the block into a diagram — and turns a
+diagram that was switched to a grammar back into one.
 The dropdown opens with the chip's current value already
 active, entries highlight as the pointer crosses them, and `Enter` confirms
 the active one. Syntax color is derived from the text and the language;
 it is never stored, so it follows the theme and never bloats a sync.
+
+### Diagrams
+
+A code block whose language is **Mermaid** is a diagram: Koru draws it in
+place of the text. Write a flowchart or a sequence diagram in
+[Mermaid](https://mermaid.js.org) notation inside a fence that opens with
+`` ```mermaid `` — or paste a Markdown document that holds one, or let an
+agent write one over MCP — and the page shows the drawing, in the page's own
+colors and font, in light and dark alike. The text is the truth and the
+drawing is derived from it: it is never stored or synced, so every device
+draws its own, and a page with a diagram opens as fast as one with a picture.
+
+Koru draws **flowcharts** (`flowchart` or `graph`, every direction, groups
+included), **sequence diagrams** (participants, actors, every arrow style,
+notes, activations, and the `loop`, `alt`/`else` and `opt` frames) and
+**pie charts** (`pie`, with its `title`, the percent on each slice and a
+legend beside; `showData` puts the values in the legend). Every
+other Mermaid kind keeps its text and says so beneath it: *Koru does not draw
+this kind of diagram yet*. Styling and interaction lines in the text —
+`%%{init}`, `classDef`, `style`, `click` — are kept exactly as written and
+ignored for drawing; the theme decides how a diagram looks.
+
+**Starting one.** Type `/diagram` — or `/mermaid` — or choose *Diagram*
+from a row's `+`. The block arrives with a small three-box example already
+drawn and its text open with the example selected: type or paste your own
+over it, or press an arrow to keep it and edit. On an empty line the line
+becomes the diagram; on a line with words, the words stay and the diagram
+goes below them. Typing `` ```mermaid `` and `Enter` (or `Space`) on an empty
+line starts an empty one.
+
+**Editing.** Click a drawing to select it, like a picture; arrow onto it and
+the *Edit text* control appears at its corner. Press `Enter` (or click the
+control, or choose *Edit text* from the right-click menu) and the text opens
+above the drawing, which follows every keystroke. When a line cannot be read,
+the block says which one — *Line 7: this line could not be read* — and keeps
+the last drawing that worked beneath, labelled as such, until the text draws
+again. `Esc` closes the text, and so does the check at the block's corner,
+left of the copy icon; `Ctrl+Enter` leaves to a paragraph below. A
+block that does not draw shows its text with the reason under it, never a
+stale drawing. A very large diagram shows its text with *Too large to draw:
+N boxes* (or *N messages*) rather than slow the page. An empty block shows
+*Describe a flowchart or a sequence diagram here*.
+
+**Looking closer.** Rest the pointer on a drawing and a small bar appears
+at the block's corner with four controls: a magnifier, *Copy image*, *Save
+as…* and *Edit text*. Click the magnifier — or double-click the drawing, or choose *Open*
+from the right-click menu — and the drawing opens in its own view over the
+page, at its natural size when that fits and fitted to the window when it
+does not. Zoom with the `−` and `+` at the bottom, `Ctrl`+wheel, `Ctrl+=`
+and `Ctrl+-`, or a pinch; `Ctrl+0` returns to natural size and the fit
+control shows the whole drawing again. A drawing larger than the window is
+scrolled with the wheel — `Shift`+wheel sideways, `Alt`+wheel up and
+down, whichever way the wheel turned — stepped with the arrow keys, or
+dragged, and never hides under the toolbar. The view takes the whole
+window, sidebar and all, so a large drawing is seen as large as the window
+allows. The view's copy control puts a picture on the
+clipboard and its save control saves one; `Esc`, the `×`, or a click
+anywhere on the dimmed window closes it.
+
+**Copying and saving.** Copy on a selected drawing copies the whole block;
+it arrives as a diagram wherever it is pasted in Koru, and as a fenced
+`mermaid` block in other applications. *Copy image* in the right-click
+menu — or the copy control that appears on the drawing, or `Ctrl+C` in the
+drawing's own view — puts a picture of the drawing on the clipboard
+instead, at twice the screen size, ready to paste into a slide or a chat;
+the control shows a check while it does, the way every copy in Koru does.
+Right-click a drawing and choose *Save as…* — or press `Ctrl+Shift+X` on
+it, or click the save control beside the copy one — to save the picture as **PNG**
+(at twice the screen size) or **SVG**; both look like the drawing on screen
+on any machine, and the SVG needs no font. On Windows the dialog offers the
+two types; on macOS the extension you type decides (`.svg` for SVG,
+anything else for PNG).
+
+**Screen readers** hear a drawn diagram as a picture named with what it
+shows: the title and description the text declares (`accTitle`, `accDescr`),
+then *Diagram, flowchart, 10 boxes, 12 arrows* and every arrow as a sentence,
+or *Diagram, sequence, 4 participants: …; 12 messages* and every message. A
+block that does not draw is announced as *Diagram, not drawn:* with the
+reason, and its text is read as usual.
+
+Agents connected over MCP learn how to write a diagram and whether it drew
+from the model document (`koru://docs/model`, section *Diagrams*): every
+read of a Mermaid block carries a `diagram` status with the same reason a
+person sees.
 
 ### Inline code
 
@@ -4215,6 +4318,43 @@ ChatGPT's browser copy uses semantic `<blockquote>` HTML. Koru reads that HTML,
 ignores ChatGPT's changing CSS classes, and keeps consecutive quoted paragraphs
 under one continuous rule. If a source supplies only plain text rather than an
 HTML clipboard flavor, its `>` characters remain ordinary pasted text.
+
+### Callouts
+
+A callout is a tinted box with an icon — the shape a tip, a warning or an
+aside takes. Three ways to make one:
+
+| | |
+| --- | --- |
+| typing `/` | choose `/callout` from the block menu; the current line goes into a new box |
+| a selection, then `Ctrl+Shift+6` | select several lines and press `Ctrl+Shift+6`, or choose **Callout** in the selection bubble's list menu; the lines go into one box, in order. The same key on a line inside a box takes the box away |
+| paste | copy a rendered callout from a rich source and paste normally |
+
+The box holds ordinary lines — paragraphs, headings, lists — and the icon
+sits beside the first of them. Enter inside the box stays inside: the next
+line is another line of the same box. Press Enter on an empty last line to
+step out below it. Backspace at the start of the first line takes the box
+away and leaves its lines in place as ordinary text. `Ctrl+Shift+↑` / `↓` on
+the first line, or dragging its grip, moves the whole box.
+
+Lists work inside a callout as anywhere else: type `- `, `1. ` or `[]` then
+Space on a line inside the box. Bold, italic, links, pills and tags all work
+inside it too.
+
+Click the icon to change the look. The picker offers an emoji and one of the
+same nine colors the rest of Koru uses; a callout without a chosen icon shows
+💡. The keyboard does the same in one go: `/callout red ⚠️` makes the box with
+that color and that icon.
+
+Copying a callout preserves it as a box for rich destinations. Markdown export
+writes it as a blockquote whose first line starts with the icon — `> 💡 First
+line`, then `> ` before each further line — and Markdown import reads such a blockquote
+back as a callout, so a file round-trips. A quote whose first line does not
+start with an emoji stays a quote.
+
+A document that holds a callout needs a Koru that knows the block: an older
+Koru opens it read-only rather than showing the text without its box, the same
+rule as for dividers and quotes.
 
 ### Tables
 

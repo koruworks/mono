@@ -154,6 +154,8 @@ if /i "%SUB%"=="run-root-signed" goto do_run_root_signed
 if /i "%SUB%"=="stop"    goto do_stop
 if /i "%SUB%"=="release" goto do_release
 if /i "%SUB%"=="mcp"      goto do_mcp
+if /i "%SUB%"=="mcp-add"    goto do_mcp_add
+if /i "%SUB%"=="mcp-remove" goto do_mcp_remove
 if /i "%SUB%"=="voice"    goto do_voice
 if /i "%SUB%"=="agent"    goto do_agent
 if /i "%SUB%"=="document" goto do_document
@@ -528,6 +530,75 @@ if /i "!MCPPASS:~0,7!"==" --root" (
 cargo run -p koru-mcp --!PASS!%ROOTONLY%
 exit /b %ERRORLEVEL%
 
+REM Register this checkout's bridge with the agent CLIs on PATH - Claude Code,
+REM Codex and Gemini - under a name, "koru" unless one is given, so testing an
+REM agent against a dev build is one verb rather than a path to type into
+REM each. The debug bridge beside the other binaries, with the channel root
+REM every other verb here uses, so the agent reaches the store the window
+REM shows. A CLI that is not installed is skipped and said so; the verb fails
+REM only when none of the three is there. `mcp-remove` undoes it.
+REM
+REM The build is the point: the registered path is this checkout's bridge, so
+REM running the verb again after a change ships the change. A bridge an MCP
+REM host still has running holds the exe lock, so it is stopped first, as the
+REM `mcp` verb does; a session already open keeps its old child until it is
+REM restarted or told to reconnect.
+REM
+REM **User scope where the CLI has one.** Claude's and Gemini's default scope
+REM is the directory the command ran in, so a session started anywhere else -
+REM a terminal inside Koru, another worktree - would not see the entry. Codex
+REM keeps one global config. Grok, Kimi, Copilot and Muse are left alone: no
+REM registration command of theirs is verified here, and each has its own MCP
+REM settings to paste the Welcome page's command into.
+REM
+REM `call`, because the npm CLIs are .cmd shims and cmd.exe would otherwise
+REM hand them this script's remaining lines.
+:do_mcp_add
+call :mcp_name || exit /b 1
+call :stop_exact_exe "%CD%\target\debug\koru-mcp.exe" || exit /b 1
+cargo build -p koru-mcp || exit /b 1
+set "MCP_BRIDGE=%CD%\target\debug\koru-mcp.exe"
+set "MCP_ANY="
+where claude >nul 2>&1
+if errorlevel 1 (
+  echo [Koru] claude is not on PATH; skipped
+) else (
+  call claude mcp add --scope user %MCP_NAME% -- "%MCP_BRIDGE%" serve --stdio%ROOTONLY% && set "MCP_ANY=1"
+)
+where codex >nul 2>&1
+if errorlevel 1 (
+  echo [Koru] codex is not on PATH; skipped
+) else (
+  call codex mcp add %MCP_NAME% -- "%MCP_BRIDGE%" serve --stdio%ROOTONLY% && set "MCP_ANY=1"
+)
+where gemini >nul 2>&1
+if errorlevel 1 (
+  echo [Koru] gemini is not on PATH; skipped
+) else (
+  call gemini mcp add --scope user %MCP_NAME% "%MCP_BRIDGE%" -- serve --stdio%ROOTONLY% && set "MCP_ANY=1"
+)
+if not defined MCP_ANY (
+  echo koru: none of claude, codex or gemini is on PATH; nothing was registered.
+  exit /b 1
+)
+exit /b 0
+
+:do_mcp_remove
+call :mcp_name || exit /b 1
+where claude >nul 2>&1
+if not errorlevel 1 call claude mcp remove --scope user %MCP_NAME%
+where codex >nul 2>&1
+if not errorlevel 1 call codex mcp remove %MCP_NAME%
+where gemini >nul 2>&1
+if not errorlevel 1 call gemini mcp remove --scope user %MCP_NAME%
+exit /b 0
+
+REM The server name for the two verbs above: the first argument, or "koru".
+:mcp_name
+set "MCP_NAME=koru"
+for /f "tokens=1" %%A in ("%ARGS%") do set "MCP_NAME=%%A"
+exit /b 0
+
 :do_document
 call :ensure_fonts || exit /b 1
 call :announce_environment
@@ -819,6 +890,9 @@ echo   run-root-signed    launch the latest signed rooted Windows notification t
 echo   stop       stop every Koru process on this machine
 echo   release    launch an optimised build
 echo   mcp        check MCP discovery; --console serves stdio in this console
+echo   mcp-add    register this checkout's bridge with the agent CLIs on PATH
+echo              (Claude Code, Codex, Gemini): mcp-add [name]; absent ones are skipped
+echo   mcp-remove unregister it from the same: mcp-remove [name]; the name defaults to koru
 echo   voice      run or inspect the voice worker (status ^| stop)
 echo   agent      run the Koru Agent in this console; IPC tracing is opt-in
 echo   document   launch the built-in document on its own
@@ -913,6 +987,8 @@ if not defined KORU_SKILLS (
     exit /b 0
   )
   echo [Koru] agent skills installed in .agents\skills
+  rem Record the published commit, for the session-start check to compare against.
+  call ".agents\check-skills.bat" --record
 )
 rem The link: present as a link (a reparse point), and showing the skills.
 set "KORU_LINK="

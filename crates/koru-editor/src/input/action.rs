@@ -137,6 +137,13 @@ pub enum Action {
     /// block with newlines cannot go back (the one-line rule would refuse it),
     /// so in that case it is a no-op. Reached via `Ctrl+` `` ` ``.
     CodeBlock,
+    /// Put the selected rows into one callout box, in order — or the focused
+    /// row alone into a box of its own — or take the box away when the
+    /// focused row is already in one. One control for
+    /// apply and undo, like [`SetHeading`](Action::SetHeading). Reached via
+    /// `Ctrl+Shift+6`, beside the three list digits, and shared with the
+    /// Callout row of the selection bubble's list menu.
+    ToggleCallout,
     /// Drop a horizontal rule at the caret. Performed only by a view that offers
     /// dividers (`ViewState`), like [`SetHeading`](Action::SetHeading): the `/`
     /// menu and the `---` shorthand reach the same operation without an action.
@@ -168,6 +175,17 @@ pub enum Action {
     /// `false` and the key falls through unhandled, which is the same nothing
     /// a press on empty space produces.
     TickCheckbox,
+    /// **Ask the shell to save the focused diagram's picture** — the menu's
+    /// *Save as…* on a drawn `mermaid` block, from the keyboard.
+    ///
+    /// [`Scope::Shared`], like [`TickCheckbox`](Self::TickCheckbox), and
+    /// refused the same way: the handler sets the view's
+    /// `wants_save_diagram_as` only when the focused row is a diagram
+    /// showing its drawing — closed, and drawn — and answers `false` on
+    /// everything else, so the chord falls through unclaimed rather than
+    /// meaning something different per row. The dialog, the raster and the
+    /// file are the shell's; the editor only names the block.
+    SaveDiagramAs,
     ToggleHideCompleted,
     /// Negative is up.
     Reorder(i32),
@@ -221,6 +239,7 @@ impl Action {
                 | Self::Reorder(_)
                 | Self::Indent(_)
                 | Self::SetListStyle(_)
+                | Self::ToggleCallout
                 // Formatting acts on every selected row, not only the focused
                 // one — clearing the marks first left Ctrl+B bolding a single
                 // line out of five.

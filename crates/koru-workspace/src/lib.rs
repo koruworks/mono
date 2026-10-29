@@ -509,8 +509,11 @@ impl Workspace {
     /// A workspace switch is a boundary for the whole set, not just its
     /// manifest. Buffer first so an acknowledgement racing the switch cannot
     /// make the last edit exist only in this process, then send the courteous
-    /// leaves and drop the links. Dropping joins each socket thread, making the
-    /// Store's occupancy view deterministic before the caller continues.
+    /// leaves and drop the links. Dropping joins each socket thread, so every
+    /// leave has been written when the caller continues. The Store reads them on
+    /// its own time, though, and its occupancy view settles a moment later: a
+    /// caller that must see these rooms gone waits for it, as the shell's
+    /// delete of the workspace just left does.
     fn close_store_sessions(&mut self) {
         self.buffer_everything_owed();
         if let Some(session) = &self.manifest_session {
