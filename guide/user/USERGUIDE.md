@@ -1024,6 +1024,7 @@ wrong.
 | `Ctrl+Shift+A` | open **Add…** — create a document or import content |
 | `Ctrl+W` | close this one — not a pinned tab; unpin or right-click Close |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | the next tab, or the previous |
+| `Ctrl+Shift+T` | reopen the tab closed last (a document or a terminal; this window only) |
 | `Ctrl+1` … `Ctrl+9` | the tab in that position |
 
 **Open tabs stay when you switch workspace.** Every document you have open remains in the strip, whichever workspace it belongs to. **Selecting a tab only changes the page** — it does not move the active workspace or the Explore pane. To land Explore on the page under a tab, use **`Ctrl+Shift+E`** or right-click the tab → **Reveal in Explore View** (same chord): that switches to the tab's home workspace if needed, focuses the tree, and scrolls the file into view.
@@ -1622,9 +1623,11 @@ even when creation began in the Manage tab. It offers:
   models. *Manage documents over MCP* shows the command an MCP client runs to
   reach this installation — the `koru-mcp` program beside Koru, with
   `serve --stdio` — and **Copy** (or clicking the command) puts the whole
-  command on the clipboard, ready to paste into the client's settings. *Run an
-  agent in a terminal* opens the list of agents from the **+** menu; choosing
-  one starts it in a new tab.
+  command on the clipboard, ready to paste into the client's settings — for a
+  client outside Koru, or for Grok, Kimi and Antigravity; an agent tab Koru
+  opens for Claude Code, Codex, Copilot, Qwen Code or OpenCode is given the
+  server already. *Run an agent in a terminal* opens the list of agents from
+  the **+** menu; choosing one starts it in a new tab.
 
 Each row you complete gets a check, and the checks are kept **for this
 computer**: every Profile on it sees the same ones. *n of m done* counts the
@@ -3033,7 +3036,7 @@ the letters. All of these are yours only — documents never store them.
 | --- | --- |
 | `F7` | documents only — cycle the page layout: Page → Narrow → Full |
 | `Ctrl+Shift+P` / `N` / `G` | documents only — Page, Narrow or Full width outright |
-| `Ctrl+Shift+T` | pin the window above other windows (per-window; the title-bar menu toggles it too) |
+| `Ctrl+Alt+A` | pin the window above other windows (per-window; the title-bar menu toggles it too) |
 | `Ctrl+=` / `Ctrl+-` | zoom in / out (or `Ctrl` + scroll); `Ctrl+0` resets |
 
 ## The title bar menu
@@ -3044,7 +3047,7 @@ or click it to open application destinations:
 
 | | |
 | --- | --- |
-| 📌 Always on Top | `Ctrl+Shift+T` |
+| 📌 Always on Top | `Ctrl+Alt+A` |
 | Settings | `Ctrl+,` |
 | Zoom | placeholder |
 | Feedback | Send feedback tab (general, idea, or bug) |
@@ -3244,10 +3247,33 @@ A session belongs to your machine, not to the tab. **Closing a tab leaves the
 session running** — reopen it from the Agents list. Typing `exit` (or Ctrl+C)
 ends the shell itself, and its tab closes. Close Koru and reopen it and your
 session tabs come back, reattached, as long as the background Koru Agent kept
-running; if it was stopped, the tabs return saying the session ended, and you
-start fresh. The Koru Agent's tray menu has the same **Agents** list, so you
+running. If it was stopped — a restart of the computer, a crash, or **Quit**
+from the tray — the tab is still there, in the same place and the same folder.
+A shell starts again by itself. An agent shows **Resume**, which continues its
+most recent conversation in that folder where the agent can, and **Start new**;
+nothing starts until you choose. What was on the screen is not brought back. The Koru Agent's tray menu has the same **Agents** list, so you
 can jump to a session from there too. The composer (for sending a message to a
-managed agent) is hidden until you need it — **Ctrl+Shift+U** shows it.
+managed agent) is hidden until you need it — **Ctrl+Shift+U** shows it. A message you send to Codex while it is working is added to the turn in progress instead of being refused.
+
+**A terminal's theme and font are yours to set, per agent.** Right-click a
+terminal tab and choose **Terminal theme** (Light or Dark) or **Terminal font**
+(a short list of monospaced families, or **More fonts…** for any font installed on your computer: search by name, and press Tab to include proportional fonts too). The choice belongs to that agent — every Claude tab, and
+the next one you open, uses it — and **Default (Settings)** hands that part back
+to the Settings page. Another agent's terminals are not affected.
+
+**An agent in a tab has Koru's tools.** Claude Code, Codex, GitHub Copilot,
+Qwen Code and OpenCode are started with Koru's own MCP server, the same
+`koru-mcp` a chat's agent uses, so you can ask them to search, read and write
+your documents and tasks straight away — no `mcp add`, nothing written into
+the agent's own configuration. It is given to that one launch only: the same
+agent started from another terminal is exactly as you set it up, and there is
+nothing to remove later. Grok and Antigravity have no way to take a server
+for a single launch, so right-click their tab and choose **Install Koru MCP**:
+Koru runs the agent's own `mcp add` once, tells you when it is done, and the
+next session you start there has Koru's tools. Choose it again after Koru
+moves and it points at the new copy. Kimi has no such command, so its tab is
+unchanged; for Kimi, *Manage documents over MCP* on the Welcome page shows the
+command to add by hand.
 
 ### Handing a piece of work over
 
@@ -4964,6 +4990,29 @@ A build somebody compiled themselves also says which branch it came from, beside
 the name at the top: **Koru (dev)**. Two windows from two working trees are
 otherwise identical on screen.
 
+### Your coding agents' own updates
+
+Koru also keeps an eye on the agent CLIs it launches for you — Claude Code,
+Codex, Grok, GitHub Copilot, Kimi Code, OpenCode and Qwen Code. Twenty seconds
+after the agent starts, and once a day after that, it asks each one that is
+installed for its version and asks the tool's own channel what it offers.
+Each one that is behind gets a card at the top right of the window: *"Codex
+update available · v0.163.0 → v0.165.0"*, with **Dismiss**, **Update** and ✕.
+
+**Update** runs the tool's own updater — `codex update`, `claude update`,
+`grok update`, and `npm install` for the ones that are only an npm package.
+The card shows the updater's last line and a moving bar while it runs, then
+says *"Codex updated · v0.165.0"* and goes away by itself, or *"Codex update
+failed"* with the updater's last words and **Try again**. **Dismiss** or ✕ on
+an offer puts it away until a newer release exists.
+
+Two things to know. The check only sees tools on the agent's own `PATH`, which
+on a Mac started from the Dock can be shorter than your shell's. And a chat
+that runs an agent in managed mode accepts only the versions Koru has checked
+([Chatting with a local agent](#chatting-with-a-local-agent)); updating to the
+newest release can leave that chat saying *Needs a supported version* until
+the next Koru admits it, while the agent's terminal tab keeps working.
+
 ### You are asked twice
 
 A download is something you can ignore; an install closes your windows. Agreeing
@@ -5683,7 +5732,7 @@ paragraph ready for typing. The title remains unchanged.
 | drag a library row into a pane | open it there — an edge splits, the strip places it, the middle opens a tab |
 | drag the hairline between panes | resize them (panes keep at least 400 × 200) |
 | click below the last line | caret to the end of it |
-| `Ctrl+Shift+T` | pin **this** window above other windows (or click 📌 in its caption) |
+| `Ctrl+Alt+A` | pin **this** window above other windows (or click 📌 in its caption) |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset (or `Ctrl` + scroll) |
 
 ### Tabs and columns

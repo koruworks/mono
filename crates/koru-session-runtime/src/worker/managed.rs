@@ -26,6 +26,10 @@ enum ManagedCommand {
         turn_id: AgentTurnId,
         reply: SyncSender<Result<(), ProviderFailure>>,
     },
+    Steer {
+        input: AgentInput,
+        reply: SyncSender<Result<(), ProviderFailure>>,
+    },
     Approval {
         approval_id: ApprovalId,
         decision: ApprovalDecision,
@@ -69,6 +73,12 @@ impl ManagedHandle {
     pub(super) fn submit(&self, input: AgentInput) -> Result<(), ErrorCode> {
         let (reply, response) = mpsc::sync_channel(1);
         self.send(ManagedCommand::Submit { input, reply })?;
+        receive(response)
+    }
+
+    pub(super) fn steer(&self, input: AgentInput) -> Result<(), ErrorCode> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.send(ManagedCommand::Steer { input, reply })?;
         receive(response)
     }
 
@@ -199,6 +209,9 @@ fn handle_command(control: &mut dyn AgentControl, command: ManagedCommand) {
         }
         ManagedCommand::Cancel { turn_id, reply } => {
             let _ = reply.send(control.cancel(turn_id));
+        }
+        ManagedCommand::Steer { input, reply } => {
+            let _ = reply.send(control.steer(input));
         }
         ManagedCommand::Approval {
             approval_id,

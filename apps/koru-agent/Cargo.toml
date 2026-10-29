@@ -145,6 +145,11 @@ tracing.workspace = true
 # bring the other three down in order and be the last one standing, and the
 # agent is the only one that outlives every window.
 koru-update = { path = "../../crates/koru-update" }
+# Checking the coding-agent CLIs on this machine against their own channels
+# and running their updaters on request. Here for the reason `koru-update` is:
+# one check and one run per machine, in the process that outlives every
+# window, pushed to whichever windows exist.
+koru-cli-updates = { path = "../../crates/koru-cli-updates" }
 # Starting the store, which already refuses a foreign channel and already does
 # the bind race. The agent adds nothing to it.
 # Store diagnostics and the authenticated whole-Store backup request exposed

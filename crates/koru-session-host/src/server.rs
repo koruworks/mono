@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use koru_session_profiles::ProfileLabel;
 use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
@@ -99,6 +100,9 @@ struct HostState {
     /// The desktop MCP bridge a chat's agent starts beside itself, when the
     /// bridge is installed beside this host (AGENTUX UC16).
     bridge: Option<koru_session_runtime::providers::McpServerLaunch>,
+    /// Where the files a tab's CLI reads the same bridge from were written
+    /// at start, when they could be (`tab_bridge`).
+    tab_bridge_files: Option<PathBuf>,
 }
 
 const CREATE_REPLAY_CAPACITY: usize = 1_024;
@@ -213,6 +217,23 @@ pub async fn serve(
     let paths = koru_session_paths::SessionPaths::from_resolved_directory(
         bootstrap.sessions_directory.clone(),
     );
+    let bridge = chat_bridge(explicit_root);
+    let tab_bridge_files = bridge.as_ref().and_then(|bridge| {
+        let directory = paths.directory().join("bridge");
+        match tab_bridge::write_files(&directory, |program| bridge_for(bridge, program)) {
+            Ok(()) => Some(directory),
+            Err(error) => {
+                tracing::warn!(
+                    event = "tab.bridge.unwritable",
+                    directory = %directory.display(),
+                    %error,
+                    "the files a tab's agent reads the bridge from could not be written; \
+                     Claude, Qwen and Copilot tabs run without Koru's tools"
+                );
+                None
+            }
+        }
+    });
     let authority = koru_session_paths::CleanupPredicate::new(true, true)
         .authority()
         .expect("the authenticated root and bound endpoint prove cleanup authority");
@@ -299,7 +320,8 @@ pub async fn serve(
         control_slots: Arc::new(Semaphore::new(16)),
         create_replays: Mutex::new(VecDeque::with_capacity(CREATE_REPLAY_CAPACITY)),
         stop: Notify::new(),
-        bridge: chat_bridge(explicit_root),
+        bridge,
+        tab_bridge_files,
     });
     // The shared watcher, in `koru-agent-worker` beside the reader that left
     // this pipe open. A host that cannot start it would never learn that its
@@ -750,9 +772,14 @@ fn handle_request(
                 .as_ref()
                 .is_some_and(koru_session_protocol::LaunchSelection::is_explicit)
                 && !protocol.launch_selection;
+            let resume_without_capability = create.resume
+                && !protocol
+                    .capabilities
+                    .supports(koru_session_protocol::capability::LAUNCH_RESUME);
             if protocol.version < 6
                 || origin_without_capability
                 || selection_without_capability
+                || resume_without_capability
                 || !protocol.profile_launch
                 || managed_without_capability
                 || placed_without_capability
@@ -1700,6 +1727,26 @@ fn create_profile_session(
             {
                 attachment_delivery = koru_session_protocol::AttachmentDeliveryPolicy::Unsupported;
             }
+            // A tab's agent gets Koru's tools the way a chat's does, in its
+            // CLI's per-process form; a shell, a custom profile and a CLI
+            // with no such form get exactly their own launch (ADR-470).
+            let bridge = (profile.kind == koru_session_protocol::ProfileKind::Agent)
+                .then(|| tab_bridge_for(state, profile.label))
+                .flatten();
+            // **Resume is the agent's own continue form, appended by the host**:
+            // a client asks for it by flag and never names an argument. A
+            // profile with no such form refuses rather than start fresh under
+            // a request that said otherwise.
+            let resume: &[&str] = if request.resume {
+                if profile.kind != koru_session_protocol::ProfileKind::Agent {
+                    return Err(failure(ErrorCode::ProfileIncompatible));
+                }
+                koru_session_profiles::resume_arguments(profile.label)
+                    .ok_or_else(|| failure(ErrorCode::ProfileIncompatible))?
+            } else {
+                &[]
+            };
+            let (argv, environment) = raw_launch(&profile, bridge, resume)?;
             SessionCreate {
                 profile: profile.id,
                 parent_session_id: request.parent_session_id,
@@ -1709,10 +1756,9 @@ fn create_profile_session(
                 attachment_delivery,
                 capabilities: protocol.capabilities.clone(),
                 launch: SessionLaunch::Raw(SpawnRequest {
-                    argv: koru_session_profiles::resolve_launch_argv(&profile.argv)
-                        .ok_or_else(|| failure(ErrorCode::ProfileMissing))?,
+                    argv,
                     cwd: request.working_directory.clone(),
-                    environment: EnvironmentPolicy::Inherit,
+                    environment,
                     size: request.size,
                 }),
                 created_at_ms: crate::now_millis(),
@@ -1748,7 +1794,7 @@ fn create_profile_session(
                         koru_session_protocol::SessionOrigin::Chat { .. } => state
                             .bridge
                             .iter()
-                            .map(|bridge| bridge_for(bridge, provider))
+                            .map(|bridge| bridge_for(bridge, provider.as_str()))
                             .collect(),
                         _ => Vec::new(),
                     },
@@ -2062,18 +2108,73 @@ fn chat_bridge(
 /// in one reply. Paging is what makes Grok 1.0.34 read the list reliably.
 const PAGED_BRIDGE_PROVIDERS: &[&str] = &["claude", "grok", "opencode"];
 
-/// The chat's bridge as this provider's session starts it: paged for the
-/// agents that follow the cursor, the build's default for every other.
+/// The bridge as `program`'s session starts it — a chat's provider kind or a
+/// tab's program, the same names: paged for the agents that follow the
+/// cursor, the build's default for every other.
 fn bridge_for(
     bridge: &koru_session_runtime::providers::McpServerLaunch,
-    provider: &koru_session_protocol::ProviderKind,
+    program: &str,
 ) -> koru_session_runtime::providers::McpServerLaunch {
     let mut bridge = bridge.clone();
-    if PAGED_BRIDGE_PROVIDERS.contains(&provider.as_str()) {
+    if PAGED_BRIDGE_PROVIDERS.contains(&program) {
         bridge.args.push("--tool-pages".into());
         bridge.args.push("on".into());
     }
     bridge
+}
+
+/// What a raw tab of `label` adds for the bridge, when this host has the
+/// bridge, could write the files, and the label's CLI has a per-process form.
+fn tab_bridge_for(state: &HostState, label: ProfileLabel) -> Option<tab_bridge::TabBridge> {
+    let bridge = state.bridge.as_ref()?;
+    let files = state.tab_bridge_files.as_ref()?;
+    let program = tab_bridge::program(label)?;
+    tab_bridge::launch(label, &bridge_for(bridge, program), files)
+}
+
+/// A profile's own argv followed by its resume form: `codex` becomes
+/// `codex resume --last`, `claude` becomes `claude --continue`.
+fn with_resume(argv: &[String], resume: &[&str]) -> Vec<String> {
+    let mut own = argv.to_vec();
+    own.extend(resume.iter().map(|argument| (*argument).to_owned()));
+    own
+}
+
+/// A raw launch's resolved argv and environment: the profile's own, plus the
+/// tab's bridge. A bridge the platform boundary refuses — an argument a
+/// Windows batch shim cannot be trusted with — costs the tab its tools,
+/// never its launch.
+fn raw_launch(
+    profile: &koru_session_profiles::LaunchProfile,
+    bridge: Option<tab_bridge::TabBridge>,
+    resume: &[&str],
+) -> Result<(Vec<OsString>, EnvironmentPolicy), SessionFailure> {
+    // The profile's own argv, then the resume form, then whatever the bridge
+    // adds: `codex resume --last -c mcp_servers…`, `claude --continue
+    // --mcp-config …`.
+    let own = with_resume(&profile.argv, resume);
+    if let Some(bridge) = bridge {
+        let argv = tab_bridge::argv(&own, Some(&bridge));
+        if let Some(argv) = koru_session_profiles::resolve_launch_argv(&argv) {
+            let environment = if bridge.env.is_empty() {
+                EnvironmentPolicy::Inherit
+            } else {
+                EnvironmentPolicy::InheritWith {
+                    set: bridge.env.into_iter().collect(),
+                    remove: BTreeSet::new(),
+                }
+            };
+            return Ok((argv, environment));
+        }
+        tracing::warn!(
+            event = "tab.bridge.refused",
+            profile = ?profile.label,
+            "the launch boundary refused the bridge's arguments; the tab runs without Koru's tools"
+        );
+    }
+    let argv = koru_session_profiles::resolve_launch_argv(&own)
+        .ok_or_else(|| failure(ErrorCode::ProfileMissing))?;
+    Ok((argv, EnvironmentPolicy::Inherit))
 }
 
 fn require_attachments(protocol_version: u32, negotiated: bool) -> Result<(), SessionFailure> {
@@ -2083,6 +2184,53 @@ fn require_attachments(protocol_version: u32, negotiated: bool) -> Result<(), Se
         Err(failure(ErrorCode::CapabilityNotNegotiated))
     } else {
         Ok(())
+    }
+}
+
+mod tab_bridge;
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    #[test]
+    fn a_resume_is_the_agents_own_continue_form_after_its_own_arguments() {
+        assert_eq!(
+            with_resume(&["claude".into()], &["--continue"]),
+            ["claude", "--continue"]
+        );
+        assert_eq!(
+            with_resume(&["codex".into()], &["resume", "--last"]),
+            ["codex", "resume", "--last"]
+        );
+        assert_eq!(with_resume(&["grok".into()], &[]), ["grok"]);
+    }
+
+    #[test]
+    fn every_agent_with_a_per_launch_bridge_or_a_registration_can_continue() {
+        use koru_session_profiles::{ProfileLabel, resume_arguments};
+        for label in [
+            ProfileLabel::Claude,
+            ProfileLabel::CodexEmbedded,
+            ProfileLabel::CodexCli,
+            ProfileLabel::Copilot,
+            ProfileLabel::QwenCode,
+            ProfileLabel::OpenCode,
+            ProfileLabel::Grok,
+            ProfileLabel::Kimi,
+            ProfileLabel::Antigravity,
+        ] {
+            assert!(resume_arguments(label).is_some(), "{label:?}");
+        }
+        for label in [
+            ProfileLabel::PlatformShell,
+            ProfileLabel::PowerShell,
+            ProfileLabel::Bash,
+            ProfileLabel::Muse,
+            ProfileLabel::Custom,
+        ] {
+            assert!(resume_arguments(label).is_none(), "{label:?}");
+        }
     }
 }
 
@@ -2102,11 +2250,11 @@ mod bridge_pages_tests {
             env: Vec::new(),
         };
         for provider in ["claude", "grok", "opencode"] {
-            let args = bridge_for(&bridge, &provider.parse().unwrap()).args;
+            let args = bridge_for(&bridge, provider).args;
             assert_eq!(&args[2..], &["--tool-pages", "on"], "{provider}");
         }
         for provider in ["kimi", "codex", "antigravity"] {
-            let args = bridge_for(&bridge, &provider.parse().unwrap()).args;
+            let args = bridge_for(&bridge, provider).args;
             assert_eq!(
                 args.len(),
                 2,

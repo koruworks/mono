@@ -107,6 +107,7 @@ pub fn protocol_offer() -> koru_session_protocol::ProtocolOffer {
         capability::DELEGATION,
         capability::SESSION_ORIGIN,
         capability::LAUNCH_SELECTION,
+        capability::LAUNCH_RESUME,
     ]
     .into_iter()
     .map(|name| CapabilityName::from_str(name).expect("built-in capability"));

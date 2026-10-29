@@ -2242,7 +2242,9 @@ impl Workspace {
             publishing += p.stop();
 
             let d = syncstats::Phase::start();
-            changed |= session.drain(&mut self.ws).unwrap_or(false);
+            let drained = session.drain(&mut self.ws).unwrap_or(false);
+            if drained {}
+            changed |= drained;
             draining += d.stop();
 
             self.entries_changed |= self.reconcile_title(active);
@@ -2251,7 +2253,9 @@ impl Workspace {
         for (id, doc) in self.others.iter_mut() {
             if let Some(session) = self.doc_sessions.get_mut(id) {
                 let d = syncstats::Phase::start();
-                changed |= session.drain(doc).unwrap_or(false);
+                let drained = session.drain(doc).unwrap_or(false);
+                if drained {}
+                changed |= drained;
                 draining += d.stop();
             }
         }

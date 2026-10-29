@@ -22,6 +22,7 @@ pub mod geometry;
 pub mod icons;
 pub mod image;
 pub mod inspect;
+pub mod installed_fonts;
 pub mod pill;
 pub mod scene;
 pub mod text;

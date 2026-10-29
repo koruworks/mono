@@ -589,7 +589,7 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // Literal numbers rather than an inequality, so that bumping one is a
     // deliberate edit here as well as there -- which is what caught the
     // `OpenLink` bump that took the protocol to 8 and left the frame alone.
-    assert_eq!(PROTOCOL_VERSION, 43);
+    assert_eq!(PROTOCOL_VERSION, 44);
     assert_eq!(FRAME_VERSION, 1);
 }
 
@@ -1081,4 +1081,70 @@ fn a_build_without_koru_cloud_says_not_configured_not_unavailable() {
         AccountState::default()
     );
     assert_eq!(AccountState::default().stage, AccountStage::Unavailable);
+}
+
+/// The CLI conversation: every stage, every choice, and a row with every
+/// optional field populated — so a spelling that moves is caught in the round
+/// trip rather than surviving as a `None`.
+#[test]
+fn the_agent_cli_conversation_has_stable_spellings_and_round_trips() {
+    let row = AgentCliRow {
+        id: "codex".into(),
+        name: "Codex".into(),
+        installed: "0.163.0".into(),
+        latest: "0.165.0".into(),
+        stage: AgentCliStage::Failed,
+        message: Some("npm ERR! code EACCES".into()),
+        detail: Some("exit 1\nnpm ERR! code EACCES".into()),
+    };
+    let report = AgentCliReport {
+        checked: true,
+        clis: vec![row],
+    };
+    let pushed = FromAgent::Push {
+        body: Push::AgentClis {
+            report: Box::new(report.clone()),
+        },
+    };
+    let text = json(&pushed);
+    assert!(text.contains(r#""kind":"agent_clis""#), "{text}");
+    assert!(text.contains(r#""stage":"failed""#), "{text}");
+    assert_eq!(serde_json::from_str::<FromAgent>(&text).unwrap(), pushed);
+
+    for stage in [
+        AgentCliStage::UpToDate,
+        AgentCliStage::Available,
+        AgentCliStage::Updating,
+        AgentCliStage::Updated,
+        AgentCliStage::Failed,
+    ] {
+        assert_eq!(
+            serde_json::from_str::<AgentCliStage>(&json(&stage)).unwrap(),
+            stage
+        );
+    }
+
+    for choice in [
+        AgentCliChoice::Update { id: "codex".into() },
+        AgentCliChoice::Dismiss { id: "grok".into() },
+        AgentCliChoice::CheckNow,
+    ] {
+        let sent = FromShell::Request {
+            id: 9,
+            body: Request::AgentCliChoice {
+                choice: choice.clone(),
+            },
+        };
+        let text = json(&sent);
+        assert!(text.contains(r#""kind":"agent_cli_choice""#), "{text}");
+        assert_eq!(serde_json::from_str::<FromShell>(&text).unwrap(), sent);
+    }
+    assert_eq!(json(&AgentCliChoice::CheckNow), r#"{"kind":"check_now"}"#);
+
+    // An empty report is the "not yet checked" spelling a late shell draws
+    // as nothing.
+    assert_eq!(
+        json(&AgentCliReport::default()),
+        r#"{"checked":false,"clis":[]}"#
+    );
 }

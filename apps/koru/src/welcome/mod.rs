@@ -50,7 +50,7 @@ mod build;
 mod draw;
 mod hints;
 mod layout;
-mod mcp;
+pub(crate) mod mcp;
 mod rows;
 
 pub(crate) use build::{DOWNLOAD_URL, build_stamp, channel_label, channel_note};

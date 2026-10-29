@@ -1,0 +1,81 @@
+title = "Diagrams, callouts and a tray that stays"
+
+summary = [
+  "Mermaid flowcharts, sequence diagrams and pie charts now draw in place in your documents.",
+  "Callouts set a tip, a warning or a key point apart in a tinted box with an icon.",
+  "On KDE, or GNOME with the AppIndicator extension, closing the window now keeps Koru in the tray, and Quit in the tray menu really quits.",
+]
+
+body = """
+## Diagrams
+
+A code block in the `mermaid` language now draws as a diagram: flowcharts,
+sequence diagrams and pie charts. Koru draws it itself, with no browser
+inside. Type `/diagram` or `/mermaid` to start from an example, or paste a
+fence from elsewhere. A Notion page with diagrams pastes in with every one of
+them.
+
+- Arrow onto a diagram and press Enter, or click the pencil, to edit its
+  text. The drawing follows as you type and keeps the last good drawing while
+  the text has a mistake, with the line named.
+- The bar at the block's corner opens the drawing in a full-window view
+  (Ctrl+wheel or pinch to zoom, drag to pan), copies it as a picture, and
+  saves it as PNG or SVG.
+- Other diagram kinds, such as Gantt charts, stay a code block and say they
+  are not drawn yet.
+
+## Callouts
+
+Type `/callout`, or select lines and press Ctrl+Shift+6, to put them in a
+tinted box with an emoji. Lists, links and formatting work inside it; click
+the icon to change the emoji and the color. Callouts survive copy and paste
+and Markdown export, and arrive from Notion and Evernote imports.
+
+The first callout you write into a workspace makes it read-only for Koru
+builds older than this one, including other devices on an older version.
+
+## Writing and tabs
+
+- Typing three backticks waits for Space or Enter before it starts a code
+  block, so ```` ```mermaid ```` can be typed as well as pasted.
+- Code blocks keep their language through copy and paste.
+- Ctrl+Shift+T reopens the last closed tab. Keep window on top moves to
+  Ctrl+Alt+A.
+- Ctrl+, opens Settings with the search box ready.
+- Opening a document while an agent tab is active opens a new tab instead of
+  replacing the agent.
+
+## Terminals and agents
+
+- Every visible terminal has its own connection, so two terminals draw at
+  once. A terminal tab's menu sets its own theme and font, from every font
+  installed, and can end its session.
+- When the background service restarts under a running window, each terminal
+  tab offers Resume or Start new instead of closing.
+- Agent tabs now get Koru's own tools, without changing your agent's
+  configuration. Koru also notices when an installed coding-agent CLI is out
+  of date and offers a card that runs its updater.
+
+## Linux
+
+- Closing the window now hides Koru in the tray when your desktop shows tray
+  icons: KDE, or GNOME with the AppIndicator extension. Without one it still
+  closes, so Koru never hides behind an icon you cannot see. It follows the
+  extension being switched on or off while Koru runs.
+- Quit in the tray menu now stays quit. Before, an open window started Koru's
+  background service again straight away.
+
+## Windows
+
+The nightly now has a Windows download too, a zip beside the Linux tarball.
+Unpack it anywhere and run `koru.exe`; an installed Windows nightly then
+updates itself from this page, as Linux does. It is not code-signed yet, so
+SmartScreen asks before the first run, and reminders show no notifications
+until it is.
+
+## Linking a device
+
+Copy link code now copies only the code, without the
+`https://koru.do/link-device#` in front. The QR code is unchanged, and a
+code copied either way is accepted.
+"""

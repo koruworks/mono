@@ -70,8 +70,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use koru_agent_wire::{
-    AgentGreeting, FRAME_VERSION, FromAgent, FromShell, PROTOCOL_VERSION, Push, Request, Response,
-    ShellHello, UpdateChoice, UpdateReport, UpdateStage,
+    AgentCliChoice, AgentCliReport, AgentGreeting, FRAME_VERSION, FromAgent, FromShell,
+    PROTOCOL_VERSION, Push, Request, Response, ShellHello, UpdateChoice, UpdateReport, UpdateStage,
 };
 use koru_core::{ProfileId, WorkspaceId};
 
@@ -211,6 +211,86 @@ pub struct UpdateFeed {
     next_id: Arc<AtomicU64>,
     dirty: Arc<AtomicBool>,
     test_upgrade: bool,
+}
+
+/// The coding-agent CLI conversation, for the cards that draw it: the agent's
+/// last [`AgentCliReport`] and the queue a card's choice goes into. The same
+/// shape and the same rules as [`UpdateFeed`] — stored whole, nothing on the
+/// loop's thread touches the socket, `choose` says whether a press was even
+/// queued.
+#[derive(Clone)]
+pub struct AgentCliFeed {
+    last: Arc<Mutex<Option<AgentCliReport>>>,
+    writer: Option<Arc<Mutex<Option<std::sync::mpsc::Sender<FromShell>>>>>,
+    live: Option<Arc<AtomicBool>>,
+    next_id: Arc<AtomicU64>,
+    dirty: Arc<AtomicBool>,
+}
+
+impl AgentCliFeed {
+    pub fn report(&self) -> Option<AgentCliReport> {
+        self.last
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// Queue a card's choice. `false` when there is no agent, the link is
+    /// known to be gone, or the writer is dead — see [`UpdateFeed::choose`].
+    #[must_use]
+    pub fn choose(&self, choice: AgentCliChoice) -> bool {
+        let Some(writer) = &self.writer else {
+            return false;
+        };
+        if let Some(live) = &self.live
+            && !live.load(Ordering::Acquire)
+        {
+            return false;
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let Some(writer) = writer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+        else {
+            return false;
+        };
+        writer
+            .send(FromShell::Request {
+                id,
+                body: Request::AgentCliChoice { choice },
+            })
+            .is_ok()
+    }
+
+    pub fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::AcqRel)
+    }
+
+    /// A feed already holding `report`, and the end of the queue its choices
+    /// go into — an in-process channel, never a socket (see
+    /// [`UpdateFeed::for_test`]).
+    #[cfg(test)]
+    pub(crate) fn for_test(report: AgentCliReport) -> (Self, std::sync::mpsc::Receiver<FromShell>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (
+            Self {
+                last: Arc::new(Mutex::new(Some(report))),
+                writer: Some(Arc::new(Mutex::new(Some(tx)))),
+                live: None,
+                next_id: Arc::new(AtomicU64::new(1)),
+                dirty: Arc::new(AtomicBool::new(false)),
+            },
+            rx,
+        )
+    }
+
+    /// Replace the held report, as the reader thread would. Test only.
+    #[cfg(test)]
+    pub(crate) fn set_for_test(&self, report: AgentCliReport) {
+        *self.last.lock().unwrap_or_else(|error| error.into_inner()) = Some(report);
+        self.dirty.store(true, Ordering::Release);
+    }
 }
 
 impl UpdateFeed {
@@ -460,6 +540,10 @@ pub struct AgentLink {
     /// view, never queued into `inbox`.
     shortcut: Arc<Mutex<Option<String>>>,
     shortcut_dirty: Arc<AtomicBool>,
+    /// The agent's last word on the coding-agent CLIs, stored like the update
+    /// report: what the cards draw from, never an instruction.
+    agent_clis: Arc<Mutex<Option<AgentCliReport>>>,
+    agent_clis_dirty: Arc<AtomicBool>,
     /// The agent process's pid, read off the transport at connect time (never
     /// from a message — see `koru_ipc::peer_pid`). `None` when there is no
     /// agent. Held so a taskbar *Search* click can pass the foreground grant
@@ -526,6 +610,8 @@ impl AgentLink {
             device_history_dirty: Arc::new(AtomicBool::new(false)),
             shortcut: Arc::new(Mutex::new(None)),
             shortcut_dirty: Arc::new(AtomicBool::new(false)),
+            agent_clis: Arc::new(Mutex::new(None)),
+            agent_clis_dirty: Arc::new(AtomicBool::new(false)),
             peer_pid: Arc::new(Mutex::new(None)),
             trouble: Arc::new(Mutex::new(None)),
             wake: Arc::new(Mutex::new(None)),
@@ -572,6 +658,18 @@ impl AgentLink {
             next_id: Arc::clone(&self.next_id),
             dirty: Arc::clone(&self.update_dirty),
             test_upgrade: false,
+        }
+    }
+
+    /// A handle on the coding-agent CLI conversation, for the cards. The same
+    /// shape as [`Self::update_feed`]: one shared report, one shared queue.
+    pub fn agent_cli_feed(&self) -> AgentCliFeed {
+        AgentCliFeed {
+            last: Arc::clone(&self.agent_clis),
+            writer: Some(Arc::clone(&self.writer)),
+            live: Some(Arc::clone(&self.live)),
+            next_id: Arc::clone(&self.next_id),
+            dirty: Arc::clone(&self.agent_clis_dirty),
         }
     }
 
@@ -1604,6 +1702,8 @@ impl AgentLink {
         let device_history_dirty = Arc::clone(&self.device_history_dirty);
         let shortcut = Arc::clone(&self.shortcut);
         let shortcut_dirty = Arc::clone(&self.shortcut_dirty);
+        let agent_clis = Arc::clone(&self.agent_clis);
+        let agent_clis_dirty = Arc::clone(&self.agent_clis_dirty);
         // Browser launching has its own bounded worker. Neither winit nor the
         // Agent reader can be held by a slow OS association handler.
         let browser_writer = Some(tx.clone());
@@ -1955,6 +2055,16 @@ impl AgentLink {
                         } => {
                             *shortcut.lock().unwrap_or_else(|error| error.into_inner()) = chord;
                             shortcut_dirty.store(true, Ordering::Release);
+                            let _ = wake_the_loop(&wake);
+                        }
+                        // Stored like the update report: the cards are a
+                        // function of the last one.
+                        FromAgent::Push {
+                            body: Push::AgentClis { report },
+                        } => {
+                            *agent_clis.lock().unwrap_or_else(|error| error.into_inner()) =
+                                Some(*report);
+                            agent_clis_dirty.store(true, Ordering::Release);
                             let _ = wake_the_loop(&wake);
                         }
                         FromAgent::Push {
@@ -2890,6 +3000,8 @@ fn translate(push: Push) -> Option<FromTheAgent> {
         // Stored by the reader (like `Pairing`), not queued — the chord is
         // something the taskbar draws from, never an instruction to act on.
         Push::Shortcut { .. } => None,
+        // Stored by the reader, like the update report: the cards draw from it.
+        Push::AgentClis { .. } => None,
         // Remembered by the reader for the end of the stream; nothing for the
         // window to do until then.
         Push::Quitting => None,

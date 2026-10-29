@@ -108,6 +108,12 @@ pub struct Body {
     /// window refreshes only the edited row in every other. `None` only for a
     /// `Body::default()` used outside a view, which falls back to `rebuild`.
     pub tracker: Option<koru_core::change::ChangeTracker>,
+    /// The document version this body last settled against, encoded. A guard
+    /// beside `tracker`: an update that moved the document on while the tracker
+    /// named nothing (an external edit its subscription did not report) is
+    /// otherwise invisible until the view is rebuilt for another reason — a
+    /// switch of document. See [`defer_pending`](Self::defer_pending).
+    pub synced_version: Option<Vec<u8>>,
     /// Set by [`rebuild`](Self::rebuild), which runs on any structural change
     /// — a row created, deleted or moved, local or remote. The container drains
     /// it to know when the explore column (a projection of the library) is stale.
@@ -235,6 +241,7 @@ impl Body {
     pub fn empty_over(ws: &WorkspaceDoc) -> Self {
         Self {
             tracker: Some(ws.track_changes()),
+            synced_version: Some(ws.version().encode()),
             ..Self::default()
         }
     }
@@ -271,6 +278,9 @@ impl Body {
     /// [`rebuild`]: Self::rebuild
     /// [`catch_up`]: Self::catch_up
     fn rebuild_reusing(&mut self, ws: &WorkspaceDoc, changed: Option<&HashSet<NodeId>>) {
+        // Everything is read from the document as it stands now, so this is the
+        // version the rows are settled against (see `defer_pending`).
+        self.synced_version = Some(ws.version().encode());
         let _watch = koru_core::timing::Watch::start("body.rebuild");
         let span = koru_core::timing::Span::start("body rebuild");
         let focused = self.focused_id();
@@ -657,6 +667,25 @@ impl Body {
             return;
         };
         let batch = tracker.drain(ws);
+        let named = !batch.touched.is_empty() || batch.structural_touches(self.root, |_| true);
+        // **The document moved on and the tracker said nothing.** A local edit
+        // always names its rows, so a version that changed with an empty batch
+        // is a change the subscription did not report — a peer's, or the MCP
+        // bridge's, merged into the open document. Without this the page keeps
+        // showing the old rows (a new image, a bold mark, new text) until it is
+        // rebuilt for some other reason, such as switching documents. It
+        // costs one version compare per drain, and a rebuild only in that case.
+        let version = ws.version().encode();
+        let moved_silently = !named
+            && self
+                .synced_version
+                .as_ref()
+                .is_some_and(|seen| *seen != version);
+        self.synced_version = Some(version);
+        if moved_silently {
+            self.pending = Pending::everything();
+            return;
+        }
         // **A callout box is no row, but it draws from its own meta.** Its
         // icon and color are a map diff that names only the box, and the
         // row filter below drops what it cannot find a row for — so an agent
@@ -746,6 +775,7 @@ impl Body {
     /// node id.
     pub fn resubscribe(&mut self, ws: &WorkspaceDoc) {
         self.tracker = Some(ws.track_changes());
+        self.synced_version = None;
         self.pending = Pending::everything();
     }
 
@@ -2965,6 +2995,55 @@ mod sync_tests {
             !body.is_stale(),
             "a create inside the other document should not concern this view"
         );
+    }
+
+    /// **A change the subscription never reported still reaches the view.**
+    ///
+    /// An image or a bold mark merged into the open document by the MCP bridge
+    /// left the page unchanged until the document was switched away from and
+    /// back: the tracker named nothing, so nothing was stale. The body now
+    /// notices that the document's version moved on with an empty batch and
+    /// rebuilds. Simulated by giving the body a fresh tracker *after* the
+    /// change, which is exactly a subscription that missed it.
+    #[test]
+    fn a_change_the_tracker_never_reported_still_makes_the_body_stale() {
+        let (mut ws, one, _two) = two_documents(2);
+        let mut body = body_over(&ws, one);
+        assert!(!body.is_stale());
+
+        let image = Node::image(
+            koru_core::BlobHash::new("b3", "0123abcd"),
+            "image/png",
+            Some(640),
+            Some(480),
+        )
+        .unwrap();
+        ws.insert(Parent::Node(one), image).unwrap();
+        body.tracker = Some(ws.track_changes());
+
+        body.defer_pending(&ws);
+
+        assert!(
+            body.is_stale(),
+            "the document moved on; the view must follow"
+        );
+        body.catch_up(&ws);
+        assert_eq!(
+            body.rows.iter().filter(|r| r.kind == Kind::Image).count(),
+            1,
+            "the image row is there without switching documents"
+        );
+    }
+
+    /// And the guard is quiet when nothing happened, so an idle drain costs a
+    /// version compare and no rebuild.
+    #[test]
+    fn an_idle_drain_does_not_rebuild() {
+        let (ws, one, _two) = two_documents(2);
+        let mut body = body_over(&ws, one);
+        body.defer_pending(&ws);
+        body.defer_pending(&ws);
+        assert!(!body.is_stale());
     }
 
     /// …but one inside *this* document certainly is.

@@ -777,9 +777,7 @@ impl MainView {
             // moved, and terminating whatever the backend now controls would
             // kill the wrong session.
             ConfirmSubject::TerminateSession(session) => {
-                let attached_here = self.session_attached.is_some()
-                    && self.session_attached == self.session_tab_for(session);
-                if attached_here && let Some(sender) = self.session_verbs() {
+                if let Some(sender) = self.controller_sender_for(session) {
                     sender.terminate();
                 }
             }

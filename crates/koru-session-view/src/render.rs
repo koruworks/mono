@@ -397,6 +397,44 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
         Ok(outcome)
     }
 
+    /// Fill the cursor where the model says it is, when it is visible.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_cursor(
+        visible: bool,
+        preferences: TerminalCursorPreferences,
+        records: &mut Vec<PaintRecord>,
+        scene: &mut Scene,
+        root: Affine,
+        geometry: &GridGeometry,
+        model: &TerminalModel,
+        style: TerminalStyle,
+    ) {
+        if !visible {
+            return;
+        }
+        let Some(cursor) = geometry.cursor_rect_with(
+            crate::CellPoint {
+                row: model.cursor.row,
+                column: model.cursor.column,
+            },
+            model.cursor.shape,
+            preferences.width,
+            preferences.height,
+        ) else {
+            return;
+        };
+        let color = match preferences.color {
+            theme::CaretColor::Default => style.palette().cursor,
+            color => color.color_for(style.epoch.dark),
+        };
+        fill(scene, root, color, &cursor);
+        records.push(PaintRecord::Cursor {
+            row: model.cursor.row.0,
+            column: model.cursor.column.0,
+            shape: format!("{:?}", model.cursor.shape).to_ascii_lowercase(),
+        });
+    }
+
     pub fn geometry(&self) -> Option<GridGeometry> {
         let model = self.model.as_ref()?;
         let style = self.renderer.style?;
@@ -519,6 +557,23 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
                 });
             }
         }
+        // **A block cursor is a ground, not a lid.** Painted over the text it
+        // hid the letter under it (a prompt's first character vanished into a
+        // purple square); a terminal shows that letter inside the block. So the
+        // block goes under the text, and only the thin shapes go over it.
+        let block_under_text = model.cursor.shape == koru_session_protocol::CursorShape::Block;
+        if block_under_text {
+            Self::paint_cursor(
+                self.cursor_visible,
+                self.cursor_preferences,
+                &mut self.last_records,
+                scene,
+                root,
+                &geometry,
+                model,
+                style,
+            );
+        }
         for offset in 0..rows.count {
             let index = RowIndex(rows.first.0 + u64::from(offset));
             let cached = &self.renderer.rows[&index];
@@ -538,27 +593,19 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
             );
             work.rows_appended_to_scene += 1;
         }
-        if self.cursor_visible
-            && let Some(cursor) = geometry.cursor_rect_with(
-                crate::CellPoint {
-                    row: model.cursor.row,
-                    column: model.cursor.column,
-                },
-                model.cursor.shape,
-                self.cursor_preferences.width,
-                self.cursor_preferences.height,
-            )
-        {
-            let color = match self.cursor_preferences.color {
-                theme::CaretColor::Default => style.palette().cursor,
-                color => color.color_for(style.epoch.dark),
-            };
-            fill(scene, root, color, &cursor);
-            self.last_records.push(PaintRecord::Cursor {
-                row: model.cursor.row.0,
-                column: model.cursor.column.0,
-                shape: format!("{:?}", model.cursor.shape).to_ascii_lowercase(),
-            });
+        // Beam and underline sit beside the glyphs, so they go on top; a block
+        // went under them above, so the letter it covers is still drawn.
+        if !block_under_text {
+            Self::paint_cursor(
+                self.cursor_visible,
+                self.cursor_preferences,
+                &mut self.last_records,
+                scene,
+                root,
+                &geometry,
+                model,
+                style,
+            );
         }
 
         self.stats.add(Counter::RowsShaped, work.rows_shaped);

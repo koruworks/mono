@@ -141,6 +141,7 @@ fn a_restored_session_drops_what_this_build_hides() {
                 TabRef::Session {
                     session: SessionId::mint(),
                     profile: shell.id.clone(),
+                    recovery: None,
                 },
                 0.0,
             ),
@@ -153,6 +154,7 @@ fn a_restored_session_drops_what_this_build_hides() {
                 TabRef::Session {
                     session: SessionId::mint(),
                     profile: agent.id.clone(),
+                    recovery: None,
                 },
                 0.0,
             ));

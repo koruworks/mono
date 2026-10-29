@@ -622,6 +622,8 @@ fn alt_letter(logical: &Key, physical: PhysicalKey) -> Option<Key> {
         // Cloud tab is showing.
         PhysicalKey::Code(KeyCode::KeyJ) => "j",
         PhysicalKey::Code(KeyCode::KeyK) => "k",
+        // Keep the window on top.
+        PhysicalKey::Code(KeyCode::KeyA) => "a",
         _ => return None,
     };
     Some(Key::Character(letter.into()))
@@ -16581,12 +16583,12 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.interrupt_dictation(why);
                 }
                 // Window-level chords are the app shell's business, not a
-                // view's: Ctrl+Shift+T needs the Window handle.
+                // view's: Ctrl+Alt+A needs the Window handle.
                 if koru_keys::has_primary(mods)
                     && !koru_keys::has_foreign_primary(mods)
-                    && mods.shift_key()
-                    && !mods.alt_key()
-                    && ctrl_letter(&logical_key, event.text.as_deref()) == Some('t')
+                    && mods.alt_key()
+                    && !mods.shift_key()
+                    && ctrl_letter(&logical_key, event.text.as_deref()) == Some('a')
                 {
                     inputdebug::write(format_args!(
                         "[Koru][input][pid={}] shell claimed=toggle-pinned",

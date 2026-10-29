@@ -101,8 +101,15 @@ fn argv_cwd_and_environment_are_delivered_without_a_shell_join() {
     // short path (C:\Users\RUNNER~1\...) and PowerShell reports the long one.
     let reported = output
         .lines()
-        .find_map(|line| line.split_once("CWD:").map(|(_, path)| path.trim()))
+        .find_map(|line| line.split_once("CWD:").map(|(_, path)| path))
         .unwrap_or_else(|| panic!("no CWD line: {output:?}"));
+    // ConPTY follows the line with terminal mode changes (ESC[?9001l and the
+    // like) before the line break, so the path ends at the first control byte.
+    let reported = reported
+        .split(|c: char| c.is_control())
+        .next()
+        .unwrap_or_default()
+        .trim();
     assert_eq!(
         std::fs::canonicalize(reported).ok(),
         Some(std::fs::canonicalize(root.path()).expect("the root exists")),

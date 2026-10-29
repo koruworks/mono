@@ -358,6 +358,23 @@ pub enum MenuAction {
     SessionAssignProject(Option<ProjectId>),
     /// The explicit kill, behind Koru Terminal's confirm.
     SessionTerminate,
+    /// *Install Koru MCP*, on the tab of an agent that has no per-launch form
+    /// for it (ADR-472): registers the bridge in the agent's own configuration.
+    InstallMcp,
+    /// The same row once the bridge is registered: takes it out again.
+    UninstallMcp,
+    /// Parent of the *Terminal theme ▸* flyout on a session tab's menu.
+    TerminalTheme,
+    /// Parent of the *Terminal font ▸* flyout.
+    TerminalFont,
+    /// A theme for this agent's terminals: `light`, `dark`, or `None` to
+    /// follow Settings (ADR-475).
+    TerminalThemeIs(Option<&'static str>),
+    /// A monospaced font family's token for this agent's terminals, or `None`
+    /// to follow Settings.
+    TerminalFontIs(Option<&'static str>),
+    /// *More fonts...*: opens the picker over every installed family.
+    TerminalFontMore,
 
     Open,
     OpenInNewWindow,
@@ -599,6 +616,28 @@ pub enum MenuAction {
     /// finalizes. Same gate, same chord — the row is built at open time, so
     /// start and stop are two actions rather than one that relabels.
     HeaderStopRecording,
+}
+
+thread_local! {
+    /// The look the session tab whose menu is open has, `(theme, font)` tokens,
+    /// so its flyouts can mark the current choice: snapshotted as the menu
+    /// opens, for the reason [`SESSION_PROJECT_NAMES`] is.
+    static TERMINAL_LOOK: RefCell<(Option<String>, Option<String>)> =
+        const { RefCell::new((None, None)) };
+}
+
+/// Record the look the menu about to open belongs to.
+pub fn set_terminal_look_snapshot(look: (Option<String>, Option<String>)) {
+    TERMINAL_LOOK.with(|cell| *cell.borrow_mut() = look);
+}
+
+/// A row's text, with a check before the choice that is current.
+fn checked(name: &str, on: bool) -> Cow<'static, str> {
+    Cow::Owned(if on {
+        format!("\u{2713}  {name}")
+    } else {
+        format!("\u{2003} {name}")
+    })
 }
 
 thread_local! {
@@ -924,6 +963,29 @@ impl MenuAction {
             // letter raised. One source, so a colour added to `ACCENT_TOKENS`
             // gets a row here without a second table to keep in step.
             MenuAction::ListSwatch(token) => return Cow::Owned(color_label(token)),
+            MenuAction::TerminalTheme => return Cow::Borrowed("Terminal theme"),
+            MenuAction::TerminalFont => return Cow::Borrowed("Terminal font"),
+            MenuAction::TerminalFontMore => return Cow::Borrowed("More fonts\u{2026}"),
+            MenuAction::TerminalThemeIs(token) => {
+                let name = match token {
+                    None => "Default (Settings)",
+                    Some("light") => "Light",
+                    Some("dark") => "Dark",
+                    Some(other) => other,
+                };
+                let on = TERMINAL_LOOK.with(|look| look.borrow().0.as_deref() == token);
+                return checked(name, on);
+            }
+            MenuAction::TerminalFontIs(token) => {
+                let name = match token {
+                    None => "Default (Settings)".to_owned(),
+                    Some(token) => koru_draw::theme::FontChoice::parse(token)
+                        .label()
+                        .to_owned(),
+                };
+                let on = TERMINAL_LOOK.with(|look| look.borrow().1.as_deref() == token);
+                return checked(&name, on);
+            }
             MenuAction::MoveFilesToTrash(count) => {
                 return Cow::Owned(format!("Move {count} to trash"));
             }
@@ -1072,6 +1134,8 @@ impl MenuAction {
                     .unwrap_or(id)
             }
             MenuAction::PopOut => "Move to New Window",
+            MenuAction::InstallMcp => "Install Koru MCP",
+            MenuAction::UninstallMcp => "Remove Koru MCP",
             MenuAction::Close => "Close",
             MenuAction::CloseOthers => "Close Other Tabs",
             MenuAction::CloseLeft => "Close Tabs to the Left",
@@ -1615,11 +1679,27 @@ pub const TAB_ITEMS: [MenuAction; 7] = [
 ///
 /// `pinnable` is true for tabs that can be pinned even though they have no
 /// document, such as an AI chat tab.
+#[cfg(test)]
 pub fn tab_items(
     document: bool,
     pinnable: bool,
     pinned: bool,
     show_title: bool,
+) -> Vec<MenuAction> {
+    tab_items_for(document, pinnable, pinned, show_title, None, false)
+}
+
+/// [`tab_items`], with *Install Koru MCP* above the window verb when the tab
+/// is an agent that can be given the bridge only by registering it. `mcp` is
+/// `None` for any other tab, and for an agent whether it is registered already
+/// (then the row removes it).
+pub fn tab_items_for(
+    document: bool,
+    pinnable: bool,
+    pinned: bool,
+    show_title: bool,
+    mcp: Option<bool>,
+    terminal_look: bool,
 ) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if (document || pinnable) && !pinned {
@@ -1636,6 +1716,28 @@ pub fn tab_items(
         items.push(MenuAction::Divider);
     }
     items.extend_from_slice(&TAB_ITEMS);
+    // A session tab draws a terminal, so its theme and font are its own to
+    // choose, per agent (ADR-475).
+    if terminal_look {
+        let pop = items.pop();
+        items.push(MenuAction::TerminalTheme);
+        items.push(MenuAction::TerminalFont);
+        items.push(MenuAction::Divider);
+        // Ends the process, where *Close* only lets go of it.
+        items.push(MenuAction::SessionTerminate);
+        items.push(MenuAction::Divider);
+        items.extend(pop);
+    }
+    if let Some(registered) = mcp {
+        let pop = items.pop();
+        items.push(if registered {
+            MenuAction::UninstallMcp
+        } else {
+            MenuAction::InstallMcp
+        });
+        items.push(MenuAction::Divider);
+        items.extend(pop);
+    }
     if document {
         let pop = items.pop();
         items.push(MenuAction::RevealInExplore);
@@ -2437,6 +2539,27 @@ pub fn arrange_items() -> Vec<MenuAction> {
 /// which is the only visual difference between "this acts" and "there is more
 /// behind this".
 pub fn submenu(self_: MenuAction) -> Option<Vec<MenuAction>> {
+    if self_ == MenuAction::TerminalTheme {
+        return Some(vec![
+            MenuAction::TerminalThemeIs(None),
+            MenuAction::Divider,
+            MenuAction::TerminalThemeIs(Some("light")),
+            MenuAction::TerminalThemeIs(Some("dark")),
+        ]);
+    }
+    if self_ == MenuAction::TerminalFont {
+        let mut items = vec![MenuAction::TerminalFontIs(None), MenuAction::Divider];
+        items.extend(
+            koru_settings::FontFamily::ALL
+                .iter()
+                .copied()
+                .filter(|family| family.is_mono())
+                .map(|family| MenuAction::TerminalFontIs(Some(family.token()))),
+        );
+        items.push(MenuAction::Divider);
+        items.push(MenuAction::TerminalFontMore);
+        return Some(items);
+    }
     if self_ == MenuAction::ImportAs {
         return Some(import_items());
     }
@@ -2638,13 +2761,15 @@ impl ContextMenu {
         pinnable: bool,
         pinned: bool,
         show_title: bool,
+        mcp: Option<bool>,
+        terminal_look: bool,
         anchor: (f32, f32),
     ) -> Self {
         Self::new(
             engine,
             MenuSubject::Tab(tab),
             anchor,
-            tab_items(document, pinnable, pinned, show_title),
+            tab_items_for(document, pinnable, pinned, show_title, mcp, terminal_look),
         )
     }
 

@@ -5,18 +5,22 @@
 #   git add releases/nightly && git commit
 #   git tag -f nightly && git push -f origin nightly
 #
-# The design is docs/features/linux/NIGHTLY.rev1.md (and the 2026-10-24
+# The design is docs/features/linux/NIGHTLY.rev2.md (and the 2026-10-24
 # amendment at the top of docs/features/github-release/TECHNICAL.final.md).
-# Linux first; Windows and macOS join as more build jobs feeding the same
-# publish job.
+# One build job per platform, all feeding one publish job; macOS joins when
+# its Developer ID certificate is Koru Works, Inc.'s (NIGHTLY rev2 §6).
 #
 # The rules differ from ci.yml's on purpose, and only here: this workflow
-# signs and publishes, so it has one secret (the Minisign release key, in the
-# `nightly` environment, which only the `nightly` tag can deploy to) and one
-# job with a write token. A tag push is its only trigger — no schedule, no
-# Run workflow button — and the repository ruleset lets only the maintainer
-# move that tag. Every third-party action is pinned to a full commit SHA, the
-# tag in the comment above it.
+# signs and publishes, so its secrets live in the `nightly` environment, which
+# only the `nightly` tag can deploy to, and one job has a write token. A tag
+# push is its only trigger — no schedule, no Run workflow button — and the
+# repository ruleset lets only the maintainer move that tag. Every third-party
+# action is pinned to a full commit SHA, the tag in the comment above it.
+#
+# **A platform that fails keeps its last nightly.** Each platform that built
+# is published whether or not the others did, and only its own files are
+# replaced, so an installed Koru never loses its feed to another platform's
+# broken build (rev2 §3).
 name: nightly
 
 on:
@@ -38,9 +42,22 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # **One reading of the clock for every platform** (N11): the build number is
+  # the UTC minute, and two platforms of one nightly must carry the same one.
+  plan:
+    name: plan
+    if: github.repository == 'koruworks/mono'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.clock.outputs.build }}
+    steps:
+      - id: clock
+        run: echo "build=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
   build-linux:
     name: build (linux-x86_64)
-    if: github.repository == 'koruworks/mono'
+    needs: plan
     # The oldest LTS hosted image, for the glibc baseline (release design D20).
     runs-on: ubuntu-22.04
     timeout-minutes: 120
@@ -92,11 +109,12 @@ jobs:
           NIGHTLY_MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY }}
           NIGHTLY_MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD }}
           NOTES: ${{ steps.notes.outputs.path }}
+          BUILD: ${{ needs.plan.outputs.build }}
         run: |
           key="$RUNNER_TEMP/minisign.key"
           (umask 077 && printf '%s\n' "$NIGHTLY_MINISIGN_KEY" > "$key")
           printf '%s' "$NIGHTLY_MINISIGN_PASSWORD" | ./koru.sh release-tool dist-github nightly \
-            --build "$(date -u +%Y%m%d%H%M)" \
+            --build "$BUILD" \
             --notes "$NOTES" \
             --key "$key" --key-password-stdin \
             --download-base "https://github.com/${{ github.repository }}/releases/download/nightly" \
@@ -125,9 +143,200 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  build-windows:
+    name: build (windows-x86_64)
+    needs: plan
+    runs-on: windows-latest
+    timeout-minutes: 150
+    environment: nightly
+    permissions:
+      contents: read
+      # Azure sign-in for Authenticode, and the provenance attestation.
+      id-token: write
+      attestations: write
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}\third-party\sherpa-onnx\1.13.6
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 0
+      # The setup is ci.yml's Windows test job's: patched crates, the pinned
+      # sherpa-onnx archive the voice runtime links, the bundled fonts.
+      - name: Fetch third-party code
+        shell: pwsh
+        run: ./scripts/setup/fetch-third-party.ps1
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.ps1') }}
+      - name: Fetch the sherpa-onnx archive
+        shell: pwsh
+        run: ./scripts/setup/fetch-voice-runtime.ps1
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.ps1') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/setup/fetch-fonts.ps1
+      # (see build-linux)
+      - name: Select this nightly's notes
+        id: notes
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          path="$(cargo run --locked -q -p koru-release -- nightly-notes --select "$BEFORE" "$AFTER" | tail -n 1)"
+          test -f "$path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      # **Authenticode, through Azure Artifact Signing** (release design D9).
+      # Off until the certificate profile exists — the organization's identity
+      # validation decides when — and then on with no change here: setting
+      # ARTIFACT_SIGNING_PROFILE and WINDOWS_PACKAGE_PUBLISHER in the
+      # environment is the switch. No key or password is stored: the job signs
+      # in to Azure with its OIDC token, as the app registration the
+      # environment's federated credential names, and Microsoft's HSM signs.
+      # azure/login v3.1.0
+      - name: Sign in to Azure
+        if: vars.ARTIFACT_SIGNING_PROFILE != ''
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # signtool from the image's newest Windows SDK, with Microsoft's signing
+      # client as its digest library — the client pinned by version and hash,
+      # as fetch-voice-runtime.ps1 pins sherpa-onnx. `koru-release` signs every
+      # executable and the notification-identity MSIX through
+      # KORU_SIGNTOOL_COMMAND, and builds that MSIX because the publisher is set.
+      - name: Prepare Authenticode signing
+        if: vars.ARTIFACT_SIGNING_PROFILE != ''
+        shell: pwsh
+        env:
+          ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          PUBLISHER: ${{ vars.WINDOWS_PACKAGE_PUBLISHER }}
+          CLIENT_VERSION: 1.0.146
+          CLIENT_SHA256: 7761e5d8f31e54b764da21d33cd8b0a2940e1b05526c7dfcb5e94b0431426f70
+        run: |
+          if (-not $env:PUBLISHER) {
+            throw 'WINDOWS_PACKAGE_PUBLISHER must be set with ARTIFACT_SIGNING_PROFILE: it is the certificate subject the MSIX names'
+          }
+          $tools = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $client = Join-Path $tools 'client.zip'
+          Invoke-WebRequest -OutFile $client -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/$env:CLIENT_VERSION/microsoft.artifactsigning.client.$env:CLIENT_VERSION.nupkg"
+          if ((Get-FileHash -Algorithm SHA256 $client).Hash -ne $env:CLIENT_SHA256) {
+            throw "Microsoft.ArtifactSigning.Client $env:CLIENT_VERSION does not match its pinned hash"
+          }
+          Expand-Archive $client -DestinationPath (Join-Path $tools 'client')
+          $dlib = Join-Path $tools 'client\bin\x64\Azure.CodeSigning.Dlib.dll'
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+            Where-Object { $_.Directory.Parent.Name -as [version] } |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+            Select-Object -First 1
+          if (-not $signtool -or [version]$signtool.Directory.Parent.Name -lt [version]'10.0.22621.0') {
+            throw 'Artifact Signing needs signtool from Windows SDK 10.0.22621 or later'
+          }
+          # The Azure CLI sign-in above is the credential; the others would
+          # only be probed first, and the managed-identity probe is slow here.
+          $metadata = Join-Path $tools 'metadata.json'
+          @{
+            Endpoint = $env:ENDPOINT
+            CodeSigningAccountName = $env:ACCOUNT
+            CertificateProfileName = $env:PROFILE
+            ExcludeCredentials = @(
+              'EnvironmentCredential', 'WorkloadIdentityCredential', 'ManagedIdentityCredential',
+              'SharedTokenCacheCredential', 'VisualStudioCredential', 'VisualStudioCodeCredential',
+              'AzurePowerShellCredential', 'AzureDeveloperCliCredential', 'InteractiveBrowserCredential'
+            )
+          } | ConvertTo-Json | Set-Content -Encoding utf8 $metadata
+          "KORU_SIGNTOOL_COMMAND=`"$($signtool.FullName)`" sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib `"$dlib`" /dmdf `"$metadata`" {file}" >> $env:GITHUB_ENV
+          "KORU_WINDOWS_PACKAGE_PUBLISHER=$env:PUBLISHER" >> $env:GITHUB_ENV
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+      - name: Build, sign and write the release files
+        shell: bash
+        env:
+          NIGHTLY_MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY }}
+          NIGHTLY_MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077 && printf '%s\n' "$NIGHTLY_MINISIGN_KEY" > "$key")
+          printf '%s' "$NIGHTLY_MINISIGN_PASSWORD" | cargo run --locked -q -p koru-release -- dist-github nightly \
+            --build "$BUILD" \
+            --notes "$NOTES" \
+            --key "$key" --key-password-stdin \
+            --download-base "https://github.com/${{ github.repository }}/releases/download/nightly" \
+            --out dist/nightly
+          rm -f "$key"
+      # (see build-linux) And, once signing is on, that it signed everything:
+      # an executable without a valid signature is the SmartScreen warning
+      # back, and a missing MSIX is reminders that silently never show.
+      - name: Smoke-test the packaged binaries
+        shell: pwsh
+        env:
+          SIGNED: ${{ vars.ARTIFACT_SIGNING_PROFILE != '' }}
+        run: |
+          $archives = @(Get-ChildItem dist/nightly -Filter *.zip)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one release archive' }
+          $package = Join-Path $env:RUNNER_TEMP 'koru-package'
+          Expand-Archive $archives[0].FullName -DestinationPath $package
+          foreach ($name in 'koru.exe', 'koru-agent.exe') {
+            $exe = @(Get-ChildItem $package -Recurse -Filter $name)
+            if ($exe.Count -ne 1) { throw "Expected exactly one packaged $name" }
+            $process = Start-Process -FilePath $exe[0].FullName -ArgumentList '--help' -WindowStyle Hidden -PassThru
+            if (-not $process.WaitForExit(30000)) {
+              $process.Kill()
+              throw "Packaged $name did not finish --help within 30 seconds"
+            }
+            if ($process.ExitCode -ne 0) { throw "Packaged $name exited with $($process.ExitCode)" }
+          }
+          if ($env:SIGNED -eq 'true') {
+            $unsigned = @(Get-ChildItem $package -Recurse -Filter *.exe |
+              Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' })
+            if ($unsigned) { throw "Not validly signed: $($unsigned.Name -join ', ')" }
+            $identity = @(Get-ChildItem $package -Recurse -Filter koru-identity.msix)
+            if ($identity.Count -ne 1) { throw 'A signed build without its notification identity package' }
+            & $env:SIGNTOOL verify /pa $identity[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw 'koru-identity.msix is not validly signed' }
+          }
+      # actions/attest-build-provenance v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/nightly/*.zip
+      # actions/upload-artifact v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nightly-windows-x86_64
+          path: dist/nightly/
+          retention-days: 7
+          if-no-files-found: error
+
   publish:
     name: publish
-    needs: [build-linux]
+    needs: [build-linux, build-windows]
+    # Whatever built is published (rev2 §3); only a nightly where nothing
+    # built, or one that was cancelled, publishes nothing.
+    if: >-
+      !cancelled() &&
+      (needs.build-linux.result == 'success' || needs.build-windows.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -135,32 +344,66 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      RESULTS: >-
+        linux-x86_64=${{ needs.build-linux.result }}
+        windows-x86_64=${{ needs.build-windows.result }}
     steps:
+      # One directory per platform that built, named after its artifact.
       # actions/download-artifact v8.0.2
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: nightly-linux-x86_64
+          pattern: nightly-*
           path: nightly
-      # **The order is the point.** Upload the new package first, then point
-      # the feed at it, then delete the old package — so the manifest an
-      # installed app reads never names a file that is not there.
-      - name: Replace the nightly release's files
+      # **The order is the point.** Upload every new package first, then point
+      # the feeds at them, then delete the packages they replaced — so the
+      # manifest an installed app reads never names a file that is not there.
+      # Only a platform that built has anything deleted; another platform's
+      # files stay as its last nightly left them.
+      - name: Replace the built platforms' files
         working-directory: nightly
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          builds=(*/)
+          test "${#builds[@]}" -ge 1
+          # Every build writes the same body; a platform that did not build
+          # this time is said so below it.
+          cp "${builds[0]}release-body.md" release-body.md
+          for result in $RESULTS; do
+            if [ "${result#*=}" != success ]; then
+              printf '\n_The %s build of this nightly did not complete; its download and update feed are from an earlier nightly, if there is one._\n' \
+                "${result%%=*}" >> release-body.md
+            fi
+          done
           if ! gh release view nightly >/dev/null 2>&1; then
             gh release create nightly --verify-tag --prerelease \
               --title "Koru nightly" --notes-file release-body.md
           fi
           old="$(gh release view nightly --json assets --jq '.assets[].name')"
-          packages=(*.tar.gz *.tar.gz.minisig)
+          packages=() feeds=() targets=()
+          for build in "${builds[@]}"; do
+            feed=("$build"nightly-*.json)
+            test "${#feed[@]}" -eq 1
+            feeds+=("${feed[0]}")
+            name="$(basename "${feed[0]}" .json)"
+            targets+=("${name#nightly-}")
+            for file in "$build"*; do
+              case "$(basename "$file")" in
+                nightly-*.json | release-body.md) ;;
+                *) packages+=("$file") ;;
+              esac
+            done
+          done
           gh release upload nightly "${packages[@]}" --clobber
-          gh release upload nightly nightly-*.json --clobber
-          keep=" ${packages[*]} $(ls nightly-*.json | tr '\n' ' ') "
+          gh release upload nightly "${feeds[@]}" --clobber
+          keep=" "
+          for file in "${packages[@]}" "${feeds[@]}"; do keep+="$(basename "$file") "; done
           for name in $old; do
-            case "$keep" in
-              *" $name "*) ;;
-              *) gh release delete-asset nightly "$name" --yes ;;
-            esac
+            case "$keep" in *" $name "*) continue ;; esac
+            for target in "${targets[@]}"; do
+              case "$name" in
+                koru-*-"$target".*) gh release delete-asset nightly "$name" --yes ;;
+              esac
+            done
           done
           gh release edit nightly --prerelease --title "Koru nightly" --notes-file release-body.md

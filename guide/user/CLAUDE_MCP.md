@@ -80,13 +80,16 @@ bridge; do not separately run `koru.bat mcp --console` for this connection.
 Before asking Claude to edit, ask:
 
 > Use Koru's `get_documentation` tool with
-> `{"uri":"koru://docs/model"}`. Summarise the node model and the supported
+> `{"uri":"koru://docs/essentials"}`. Summarise the node model and the supported
 > `edit_document` operations before making any changes.
 
-`koru://docs/model` is also exposed as a standard MCP resource. Some bridges,
-including versions of remote-device proxies, do not forward `resources/list`
-or `resources/read`; `get_documentation` returns the same canonical document as
-a normal tool call and is the portable fallback. An empty resource list from a
+`koru://docs/essentials` is the short form, and `koru://docs/model` the whole
+contract, which the same tool also answers one section at a time
+(`{"uri":"koru://docs/model","section":"tasks"}`). Both are exposed as
+standard MCP resources. Some bridges, including versions of remote-device
+proxies, do not forward `resources/list` or `resources/read`;
+`get_documentation` returns the same text as a normal tool call and is the
+portable fallback. An empty resource list from a
 proxy does not mean Koru failed to publish the resource. The `edit_document` input
 schema itself is fully inlined, so Claude should not receive unresolved
 `$ref`/`$defs` pointers.
@@ -95,7 +98,7 @@ schema itself is fully inlined, so Claude should not receive unresolved
 
 Ask Claude:
 
-> Use Koru's `get_documentation` tool for `koru://docs/model`. Then create a
+> Use Koru's `get_documentation` tool for `koru://docs/essentials`. Then create a
 > document called "Claude bulk-create smoke" in one `create_document` call. Use
 > a UUID idempotency key and `initial_operations` containing three ordered
 > paragraphs and one task. Read it back, verify the create result equals the

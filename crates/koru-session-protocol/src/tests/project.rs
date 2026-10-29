@@ -289,7 +289,7 @@ fn the_project_rescope_verb_arrives_under_a_version_and_the_lifecycle_capability
     // pinned rather than floored: a capability is append-only and a new one is
     // a decision, so this line is what makes adding one deliberate. (v14
     // minted `delegation`, the twenty-fourth; `tests::delegation` records it.)
-    assert_eq!(capability::ALL.len(), 30);
+    assert_eq!(capability::ALL.len(), 31);
 }
 
 /// **v13 adds a verb to the *project* family and no capability to go with it.**
@@ -341,7 +341,7 @@ fn the_project_scope_verb_arrives_under_a_version_and_the_projects_capability() 
     // Still no capability minted for it, and in particular it did not join the
     // lifecycle family: this verb is not the Gateway's. (The twenty-fourth is
     // v14's `delegation`, a different family again.)
-    assert_eq!(capability::ALL.len(), 30);
+    assert_eq!(capability::ALL.len(), 31);
     assert!(
         !current
             .capabilities

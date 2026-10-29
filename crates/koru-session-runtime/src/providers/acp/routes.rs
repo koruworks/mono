@@ -124,10 +124,22 @@ impl AcpDialect {
             Self::Generic => &[],
             Self::Claude => &[("0.76.0", "0.76.0")],
             Self::OpenCode => &[("1.18.27", "1.18.27")],
-            Self::Kimi => &[("0.42.0", "0.42.0"), ("2.0.0", "2.0.0")],
+            // 2.3.3 and 2.4.0: the normally installed CLI on 2026-10-27 and 2026-10-28 (UPDATEAGENTS),
+            // admitted on the same factory handshake as 2.0.0.
+            Self::Kimi => &[
+                ("0.42.0", "0.42.0"),
+                ("2.0.0", "2.0.0"),
+                ("2.3.3", "2.3.3"),
+                ("2.4.0", "2.4.0"),
+            ],
             Self::Grok => &[
                 ("grok 1.0.25 (f7e67d6988e2) [stable]", "1.0.25"),
                 ("grok 1.0.34 (3736acbc8658) [stable]", "1.0.34"),
+                // The normally installed CLI on 2026-10-27 (UPDATEAGENTS),
+                // admitted on the same no-prompt factory handshake as 1.0.34;
+                // `docs/features/terminal/providers/grok.md` has the line.
+                ("grok 1.0.60 (01a8e1c591c0) [stable]", "1.0.60"),
+                ("grok 1.0.70 (f50904eaee6c) [stable]", "1.0.70"),
             ],
             // SHA-256 of `agy_acp_server.exe` from Google's
             // agy-acp-server-1.2.1-windows-x86_64.zip (AGENTUX I9, 2026-09-26).

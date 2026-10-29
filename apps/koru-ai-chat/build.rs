@@ -28,7 +28,7 @@ fn version() -> String {
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").expect("package version"))
 }
 
-fn build_number() -> u32 {
+fn build_number() -> u64 {
     env::var("KORU_BUILD_NUMBER")
         .ok()
         .and_then(|value| value.parse().ok())

@@ -2,7 +2,8 @@
 
 //! **The GitHub nightly**: one pre-release on the moving `nightly` tag of
 //! koruworks/mono, rebuilt and replaced each time the maintainer moves the tag
-//! (`docs/features/linux/NIGHTLY.rev1.md`).
+//! (`docs/features/linux/NIGHTLY.rev1.md`, and `NIGHTLY.rev2.md` for every
+//! platform beyond Linux). Section numbers below are rev1's unless they say.
 //!
 //! Three verbs, and none of them talks to GitHub — the workflow uploads:
 //!
@@ -48,15 +49,19 @@ pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github nigh
 pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\n       \
      koru-release nightly-notes --select <before-sha> <after-sha>";
 
-/// What a person is told before downloading a Linux nightly (NIGHTLY §1).
-/// Per platform, because Windows and macOS join the same page later and their
-/// limits are not Linux's.
-fn preview_note(platform: &str) -> Option<&'static str> {
-    (platform == "linux").then_some(
-        "**A preview** — X11 only (XWayland on Wayland desktops), no dictation yet, \
-         no Koru Cloud yet.",
-    )
-}
+/// What a person is told about each platform before downloading (NIGHTLY §1,
+/// rev2 §3).
+///
+/// **One page for every platform's build**, and each build writes the same
+/// body, so it names them all rather than only the one it built; the publish
+/// job adds a line for a platform whose build failed this time. The Windows
+/// line goes when the nightly is signed (NIGHTLY rev2 §5).
+const PLATFORM_NOTES: [&str; 3] = [
+    "**Linux** is a preview — X11 only (XWayland on Wayland desktops), no dictation yet.",
+    "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
+     reminders show no notifications.",
+    "No Koru Cloud in the nightly yet.",
+];
 
 // ------------------------------------------------------------ dist-github
 
@@ -264,9 +269,9 @@ pub(crate) fn release_body(build: &GithubBuild<'_>) -> String {
         repository = source::REPOSITORY,
         commit = build.commit,
     ));
-    let (platform, _) = split_target(build.target);
-    if let Some(note) = preview_note(&platform) {
-        body.push_str(&format!("\n{note}\n"));
+    body.push('\n');
+    for note in PLATFORM_NOTES {
+        body.push_str(&format!("- {note}\n"));
     }
     body
 }
@@ -289,6 +294,16 @@ pub(crate) fn dist_github(
     let target = host_target();
     if target == "unsupported" {
         return Err("dist-github does not know this host's target triple".into());
+    }
+    // **No unsigned Mac package, ever.** `publish` asks a person before it
+    // ships one; this verb has nobody to ask, and an ad-hoc-signed download
+    // meets Gatekeeper's malware dialog on every Mac it reaches.
+    if target.starts_with("macos") && !crate::mac_signing_is_configured() {
+        return Err(format!(
+            "a Mac nightly is Developer ID signed and notarized or not built: set {} \
+             (docs/features/macos/RELEASING.md)",
+            crate::MAC_SIGNING_HOOKS.join(" and ")
+        ));
     }
     // Everything that can be refused is refused before the build: the notes,
     // the key, the tree, the version.

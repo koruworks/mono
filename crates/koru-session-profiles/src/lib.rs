@@ -387,6 +387,35 @@ pub fn resolve_executable(program: &str) -> Option<PathBuf> {
     None
 }
 
+/// The arguments that make a raw agent continue its **most recent
+/// conversation in the folder it starts in**, or `None` for a profile whose
+/// CLI has no such form (a shell, Muse, a custom profile). Each was read from
+/// the CLI's own `--help` on 2026-10-28.
+///
+/// This is the whole of what *Resume* means: Koru does not know the agent's
+/// session id (a raw PTY never tells it), so it asks the agent for "the last
+/// one here". The host appends these after the profile's own argv, which is
+/// why the client sends a flag and never a command line.
+pub fn resume_arguments(label: ProfileLabel) -> Option<&'static [&'static str]> {
+    match label {
+        ProfileLabel::Claude
+        | ProfileLabel::OpenCode
+        | ProfileLabel::QwenCode
+        | ProfileLabel::Copilot
+        | ProfileLabel::Kimi
+        | ProfileLabel::Grok
+        | ProfileLabel::Antigravity => Some(&["--continue"]),
+        // Codex's continue is a subcommand, not a flag.
+        ProfileLabel::CodexEmbedded | ProfileLabel::CodexCli => Some(&["resume", "--last"]),
+        ProfileLabel::PlatformShell
+        | ProfileLabel::PowerShell
+        | ProfileLabel::Bash
+        | ProfileLabel::Gemini
+        | ProfileLabel::Muse
+        | ProfileLabel::Custom => None,
+    }
+}
+
 /// Resolve an authored profile argv to the concrete invocation the host will
 /// spawn. Presence probing and process launch therefore cannot disagree about
 /// which Windows shim was selected.
@@ -468,8 +497,25 @@ fn preferred_windows_bash(directories: &[PathBuf]) -> Option<PathBuf> {
     })
 }
 
+/// Whether cmd.exe hands `argument` to a batch file's `%*` exactly as it was
+/// given. Its operators (`& | < > ^`), both expansion sigils (`% !`), the
+/// quote itself and line breaks are refused. Whitespace is fine: the spawner
+/// quotes such an argument, and cmd.exe keeps those quotes for the batch file
+/// to pass on to the program it wraps. Platform-neutral, so the rule is
+/// tested everywhere even though only Windows applies it.
+pub fn cmd_transparent(argument: &str) -> bool {
+    !argument.is_empty()
+        && !argument.chars().any(|character| {
+            matches!(
+                character,
+                '&' | '|' | '<' | '>' | '^' | '%' | '!' | '"' | '\n' | '\r'
+            )
+        })
+}
+
 /// Render an already-resolved executable using the same platform boundary as raw
-/// profiles. Windows batch shims accept no authored arguments at this boundary.
+/// profiles. A Windows batch shim takes an authored argument only when it is
+/// [`cmd_transparent`]; otherwise the launch is refused.
 pub fn platform_launch_argv(executable: PathBuf, arguments: &[String]) -> Option<Vec<OsString>> {
     #[cfg(windows)]
     let executable = windows_compatible_path(&executable);
@@ -481,14 +527,15 @@ pub fn platform_launch_argv(executable: PathBuf, arguments: &[String]) -> Option
             extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
         })
     {
-        // cmd.exe reparses everything after /c. The built-in npm-backed
-        // profiles need no authored arguments, so keep that boundary exact
-        // instead of pretending ordinary argv quoting makes metacharacters
-        // safe for a second parser.
-        if !arguments.is_empty() {
+        // cmd.exe reparses everything after /c, so ordinary argv quoting does
+        // not make its metacharacters safe for that second parser. An
+        // argument rides through only when it is transparent to cmd.exe —
+        // the flag and the path a tab's MCP bridge needs are (`tab_bridge`
+        // in `koru-session-host`); anything else is refused, never reparsed.
+        if !arguments.iter().all(|argument| cmd_transparent(argument)) {
             return None;
         }
-        let launch = vec![
+        let mut launch = vec![
             std::env::var_os("ComSpec").unwrap_or_else(|| OsString::from("cmd.exe")),
             OsString::from("/d"),
             OsString::from("/s"),
@@ -496,6 +543,7 @@ pub fn platform_launch_argv(executable: PathBuf, arguments: &[String]) -> Option
             OsString::from("call"),
             executable.into_os_string(),
         ];
+        launch.extend(arguments.iter().map(OsString::from));
         return Some(launch);
     }
     let mut launch = Vec::with_capacity(arguments.len() + 1);
@@ -668,6 +716,47 @@ mod tests {
             )
             .is_none()
         );
+        // A tab's bridge: a flag and a path, with a space the spawner will
+        // quote, ride through after the shim.
+        let argv = platform_launch_argv(
+            PathBuf::from(r"C:\tools\qwen.cmd"),
+            &[
+                "--mcp-config".into(),
+                r"C:\Users\A B\bridge\qwen.json".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(argv[4..5], ["call"]);
+        assert_eq!(argv[6], OsString::from("--mcp-config"));
+        assert_eq!(argv[7], OsString::from(r"C:\Users\A B\bridge\qwen.json"));
+        assert_eq!(argv.len(), 8);
+    }
+
+    #[test]
+    fn cmd_transparency_admits_flags_paths_and_toml_literals_only() {
+        for argument in [
+            "--mcp-config",
+            r"C:\Users\A B\AppData\Local\Koru\agent\sessions\bridge\claude.json",
+            r"@C:\Users\me\bridge\copilot.json",
+            r"mcp_servers.koru.command='C:\Program Files\Koru\koru-mcp.exe'",
+            "mcp_servers.koru.args=['serve','--stdio']",
+        ] {
+            assert!(cmd_transparent(argument), "{argument}");
+        }
+        for argument in [
+            "",
+            "a & b",
+            "a|b",
+            "<in",
+            "out>",
+            "^",
+            "%PATH%",
+            "!x!",
+            "\"quoted\"",
+            "two\nlines",
+        ] {
+            assert!(!cmd_transparent(argument), "{argument:?}");
+        }
     }
 
     #[cfg(windows)]

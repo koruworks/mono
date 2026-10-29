@@ -67,7 +67,9 @@ fn a_delegated_launch_renders_the_six_tools_and_names_the_bearer_by_variable() {
     );
     let mut modern = argv;
     modern.extend(["-c".to_owned(), "features.multi_agent_v2=false".to_owned()]);
-    for version in ["0.153.4", "0.154.0", "0.156.1", "0.158.0"] {
+    for version in [
+        "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0",
+    ] {
         assert_eq!(
             strings(&render_argv(Some(&delegation), &version.parse().unwrap())),
             modern,

@@ -166,6 +166,8 @@ pub enum ShortcutId {
     ShowSocials,
     ToggleContext,
     ToggleAiPane,
+    /// Bring back the tab that was closed last, as a browser does.
+    ReopenClosedTab,
     Settings,
     ManageWorkspaces,
     /// The workspaces list in the explore header. **The one `Ctrl+Alt+letter`
@@ -478,7 +480,7 @@ pub const REGISTRY: &[Shortcut] = &[
         ShortcutId::PinWindow,
         Layer::Shell,
         "Keep window on top",
-        Chord::new(On::Letter('t'), PRIMARY_SHIFT),
+        Chord::new(On::Letter('a'), PRIMARY_ALT),
     ),
     s(
         ShortcutId::ZoomIn,
@@ -670,6 +672,12 @@ pub const REGISTRY: &[Shortcut] = &[
         Layer::Container,
         "Koru AI pane",
         Chord::new(On::Letter('j'), PRIMARY_SHIFT),
+    ),
+    s(
+        ShortcutId::ReopenClosedTab,
+        Layer::Container,
+        "Reopen closed tab",
+        Chord::new(On::Letter('t'), PRIMARY_SHIFT),
     ),
     s(
         ShortcutId::Settings,

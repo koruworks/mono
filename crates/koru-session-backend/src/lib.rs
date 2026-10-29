@@ -129,6 +129,29 @@ impl InteractionSender {
             intent,
             project_id,
             working_directory,
+            resume: false,
+        });
+    }
+
+    /// [`launch_in`](Self::launch_in) for a **raw agent that continues its most
+    /// recent conversation** in `working_directory` (`launch-resume`). Always a
+    /// raw terminal: a managed chat has no such continuation.
+    pub fn launch_resumed(
+        &self,
+        profile: LaunchProfile,
+        display_name: String,
+        size: GridSize,
+        project_id: Option<ProjectId>,
+        working_directory: PathBuf,
+    ) {
+        self.try_command(BackendCommand::Launch {
+            profile,
+            display_name,
+            size,
+            intent: LaunchIntent::Raw,
+            project_id,
+            working_directory: Some(working_directory),
+            resume: true,
         });
     }
 
@@ -225,6 +248,12 @@ impl InteractionSender {
         self.try_command(BackendCommand::StopObserving);
     }
 
+    /// End this connection's thread — for a terminal's own lane, once it is no
+    /// longer on screen. The session it held keeps running.
+    pub fn close(&self) {
+        self.try_command(BackendCommand::Close);
+    }
+
     /// §7.4: ask the session's holder for the controller. The answer is not
     /// a lease — nothing preempts — it is either *nobody holds it, attach*
     /// or *the holder has been told*. Either way the window learns where
@@ -306,7 +335,25 @@ pub fn spawn<S: BackendSink>(
     let _ = std::thread::Builder::new()
         .name("koru-session-backend session client".into())
         .stack_size(256 * 1024)
-        .spawn(move || run(sink, root, profiles, commands, internal));
+        .spawn(move || run(sink, root, profiles, commands, internal, false));
+}
+
+/// **One terminal's own connection.** The same backend, started for a single
+/// visible terminal: the window drives one session per connection (the client
+/// holds one controller lease), so a second terminal on screen gets a second
+/// connection rather than a blank pane. It skips the work only the window's
+/// main connection needs — probing the profiles and reading the whole catalog
+/// at start — and is ended with [`InteractionSender::close`].
+pub fn spawn_lane<S: BackendSink>(
+    sink: S,
+    root: Option<PathBuf>,
+    commands: mpsc::Receiver<BackendCommand>,
+    internal: SyncSender<BackendCommand>,
+) {
+    let _ = std::thread::Builder::new()
+        .name("koru-session-backend terminal lane".into())
+        .stack_size(256 * 1024)
+        .spawn(move || run(sink, root, Vec::new(), commands, internal, true));
 }
 
 #[derive(Debug)]
@@ -342,6 +389,9 @@ pub enum BackendCommand {
         /// backend process's own current directory — see
         /// [`InteractionSender::launch_in`].
         working_directory: Option<PathBuf>,
+        /// Continue the agent's most recent conversation in that directory
+        /// ([`InteractionSender::launch_resumed`]); raw agents only.
+        resume: bool,
     },
     Select {
         session_id: SessionId,
@@ -398,6 +448,8 @@ pub enum BackendCommand {
     },
     /// Stop watching, closing the observing connection.
     StopObserving,
+    /// End this connection (a terminal's own lane): detach, disconnect, stop.
+    Close,
     /// Protocol v14, §7.4. Ask the holder for the controller.
     RequestControl {
         session_id: SessionId,
@@ -450,6 +502,7 @@ struct LaunchRequest {
     intent: LaunchIntent,
     project_id: Option<ProjectId>,
     working_directory: Option<PathBuf>,
+    resume: bool,
     readiness: Vec<koru_session_protocol::ProviderReadiness>,
 }
 
@@ -480,6 +533,7 @@ impl BackendCommand {
             Self::Terminate => "terminate",
             Self::Observe { .. } => "observe",
             Self::StopObserving => "stop_observing",
+            Self::Close => "close",
             Self::RequestControl { .. } => "request_control",
             Self::ReturnControl => "return_control",
         }
@@ -494,6 +548,7 @@ impl BackendCommand {
             | Self::ProvidersLost { .. }
             | Self::Launch { .. }
             | Self::Refresh
+            | Self::Close
             | Self::ConnectionLost { .. }
             | Self::CreateProject { .. }
             | Self::RenameProject { .. }
@@ -590,8 +645,11 @@ fn run<S: BackendSink>(
     profiles: Vec<LaunchProfile>,
     commands: mpsc::Receiver<BackendCommand>,
     internal: SyncSender<BackendCommand>,
+    lane: bool,
 ) {
-    send(&sink, BackendEvent::Profiles(probe(profiles)));
+    if !lane {
+        send(&sink, BackendEvent::Profiles(probe(profiles)));
+    }
     let endpoint = match direct_endpoint(root.as_deref()) {
         Ok(endpoint) => endpoint,
         Err(_) => {
@@ -649,16 +707,25 @@ fn run<S: BackendSink>(
     // in the second while another process is in the first.
     let mut observing: Option<Observing> = None;
     let mut next_epoch = 1_u64;
-    refresh(
-        &connection.client,
-        &sink,
-        &internal,
-        generation,
-        &mut subscribed,
-        true,
-    );
+    if !lane {
+        refresh(
+            &connection.client,
+            &sink,
+            &internal,
+            generation,
+            &mut subscribed,
+            true,
+        );
+    }
 
     while let Ok(command) = commands.recv() {
+        // The window is done with this connection: give the session back (the
+        // process keeps running) and end the thread.
+        if matches!(command, BackendCommand::Close) {
+            let _ = detach(&connection.client, &mut active);
+            connection.client.disconnect();
+            return;
+        }
         if let BackendCommand::ConnectionLost {
             generation: observed,
         } = command
@@ -744,6 +811,7 @@ fn run<S: BackendSink>(
                 intent,
                 project_id,
                 working_directory,
+                resume,
             } => launch(
                 &connection.client,
                 AttachContext {
@@ -762,6 +830,7 @@ fn run<S: BackendSink>(
                     intent,
                     project_id,
                     working_directory,
+                    resume,
                     readiness: connection.providers.snapshot(),
                 },
             ),
@@ -850,7 +919,9 @@ fn run<S: BackendSink>(
                 epoch,
                 &update,
             ),
-            BackendCommand::ConnectionLost { .. } => unreachable!("handled before the match"),
+            BackendCommand::ConnectionLost { .. } | BackendCommand::Close => {
+                unreachable!("handled before the match")
+            }
             BackendCommand::Refresh => {
                 refresh(
                     &connection.client,
@@ -962,7 +1033,8 @@ fn await_session_host<T>(
             }
         }
         match commands.recv_timeout(retry_every) {
-            Ok(BackendCommand::Detach) | Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            Ok(BackendCommand::Detach | BackendCommand::Close)
+            | Err(mpsc::RecvTimeoutError::Disconnected) => return None,
             Ok(command) => rejected(&command),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
@@ -1055,6 +1127,7 @@ fn recover<S: BackendSink>(
                 Ok(BackendCommand::Detach) => resume = None,
                 // The person left the session they were watching.
                 Ok(BackendCommand::StopObserving) => rewatch = None,
+                Ok(BackendCommand::Close) => return false,
                 // Late traffic from superseded readers, not a person's ask.
                 Ok(
                     BackendCommand::ConnectionLost { .. }
@@ -1167,6 +1240,27 @@ fn launch<S: BackendSink>(
         None => std::env::current_dir().map_err(|error| ClientError::Ipc(error.to_string()))?,
     };
     let project_id = request.project_id;
+    if request.resume {
+        // A continuation is a raw agent in a folder: no managed attempt and no
+        // fallback, because falling back to a fresh conversation is exactly
+        // what the person declined by pressing *Resume*.
+        let summary = client.create_profile_resumed(
+            IdempotencyKey::mint(),
+            request.profile.id.clone(),
+            project_id,
+            working_directory,
+            request.size,
+        )?;
+        send(context.sink, BackendEvent::Sessions(client.list()?));
+        return attach(
+            client,
+            context,
+            active,
+            next_epoch,
+            summary.id,
+            request.size.columns,
+        );
+    }
     let raw = || {
         create_raw_profile(
             client,
@@ -2459,6 +2553,11 @@ pub fn protocol_offer() -> ProtocolOffer {
         // no delegated session — that is the orchestrator's — and manual
         // managed profiles are untouched by the offer.
         capability::DELEGATION,
+        // **Continue the last conversation** (ADR-474): a saved agent tab
+        // offers to resume, and the host refuses that to a peer that did not
+        // negotiate it — `capability_not_negotiated`, the failure a window
+        // that forgot to offer it shows as `Session failed`.
+        capability::LAUNCH_RESUME,
     ]
     .into_iter()
     .map(|name| CapabilityName::from_str(name).expect("built-in capability"));

@@ -206,22 +206,33 @@ fn a_bare_letter_is_not_a_container_chord() {
     }
 }
 
-/// The shifted forms the container must **not** claim: the shell owns
-/// Ctrl+Shift+T for pinning a window. Ctrl+Shift+J is deliberately claimed by
-/// the workspace AI pane and is asserted above.
+/// The shifted forms the container must **not** claim: `Ctrl+Shift+N` is the
+/// document's Narrow width, and a chord claimed here never reaches the editor.
+/// Ctrl+Shift+J is deliberately claimed by the workspace AI pane and is asserted
+/// above.
 ///
-/// `e` is deliberately not in this list any more — the pane's toggle moved onto
+/// `e` is deliberately not in this list any more: the pane's toggle moved onto
 /// Ctrl+Shift+E so the editor could have Word's plain Ctrl+E for align-centre.
 /// It is asserted the other way round in `the_container_chords_resolve`.
 #[test]
 fn the_shifted_forms_belong_to_someone_else() {
-    for c in ["t"] {
+    for c in ["n"] {
         assert_eq!(
             resolve(&ch(c), Some(c), PRIMARY_SHIFT),
             None,
             "Ctrl+Shift+{c}"
         );
     }
+}
+
+/// The browser's shape: `Ctrl+T` opens a tab, `Ctrl+Shift+T` brings back the
+/// one closed last. Keeping a window on top moved to `Ctrl+Alt+A`.
+#[test]
+fn ctrl_shift_t_reopens_the_closed_tab() {
+    assert_eq!(
+        resolve(&ch("t"), Some("t"), PRIMARY_SHIFT),
+        Some(Chord::ReopenClosedTab)
+    );
 }
 
 /// **The one exception**, and it is the browser's shape: `Ctrl+W` closes a tab,

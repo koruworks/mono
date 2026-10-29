@@ -31,8 +31,8 @@ use serde_json::{Value, json};
 use koru_api_client::Client;
 use koru_core::{
     Attr, AttrValue, AttributeDefinition, Content, DocRef, DocumentId as CoreDocumentId,
-    DocumentReference, Kind, Node, NodeId, Parent, ProfileId as CoreProfileId, Ref, SystemDoc,
-    TagId, WorkspaceDoc, WorkspaceId as CoreWorkspaceId,
+    DocumentReference, Heading, Kind, Node, NodeId, Parent, ProfileId as CoreProfileId, Ref,
+    SystemDoc, TagId, WorkspaceDoc, WorkspaceId as CoreWorkspaceId,
     time::{DateOnly, FloatingDateTime, TimeZoneName, ZonedDateTime},
 };
 use koru_store_core::ids::{
@@ -59,6 +59,12 @@ pub mod tasks;
 mod tool_pages;
 
 pub const MODEL_RESOURCE_URI: &str = "koru://docs/model";
+/// The short form: the contract's *Essentials* section on its own, what an
+/// agent reads before its first mutation. The same file, one section, so it
+/// cannot drift from the long form.
+pub const ESSENTIALS_RESOURCE_URI: &str = "koru://docs/essentials";
+/// The heading slug of that section in the contract.
+const ESSENTIALS_SECTION: &str = "essentials";
 /// Where a release installs the model contract, under its data directory.
 /// `koru_update::RELEASE_DOCUMENTS` names the same path; it is append-only,
 /// so this never moves.
@@ -126,9 +132,153 @@ fn read_model_document() -> Result<String, ToolError> {
     })
 }
 
-/// Fail a host startup early when a release omitted its public MCP contract.
+/// Fail a host startup early when a release omitted its public MCP contract,
+/// or when its *Essentials* section is gone — the short form is served from
+/// it, so a contract without it would answer `koru://docs/essentials` with an
+/// error at the first mutation.
 pub fn verify_model_documentation() -> Result<(), ToolError> {
-    read_model_document().map(|_| ())
+    let guide = read_model_document()?;
+    section_of(&guide, ESSENTIALS_SECTION)
+        .map(|_| ())
+        .ok_or_else(|| ToolError {
+            code: "documentation_missing".into(),
+            message: format!("{MODEL_DOCUMENT_SOURCE} has no `## Essentials` section"),
+            details: Some(json!({ "uri": ESSENTIALS_RESOURCE_URI })),
+        })
+}
+
+/// GitHub's slug for a heading: lower case, punctuation dropped, each run of
+/// whitespace one `-`. `## Preconditions, history, and durability` is
+/// `preconditions-history-and-durability`; a slug a reader typed is folded
+/// the same way, so either spelling of a heading finds it.
+fn heading_slug(heading: &str) -> String {
+    let mut slug = String::new();
+    for character in heading.trim().chars() {
+        if character.is_alphanumeric() {
+            slug.extend(character.to_lowercase());
+        } else if character == '-' || character == '_' {
+            slug.push(character);
+        } else if character.is_whitespace() && !slug.ends_with('-') && !slug.is_empty() {
+            slug.push('-');
+        }
+    }
+    slug.trim_end_matches('-').to_owned()
+}
+
+/// A `##` or `###` heading outside a fenced block, as `(level, title)`.
+fn heading<'a>(line: &'a str, in_fence: &mut bool) -> Option<(usize, &'a str)> {
+    if line.trim_start().starts_with("```") {
+        *in_fence = !*in_fence;
+        return None;
+    }
+    if *in_fence {
+        return None;
+    }
+    let level = line.bytes().take_while(|byte| *byte == b'#').count();
+    (2..=3)
+        .contains(&level)
+        .then(|| line[level..].strip_prefix(' '))
+        .flatten()
+        .map(|title| (level, title))
+}
+
+/// One section of the contract by heading slug: its heading line through the
+/// line before the next heading of the same or a higher level, so a `##`
+/// section carries its `###` children. `None` when no heading has that slug.
+fn section_of(markdown: &str, slug: &str) -> Option<String> {
+    let wanted = heading_slug(slug);
+    let mut in_fence = false;
+    let mut section: Option<(usize, String)> = None;
+    for line in markdown.lines() {
+        match (heading(line, &mut in_fence), &mut section) {
+            (Some((level, _)), Some((open, text))) if level <= *open => {
+                return Some(text.trim_end().to_owned());
+            }
+            (Some((level, title)), None) if heading_slug(title) == wanted => {
+                section = Some((level, format!("{line}\n")));
+            }
+            (_, Some((_, text))) => {
+                text.push_str(line);
+                text.push('\n');
+            }
+            (_, None) => {}
+        }
+    }
+    section.map(|(_, text)| text.trim_end().to_owned())
+}
+
+/// The `##` sections a reader can ask for, by slug, in the contract's order.
+fn section_slugs(markdown: &str) -> Vec<String> {
+    let mut in_fence = false;
+    markdown
+        .lines()
+        .filter_map(|line| heading(line, &mut in_fence))
+        .filter(|(level, _)| *level == 2)
+        .map(|(_, title)| heading_slug(title))
+        .collect()
+}
+
+/// What `get_documentation` and `resources/read` answer: `{uri, mime_type,
+/// section?, text}`, the text being the whole contract, one section of it
+/// by slug, or the Essentials.
+fn documentation(uri: &str, section: Option<&str>) -> Result<Value, ToolError> {
+    let guide = read_model_document()?;
+    let (section, text) = match (uri, section) {
+        (ESSENTIALS_RESOURCE_URI, None) => (
+            None,
+            section_of(&guide, ESSENTIALS_SECTION).ok_or_else(|| ToolError {
+                code: "documentation_missing".into(),
+                message: format!("{MODEL_DOCUMENT_SOURCE} has no `## Essentials` section"),
+                details: Some(json!({ "uri": ESSENTIALS_RESOURCE_URI })),
+            })?,
+        ),
+        (ESSENTIALS_RESOURCE_URI, Some(_)) => {
+            return Err(ToolError::invalid(
+                "koru://docs/essentials is one section already; section applies to koru://docs/model",
+            ));
+        }
+        (MODEL_RESOURCE_URI, None) => (None, guide),
+        (MODEL_RESOURCE_URI, Some(wanted)) => {
+            let slug = heading_slug(wanted);
+            let text = section_of(&guide, &slug).ok_or_else(|| ToolError {
+                code: "documentation_section_not_found".into(),
+                message: format!("koru://docs/model has no section {wanted:?}"),
+                details: Some(json!({
+                    "uri": MODEL_RESOURCE_URI,
+                    "section": wanted,
+                    "sections": section_slugs(&guide),
+                })),
+            })?;
+            (Some(slug), text)
+        }
+        (other, _) => {
+            return Err(ToolError {
+                code: "documentation_not_found".into(),
+                message: format!("unknown Koru documentation URI: {other}"),
+                details: Some(json!({ "uri": other })),
+            });
+        }
+    };
+    Ok(json!({
+        "uri": uri,
+        "mime_type": MODEL_DOCUMENT_MIME,
+        "section": section,
+        "text": text,
+    }))
+}
+
+fn essentials_resource() -> Resource {
+    Resource::new(ESSENTIALS_RESOURCE_URI, "koru-essentials")
+        .with_title("Koru in brief: read, create and edit documents correctly")
+        .with_description(
+            "The short form of the contract. Read before the first mutation; koru://docs/model has every rule.",
+        )
+        .with_mime_type(MODEL_DOCUMENT_MIME)
+        .with_annotations(
+            Annotations::default()
+                .with_audience(vec![Role::Assistant])
+                .with_priority(1.0),
+        )
 }
 
 fn model_resource() -> Resource {
@@ -302,6 +452,20 @@ pub trait EmbeddedStore: Send + Sync {
         workspace: StoreWorkspaceId,
         hash: koru_store_core::model::BlobHash,
     ) -> Result<Vec<u8>, ToolError>;
+    /// Keep `bytes` in the workspace's blob store. Only the bridge's own store
+    /// client can; an in-process store that cannot says so, and `add_image`
+    /// answers that rather than pretending.
+    fn put_blob(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _bytes: Vec<u8>,
+        _mime: &str,
+        _filename: Option<&str>,
+    ) -> Result<Blob, ToolError> {
+        Err(ToolError::invalid(
+            "this store cannot keep image bytes; use the desktop bridge",
+        ))
+    }
     fn status(&self) -> Result<Status, ToolError>;
 }
 
@@ -426,6 +590,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         },
         "create_document"
         | "edit_document"
+        | "add_image"
         | "ensure_file_note"
         | "extract_to_document"
         | "save_document_version"
@@ -540,18 +705,7 @@ impl WorkspaceToolExecutor {
 
         let result = if tool == "get_documentation" {
             let request: DocumentationRequest = from(arguments)?;
-            if request.uri != MODEL_RESOURCE_URI {
-                return Err(ToolError {
-                    code: "documentation_not_found".into(),
-                    message: format!("unknown Koru documentation URI: {}", request.uri),
-                    details: Some(json!({ "uri": request.uri })),
-                });
-            }
-            json!({
-                "uri": MODEL_RESOURCE_URI,
-                "mime_type": MODEL_DOCUMENT_MIME,
-                "text": read_model_document()?,
-            })
+            documentation(&request.uri, request.section.as_deref())?
         } else {
             self.backend.invoke(context, tool, arguments)?
         };
@@ -1123,6 +1277,19 @@ impl LocalBackend {
         }
     }
 
+    fn put_blob(
+        &self,
+        workspace: StoreWorkspaceId,
+        bytes: Vec<u8>,
+        mime: &str,
+        filename: Option<&str>,
+    ) -> Result<Blob, ToolError> {
+        match &self.embedded {
+            Some(store) => store.put_blob(workspace, bytes, mime, filename),
+            None => self.store(|client| client.put_blob(workspace, bytes.clone(), mime, filename)),
+        }
+    }
+
     fn status(&self) -> Result<Status, ToolError> {
         match &self.embedded {
             Some(store) => store.status(),
@@ -1564,6 +1731,79 @@ impl LocalBackend {
                 asked,
             },
         ))
+    }
+
+    fn edit_document(&self, a: EditDocumentRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let mut inline_context = self.inline_context(ws)?;
+        // Provisional answers, minted on a fork of the system
+        // document: enough to validate with, and nothing written. Any
+        // creation the batch implies is held in `pending`, which
+        // writes nothing if this function leaves before committing it.
+        let (provisional, mut pending) = self.attr_context(ws, &a.operations)?;
+        inline_context.attrs = provisional;
+        let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
+        validate_base(&doc, &a.base_revision)?;
+        let mut validation = doc.fork_for_read();
+        apply_ops(&mut validation, &a.operations, &inline_context)?;
+        // Proved, so the tags this batch names may now exist. The real
+        // pass runs on the ids that were persisted, never the fork's.
+        if let Some(attrs) = pending.commit(self)? {
+            inline_context.attrs = attrs;
+        }
+        let boundary = uuid::Uuid::new_v4().to_string();
+        let _ = self.capture(ws, doc_id, &doc, "mcp_before", Some(&boundary))?;
+        let tasks = apply_ops(&mut doc, &a.operations, &inline_context)?;
+        self.persist(&mut session, &mut doc)?;
+        // **After the durability wait**, best effort, one attempt. A
+        // failed append keeps the task change and is never retried and
+        // never fabricated later (SPEC §9), and the batch is the burst:
+        // one delivery per `edit_document` call.
+        tasks.deliver(&mut tasks::LogSink::default());
+        let after = self.capture(ws, doc_id, &doc, "mcp_after", Some(&boundary))?;
+        Ok(json!({"revision": revision(&doc), "history": after}))
+    }
+
+    /// Keep an image's bytes and put it in a document, as one tool call. The
+    /// bytes go to the workspace's blob store (addressed by their hash, never
+    /// inside the document), then an image block that holds only that hash,
+    /// its type and its size is inserted through the same pipeline
+    /// `edit_document` uses: the base revision, the precondition and the
+    /// history markers are the edit's own.
+    fn add_image(&self, a: AddImageRequest) -> Result<Value, ToolError> {
+        use base64::Engine as _;
+        let ws = workspace(&a.workspace_id)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(a.data_base64.trim())
+            .map_err(|_| ToolError::invalid("data_base64 is not standard base64"))?;
+        let sniffed = sniff_image(&bytes)?;
+        let blob = self.put_blob(ws, bytes, sniffed.mime, a.name.as_deref())?;
+        let hash = blob.hash.as_str().to_owned();
+        let mut answer = self.edit_document(EditDocumentRequest {
+            workspace_id: a.workspace_id,
+            document_id: a.document_id,
+            base_revision: a.base_revision,
+            operations: vec![EditOperation::InsertImage {
+                node_id: a.node_id.clone(),
+                parent_id: a.parent_id,
+                after_node_id: a.after_node_id,
+                hash: hash.clone(),
+                mime: sniffed.mime.to_owned(),
+                width: sniffed.width,
+                height: sniffed.height,
+            }],
+        })?;
+        if let Some(object) = answer.as_object_mut() {
+            object.insert("node_id".into(), json!(a.node_id));
+            object.insert("hash".into(), json!(hash));
+            object.insert("mime".into(), json!(sniffed.mime));
+            object.insert("width".into(), json!(sniffed.width));
+            object.insert("height".into(), json!(sniffed.height));
+            object.insert("size".into(), json!(blob.size));
+        }
+        Ok(answer)
     }
 
     fn extract_to_document(&self, a: ExtractToDocumentRequest) -> Result<Value, ToolError> {
@@ -2053,36 +2293,11 @@ impl Backend for LocalBackend {
             }
             "edit_document" => {
                 let a: EditDocumentRequest = from(arguments)?;
-                let ws = workspace(&a.workspace_id)?;
-                let doc_id = document(&a.document_id)?;
-                self.ensure_readable(ws, doc_id, "document_id")?;
-                let mut inline_context = self.inline_context(ws)?;
-                // Provisional answers, minted on a fork of the system
-                // document: enough to validate with, and nothing written. Any
-                // creation the batch implies is held in `pending`, which
-                // writes nothing if this function leaves before committing it.
-                let (provisional, mut pending) = self.attr_context(ws, &a.operations)?;
-                inline_context.attrs = provisional;
-                let (mut session, mut doc) = self.join_for_edit(ws, doc_id)?;
-                validate_base(&doc, &a.base_revision)?;
-                let mut validation = doc.fork_for_read();
-                apply_ops(&mut validation, &a.operations, &inline_context)?;
-                // Proved, so the tags this batch names may now exist. The real
-                // pass runs on the ids that were persisted, never the fork's.
-                if let Some(attrs) = pending.commit(self)? {
-                    inline_context.attrs = attrs;
-                }
-                let boundary = uuid::Uuid::new_v4().to_string();
-                let _ = self.capture(ws, doc_id, &doc, "mcp_before", Some(&boundary))?;
-                let tasks = apply_ops(&mut doc, &a.operations, &inline_context)?;
-                self.persist(&mut session, &mut doc)?;
-                // **After the durability wait**, best effort, one attempt. A
-                // failed append keeps the task change and is never retried and
-                // never fabricated later (SPEC §9), and the batch is the burst:
-                // one delivery per `edit_document` call.
-                tasks.deliver(&mut tasks::LogSink::default());
-                let after = self.capture(ws, doc_id, &doc, "mcp_after", Some(&boundary))?;
-                Ok(json!({"revision": revision(&doc), "history": after}))
+                self.edit_document(a)
+            }
+            "add_image" => {
+                let a: AddImageRequest = from(arguments)?;
+                self.add_image(a)
             }
             "extract_to_document" => {
                 let a: ExtractToDocumentRequest = from(arguments)?;
@@ -2182,8 +2397,12 @@ struct WorkspaceRequest {
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DocumentationRequest {
-    /// Koru documentation URI. Currently only `koru://docs/model` is available.
+    /// `koru://docs/essentials`, the short form, or `koru://docs/model`, the
+    /// whole contract.
     uri: String,
+    /// With `koru://docs/model`: one `##` section by its heading's slug
+    /// (`creating-a-complete-document`), with its `###` children.
+    section: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -2432,6 +2651,104 @@ struct EditDocumentRequest {
     operations: Vec<EditOperation>,
 }
 
+/// The most image bytes one call takes. The bytes ride in the request as
+/// base64, in the agent's context, so this is a ceiling on what is sensible
+/// to send, not on what the store could keep.
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AddImageRequest {
+    /// UUID of the workspace returned by `list_workspaces`.
+    workspace_id: String,
+    /// UUID of the document the image goes into.
+    document_id: String,
+    /// The opaque `revision` of the latest `read_document`.
+    base_revision: String,
+    /// A fresh UUID you mint; it names the new image block.
+    node_id: String,
+    /// The document-title node, or the block the image nests under.
+    parent_id: String,
+    /// A sibling to place it after; null means first.
+    after_node_id: Option<String>,
+    /// The image file's bytes, standard base64: PNG, JPEG, GIF or WebP, at
+    /// most 8 MiB decoded.
+    data_base64: String,
+    /// The file's name, kept as metadata with the bytes.
+    name: Option<String>,
+}
+
+/// What an image's bytes are, read from their header.
+#[derive(Debug)]
+struct SniffedImage {
+    mime: &'static str,
+    width: u32,
+    height: u32,
+}
+
+/// Decide that `bytes` are an image Koru shows, from the bytes and not from
+/// anything the caller claimed: the format is the header's, the size is the
+/// header's, and anything else — a script, an SVG, a truncated file — is
+/// refused with the reason.
+/// Most pixels an image may hold, decoded: 40 million (a 6,300 x 6,300 photo).
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+
+fn sniff_image(bytes: &[u8]) -> Result<SniffedImage, ToolError> {
+    if bytes.is_empty() {
+        return Err(ToolError::invalid("data_base64 holds no bytes"));
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(ToolError::invalid(format!(
+            "the image is {} bytes; add_image takes at most {MAX_IMAGE_BYTES}",
+            bytes.len()
+        )));
+    }
+    let mime = match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Png) => "image/png",
+        Ok(image::ImageFormat::Jpeg) => "image/jpeg",
+        Ok(image::ImageFormat::Gif) => "image/gif",
+        Ok(image::ImageFormat::WebP) => "image/webp",
+        _ => {
+            return Err(ToolError::invalid(
+                "the bytes are not a PNG, JPEG, GIF or WebP image",
+            ));
+        }
+    };
+    let (width, height) = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| ToolError::invalid("the image header cannot be read"))?
+        .into_dimensions()
+        .map_err(|_| ToolError::invalid("the image is damaged: its size cannot be read"))?;
+    if width == 0 || height == 0 {
+        return Err(ToolError::invalid("the image has no area"));
+    }
+    // **Decode it all, not just the header.** The header is the first few
+    // bytes; an image a model copied out character by character can have one
+    // wrong in the pixel data and still read as a perfectly good PNG here,
+    // then draw as noise or not at all. Refusing it now, with the reason, lets
+    // the caller resend instead of leaving a broken picture in the document.
+    // The area is bounded first so a tiny file cannot ask for a huge buffer.
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err(ToolError::invalid(format!(
+            "the image is {width}x{height}; add_image takes at most {MAX_IMAGE_PIXELS} pixels"
+        )));
+    }
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| ToolError::invalid("the image header cannot be read"))?
+        .decode()
+        .map_err(|error| {
+            ToolError::invalid(format!(
+                "the image data is damaged ({error}); the bytes were probably altered in transit, so send the image again"
+            ))
+        })?;
+    Ok(SniffedImage {
+        mime,
+        width,
+        height,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ExtractToDocumentRequest {
@@ -2492,6 +2809,57 @@ enum InlineValue {
         /// Optional fallback caption; defaults to the stored filename.
         label: Option<String>,
     },
+    /// A web-address link pill: the caption is what the page shows, the URL
+    /// is what a click opens. `http`, `https` or `mailto` only.
+    Link {
+        /// The address, at most 2,048 characters, with no spaces or control
+        /// characters.
+        url: String,
+        /// The caption; defaults to the address itself.
+        label: Option<String>,
+    },
+}
+
+/// Longest address a link carries.
+const MAX_LINK_URL: usize = 2_048;
+/// Longest caption a link carries.
+const MAX_LINK_LABEL: usize = 200;
+
+/// The link pill's attribute for `url`, refused with the reason when the
+/// address is not one a page should hold: the scheme is the whole of the
+/// safety rule (`javascript:`, `file:` and `data:` are how a document becomes
+/// an attack), so it is an allowlist, not a blocklist.
+fn link_attr(url: &str, label: Option<&str>) -> Result<Attr, ToolError> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    let allowed = ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme));
+    if !allowed {
+        return Err(ToolError::invalid(
+            "a link's url must start with http://, https:// or mailto:",
+        ));
+    }
+    if url.len() > MAX_LINK_URL || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(ToolError::invalid(format!(
+            "a link's url is at most {MAX_LINK_URL} characters with no spaces or control characters"
+        )));
+    }
+    match label.map(str::trim).filter(|label| !label.is_empty()) {
+        Some(label) => {
+            if label.chars().count() > MAX_LINK_LABEL || label.chars().any(char::is_control) {
+                return Err(ToolError::invalid(format!(
+                    "a link's label is at most {MAX_LINK_LABEL} characters with no control characters"
+                )));
+            }
+            Ok(Attr::labelled(
+                "link",
+                AttrValue::Url(url.to_owned()),
+                label,
+            ))
+        }
+        None => Ok(Attr::new("link", AttrValue::Url(url.to_owned()))),
+    }
 }
 
 /// A typed attribute value, in **exactly the shapes `read_document` emits**.
@@ -2663,7 +3031,8 @@ enum EditOperation {
         )]
         after_node_id: Option<String>,
     },
-    /// Remove one existing non-title node and its descendants.
+    /// Remove one existing non-title node and its descendants. An image has no
+    /// text, so its `expected` is ignored (send an empty string).
     Remove {
         node_id: String,
         /// Exact current text returned by `read_document`.
@@ -2685,6 +3054,65 @@ enum EditOperation {
         /// Exact current text returned by `read_document`.
         expected: String,
         language: Option<String>,
+    },
+    /// **Not part of the published vocabulary** (`serde(skip)`): `add_image`
+    /// builds this once the bytes are stored, so the image block is inserted
+    /// by the same code and under the same revision rules as every other
+    /// edit, and a caller never sends a hash it did not get from the store.
+    #[serde(skip)]
+    InsertImage {
+        node_id: String,
+        parent_id: String,
+        after_node_id: Option<String>,
+        hash: String,
+        mime: String,
+        width: u32,
+        height: u32,
+    },
+    /// Align a block's lines: `start`, `center` or `end`. A paragraph, a
+    /// heading, a quote or an image; `expected` is the block's current text
+    /// (an image has none, so it is not checked there).
+    SetAlign {
+        node_id: String,
+        /// Exact current text returned by `read_document`.
+        expected: String,
+        align: AlignName,
+    },
+    /// Turn one inline formatting mark on or off over a byte range of an
+    /// existing node's text — what Ctrl+B does to a selection. The range is
+    /// UTF-8 byte offsets into `expected`, on character boundaries, and must
+    /// not be empty. A read reports the result in the node's `runs`.
+    SetMark {
+        node_id: String,
+        /// Exact current text returned by `read_document`.
+        expected: String,
+        start_utf8: usize,
+        end_utf8: usize,
+        mark: MarkName,
+        on: bool,
+    },
+    /// This block's heading level. `heading` is 1–6, the number a read reports
+    /// as `metadata.heading`; `null` returns the block to body text. A property
+    /// of the whole block, so it takes no range.
+    SetHeading {
+        node_id: String,
+        /// Exact current text returned by `read_document`.
+        expected: String,
+        /// 1–6, or null for body text.
+        heading: Option<u8>,
+    },
+    /// A highlight colour over a byte range of an existing node's text.
+    /// `highlight` is `yellow`, `green`, `blue` or `pink` — the names a read
+    /// reports on `runs` — or null to clear. The same range rules as
+    /// `set_mark`. The text, and any other mark on it, are untouched.
+    SetHighlight {
+        node_id: String,
+        /// Exact current text returned by `read_document`.
+        expected: String,
+        start_utf8: usize,
+        end_utf8: usize,
+        /// `yellow`, `green`, `blue`, `pink`, or null to clear.
+        highlight: Option<String>,
     },
     /// Set a callout box's look: the emoji beside its first line and the
     /// accent color of its tint. Both live on the box, so `node_id` is the node
@@ -2860,6 +3288,23 @@ enum InitialOperation {
         expected: String,
         language: Option<String>,
     },
+    /// Align a block inserted earlier in this batch, exactly as the edit of
+    /// the same name.
+    SetAlign {
+        node_id: String,
+        expected: String,
+        align: AlignName,
+    },
+    /// Format a byte range of a node inserted earlier in this batch, exactly
+    /// as the edit of the same name.
+    SetMark {
+        node_id: String,
+        expected: String,
+        start_utf8: usize,
+        end_utf8: usize,
+        mark: MarkName,
+        on: bool,
+    },
     /// Set the look of a callout inserted earlier in this batch, exactly as
     /// the edit operation of the same name does.
     SetCalloutLook {
@@ -2881,6 +3326,107 @@ enum InitialOperation {
     },
 }
 
+/// How a block's lines sit in their column, by the names a read reports.
+/// `start` is the default and is stored as no value at all.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum AlignName {
+    Start,
+    Center,
+    End,
+}
+
+impl AlignName {
+    fn to_core(self) -> Option<koru_core::node::Align> {
+        match self {
+            Self::Start => None,
+            Self::Center => Some(koru_core::node::Align::Center),
+            Self::End => Some(koru_core::node::Align::End),
+        }
+    }
+}
+
+/// The inline formatting marks a run can carry, each independent of the
+/// others; the names a read reports them under.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum MarkName {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Code,
+}
+
+impl From<MarkName> for koru_core::Mark {
+    fn from(mark: MarkName) -> Self {
+        match mark {
+            MarkName::Bold => Self::Bold,
+            MarkName::Italic => Self::Italic,
+            MarkName::Underline => Self::Underline,
+            MarkName::Strike => Self::Strike,
+            MarkName::Code => Self::Code,
+        }
+    }
+}
+
+/// The byte range a `set_mark` or `set_highlight` names, checked against the
+/// text it was read from: inside it, on character boundaries, and not empty —
+/// an empty range would write nothing, and a no-op that answers success is
+/// how a misspelt offset goes unnoticed.
+fn mark_range(
+    op: &str,
+    expected: &str,
+    start_utf8: usize,
+    end_utf8: usize,
+) -> Result<std::ops::Range<usize>, ToolError> {
+    if start_utf8 >= end_utf8 {
+        return Err(ToolError::invalid(format!(
+            "{op} range is empty: end_utf8 must be greater than start_utf8"
+        )));
+    }
+    if end_utf8 > expected.len()
+        || !expected.is_char_boundary(start_utf8)
+        || !expected.is_char_boundary(end_utf8)
+    {
+        return Err(ToolError::invalid(format!(
+            "{op} range {start_utf8}..{end_utf8} is outside expected or splits a character (expected is {} bytes)",
+            expected.len()
+        )));
+    }
+    Ok(start_utf8..end_utf8)
+}
+
+/// Highlight colours the theme can draw. An unknown name would still paint,
+/// as the first swatch, so a misspelling must be refused here rather than stored.
+const HIGHLIGHT_COLOURS: [&str; 4] = ["yellow", "green", "blue", "pink"];
+
+fn highlight_colour(highlight: Option<&str>) -> Result<Option<&str>, ToolError> {
+    match highlight {
+        None => Ok(None),
+        Some(name) => HIGHLIGHT_COLOURS
+            .iter()
+            .copied()
+            .find(|colour| *colour == name)
+            .map(Some)
+            .ok_or_else(|| {
+                ToolError::invalid(
+                    "set_highlight highlight must be yellow, green, blue, pink, or null to clear",
+                )
+            }),
+    }
+}
+
+fn heading_level(heading: Option<u8>) -> Result<Option<Heading>, ToolError> {
+    match heading {
+        None => Ok(None),
+        Some(level @ 1..=6) => Ok(Heading::from_level(i64::from(level))),
+        Some(level) => Err(ToolError::invalid(format!(
+            "set_heading heading must be 1–6, or null for body text; {level} is not"
+        ))),
+    }
+}
+
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(inline)]
 #[serde(rename_all = "snake_case")]
@@ -2892,13 +3438,16 @@ enum InsertKind {
     ListBlock,
     Table,
     Code,
-    Contact,
     Divider,
+    // No `contact`: a contact is a root-level reference node the `@` pill
+    // creates, not a body block, and inserting one into a body did not
+    // survive a read (ADR-471). It returns when contacts are a supported
+    // surface, with the pill's find-or-create semantics rather than a bare
+    // insert.
     /// A callout box: a container with no text of its own. The inserted node
     /// is the box; a non-empty `text` becomes a first paragraph inside it,
     /// and later inserts under it are the rest of the box's lines. It
-    /// arrives with the default icon and tint; no operation here sets either
-    /// yet (see MCP.md).
+    /// arrives with the default icon and tint; `set_callout_look` changes them.
     Callout,
 }
 
@@ -2911,7 +3460,6 @@ impl From<InsertKind> for Kind {
             InsertKind::ListBlock => Self::ListBlock,
             InsertKind::Table => Self::Table,
             InsertKind::Code => Self::Code,
-            InsertKind::Contact => Self::Contact,
             InsertKind::Divider => Self::Divider,
             InsertKind::Callout => Self::Callout,
         }
@@ -3374,6 +3922,7 @@ fn apply_ops(
                     InlineValue::Attachment { file_id, label } => {
                         inline_context.attachment_attr(file_id, label.as_deref())?
                     }
+                    InlineValue::Link { url, label } => link_attr(url, label.as_deref())?,
                 };
                 doc.insert_pill(id, *at_utf8, &attr)?;
                 // A pill is an anchor character in the row's text, so this is
@@ -3436,7 +3985,7 @@ fn apply_ops(
                 after_node_id,
             } => {
                 let id = node(node_id)?;
-                validate_expected_text(doc, id, expected, "move")?;
+                validate_expected_if_text(doc, id, expected, "move")?;
                 if doc.parent(id)? == Parent::Root && doc.read(id)?.kind == Kind::Document {
                     return Err(ToolError::invalid(
                         "the document title root cannot be moved",
@@ -3482,7 +4031,7 @@ fn apply_ops(
             }
             EditOperation::Remove { node_id, expected } => {
                 let id = node(node_id)?;
-                validate_expected_text(doc, id, expected, "remove")?;
+                validate_expected_if_text(doc, id, expected, "remove")?;
                 if doc.parent(id)? == Parent::Root && doc.read(id)?.kind == Kind::Document {
                     return Err(ToolError::invalid(
                         "the document title root cannot be removed",
@@ -3505,7 +4054,8 @@ fn apply_ops(
                 done,
             } => {
                 let id = node(node_id)?;
-                validate_expected_text(doc, id, expected, "set_done")?;
+                // An image task has no text to compare. The node id is the target.
+                validate_expected_if_text(doc, id, expected, "set_done")?;
                 // **On a task, `set_done` means the lifecycle** (ADR-272's
                 // reconciliation table, row 9). The desktop's checkbox asks
                 // `tasks::checkbox_completes`, because a rich task's box is a
@@ -3561,6 +4111,74 @@ fn apply_ops(
                 }
                 doc.set_language(id, language.as_deref())?;
             }
+            EditOperation::InsertImage {
+                node_id,
+                parent_id,
+                after_node_id,
+                hash,
+                mime,
+                width,
+                height,
+            } => {
+                let mut value = Node::image(
+                    koru_core::BlobHash(hash.clone()),
+                    mime.clone(),
+                    Some(*width),
+                    Some(*height),
+                )?;
+                value.id = node(node_id)?;
+                let parent = parent(parent_id)?;
+                let index = after_index(doc, parent, after_node_id.as_deref())?;
+                let id = doc.insert(parent, value)?;
+                doc.move_node(id, parent, index)?;
+            }
+            EditOperation::SetAlign {
+                node_id,
+                expected,
+                align,
+            } => {
+                let id = node(node_id)?;
+                // An image holds a blob, not text, so there is nothing to
+                // compare; every other block carries the usual precondition.
+                validate_expected_if_text(doc, id, expected, "set_align")?;
+                doc.set_align(id, align.to_core())?;
+            }
+            EditOperation::SetMark {
+                node_id,
+                expected,
+                start_utf8,
+                end_utf8,
+                mark,
+                on,
+            } => {
+                let id = node(node_id)?;
+                validate_expected_text(doc, id, expected, "set_mark")?;
+                let range = mark_range("set_mark", expected, *start_utf8, *end_utf8)?;
+                doc.set_mark(id, range, (*mark).into(), *on)?;
+            }
+            EditOperation::SetHeading {
+                node_id,
+                expected,
+                heading,
+            } => {
+                let id = node(node_id)?;
+                validate_expected_text(doc, id, expected, "set_heading")?;
+                let level = heading_level(*heading)?;
+                doc.set_heading(id, level)?;
+            }
+            EditOperation::SetHighlight {
+                node_id,
+                expected,
+                start_utf8,
+                end_utf8,
+                highlight,
+            } => {
+                let id = node(node_id)?;
+                validate_expected_text(doc, id, expected, "set_highlight")?;
+                let range = mark_range("set_highlight", expected, *start_utf8, *end_utf8)?;
+                let colour = highlight_colour(highlight.as_deref())?;
+                doc.set_highlight(id, range, colour)?;
+            }
             EditOperation::SetCalloutLook {
                 node_id,
                 expected,
@@ -3611,7 +4229,7 @@ fn apply_ops(
                 value,
             } => {
                 let id = node(node_id)?;
-                validate_expected_text(doc, id, expected, "set_attribute")?;
+                validate_expected_if_text(doc, id, expected, "set_attribute")?;
                 // **The model validates, not this layer.** `set_attribute`
                 // and `set_attribute_defined` run the definition's own check
                 // — which is where the rule that the three temporal shapes do
@@ -3641,6 +4259,16 @@ fn apply_ops(
                 // `task_rejected` with `kind_not_capable`.
                 let route = koru_core::tasks::route_attribute(doc, id, key)?;
                 if matches!(route, koru_core::tasks::AttributeRoute::Due) {
+                    // A due creates a task. That is available on a text block.
+                    // An image or a file that is not already a task stays one
+                    // the editor makes; re-dating one that is a task is allowed.
+                    if doc.read(id)?.content.as_text().is_none()
+                        && !koru_core::tasks::is_task_node(doc, id)?
+                    {
+                        return Err(ToolError::invalid(
+                            "an image or a file cannot be made a task from here yet",
+                        ));
+                    }
                     // The wire contract is unchanged — this is still
                     // `set_attribute` with `koru.due` — and the routing is
                     // internal: a due *is* a task, so the command writes the
@@ -3673,7 +4301,7 @@ fn apply_ops(
                 key,
             } => {
                 let id = node(node_id)?;
-                validate_expected_text(doc, id, expected, "clear_attribute")?;
+                validate_expected_if_text(doc, id, expected, "clear_attribute")?;
                 // Refused rather than shrugged at: a clear of a key nothing
                 // defines is a misspelling, and answering it with the same
                 // silence a genuinely absent value gets would hide it.
@@ -3845,6 +4473,46 @@ fn apply_initial_ops(
                     language: language.clone(),
                 }
             }
+            InitialOperation::SetAlign {
+                node_id,
+                expected,
+                align,
+            } => {
+                let target = node(node_id)?;
+                if !inserted.contains(&target) {
+                    return Err(ToolError::invalid(
+                        "initial set_align node_id must name an earlier insert",
+                    ));
+                }
+                EditOperation::SetAlign {
+                    node_id: node_id.clone(),
+                    expected: expected.clone(),
+                    align: *align,
+                }
+            }
+            InitialOperation::SetMark {
+                node_id,
+                expected,
+                start_utf8,
+                end_utf8,
+                mark,
+                on,
+            } => {
+                let target = node(node_id)?;
+                if !inserted.contains(&target) {
+                    return Err(ToolError::invalid(
+                        "initial set_mark node_id must name an earlier insert",
+                    ));
+                }
+                EditOperation::SetMark {
+                    node_id: node_id.clone(),
+                    expected: expected.clone(),
+                    start_utf8: *start_utf8,
+                    end_utf8: *end_utf8,
+                    mark: *mark,
+                    on: *on,
+                }
+            }
             InitialOperation::SetCalloutLook {
                 node_id,
                 expected,
@@ -3956,6 +4624,21 @@ fn due_value(key: &str, value: AttrValue) -> Result<koru_core::Temporal, ToolErr
         key: key.to_owned(),
         why,
     }))
+}
+
+/// The precondition every edit carries, for a block that has text to compare.
+/// An image (or any block that holds no text) has none, so there is nothing
+/// to be stale about and `expected` is not checked: the node id is the target.
+fn validate_expected_if_text(
+    doc: &WorkspaceDoc,
+    id: NodeId,
+    expected: &str,
+    operation: &str,
+) -> Result<(), ToolError> {
+    if doc.read(id)?.content.as_text().is_none() {
+        return Ok(());
+    }
+    validate_expected_text(doc, id, expected, operation)
 }
 
 /// The one emoji a callout's `icon` names, spelled the way Koru stores it, or
@@ -4162,8 +4845,15 @@ fn node_json(
             mime,
             width,
             height,
-            ..
-        } => json!({"type":"blob", "hash":&hash.0, "mime":mime, "width":width, "height":height}),
+            attrs,
+        } => json!({
+            "type":"blob",
+            "hash":&hash.0,
+            "mime":mime,
+            "width":width,
+            "height":height,
+            "attributes":attrs.iter().map(attr_json).collect::<Vec<_>>(),
+        }),
         Content::Embed { target } => json!({"type":"embed", "target":ref_json(target)}),
     };
     let mut value = json!({
@@ -4552,11 +5242,23 @@ impl KoruMcp {
 impl KoruMcp {
     #[tool(
         title = "Read Koru model documentation",
-        description = "Read koru://docs/model, the full contract for these tools, when the host cannot read MCP resources. Read it before the first mutation.",
+        description = "koru://docs/essentials is the short contract to read before the first mutation; koru://docs/model is the whole one, or one section by heading slug (section). For hosts that cannot read MCP resources; the markdown is the text block.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn get_documentation(&self, Parameters(a): Parameters<DocumentationRequest>) -> CallToolResult {
-        self.call("get_documentation", a)
+        let mut result = self.call("get_documentation", a);
+        // The markdown itself is the text block, not a JSON line with the
+        // markdown escaped inside it, so an agent reads it as written instead
+        // of unescaping it first. The structured copy keeps the published
+        // `{uri, mime_type, section?, text}` shape.
+        if let Some(text) = result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["text"].as_str())
+        {
+            result.content = vec![rmcp::model::ContentBlock::text(text.to_owned())];
+        }
+        result
     }
 
     #[tool(
@@ -4636,7 +5338,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Create a Koru document",
-        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language and set_callout_look only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/model before the first mutation.",
+        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language, set_mark, set_align and set_callout_look only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -4662,7 +5364,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Edit a Koru document",
-        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/model before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
+        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_mark turns one of bold, italic, underline, strike, code on or off over start_utf8..end_utf8 of expected (non-empty, on character boundaries). set_align sets start, center or end. insert_inline also takes {type:link,url,label?} (http, https or mailto). set_heading sets metadata.heading to 1–6, or null for body text. set_highlight sets runs[].highlight to yellow, green, blue or pink over the same byte range, or null to clear. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -4674,8 +5376,21 @@ impl KoruMcp {
         self.call("edit_document", a)
     }
     #[tool(
+        title = "Add an image to a document",
+        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is a fresh UUID you mint; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    fn add_image(&self, Parameters(a): Parameters<AddImageRequest>) -> CallToolResult {
+        self.call("add_image", a)
+    }
+    #[tool(
         title = "Extract blocks to a document",
-        description = "Move complete block subtrees (source_node_id, then extra_source_node_ids; none an ancestor of another) into exactly one of a new document (new_document_title) or an existing one (target_document_id, at its top or first under under_node_id), leaving one /document link in their place. expected is source_node_id's exact current text and base_revision the source's. Read koru://docs/model before the first mutation.",
+        description = "Move complete block subtrees (source_node_id, then extra_source_node_ids; none an ancestor of another) into exactly one of a new document (new_document_title) or an existing one (target_document_id, at its top or first under under_node_id), leaving one /document link in their place. expected is source_node_id's exact current text and base_revision the source's. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -4691,7 +5406,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Save a document version",
-        description = "Save a pinned manual version of the current document state. Read koru://docs/model before the first mutation.",
+        description = "Save a pinned manual version of the current document state. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -4726,7 +5441,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Restore a document version",
-        description = "Restore a durable version at base_revision by creating forward-moving CRDT operations, with paired history boundaries. Read koru://docs/model before the first mutation.",
+        description = "Restore a durable version at base_revision by creating forward-moving CRDT operations, with paired history boundaries. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -4828,7 +5543,7 @@ impl ServerHandler for KoruMcp {
                 .enable_resources()
                 .build(),
         )
-        .with_instructions("Read koru://docs/model before the first mutation. It is available through standard MCP resources/read or the get_documentation compatibility tool. Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
+        .with_instructions("Read koru://docs/essentials before the first mutation; koru://docs/model is the full contract, whole or one section by heading slug. Both are standard MCP resources and the get_documentation compatibility tool. Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
     }
 
     fn list_resources(
@@ -4837,6 +5552,7 @@ impl ServerHandler for KoruMcp {
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
         std::future::ready(Ok(ListResourcesResult::with_all_items(vec![
+            essentials_resource(),
             model_resource(),
         ])))
     }
@@ -4848,25 +5564,24 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let result = if request.uri != MODEL_RESOURCE_URI {
+        let result = if request.uri != MODEL_RESOURCE_URI && request.uri != ESSENTIALS_RESOURCE_URI
+        {
             Err(ErrorData::resource_not_found(
                 "Koru documentation resource not found",
                 Some(json!({ "uri": request.uri })),
             ))
         } else {
-            read_model_document()
-                .map(|text| {
+            documentation(&request.uri, None)
+                .map(|answer| {
+                    let text = answer["text"].as_str().unwrap_or_default().to_owned();
                     ReadResourceResult::new(vec![
-                        ResourceContents::text(text, MODEL_RESOURCE_URI)
+                        ResourceContents::text(text, request.uri.clone())
                             .with_mime_type(MODEL_DOCUMENT_MIME),
                     ])
                     .into()
                 })
                 .map_err(|error| {
-                    ErrorData::internal_error(
-                        error.message,
-                        Some(json!({ "uri": MODEL_RESOURCE_URI })),
-                    )
+                    ErrorData::internal_error(error.message, Some(json!({ "uri": request.uri })))
                 })
         };
         match &result {
@@ -5093,7 +5808,7 @@ mod tests {
     }
 
     #[test]
-    fn the_official_sdk_exposes_all_twenty_one_tools() {
+    fn the_official_sdk_exposes_all_twenty_two_tools() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let names: std::collections::HashSet<_> = server
             .tool_router
@@ -5126,7 +5841,7 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
     }
 
     fn an_arg(key: &str, op: &str, values: &[&str], kinds: &[&str]) -> AttrFilterArg {
@@ -5260,6 +5975,7 @@ mod tests {
             "restore_document_version",
         ];
         let non_idempotent = [
+            "add_image",
             "create_document",
             "extract_to_document",
             "save_document_version",
@@ -5319,11 +6035,14 @@ mod tests {
     /// 1.0.34 can lose an 8,192-byte chunk of any longer line
     /// (ADR-433-compacttools); 21 typed tools cannot fit under that, so this
     /// holds what was reached and makes growth a decision rather than a drift.
-    ///
-    /// Growth decided so far: 17,500 to 17,700 for `set_callout_look`, one edit
-    /// operation and one seed operation (ADR-468-callout). The reply was 17,644
-    /// bytes with it.
-    const TOOLS_LIST_BUDGET: usize = 17_700;
+    /// Raised from 17,500 for `set_mark`'s schema in both operation unions
+    /// (ADR-471-mcpessentials, 17,973 bytes measured), to 19,100 for
+    /// `add_image`, a 22nd tool (ADR-473-addimage, 19,005 bytes measured),
+    /// and to 19,500 for `set_heading` and `set_highlight` on `edit_document`
+    /// (19,428 bytes measured), and to 20,000 for `set_align` and the link
+    /// inline (ADR-473-addimage), and to 20,500 for `set_callout_look`, one edit
+    /// operation and one seed operation (ADR-468-callout; 20,375 bytes measured).
+    const TOOLS_LIST_BUDGET: usize = 20_500;
 
     /// What crosses the wire is compact: no prose inside a schema except the
     /// generated union summaries, no `$ref`, `$defs`, `$schema`, `title` or
@@ -5363,7 +6082,7 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        assert_eq!(listed.tools.len(), 21);
+        assert_eq!(listed.tools.len(), 22);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -5480,7 +6199,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        assert_eq!(expected.len(), 21);
+        assert_eq!(expected.len(), 22);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -5546,7 +6265,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
         let routed: HashSet<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
@@ -5678,6 +6397,124 @@ mod tests {
     }
 
     #[test]
+    fn heading_slugs_fold_the_way_a_reader_types_them() {
+        assert_eq!(
+            heading_slug("Preconditions, history, and durability"),
+            "preconditions-history-and-durability"
+        );
+        assert_eq!(
+            heading_slug("`#tag` inside the text"),
+            "tag-inside-the-text"
+        );
+        assert_eq!(
+            heading_slug("What `tools/list` publishes"),
+            "what-toolslist-publishes"
+        );
+        assert_eq!(
+            heading_slug("  Creating A Complete  Document "),
+            "creating-a-complete-document"
+        );
+        assert_eq!(
+            heading_slug("creating-a-complete-document"),
+            "creating-a-complete-document"
+        );
+    }
+
+    #[test]
+    fn a_section_runs_to_the_next_heading_of_its_level_and_skips_fenced_hashes() {
+        let markdown = "# Title\n\nintro\n\n## One\n\nbody\n\n```jsonc\n## not a heading\n```\n\n### One A\n\nchild\n\n## Two\n\nother\n";
+        let one = section_of(markdown, "one").unwrap();
+        assert!(one.starts_with("## One\n"), "{one}");
+        assert!(
+            one.contains("## not a heading"),
+            "a fenced line is content: {one}"
+        );
+        assert!(
+            one.contains("### One A"),
+            "a ### child belongs to its ##: {one}"
+        );
+        assert!(!one.contains("## Two"), "{one}");
+        assert_eq!(section_of(markdown, "one-a").unwrap(), "### One A\n\nchild");
+        assert_eq!(section_of(markdown, "two").unwrap(), "## Two\n\nother");
+        assert!(section_of(markdown, "three").is_none());
+        assert!(
+            section_of(markdown, "title").is_none(),
+            "the # title is not a section"
+        );
+        assert_eq!(section_slugs(markdown), ["one", "two"]);
+    }
+
+    #[test]
+    fn the_essentials_are_one_section_of_the_contract_and_the_tool_answers_them_as_text() {
+        let essentials = documentation(ESSENTIALS_RESOURCE_URI, None).unwrap();
+        let text = essentials["text"].as_str().unwrap();
+        assert!(text.starts_with("## Essentials\n"), "{}", &text[..40]);
+        assert!(!text.contains("## Keeping this contract current"));
+        assert!(
+            text.len() < 12_000,
+            "the short form stays short: {} bytes",
+            text.len()
+        );
+        assert_eq!(essentials["section"], Value::Null);
+
+        let whole = documentation(MODEL_RESOURCE_URI, None).unwrap();
+        assert!(whole["text"].as_str().unwrap().contains(text));
+
+        let section =
+            documentation(MODEL_RESOURCE_URI, Some("Creating a complete document")).unwrap();
+        assert_eq!(section["section"], "creating-a-complete-document");
+        let body = section["text"].as_str().unwrap();
+        assert!(body.starts_with("## Creating a complete document"));
+        assert!(!body.contains("## Inline objects"));
+
+        let missing = documentation(MODEL_RESOURCE_URI, Some("no such thing")).unwrap_err();
+        assert_eq!(missing.code, "documentation_section_not_found");
+        let sections = missing.details.unwrap()["sections"].clone();
+        assert!(
+            sections
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == "essentials"),
+            "{sections}"
+        );
+        assert!(
+            sections.as_array().unwrap().iter().any(|s| s == "tasks"),
+            "{sections}"
+        );
+        assert_eq!(
+            documentation(ESSENTIALS_RESOURCE_URI, Some("tasks"))
+                .unwrap_err()
+                .code,
+            "invalid_request"
+        );
+        assert_eq!(
+            documentation("koru://docs/other", None).unwrap_err().code,
+            "documentation_not_found"
+        );
+        verify_model_documentation().expect("the shipped contract has its essentials");
+
+        // Through the tool: the markdown is the text block, readable as
+        // written, and the structured copy keeps the published shape.
+        let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
+        let result = server.get_documentation(Parameters(DocumentationRequest {
+            uri: ESSENTIALS_RESOURCE_URI.into(),
+            section: None,
+        }));
+        assert_eq!(result.is_error, Some(false));
+        let shown = result.content[0]
+            .as_text()
+            .expect("a text block")
+            .text
+            .as_str();
+        assert!(shown.starts_with("## Essentials\n"), "{}", &shown[..40]);
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["uri"],
+            ESSENTIALS_RESOURCE_URI
+        );
+    }
+
+    #[test]
     fn tool_results_have_text_and_structured_content() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let result = server.list_workspaces();
@@ -5761,7 +6598,7 @@ mod tests {
         // The safety wording lives in the tool's description, condensed; the
         // schema carries which fields each op requires, generated from it.
         for phrase in [
-            "Read koru://docs/model before the first mutation",
+            "Read koru://docs/essentials before the first mutation",
             "expected, its exact current text",
             "on stale_node or a mismatch, reread and retry",
             "never the absolute CRDT root",
@@ -5800,12 +6637,15 @@ mod tests {
             "listblock",
             "table",
             "code",
-            "contact",
             "divider",
             "callout",
         ] {
             assert!(encoded.contains(&format!("\"{kind}\"")), "missing {kind}");
         }
+        assert!(
+            !encoded.contains("\"contact\""),
+            "a contact is not a body block this surface inserts (ADR-471)"
+        );
     }
 
     #[test]
@@ -5826,6 +6666,7 @@ mod tests {
             "insert_inline",
             "set_done",
             "set_language",
+            "set_mark",
             "set_callout_look",
         ] {
             assert!(
@@ -6139,6 +6980,815 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.read(block).unwrap().meta.language, None);
+    }
+
+    #[test]
+    fn set_mark_formats_a_byte_range_and_a_read_reports_it_in_the_runs() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Marks").unwrap())
+            .unwrap();
+        let line = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("Hello wörld")).unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let mark = |start_utf8, end_utf8, mark, on| EditOperation::SetMark {
+            node_id: line.to_storage(),
+            expected: "Hello wörld".into(),
+            start_utf8,
+            end_utf8,
+            mark,
+            on,
+        };
+
+        // "wörld" is bytes 6..12: the ö is two bytes.
+        apply_ops(&mut doc, &[mark(6, 12, MarkName::Bold, true)], &context).unwrap();
+        apply_ops(&mut doc, &[mark(0, 5, MarkName::Code, true)], &context).unwrap();
+        let runs = doc.runs(line).unwrap();
+        let bold: Vec<_> = runs
+            .iter()
+            .filter(|run| run.bold)
+            .map(|run| run.text.as_str())
+            .collect();
+        let code: Vec<_> = runs
+            .iter()
+            .filter(|run| run.code)
+            .map(|run| run.text.as_str())
+            .collect();
+        assert_eq!(bold, ["wörld"]);
+        assert_eq!(code, ["Hello"]);
+        let projected: Vec<_> = runs.iter().map(run_json).collect();
+        assert!(
+            projected
+                .iter()
+                .any(|run| run["bold"] == true && run["text"] == "wörld"),
+            "{projected:?}"
+        );
+
+        // Off again, and the text is untouched throughout.
+        apply_ops(&mut doc, &[mark(6, 12, MarkName::Bold, false)], &context).unwrap();
+        assert!(doc.runs(line).unwrap().iter().all(|run| !run.bold));
+        assert_eq!(
+            doc.read(line).unwrap().content.as_text(),
+            Some("Hello wörld")
+        );
+
+        // An empty range, a range past the end and one inside the ö are
+        // refused rather than quietly writing nothing.
+        for (start, end) in [(3, 3), (5, 2), (0, 99), (6, 8)] {
+            let error = apply_ops(
+                &mut doc,
+                &[mark(start, end, MarkName::Italic, true)],
+                &context,
+            )
+            .expect_err("refused");
+            assert_eq!(
+                error.code, "invalid_request",
+                "{start}..{end}: {}",
+                error.message
+            );
+        }
+
+        // The precondition is the same one every edit carries.
+        let stale = EditOperation::SetMark {
+            node_id: line.to_storage(),
+            expected: "Hello world".into(),
+            start_utf8: 0,
+            end_utf8: 5,
+            mark: MarkName::Underline,
+            on: true,
+        };
+        let error = apply_ops(&mut doc, &[stale], &context).expect_err("stale expected");
+        assert_eq!(error.code, "precondition_failed");
+    }
+
+    #[test]
+    fn set_heading_and_set_highlight_round_trip_and_refuse_a_misspelling() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Headings").unwrap())
+            .unwrap();
+        let line = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("It lived, she said")).unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let heading_id = NodeId::new();
+        apply_ops(
+            &mut doc,
+            &[
+                EditOperation::Insert {
+                    node_id: heading_id.to_storage(),
+                    parent_id: root.to_storage(),
+                    after_node_id: None,
+                    kind: InsertKind::Paragraph,
+                    text: "The library".into(),
+                },
+                EditOperation::SetHeading {
+                    node_id: heading_id.to_storage(),
+                    expected: "The library".into(),
+                    heading: Some(2),
+                },
+                EditOperation::SetMark {
+                    node_id: line.to_storage(),
+                    expected: "It lived, she said".into(),
+                    start_utf8: 0,
+                    end_utf8: 8,
+                    mark: MarkName::Italic,
+                    on: true,
+                },
+                EditOperation::SetHighlight {
+                    node_id: line.to_storage(),
+                    expected: "It lived, she said".into(),
+                    start_utf8: 0,
+                    end_utf8: 8,
+                    highlight: Some("blue".into()),
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.read(heading_id).unwrap().meta.heading,
+            Some(Heading::H2)
+        );
+        let projected = node_json(
+            &doc.read(heading_id).unwrap(),
+            Parent::Node(root),
+            0,
+            1,
+            &[],
+        );
+        assert_eq!(projected["metadata"]["heading"], 2);
+        let spoken = doc.runs(line).unwrap();
+        let marked = spoken.iter().find(|run| run.text == "It lived").unwrap();
+        assert!(marked.italic);
+        assert_eq!(marked.style.highlight.as_deref(), Some("blue"));
+        let run = run_json(marked);
+        assert_eq!(run["highlight"], "blue");
+        assert_eq!(run["italic"], true);
+
+        apply_ops(
+            &mut doc,
+            &[
+                EditOperation::SetHeading {
+                    node_id: heading_id.to_storage(),
+                    expected: "The library".into(),
+                    heading: None,
+                },
+                EditOperation::SetHighlight {
+                    node_id: line.to_storage(),
+                    expected: "It lived, she said".into(),
+                    start_utf8: 0,
+                    end_utf8: 8,
+                    highlight: None,
+                },
+            ],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(doc.read(heading_id).unwrap().meta.heading, None);
+        assert!(
+            doc.runs(line)
+                .unwrap()
+                .iter()
+                .all(|run| run.style.highlight.is_none())
+        );
+        // The italic set_mark wrote is a different mark and stays.
+        assert!(doc.runs(line).unwrap().iter().any(|run| run.italic));
+
+        for heading in [Some(0), Some(7)] {
+            let error = apply_ops(
+                &mut doc,
+                &[EditOperation::SetHeading {
+                    node_id: heading_id.to_storage(),
+                    expected: "The library".into(),
+                    heading,
+                }],
+                &context,
+            )
+            .expect_err("refused");
+            assert_eq!(error.code, "invalid_request");
+        }
+        for highlight in [Some("orange".into()), Some("Yellow".into())] {
+            let error = apply_ops(
+                &mut doc,
+                &[EditOperation::SetHighlight {
+                    node_id: line.to_storage(),
+                    expected: "It lived, she said".into(),
+                    start_utf8: 0,
+                    end_utf8: 8,
+                    highlight,
+                }],
+                &context,
+            )
+            .expect_err("refused");
+            assert_eq!(error.code, "invalid_request");
+        }
+        let error = apply_ops(
+            &mut doc,
+            &[EditOperation::SetHighlight {
+                node_id: line.to_storage(),
+                expected: "It lived, she said".into(),
+                start_utf8: 0,
+                end_utf8: 0,
+                highlight: Some("pink".into()),
+            }],
+            &context,
+        )
+        .expect_err("empty range");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[test]
+    fn a_seed_can_format_the_block_it_just_inserted_and_nothing_else() {
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let first = NodeId::new();
+        let seed = |node_id: NodeId| InitialOperation::SetMark {
+            node_id: node_id.to_storage(),
+            expected: "Bold start".into(),
+            start_utf8: 0,
+            end_utf8: 4,
+            mark: MarkName::Bold,
+            on: true,
+        };
+        let insert = |root: NodeId| InitialOperation::Insert {
+            node_id: first.to_storage(),
+            parent_id: root.to_storage(),
+            after_node_id: None,
+            kind: InsertKind::Paragraph,
+            text: "Bold start".into(),
+        };
+
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Seeded").unwrap())
+            .unwrap();
+        apply_initial_ops(&mut doc, root, &[insert(root), seed(first)], &context)
+            .expect("a mark on an earlier insert is legal");
+        let bold: Vec<_> = doc
+            .runs(first)
+            .unwrap()
+            .into_iter()
+            .filter(|run| run.bold)
+            .map(|run| run.text)
+            .collect();
+        assert_eq!(bold, ["Bold"]);
+
+        let mut other = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = other
+            .insert(Parent::Root, Node::document("Seeded").unwrap())
+            .unwrap();
+        let error = apply_initial_ops(
+            &mut other,
+            root,
+            &[insert(root), seed(NodeId::new())],
+            &context,
+        )
+        .expect_err("a mark on a node the seed did not insert");
+        assert!(
+            error.message.contains("earlier insert"),
+            "{}",
+            error.message
+        );
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(width, height)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("a png encodes");
+        bytes
+    }
+
+    #[test]
+    fn an_image_is_known_by_its_header_and_nothing_else_is_taken() {
+        let sniffed = sniff_image(&png(3, 2)).expect("a png");
+        assert_eq!(
+            (sniffed.mime, sniffed.width, sniffed.height),
+            ("image/png", 3, 2)
+        );
+        let mut jpeg = Vec::new();
+        image::RgbImage::new(4, 5)
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        assert_eq!(sniff_image(&jpeg).unwrap().mime, "image/jpeg");
+
+        for (what, bytes) in [
+            ("nothing", Vec::new()),
+            (
+                "text",
+                b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec(),
+            ),
+            ("a script", b"#!/bin/sh\nrm -rf /\n".to_vec()),
+            ("a cut-off png", png(8, 8)[..20].to_vec()),
+        ] {
+            let error = sniff_image(&bytes)
+                .err()
+                .unwrap_or_else(|| panic!("{what} was taken"));
+            assert_eq!(error.code, "invalid_request", "{what}: {}", error.message);
+        }
+        let big = vec![0u8; MAX_IMAGE_BYTES + 1];
+        assert!(sniff_image(&big).err().unwrap().message.contains("at most"));
+    }
+
+    #[test]
+    fn an_image_block_lands_after_the_sibling_it_names_and_a_read_reports_its_blob() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Story").unwrap())
+            .unwrap();
+        let first = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("First")).unwrap(),
+            )
+            .unwrap();
+        let second = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("Second")).unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let image = NodeId::new();
+        apply_ops(
+            &mut doc,
+            &[EditOperation::InsertImage {
+                node_id: image.to_storage(),
+                parent_id: root.to_storage(),
+                after_node_id: Some(first.to_storage()),
+                hash: "b3:0123abcd".into(),
+                mime: "image/png".into(),
+                width: 640,
+                height: 480,
+            }],
+            &context,
+        )
+        .unwrap();
+
+        let order = doc.children(Parent::Node(root)).unwrap();
+        assert_eq!(
+            order,
+            [first, image, second],
+            "after the first, before the second"
+        );
+        let node = doc.read(image).unwrap();
+        assert_eq!(node.kind, Kind::Image);
+        let projected = node_json(&node, Parent::Node(root), 1, 1, &[]);
+        assert_eq!(projected["content"]["type"], "blob");
+        assert_eq!(projected["content"]["hash"], "b3:0123abcd");
+        assert_eq!(projected["content"]["mime"], "image/png");
+        assert_eq!(projected["content"]["width"], 640);
+        assert_eq!(projected["content"]["height"], 480);
+
+        // First means first, and a parent that is not in the document is refused.
+        let top = NodeId::new();
+        apply_ops(
+            &mut doc,
+            &[EditOperation::InsertImage {
+                node_id: top.to_storage(),
+                parent_id: root.to_storage(),
+                after_node_id: None,
+                hash: "b3:0123abcd".into(),
+                mime: "image/png".into(),
+                width: 1,
+                height: 1,
+            }],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(doc.children(Parent::Node(root)).unwrap()[0], top);
+    }
+
+    #[test]
+    fn the_published_vocabulary_cannot_send_an_image_hash_and_the_tool_takes_bytes() {
+        let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
+        let tools = server.tool_router.list_all();
+        let edit = tools
+            .iter()
+            .find(|tool| tool.name == "edit_document")
+            .unwrap();
+        let encoded = serde_json::to_string(&edit.input_schema).unwrap();
+        assert!(
+            !encoded.contains("insert_image"),
+            "the internal operation is not published"
+        );
+        let add = tools
+            .iter()
+            .find(|tool| tool.name == "add_image")
+            .expect("add_image");
+        let schema = serde_json::to_string(&add.input_schema).unwrap();
+        for field in [
+            "data_base64",
+            "base_revision",
+            "node_id",
+            "parent_id",
+            "after_node_id",
+        ] {
+            assert!(schema.contains(field), "{field}");
+        }
+        assert!(!schema.contains("\"hash\""), "a caller never sends a hash");
+    }
+
+    #[test]
+    fn set_align_centres_a_block_and_start_restores_the_default() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Poem").unwrap())
+            .unwrap();
+        let line = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("Moon")).unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let align = |align| EditOperation::SetAlign {
+            node_id: line.to_storage(),
+            expected: "Moon".into(),
+            align,
+        };
+
+        apply_ops(&mut doc, &[align(AlignName::Center)], &context).unwrap();
+        assert_eq!(
+            doc.read(line).unwrap().meta.align,
+            Some(koru_core::node::Align::Center)
+        );
+        apply_ops(&mut doc, &[align(AlignName::End)], &context).unwrap();
+        assert_eq!(
+            doc.read(line).unwrap().meta.align,
+            Some(koru_core::node::Align::End)
+        );
+        apply_ops(&mut doc, &[align(AlignName::Start)], &context).unwrap();
+        assert_eq!(
+            doc.read(line).unwrap().meta.align,
+            None,
+            "start is the default, stored as no value"
+        );
+
+        // The precondition every edit carries.
+        let stale = EditOperation::SetAlign {
+            node_id: line.to_storage(),
+            expected: "Sun".into(),
+            align: AlignName::Center,
+        };
+        assert_eq!(
+            apply_ops(&mut doc, &[stale], &context).unwrap_err().code,
+            "precondition_failed"
+        );
+    }
+
+    #[test]
+    fn an_image_can_be_aligned_without_a_text_to_compare() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Pictures").unwrap())
+            .unwrap();
+        let picture = doc
+            .insert(
+                Parent::Node(root),
+                Node::image(
+                    koru_core::BlobHash::new("b3", "0123abcd"),
+                    "image/png",
+                    Some(10),
+                    Some(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        apply_ops(
+            &mut doc,
+            &[EditOperation::SetAlign {
+                node_id: picture.to_storage(),
+                expected: String::new(),
+                align: AlignName::Center,
+            }],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(
+            doc.read(picture).unwrap().meta.align,
+            Some(koru_core::node::Align::Center)
+        );
+    }
+
+    #[test]
+    fn an_image_block_can_be_removed_and_moved_without_a_text_to_compare() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Pictures").unwrap())
+            .unwrap();
+        let first = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("Caption")).unwrap(),
+            )
+            .unwrap();
+        let picture = doc
+            .insert(
+                Parent::Node(root),
+                Node::image(
+                    koru_core::BlobHash::new("b3", "0123abcd"),
+                    "image/png",
+                    Some(10),
+                    Some(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        apply_ops(
+            &mut doc,
+            &[EditOperation::Move {
+                node_id: picture.to_storage(),
+                expected: String::new(),
+                parent_id: root.to_storage(),
+                after_node_id: None,
+            }],
+            &context,
+        )
+        .unwrap();
+        apply_ops(
+            &mut doc,
+            &[EditOperation::Remove {
+                node_id: picture.to_storage(),
+                expected: String::new(),
+            }],
+            &context,
+        )
+        .unwrap();
+        assert!(doc.read(picture).is_err(), "the image is gone");
+        assert!(doc.read(first).is_ok(), "and its neighbour is not");
+
+        // A text block still carries its precondition.
+        let stale = EditOperation::Remove {
+            node_id: first.to_storage(),
+            expected: "Old".into(),
+        };
+        assert_eq!(
+            apply_ops(&mut doc, &[stale], &context).unwrap_err().code,
+            "precondition_failed"
+        );
+    }
+
+    #[test]
+    fn an_image_can_be_completed_and_redated_and_cannot_be_made_a_task() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Pictures").unwrap())
+            .unwrap();
+        let picture = doc
+            .insert(
+                Parent::Node(root),
+                Node::image(
+                    koru_core::BlobHash::new("b3", "0123abcd"),
+                    "image/png",
+                    Some(10),
+                    Some(10),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        let due = |day: &str| EditOperation::SetAttribute {
+            node_id: picture.to_storage(),
+            expected: String::new(),
+            key: "koru.due".into(),
+            value: AttributeValue::Date { value: day.into() },
+        };
+        let refused = apply_ops(&mut doc, &[due("2026-08-30")], &context).unwrap_err();
+        assert_eq!(refused.code, "invalid_request");
+        assert!(
+            refused.message.contains("cannot be made a task"),
+            "{}",
+            refused.message
+        );
+        assert!(!koru_core::tasks::is_task_node(&doc, picture).unwrap());
+
+        koru_core::tasks::set_due(
+            &mut doc,
+            picture,
+            koru_core::time::Temporal::Date(DateOnly::parse("2026-08-30").unwrap()),
+        )
+        .unwrap();
+        apply_ops(&mut doc, &[due("2026-09-01")], &context).unwrap();
+        assert_eq!(
+            published_value(&doc, picture, "koru.due"),
+            Some(json!({"type":"date", "value":"2026-09-01"}))
+        );
+        apply_ops(
+            &mut doc,
+            &[EditOperation::SetDone {
+                node_id: picture.to_storage(),
+                expected: String::new(),
+                done: true,
+            }],
+            &context,
+        )
+        .unwrap();
+        assert_eq!(
+            koru_core::tasks::TaskFields::of(&doc.read(picture).unwrap()).lifecycle,
+            koru_core::attributes::Lifecycle::Completed
+        );
+    }
+
+    #[test]
+    fn a_damaged_image_is_refused_even_when_its_header_reads() {
+        let mut gradient = image::RgbImage::new(64, 64);
+        for (x, y, pixel) in gradient.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8]);
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(gradient)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert!(sniff_image(&png).is_ok(), "the whole image is accepted");
+
+        // One byte wrong in the middle of the pixel data: the header, and so
+        // the size, still read.
+        let mut flipped = png.clone();
+        let middle = flipped.len() / 2;
+        flipped[middle] ^= 0xFF;
+        let error = sniff_image(&flipped).unwrap_err();
+        assert!(error.message.contains("damaged"), "{}", error.message);
+
+        // Cut short: the same.
+        let truncated = &png[..png.len() * 2 / 3];
+        assert!(
+            sniff_image(truncated)
+                .unwrap_err()
+                .message
+                .contains("damaged")
+        );
+    }
+
+    #[test]
+    fn a_web_link_is_a_link_pill_and_only_a_safe_address_is_one() {
+        let attr = link_attr("https://koru.do/docs?a=1#top", Some("Koru docs")).unwrap();
+        assert_eq!(attr.role, "link");
+        assert_eq!(attr.label.as_deref(), Some("Koru docs"));
+        assert!(matches!(
+            &attr.value,
+            AttrValue::Url(url) if url == "https://koru.do/docs?a=1#top"
+        ));
+        assert_eq!(
+            link_attr("MAILTO:someone@example.com", None).unwrap().label,
+            None
+        );
+        // The scheme is an allowlist.
+        for bad in [
+            "javascript:alert(1)",
+            "file:///C:/Windows/win.ini",
+            "data:text/html,<script>",
+            "ftp://example.com",
+            "example.com",
+            "",
+            "https://exa mple.com",
+            "https://example.com/\nsecond",
+        ] {
+            assert!(link_attr(bad, None).is_err(), "{bad:?} must be refused");
+        }
+        let long = format!("https://example.com/{}", "a".repeat(MAX_LINK_URL));
+        assert!(link_attr(&long, None).is_err());
+        assert!(link_attr("https://example.com", Some(&"x".repeat(MAX_LINK_LABEL + 1))).is_err());
+    }
+
+    #[test]
+    fn insert_inline_puts_a_link_pill_into_the_text_and_a_read_reports_it() {
+        let mut doc = WorkspaceDoc::create(CoreWorkspaceId::new(), "test").unwrap();
+        let root = doc
+            .insert(Parent::Root, Node::document("Links").unwrap())
+            .unwrap();
+        let line = doc
+            .insert(
+                Parent::Node(root),
+                Node::new(Kind::Paragraph, Content::text("See ")).unwrap(),
+            )
+            .unwrap();
+        let context = InlineContext {
+            profile: CoreProfileId::new(),
+            workspace: CoreWorkspaceId::new(),
+            documents: HashMap::new(),
+            files: HashMap::new(),
+            attrs: AttrContext::default(),
+        };
+        apply_ops(
+            &mut doc,
+            &[EditOperation::InsertInline {
+                node_id: line.to_storage(),
+                expected: "See ".into(),
+                at_utf8: 4,
+                inline: InlineValue::Link {
+                    url: "https://koru.do".into(),
+                    label: Some("Koru".into()),
+                },
+            }],
+            &context,
+        )
+        .unwrap();
+        let node = doc.read(line).unwrap();
+        let attrs = match &node.content {
+            Content::Text { attrs, .. } => attrs.clone(),
+            other => panic!("a text node: {other:?}"),
+        };
+        assert!(
+            attrs.iter().any(|attr| matches!(
+                &attr.value,
+                AttrValue::Url(url) if url == "https://koru.do"
+            ) && attr.label.as_deref() == Some("Koru")),
+            "the link is an attribute of the line: {attrs:?}"
+        );
+        let runs = doc.runs(line).unwrap();
+        assert!(
+            runs.iter().any(|run| run.pill.is_some()),
+            "and a pill in its runs"
+        );
+
+        // A bad address is refused before anything is written.
+        let current = doc
+            .read(line)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap()
+            .to_owned();
+        let refused = apply_ops(
+            &mut doc,
+            &[EditOperation::InsertInline {
+                node_id: line.to_storage(),
+                expected: current,
+                at_utf8: 0,
+                inline: InlineValue::Link {
+                    url: "javascript:alert(1)".into(),
+                    label: None,
+                },
+            }],
+            &context,
+        )
+        .unwrap_err();
+        assert_eq!(refused.code, "invalid_request");
     }
 
     #[test]
@@ -8764,6 +10414,31 @@ mod tests {
                 tag: None,
                 tag_id: Some(uuid::Uuid::new_v4().to_string()),
             },
+            EditOperation::SetMark {
+                node_id: id(),
+                expected: expected(),
+                start_utf8: 0,
+                end_utf8: 3,
+                mark: MarkName::Bold,
+                on: true,
+            },
+            EditOperation::SetHeading {
+                node_id: id(),
+                expected: expected(),
+                heading: Some(2),
+            },
+            EditOperation::SetHighlight {
+                node_id: id(),
+                expected: expected(),
+                start_utf8: 0,
+                end_utf8: 3,
+                highlight: Some("yellow".into()),
+            },
+            EditOperation::SetAlign {
+                node_id: id(),
+                expected: expected(),
+                align: AlignName::Center,
+            },
         ]
     }
 
@@ -8834,6 +10509,14 @@ mod tests {
                 node_id: first.clone(),
                 expected: "fn main() {}".into(),
                 language: Some("rust".into()),
+            },
+            InitialOperation::SetMark {
+                node_id: first.clone(),
+                expected: "fn main() {}".into(),
+                start_utf8: 0,
+                end_utf8: 2,
+                mark: MarkName::Code,
+                on: true,
             },
             InitialOperation::SetCalloutLook {
                 node_id: first,
@@ -8957,7 +10640,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 22);
         assert!(
             tools
                 .iter()
@@ -8976,8 +10659,12 @@ mod tests {
             .list_resources(None)
             .await
             .expect("resources/list over stdio");
-        assert_eq!(resources.resources.len(), 1);
-        assert_eq!(resources.resources[0].uri, MODEL_RESOURCE_URI);
+        let uris: Vec<_> = resources
+            .resources
+            .iter()
+            .map(|resource| resource.uri.as_str())
+            .collect();
+        assert_eq!(uris, [ESSENTIALS_RESOURCE_URI, MODEL_RESOURCE_URI]);
         assert_eq!(
             resources.resources[0].mime_type.as_deref(),
             Some(MODEL_DOCUMENT_MIME)

@@ -90,6 +90,11 @@ pub struct PendingInputView<I: SessionSurfaceInteraction> {
 }
 
 impl<I: SessionSurfaceInteraction> PendingInputView<I> {
+    /// Send through another connection from now on.
+    pub fn set_interaction(&mut self, interaction: I) {
+        self.interaction = interaction;
+    }
+
     pub fn new(interaction: I, copy: PendingInputCopy) -> Self {
         Self {
             interaction,

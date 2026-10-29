@@ -221,7 +221,7 @@ fn the_manifest_points_every_url_at_the_github_release() {
 }
 
 #[test]
-fn the_release_body_is_the_notes_then_the_build_then_the_preview_note() {
+fn the_release_body_is_the_notes_then_the_build_then_the_platform_notes() {
     let notes = notes();
     let body = release_body(&build(&notes, "linux-x86_64"));
     let title = body.find("## Linux, previewed").unwrap();
@@ -230,7 +230,7 @@ fn the_release_body_is_the_notes_then_the_build_then_the_preview_note() {
         .unwrap();
     let full = body.find("Koru builds and runs on X11.").unwrap();
     let footer = body.find("\n---\n").unwrap();
-    let preview = body.find("**A preview** — X11 only").unwrap();
+    let preview = body.find("- **Linux** is a preview — X11 only").unwrap();
     assert!(
         title < summary && summary < full && full < footer && footer < preview,
         "{body}"
@@ -240,11 +240,13 @@ fn the_release_body_is_the_notes_then_the_build_then_the_preview_note() {
     assert!(body.contains(
         "[`0123456`](https://github.com/koruworks/mono/commit/0123456789abcdef0123456789abcdef01234567)"
     ));
-    assert!(body.contains("no dictation yet, no Koru Cloud yet"));
+    assert!(body.contains("- **Windows** is not code-signed yet"));
+    assert!(body.contains("- No Koru Cloud in the nightly yet."));
 
-    // The Linux limits are Linux's; another platform's page does not claim them.
+    // One page for every platform: whichever build writes it, it is the same,
+    // so the last platform to publish cannot drop another's notes.
     let other = release_body(&build(&notes, "windows-x86_64"));
-    assert!(!other.contains("A preview"), "{other}");
+    assert_eq!(other, body);
 }
 
 #[test]

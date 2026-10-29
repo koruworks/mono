@@ -76,11 +76,11 @@ fn session_profile_label(key: &SessionProfileKey) -> String {
 /// This window's connection to the session backend.
 pub(super) struct SessionBackend {
     pub(super) sender: InteractionSender,
-    events: Arc<Mutex<VecDeque<BackendEvent>>>,
+    pub(super) events: Arc<Mutex<VecDeque<BackendEvent>>>,
 }
 
 impl SessionBackend {
-    fn drain(&self) -> Vec<BackendEvent> {
+    pub(super) fn drain(&self) -> Vec<BackendEvent> {
         let mut queue = self
             .events
             .lock()
@@ -147,26 +147,45 @@ impl MainView {
 
     fn ensure_session_backend(&mut self) -> Option<&SessionBackend> {
         if self.session_backend.is_none() {
-            let proxy = self.agent.wake_proxy()?;
-            let events = Arc::new(Mutex::new(VecDeque::new()));
-            let (sender, commands) = koru_session_backend::channel();
-            let internal: SyncSender<BackendCommand> = sender.internal_sender();
-            koru_session_backend::spawn(
-                QueueSink {
-                    events: Arc::clone(&events),
-                    proxy,
-                },
-                // The channel root, the same one the Agent link dials —
-                // `--root` threads through, and a mismatch would find nothing
-                // rather than the wrong host.
-                koru_workspace_host::cli::root_from_args(),
-                built_in_profiles(),
-                commands,
-                internal,
-            );
-            self.session_backend = Some(SessionBackend { sender, events });
+            self.session_backend = Some(self.new_backend_connection(false)?);
         }
         self.session_backend.as_ref()
+    }
+
+    /// Start a connection to the session host: the window's main one, or - with
+    /// `lane` - one terminal's own (`mainview/session_lanes.rs`).
+    pub(super) fn new_backend_connection(&mut self, lane: bool) -> Option<SessionBackend> {
+        let Some(proxy) = self.agent.wake_proxy() else {
+            // No event loop: a test. A lane there is a channel the test holds,
+            // with no thread behind it.
+            #[cfg(test)]
+            if lane {
+                let (sender, commands) = koru_session_backend::channel();
+                self.lane_commands.push(commands);
+                return Some(SessionBackend {
+                    sender,
+                    events: Arc::new(Mutex::new(VecDeque::new())),
+                });
+            }
+            return None;
+        };
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let (sender, commands) = koru_session_backend::channel();
+        let internal: SyncSender<BackendCommand> = sender.internal_sender();
+        let sink = QueueSink {
+            events: Arc::clone(&events),
+            proxy,
+        };
+        // The channel root, the same one the Agent link dials - `--root`
+        // threads through, and a mismatch would find nothing rather than the
+        // wrong host.
+        let root = koru_workspace_host::cli::root_from_args();
+        if lane {
+            koru_session_backend::spawn_lane(sink, root, commands, internal);
+        } else {
+            koru_session_backend::spawn(sink, root, built_in_profiles(), commands, internal);
+        }
+        Some(SessionBackend { sender, events })
     }
 
     /// The typed-verb sender for the container's project mutations —
@@ -251,6 +270,8 @@ impl MainView {
                     profile,
                     raw_fallback: false,
                     project,
+                    working_directory: None,
+                    resume: false,
                 }),
             ),
             // No backend (no event loop yet, or a test). The tab still opens
@@ -263,6 +284,8 @@ impl MainView {
                         profile,
                         raw_fallback: false,
                         project,
+                        working_directory: None,
+                        resume: false,
                     }),
                 );
                 view.surface.status = PaneStatus::AgentUnavailable;
@@ -428,7 +451,7 @@ impl MainView {
     /// session alive) and from a process ending on its own (cleanup).
     pub(super) fn begin_terminate_session(&mut self, session: SessionId) -> bool {
         let tab_for = self.session_tab_for(session);
-        if self.session_attached.is_some() && self.session_attached == tab_for {
+        if tab_for.is_some_and(|tab| self.tab_attached_anywhere(tab)) {
             self.open_terminate_confirm(session);
             return true;
         }
@@ -477,8 +500,9 @@ impl MainView {
             return Some(t(lang, I18nKey::TerminalExited));
         };
         let running = matches!(summary.process, ProcessState::Running);
-        let attached_here = self.session_attached.is_some()
-            && self.session_attached == self.session_tab_for(session);
+        let attached_here = self
+            .session_tab_for(session)
+            .is_some_and(|tab| self.tab_attached_anywhere(tab));
         let detached = matches!(summary.controller, ControllerState::Detached);
         if running && (attached_here || detached) {
             None
@@ -496,6 +520,7 @@ impl MainView {
         &mut self,
         session: SessionId,
         profile_key: SessionProfileKey,
+        recovery: Option<koru_workspace_host::SessionRecovery>,
     ) -> Tab {
         let label = session_profile_label(&profile_key);
         // A restored tab drives its session. Whether it was watching a run
@@ -503,14 +528,22 @@ impl MainView {
         // arrived yet would be a guess: the tab attaches, and the person
         // opens the run's session again from the navigator if they meant to
         // watch it.
-        self.build_existing_session_tab(session, Some(profile_key), &label, false)
+        let mut tab = self.build_existing_session_tab(session, Some(profile_key), &label, false);
+        // What the tab was, kept until the first catalog says whether the
+        // session is still alive (ADR-474).
+        if let TabView::Session(view) = &mut tab.view {
+            view.recovery = recovery;
+        }
+        tab
     }
 
     /// The session half of `maintain`: reconcile which tab holds the
     /// controller, then drain and route everything the backend queued.
     pub(super) fn maintain_sessions(&mut self) -> bool {
         let mut changed = self.drain_takeover_requests();
+        changed |= self.drain_recovery_choices();
         changed |= self.settle_session_tabs();
+        changed |= self.settle_session_lanes();
         let Some(backend) = self.session_backend.as_ref() else {
             return changed;
         };
@@ -518,6 +551,7 @@ impl MainView {
         for event in events {
             changed |= self.handle_session_event(event);
         }
+        changed |= self.drain_session_lanes();
         changed
     }
 
@@ -532,6 +566,15 @@ impl MainView {
     fn close_gone_session_tabs(&mut self, tab_ids: &[u64]) -> bool {
         let mut changed = false;
         for &tab_id in tab_ids {
+            // **A restored tab whose session did not survive offers a new one
+            // instead of closing** (ADR-474): its layout, agent and folder were
+            // saved, and the tab is where the person was working. Only a tab
+            // restored with that record qualifies; a session that ends during a
+            // run, or one restored from an older file, closes as before.
+            if self.offer_recovery(tab_id) {
+                changed = true;
+                continue;
+            }
             if self.session_attached == Some(tab_id) || self.session_attaching == Some(tab_id) {
                 self.session_attached = None;
                 self.session_attaching = None;
@@ -557,6 +600,124 @@ impl MainView {
             }
         }
         changed
+    }
+
+    /// Turn a restored tab whose session is gone into an offer, when it
+    /// carries what is needed to start another. Returns whether it did, so
+    /// the caller leaves the tab open.
+    ///
+    /// A shell is simply started again — a fresh prompt in the same folder
+    /// costs nothing and asks nothing of the person — and an agent shows the
+    /// panel: *Resume* where its CLI can continue a conversation, and *Start
+    /// new* always.
+    fn offer_recovery(&mut self, tab_id: u64) -> bool {
+        let released =
+            self.session_attached == Some(tab_id) || self.session_attaching == Some(tab_id);
+        let Some(view) = self.session_view_by_tab(tab_id) else {
+            return false;
+        };
+        if view.offer.is_some() {
+            return true;
+        }
+        let Some(recovery) = view.recovery.clone() else {
+            return false;
+        };
+        let Some(key) = view.profile_key.clone() else {
+            return false;
+        };
+        let Some(profile) = recovery_profile(&key) else {
+            return false;
+        };
+        let agent = profile.kind == ProfileKind::Agent;
+        let resumable = recovery.raw
+            && agent
+            && koru_session_profiles::resume_arguments(profile.label).is_some();
+        view.surface.notice = None;
+        view.surface.status = PaneStatus::Exited;
+        view.offer = Some(crate::session_offer::Offer::new(
+            profile.fallback_display_name().to_owned(),
+            recovery.working_directory.clone(),
+            resumable,
+        ));
+        // A shell answers its own offer; an agent waits for the person.
+        view.offer_auto_start = !agent;
+        if released {
+            self.session_attached = None;
+            self.session_attaching = None;
+            if let Some(backend) = self.session_backend.as_ref() {
+                backend.sender.detach();
+            }
+        }
+        if self.session_settled == Some(tab_id) {
+            self.session_settled = None;
+        }
+        true
+    }
+
+    /// Carry out what the offers were answered with: each answered tab gets a
+    /// fresh view that launches the replacement session on the next settle.
+    fn drain_recovery_choices(&mut self) -> bool {
+        use crate::session_offer::Choice;
+        let mut answers: Vec<(u64, Choice)> = Vec::new();
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                let tab_id = tab.id;
+                let TabView::Session(view) = &mut tab.view else {
+                    continue;
+                };
+                let auto = std::mem::take(&mut view.offer_auto_start);
+                let Some(offer) = view.offer.as_mut() else {
+                    continue;
+                };
+                if auto {
+                    answers.push((tab_id, Choice::StartNew));
+                } else if let Some(choice) = offer.take_choice() {
+                    answers.push((tab_id, choice));
+                }
+            }
+        }
+        let mut changed = false;
+        for (tab_id, choice) in answers {
+            changed |= self.start_recovered(tab_id, choice);
+        }
+        changed
+    }
+
+    /// Replace the offer in `tab_id` with a launching session: the same
+    /// profile, folder and project, as a continuation or as a new
+    /// conversation.
+    fn start_recovered(&mut self, tab_id: u64, choice: crate::session_offer::Choice) -> bool {
+        use crate::session_offer::Choice;
+        let Some(sender) = self.session_backend.as_ref().map(|b| b.sender.clone()) else {
+            return false;
+        };
+        let Some(view) = self.session_view_by_tab(tab_id) else {
+            return false;
+        };
+        let (Some(key), Some(recovery)) = (view.profile_key.clone(), view.recovery.clone()) else {
+            return false;
+        };
+        let Some(profile) = recovery_profile(&key) else {
+            return false;
+        };
+        let resume = choice == Choice::Resume
+            && recovery.raw
+            && koru_session_profiles::resume_arguments(profile.label).is_some();
+        let launch = PendingLaunch {
+            profile,
+            // A recovered raw terminal comes back raw: the person left a
+            // terminal, and a managed attempt would swap it for a chat.
+            raw_fallback: recovery.raw,
+            project: recovery.project,
+            working_directory: recovery.working_directory.map(std::path::PathBuf::from),
+            resume,
+        };
+        let mut fresh = SessionView::new(&SessionSender(sender), Some(launch));
+        fresh.surface.bounds = view.surface.bounds;
+        *view = fresh;
+        // The settle pass launches it for the active tab, or when it next is.
+        let _ = self.settle_session_tabs();
+        true
     }
 
     /// **Release on switch, attach on switch.** The active session tab takes
@@ -585,8 +746,35 @@ impl MainView {
                 }
             }
         }
-        let active_id = self.tabs().active_tab().id;
-        let active_is_session = matches!(self.tabs().active_tab().view, TabView::Session(_));
+        // **A terminal that is on screen keeps running**, whichever pane has
+        // the keyboard: the focused pane's session tab when there is one,
+        // else the session this window is already settled on if it is still
+        // the visible tab of some pane, else the first visible session tab.
+        // Looking only at the focused pane detached the session the moment
+        // the person clicked a document beside it, and the screen froze until
+        // they clicked back.
+        let owned_by_a_lane = self.lane_owned_tabs();
+        let focused = self.tabs().active_tab();
+        let visible: Vec<u64> = self
+            .panes
+            .iter_groups()
+            .filter_map(|(_, group)| {
+                let tab = group.tabs().active_tab();
+                (matches!(tab.view, TabView::Session(_)) && !owned_by_a_lane.contains(&tab.id))
+                    .then_some(tab.id)
+            })
+            .collect();
+        let target = if matches!(focused.view, TabView::Session(_))
+            && !owned_by_a_lane.contains(&focused.id)
+        {
+            Some(focused.id)
+        } else {
+            self.session_settled
+                .filter(|id| visible.contains(id))
+                .or_else(|| visible.first().copied())
+        };
+        let active_is_session = target.is_some();
+        let active_id = target.unwrap_or(focused.id);
         if !active_is_session {
             if self.session_settled.take().is_some() {
                 // Closing or leaving a session tab detaches; it never
@@ -611,7 +799,7 @@ impl MainView {
         // the first maintain pass, which can precede the first viewport — and
         // attaching then would resize the surviving session to a 1×1 grid in
         // front of the person. Not settled yet, so the next pass retries.
-        if let TabView::Session(view) = &self.tabs().active_tab().view
+        if let Some(view) = self.session_view_by_tab(active_id)
             && (view.surface.bounds.w <= 0.0 || view.surface.bounds.h <= 0.0)
         {
             return changed;
@@ -661,7 +849,7 @@ impl MainView {
 
     /// The active session tab takes the controller: attach its session, or
     /// send the launch it was opened for.
-    fn take_session_controller(&mut self, tab_id: u64) -> bool {
+    pub(super) fn take_session_controller(&mut self, tab_id: u64) -> bool {
         let Some(sender) = self
             .session_backend
             .as_ref()
@@ -687,18 +875,42 @@ impl MainView {
                 TabView::Session(view) => view.pending_launch.as_ref().and_then(|l| l.project),
                 _ => None,
             });
-        let working_directory = pending_project
-            .and_then(|id| {
-                self.explore
-                    .agent_project_root(id)
-                    .map(std::path::PathBuf::from)
+        // A recovered tab names the folder the lost session was in; it wins
+        // over the project's folder when it still exists. A folder that is
+        // gone falls through to the same defaults every launch has.
+        let named_directory = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.tabs().iter())
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| match &tab.view {
+                TabView::Session(view) => view
+                    .pending_launch
+                    .as_ref()
+                    .and_then(|l| l.working_directory.clone()),
+                _ => None,
             })
-            .filter(|root| root.is_dir())
+            .filter(|directory| directory.is_dir());
+        let working_directory = named_directory
+            .or_else(|| {
+                pending_project
+                    .and_then(|id| {
+                        self.explore
+                            .agent_project_root(id)
+                            .map(std::path::PathBuf::from)
+                    })
+                    .filter(|root| root.is_dir())
+            })
             .or_else(std::env::home_dir);
         let readiness = self.provider_readiness.clone();
         let Some(view) = self.session_view_by_tab(tab_id) else {
             return false;
         };
+        // A recovered tab is showing its offer: its old session is gone and
+        // there is nothing to attach to or launch until the person answers.
+        if view.offer.is_some() {
+            return false;
+        }
         match (view.session, view.pending_launch.take()) {
             (Some(session), _) => {
                 // Attach the tab's own session, keeping its previous frame on
@@ -741,21 +953,32 @@ impl MainView {
                 // The placement rides the creation request (ADR-264): the
                 // project the tab was opened into, or `None` for the bucket.
                 // The directory was resolved above, before this borrow.
-                sender.launch_in(
-                    launch.profile,
-                    display_name,
-                    size,
-                    intent,
-                    launch.project,
-                    working_directory,
-                );
+                match (launch.resume, working_directory) {
+                    // A continuation: the agent's own *continue* form, as a raw
+                    // terminal, in the folder the lost session was in.
+                    (true, Some(directory)) => sender.launch_resumed(
+                        launch.profile,
+                        display_name,
+                        size,
+                        launch.project,
+                        directory,
+                    ),
+                    (_, directory) => sender.launch_in(
+                        launch.profile,
+                        display_name,
+                        size,
+                        intent,
+                        launch.project,
+                        directory,
+                    ),
+                }
                 true
             }
             (None, None) => false,
         }
     }
 
-    fn session_view_by_tab(&mut self, tab_id: u64) -> Option<&mut SessionView> {
+    pub(super) fn session_view_by_tab(&mut self, tab_id: u64) -> Option<&mut SessionView> {
         self.panes.iter_groups_mut().find_map(|(_, group)| {
             group.tabs_mut().iter_mut().find_map(|tab| {
                 if tab.id != tab_id {
@@ -842,7 +1065,7 @@ impl MainView {
 
     /// One backend event, routed to the tab it is about. Answers whether
     /// anything visible changed.
-    fn handle_session_event(&mut self, event: BackendEvent) -> bool {
+    pub(super) fn handle_session_event(&mut self, event: BackendEvent) -> bool {
         match event {
             // koru.exe's `+` menu reads `built_in_profiles()` directly; the
             // probed catalogue feeds a menu-dimming increment, not this one.
@@ -904,6 +1127,11 @@ impl MainView {
             | BackendEvent::Sessions(sessions)
             | BackendEvent::Recovered { sessions } => {
                 let attached = self.session_attached;
+                let lane_attached: Vec<u64> = self
+                    .session_lanes
+                    .iter()
+                    .filter_map(|lane| lane.attached)
+                    .collect();
                 // The Agents navigator projects this same catalog — one push,
                 // on the same wake, so the tree and the tabs cannot disagree
                 // about which sessions exist.
@@ -939,8 +1167,13 @@ impl MainView {
                                 // so it reads *running* rather than the
                                 // sentence about another window taking it
                                 // (ADR-361).
-                                let showing_it =
-                                    attached == Some(tab_id) || view.surface.watching().watching();
+                                // Alive after a restart: nothing to recover. From
+                                // here on a session that ends closes its tab, as
+                                // a session started in this run always did.
+                                view.recovery = None;
+                                let showing_it = attached == Some(tab_id)
+                                    || lane_attached.contains(&tab_id)
+                                    || view.surface.watching().watching();
                                 let status = pane_status_for(summary, showing_it);
                                 if view.surface.status != status {
                                     view.surface.status = status;
@@ -1243,6 +1476,12 @@ impl MainView {
                     {
                         tab = Some(waiting);
                     }
+                    tracing::info!(
+                        target: "koru::session",
+                        operation,
+                        tab = ?tab,
+                        "a session was gone when this window asked for it"
+                    );
                     if let Some(tab) = tab {
                         self.session_attaching = None;
                         return self.close_gone_session_tabs(&[tab]);
@@ -1315,16 +1554,39 @@ impl MainView {
                 self.session_attached = None;
                 self.session_attaching = None;
                 self.terminate_after_attach = None;
-                let changed = self.explore.set_agent_sessions(sessions);
-                let gone: Vec<u64> = self
+                // **What each tab was, read before the catalog is replaced.**
+                // A tab started in this run holds no saved record; the old
+                // catalog still names its folder and project, and the new one
+                // will not. With it the tab offers to continue (ADR-474)
+                // instead of vanishing and leaving a Welcome tab where the
+                // terminal was.
+                let lost: Vec<(u64, Option<koru_workspace_host::SessionRecovery>)> = self
                     .panes
                     .iter_groups()
                     .flat_map(|(_, group)| group.tabs().iter())
                     .filter_map(|tab| match &tab.view {
-                        TabView::Session(view) if view.session.is_some() => Some(tab.id),
+                        TabView::Session(view) if view.session.is_some() => {
+                            Some((tab.id, self.session_recovery(view)))
+                        }
                         _ => None,
                     })
                     .collect();
+                let changed = self.explore.set_agent_sessions(sessions);
+                let mut gone = Vec::new();
+                for (tab_id, recovery) in lost {
+                    tracing::info!(
+                        target: "koru::session",
+                        tab = tab_id,
+                        has_recovery = recovery.is_some(),
+                        "the session host restarted under a terminal tab"
+                    );
+                    if let Some(view) = self.session_view_by_tab(tab_id)
+                        && view.recovery.is_none()
+                    {
+                        view.recovery = recovery;
+                    }
+                    gone.push(tab_id);
+                }
                 changed | self.close_gone_session_tabs(&gone)
             }
             BackendEvent::Backpressure => {
@@ -1537,4 +1799,10 @@ pub(super) fn session_profile_shown(key: &SessionProfileKey) -> bool {
         || !built_in_profiles()
             .iter()
             .any(|profile| &profile.id == key && profile.kind == ProfileKind::Agent)
+}
+
+/// The launch profile a saved key names, for a recovered tab: a built-in by
+/// its key, or a custom profile where this build can still resolve it.
+fn recovery_profile(key: &SessionProfileKey) -> Option<koru_session_profiles::LaunchProfile> {
+    koru_session_profiles::resolve(key).ok()
 }

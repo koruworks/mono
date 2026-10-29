@@ -3343,3 +3343,94 @@ fn the_windows_are_told_whether_there_is_an_icon_to_hide_behind() {
         );
     }
 }
+
+/// **The agent CLI report reaches every window, once per change, and a late
+/// Hello.** A detached controller never checks anything, so what travels is
+/// the "not yet checked" report — enough to prove the path, which is the same
+/// path the update report takes.
+#[test]
+fn the_agent_cli_report_is_broadcast_on_change_and_told_to_a_late_hello() {
+    let mut agent = agent();
+    let waker = crate::event::Waker::new(|_| {});
+    agent.attach_cli_updates(koru_cli_updates::Controller::detached(), &waker, false);
+    let first = ConnectionId(7);
+    let (first_conn, first_queue) = Connection::for_test(first);
+    agent.connections.push(first_conn);
+
+    let unchecked = Push::AgentClis {
+        report: Box::new(koru_agent_wire::AgentCliReport::default()),
+    };
+    agent.wake(AgentEvent::AgentCliUpdatesChanged);
+    assert_eq!(
+        drained(&first_queue),
+        vec![FromAgent::Push {
+            body: unchecked.clone()
+        }],
+        "the first wake broadcasts the report"
+    );
+    agent.wake(AgentEvent::AgentCliUpdatesChanged);
+    assert!(
+        drained(&first_queue).is_empty(),
+        "a wake that changed nothing sends nothing"
+    );
+
+    let late = ConnectionId(8);
+    let (late_conn, late_queue) = Connection::for_test(late);
+    agent.connections.push(late_conn);
+    agent.wake(AgentEvent::ShellSaid {
+        connection: late,
+        id: 1,
+        body: Box::new(Request::Hello {
+            profile: ProfileId::new().to_storage(),
+            workspace: WorkspaceId::new().to_storage(),
+            profile_name: "Personal".into(),
+            workspace_name: "Notes".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        }),
+        read_at: std::time::Instant::now(),
+    });
+    let late_got = drained(&late_queue);
+    assert_eq!(
+        late_got.first(),
+        Some(&FromAgent::Response {
+            id: 1,
+            body: Response::Ok,
+        })
+    );
+    assert!(
+        late_got.contains(&FromAgent::Push { body: unchecked }),
+        "a late Hello is told the report: {late_got:?}"
+    );
+}
+
+/// A card's choice is refused with a stable code when there is nothing behind
+/// it — no check yet, or no controller at all — never silently dropped.
+#[test]
+fn an_agent_cli_choice_with_nothing_behind_it_is_refused_with_a_code() {
+    for attach in [false, true] {
+        let mut agent = agent();
+        if attach {
+            let waker = crate::event::Waker::new(|_| {});
+            agent.attach_cli_updates(koru_cli_updates::Controller::detached(), &waker, false);
+        }
+        let shell = ConnectionId(3);
+        let (conn, queue) = Connection::for_test(shell);
+        agent.connections.push(conn);
+        agent.wake(AgentEvent::ShellSaid {
+            connection: shell,
+            id: 5,
+            body: Box::new(Request::AgentCliChoice {
+                choice: koru_agent_wire::AgentCliChoice::Update { id: "codex".into() },
+            }),
+            read_at: std::time::Instant::now(),
+        });
+        match drained(&queue).first() {
+            Some(FromAgent::Response {
+                id: 5,
+                body: Response::Failed { code, .. },
+            }) => assert_eq!(code, "no_such_cli", "attach={attach}"),
+            other => panic!("attach={attach}: {other:?}"),
+        }
+    }
+}

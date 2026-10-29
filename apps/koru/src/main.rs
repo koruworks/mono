@@ -48,6 +48,7 @@ mod run_view;
 mod schedule_index;
 mod schedule_words;
 mod search;
+mod session_offer;
 mod session_tab;
 mod settings_view;
 mod socials_view;
@@ -256,7 +257,11 @@ impl Host for Manager {
     /// A report arrives on the link's reader thread; a window that only found
     /// out on the next keystroke would sit on a finished download.
     fn take_update_redraw(&self) -> bool {
-        self.agent.update_feed().take_dirty()
+        // Both taken, never short-circuited: a report left un-taken would be
+        // noticed on the next keystroke rather than now.
+        let update = self.agent.update_feed().take_dirty();
+        let clis = self.agent.agent_cli_feed().take_dirty();
+        update || clis
     }
 
     /// A window refused [`koru_workspace_host::AgentAsk::CloseForUpdate`] — somebody

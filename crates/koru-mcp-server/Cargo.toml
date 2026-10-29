@@ -30,6 +30,7 @@ koru-workspace = { path = "../koru-workspace" }
 # It inspects without laying out, so a read stays cheap; no renderer is linked.
 koru-diagram = { path = "../koru-diagram" }
 base64 = "0.22"
+image = "0.25"
 # Recognising the one emoji a callout's `icon` names.
 emojis.workspace = true
 

@@ -390,6 +390,53 @@ impl SessionClient {
                 delegation: None,
                 origin: Default::default(),
                 selection: None,
+                resume: false,
+                working_directory,
+                size,
+            },
+        })? {
+            Response::Created { session } => Ok(session),
+            _ => Err(ClientError::UnexpectedResponse),
+        }
+    }
+
+    /// Whether this connection negotiated `launch-resume`. A resume is never
+    /// sent to a host without it: the host would ignore the flag and start a
+    /// new conversation under a request that asked to continue.
+    pub fn supports_launch_resume(&self) -> bool {
+        self.host
+            .agreement
+            .capabilities
+            .supports(koru_session_protocol::capability::LAUNCH_RESUME)
+    }
+
+    /// Create a raw agent session that continues its most recent conversation
+    /// in `working_directory` (`launch-resume`). Refused locally, before
+    /// anything reaches the host, when the connection did not negotiate it.
+    pub fn create_profile_resumed(
+        &self,
+        idempotency_key: IdempotencyKey,
+        profile: SessionProfileKey,
+        project_id: Option<ProjectId>,
+        working_directory: PathBuf,
+        size: GridSize,
+    ) -> Result<SessionSummary, ClientError> {
+        if !self.supports_launch_resume() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        match self.request(Request::CreateProfileSession {
+            create: CreateProfileSession {
+                idempotency_key,
+                profile,
+                parent_session_id: None,
+                mode: SessionMode::RawPty,
+                project_id,
+                delegation: None,
+                origin: Default::default(),
+                selection: None,
+                resume: true,
                 working_directory,
                 size,
             },
@@ -835,6 +882,7 @@ impl SessionClient {
                 delegation: None,
                 origin,
                 selection,
+                resume: false,
                 working_directory,
                 size,
             },
@@ -912,6 +960,7 @@ impl SessionClient {
                 delegation: Some(delegation),
                 origin: Default::default(),
                 selection: None,
+                resume: false,
                 working_directory,
                 size,
             },
@@ -950,6 +999,7 @@ impl SessionClient {
                 delegation: Some(delegation),
                 origin: Default::default(),
                 selection: None,
+                resume: false,
                 working_directory,
                 size,
             },

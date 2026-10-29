@@ -303,6 +303,10 @@ pub enum AgentEvent {
     /// snapshot copied into an event would be one that had already moved on by
     /// the time the loop read it. This is a nudge, not a report.
     UpdateChanged,
+    /// The coding-agent CLI worker moved — a check finished, an updater
+    /// printed a line, a run ended. The same nudge as [`Self::UpdateChanged`],
+    /// for the controller in `koru-cli-updates`.
+    AgentCliUpdatesChanged,
     /// Somebody answered an update offer from a dialog or the tray rather than
     /// over a socket.
     ///
@@ -507,6 +511,7 @@ impl AgentEvent {
             Self::ShellSaid { .. } => "ShellSaid",
             Self::ShellGone { .. } => "ShellGone",
             Self::UpdateChanged => "UpdateChanged",
+            Self::AgentCliUpdatesChanged => "AgentCliUpdatesChanged",
             Self::UpdateChoiceMade { .. } => "UpdateChoiceMade",
             Self::UpdateOfferHandled => "UpdateOfferHandled",
             Self::SessionShutdownPrepared { .. } => "SessionShutdownPrepared",

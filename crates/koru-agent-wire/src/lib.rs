@@ -219,7 +219,10 @@ use serde::{Deserialize, Serialize};
 /// window can be brought back from. A window used to assume it from the
 /// platform it was built for, which was wrong on Linux (where the icon now
 /// exists, when a host does) and wherever the icon failed to appear.
-pub const PROTOCOL_VERSION: u32 = 43;
+/// 44 adds the coding-agent CLI update conversation — [`Push::AgentClis`]
+/// and [`Request::AgentCliChoice`]: which of the installed agent CLIs are
+/// behind their own channel, and the card buttons that run their updaters.
+pub const PROTOCOL_VERSION: u32 = 44;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -530,6 +533,13 @@ pub enum Request {
     /// shell and arrive as this.
     UpdateChoice {
         choice: UpdateChoice,
+    },
+    /// The person answered a card about a coding-agent CLI. See
+    /// [`AgentCliChoice`]. Drawn by a shell, acted on by the agent, for the
+    /// reason [`Self::UpdateChoice`] gives: the agent is the one process that
+    /// runs the updater once for the machine rather than once per window.
+    AgentCliChoice {
+        choice: AgentCliChoice,
     },
     /// What is this agent, and what is it holding? Answered with
     /// [`Response::Status`].
@@ -1090,6 +1100,13 @@ pub enum Push {
     /// two-byte message, cost as much to move as the release notes.
     Update {
         report: Box<UpdateReport>,
+    },
+    /// Everything the agent knows about the coding-agent CLIs installed on
+    /// this machine — which are behind their channel, which are being updated,
+    /// which just were. Whole on every change and re-pushed on every `Hello`,
+    /// for the reasons [`Self::Update`] gives. See [`AgentCliReport`].
+    AgentClis {
+        report: Box<AgentCliReport>,
     },
     /// **An install finished, and this is the build it produced.** Show the
     /// person what changed.
@@ -2040,6 +2057,82 @@ pub enum UpdateChoice {
     /// they are ready — which is what `Handoff::refused` was always documented
     /// to do and, until now, had no caller to do it.
     CloseRefused,
+}
+
+/// Where one coding-agent CLI stands against its own release channel.
+///
+/// **Not Koru's update stages.** A CLI's update is the CLI's own command run
+/// once, with no download/install split and no restart of Koru, so the
+/// conversation is shorter: an offer, a run, and how the run ended.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCliStage {
+    /// Installed and current, or the channel could not be read, or the person
+    /// closed the card about this very version. Nothing to draw.
+    UpToDate,
+    /// The channel has a newer release than the one installed.
+    Available,
+    /// The CLI's updater is running.
+    Updating,
+    /// The updater finished and the CLI now reports [`AgentCliRow::installed`].
+    Updated,
+    /// The updater exited non-zero, timed out, or left the version unchanged.
+    Failed,
+}
+
+/// One installed CLI, as the agent's last check and last run found it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCliRow {
+    /// The program name — `claude`, `codex`, `grok` — stable, and what a
+    /// choice names.
+    pub id: String,
+    /// The brand name a card shows: `Codex`, `GitHub Copilot`. Identical in
+    /// every language, so it travels rather than being looked up.
+    pub name: String,
+    /// What `--version` printed, or empty when it printed no version.
+    pub installed: String,
+    /// What the channel offers, or empty when it could not be read.
+    pub latest: String,
+    pub stage: AgentCliStage,
+    /// The updater's most recent line while [`AgentCliStage::Updating`], and
+    /// its last line after [`AgentCliStage::Failed`] — the tool's own words,
+    /// never a sentence the agent composed. `None` otherwise.
+    pub message: Option<String>,
+    /// Developer text for a log: a check error, or the failed run's output
+    /// tail. Never for the card.
+    pub detail: Option<String>,
+}
+
+/// The agent's whole picture of the CLIs, pushed on every change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AgentCliReport {
+    /// Whether a check has completed since the agent started. `false` with no
+    /// rows means *not yet*, which a shell draws as nothing; `true` with no
+    /// rows means none of the known CLIs is installed.
+    pub checked: bool,
+    /// One row per installed, known CLI, in the agent's catalogue order.
+    pub clis: Vec<AgentCliRow>,
+}
+
+/// What the person pressed on a CLI's card.
+///
+/// Answered [`Response::Ok`], or [`Response::Failed`] with one of two stable
+/// codes: `no_such_cli` when the id is not one the last check found
+/// installed, and `wrong_stage` when the card is not at a step this answers —
+/// an update is already running, or there is no offer to dismiss. `Ok` means
+/// the agent took the choice; what happened arrives as the next
+/// [`Push::AgentClis`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentCliChoice {
+    /// Run this CLI's updater. From [`AgentCliStage::Available`] or, as a
+    /// retry, [`AgentCliStage::Failed`].
+    Update { id: String },
+    /// Close the card. An offer is remembered as declined for the version it
+    /// named; a finished or failed run is simply put away.
+    Dismiss { id: String },
+    /// Check every CLI again now, whatever the daily cadence says.
+    CheckNow,
 }
 
 #[cfg(test)]

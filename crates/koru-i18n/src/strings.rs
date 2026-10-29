@@ -2489,6 +2489,32 @@ pub enum Key {
     /// the confirmation's sentence (the CTO's note).
     ChatsDeleteMany,
     ChatsDeleteManyBody,
+    /// The coding-agent CLI cards: "{} update available", with the CLI's
+    /// brand name.
+    AgentCliUpdateAvailable,
+    /// "v{} → v{}": installed, then the channel's latest.
+    AgentCliVersions,
+    /// "v{}": one version.
+    AgentCliVersion,
+    AgentCliUpdate,
+    /// "Updating {}".
+    AgentCliUpdating,
+    /// The card's second line before the updater has printed anything.
+    AgentCliStarting,
+    /// "{} updated".
+    AgentCliUpdated,
+    /// "{} update failed".
+    AgentCliUpdateFailed,
+    AgentCliDismiss,
+    AgentMcpInstalled,
+    AgentMcpFailed,
+    AgentMcpRemoved,
+    AgentMcpRemoveFailed,
+    TerminalRecoveredTitle,
+    TerminalRecoveredFolder,
+    TerminalRecoveredResumeHint,
+    TerminalRecoverResume,
+    TerminalRecoverStartNew,
 
     // ------------------------------------------ the document's context menu
     // The two rows a code block's menu shares with every other block. The
@@ -2540,7 +2566,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1721] = [
+    pub const ALL: [Key; 1739] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4240,6 +4266,24 @@ impl Key {
         Key::Download,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
+        Key::AgentCliUpdateAvailable,
+        Key::AgentCliVersions,
+        Key::AgentCliVersion,
+        Key::AgentCliUpdate,
+        Key::AgentCliUpdating,
+        Key::AgentCliStarting,
+        Key::AgentCliUpdated,
+        Key::AgentCliUpdateFailed,
+        Key::AgentCliDismiss,
+        Key::AgentMcpInstalled,
+        Key::AgentMcpFailed,
+        Key::AgentMcpRemoved,
+        Key::AgentMcpRemoveFailed,
+        Key::TerminalRecoveredTitle,
+        Key::TerminalRecoveredFolder,
+        Key::TerminalRecoveredResumeHint,
+        Key::TerminalRecoverResume,
+        Key::TerminalRecoverStartNew,
         Key::MenuCopy,
         Key::MenuDelete,
         Key::MenuSaveAs,
@@ -12752,6 +12796,24 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         zh_hans: "{} 个聊天及其消息将被删除。如果有本地智能体在其中任一聊天中回答，Koru 会先停止该智能体。",
         ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
     },
+    Row { key: Key::AgentCliUpdateAvailable, en: "{} update available", es: "Actualización de {} disponible", pt_br: "Atualização do {} disponível", de: "Update für {} verfügbar", fr: "Mise à jour de {} disponible", ar: "يتوفر تحديث لـ {}", zh_hans: "{} 有可用更新", ja: "{} のアップデートがあります" },
+    Row { key: Key::AgentCliVersions, en: "v{} → v{}", es: "v{} → v{}", pt_br: "v{} → v{}", de: "v{} → v{}", fr: "v{} → v{}", ar: "v{} → v{}", zh_hans: "v{} → v{}", ja: "v{} → v{}" },
+    Row { key: Key::AgentCliVersion, en: "v{}", es: "v{}", pt_br: "v{}", de: "v{}", fr: "v{}", ar: "v{}", zh_hans: "v{}", ja: "v{}" },
+    Row { key: Key::AgentCliUpdate, en: "Update", es: "Actualizar", pt_br: "Atualizar", de: "Aktualisieren", fr: "Mettre à jour", ar: "تحديث", zh_hans: "更新", ja: "更新" },
+    Row { key: Key::AgentCliUpdating, en: "Updating {}", es: "Actualizando {}", pt_br: "Atualizando {}", de: "{} wird aktualisiert", fr: "Mise à jour de {}", ar: "جارٍ تحديث {}", zh_hans: "正在更新 {}", ja: "{} を更新中" },
+    Row { key: Key::AgentCliStarting, en: "Starting…", es: "Iniciando…", pt_br: "Iniciando…", de: "Wird gestartet…", fr: "Démarrage…", ar: "جارٍ البدء…", zh_hans: "正在启动…", ja: "開始しています…" },
+    Row { key: Key::AgentCliUpdated, en: "{} updated", es: "{} actualizado", pt_br: "{} atualizado", de: "{} aktualisiert", fr: "{} mis à jour", ar: "تم تحديث {}", zh_hans: "{} 已更新", ja: "{} を更新しました" },
+    Row { key: Key::AgentCliUpdateFailed, en: "{} update failed", es: "Error al actualizar {}", pt_br: "Falha ao atualizar {}", de: "Update für {} fehlgeschlagen", fr: "Échec de la mise à jour de {}", ar: "فشل تحديث {}", zh_hans: "{} 更新失败", ja: "{} の更新に失敗しました" },
+    Row { key: Key::AgentCliDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
+    Row { key: Key::AgentMcpInstalled, en: "Koru's tools are added to {}. Start a new session to use them.", es: "Las herramientas de Koru se añadieron a {}. Inicia una sesión nueva para usarlas.", pt_br: "As ferramentas do Koru foram adicionadas ao {}. Inicie uma nova sessão para usá-las.", de: "Die Koru-Werkzeuge wurden zu {} hinzugefügt. Starte eine neue Sitzung, um sie zu nutzen.", fr: "Les outils de Koru sont ajoutés à {}. Démarrez une nouvelle session pour les utiliser.", ar: "تمت إضافة أدوات Koru إلى {}. ابدأ جلسة جديدة لاستخدامها.", zh_hans: "已将 Koru 的工具添加到 {}。请开启新会话来使用。", ja: "Koru のツールを {} に追加しました。新しいセッションを開始すると使えます。" },
+    Row { key: Key::AgentMcpFailed, en: "Couldn't add Koru's tools to {}: {}", es: "No se pudieron añadir las herramientas de Koru a {}: {}", pt_br: "Não foi possível adicionar as ferramentas do Koru ao {}: {}", de: "Die Koru-Werkzeuge konnten nicht zu {} hinzugefügt werden: {}", fr: "Impossible d'ajouter les outils de Koru à {} : {}", ar: "تعذّرت إضافة أدوات Koru إلى {}: {}", zh_hans: "无法将 Koru 的工具添加到 {}：{}", ja: "Koru のツールを {} に追加できませんでした: {}" },
+    Row { key: Key::AgentMcpRemoved, en: "Koru's tools are removed from {}. Start a new session to apply it.", es: "Las herramientas de Koru se quitaron de {}. Inicia una sesión nueva para aplicarlo.", pt_br: "As ferramentas do Koru foram removidas do {}. Inicie uma nova sessão para aplicar.", de: "Die Koru-Werkzeuge wurden aus {} entfernt. Starte eine neue Sitzung, um es zu übernehmen.", fr: "Les outils de Koru sont retirés de {}. Démarrez une nouvelle session pour l'appliquer.", ar: "تمت إزالة أدوات Koru من {}. ابدأ جلسة جديدة لتطبيق ذلك.", zh_hans: "已从 {} 移除 Koru 的工具。请开启新会话以生效。", ja: "Koru のツールを {} から削除しました。新しいセッションを開始すると反映されます。" },
+    Row { key: Key::AgentMcpRemoveFailed, en: "Couldn't remove Koru's tools from {}: {}", es: "No se pudieron quitar las herramientas de Koru de {}: {}", pt_br: "Não foi possível remover as ferramentas do Koru do {}: {}", de: "Die Koru-Werkzeuge konnten nicht aus {} entfernt werden: {}", fr: "Impossible de retirer les outils de Koru de {} : {}", ar: "تعذّرت إزالة أدوات Koru من {}: {}", zh_hans: "无法从 {} 移除 Koru 的工具：{}", ja: "Koru のツールを {} から削除できませんでした: {}" },
+    Row { key: Key::TerminalRecoveredTitle, en: "{} stopped when Koru closed", es: "{} se detuvo al cerrar Koru", pt_br: "{} parou quando o Koru foi fechado", de: "{} wurde beendet, als Koru geschlossen wurde", fr: "{} s'est arrêté à la fermeture de Koru", ar: "توقّف {} عند إغلاق Koru", zh_hans: "{} 在 Koru 关闭时已停止", ja: "{} は Koru を閉じたときに停止しました" },
+    Row { key: Key::TerminalRecoveredFolder, en: "Folder: {}", es: "Carpeta: {}", pt_br: "Pasta: {}", de: "Ordner: {}", fr: "Dossier : {}", ar: "المجلد: {}", zh_hans: "文件夹：{}", ja: "フォルダー: {}" },
+    Row { key: Key::TerminalRecoveredResumeHint, en: "Resume continues the most recent conversation in this folder.", es: "Reanudar continúa la conversación más reciente de esta carpeta.", pt_br: "Retomar continua a conversa mais recente nesta pasta.", de: "Fortsetzen setzt die letzte Unterhaltung in diesem Ordner fort.", fr: "Reprendre poursuit la conversation la plus récente de ce dossier.", ar: "تتابع «استئناف» أحدث محادثة في هذا المجلد.", zh_hans: "“继续”会接上此文件夹中最近的一次对话。", ja: "「再開」は、このフォルダーの直近の会話を続けます。" },
+    Row { key: Key::TerminalRecoverResume, en: "Resume", es: "Reanudar", pt_br: "Retomar", de: "Fortsetzen", fr: "Reprendre", ar: "استئناف", zh_hans: "继续", ja: "再開" },
+    Row { key: Key::TerminalRecoverStartNew, en: "Start new", es: "Empezar de nuevo", pt_br: "Começar novo", de: "Neu starten", fr: "Nouvelle session", ar: "بدء جديد", zh_hans: "新建会话", ja: "新しく始める" },
     // ------------------------------------------ the document's context menu
     Row { key: Key::MenuCopy, en: "Copy", es: "Copiar", pt_br: "Copiar", de: "Kopieren", fr: "Copier", ar: "نسخ", zh_hans: "复制", ja: "コピー" },
     Row { key: Key::MenuDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },

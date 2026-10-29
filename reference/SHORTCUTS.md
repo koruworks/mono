@@ -11,7 +11,7 @@ Chords are shown as this platform writes them.
 | | |
 | --- | --- |
 | `Ctrl+N` | New window |
-| `Ctrl+Shift+T` | Keep window on top |
+| `Ctrl+Alt+A` | Keep window on top |
 | `Ctrl+=` | Zoom in |
 | `Ctrl+-` | Zoom out |
 | `Ctrl+0` | Actual size |
@@ -53,6 +53,7 @@ Chords are shown as this platform writes them.
 | `Alt+8` | Socials |
 | `Ctrl+J` | Context |
 | `Ctrl+Shift+J` | Koru AI pane |
+| `Ctrl+Shift+T` | Reopen closed tab |
 | `Ctrl+,` | Settings |
 | `Ctrl+Shift+O` | Manage workspaces |
 | `Ctrl+Alt+W` | Switch workspace |

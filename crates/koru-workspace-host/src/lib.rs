@@ -182,7 +182,8 @@ pub use clipboard_markdown::parse as parse_markdown;
 /// a drawn diagram.
 pub use diagram::{CopyDiagram, SaveDiagram};
 pub use settings::{
-    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PopoutClose, Settings, TabRef, TasksTabRef,
+    DocViewPrefs, MAX_RECENTS, PinnedTabRef, PopoutClose, SessionRecovery, Settings, TabRef,
+    TasksTabRef, TerminalLook,
 };
 
 /// A decoded image ready to become a block, produced by the shell from the

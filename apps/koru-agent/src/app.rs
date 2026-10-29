@@ -756,6 +756,13 @@ pub struct Agent {
     /// sends one report to all of them; a window that connects later is caught
     /// by `push_update_to`, which is a different path and always sends.
     last_broadcast_report: Option<koru_agent_wire::UpdateReport>,
+    /// The coding-agent CLIs on this machine against their own channels, and
+    /// their updaters when a card asks. `None` under test and under a rooted
+    /// agent, for the reasons `updates` is — see [`Self::set_event_waker`].
+    cli_updates: Option<koru_cli_updates::Controller>,
+    /// The last CLI report every window was told, for the reason
+    /// [`Self::last_broadcast_report`] exists: a worker's wake is not a change.
+    last_broadcast_cli_report: Option<koru_agent_wire::AgentCliReport>,
     /// Physical keys the loop must swallow until they are released — see
     /// [`Self::quarantine_the_chord`]. Drained by the loop, not by us.
     quarantine: Vec<winit::keyboard::PhysicalKey>,
@@ -1055,6 +1062,8 @@ impl Agent {
             update_funnel_available: None,
             update_funnel_downloaded: None,
             last_broadcast_report: None,
+            cli_updates: None,
+            last_broadcast_cli_report: None,
             quarantine: Vec::new(),
             ignore_blur_until: None,
             exit: false,
@@ -1874,6 +1883,7 @@ impl Agent {
         // the one that supervises replacement of the installed gateway image.
         if self.paths.owns_the_machine() {
             self.start_updates(&waker);
+            self.start_cli_updates(&waker);
         } else if let Some(controller) = self.updates.clone() {
             // The only rooted controller is installed explicitly by
             // `--rehearse-update`. It has a local package source and must never
@@ -2810,6 +2820,77 @@ impl Agent {
     /// afterwards would otherwise never learn the chord. `Shortcut::Unknown`
     /// means the thread has not answered yet — push nothing, because the
     /// registration broadcast below will carry it when it does.
+    /// Start checking the coding-agent CLIs, behind the gates updating has:
+    /// never under test (a check reaches the npm registry and spawns every
+    /// installed CLI), only when agents are a feature of this build, and only
+    /// from the machine-owning Agent — the caller checks the last one.
+    fn start_cli_updates(&mut self, waker: &crate::event::Waker) {
+        if cfg!(test) || !koru_features::agents() {
+            return;
+        }
+        let state_file = self.paths.agent_dir().join(crate::cli_updates::STATE_FILE);
+        let user_agent = format!("koru-agent/{}", koru_update::build_info().version);
+        let controller = koru_cli_updates::Controller::new(state_file, user_agent);
+        self.attach_cli_updates(controller, waker, true);
+    }
+
+    /// `pub(crate)` so a test can hand the agent a detached controller and
+    /// drive the push path without a check ever running.
+    pub(crate) fn attach_cli_updates(
+        &mut self,
+        controller: koru_cli_updates::Controller,
+        waker: &crate::event::Waker,
+        automatic: bool,
+    ) {
+        let notify = waker.clone();
+        controller
+            .set_notifier(move || notify.wake(crate::event::AgentEvent::AgentCliUpdatesChanged));
+        if automatic {
+            controller.start_automatic();
+        }
+        self.cli_updates = Some(controller);
+    }
+
+    fn agent_cli_report(&self) -> Option<koru_agent_wire::AgentCliReport> {
+        self.cli_updates
+            .as_ref()
+            .map(|controller| crate::cli_updates::report_for(&controller.report()))
+    }
+
+    /// Tell every window what the agent now knows about the CLIs — only when
+    /// it says something new, for the reason `broadcast_update` gives.
+    fn broadcast_agent_clis(&mut self) {
+        let Some(report) = self.agent_cli_report() else {
+            return;
+        };
+        if self.last_broadcast_cli_report.as_ref() == Some(&report) {
+            return;
+        }
+        let ids: Vec<ConnectionId> = self.connections.iter().map(|c| c.id()).collect();
+        for id in ids {
+            self.push(
+                id,
+                Push::AgentClis {
+                    report: Box::new(report.clone()),
+                },
+            );
+        }
+        self.last_broadcast_cli_report = Some(report);
+    }
+
+    /// Tell one window, which is what a window that has just arrived needs.
+    fn push_agent_clis_to(&mut self, connection: ConnectionId) {
+        let Some(report) = self.agent_cli_report() else {
+            return;
+        };
+        self.push(
+            connection,
+            Push::AgentClis {
+                report: Box::new(report),
+            },
+        );
+    }
+
     fn push_shortcut_to(&mut self, connection: ConnectionId) {
         match &self.shortcut {
             crate::tray::Shortcut::Chord(label) => {
@@ -3781,6 +3862,28 @@ impl Agent {
                     new,
                 );
             }
+            Request::AgentCliChoice { choice } => {
+                let outcome = match &self.cli_updates {
+                    Some(controller) => crate::cli_updates::apply(controller, &choice),
+                    // A rooted or test agent runs no CLI check; a card it never
+                    // sent cannot be answered through it.
+                    None => Err((
+                        "no_such_cli".to_owned(),
+                        "this agent does not check agent CLIs".to_owned(),
+                    )),
+                };
+                match outcome {
+                    Ok(()) => {
+                        self.reply(connection, id, Response::Ok);
+                        // `Updating` is state the controller set synchronously;
+                        // say so now rather than at the worker's first line.
+                        self.broadcast_agent_clis();
+                    }
+                    Err((code, message)) => {
+                        self.reply(connection, id, Response::Failed { code, message });
+                    }
+                }
+            }
             Request::UpdateChoice { choice } => {
                 if let koru_agent_wire::UpdateChoice::Install { session_generation } = choice {
                     if let Err((code, message)) = self.prepare_sessions_for_install(
@@ -3931,6 +4034,9 @@ impl Agent {
                 // answered — a window that connected after registration still
                 // learns it, exactly as it learns the update report.
                 self.push_shortcut_to(connection);
+                // And which agent CLIs are behind, for the reason the update
+                // report is re-sent: the check ran once, possibly hours ago.
+                self.push_agent_clis_to(connection);
                 self.push_reminder_diagnostics_to(connection);
                 // And whether there is an icon to hide behind — the window's
                 // close button keeps it in the background only if there is.
@@ -4610,6 +4716,18 @@ impl Agent {
             // A version is a fact about the build, not somebody's copy, so this
             // one is safe to name in full.
             Push::Updated { version } => format!("updated version={version}"),
+            // Ids and stages, never the updater's output: a `message` is a
+            // third party's stderr and can name paths.
+            Push::AgentClis { report } => format!(
+                "agent_clis checked={} {}",
+                report.checked,
+                report
+                    .clis
+                    .iter()
+                    .map(|row| format!("{}={:?}", row.id, row.stage))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Push::ShowFeedback => "show-feedback".to_string(),
             Push::ShowSupport => "show-support".to_string(),
             Push::Pairing { view } => format!("pairing state={:?}", view.state),
@@ -7364,6 +7482,15 @@ impl WindowApp for Agent {
                     self.broadcast_update();
                 }
                 self.advance_handoff();
+                false
+            }
+            // The CLI worker moved: drain it and tell every window if the
+            // report changed. The same three lines as `UpdateChanged`.
+            AgentEvent::AgentCliUpdatesChanged => {
+                if let Some(controller) = &self.cli_updates {
+                    controller.tick();
+                }
+                self.broadcast_agent_clis();
                 false
             }
             AgentEvent::UpdateChoiceMade { choice } => {

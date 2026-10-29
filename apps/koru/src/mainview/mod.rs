@@ -60,17 +60,21 @@ mod harness;
 /// inside this file (§7.10); this file gets four small `impl View` methods
 /// that call into it.
 pub(crate) mod accessibility;
+mod agent_cli_updates;
+mod agent_mcp;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
 mod chrome_debug;
 mod chrome_focus;
+mod closed_tabs;
 pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
 mod delegate;
 pub(crate) mod dictation;
 pub(crate) mod draw;
 mod error_dialog;
+mod font_picker;
 mod history;
 mod icon_action;
 mod import_dialog;
@@ -98,11 +102,13 @@ mod runs;
 mod schedules;
 mod session;
 mod session_backend;
+mod session_lanes;
 mod snapshot_prompt;
 pub mod tab;
 pub mod tab_rules;
 pub(crate) mod taskcounts;
 pub(crate) mod tasks;
+mod terminal_look;
 pub(crate) mod trash;
 mod update_ui;
 mod welcome_progress;
@@ -844,11 +850,16 @@ pub struct MainView {
     /// with a path to reveal. A plain notice (including Move to… undo) carries
     /// [`ToastPayload::None`].
     toast: Option<(koru_ui::Toast, ToastPayload)>,
+    /// The registration of Koru's bridge in an agent's configuration that is
+    /// running (`agent_mcp.rs`), and what it will answer.
+    agent_mcp: agent_mcp::Install,
     /// Reverse of a *Move to…* while its toast is up. **Every root** of a
     /// multi-move, so Undo takes the whole gesture back (not only the first).
     move_undo: Option<Vec<MoveUndo>>,
     /// The centred **Move to…** picker, when open.
     move_to: Option<move_to::MoveToSurface>,
+    /// The terminal font picker, and whose font it is choosing.
+    font_picker: Option<font_picker::Open>,
     /// Who this window says it is, written into documents it bins so the *other*
     /// window can say who did it.
     ///
@@ -1165,6 +1176,11 @@ pub struct MainView {
     /// help popover. `None` until the read lands or when no notes shipped.
     help_headlines: Option<Vec<String>>,
     help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
+    /// The agent's last word on the coding-agent CLIs, and the way to answer
+    /// a card. Absent in every test, like `updates`.
+    agent_clis: crate::agent::AgentCliFeed,
+    /// The cards' own state: hover, a press in flight, the progress bars.
+    agent_cli_cards: agent_cli_updates::Cards,
     /// Shared control-plane connection used by the device-linking modal.
     agent: crate::agent::AgentLink,
     reminder_preferences: crate::reminder_settings::Controller,
@@ -1295,6 +1311,15 @@ pub struct MainView {
     /// use — a window that never opens one pays nothing. See
     /// `mainview/session_backend.rs`.
     session_backend: Option<session_backend::SessionBackend>,
+    /// A connection of its own for every other terminal on screen
+    /// (`mainview/session_lanes.rs`).
+    session_lanes: Vec<session_lanes::SessionLane>,
+    /// The tabs closed by hand, newest last (`mainview/closed_tabs.rs`).
+    closed_tabs: Vec<closed_tabs::ClosedTab>,
+    /// Test builds cannot start a connection; the lanes a test asks for hand
+    /// their command channels here instead.
+    #[cfg(test)]
+    lane_commands: Vec<std::sync::mpsc::Receiver<koru_session_backend::BackendCommand>>,
     /// The session tab whose controller lease is in flight; the host's
     /// `Attached` answer names a session onto it. The tab, not "the active
     /// one" — the person may have switched away before the answer lands.
@@ -1796,8 +1821,10 @@ impl MainView {
             trashed_here: std::collections::HashSet::new(),
             confirm: None,
             toast: None,
+            agent_mcp: agent_mcp::Install::default(),
             move_undo: None,
             move_to: None,
+            font_picker: None,
             actor: None,
             welcome_owner: None,
             welcome_workspace_hint: None,
@@ -1866,6 +1893,8 @@ impl MainView {
             tab_pending: None,
             clear_doc_view_prefs: std::cell::Cell::new(false),
             updates,
+            agent_clis: agent.agent_cli_feed(),
+            agent_cli_cards: agent_cli_updates::Cards::default(),
             agent,
             reminder_preferences: crate::reminder_settings::Controller::default(),
             update_was_offered: false,
@@ -1925,6 +1954,10 @@ impl MainView {
                 ),
             },
             session_backend: None,
+            session_lanes: Vec::new(),
+            closed_tabs: Vec::new(),
+            #[cfg(test)]
+            lane_commands: Vec::new(),
             session_attaching: None,
             session_attached: None,
             session_settled: None,
@@ -3113,6 +3146,25 @@ impl MainView {
         true
     }
 
+    /// The running session whose row in an open *Active* flyout is under the
+    /// pointer, if any.
+    pub(super) fn running_session_under(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<koru_session_protocol::SessionId> {
+        [self.nested.as_ref(), self.submenu.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|(_, menu)| {
+                let row = menu.item_at(self.viewport, x, y)?;
+                match menu.items().get(row)? {
+                    MenuAction::OpenRunningSession(session) => Some(*session),
+                    _ => None,
+                }
+            })
+    }
+
     /// A right-click on a session row, as the pane reported it: Koru Terminal's
     /// session menu (Q-E7 P8). The project names for the *Move to project ▸*
     /// flyout and the *Terminate* refusal are snapshotted first — the two rows
@@ -3748,6 +3800,7 @@ impl MainView {
         if self.socials_close_veto(|index| index == i) {
             return true;
         }
+        self.remember_closed_tab(i);
         if self.tabs().pinned_count() == 0 && self.tabs().len() <= 1 {
             if self.panes.iter_groups().count() > 1 {
                 // Take, not close: close floors at a welcome tab, and this pane
@@ -4039,6 +4092,17 @@ impl MainView {
                 let show_title = self.tabs().get(tab).is_some_and(|t| t.show_title);
                 match action {
                     MenuAction::PopOut => self.is_poppable(tab),
+                    MenuAction::InstallMcp | MenuAction::UninstallMcp => {
+                        self.agent_mcp_target(tab).is_some() && !self.agent_mcp_running()
+                    }
+                    MenuAction::SessionTerminate => self
+                        .session_of_tab(tab)
+                        .is_some_and(|session| self.session_terminate_refusal(session).is_none()),
+                    MenuAction::TerminalTheme
+                    | MenuAction::TerminalFont
+                    | MenuAction::TerminalThemeIs(_)
+                    | MenuAction::TerminalFontMore
+                    | MenuAction::TerminalFontIs(_) => self.session_profile_of_tab(tab).is_some(),
                     MenuAction::PinTab => {
                         in_range
                             && (document.is_some()
@@ -4387,6 +4451,16 @@ impl MainView {
                     self.social_post_from_document(document)
                 }
                 MenuAction::PopOut => self.pop_out(tab),
+                MenuAction::InstallMcp => self.install_agent_mcp(tab),
+                MenuAction::UninstallMcp => self.remove_agent_mcp(tab),
+                MenuAction::TerminalFontMore => self.open_font_picker(tab),
+                MenuAction::SessionTerminate => self
+                    .session_of_tab(tab)
+                    .is_some_and(|session| self.begin_terminate_session(session)),
+                MenuAction::TerminalThemeIs(token) => {
+                    self.set_terminal_look(tab, Some(token), None)
+                }
+                MenuAction::TerminalFontIs(token) => self.set_terminal_look(tab, None, Some(token)),
                 MenuAction::Close => {
                     if self.tabs().get(tab).is_some_and(|t| t.is_pinned()) {
                         self.close(tab)
@@ -7661,9 +7735,23 @@ impl MainView {
     /// a second O(rows) pass on the path AGENTS.md's responsiveness rules are
     /// about ([ADR-343-overlaycatchup](../../../docs/decisions/README.md)).
     fn catch_up_active(&mut self, ws: &WorkspaceDoc) {
-        let tab = self.tabs_mut().active_mut();
+        // **The active tab of every pane**, because every visible pane draws
+        // its active tab from the document as it now stands: a page beside the
+        // focused terminal is on screen, and an edit that arrives from the
+        // bridge or a peer has to reach it as much as one in the focused pane.
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            changed |= Self::catch_up_tab(group.tabs_mut().active_mut(), ws);
+        }
+        if changed {
+            self.explore_stale = true;
+        }
+    }
+
+    /// Settle one tab against the document; whether it had anything to take.
+    fn catch_up_tab(tab: &mut Tab, ws: &WorkspaceDoc) -> bool {
         if tab.draft.is_some() {
-            return;
+            return false;
         }
         if let TabView::Leaf(l) = &tab.view
             && let Some(root) = l.body().root
@@ -7673,7 +7761,7 @@ impl MainView {
                 "[koru:nav] catch-up skip root_in_ws=false rows={}",
                 l.body().rows.len(),
             );
-            return;
+            return false;
         }
         let rows_before = match &tab.view {
             TabView::Leaf(l) => l.body().rows.len(),
@@ -7684,7 +7772,7 @@ impl MainView {
             _ => false,
         };
         if !tab.view.catch_up(ws) {
-            return;
+            return false;
         }
         if let TabView::Leaf(l) = &tab.view {
             crate::mainview::nav_debug::nav_debug!(
@@ -7692,7 +7780,7 @@ impl MainView {
                 l.body().rows.len(),
             );
         }
-        self.explore_stale = true;
+        true
     }
 
     /// **The active tab asked to be shown on the Tasks page.**
@@ -8916,6 +9004,9 @@ impl MainView {
         if self.update_mouse_down(x, y) {
             return true;
         }
+        if self.agent_cli_mouse_down(x, y) {
+            return true;
+        }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             let out = dialog.mouse_down(&mut self.engine, self.viewport, x, y);
             self.settle_confirm_outcome(out);
@@ -9686,6 +9777,9 @@ impl View for MainView {
         {
             return true;
         }
+        if self.font_picker.is_some() {
+            return self.font_picker_key(key, text, mods);
+        }
         // **The two surfaces the wrapper claims**, taken from the same table
         // the inherent `key` walks below — see `mainview::routing`. They are
         // here rather than in the container's own chain because they float
@@ -9715,6 +9809,9 @@ impl View for MainView {
         // capture is live. A press that reaches the document's content is
         // reclassified a node click at the leaf dispatch below.
         self.observe_recording_click(x, y);
+        if self.font_picker.is_some() {
+            return self.font_picker_mouse_down(x, y);
+        }
         if self.move_to.is_some() {
             return self.move_to_mouse_down(x, y);
         }
@@ -9785,6 +9882,14 @@ impl View for MainView {
         {
             return true;
         }
+        // **A right-click on a running session in the + menu's *Active* list**
+        // is that session's own menu — Terminate among its rows, behind the
+        // same confirmation the Agents navigator asks.
+        if let Some(session) = self.running_session_under(x, y) {
+            self.submenu = None;
+            self.nested = None;
+            return self.open_session_menu(session, (x, y));
+        }
         // A context press outside the reminder editor dismisses it, then keeps
         // travelling so the object under the pointer can open its own menu.
         // Ordinary pointer dismissal consumes the press; doing that here was
@@ -9845,6 +9950,25 @@ impl View for MainView {
                 let pinnable = tab.is_some_and(|tab| tab.view.is_pinnable());
                 let pinned = tab.is_some_and(|tab| tab.is_pinned());
                 let show_title = tab.is_some_and(|tab| tab.show_title);
+                let mcp = self
+                    .agent_mcp_target(i)
+                    .map(|_| self.agent_mcp_registered(i));
+                let session_profile = self.session_profile_of_tab(i);
+                let terminal_look = session_profile.is_some();
+                if terminal_look {
+                    // The font picker lists every installed family; scanning
+                    // them takes a moment, so it starts as the menu opens.
+                    koru_draw::installed_fonts::warm();
+                }
+                context_menu::set_session_terminate_refusal(
+                    self.session_of_tab(i)
+                        .and_then(|session| self.session_terminate_refusal(session)),
+                );
+                if let Some(profile) = &session_profile {
+                    context_menu::set_terminal_look_snapshot(crate::terminal_prefs::agent_look(
+                        profile,
+                    ));
+                }
                 let mut m = ContextMenu::for_tab(
                     &mut self.engine,
                     i,
@@ -9852,6 +9976,8 @@ impl View for MainView {
                     pinnable,
                     pinned,
                     show_title,
+                    mcp,
+                    terminal_look,
                     (x, y),
                 );
                 // Open with the first item already highlighted, the way a native
@@ -9997,6 +10123,10 @@ impl View for MainView {
         }
         // Modal: own the pointer so chrome under the scrim does not light up or
         // change the cursor (I-beam, sidebar ColResize).
+        if self.font_picker.is_some() {
+            self.tooltip.set_hover(None, Instant::now());
+            return true;
+        }
         if self.move_to.is_some() {
             self.tooltip.set_hover(None, Instant::now());
             return true;
@@ -10037,6 +10167,9 @@ impl View for MainView {
             return true;
         }
         if self.recording_modal.is_some() {
+            return true;
+        }
+        if self.font_picker.is_some() {
             return true;
         }
         if self.move_to.is_some() {
@@ -10165,6 +10298,14 @@ impl View for MainView {
             self.reminder_shell.scroll_by(self.viewport, dy);
             return;
         }
+        if self.font_picker.is_some() {
+            let dy = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -y * 32.0,
+                MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+            };
+            self.font_picker_scroll(dy);
+            return;
+        }
         if let Some(surface) = self.move_to.as_mut() {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => -y * 32.0,
@@ -10206,7 +10347,7 @@ impl View for MainView {
         {
             return;
         }
-        if self.update_contains_pointer() {
+        if self.update_contains_pointer() || self.agent_cli_contains_pointer() {
             return;
         }
         if let Some(dialog) = self.import_dialog.as_mut() {
@@ -10373,7 +10514,7 @@ impl View for MainView {
         if let Some(modal) = &self.recording_modal {
             return modal.cursor_icon();
         }
-        if self.move_to.is_some() {
+        if self.font_picker.is_some() || self.move_to.is_some() {
             return CursorIcon::Default;
         }
         if let Some(search) = &self.search {
@@ -10395,6 +10536,9 @@ impl View for MainView {
         }
         if let Some((dialog, _)) = &self.confirm {
             return dialog.cursor();
+        }
+        if let Some(icon) = self.agent_cli_cursor() {
+            return icon;
         }
         if let Some(icon) = self.update_newer_cursor() {
             return icon;
@@ -10570,19 +10714,28 @@ impl View for MainView {
         // deleted rows the moment you switch to it, and its Loro subscription
         // queues without bound. But only the active one *acts on* them: see
         // `TabView::adopt_cheap`.
-        let active = self.tabs().active();
-        for (i, t) in self.tabs_mut().iter_mut().enumerate() {
-            // A draft drains its *own* document. Handing it the workspace here
-            // would apply the window's changes to a leaf that is not over the
-            // window's document at all.
-            if t.draft.is_none() {
-                t.view.adopt_cheap(ws);
-            }
-            if i != active {
-                t.invalidate_size();
+        //
+        // **Every pane's tabs, not only the focused pane's.** `tabs()` is the
+        // focused group, so with a document in one pane and a terminal focused
+        // in the next, an edit from the MCP bridge or a peer drained nothing
+        // for the document: its tracker filled up unread and the page showed
+        // the old rows until the document was switched away from and back.
+        for (_, group) in self.panes.iter_groups_mut() {
+            let active = group.tabs().active();
+            for (i, t) in group.tabs_mut().iter_mut().enumerate() {
+                // A draft drains its *own* document. Handing it the workspace
+                // here would apply the window's changes to a leaf that is not
+                // over the window's document at all.
+                if t.draft.is_none() {
+                    t.view.adopt_cheap(ws);
+                }
+                if i != active {
+                    t.invalidate_size();
+                }
             }
         }
-        // ...and the active one settles what it just noted, then lays out.
+        // ...and each pane's active tab settles what it just noted, then lays
+        // out.
         self.catch_up_active(ws);
         if let TabView::Leaf(l) = self.active_view() {
             l.reflow();
@@ -10688,6 +10841,11 @@ impl View for MainView {
         // Holding a message or a determinate bar still is not an animation; see
         // `koru_ui::toast`.
         if self.toast_animating(Instant::now()) {
+            return true;
+        }
+        // An agent CLI card with a moving bar, or one waiting out its
+        // auto-dismiss, needs frames nobody else is asking for.
+        if self.agent_cli_animating() || self.agent_mcp_running() {
             return true;
         }
         // **A deletion verb is in flight.** Its answer comes back on the run
@@ -10843,6 +11001,8 @@ impl View for MainView {
         }
         self.draw_frame(scene, workspace, images, root, caret_on, pointer);
         self.draw_update_banner(scene, root);
+        self.draw_agent_cli_cards(scene, root);
+        self.poll_agent_mcp();
         if self.search.is_some() {
             let bounds = self.search_bounds();
             draw_scene::fill(
@@ -10891,6 +11051,7 @@ impl View for MainView {
                 ),
             );
         }
+        self.draw_font_picker(scene, root);
         if self.move_to.is_some() {
             let bounds = self.move_to_bounds();
             draw_scene::fill(
@@ -13792,6 +13953,7 @@ impl MainView {
                 Chord::NewTab => self.new_tab(),
                 Chord::AddContent => self.open_new_tab_menu(),
                 Chord::CloseTab => self.close_requested(self.tabs().active()),
+                Chord::ReopenClosedTab => self.reopen_closed_tab(),
                 Chord::CloseAllTabs => self.close_all(),
                 Chord::Search => self.open_search(),
                 Chord::SelectTab(i) => self.select(i),
@@ -15587,6 +15749,9 @@ impl MainView {
             return self.update_newer_mouse_move(x, y);
         }
         if self.update_mouse_move(x, y) {
+            return true;
+        }
+        if self.agent_cli_mouse_move(x, y) {
             return true;
         }
         if let Some(dialog) = self.new_document.as_mut() {

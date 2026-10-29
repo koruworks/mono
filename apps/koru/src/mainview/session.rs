@@ -24,6 +24,7 @@ use crate::leaf::Leaf;
 
 impl MainView {
     pub(super) fn restore_session(&mut self, workspace: &Workspace, settings: &Settings) {
+        crate::terminal_prefs::load_agent_looks(&settings.terminal_looks);
         // **The whole workspace, not one document.** A tab is over a document
         // and a window has several of them, so rebuilding the strip needs each
         // one — the shell has already opened the remembered ones, and
@@ -140,7 +141,31 @@ impl MainView {
         }
     }
 
+    /// What a session tab keeps so it can offer a replacement when its session
+    /// is gone at the next start (ADR-474): the folder and project the host
+    /// reports for the live session, or — for a restored tab whose session has
+    /// not been confirmed, or is gone and now offered — what it was saved with,
+    /// so a second quit before a choice does not lose it.
+    pub(super) fn session_recovery(
+        &self,
+        view: &crate::session_tab::SessionView,
+    ) -> Option<koru_workspace_host::SessionRecovery> {
+        let live = view
+            .session
+            .and_then(|id| self.explore.agent_session(id))
+            .filter(|_| view.offer.is_none());
+        match live {
+            Some(summary) => Some(koru_workspace_host::SessionRecovery {
+                working_directory: summary.working_directory.clone(),
+                project: summary.project_id,
+                raw: matches!(summary.mode, koru_session_protocol::SessionMode::RawPty),
+            }),
+            None => view.recovery.clone(),
+        }
+    }
+
     pub(super) fn capture_session(&self, settings: &mut Settings) {
+        settings.terminal_looks = crate::terminal_prefs::agent_looks();
         // Per workspace, and **the width that was asked for** rather than
         // `regions.sidebar.w`: `solve` clamps against `CONTENT_MIN_W`, so
         // storing the clamped one would mean opening on a laptop permanently
@@ -247,6 +272,7 @@ impl MainView {
                     TabView::Session(s) => TabRef::Session {
                         session: s.session?,
                         profile: s.profile_key.clone()?,
+                        recovery: self.session_recovery(s),
                     },
                     // **A run view is not reopened.** It is a live reading of
                     // a run through the gateway, and a tab strip that brought
@@ -415,11 +441,15 @@ impl MainView {
                 //
                 // An **agent** session's tab is dropped when this build hides
                 // agents; the session itself is untouched (koru-features).
-                TabRef::Session { session, profile } => {
+                TabRef::Session {
+                    session,
+                    profile,
+                    recovery,
+                } => {
                     if !super::session_backend::session_profile_shown(profile) {
                         continue;
                     }
-                    self.restored_session_tab(*session, profile.clone())
+                    self.restored_session_tab(*session, profile.clone(), recovery.clone())
                 }
                 TabRef::Document {
                     id,
@@ -676,11 +706,15 @@ impl MainView {
             //
             // An **agent** session's tab is dropped when this build hides
             // agents; the session itself is untouched (koru-features).
-            TabRef::Session { session, profile } => {
+            TabRef::Session {
+                session,
+                profile,
+                recovery,
+            } => {
                 if !super::session_backend::session_profile_shown(profile) {
                     return None;
                 }
-                self.restored_session_tab(*session, profile.clone())
+                self.restored_session_tab(*session, profile.clone(), recovery.clone())
             }
             TabRef::Document {
                 id,
@@ -717,7 +751,7 @@ impl MainView {
     }
 
     fn pane_tree_state(&self) -> PaneTreeState {
-        fn group_state(group: &TabGroup) -> PaneNodeState {
+        fn group_state(view: &MainView, group: &TabGroup) -> PaneNodeState {
             let main: Vec<(TabRef, f32)> = group
                 .tabs()
                 .iter()
@@ -761,6 +795,7 @@ impl MainView {
                         TabView::Session(s) => TabRef::Session {
                             session: s.session?,
                             profile: s.profile_key.clone()?,
+                            recovery: view.session_recovery(s),
                         },
                         // See the sibling arm above: a run view is a live
                         // reading and a result is read from its run, not a
@@ -803,9 +838,9 @@ impl MainView {
                 active,
             }
         }
-        fn node_state(node: &PaneNode) -> PaneNodeState {
+        fn node_state(view: &MainView, node: &PaneNode) -> PaneNodeState {
             match node {
-                PaneNode::Group(g) => group_state(g),
+                PaneNode::Group(g) => group_state(view, g),
                 PaneNode::Split {
                     axis,
                     ratio,
@@ -816,13 +851,13 @@ impl MainView {
                         SplitAxis::Vertical => SplitAxisState::Vertical,
                     },
                     ratio: *ratio,
-                    left: Box::new(node_state(&children[0])),
-                    right: Box::new(node_state(&children[1])),
+                    left: Box::new(node_state(view, &children[0])),
+                    right: Box::new(node_state(view, &children[1])),
                 },
             }
         }
         PaneTreeState {
-            root: node_state(self.panes.root()),
+            root: node_state(self, self.panes.root()),
             focused: self
                 .panes
                 .focused_path()

@@ -132,6 +132,9 @@ impl SessionHandle {
         input: PendingInput,
     ) -> Result<SendPendingInputResult, ErrorCode> {
         validate_input(&input)?;
+        if let Some(result) = self.steer_running_turn(lease, &input)? {
+            return Ok(result);
+        }
         let (turn_id, report_input) = self.begin_pending_input(lease, &input)?;
         if report_input {
             let input_kind = input_kind(&input);
@@ -166,6 +169,64 @@ impl SessionHandle {
         };
 
         self.finish_pending_input(&input, turn_id, outcome)
+    }
+
+    /// Text sent while a managed turn is running goes into that turn when the
+    /// provider can take it (`AgentControl::steer`), instead of being refused.
+    /// `Ok(None)` means this is not that case and the ordinary path decides:
+    /// no running turn, a retry of an input already seen, or an attachment
+    /// (steering carries text only).
+    fn steer_running_turn(
+        &self,
+        lease: ControllerLeaseToken,
+        input: &PendingInput,
+    ) -> Result<Option<SendPendingInputResult>, ErrorCode> {
+        let active = {
+            let state = self.shared.lock();
+            require_lease(&state, lease)?;
+            let running = matches!(state.summary.mode, SessionMode::Managed { .. })
+                && state.summary.process == koru_session_protocol::ProcessState::Running;
+            match state.summary.active_turn_id {
+                Some(active)
+                    if running
+                        && input.attachment_ids.is_empty()
+                        && !state.pending_inputs.contains_key(&input.idempotency_key) =>
+                {
+                    active
+                }
+                _ => return Ok(None),
+            }
+        };
+        let SessionIo::Managed(managed) = &self.shared.io else {
+            return Ok(None);
+        };
+        managed.steer(AgentInput {
+            turn_id: active,
+            text: input.text.clone(),
+            attachments: Vec::new(),
+        })?;
+        // Recorded as sent, so the same key repeated is answered and not sent
+        // twice. The running turn stays the session's active one.
+        self.shared.lock().pending_inputs.insert(
+            input.idempotency_key,
+            PendingSubmission {
+                fingerprint: input_fingerprint(input),
+                turn_id: active,
+                command_sent: true,
+                in_flight: false,
+                reported: BTreeSet::new(),
+            },
+        );
+        let event = InputSubmittedFact {
+            session_id: self.shared.id,
+            input_kind: input_kind(input),
+        }
+        .commit(self.shared.trace);
+        self.shared.lifecycle.publish(event.into());
+        Ok(Some(SendPendingInputResult {
+            turn_id: active,
+            attachments: Vec::new(),
+        }))
     }
 
     fn begin_pending_input(

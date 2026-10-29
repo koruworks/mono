@@ -8,7 +8,7 @@ mod normalize;
 mod probe;
 
 pub use config::CodexConfig;
-pub use launch::KORU_MCP_SERVER_NAME;
+pub use launch::{KORU_MCP_SERVER_NAME, mcp_server_overrides};
 pub use probe::{CodexCompatibilityProbe, CodexFactory};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -32,12 +32,13 @@ use super::process::{JsonRpcTransport, StdioJsonRpc, TransportReceive};
 
 pub const CODEX_PROVIDER: &str = koru_session_profiles::CODEX_REGISTRATION.kind;
 pub const CODEX_PROTOCOL_VERSION: &str = "v2";
-/// The reviewed allowlist. 0.156.1 (2026-09-25) and 0.158.0 (2026-09-29)
-/// were admitted on the maintainers' instruction with schema evidence and a
-/// no-prompt handshake, and without a recorded turn — see each version's
-/// `tests/fixtures/codex-app-server/<version>/README.md`.
-pub const SUPPORTED_CODEX_VERSIONS: &[&str] =
-    &["0.150.1", "0.153.4", "0.154.0", "0.156.1", "0.158.0"];
+/// The reviewed allowlist. 0.156.1 (2026-09-25), 0.158.0 (2026-09-29) and
+/// 0.163.0 (2026-10-27) were admitted on the maintainers' instruction with
+/// schema evidence and a no-prompt handshake, and without a recorded turn —
+/// see each version's `tests/fixtures/codex-app-server/<version>/README.md`.
+pub const SUPPORTED_CODEX_VERSIONS: &[&str] = &[
+    "0.150.1", "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0",
+];
 
 /// One Codex app-server process, one ephemeral Codex thread, and one Koru
 /// managed session. Provider ids and JSON values never leave this adapter.
@@ -521,6 +522,43 @@ impl AgentControl for CodexControl {
             provider: provider_kind(),
             state: koru_session_protocol::ManagedState::Running,
         })
+    }
+
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        input.validate(self.config.maximum_input_bytes)?;
+        let invalid_state = || {
+            failure(
+                ErrorCode::InvalidTransition,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidState,
+            )
+        };
+        if !input.attachments.is_empty() {
+            return Err(failure(
+                ErrorCode::DeliveryUnsupported,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidInput,
+            ));
+        }
+        // Only a turn this adapter started and has not seen finish can be
+        // steered; the provider also checks the id it is given.
+        let native_id = self
+            .turns
+            .get(&input.turn_id)
+            .filter(|turn| !turn.terminal)
+            .and_then(|turn| turn.native_id.clone())
+            .ok_or_else(invalid_state)?;
+        let thread_id = self.thread_id.clone().ok_or_else(invalid_state)?;
+        self.call(
+            "turn/steer",
+            json!({
+                "threadId": thread_id,
+                "expectedTurnId": native_id,
+                "input": [{ "type": "text", "text": input.text }],
+            }),
+            ProviderStage::Submit,
+        )?;
+        Ok(())
     }
 
     fn cancel(&mut self, turn_id: AgentTurnId) -> Result<(), ProviderFailure> {

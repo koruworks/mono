@@ -13405,3 +13405,59 @@ fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(!v.explore.popover_open(), "the square is the list's door");
 }
+
+/// **A page beside the focused pane still takes an external edit.**
+///
+/// A document in one pane and a different tab focused in the next: an edit
+/// that arrives from the MCP bridge or a peer is applied to the shared
+/// document, and the shell drained only the *focused* pane's tabs, so the page
+/// on screen kept its old rows until the document was switched away from and
+/// back. Both panes' tabs drain, and both panes' active tabs settle.
+#[test]
+fn an_external_edit_reaches_the_page_in_an_unfocused_pane() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+
+    let (mut v, mut workspace) = on_document();
+    let root = v.document_root().expect("a document is showing");
+    // The page's row count, wherever its pane is: the group that holds a Leaf.
+    let rows_of = |v: &mut MainView| -> usize {
+        v.panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.tabs().iter())
+            .find_map(|tab| match &tab.view {
+                TabView::Leaf(leaf) => Some(leaf.body().rows.len()),
+                _ => None,
+            })
+            .expect("a pane holds the page")
+    };
+    let before_split = rows_of_single(&mut v);
+
+    // A welcome tab opens to the right and takes the focus, as a terminal
+    // beside a page does.
+    v.panes
+        .split(&PanePath::root(), SplitDir::Right, Tab::welcome());
+    v.panes.set_focus(PanePath::root().child(1));
+
+    // The document changes underneath: a paragraph, as an edit from outside
+    // the window would add one.
+    workspace
+        .ws
+        .insert(
+            Parent::Node(root),
+            Node::paragraph("From the bridge").unwrap(),
+        )
+        .unwrap();
+    View::adopt(&mut v, &workspace.ws);
+
+    assert!(
+        rows_of(&mut v) > before_split,
+        "the page beside the focused pane shows the new row without switching documents"
+    );
+}
+
+fn rows_of_single(v: &mut MainView) -> usize {
+    match &v.tabs().active_tab().view {
+        TabView::Leaf(leaf) => leaf.body().rows.len(),
+        _ => 0,
+    }
+}

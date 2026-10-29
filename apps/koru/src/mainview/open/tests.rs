@@ -317,3 +317,57 @@ fn a_draft_is_not_reusable() {
     assert!(!tab.is_reusable());
     assert!(!tab.is_pinned());
 }
+
+fn a_session_tab() -> Tab {
+    let (sender, _commands) = koru_session_backend::channel();
+    let view =
+        crate::session_tab::SessionView::new(&crate::session_tab::SessionSender(sender), None);
+    Tab::session(view, "Claude")
+}
+
+#[test]
+fn a_session_tab_is_not_reusable() {
+    let tab = a_session_tab();
+    assert!(
+        !tab.is_reusable(),
+        "an agent is a running process, not a view"
+    );
+    assert!(!tab.is_pinned());
+}
+
+/// Clicking a document while an agent tab is active opens the document in a
+/// tab of its own; the agent tab is not replaced, renamed or re-pointed.
+#[test]
+fn explore_with_an_active_agent_tab_opens_a_new_tab_and_keeps_the_agent() {
+    let (mut v, mut w) = on_document();
+    let brief = a_document(&mut w.ws, "Brief");
+    v.tabs_mut().push(a_session_tab());
+    let agent = v.tabs().active();
+    let before = v.tabs().len();
+    assert!(matches!(v.tabs().active_tab().view, TabView::Session(_)));
+
+    assert!(v.apply(&w.ws, Outcome::OpenNode(brief)));
+
+    assert!(
+        matches!(
+            v.tabs().get(agent).map(|t| &t.view),
+            Some(TabView::Session(_))
+        ),
+        "the agent tab is still an agent tab, in its place"
+    );
+    assert_eq!(
+        v.tabs().get(agent).map(|t| t.label.clone()),
+        Some("Claude".into())
+    );
+    assert_eq!(
+        v.document_root(),
+        Some(brief),
+        "the document is what is showing"
+    );
+    assert!(
+        v.tabs().len() >= before,
+        "no tab was consumed: {} -> {}",
+        before,
+        v.tabs().len()
+    );
+}

@@ -21,6 +21,7 @@ koru-features = { path = "../koru-features" }
 koru-env = { path = "../koru-env" }
 koru-core = { path = "../koru-core" }
 uuid.workspace = true
+tracing = { workspace = true }
 # Chords, the primary modifier, and how a shortcut is written. Shared so
 # `koru-workspace-host` and `koru-editor` agree without depending on each other.
 # **The words a person reads.** One row of the slash menu is localized —

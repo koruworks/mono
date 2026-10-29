@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 
 use super::*;
-use crate::test_support::{exclusive, scratch, spare};
+use crate::test_support::{exclusive, scratch};
 use crate::{AGENT, REOPEN_CLAIM, STORE};
 
 #[test]
@@ -180,10 +180,21 @@ fn a_channel_endpoint_is_bindable_too() {
     // The scratch-root endpoints above are what keeps these tests independent;
     // this one proves the ordinary, un-rooted path binds at all. It uses a
     // channel this build is *not*, and takes the lock, so a service a developer
-    // is running is never displaced.
+    // is running is never displaced. An installed Koru holds its own channel,
+    // so the first spare one that is free is used rather than a fixed one.
     let _guard = exclusive();
-    let endpoint = Endpoint::for_service(AGENT, spare(0)).unwrap();
-    let held = Listener::bind(endpoint.clone()).expect("bind a bare channel endpoint");
+    let (endpoint, held) = koru_channel::SEGMENTS
+        .iter()
+        .filter(|segment| **segment != koru_channel::segment())
+        .find_map(|segment| {
+            let endpoint = Endpoint::for_service(AGENT, segment).unwrap();
+            match Listener::bind(endpoint.clone()) {
+                Ok(held) => Some((endpoint, held)),
+                Err(IpcError::AlreadyBound(_)) => None,
+                Err(other) => panic!("bind a bare channel endpoint: {other:?}"),
+            }
+        })
+        .expect("a spare channel that nothing holds");
     assert!(crate::probe(&endpoint));
     drop(held);
 }

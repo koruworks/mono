@@ -1437,12 +1437,18 @@ impl Tab {
     /// **Welcome is a dedicated tab**, never consumed by what is opened from
     /// it — opening anything while it is active opens a new tab beside it,
     /// the same way a pin does. So is **Socials**, whose editor can hold an
-    /// unsaved post. Trash, Manage, What's new and ordinary document tabs are
-    /// reusable.
+    /// unsaved post. **A terminal or agent session is another**: it is a
+    /// running process with a scrollback, not a view over a document, so
+    /// clicking a document while it is active opens the document in a tab of
+    /// its own and the session stays exactly as it was. Trash, Manage,
+    /// What's new and ordinary document tabs are reusable.
     pub fn is_reusable(&self) -> bool {
         !self.is_pinned()
             && self.draft.is_none()
-            && !matches!(self.view, TabView::Welcome(_) | TabView::Socials(_))
+            && !matches!(
+                self.view,
+                TabView::Welcome(_) | TabView::Socials(_) | TabView::Session(_)
+            )
     }
 
     /// **The workspace this tab's view must be talked to through.**

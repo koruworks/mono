@@ -19,6 +19,17 @@ const MCP_EXE: &str = if cfg!(windows) {
     "koru-mcp"
 };
 
+/// The bridge beside this executable and the root this launch was given, the
+/// two things a registration needs; [`command`] is them as one line.
+pub(crate) fn bridge() -> (std::path::PathBuf, Option<std::path::PathBuf>) {
+    let root = koru_workspace_host::cli::root_from_args()
+        .map(|root| std::path::absolute(&root).unwrap_or(root));
+    let exe = std::env::current_exe()
+        .map(|exe| exe.with_file_name(MCP_EXE))
+        .unwrap_or_else(|_| std::path::PathBuf::from(MCP_EXE));
+    (exe, root)
+}
+
 /// The command line for this installation, ready to paste.
 pub(crate) fn command() -> String {
     // Absolute, because the host that runs it starts in a directory of its own.

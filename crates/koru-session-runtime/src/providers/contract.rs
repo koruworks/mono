@@ -324,6 +324,19 @@ pub trait AgentControl: Send {
 
     fn cancel(&mut self, turn_id: AgentTurnId) -> Result<(), ProviderFailure>;
 
+    /// Adds text to the turn that is running, instead of starting another.
+    /// `input.turn_id` names the running turn. A provider with no such call
+    /// answers `InvalidTransition`, which is what input during a turn has
+    /// always been told.
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        let _ = input;
+        Err(ProviderFailure::new(
+            ErrorCode::InvalidTransition,
+            ProviderStage::Submit,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
+
     fn answer_approval(
         &mut self,
         approval_id: ApprovalId,

@@ -444,6 +444,7 @@ fn a_session_tab_survives_capture_and_restore_between_document_tabs() {
         TabRef::Session {
             session,
             profile: profile.id.clone(),
+            recovery: None,
         },
         "the record is {{session_id, profile_key}}, in tab order"
     );

@@ -50,9 +50,10 @@ pub struct Resource {
     /// The full version, prerelease suffix and all. Goes in the string values
     /// only; `FILEVERSION` takes the numeric part.
     pub version: String,
-    /// The fourth field of `FILEVERSION`, which is four numbers and nothing
-    /// else — so a prerelease suffix cannot travel in it.
-    pub build_number: u32,
+    /// The release's build number. `FILEVERSION` is four 16-bit numbers and
+    /// nothing else — so a prerelease suffix cannot travel in it, and its
+    /// fourth field is [`build_field`] of this.
+    pub build_number: u64,
     /// Identity of the sparse MSIX package that grants this executable a
     /// stable notification identity. Absent for ordinary developer builds.
     pub package_identity: Option<PackageIdentity>,
@@ -121,7 +122,7 @@ impl Resource {
 
     /// Override the version, from `KORU_VERSION` and `KORU_BUILD_NUMBER` where
     /// a release sets them.
-    pub fn versioned(mut self, version: String, build_number: u32) -> Self {
+    pub fn versioned(mut self, version: String, build_number: u64) -> Self {
         self.version = version;
         self.build_number = build_number;
         self
@@ -203,6 +204,93 @@ pub fn numeric_core(version: &str) -> (u32, u32, u32) {
     )
 }
 
+/// **The fourth field of a Windows version for a build number**, which Windows
+/// holds in 16 bits — in `FILEVERSION` and in the sparse MSIX's `Version`,
+/// where it must also grow from one build to the next or the package is not
+/// re-registered.
+///
+/// A number the update origin allocated is small and is the field as it is. A
+/// GitHub nightly's is its UTC build time, `yyyymmddHHMM` (NIGHTLY N11), which
+/// does not fit; it becomes the hours since 2026-01-01 00:00 UTC — growing,
+/// and room until mid-2033. Two nightlies within one hour share a field.
+/// `None` is any other number too large to hold: refused, never wrapped,
+/// because a wrapped field is a package Windows thinks is older.
+pub fn build_field(build_number: u64) -> Option<u16> {
+    if let Ok(field) = u16::try_from(build_number) {
+        return Some(field);
+    }
+    let hours = build_time_hours(build_number)?;
+    u16::try_from(hours.checked_sub(BUILD_FIELD_EPOCH_HOURS)?).ok()
+}
+
+/// 2026-01-01 00:00 UTC, in hours since the Unix epoch.
+const BUILD_FIELD_EPOCH_HOURS: i64 = 20_454 * 24;
+
+/// `yyyymmddHHMM` as hours since the Unix epoch, or `None` if it is not a
+/// real UTC minute.
+fn build_time_hours(build_number: u64) -> Option<i64> {
+    let text = build_number.to_string();
+    if text.len() != 12 {
+        return None;
+    }
+    let field = |range: std::ops::Range<usize>| text[range].parse::<i64>().ok();
+    let (year, month, day) = (field(0..4)?, field(4..6)?, field(6..8)?);
+    let (hour, minute) = (field(8..10)?, field(10..12)?);
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if !(1..=12).contains(&month)
+        || !(1..=month_days[month as usize - 1]).contains(&day)
+        || hour > 23
+        || minute > 59
+    {
+        return None;
+    }
+    // Days from 1970-01-01 to the civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let year_of_era = y - era * 400;
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some((era * 146_097 + day_of_era - 719_468) * 24 + hour)
+}
+
+/// The sparse MSIX's four-part `Version` for a release, which the packager
+/// writes and the Agent compares its registration against — one function, so
+/// the two cannot disagree. Every field is 16 bits.
+pub fn package_version(version: &str, build_number: u64) -> Result<String, String> {
+    let (major, minor, patch) = numeric_core(version);
+    let field = build_field(build_number).ok_or_else(|| {
+        format!(
+            "build number {build_number} has no Windows version field: it is neither at most {} \
+             nor a yyyymmddHHMM build time from 2026 on",
+            u16::MAX
+        )
+    })?;
+    if [major, minor, patch]
+        .iter()
+        .any(|part| *part > u16::MAX as u32)
+    {
+        return Err(format!(
+            "Windows version fields must be at most {}; got {version}",
+            u16::MAX
+        ));
+    }
+    Ok(format!("{major}.{minor}.{patch}.{field}"))
+}
+
 fn write_script(out_dir: &Path, bin_name: &str, resource: &Resource) -> PathBuf {
     let icons: String = resource
         .icons
@@ -233,6 +321,11 @@ fn write_script(out_dir: &Path, bin_name: &str, resource: &Resource) -> PathBuf 
         build_number,
         ..
     } = resource;
+    // Refused rather than wrapped or zeroed: the build number is what a
+    // release is, and a binary that lost it looks right only where it was built.
+    let build_number = build_field(*build_number).unwrap_or_else(|| {
+        panic!("KORU_BUILD_NUMBER {build_number} does not fit a Windows version field")
+    });
 
     let script = format!(
         r#"#include <windows.h>

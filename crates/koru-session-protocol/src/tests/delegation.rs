@@ -17,7 +17,9 @@ fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
     assert!(capability::ALL.contains(&capability::DELEGATION));
     // The pinned count: a capability is append-only and a new one is a
     // decision, so this line is what makes adding the next one deliberate.
-    assert_eq!(capability::ALL.len(), 30);
+    // The thirty-first, `launch-resume`, rides no version: it gates a defaulted
+    // `resume` flag on a creation (ADR-474).
+    assert_eq!(capability::ALL.len(), 31);
     assert_eq!(
         capability::DELEGATION
             .parse::<CapabilityName>()

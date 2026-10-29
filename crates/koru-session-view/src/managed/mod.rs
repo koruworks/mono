@@ -274,6 +274,12 @@ pub struct ManagedSessionView<I: SessionSurfaceInteraction> {
 }
 
 impl<I: SessionSurfaceInteraction> ManagedSessionView<I> {
+    /// Send through another connection from now on (a terminal that moves to
+    /// its own session connection keeps its model and scroll).
+    pub fn set_interaction(&mut self, interaction: I) {
+        self.interaction = interaction;
+    }
+
     pub fn new(interaction: I, copy: ManagedSessionCopy) -> Self {
         Self {
             interaction,

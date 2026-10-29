@@ -47,11 +47,11 @@ fn main() {
         .ok()
         .filter(|value| !value.trim().is_empty())
     {
-        let (major, minor, patch) = koru_winres::numeric_core(&version());
-        println!(
-            "cargo:rustc-env=KORU_WINDOWS_PACKAGE_VERSION={major}.{minor}.{patch}.{}",
-            build_number()
-        );
+        // The packager writes the MSIX's version with this same function, and
+        // registration compares the two.
+        let package_version = koru_winres::package_version(&version(), build_number())
+            .unwrap_or_else(|error| panic!("{error}"));
+        println!("cargo:rustc-env=KORU_WINDOWS_PACKAGE_VERSION={package_version}");
         let channel = env::var("KORU_RELEASE_CHANNEL").unwrap_or_else(|_| "internal".into());
         let channel = koru_channel::ReleaseChannel::from_build_channel(&channel);
         let debug = env::var("PROFILE").as_deref() == Ok("debug");
@@ -135,9 +135,9 @@ fn version() -> String {
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").expect("package version"))
 }
 
-fn build_number() -> u32 {
+fn build_number() -> u64 {
     env::var("KORU_BUILD_NUMBER")
         .ok()
-        .and_then(|value| value.parse::<u32>().ok())
+        .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0)
 }

@@ -28,6 +28,11 @@ use koru_session_view::{
 use koru_settings::TerminalSettings;
 
 static CURRENT: Mutex<Option<TerminalSettings>> = Mutex::new(None);
+/// **The look each agent's terminals override Settings with** (ADR-475), keyed
+/// by the profile's stable key. Process-wide like [`CURRENT`], loaded from the
+/// profile file at restore and written back at capture.
+static AGENTS: Mutex<std::collections::BTreeMap<String, koru_workspace_host::TerminalLook>> =
+    Mutex::new(std::collections::BTreeMap::new());
 static VERSION: AtomicU64 = AtomicU64::new(0);
 
 /// Take a Terminal section. Bumps the version only when it differs.
@@ -60,6 +65,126 @@ pub fn cursor() -> TerminalCursorPreferences {
         .map_or_else(TerminalCursorPreferences::default, cursor_of)
 }
 
+/// The key a profile's look is filed under: a built-in's own token, or
+/// `custom:<id>`.
+pub fn agent_key(profile: &koru_session_protocol::SessionProfileKey) -> String {
+    match profile {
+        koru_session_protocol::SessionProfileKey::BuiltIn(key) => key.to_string(),
+        koru_session_protocol::SessionProfileKey::Custom(id) => format!("custom:{id}"),
+    }
+}
+
+/// The look filed for this agent: `(theme token, font token)`, each `None`
+/// where it follows Settings.
+pub fn agent_look(
+    profile: &koru_session_protocol::SessionProfileKey,
+) -> (Option<String>, Option<String>) {
+    let agents = AGENTS.lock().unwrap_or_else(|held| held.into_inner());
+    agents
+        .get(&agent_key(profile))
+        .map(|look| (look.theme.clone(), look.font.clone()))
+        .unwrap_or_default()
+}
+
+/// Set one half of an agent's look (`Some(None)` clears it back to Settings),
+/// leaving the other as it was. Returns whether anything changed.
+pub fn set_agent_look(
+    profile: &koru_session_protocol::SessionProfileKey,
+    theme: Option<Option<&str>>,
+    font: Option<Option<&str>>,
+) -> bool {
+    let key = agent_key(profile);
+    let mut agents = AGENTS.lock().unwrap_or_else(|held| held.into_inner());
+    let before = agents.get(&key).cloned().unwrap_or_default();
+    let mut look = before.clone();
+    if let Some(theme) = theme {
+        look.theme = theme.map(str::to_owned);
+    }
+    if let Some(font) = font {
+        look.font = font.map(str::to_owned);
+    }
+    if look == before {
+        return false;
+    }
+    if look.is_default() {
+        agents.remove(&key);
+    } else {
+        agents.insert(key, look);
+    }
+    VERSION.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+/// Take the looks a profile file carried.
+pub fn load_agent_looks(
+    looks: &std::collections::BTreeMap<String, koru_workspace_host::TerminalLook>,
+) {
+    let mut agents = AGENTS.lock().unwrap_or_else(|held| held.into_inner());
+    if *agents != *looks {
+        *agents = looks.clone();
+        VERSION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// What to write back into the profile file.
+pub fn agent_looks() -> std::collections::BTreeMap<String, koru_workspace_host::TerminalLook> {
+    AGENTS
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())
+        .clone()
+}
+
+/// What a stored font token starts with when it names an installed family
+/// rather than one of the built-in monospaced faces.
+pub const FAMILY_PREFIX: &str = "family:";
+
+/// The token that stores an installed family by name.
+pub fn family_token(name: &str) -> String {
+    format!("{FAMILY_PREFIX}{}", name.trim())
+}
+
+/// The family a stored token names, when it names one.
+pub fn family_of_token(token: &str) -> Option<&str> {
+    token.strip_prefix(FAMILY_PREFIX)
+}
+
+/// The monospaced family a font token names, or `None` for a token this build
+/// does not offer — which reads as *follow Settings*, never as a failure.
+fn mono_family(token: &str) -> Option<koru_settings::FontFamily> {
+    koru_settings::FontFamily::ALL
+        .iter()
+        .copied()
+        .find(|family| family.is_mono() && family.token() == token)
+}
+
+/// The appearance **this agent's** terminal draws with: the Settings page's,
+/// with the agent's own theme and font laid over it where it has chosen them.
+pub fn appearance_for(
+    profile: Option<&koru_session_protocol::SessionProfileKey>,
+) -> koru_session_view::TerminalAppearance {
+    let mut appearance = appearance();
+    let Some(profile) = profile else {
+        return appearance;
+    };
+    let (theme, font) = agent_look(profile);
+    match theme.as_deref() {
+        Some("light") => appearance.dark = false,
+        Some("dark") => appearance.dark = true,
+        _ => {}
+    }
+    if let Some(font) = font.as_deref() {
+        if let Some(family) = mono_family(font) {
+            appearance.font = koru_draw::theme::FontChoice::parse(family.token());
+        } else if let Some(name) = font.strip_prefix(FAMILY_PREFIX) {
+            // An installed family the person picked by name. One that is not
+            // installed here (a profile carried from another machine) reads as
+            // *follow Settings*.
+            appearance.custom_stack = koru_draw::installed_fonts::terminal_stack_for(name);
+        }
+    }
+    appearance
+}
+
 pub fn appearance() -> koru_session_view::TerminalAppearance {
     let current = CURRENT.lock().unwrap_or_else(|held| held.into_inner());
     let section = current.clone().unwrap_or_default();
@@ -84,6 +209,7 @@ fn appearance_of(
                 .unwrap_or(FontFamily::JetBrainsMono)
                 .token(),
         ),
+        custom_stack: None,
         zoom: section.zoom.get(),
     }
 }

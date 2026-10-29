@@ -156,7 +156,6 @@ impl ImageLoader {
         } else {
             Vec::new()
         };
-        let dirty_count = dirty_hashes.as_ref().map(|dirty| dirty.len());
         let mut hashes = retries;
         if let Some(dirty) = dirty_hashes {
             hashes.extend(dirty);
@@ -166,11 +165,6 @@ impl ImageLoader {
         }
         hashes.sort();
         hashes.dedup();
-        if let Some(n) = dirty_count {
-            if n > 0 {
-                tracing::info!(target: "koru::images", images = n, "decoding document images");
-            }
-        }
         let Some(blobs) = blobs else {
             return decoded;
         };
@@ -233,15 +227,9 @@ impl ImageLoader {
         }
         match result.bytes {
             Ok(bytes) => {
-                let was_missing = self.retry.remove(&key);
+                self.retry.remove(&key);
                 let _watch = timing::Watch::start("image.decode");
                 if let Some((brush, _, _, _)) = decode_image(&bytes) {
-                    if was_missing {
-                        tracing::info!(
-                            target: "koru::images",
-                            "image arrived after waiting for a device"
-                        );
-                    }
                     images.insert(scope(current), &result.hash.0, brush);
                     return true;
                 }
@@ -267,13 +255,6 @@ impl ImageLoader {
                 // so the retry cadence re-reporting the same hold every few
                 // seconds is not a redraw.
                 let hold_changed = images.set_hold(&result.hash.0, error.hold());
-                if hold_changed && let Some(hold) = error.hold() {
-                    tracing::info!(
-                        target: "koru::images",
-                        hold,
-                        "blob transfer is holding this image"
-                    );
-                }
                 // A parked hydration names the devices it waits for; the
                 // placeholder shows them. Only a change is news — the retry
                 // cadence re-reports the same park every few seconds.
@@ -281,11 +262,6 @@ impl ImageLoader {
                     && !error.waiting_on().is_empty()
                     && images.pending(&result.hash.0) != Some(error.waiting_on())
                 {
-                    tracing::info!(
-                        target: "koru::images",
-                        waiting_on = %error.waiting_on().join(", "),
-                        "image waiting for a device"
-                    );
                     images.set_pending(&result.hash.0, error.waiting_on().to_vec());
                     // The placeholder's words changed: that is a redraw, the
                     // same as pixels landing.

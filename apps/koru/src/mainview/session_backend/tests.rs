@@ -249,6 +249,7 @@ fn restore_reattaches_the_living_and_a_confirmed_dead_session_has_no_tab() {
             TabRef::Session {
                 session: alive,
                 profile: profile.clone(),
+                recovery: None,
             },
             0.0,
         ),
@@ -256,6 +257,7 @@ fn restore_reattaches_the_living_and_a_confirmed_dead_session_has_no_tab() {
             TabRef::Session {
                 session: dead,
                 profile,
+                recovery: None,
             },
             0.0,
         ),
@@ -466,4 +468,296 @@ fn open_delegate_picker_accepts_readiness_updates_and_retries_without_launching(
     )));
     assert!(!modal.ready());
     assert_eq!(session_tab_count(&view), 0);
+}
+
+// ----------------------------------------------------------- session recovery
+//
+// ADR-474: a restored tab whose session did not survive offers a replacement
+// in the same place instead of closing. These pin the three ways it can end
+// (an agent waits for a choice, a shell restarts itself, a living session
+// needs nothing) and the two choices an agent has.
+
+use std::str::FromStr as _;
+
+use koru_session_protocol::{BuiltInProfileKey, SessionProfileKey};
+use koru_workspace_host::SessionRecovery;
+use winit::keyboard::{Key, NamedKey};
+
+fn profile_key(name: &str) -> SessionProfileKey {
+    SessionProfileKey::BuiltIn(BuiltInProfileKey::from_str(name).expect("a built-in key"))
+}
+
+/// A workspace and settings holding one saved session tab, selected.
+fn restored_with(
+    profile: &str,
+    recovery: Option<SessionRecovery>,
+) -> (MainView, Receiver<BackendCommand>, SessionId) {
+    let ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("create");
+    let workspace = koru_workspace::Workspace::new(ws);
+    let session = SessionId::mint();
+    let mut settings = Settings::default();
+    settings.tabs = vec![
+        (TabRef::Welcome, 0.0),
+        (
+            TabRef::Session {
+                session,
+                profile: profile_key(profile),
+                recovery,
+            },
+            0.0,
+        ),
+    ];
+    settings.tab = 1;
+    let mut back = MainView::new();
+    let commands = with_backend(&mut back);
+    back.restore(&workspace, &settings);
+    back.set_viewport(1200.0, 700.0);
+    (back, commands, session)
+}
+
+fn folder() -> String {
+    std::env::temp_dir().display().to_string()
+}
+
+fn recovery(raw: bool) -> Option<SessionRecovery> {
+    Some(SessionRecovery {
+        working_directory: Some(folder()),
+        project: None,
+        raw,
+    })
+}
+
+#[test]
+fn a_restored_agent_whose_session_is_gone_stays_and_offers_a_choice() {
+    let (mut back, commands, _session) = restored_with("claude", recovery(true));
+    assert_eq!(session_tab_count(&back), 1);
+
+    // The first catalog is empty: the Agent that owned the session stopped.
+    assert!(back.handle_session_event(BackendEvent::Connected(Vec::new())));
+
+    assert_eq!(
+        session_tab_count(&back),
+        1,
+        "the tab stays; it is where they were"
+    );
+    let (_, view) = session_tab(&mut back);
+    let offer = view.offer.as_ref().expect("an offer is showing");
+    assert!(
+        offer.resumable(),
+        "Claude can continue its last conversation"
+    );
+    assert!(
+        drained(&commands)
+            .iter()
+            .all(|command| !matches!(command, BackendCommand::Launch { .. })),
+        "nothing launches until the person chooses"
+    );
+}
+
+#[test]
+fn a_restored_shell_whose_session_is_gone_starts_again_in_its_folder() {
+    let (mut back, commands, _session) = restored_with("powershell", recovery(true));
+    back.handle_session_event(BackendEvent::Connected(Vec::new()));
+    let _ = back.maintain_sessions();
+
+    let launches: Vec<_> = drained(&commands)
+        .into_iter()
+        .filter_map(|command| match command {
+            BackendCommand::Launch {
+                resume,
+                working_directory,
+                ..
+            } => Some((resume, working_directory)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(launches.len(), 1, "one fresh shell: {launches:?}");
+    assert!(!launches[0].0, "a shell has no conversation to resume");
+    assert_eq!(
+        launches[0].1.as_deref(),
+        Some(std::path::Path::new(&folder())),
+        "in the folder it was in"
+    );
+}
+
+#[test]
+fn a_living_session_drops_its_recovery_record_and_later_closes_as_ever() {
+    let (mut back, commands, session) = restored_with("powershell", recovery(true));
+    back.handle_session_event(BackendEvent::Connected(vec![summary(
+        session,
+        ProcessState::Running,
+    )]));
+    {
+        let (_, view) = session_tab(&mut back);
+        assert!(view.recovery.is_none(), "alive: nothing to recover");
+        assert!(view.offer.is_none());
+    }
+    // And when it ends during this run, the tab closes, with no offer.
+    back.handle_session_event(BackendEvent::Sessions(Vec::new()));
+    assert_eq!(session_tab_count(&back), 0);
+    let _ = drained(&commands);
+}
+
+#[test]
+fn a_tab_saved_without_recovery_data_closes_when_its_session_is_gone() {
+    let (mut back, commands, _session) = restored_with("claude", None);
+    back.handle_session_event(BackendEvent::Connected(Vec::new()));
+    assert_eq!(
+        session_tab_count(&back),
+        0,
+        "an older file, or a session that was never recorded: closed as before"
+    );
+    let _ = drained(&commands);
+}
+
+/// Press every point of the pane until the offer reports a choice, the way a
+/// click would find a button, and return what it was.
+fn click_until_chosen(view: &mut SessionView) -> Option<crate::session_offer::Choice> {
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "p")
+        .expect("create");
+    let (w, h) = (view.surface.bounds.w, view.surface.bounds.h);
+    for y in (0..h as i32).step_by(4) {
+        for x in (0..w as i32).step_by(6) {
+            View::mouse_down(view, &mut ws, x as f32, y as f32, false);
+            if let Some(choice) = view.offer.as_mut().and_then(|offer| offer.take_choice()) {
+                return Some(choice);
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn resume_sends_a_continuation_in_the_saved_folder_and_start_new_a_fresh_launch() {
+    use crate::session_offer::Choice;
+    for expect_resume in [true, false] {
+        let (mut back, commands, _session) = restored_with("claude", recovery(true));
+        back.handle_session_event(BackendEvent::Connected(Vec::new()));
+        let _ = drained(&commands);
+
+        {
+            let (_, view) = session_tab(&mut back);
+            let mut ws =
+                koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "k")
+                    .expect("create");
+            if expect_resume {
+                // Enter takes the first button, which is Resume for an agent
+                // that can continue.
+                View::key(
+                    view,
+                    &mut ws,
+                    &Key::Named(NamedKey::Enter),
+                    None,
+                    winit::keyboard::ModifiersState::empty(),
+                );
+            } else {
+                // The first button found by pressing around the pane is
+                // Resume (it sits first); Start new is the other one, so a
+                // scan that lands on Resume chooses Start new directly.
+                if click_until_chosen(view) != Some(Choice::StartNew) {
+                    view.offer
+                        .as_mut()
+                        .unwrap()
+                        .force_choice_for_test(Choice::StartNew);
+                }
+            }
+        }
+
+        let _ = back.maintain_sessions();
+        let launches: Vec<_> = drained(&commands)
+            .into_iter()
+            .filter_map(|command| match command {
+                BackendCommand::Launch {
+                    resume,
+                    working_directory,
+                    intent,
+                    ..
+                } => Some((resume, working_directory, intent)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(launches.len(), 1, "one launch per choice: {launches:?}");
+        assert_eq!(launches[0].0, expect_resume);
+        assert_eq!(
+            launches[0].1.as_deref(),
+            Some(std::path::Path::new(&folder()))
+        );
+        assert!(
+            matches!(launches[0].2, koru_session_profiles::LaunchIntent::Raw),
+            "a recovered terminal comes back as a terminal"
+        );
+    }
+}
+
+/// **A terminal that is on screen keeps running whichever pane has the
+/// keyboard.** The settle pass used to look only at the focused pane, so a
+/// click on a document beside the terminal detached its session and the screen
+/// froze until the person clicked back.
+#[test]
+fn a_session_in_an_unfocused_pane_stays_attached() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+
+    let id = SessionId::mint();
+    let (mut v, _workspace) = container();
+    let commands = with_backend(&mut v);
+    let tab_id = open_bound(&mut v, id);
+    v.session_attaching = None;
+    v.session_attached = Some(tab_id);
+    v.session_settled = Some(tab_id);
+
+    // A welcome tab opens to the right and takes the focus; the session stays
+    // the visible tab of the left pane.
+    v.panes.split(
+        &PanePath::root(),
+        SplitDir::Right,
+        crate::mainview::tab::Tab::welcome(),
+    );
+    v.panes.set_focus(PanePath::root().child(1));
+    let _ = drained(&commands);
+
+    v.maintain_sessions();
+
+    assert_eq!(
+        v.session_settled,
+        Some(tab_id),
+        "the session is still settled"
+    );
+    assert_eq!(v.session_attached, Some(tab_id), "and still attached");
+    assert!(
+        !drained(&commands)
+            .iter()
+            .any(|command| matches!(command, BackendCommand::Detach)),
+        "focus moving to another pane does not detach a visible terminal"
+    );
+}
+
+/// **A host restart under a running terminal offers to continue it** (ADR-474)
+/// instead of closing the tab and leaving a Welcome tab where it was: the
+/// catalog still named the session's folder at the moment it was lost, and a
+/// tab started in this run has no saved record to fall back on.
+#[test]
+fn a_host_restart_offers_to_continue_a_terminal_the_catalog_knew() {
+    let id = SessionId::mint();
+    let (mut v, _workspace) = container();
+    let _commands = with_backend(&mut v);
+    open_bound(&mut v, id);
+    let mut known = summary(id, ProcessState::Running);
+    known.working_directory = Some("/work/project".into());
+    assert!(v.handle_session_event(BackendEvent::Sessions(vec![known])));
+    assert_eq!(session_tab_count(&v), 1);
+
+    assert!(v.handle_session_event(BackendEvent::SessionsLost {
+        sessions: Vec::new()
+    }));
+    assert_eq!(session_tab_count(&v), 1, "the terminal's tab stays");
+    let (_, view) = session_tab(&mut v);
+    assert!(view.offer.is_some(), "and says it can continue");
+    assert_eq!(
+        view.recovery
+            .as_ref()
+            .and_then(|recovery| recovery.working_directory.as_deref()),
+        Some("/work/project"),
+        "in the folder it was in"
+    );
 }

@@ -42,11 +42,36 @@ fn version_carriers_accept_pinned_output_and_refuse_adornments() {
         "2.0.0"
     );
     assert_eq!(
+        AcpRoute::kimi().parse_version("2.3.3\n").unwrap().as_str(),
+        "2.3.3"
+    );
+    assert_eq!(
+        AcpRoute::kimi().parse_version("2.4.0\n").unwrap().as_str(),
+        "2.4.0"
+    );
+    assert_eq!(
         AcpRoute::grok()
             .parse_version("grok 1.0.34 (3736acbc8658) [stable]\n")
             .unwrap()
             .as_str(),
         "1.0.34"
+    );
+    assert_eq!(
+        AcpRoute::grok()
+            .parse_version("grok 1.0.60 (01a8e1c591c0) [stable]\n")
+            .unwrap()
+            .as_str(),
+        "1.0.60"
+    );
+    assert_eq!(
+        AcpRoute::grok()
+            .parse_version(
+                "grok 1.0.70 (f50904eaee6c) [stable]
+"
+            )
+            .unwrap()
+            .as_str(),
+        "1.0.70"
     );
 }
 

@@ -223,6 +223,12 @@ pub struct CreateProfileSession {
     /// outcome an explicit choice exists to prevent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<koru_session_protocol::LaunchSelection>,
+    /// Start a raw agent on its most recent conversation in
+    /// `working_directory` (the `launch-resume` capability). Raw agent
+    /// profiles with a continue form only; refused otherwise, and from a peer
+    /// that did not negotiate the capability.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resume: bool,
     pub working_directory: PathBuf,
     pub size: GridSize,
 }
@@ -969,6 +975,37 @@ mod tests {
         assert!(update["event"].get("projects").is_none());
     }
 
+    /// `resume` is absent from every creation that does not ask for it, so an
+    /// older host receives exactly the frame it always did, and present as a
+    /// plain boolean when it does.
+    #[test]
+    fn a_resume_flag_is_spelled_only_when_it_is_asked_for() {
+        let create = |resume| {
+            serde_json::to_value(CreateProfileSession {
+                idempotency_key: IdempotencyKey::mint(),
+                profile: SessionProfileKey::BuiltIn("claude".parse().unwrap()),
+                parent_session_id: None,
+                mode: SessionMode::RawPty,
+                project_id: None,
+                delegation: None,
+                origin: Default::default(),
+                selection: None,
+                resume,
+                working_directory: PathBuf::from("/tmp"),
+                size: GridSize {
+                    columns: 80,
+                    rows: 24,
+                },
+            })
+            .unwrap()
+        };
+        assert!(create(false).get("resume").is_none());
+        assert_eq!(create(true)["resume"], true);
+        let back: CreateProfileSession =
+            serde_json::from_value(create(false)).expect("a frame without the field reads");
+        assert!(!back.resume);
+    }
+
     #[test]
     fn a_pre_project_peer_reads_both_creation_frames_and_ignores_the_placement() {
         // An older host receives `project_id` it does not declare. Serde skips
@@ -983,6 +1020,7 @@ mod tests {
             delegation: None,
             origin: Default::default(),
             selection: None,
+            resume: false,
             working_directory: PathBuf::from("/tmp"),
             size: koru_session_protocol::GridSize::new(80, 24).unwrap(),
         })
@@ -1303,6 +1341,7 @@ mod tests {
             delegation: Some(launch),
             origin: Default::default(),
             selection: None,
+            resume: false,
             working_directory: PathBuf::from("/tmp"),
             size: koru_session_protocol::GridSize::new(80, 24).unwrap(),
         };

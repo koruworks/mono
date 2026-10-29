@@ -77,6 +77,7 @@ fn host(registry: ManagedProviderRegistry) -> Arc<HostState> {
         create_replays: Mutex::new(VecDeque::new()),
         stop: Notify::new(),
         bridge: None,
+        tab_bridge_files: None,
     })
 }
 

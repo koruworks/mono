@@ -206,6 +206,17 @@ pub enum SurfaceFocus {
 }
 
 impl<I: SurfaceInteraction> SessionSurface<I> {
+    /// **Send everything through `sender` from now on.** Each visible terminal
+    /// has its own session connection, so a surface that moves to one — or
+    /// back — repoints all four places that hold the sender, and keeps its
+    /// model, scroll and selection.
+    pub fn set_sender(&mut self, sender: &I) {
+        *self.view.interaction_mut() = sender.clone();
+        self.managed.set_interaction(sender.clone());
+        self.pending.set_interaction(sender.clone());
+        self.sender = sender.clone();
+    }
+
     pub fn new(
         sender: &I,
         stats: std::sync::Arc<SessionStats>,

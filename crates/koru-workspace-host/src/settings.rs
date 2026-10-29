@@ -28,7 +28,9 @@ use koru_core::{DocumentId, NodeId, WorkspaceId};
 use koru_draw::theme::{
     CaretColor, CaretHeight, CaretWidth, Density, FontChoice, ThemePreference, ViewMode,
 };
-use koru_session_protocol::{BuiltInProfileKey, SessionId, SessionProfileId, SessionProfileKey};
+use koru_session_protocol::{
+    BuiltInProfileKey, ProjectId, SessionId, SessionProfileId, SessionProfileKey,
+};
 use koru_voice::{InputChoice, Requested};
 use koru_voice_models::ModelTier;
 
@@ -128,10 +130,167 @@ pub enum TabRef {
     /// grammar knows keywords, `doc:` and bare node ids — parses nothing here
     /// and drops the entry on its own, keeping every neighbouring tab. That is
     /// the same tolerance the retired `workspace` token already relies on.
+    ///
+    /// **`recovery` is what the tab keeps for the day its session is gone**
+    /// (ADR-474): the folder it was in, the project it was placed in and
+    /// whether it was a raw terminal. It is written as a `|`-separated suffix
+    /// of percent-encoded `key=value` pairs, so neither the list's comma nor
+    /// the scroll's colon can appear in it, and an older reader — which
+    /// cannot read the profile token through the suffix — drops the entry, as
+    /// it already does for a session entry it does not understand.
     Session {
         session: SessionId,
         profile: SessionProfileKey,
+        recovery: Option<SessionRecovery>,
     },
+}
+
+/// One agent's terminal look: each half is `None` when that half follows the
+/// Settings page. Tokens, not enums — `light`/`dark` and a monospaced font
+/// family's token — so this crate holds no opinion on what exists, and a token
+/// a later build adds or removes reads as "follow Settings" rather than
+/// failing the file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TerminalLook {
+    pub theme: Option<String>,
+    pub font: Option<String>,
+}
+
+impl TerminalLook {
+    pub fn is_default(&self) -> bool {
+        self.theme.is_none() && self.font.is_none()
+    }
+}
+
+/// `claude|dark|jetbrains-mono;codex||fira-code`: entries by `;`, fields by
+/// `|`, an empty field meaning *follow Settings*. Characters that would be
+/// grammar are dropped from a token on the way out, so a hand-edited value can
+/// never break the line.
+fn write_looks(looks: &std::collections::BTreeMap<String, TerminalLook>) -> String {
+    let clean = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !matches!(c, ';' | '|' | '\n' | '\r' | '='))
+            .collect()
+    };
+    looks
+        .iter()
+        .filter(|(_, look)| !look.is_default())
+        .map(|(agent, look)| {
+            format!(
+                "{}|{}|{}",
+                clean(agent),
+                look.theme.as_deref().map(clean).unwrap_or_default(),
+                look.font.as_deref().map(clean).unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn read_looks(value: &str) -> std::collections::BTreeMap<String, TerminalLook> {
+    value
+        .split(';')
+        .filter_map(|entry| {
+            let mut fields = entry.split('|');
+            let agent = fields.next()?.trim();
+            let field = |text: Option<&str>| {
+                text.map(str::trim)
+                    .filter(|token| !token.is_empty())
+                    .map(str::to_owned)
+            };
+            let look = TerminalLook {
+                theme: field(fields.next()),
+                font: field(fields.next()),
+            };
+            (!agent.is_empty() && !look.is_default()).then(|| (agent.to_owned(), look))
+        })
+        .collect()
+}
+
+/// What a saved session tab needs to start a replacement in the same place.
+///
+/// Every field is optional on the way back in: a hand-edited or older entry
+/// that lacks one simply offers a fresh session from the default folder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionRecovery {
+    /// The folder the session's process started in, as the host reported it.
+    pub working_directory: Option<String>,
+    /// The project the session was placed in, if any.
+    pub project: Option<ProjectId>,
+    /// A raw terminal rather than a managed chat. A recovered raw agent may
+    /// *resume*; a recovered managed chat has no conversation to continue.
+    pub raw: bool,
+}
+
+impl SessionRecovery {
+    fn write(&self) -> String {
+        let mut out = String::new();
+        if self.raw {
+            out.push_str("|raw=1");
+        }
+        if let Some(dir) = &self.working_directory {
+            out.push_str("|dir=");
+            out.push_str(&percent_encode(dir));
+        }
+        if let Some(project) = self.project {
+            out.push_str("|project=");
+            out.push_str(&project.to_string());
+        }
+        out
+    }
+
+    fn read<'a>(pairs: impl Iterator<Item = &'a str>) -> Option<Self> {
+        use std::str::FromStr as _;
+        let mut recovery = Self::default();
+        let mut any = false;
+        for pair in pairs {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            match key {
+                "raw" => recovery.raw = value == "1",
+                "dir" => recovery.working_directory = percent_decode(value),
+                "project" => recovery.project = ProjectId::from_str(value).ok(),
+                // A key a later build added: read past it, keep the rest.
+                _ => continue,
+            }
+            any = true;
+        }
+        any.then_some(recovery)
+    }
+}
+
+/// Everything but letters, digits and `-_.` becomes `%XX`, so a path's colon,
+/// backslash, comma or `|` can never be read as grammar.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let hex = text.get(at + 1..at + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out)
+        .ok()
+        .filter(|decoded| !decoded.is_empty())
 }
 
 /// Which page a Tasks tab was on — a queue, a list, or the Reminders page.
@@ -212,10 +371,22 @@ impl TabRef {
             // never read as the `:<scroll>` suffix `parse_tabs` peels (a uuid
             // always carries hyphens; a token starts with a letter and the
             // built-in list holds no float spelling).
-            Self::Session { session, profile } => match profile {
-                SessionProfileKey::BuiltIn(key) => format!("session:{session}@{key}"),
-                SessionProfileKey::Custom(id) => format!("session:{session}@custom:{id}"),
-            },
+            Self::Session {
+                session,
+                profile,
+                recovery,
+            } => {
+                let suffix = recovery
+                    .as_ref()
+                    .map(SessionRecovery::write)
+                    .unwrap_or_default();
+                match profile {
+                    SessionProfileKey::BuiltIn(key) => format!("session:{session}@{key}{suffix}"),
+                    SessionProfileKey::Custom(id) => {
+                        format!("session:{session}@custom:{id}{suffix}")
+                    }
+                }
+            }
         }
     }
 
@@ -255,13 +426,21 @@ impl TabRef {
     /// the way any unreadable entry does rather than coming back half-blank.
     fn parse_session(rest: &str) -> Option<Self> {
         use std::str::FromStr as _;
-        let (session, profile) = rest.split_once('@')?;
+        // `<session uuid>@<profile>` then, optionally, `|key=value` pairs.
+        let mut parts = rest.split('|');
+        let head = parts.next()?;
+        let recovery = SessionRecovery::read(parts);
+        let (session, profile) = head.split_once('@')?;
         let session = SessionId::from_str(session).ok()?;
         let profile = match profile.strip_prefix("custom:") {
             Some(id) => SessionProfileKey::Custom(SessionProfileId::from_str(id).ok()?),
             None => SessionProfileKey::BuiltIn(BuiltInProfileKey::from_str(profile).ok()?),
         };
-        Some(Self::Session { session, profile })
+        Some(Self::Session {
+            session,
+            profile,
+            recovery,
+        })
     }
 
     /// Document id when this ref names one.
@@ -822,6 +1001,10 @@ pub struct Settings {
     pub pinned_tab: Option<usize>,
     /// Welcome default: newly pinned tabs show their title.
     pub pinned_show_title: bool,
+    /// **The terminal's theme and font, per agent** (ADR-475): `claude`,
+    /// `codex`, `powershell`, or `custom:<id>` to the look that agent's tabs
+    /// use instead of the Settings page's. A key absent here follows Settings.
+    pub terminal_looks: std::collections::BTreeMap<String, TerminalLook>,
     /// Nodes whose children are hidden in the explore pane, **per workspace**.
     ///
     /// Collapsed is the *exception* — a newly-seen node appears rather than
@@ -1156,6 +1339,7 @@ impl Default for Settings {
             pinned_tabs: Vec::new(),
             pinned_tab: None,
             pinned_show_title: false,
+            terminal_looks: std::collections::BTreeMap::new(),
             collapsed: Vec::new(),
             show_archived: false,
             sidebar_w: Vec::new(),
@@ -1875,6 +2059,7 @@ impl Settings {
                         .filter_map(koru_core::ProfileId::parse)
                         .collect();
                 }
+                "terminal_looks" => s.terminal_looks = read_looks(value),
                 "hide_completed" => s.hide_completed = value == "1" || value == "true",
                 "pinned" => s.pinned = value == "1" || value == "true",
                 "maximized" => s.maximized = value == "1" || value == "true",
@@ -2159,6 +2344,10 @@ impl Settings {
                     .join(","),
             );
             out.push('\n');
+        }
+        let looks = write_looks(&self.terminal_looks);
+        if !looks.is_empty() {
+            out.push_str(&format!("terminal_looks={looks}\n"));
         }
         if let Some(id) = self.workspace {
             out.push_str(&format!("workspace={}\n", id.to_storage()));
@@ -2773,10 +2962,12 @@ mod tests {
             profile: SessionProfileKey::BuiltIn(
                 BuiltInProfileKey::from_str("powershell").expect("built-in token"),
             ),
+            recovery: None,
         };
         let custom = TabRef::Session {
             session: SessionId::mint(),
             profile: SessionProfileKey::Custom(SessionProfileId::mint()),
+            recovery: None,
         };
         let before = Settings {
             tabs: vec![
@@ -2796,6 +2987,169 @@ mod tests {
         assert!(!custom.to_storage().contains(','));
     }
 
+    /// **A session tab keeps what it needs to come back** (ADR-474): the folder
+    /// (a Windows path, whose colon, backslashes and spaces would otherwise be
+    /// read as the grammar's), the project, and whether it was a raw terminal.
+    #[test]
+    fn a_session_tab_round_trips_its_recovery_record_through_the_file() {
+        use std::str::FromStr as _;
+        let project = ProjectId::mint();
+        let tab = TabRef::Session {
+            session: SessionId::mint(),
+            profile: SessionProfileKey::BuiltIn(
+                BuiltInProfileKey::from_str("claude").expect("built-in token"),
+            ),
+            recovery: Some(SessionRecovery {
+                working_directory: Some(r"C:\Users\A B\work, 2026|new:dir".into()),
+                project: Some(project),
+                raw: true,
+            }),
+        };
+        let line = tab.to_storage();
+        for separator in [',', ' '] {
+            assert!(
+                !line.contains(separator),
+                "the entry must not contain {separator:?}: {line}"
+            );
+        }
+        // Scroll still peels from the last colon, and the folder survives it.
+        let parsed = parse_tabs(&write_tabs(&[(tab.clone(), 40.0)]));
+        assert_eq!(parsed, vec![(tab, 40.0)]);
+    }
+
+    /// A field a later build adds, or one that is damaged, costs only itself:
+    /// the tab and its other fields come back.
+    #[test]
+    fn a_recovery_record_reads_past_what_it_does_not_understand() {
+        let line = format!(
+            "session:{}@claude|raw=1|colour=teal|dir=%ZZ|project=not-a-uuid",
+            SessionId::mint()
+        );
+        let parsed = parse_tabs(&format!("{line}:0"));
+        let [(TabRef::Session { recovery, .. }, _)] = parsed.as_slice() else {
+            panic!("the tab survives its odd fields: {parsed:?}");
+        };
+        let recovery = recovery.as_ref().expect("raw=1 was readable");
+        assert!(recovery.raw);
+        assert_eq!(
+            recovery.working_directory, None,
+            "a bad escape drops the folder"
+        );
+        assert_eq!(recovery.project, None, "a bad id drops the project");
+    }
+
+    /// An entry with no suffix — every session entry written before this —
+    /// reads exactly as it did, with nothing to recover.
+    #[test]
+    fn a_session_entry_without_a_recovery_suffix_has_no_recovery() {
+        let old = format!("session:{}@powershell:0", SessionId::mint());
+        let parsed = parse_tabs(&old);
+        let [(TabRef::Session { recovery, .. }, _)] = parsed.as_slice() else {
+            panic!("an old entry still parses: {parsed:?}");
+        };
+        assert!(recovery.is_none());
+    }
+
+    /// **What a build that has never heard of recovery makes of the new
+    /// spelling**: the suffix is part of the profile token it tries to read,
+    /// so the entry drops itself and every neighbouring tab survives, which
+    /// is the tolerance an unknown session entry already had.
+    #[test]
+    fn an_older_reader_drops_a_recovering_entry_and_keeps_its_neighbours() {
+        use std::str::FromStr as _;
+        // The pre-recovery `parse_session`: the profile is everything after the
+        // first `@`, and a token with a suffix is not a built-in key.
+        fn old_parse_session(rest: &str) -> bool {
+            let Some((session, profile)) = rest.split_once('@') else {
+                return false;
+            };
+            SessionId::from_str(session).is_ok()
+                && match profile.strip_prefix("custom:") {
+                    Some(id) => SessionProfileId::from_str(id).is_ok(),
+                    None => BuiltInProfileKey::from_str(profile).is_ok(),
+                }
+        }
+        let with = format!("{}@claude|raw=1", SessionId::mint());
+        let without = format!("{}@claude", SessionId::mint());
+        assert!(
+            !old_parse_session(&with),
+            "the suffix makes an older reader drop it"
+        );
+        assert!(
+            old_parse_session(&without),
+            "and the plain spelling still reads"
+        );
+    }
+
+    /// **A terminal look is one line, per agent** (ADR-475): written only for an
+    /// agent that chose something, an empty half meaning *follow Settings*.
+    #[test]
+    fn a_terminal_look_per_agent_round_trips_through_the_profile_file() {
+        let mut settings = Settings::default();
+        settings.terminal_looks.insert(
+            "claude".into(),
+            TerminalLook {
+                theme: Some("dark".into()),
+                font: Some("jetbrains-mono".into()),
+            },
+        );
+        settings.terminal_looks.insert(
+            "codex".into(),
+            TerminalLook {
+                theme: None,
+                font: Some("fira-code".into()),
+            },
+        );
+        // Nothing chosen: not written, so the file does not grow with every
+        // agent a person ever opened.
+        settings
+            .terminal_looks
+            .insert("bash".into(), TerminalLook::default());
+        let body = settings.profile_body();
+        assert!(
+            body.contains("terminal_looks=claude|dark|jetbrains-mono;codex||fira-code"),
+            "{body}"
+        );
+        let back = Settings::from_text(&body);
+        assert_eq!(back.terminal_looks.len(), 2);
+        assert_eq!(back.terminal_looks["claude"].theme.as_deref(), Some("dark"));
+        assert_eq!(back.terminal_looks["codex"].theme, None);
+        assert_eq!(
+            back.terminal_looks["codex"].font.as_deref(),
+            Some("fira-code")
+        );
+    }
+
+    /// A file with no such line has no looks, and a damaged line costs only
+    /// the entries it damages.
+    #[test]
+    fn a_missing_or_damaged_terminal_looks_line_costs_only_itself() {
+        assert!(
+            Settings::from_text("hide_completed=1\n")
+                .terminal_looks
+                .is_empty()
+        );
+        let back = Settings::from_text("terminal_looks=;;claude|dark|;||x;|dark|f;codex|light\n");
+        let agents: Vec<_> = back.terminal_looks.keys().cloned().collect();
+        assert_eq!(agents, ["claude", "codex"], "{:?}", back.terminal_looks);
+        assert_eq!(back.terminal_looks["claude"].font, None);
+        // Characters that are the line's own grammar cannot be written into a
+        // token, so a hand-edited value cannot split an entry.
+        let mut settings = Settings::default();
+        settings.terminal_looks.insert(
+            "bash".into(),
+            TerminalLook {
+                theme: Some("da;rk|x".into()),
+                font: None,
+            },
+        );
+        let reread = Settings::from_text(&settings.profile_body());
+        assert_eq!(
+            reread.terminal_looks["bash"].theme.as_deref(),
+            Some("darkx")
+        );
+    }
+
     /// The custom-profile spelling nests a second colon
     /// (`session:<uuid>@custom:<uuid>`), and the scroll suffix is peeled from
     /// the *last* colon — so the two must come apart cleanly, scroll on one
@@ -2805,6 +3159,7 @@ mod tests {
         let entry = TabRef::Session {
             session: SessionId::mint(),
             profile: SessionProfileKey::Custom(SessionProfileId::mint()),
+            recovery: None,
         };
         let parsed = parse_tabs(&write_tabs(&[(entry.clone(), 40.0)]));
         assert_eq!(parsed, vec![(entry, 40.0)]);
@@ -2839,6 +3194,7 @@ mod tests {
         let session = TabRef::Session {
             session: SessionId::mint(),
             profile: SessionProfileKey::Custom(SessionProfileId::mint()),
+            recovery: None,
         };
         let line = write_tabs(&[
             (TabRef::Welcome, 0.0),

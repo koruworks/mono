@@ -52,26 +52,15 @@ pub(super) fn render_argv(
     render_argv_with(delegation, &[], executable_version)
 }
 
-/// The launch with stdio MCP servers of Koru's own beside any delegation:
-/// each becomes `mcp_servers.<name>.command` and `.args` overrides, in the
-/// same TOML literal-string form as the delegated endpoint's, so a path
-/// with backslashes rides unchanged and a quote can never need escaping.
-pub(super) fn render_argv_with(
-    delegation: Option<&DelegationLaunch>,
-    mcp_servers: &[crate::providers::McpServerLaunch],
-    executable_version: &ProviderVersion,
-) -> Vec<OsString> {
-    let mut argv: Vec<OsString> = koru_session_profiles::CODEX_REGISTRATION
-        .arguments
-        .iter()
-        .map(OsString::from)
-        .collect();
-    if let Some(delegation) = delegation {
-        for element in overrides(delegation, executable_version) {
-            argv.push("-c".into());
-            argv.push(element.into());
-        }
-    }
+/// The `-c` overrides that put stdio MCP servers of Koru's own into a Codex
+/// launch: `mcp_servers.<name>.command` and `.args`, each a TOML literal
+/// string in single quotes (see [`overrides`] for why), so a path with
+/// backslashes rides unchanged and a quote can never need escaping. The
+/// app-server launch appends these after its own; a raw `codex` tab takes
+/// them bare, after the profile's program (`tab_bridge` in
+/// `koru-session-host`).
+pub fn mcp_server_overrides(mcp_servers: &[crate::providers::McpServerLaunch]) -> Vec<OsString> {
+    let mut argv = Vec::new();
     for server in mcp_servers {
         let literal = |value: &OsString| format!("'{}'", value.to_string_lossy().replace('\'', ""));
         argv.push("-c".into());
@@ -98,6 +87,30 @@ pub(super) fn render_argv_with(
             .into(),
         );
     }
+    argv
+}
+
+/// The launch with stdio MCP servers of Koru's own beside any delegation:
+/// each becomes `mcp_servers.<name>.command` and `.args` overrides, in the
+/// same TOML literal-string form as the delegated endpoint's, so a path
+/// with backslashes rides unchanged and a quote can never need escaping.
+pub(super) fn render_argv_with(
+    delegation: Option<&DelegationLaunch>,
+    mcp_servers: &[crate::providers::McpServerLaunch],
+    executable_version: &ProviderVersion,
+) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = koru_session_profiles::CODEX_REGISTRATION
+        .arguments
+        .iter()
+        .map(OsString::from)
+        .collect();
+    if let Some(delegation) = delegation {
+        for element in overrides(delegation, executable_version) {
+            argv.push("-c".into());
+            argv.push(element.into());
+        }
+    }
+    argv.extend(mcp_server_overrides(mcp_servers));
     argv
 }
 
@@ -153,10 +166,12 @@ fn overrides(delegation: &DelegationLaunch, executable_version: &ProviderVersion
     // Preserve the older pin's launch: its v2 switch was not verified.
     // 0.156.1: `codex features list` on the installed CLI names
     // `multi_agent_v2` (stable, off by default) and accepts the override
-    // (2026-09-25); 0.158.0 the same (2026-09-29).
+    // (2026-09-25); 0.158.0 the same (2026-09-29); 0.163.0 the same, with
+    // `multi_agent_v2_dynamic_tools` beside it, under development and off
+    // (2026-10-27).
     if matches!(
         executable_version.as_str(),
-        "0.153.4" | "0.154.0" | "0.156.1" | "0.158.0"
+        "0.153.4" | "0.154.0" | "0.156.1" | "0.158.0" | "0.163.0" | "0.165.0"
     ) {
         overrides.push("features.multi_agent_v2=false".to_owned());
     }

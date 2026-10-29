@@ -33,16 +33,6 @@ pub fn exclusive() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// A channel this build is **not**, so a service a developer is running is
-/// never displaced by the suite.
-pub fn spare(nth: usize) -> &'static str {
-    koru_channel::SEGMENTS
-        .iter()
-        .filter(|s| **s != koru_channel::segment())
-        .nth(nth)
-        .expect("there are at least three channels besides this build's")
-}
-
 /// An endpoint that certainly has nothing behind it.
 ///
 /// Scoped to a root that does not exist, so it is unique to this call and

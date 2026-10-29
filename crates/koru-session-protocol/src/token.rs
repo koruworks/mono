@@ -183,6 +183,11 @@ pub mod capability {
     /// run the provider's default, which is the one outcome an explicit
     /// choice exists to prevent.
     pub const LAUNCH_SELECTION: &str = "launch-selection";
+    /// Resume at launch: the defaulted `resume` flag on a creation, which asks
+    /// the host to start a raw agent on its most recent conversation in the
+    /// folder. Gated because an older host would ignore the flag and start a
+    /// fresh conversation under a button that said *Resume*.
+    pub const LAUNCH_RESUME: &str = "launch-resume";
 
     pub const ALL: &[&str] = &[
         CONTROLLER_LEASES,
@@ -215,5 +220,6 @@ pub mod capability {
         DELEGATION,
         SESSION_ORIGIN,
         LAUNCH_SELECTION,
+        LAUNCH_RESUME,
     ];
 }

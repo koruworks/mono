@@ -31,6 +31,9 @@ pub struct StyleEpoch {
     pub dark: bool,
     pub density: Density,
     pub font: FontChoice,
+    /// An installed family the person named, as its whole stack; it replaces
+    /// the stack `font` would give.
+    pub custom_stack: Option<&'static str>,
     pub scale_bits: u32,
     pub zoom_bits: u32,
 }
@@ -41,6 +44,7 @@ impl StyleEpoch {
             dark: theme::is_dark(),
             density: theme::density(),
             font: theme::terminal_code_font(),
+            custom_stack: None,
             scale_bits: scale.to_bits(),
             zoom_bits: 1.0f32.to_bits(),
         }
@@ -53,6 +57,8 @@ impl StyleEpoch {
 pub struct TerminalAppearance {
     pub dark: bool,
     pub font: FontChoice,
+    /// See [`StyleEpoch::custom_stack`].
+    pub custom_stack: Option<&'static str>,
     pub zoom: f32,
 }
 
@@ -61,6 +67,7 @@ impl TerminalAppearance {
         StyleEpoch {
             dark: self.dark,
             font: self.font,
+            custom_stack: self.custom_stack,
             zoom_bits: self.zoom.to_bits(),
             ..StyleEpoch::current(scale)
         }
@@ -103,7 +110,7 @@ impl TerminalStyle {
         // applied exactly once by its root transform, never read here.
         let zoom = f32::from_bits(epoch.zoom_bits);
         let metrics = TextMetrics::new(text.metrics.size * zoom, text.metrics.line_height * zoom);
-        let stack = epoch.font.stack();
+        let stack = epoch.custom_stack.unwrap_or_else(|| epoch.font.stack());
         let cell_width = engine.measure_advance("M", stack, metrics.size, 400.0);
         Self {
             epoch,

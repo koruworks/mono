@@ -55,6 +55,7 @@ pub mod ai_chat;
 pub mod app;
 pub mod build_stamp;
 pub mod cli;
+pub mod cli_updates;
 pub mod client;
 pub mod cloud_host;
 pub mod connection;

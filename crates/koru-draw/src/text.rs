@@ -1008,7 +1008,7 @@ fn fill_is_bundled() -> bool {
 /// cache, and only the font database is shared.
 static PROTOTYPE: OnceLock<FontContext> = OnceLock::new();
 
-fn prototype() -> &'static FontContext {
+pub(crate) fn prototype() -> &'static FontContext {
     PROTOTYPE.get_or_init(|| {
         let mut font_cx = FontContext::new();
         register_bundled_fonts(&mut font_cx);

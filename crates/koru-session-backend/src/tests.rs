@@ -1447,6 +1447,7 @@ fn the_running_backend_survives_a_host_restart_and_reports_loss_not_a_false_resu
                 Vec::new(),
                 commands,
                 internal,
+                false,
             )
         });
     wait_for_event(&events, "the initial connect", |event| match event {
@@ -1579,4 +1580,152 @@ fn ordinary_managed_preference_calls_live_creation_while_discovery_is_checking()
     .unwrap();
     assert_eq!(created, "live managed");
     assert_eq!(fallback, None);
+}
+
+/// A window that offers a request the host refuses on an un-negotiated
+/// connection shows `Session failed` (ADR-474): the offer must carry
+/// `launch-resume`, and the host's own offer must agree to it.
+#[test]
+fn the_windows_offer_negotiates_launch_resume_with_the_host() {
+    let agreement =
+        koru_session_protocol::negotiate(&protocol_offer(), &koru_session_host::protocol_offer())
+            .expect("the window and the host agree on a protocol");
+    assert!(
+        agreement
+            .capabilities
+            .supports(koru_session_protocol::capability::LAUNCH_RESUME),
+        "launch-resume must be negotiated"
+    );
+}
+
+/// **Two connections, two live terminals.** Each connection holds one
+/// controller lease, so a window that shows two terminals gives each its own
+/// connection (`mainview/session_lanes.rs`). The host must serve both at once:
+/// each types into and reads its own session, and neither sees the other's.
+#[test]
+fn two_connections_drive_two_sessions_at_once_on_an_isolated_host() {
+    let root = tempfile::tempdir().unwrap();
+    let mut host = IsolatedHost::start(root.path());
+    let first_client = host.client();
+    let second_client = host.client();
+    let first = first_client.create(interactive_shell(root.path())).unwrap();
+    let second = first_client.create(interactive_shell(root.path())).unwrap();
+
+    let (first_lease, first_render) = attach_raw(
+        &first_client,
+        first.id,
+        ViewportGeneration::new(1).unwrap(),
+        80,
+        2,
+    )
+    .unwrap();
+    let (second_lease, second_render) = attach_raw(
+        &second_client,
+        second.id,
+        ViewportGeneration::new(1).unwrap(),
+        80,
+        2,
+    )
+    .expect("a second connection attaches a different session while the first holds its own");
+
+    let (mut sender, receive) = channel();
+    #[cfg(windows)]
+    let (one, two) = ("echo KORU_LANE_ONE\r", "echo KORU_LANE_TWO\r");
+    #[cfg(unix)]
+    let (one, two) = ("echo KORU_LANE_ONE\n", "echo KORU_LANE_TWO\n");
+    dispatch_raw_text(
+        &mut sender,
+        &receive,
+        &first_client,
+        first.id,
+        first_lease.token,
+        one,
+    );
+    dispatch_raw_text(
+        &mut sender,
+        &receive,
+        &second_client,
+        second.id,
+        second_lease.token,
+        two,
+    );
+    render_contains(&first_render, "KORU_LANE_ONE");
+    render_contains(&second_render, "KORU_LANE_TWO");
+
+    // One connection cannot take the other's session while it is held.
+    assert!(
+        attach_raw(
+            &first_client,
+            second.id,
+            ViewportGeneration::new(2).unwrap(),
+            80,
+            2,
+        )
+        .is_err(),
+        "a session already driven by another connection is not taken by attaching"
+    );
+
+    send_raw(
+        &first_client,
+        first.id,
+        first_lease.token,
+        RawCommand::Terminate,
+    )
+    .unwrap();
+    send_raw(
+        &second_client,
+        second.id,
+        second_lease.token,
+        RawCommand::Terminate,
+    )
+    .unwrap();
+    drop(first_render);
+    drop(second_render);
+    first_client.disconnect();
+    second_client.disconnect();
+    host.stop();
+}
+
+/// A terminal's own connection ends when the window is done with it: `close`
+/// stops the thread (the session it held keeps running), where dropping the
+/// sender alone would not — the backend holds its own sender to itself.
+#[test]
+fn a_lane_connection_stops_when_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let host = IsolatedHost::start(root.path());
+    let (event_send, events) = mpsc::channel();
+    let (sender, commands) = channel();
+    let internal = sender.internal_sender();
+    let owned_root = root.path().to_path_buf();
+    let thread = std::thread::Builder::new()
+        .name("koru-session-backend terminal lane".into())
+        .spawn(move || {
+            run(
+                ChannelSink(event_send),
+                Some(owned_root),
+                Vec::new(),
+                commands,
+                internal,
+                true,
+            )
+        })
+        .unwrap();
+
+    // A lane asks for no catalog: connecting produces no `Connected`.
+    assert!(
+        events.recv_timeout(Duration::from_millis(500)).is_err()
+            || !events
+                .try_iter()
+                .any(|event| matches!(event, BackendEvent::Connected(_))),
+        "a lane does not read the catalog"
+    );
+
+    sender.close();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !thread.is_finished() {
+        assert!(Instant::now() < deadline, "the lane's thread did not stop");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    thread.join().unwrap();
+    drop(host);
 }

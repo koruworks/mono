@@ -945,19 +945,11 @@ fn native_sign(path: &Path) -> Result<(), String> {
 
 #[cfg(any(windows, test))]
 fn windows_package_version(version: &str, build_number: u64) -> Result<String, String> {
-    let parsed = semver::Version::parse(version.trim_start_matches('v'))
+    // Parsed strictly here, where a release is refused, before the Agent's
+    // build script derives the same string leniently.
+    semver::Version::parse(version.trim_start_matches('v'))
         .map_err(|error| format!("invalid release version for Windows identity: {error}"))?;
-    let parts = [parsed.major, parsed.minor, parsed.patch, build_number];
-    if parts.iter().any(|part| *part > u16::MAX as u64) {
-        return Err(format!(
-            "Windows package version fields must be at most {}; got {version}.{build_number}",
-            u16::MAX
-        ));
-    }
-    Ok(format!(
-        "{}.{}.{}.{}",
-        parsed.major, parsed.minor, parsed.patch, build_number
-    ))
+    koru_winres::package_version(version, build_number)
 }
 
 #[cfg(any(windows, test))]
@@ -2245,6 +2237,13 @@ mod tests {
             Ok("1.2.3.42")
         );
         assert!(windows_package_version("1.2.3", u16::MAX as u64 + 1).is_err());
+        // A GitHub nightly's build number is its UTC minute; the field is the
+        // hours since 2026, the same string the Agent's build script stamps.
+        assert_eq!(
+            windows_package_version("0.1.4-nightly.20261029+abc1234", 202_610_291_530).as_deref(),
+            Ok("0.1.4.7239")
+        );
+        assert!(windows_package_version("70000.0.0", 1).is_err());
     }
 
     /// This half of the drift guard. The other half lives in

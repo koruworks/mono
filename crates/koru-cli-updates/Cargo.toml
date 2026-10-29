@@ -1,0 +1,24 @@
+[package]
+rust-version.workspace = true
+name = "koru-cli-updates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Which coding-agent CLIs are installed, whether each has a newer release, and running the CLI's own updater."
+
+# The programs are the ones the terminal's `+` menu already lists, resolved
+# through the same PATH/PATHEXT lookup the presence probe uses, so this crate
+# cannot report an update for a CLI the menu would not show, nor pick a
+# different shim than the session host would launch.
+[dependencies]
+koru-session-profiles = { path = "../koru-session-profiles" }
+# The registry lookup. `koru-agent` already links reqwest through
+# `koru-update`; this adds no new weight to the one process that runs it.
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

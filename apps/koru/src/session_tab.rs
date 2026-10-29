@@ -82,6 +82,13 @@ pub struct PendingLaunch {
     /// (ADR-264: placement travels inside creation, never a follow-up
     /// assign). `None` is the Unassigned bucket — the `+` menu's case.
     pub project: Option<ProjectId>,
+    /// Where the session's process starts, when the launch names one: a
+    /// recovered tab starts where the lost session was. `None` keeps the
+    /// project's folder, then the home folder.
+    pub working_directory: Option<std::path::PathBuf>,
+    /// Continue the agent's most recent conversation in that folder rather
+    /// than start a fresh one (`launch-resume`). Raw agents only.
+    pub resume: bool,
 }
 
 pub struct SessionView {
@@ -96,6 +103,16 @@ pub struct SessionView {
     /// answers.
     pub profile_key: Option<SessionProfileKey>,
     pub pending_launch: Option<PendingLaunch>,
+    /// What this tab was when it was saved — its folder, its project, whether
+    /// it was a raw terminal — kept from a restore until the Agent's first
+    /// catalog says the session is still alive (then it is dropped) or is not
+    /// (then the tab offers a replacement instead of closing; ADR-474).
+    pub recovery: Option<koru_workspace_host::SessionRecovery>,
+    /// The panel a recovered tab shows in place of a terminal.
+    pub offer: Option<crate::session_offer::Offer>,
+    /// A recovered shell answers its own offer: a fresh prompt in the same
+    /// folder asks nothing of the person.
+    pub offer_auto_start: bool,
     /// The Terminal settings' version this tab last applied its cursor from.
     cursor_version: u64,
     /// **This tab was opened to watch a delegated run's session.**
@@ -140,7 +157,9 @@ impl SessionView {
         surface.window_focused = true;
         surface
             .view
-            .set_appearance(crate::terminal_prefs::appearance());
+            .set_appearance(crate::terminal_prefs::appearance_for(
+                pending_launch.as_ref().map(|launch| &launch.profile.id),
+            ));
         Self {
             surface,
             session: None,
@@ -149,6 +168,9 @@ impl SessionView {
                 .as_ref()
                 .map(|launch| launch.profile.id.clone()),
             pending_launch,
+            recovery: None,
+            offer: None,
+            offer_auto_start: false,
             watches_run: false,
             engine: TextEngine::new(),
             pointer: (0.0, 0.0),
@@ -391,6 +413,10 @@ impl View for SessionView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        // A recovered tab has no terminal behind it to type into.
+        if let Some(offer) = self.offer.as_mut() {
+            return offer.key(key);
+        }
         // **Before every other key.** A watched session has no composer to
         // toggle, no grid to type into and no approval to answer; the only
         // keys it has are the ones that reach the control at its foot.
@@ -456,6 +482,15 @@ impl View for SessionView {
 
     fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.pointer = (x, y);
+        if let Some(offer) = self.offer.as_mut() {
+            return offer.mouse_down(
+                &mut self.engine,
+                self.surface.lang,
+                self.surface.bounds,
+                x,
+                y,
+            );
+        }
         self.pressed = true;
         let composer = self.surface.split().1;
         // The same band, read two ways: the composer when this window drives
@@ -483,6 +518,15 @@ impl View for SessionView {
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        if let Some(offer) = self.offer.as_mut() {
+            return offer.mouse_move(
+                &mut self.engine,
+                self.surface.lang,
+                self.surface.bounds,
+                x,
+                y,
+            );
+        }
         let composer = self.surface.split().1;
         if self.surface.watching().watching() {
             return self.surface.hover_watch_band(x, y);
@@ -534,6 +578,9 @@ impl View for SessionView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if self.offer.is_some() {
+            return;
+        }
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, y) => y,
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
@@ -568,6 +615,9 @@ impl View for SessionView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if let Some(offer) = self.offer.as_ref() {
+            return offer.cursor();
+        }
         let composer = self.surface.split().1;
         let (x, y) = self.pointer;
         if composer.h <= 0.0 || !composer.contains(x, y) {
@@ -632,14 +682,47 @@ impl View for SessionView {
         // (`the_workspace_host_chain_has_no_seams_at_fractional_zoom`).
         let scale = 1.0;
         self.surface.scale = scale;
+        // A recovered tab paints its offer over the terminal's own ground and
+        // nothing else: there is no grid, no composer and no status.
+        if let Some(offer) = self.offer.as_ref() {
+            let bounds = self.surface.bounds;
+            koru_draw::scene::fill(
+                scene,
+                root,
+                self.surface.view.background(),
+                &koru_draw::scene::rect(bounds.x, bounds.y, bounds.w, bounds.h),
+            );
+            let dark = crate::terminal_prefs::appearance_for(self.profile_key.as_ref()).dark;
+            offer.draw(
+                scene,
+                root,
+                &mut self.engine,
+                self.surface.lang,
+                bounds,
+                dark,
+            );
+            return;
+        }
         self.surface
             .view
-            .set_appearance(crate::terminal_prefs::appearance());
+            .set_appearance(crate::terminal_prefs::appearance_for(
+                self.profile_key.as_ref(),
+            ));
         if self.surface.view.prepare_style(&mut self.engine, scale) {
             // Font/terminal text zoom changes the PTY's cell count as well as
             // its paint. Reuse the same resize path as viewport changes.
             let _ = self.surface.renegotiate_grid();
         }
+        // The grid paints whole cells, so what is left over at the right and
+        // bottom edge (up to a cell wide or tall, and the content inset) would
+        // show the page behind it. The ground goes under the whole pane first.
+        let bounds = self.surface.bounds;
+        koru_draw::scene::fill(
+            scene,
+            root,
+            self.surface.view.background(),
+            &koru_draw::scene::rect(bounds.x, bounds.y, bounds.w, bounds.h),
+        );
         let now = Instant::now();
         let eligible = self.surface.blink_eligible();
         let _ = self.surface.sync_cursor_blink(eligible, now);

@@ -48,6 +48,9 @@ struct NativeInner {
     reject_submit: bool,
     hold_events: bool,
     hold_submit: bool,
+    /// A provider that takes text into the running turn.
+    steerable: bool,
+    steered: Vec<AgentInput>,
 }
 
 struct NativeWake(Arc<NativeState>);
@@ -118,6 +121,19 @@ impl AgentControl for NativeControl {
         }
         drop(inner);
         self.state.ready.notify_one();
+        Ok(())
+    }
+
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        let mut inner = self.state.inner.lock().unwrap();
+        if !inner.steerable {
+            return Err(ProviderFailure::new(
+                ErrorCode::InvalidTransition,
+                crate::providers::ProviderStage::Submit,
+                crate::providers::ProviderDiagnostic::InvalidState,
+            ));
+        }
+        inner.steered.push(input);
         Ok(())
     }
 
@@ -789,4 +805,80 @@ fn an_accepted_managed_submission_survives_lease_loss_before_its_reply() {
         accepted.turn_id
     );
     assert_eq!(harness.state.inner.lock().unwrap().calls.len(), 1);
+}
+
+#[test]
+fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_it_cannot() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    {
+        let mut inner = harness.state.inner.lock().unwrap();
+        inner.hold_events = true;
+    }
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let accepted = handle
+        .send_pending_input(
+            attached.lease.token,
+            PendingInput {
+                idempotency_key: IdempotencyKey::mint(),
+                text: "first".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+
+    let steer = PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: "and also this".into(),
+        attachment_ids: Vec::new(),
+    };
+    // A provider with no steer call says what it has always said.
+    assert_eq!(
+        handle
+            .send_pending_input(attached.lease.token, steer.clone())
+            .unwrap_err(),
+        ErrorCode::InvalidTransition
+    );
+    assert!(harness.state.inner.lock().unwrap().steered.is_empty());
+
+    harness.state.inner.lock().unwrap().steerable = true;
+    let steered = handle
+        .send_pending_input(attached.lease.token, steer.clone())
+        .unwrap();
+    assert_eq!(
+        steered.turn_id, accepted.turn_id,
+        "it joined the running turn"
+    );
+    assert_eq!(handle.summary().active_turn_id, Some(accepted.turn_id));
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.calls.len(), 1, "no second turn was started");
+        assert_eq!(inner.steered.len(), 1);
+        assert_eq!(inner.steered[0].text, "and also this");
+        assert_eq!(inner.steered[0].turn_id, accepted.turn_id);
+    }
+
+    // The same key again is answered, not sent twice.
+    let again = handle
+        .send_pending_input(attached.lease.token, steer)
+        .unwrap();
+    assert_eq!(again.turn_id, accepted.turn_id);
+    assert_eq!(harness.state.inner.lock().unwrap().steered.len(), 1);
+
+    // And the turn it joined can still be cancelled as before.
+    handle
+        .cancel_turn(
+            attached.lease.token,
+            IdempotencyKey::mint(),
+            accepted.turn_id,
+            CancelReason::Run,
+        )
+        .unwrap();
+    harness.state.inner.lock().unwrap().hold_events = false;
+    harness.state.ready.notify_one();
+    eventually(|| handle.summary().active_turn_id.is_none());
 }

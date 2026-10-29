@@ -1,0 +1,85 @@
+{
+  "cli_version": "0.165.0",
+  "protocol_version": "v2",
+  "schema_sha256": "38027ec8a6fffc2422b674cab13dc1a05c26e13a48349c46a274609d52090e35",
+  "required_client_methods": [
+    "initialize",
+    "model/list",
+    "thread/start",
+    "turn/start",
+    "turn/interrupt"
+  ],
+  "required_server_notifications": [
+    "item/agentMessage/delta",
+    "item/started",
+    "item/completed",
+    "thread/tokenUsage/updated",
+    "turn/completed"
+  ],
+  "required_server_requests": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval"
+  ],
+  "required_input_modalities": [
+    "text",
+    "image"
+  ],
+  "model_identity_notifications": [
+    "model/rerouted"
+  ],
+  "additive_server_requests_unhandled": [
+    "account/chatgptAuthTokens/refresh",
+    "applyPatchApproval",
+    "attestation/generate",
+    "execCommandApproval",
+    "item/tool/call",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request"
+  ],
+  "additive_notifications_ignored": [
+    "thread/started",
+    "turn/started",
+    "thread/status/changed",
+    "mcpServer/startupStatus/updated",
+    "hook/started",
+    "hook/completed",
+    "account/rateLimits/updated",
+    "remoteControl/status/changed",
+    "item/plan/delta",
+    "item/reasoning/summaryPartAdded",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "turn/diff/updated",
+    "turn/plan/updated",
+    "model/safetyBuffering/updated",
+    "model/verification",
+    "guardianWarning",
+    "warning",
+    "deprecationNotice",
+    "configWarning",
+    "autoApprovalReview/strictReviewRequired",
+    "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed",
+    "item/commandExecution/terminalInteraction",
+    "item/mcpToolCall/progress",
+    "modelProvider/authRecoveryStarted",
+    "modelProvider/authRecoveryCompleted",
+    "serverRequest/resolved",
+    "thread/goal/updated",
+    "thread/goal/cleared",
+    "thread/prediction/updated",
+    "thread/queue/changed",
+    "thread/readState/changed",
+    "thread/realtime/started",
+    "thread/realtime/closed",
+    "thread/realtime/error",
+    "turn/moderationMetadata",
+    "windows/worldWritableWarning"
+  ],
+  "recording_provenance": {
+    "schema": "Generated on Windows on 2026-10-28 with the normally installed codex-cli 0.165.0 through scripts/dev/probe-codex-app-server.ps1 (twice, same digest); every required token present. The server-request set is the 0.163.0 set without openai/form, plus the legacy applyPatchApproval and execCommandApproval, which reach a person as a generic approval like the others listed. The adapter's required notifications and model/rerouted are all present; the additive notifications are the 0.163.0 set, all ignored.",
+    "handshake": "The opt-in no-prompt factory handshake (live_codex_no_prompt_handshake_lists_models_when_opted_in) completed initialize and model/list against the installed CLI; no thread or prompt. See README.md for the run.",
+    "jsonl": "No replay fixtures for this version. The 0.154.0 replay set is the boundary fixture; a model turn under 0.165.0 has not been recorded."
+  }
+}

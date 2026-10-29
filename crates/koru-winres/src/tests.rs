@@ -144,3 +144,57 @@ fn the_version_block_carries_the_full_version_and_a_numeric_fileversion() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn an_allocated_build_number_is_its_own_field() {
+    assert_eq!(build_field(0), Some(0));
+    assert_eq!(build_field(42), Some(42));
+    assert_eq!(build_field(u16::MAX as u64), Some(u16::MAX));
+}
+
+#[test]
+fn a_nightly_build_time_is_the_hours_since_2026() {
+    assert_eq!(build_field(202_601_010_000), Some(0));
+    assert_eq!(build_field(202_601_010_059), Some(0));
+    assert_eq!(build_field(202_601_010_100), Some(1));
+    // 2026-10-29 is day 301 of the year.
+    assert_eq!(build_field(202_610_291_530), Some(301 * 24 + 15));
+    // Leap day 2028 (after 2026 and 2027), and the year after it.
+    assert_eq!(
+        build_field(202_802_290_000),
+        Some((365 + 365 + 31 + 28) * 24)
+    );
+    assert_eq!(build_field(202_901_010_000), Some((365 + 365 + 366) * 24));
+    // Later is always larger, across a month and a year boundary.
+    assert!(build_field(202_611_010_000) > build_field(202_610_312_300));
+    assert!(build_field(202_701_010_000) > build_field(202_612_312_300));
+}
+
+#[test]
+fn a_number_with_no_field_is_refused_not_wrapped() {
+    // Too large and not a time.
+    assert_eq!(build_field(65_536), None);
+    assert_eq!(build_field(999_999_999_999), None);
+    // Times that are not real minutes.
+    assert_eq!(build_field(202_613_010_000), None);
+    assert_eq!(build_field(202_602_300_000), None);
+    assert_eq!(build_field(202_610_292_400), None);
+    assert_eq!(build_field(202_610_291_560), None);
+    // Before 2026, and after the field runs out (mid-2033).
+    assert_eq!(build_field(202_512_312_359), None);
+    assert_eq!(build_field(203_401_010_000), None);
+}
+
+#[test]
+fn the_package_version_is_four_sixteen_bit_fields() {
+    assert_eq!(
+        package_version("1.2.3-beta.4", 42).as_deref(),
+        Ok("1.2.3.42")
+    );
+    assert_eq!(
+        package_version("0.1.4-nightly.20261029+abc1234", 202_610_291_530).as_deref(),
+        Ok("0.1.4.7239")
+    );
+    assert!(package_version("1.2.3", 65_536).is_err());
+    assert!(package_version("70000.0.0", 1).is_err());
+}
