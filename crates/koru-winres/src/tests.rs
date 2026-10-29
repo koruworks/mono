@@ -160,7 +160,10 @@ fn a_nightly_build_time_is_the_hours_since_2026() {
     // 2026-10-29 is day 301 of the year.
     assert_eq!(build_field(202_610_291_530), Some(301 * 24 + 15));
     // Leap day 2028 (after 2026 and 2027), and the year after it.
-    assert_eq!(build_field(202_802_290_000), Some((365 + 365 + 31 + 28) * 24));
+    assert_eq!(
+        build_field(202_802_290_000),
+        Some((365 + 365 + 31 + 28) * 24)
+    );
     assert_eq!(build_field(202_901_010_000), Some((365 + 365 + 366) * 24));
     // Later is always larger, across a month and a year boundary.
     assert!(build_field(202_611_010_000) > build_field(202_610_312_300));
