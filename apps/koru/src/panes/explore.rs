@@ -8704,4 +8704,6 @@ mod slides;
 use slides::RowSlides;
 
 #[cfg(test)]
+mod popover_baseline;
+#[cfg(test)]
 mod tests;

@@ -114,6 +114,7 @@ pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f6
     fill(scene, root, color, &path);
 }
 
+#[track_caller]
 pub fn stroke(
     scene: &mut Scene,
     root: Affine,
@@ -121,6 +122,18 @@ pub fn stroke(
     width: f64,
     shape: &impl vello::kurbo::Shape,
 ) {
+    // Recorded like a fill, so a hairline is evidence too: a panel's border
+    // and a badge's outline were the paints the inspector could not see.
+    if crate::inspect::enabled() && color.components[3] > 0.0 {
+        crate::inspect::leaf("stroke", root, shape.bounding_box(), |record| {
+            record.property(
+                "color",
+                crate::inspect::color(color),
+                "resolved paint; token origin not exposed",
+            );
+            record.property("width", width, "scene::stroke");
+        });
+    }
     scene.stroke(&Stroke::new(width), root, color, None, shape);
 }
 

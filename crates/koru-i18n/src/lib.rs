@@ -249,10 +249,34 @@ pub fn set_current(lang: Lang) {
 /// English is the default rather than a fall-back: a process that has not yet
 /// resolved a locale has not yet been told anything about a person.
 pub fn current() -> Lang {
+    if let Some(lang) = SCOPED.get() {
+        return lang;
+    }
     Lang::ALL
         .get(CURRENT.load(std::sync::atomic::Ordering::Relaxed) as usize)
         .copied()
         .unwrap_or(Lang::En)
+}
+
+thread_local! {
+    static SCOPED: std::cell::Cell<Option<Lang>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `f` with [`current`] answering `lang` **on this thread only**.
+///
+/// For a test that draws a surface in another language: flipping the process
+/// global would change the words every other test in the binary is drawing at
+/// that moment, because cargo runs them concurrently. Nested calls restore in
+/// order, and an unwind restores too.
+pub fn with_current<T>(lang: Lang, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Lang>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.set(self.0);
+        }
+    }
+    let _restore = Restore(SCOPED.replace(Some(lang)));
+    f()
 }
 
 #[cfg(test)]
