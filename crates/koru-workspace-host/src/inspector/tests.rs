@@ -1187,7 +1187,11 @@ fn details_group_tokens_first_and_fold_the_capture_notes() {
     assert!(size < layout);
     assert!(position("fill: Fill(1)").is_some());
     assert!(position("min_h: metrics::ROW_MIN -> 26").is_some());
-    assert!(position("Ancestors: Workspace plate").is_some());
+    let ancestors = position("Ancestors: Workspace plate").expect("a breadcrumb");
+    assert!(
+        ancestors < size,
+        "where it sits comes before what it is made of"
+    );
     assert!(
         !inspector.lines.iter().any(|l| l.starts_with("pad_x")),
         "the parent's properties are not repeated under its child"

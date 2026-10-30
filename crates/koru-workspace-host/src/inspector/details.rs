@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **Details, grouped.** Who the element is; then its design-system tokens —
-//! colour, spacing, size, text, icon — then its state, accessibility and
-//! measured layout; its ancestors as a breadcrumb; and the capture's notes
-//! folded at the foot.
+//! **Details, grouped.** Who the element is and its ancestors, as a
+//! breadcrumb; then its design-system tokens — colour, spacing, size, text,
+//! icon — then its state, accessibility and measured layout; and the
+//! capture's notes folded at the foot.
 //!
 //! Reads the element record (ELEMENTS.final §3.9), whose token properties
 //! are written `provenance -> value`. A record from a surface not yet on
@@ -178,6 +178,19 @@ impl Inspector {
             }
         }
 
+        // Where it sits, before what it is made of.
+        let mut crumbs = Vec::new();
+        let mut at = record.parent;
+        while let Some(i) = at {
+            let ancestor = &snapshot.records[i];
+            crumbs.push((i, display_name(ancestor).to_string()));
+            at = ancestor.parent;
+        }
+        if !crumbs.is_empty() {
+            out.push(Line::Heading("Ancestors"));
+            out.push(Line::Crumbs(crumbs));
+        }
+
         let mut placed: BTreeSet<&str> = IDENTITY.into_iter().collect();
         placed.extend(SHOWN_ELSEWHERE);
         for (heading, names) in GROUPS {
@@ -266,18 +279,6 @@ impl Inspector {
             "clip",
             rectangle_numbers(record.clip),
         )));
-
-        let mut crumbs = Vec::new();
-        let mut at = record.parent;
-        while let Some(i) = at {
-            let ancestor = &snapshot.records[i];
-            crumbs.push((i, display_name(ancestor).to_string()));
-            at = ancestor.parent;
-        }
-        if !crumbs.is_empty() {
-            out.push(Line::Heading("Ancestors"));
-            out.push(Line::Crumbs(crumbs));
-        }
 
         out.push(Line::Fold(self.notes_open));
         if self.notes_open {
