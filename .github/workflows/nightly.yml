@@ -270,16 +270,28 @@ jobs:
           "KORU_SIGNTOOL_COMMAND=`"$($signtool.FullName)`" sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib `"$dlib`" /dmdf `"$metadata`" {file}" >> $env:GITHUB_ENV
           "KORU_WINDOWS_PACKAGE_PUBLISHER=$env:PUBLISHER" >> $env:GITHUB_ENV
           "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
-      # **The installer is NSIS** (rev2 §12, N18), which the image carries.
-      # `!uninstfinalize`, which signs the uninstaller, needs 3.08 or later.
+      # **The installer is NSIS** (rev2 §12, N18). `windows-latest` stopped
+      # carrying it (the run of 2026-10-30 found none), so a missing one is
+      # installed from Chocolatey at a pinned version, never whatever is
+      # newest. `!uninstfinalize`, which signs the uninstaller, needs 3.08 or
+      # later.
       - name: Find NSIS
         shell: pwsh
+        env:
+          NSIS_VERSION: 3.13.0
         run: |
-          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
-          if (-not (Test-Path $makensis)) {
-            $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          $default = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          $find = {
+            if (Test-Path $default) { $default }
+            else { (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source }
           }
-          if (-not $makensis) { throw 'NSIS is not on this image: the Windows installer needs makensis 3.08 or later' }
+          $makensis = & $find
+          if (-not $makensis) {
+            choco install nsis --version $env:NSIS_VERSION --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco could not install NSIS $env:NSIS_VERSION" }
+            $makensis = & $find
+          }
+          if (-not $makensis) { throw 'NSIS is not on this image and did not install: the Windows installer needs makensis 3.08 or later' }
           $version = (& $makensis /VERSION).Trim()
           if ([version]($version.TrimStart('v') -replace '[^0-9.].*$', '') -lt [version]'3.8') {
             throw "NSIS $version is older than 3.08"
