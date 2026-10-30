@@ -26,6 +26,8 @@
 //! focused state and an accessibility node are about, and it survives
 //! reordering, renaming and translation. A list position never is one.
 
+use std::panic::Location;
+
 use vello::Scene;
 use vello::kurbo::Affine;
 
@@ -33,11 +35,12 @@ use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::themes::{self, Contrast, Theme};
 use crate::theme::{
-    FontWeight, IconSize, Ink, Line, Metric, Palette, Profile, Radius, Space, Surface, TextRole,
-    roles,
+    FontWeight, IconSize, Ink, Line, Metric, Palette, Profile, Radius, Space, Surface, Tagged,
+    TextRole, roles,
 };
 
 mod frame;
+mod record;
 mod solve;
 
 pub use frame::{Diagnostic, Frame, HitRegion, Node, SemNode, TextCache};
@@ -286,6 +289,41 @@ impl From<Metric> for Length {
     }
 }
 
+/// A spacing step as it was authored: the step, and the alias that named it
+/// when a component's use of a step has a name of its own (`NAV_PAD` is
+/// `S2`). The inspector shows both.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Spacing {
+    pub space: Space,
+    pub alias: Option<&'static str>,
+}
+
+impl Spacing {
+    pub const NONE: Self = Self {
+        space: Space::S0,
+        alias: None,
+    };
+
+    pub fn px(self, profile: Profile) -> f32 {
+        self.space.px(profile)
+    }
+}
+
+impl From<Space> for Spacing {
+    fn from(space: Space) -> Self {
+        Self { space, alias: None }
+    }
+}
+
+impl From<Tagged<Space>> for Spacing {
+    fn from(alias: Tagged<Space>) -> Self {
+        Self {
+            space: alias.token,
+            alias: Some(alias.name),
+        }
+    }
+}
+
 /// Cross-axis placement of a stack's children (§3.3: Stretch by default).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum Align {
@@ -369,6 +407,8 @@ pub(crate) enum Kind {
 /// One element: a box, text, an icon, a scroll viewport or a leaf.
 pub struct El {
     pub(crate) name: &'static str,
+    /// Where it was written: the inspector's source line (§3.9).
+    pub(crate) site: &'static Location<'static>,
     pub(crate) kind: Kind,
     /// `Fill(weight)` along the parent's stack axis.
     pub(crate) fill: Option<f32>,
@@ -381,8 +421,8 @@ pub struct El {
     pub(crate) min_h: Option<Length>,
     pub(crate) max_h: Option<Length>,
     /// Logical start, top, end, bottom.
-    pub(crate) pad: [Space; 4],
-    pub(crate) gap: Space,
+    pub(crate) pad: [Spacing; 4],
+    pub(crate) gap: Spacing,
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) bg: Option<Surface>,
@@ -409,9 +449,11 @@ pub struct El {
     pub(crate) children: Vec<El>,
 }
 
+#[track_caller]
 fn element(name: &'static str, kind: Kind) -> El {
     El {
         name,
+        site: Location::caller(),
         kind,
         fill: None,
         w: None,
@@ -422,8 +464,8 @@ fn element(name: &'static str, kind: Kind) -> El {
         max_w: None,
         min_h: None,
         max_h: None,
-        pad: [Space::S0; 4],
-        gap: Space::S0,
+        pad: [Spacing::NONE; 4],
+        gap: Spacing::NONE,
         align: Align::Stretch,
         align_self: None,
         bg: None,
@@ -446,28 +488,33 @@ fn element(name: &'static str, kind: Kind) -> El {
 }
 
 /// Children side by side.
+#[track_caller]
 pub fn row(name: &'static str) -> El {
     element(name, Kind::Stack(Axis::Horizontal))
 }
 
 /// Children one under another.
+#[track_caller]
 pub fn col(name: &'static str) -> El {
     element(name, Kind::Stack(Axis::Vertical))
 }
 
 /// One child in a padded, decorated box.
+#[track_caller]
 pub fn boxed(name: &'static str) -> El {
     element(name, Kind::Stack(Axis::Vertical))
 }
 
 /// A bounded viewport over a vertical column of children, scrolled by the
 /// host's offset.
+#[track_caller]
 pub fn scroll_y(name: &'static str) -> El {
     element(name, Kind::Scroll { offset: 0.0 })
 }
 
 /// Text in a role, Primary ink, single-line unless asked. Its words are
 /// paint; the control that holds it owns the accessible name.
+#[track_caller]
 pub fn text(content: impl Into<String>) -> El {
     element(
         "Text",
@@ -483,6 +530,7 @@ pub fn text(content: impl Into<String>) -> El {
 
 /// A glyph in a named icon size. **Not an element until it is classified**:
 /// [`Unclassified::decorative`] or [`Unclassified::alt`].
+#[track_caller]
 pub fn icon(glyph: char, size: IconSize) -> Unclassified {
     Unclassified(element(
         "Icon",
@@ -496,6 +544,7 @@ pub fn icon(glyph: char, size: IconSize) -> Unclassified {
 
 /// An existing drawable, measured and placed like any element. **Not an
 /// element until it is classified**: decorative, or a simple semantic node.
+#[track_caller]
 pub fn leaf(name: &'static str, adapter: impl Leaf + 'static) -> Unclassified {
     Unclassified(element(name, Kind::Leaf(Box::new(adapter))))
 }
@@ -528,6 +577,7 @@ impl Unclassified {
 }
 
 /// Space that takes what its stack leaves over.
+#[track_caller]
 pub fn spacer() -> El {
     let mut el = element("Spacer", Kind::Stack(Axis::Horizontal));
     el.fill = Some(1.0);
@@ -536,6 +586,7 @@ pub fn spacer() -> El {
 
 /// A hairline across its stack, one border width thick along the stack's
 /// axis.
+#[track_caller]
 pub fn divider(line: Line) -> El {
     element("Divider", Kind::Divider(line))
 }
@@ -599,47 +650,50 @@ impl El {
         self
     }
 
-    pub fn pad(mut self, space: Space) -> Self {
-        self.pad = [space; 4];
+    /// A step or a tagged alias (`alias::NAV_PAD`); the alias keeps its name.
+    pub fn pad(mut self, space: impl Into<Spacing>) -> Self {
+        self.pad = [space.into(); 4];
         self
     }
 
     /// Logical start and end: the same on both sides in either direction.
-    pub fn pad_x(mut self, space: Space) -> Self {
+    pub fn pad_x(mut self, space: impl Into<Spacing>) -> Self {
+        let space = space.into();
         self.pad[0] = space;
         self.pad[2] = space;
         self
     }
 
-    pub fn pad_y(mut self, space: Space) -> Self {
+    pub fn pad_y(mut self, space: impl Into<Spacing>) -> Self {
+        let space = space.into();
         self.pad[1] = space;
         self.pad[3] = space;
         self
     }
 
-    pub fn pad_start(mut self, space: Space) -> Self {
-        self.pad[0] = space;
+    pub fn pad_start(mut self, space: impl Into<Spacing>) -> Self {
+        self.pad[0] = space.into();
         self
     }
 
-    pub fn pad_end(mut self, space: Space) -> Self {
-        self.pad[2] = space;
+    pub fn pad_end(mut self, space: impl Into<Spacing>) -> Self {
+        self.pad[2] = space.into();
         self
     }
 
-    pub fn pad_top(mut self, space: Space) -> Self {
-        self.pad[1] = space;
+    pub fn pad_top(mut self, space: impl Into<Spacing>) -> Self {
+        self.pad[1] = space.into();
         self
     }
 
-    pub fn pad_bottom(mut self, space: Space) -> Self {
-        self.pad[3] = space;
+    pub fn pad_bottom(mut self, space: impl Into<Spacing>) -> Self {
+        self.pad[3] = space.into();
         self
     }
 
     /// The space a stack keeps between its children.
-    pub fn gap(mut self, space: Space) -> Self {
-        self.gap = space;
+    pub fn gap(mut self, space: impl Into<Spacing>) -> Self {
+        self.gap = space.into();
         self
     }
 

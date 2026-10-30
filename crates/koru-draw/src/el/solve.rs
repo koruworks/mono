@@ -68,7 +68,7 @@ impl Solver<'_> {
 
     /// Start, top, end, bottom.
     fn pad(&self, el: &El) -> [f32; 4] {
-        el.pad.map(|space| self.space(space))
+        el.pad.map(|spacing| self.space(spacing.space))
     }
 
     fn clamp(&self, value: f32, min: Option<Length>, max: Option<Length>) -> f32 {
@@ -216,7 +216,7 @@ impl Solver<'_> {
         if n < 2 {
             0.0
         } else {
-            self.space(el.gap) * (n - 1) as f32
+            self.space(el.gap.space) * (n - 1) as f32
         }
     }
 
@@ -462,7 +462,7 @@ impl Solver<'_> {
         if spare < -0.001 {
             self.frame.nodes[index].overflow = true;
         }
-        let gap = self.space(el.gap);
+        let gap = self.space(el.gap.space);
         let mut cursor = match axis {
             Axis::Horizontal => inner.x,
             Axis::Vertical => inner.y,
@@ -520,7 +520,7 @@ impl Solver<'_> {
             let claim = self.claim(child, Axis::Vertical, w);
             heights.push((w, claim.size));
         }
-        let gap = self.space(el.gap);
+        let gap = self.space(el.gap.space);
         let content = heights.iter().map(|(_, h)| h).sum::<f32>() + self.gaps(el);
         let offset = offset.clamp(0.0, (content - inner.h).max(0.0));
         self.frame.nodes[index].scroll = Some((content, offset));

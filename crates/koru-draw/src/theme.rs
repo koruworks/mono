@@ -2649,6 +2649,8 @@ pub use tokens::{
 
 #[cfg(test)]
 mod token_guards;
+#[cfg(test)]
+mod ui_scan;
 
 pub const POPOVER_RISE: f32 = 5.0;
 

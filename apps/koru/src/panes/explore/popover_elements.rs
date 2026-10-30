@@ -162,7 +162,7 @@ impl ExploreView {
             .id(PAGE)
             .semantics(Role::Menu)
             .name(koru_i18n::Key::FloorChipAction)
-            .pad_y(alias::PANEL_PAD.token)
+            .pad_y(alias::PANEL_PAD)
             .child(
                 text(heading.clone())
                     .named("Workspaces heading")
@@ -171,7 +171,7 @@ impl ExploreView {
                     .name_text(heading)
                     .role(roles::POPOVER_HEADING)
                     .ink(Ink::Hint)
-                    .pad_x(alias::NAV_PAD.token)
+                    .pad_x(alias::NAV_PAD)
                     .min_h(metrics::ROW_MIN),
             )
             .child(scroll_y("Workspace list").fill().offset(scroll).children(
@@ -205,12 +205,12 @@ impl ExploreView {
         let gear = manage(id);
         row("Workspace row")
             .min_h(metrics::ROW_MIN)
-            .pad_x(alias::ROW_PLATE_INSET.token)
+            .pad_x(alias::ROW_PLATE_INSET)
             .hit_as(primary)
             .child(
                 row("Workspace plate")
                     .fill()
-                    .pad_x(alias::ROW_PLATE_INSET.token)
+                    .pad_x(alias::ROW_PLATE_INSET)
                     .gap(Space::S1)
                     .radius(Radius::Metric(metrics::WORKSPACE_GEAR_RADIUS))
                     .states(&WORKSPACE_ROW_STATES)

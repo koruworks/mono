@@ -283,10 +283,24 @@ pub fn scope(
     bounds: Rect,
     properties: impl FnOnce(&mut Record),
 ) -> Scope {
+    scope_at(name, kind, root, bounds, Location::caller(), properties)
+}
+
+/// A scope whose source is where the thing was *written*, not where it was
+/// painted: an element built in a host module and painted by the shared
+/// frame names the host's line (ELEMENTS.final §3.9, construction site).
+pub fn scope_at(
+    name: &'static str,
+    kind: &'static str,
+    root: Affine,
+    bounds: Rect,
+    site: &'static Location<'static>,
+    properties: impl FnOnce(&mut Record),
+) -> Scope {
     if !enabled() {
         return Scope(false);
     }
-    let index = append(name, kind, root, bounds, Location::caller(), properties);
+    let index = append(name, kind, root, bounds, site, properties);
     if let Some(index) = index {
         CAPTURE.with_borrow_mut(|slot| slot.as_mut().unwrap().stack.push(index));
     }

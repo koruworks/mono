@@ -508,3 +508,136 @@ fn two_themed_subtrees_paint_tiles_text_and_gear_in_their_own_themes() {
         assert!(themed, "{half}: every element record names its theme");
     }
 }
+
+/// **Rung 5: F12 on any element reads everything §3.9 lists** — where it was
+/// written, its key or the key it belongs to, the authored token beside the
+/// value, the profile, theme and contrast, the state rule that won, its clip,
+/// and what it is to a screen reader and the pointer.
+#[test]
+fn every_element_record_reads_what_the_contract_lists() {
+    let list = workspaces(4);
+    let target = list[2].id;
+    let mut v = opened(list);
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    v.accessibility_action(a, gear_of(target), AkAction::Focus, VIEW);
+    let (tree, frame) = lay(&v, a);
+    let mut engine = TextEngine::new();
+    let mut scene = vello::Scene::new();
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        koru_draw::scene::rect(0.0, 0.0, VIEW.0, VIEW.1),
+    );
+    frame.paint(&tree, &mut scene, Affine::IDENTITY, &mut engine);
+    let records = capture.finish().records;
+    let elements: Vec<_> = records.iter().filter(|r| r.kind == "element").collect();
+    assert_eq!(
+        elements.len(),
+        frame.nodes.len(),
+        "every element has a record"
+    );
+
+    let value = |record: &inspect::Record, name: &str| {
+        record
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value.clone())
+            .unwrap_or_else(|| panic!("{}: no {name}", record.name))
+    };
+    for record in &elements {
+        assert!(
+            record
+                .source
+                .starts_with("apps/koru/src/panes/explore/popover_elements.rs:"),
+            "{}: sourced where it was written, not where it painted: {}",
+            record.name,
+            record.source
+        );
+        for name in [
+            "element",
+            "profile",
+            "theme",
+            "appearance",
+            "contrast",
+            "semantics",
+            "input",
+        ] {
+            value(record, name);
+        }
+    }
+    let nth = |name: &str, n: usize| {
+        *elements
+            .iter()
+            .filter(|r| r.name == name)
+            .nth(n)
+            .unwrap_or_else(|| panic!("no {name} #{n}"))
+    };
+
+    let row = nth("Workspace row", 2);
+    assert_eq!(value(row, "occurrence"), "3 of 4 named alike");
+    assert_eq!(value(row, "min_h"), "metrics::ROW_MIN -> 26");
+    assert_eq!(
+        value(row, "pad_x"),
+        "alias::ROW_PLATE_INSET = Space::S1 -> 4"
+    );
+    assert_eq!(
+        value(row, "semantics"),
+        "none: transparent to semantic parenting"
+    );
+    assert!(value(row, "input").starts_with("presses model "));
+    assert!(value(row, "input").ends_with("/root"));
+
+    let plate = nth("Workspace plate", 2);
+    assert_eq!(
+        value(plate, "radius"),
+        "metrics::WORKSPACE_GEAR_RADIUS -> 5"
+    );
+    assert_eq!(value(plate, "gap"), "Space::S1 -> 4");
+    assert_eq!(value(plate, "state rule"), "workspace row: hover");
+    assert!(value(plate, "fill colour").starts_with("Surface::Hover -> #"));
+    assert_eq!(
+        value(nth("Workspace plate", 0), "state rule"),
+        "workspace row: base"
+    );
+
+    let primary = nth("Workspace primary action", 2);
+    assert!(value(primary, "key").ends_with("/root"));
+    assert_eq!(value(primary, "name"), "model content");
+    assert_eq!(value(primary, "semantics"), "MenuItem");
+
+    let gear = nth("Manage gear", 2);
+    let id = target.as_uuid().hyphenated().to_string();
+    assert_eq!(value(gear, "key"), format!("model {id}/manage"));
+    assert_eq!(value(gear, "name"), "Key::ManageWorkspace");
+    assert_eq!(value(gear, "w"), "metrics::TRAILING_LANE_W -> 20");
+    assert_eq!(
+        value(gear, "semantics"),
+        "MenuItem: delegated to the leaf's own node"
+    );
+    assert_eq!(value(gear, "state"), "hovered");
+    let input = value(gear, "input");
+    assert!(input.starts_with("pointer target; focusable; Click/Focus; lit by model "));
+
+    let tile = nth("Workspace tile", 2);
+    assert_eq!(value(tile, "semantics"), "decorative");
+    assert_eq!(value(tile, "within"), format!("model {id}/root"));
+
+    let name = nth("Workspace name", 2);
+    assert_eq!(value(name, "text role"), "row");
+    assert!(value(name, "ink").starts_with("Ink::Secondary -> #"));
+    assert_eq!(value(name, "text mode"), "single line, elided");
+
+    let heading = nth("Workspaces heading", 0);
+    assert!(value(heading, "ink").starts_with("Ink::Hint -> #"));
+    assert_eq!(value(heading, "pad_x"), "alias::NAV_PAD = Space::S2 -> 8");
+
+    let list = nth("Workspace list", 0);
+    assert!(value(list, "scroll").starts_with("content "));
+    // The rows are clipped to the list they scroll in.
+    let viewport = list.rect();
+    assert_eq!(
+        inspect::rect(row.clip),
+        viewport.intersect(inspect::rect(list.clip))
+    );
+}

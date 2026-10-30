@@ -261,30 +261,14 @@ impl Frame {
         let r = node.rect;
         let cx = node.cx;
         let palette = cx.palette();
-        // The minimal element record (P2): developer name, key, bounds,
-        // theme with its appearance and contrast, semantic role.
-        let _record = inspect::scope(
+        // The element's record (§3.9), sourced where it was written.
+        let _record = inspect::scope_at(
             el.name,
             "element",
             transform,
             scene::rect(r.x, r.y, r.w, r.h),
-            |record| {
-                if let Some(key) = node.key {
-                    record.property("key", format!("{:?}/{}", key.object, key.part), "El::id");
-                }
-                record.property("theme", cx.theme.key, "FrameCx::theme");
-                record.property("appearance", cx.theme.appearance.key(), "Theme::appearance");
-                record.property("contrast", cx.contrast.key(), "FrameCx::contrast");
-                let role = match (node.role, node.decorative) {
-                    (_, true) => "decorative".to_string(),
-                    (Some(role), false) => format!("{role:?}"),
-                    (None, false) => "none".to_string(),
-                };
-                record.property("semantics", role, "El::semantics");
-                if el.states.is_some() {
-                    record.property("state rule", node.rule, "El::states");
-                }
-            },
+            el.site,
+            |record| super::record::describe(self, index, el, record),
         );
         if let Some(surface) = node.look.bg {
             let radius = el.radius.px(cx.profile, r.w, r.h);
@@ -295,7 +279,7 @@ impl Frame {
                 &scene::rrect(r.x, r.y, r.w, r.h, radius),
             );
         }
-        let [start, top, end, bottom] = el.pad.map(|space| space.px(cx.profile));
+        let [start, top, end, bottom] = el.pad.map(|spacing| spacing.px(cx.profile));
         let inner = Rect::new(
             r.x + start,
             r.y + top,
