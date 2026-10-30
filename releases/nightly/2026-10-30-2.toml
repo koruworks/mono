@@ -1,0 +1,38 @@
+title = "The Windows installer and Koru Nightly for Mac are here"
+
+summary = [
+  "Windows now has a setup.exe beside the zip: it installs Koru for you alone, with no administrator prompt, and adds Start menu and desktop shortcuts.",
+  "The nightly now comes for Macs with Apple silicon, as a disk image with an app signed and notarized by Apple.",
+]
+
+body = """
+The previous nightly described both of these, but only its Linux build was
+published. This one brings the Windows installer and the Mac download.
+
+## Windows
+
+The nightly now has a Windows installer, `setup.exe`, next to the zip.
+
+- It installs Koru Nightly into your own programs folder
+  (`%LOCALAPPDATA%\\Programs\\Koru Nightly`), or another empty folder you
+  choose, without asking for administrator rights. It adds Start menu and
+  desktop shortcuts and lists Koru under Settings → Apps.
+- Running it over an existing install closes Koru first and upgrades it in
+  place.
+- After the first install Koru updates itself from this page, the same way an
+  unzipped Koru does. The zip is still here if you prefer it.
+- Uninstalling from Settings → Apps closes Koru and removes the program, its
+  shortcuts, `koru://` links and start-at-sign-in. **Your workspaces stay.**
+  Before it starts, it asks why you are leaving. That is optional: leave the
+  box empty and nothing is sent.
+
+The installer is English only for now. Like the zip it is not code-signed
+yet, so SmartScreen asks before it runs.
+
+## macOS
+
+The nightly now comes for Macs with Apple silicon:
+`koru-…-macos-aarch64.dmg`. Open it and drag Koru to Applications. The app is
+signed and notarized by Apple, so it opens without a warning, and it updates
+itself from this page.
+"""

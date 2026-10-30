@@ -578,7 +578,8 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
             let index = RowIndex(rows.first.0 + u64::from(offset));
             let cached = &self.renderer.rows[&index];
             let row_y = bounds.y0 + f64::from(offset) * f64::from(style.cell_height);
-            let transform = root * Affine::translate((bounds.x0, row_y));
+            let snapped_row_y = grid.snap_y(row_y);
+            let transform = root * Affine::translate((bounds.x0, snapped_row_y));
             scene.append(&cached.text, Some(transform));
             draw_terminal_shapes(scene, root, grid, cached, style, bounds.x0, row_y);
             work.private_use_cells += cached.private_use_cells;

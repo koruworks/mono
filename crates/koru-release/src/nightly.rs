@@ -5,10 +5,15 @@
 //! (`docs/features/linux/NIGHTLY.rev1.md`, and `NIGHTLY.rev2.md` for every
 //! platform beyond Linux). Section numbers below are rev1's unless they say.
 //!
+//! **And the GitHub stable**, built the same way: one release per `v<version>`
+//! tag, which never moves, so its files are added and never replaced
+//! (`docs/features/github-release/STABLE.md`), and with `.env.production`
+//! baked in, as the stable on the update origin always was.
+//!
 //! Three verbs, and none of them talks to GitHub — the workflow uploads:
 //!
-//! - `dist-github nightly` builds, signs and writes everything one build
-//!   publishes into a directory: the package, its `.minisig`, the feed
+//! - `dist-github <nightly|stable>` builds, signs and writes everything one
+//!   build publishes into a directory: the package, its `.minisig`, the feed
 //!   manifest and the release body. Non-interactive, for CI.
 //! - `nightly-notes` drafts the next `releases/nightly/<yyyy-mm-dd>.toml` with
 //!   the release-notes generator, for the maintainer to edit and commit.
@@ -42,9 +47,10 @@ const NOTES_DIR: &str = "releases/nightly";
 /// start from.
 const FALLBACK_COMMITS: usize = 50;
 
-pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github nightly \
-     --build <yyyymmddHHMM> --notes <releases/nightly/<file>.toml> --key <minisign secret key> \
-     [--key-password-stdin] --download-base <https url> --out <dir> [--version <version>]";
+pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github <nightly|stable> \
+     --build <yyyymmddHHMM> --notes <releases/...toml> --key <minisign secret key> \
+     [--key-password-stdin] --download-base <https url> [--update-base <https url>] \
+     [--with-cloud] --out <dir> [--version <version>, required for stable]";
 
 pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\n       \
      koru-release nightly-notes --select <before-sha> <after-sha>";
@@ -56,12 +62,29 @@ pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\
 /// body, so it names them all rather than only the one it built; the publish
 /// job adds a line for a platform whose build failed this time. The Windows
 /// line goes when the nightly is signed (NIGHTLY rev2 §5).
-const PLATFORM_NOTES: [&str; 3] = [
+const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Linux** is a preview — X11 only (XWayland on Wayland desktops), no dictation yet.",
     "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
      reminders show no notifications.",
     "No Koru Cloud in the nightly yet.",
 ];
+
+/// The same for a stable release (STABLE.md), which is built with Koru Cloud
+/// (S8). The Windows line goes when the release is signed, as the nightly's
+/// does.
+const STABLE_PLATFORM_NOTES: &[&str] = &[
+    "**Linux** runs as an X11 app (XWayland on Wayland desktops); text may look soft at \
+     fractional scaling. Dictation is not available on Linux yet.",
+    "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
+     reminders show no notifications.",
+];
+
+fn platform_notes(channel: ReleaseChannel) -> &'static [&'static str] {
+    match channel {
+        ReleaseChannel::Stable => STABLE_PLATFORM_NOTES,
+        _ => NIGHTLY_PLATFORM_NOTES,
+    }
+}
 
 // ------------------------------------------------------------ dist-github
 
@@ -78,6 +101,17 @@ pub(crate) struct DistGithubOptions {
     pub key_password_stdin: bool,
     /// Always ends in `/`, so a file name is appended to it.
     pub download_base: String,
+    /// Where the installed build looks for its next update, ending in `/`:
+    /// the download base unless `--update-base` is given. A nightly's tag
+    /// moves, so its own directory is where the next one appears; a stable
+    /// release's `v<version>` does not, and its builds read GitHub's
+    /// `releases/latest/download/` instead.
+    pub update_base: String,
+    /// Bake in `.env.production`, every value of it, as the stable on the
+    /// update origin always has (STABLE S8): Koru Cloud, Google Docs import,
+    /// the support and feedback links. Without it nothing is baked in, as the
+    /// nightly is built (NIGHTLY N5).
+    pub with_cloud: bool,
     pub out: PathBuf,
     pub version: Option<String>,
 }
@@ -90,7 +124,9 @@ impl DistGithubOptions {
         let mut notes = None;
         let mut key = None;
         let mut key_password_stdin = false;
+        let mut with_cloud = false;
         let mut download_base = None;
+        let mut update_base = None;
         let mut out = None;
         let mut version = None;
         while let Some(arg) = args.next() {
@@ -99,10 +135,15 @@ impl DistGithubOptions {
                     key_password_stdin = true;
                     continue;
                 }
+                "--with-cloud" => {
+                    with_cloud = true;
+                    continue;
+                }
                 "--build" => &mut build,
                 "--notes" => &mut notes,
                 "--key" => &mut key,
                 "--download-base" => &mut download_base,
+                "--update-base" => &mut update_base,
                 "--out" => &mut out,
                 "--version" => &mut version,
                 _ => return Err(format!("unexpected argument: {arg}\n{DIST_GITHUB_USAGE}")),
@@ -118,13 +159,21 @@ impl DistGithubOptions {
             value.ok_or_else(|| format!("{flag} is required\n{DIST_GITHUB_USAGE}"))
         };
         let (build_number, released) = parse_build_time(&required(build, "--build")?)?;
+        let download_base = download_base_url(&required(download_base, "--download-base")?)?;
+        let update_base = match update_base {
+            Some(base) => download_base_url(&base)
+                .map_err(|error| error.replace("--download-base", "--update-base"))?,
+            None => download_base.clone(),
+        };
         Ok(Self {
             build_number,
             released,
             notes: required(notes, "--notes")?.into(),
             key: required(key, "--key")?.into(),
             key_password_stdin,
-            download_base: download_base_url(&required(download_base, "--download-base")?)?,
+            download_base,
+            update_base,
+            with_cloud,
             out: required(out, "--out")?.into(),
             version,
         })
@@ -193,9 +242,18 @@ pub(crate) fn feed_name(channel: ReleaseChannel, target: &str) -> String {
     })
 }
 
+/// The tag a channel's release lives on: the moving `nightly`, or a stable
+/// release's own `v<version>`.
+pub(crate) fn release_tag(channel: ReleaseChannel, version: &str) -> String {
+    match channel {
+        ReleaseChannel::Nightly => TAG.into(),
+        _ => format!("v{version}"),
+    }
+}
+
 /// The release page on GitHub, which the update banner links to.
-pub(crate) fn release_page(channel: ReleaseChannel) -> String {
-    format!("{}/releases/tag/{channel}", source::REPOSITORY)
+pub(crate) fn release_page(tag: &str) -> String {
+    format!("{}/releases/tag/{tag}", source::REPOSITORY)
 }
 
 /// Everything one GitHub build publishes about its package.
@@ -235,7 +293,7 @@ pub(crate) fn github_manifest(build: &GithubBuild<'_>) -> UpdateManifest {
         release_notes: ReleaseNotes {
             title: build.notes.title.clone(),
             summary: build.notes.summary.clone(),
-            url: Some(release_page(build.channel)),
+            url: Some(release_page(&release_tag(build.channel, build.version))),
         },
         package: UpdatePackage {
             url: format!("{}{}", build.download_base, build.asset),
@@ -270,7 +328,7 @@ pub(crate) fn release_body(build: &GithubBuild<'_>) -> String {
         commit = build.commit,
     ));
     body.push('\n');
-    for note in PLATFORM_NOTES {
+    for note in platform_notes(build.channel) {
         body.push_str(&format!("- {note}\n"));
     }
     body
@@ -286,9 +344,18 @@ pub(crate) fn dist_github(
     channel: ReleaseChannel,
     options: DistGithubOptions,
 ) -> Result<(), String> {
-    if channel != ReleaseChannel::Nightly {
+    if !matches!(channel, ReleaseChannel::Nightly | ReleaseChannel::Stable) {
         return Err(format!(
-            "only the nightly is published to GitHub so far, not {channel}"
+            "only the nightly and stable are published to GitHub so far, not {channel}"
+        ));
+    }
+    // **A stable release's version is its tag**, which a person chose and
+    // pushed. It is never inferred: the origin it would be inferred from is
+    // the one stable is leaving, and a guess that differed from the tag would
+    // publish a release under one name and a version under another.
+    if channel == ReleaseChannel::Stable && options.version.is_none() {
+        return Err(format!(
+            "a stable release names its version, the tag's without the v: pass --version\n{DIST_GITHUB_USAGE}"
         ));
     }
     let target = host_target();
@@ -362,13 +429,41 @@ pub(crate) fn dist_github(
         &released_at,
         &public_key,
         Some(descriptor.body.as_str()),
-        // `Official` requires .env.production and the canonical sherpa-onnx
-        // archive; this build has neither by design (no Cloud, no voice).
+        // `Official` also requires the canonical sherpa-onnx archive, and Linux
+        // has none to link (no voice there yet); CI fetches the pinned one for
+        // the others, and a different one is said out loud.
         crate::native::Rule::Local,
-        package::Baked::WithoutCloud {
-            update_base_url: &options.download_base,
+        if options.with_cloud {
+            package::Baked::WithCloud {
+                update_base_url: &options.update_base,
+            }
+        } else {
+            package::Baked::WithoutCloud {
+                update_base_url: &options.update_base,
+            }
         },
     )?;
+    // **Windows also gets an installer** (rev2 §12), made from the same staged
+    // files after the zip, so both carry the same signed executables. It is
+    // offered on the page beside the zip, with its own `.minisig`; the feed
+    // keeps naming the zip, which is what an installed Koru updates from.
+    let installer = if target.starts_with("windows") {
+        let name = github_asset_name(&crate::installer::file_name(&version, target));
+        let path = root.join("dist/cloud").join(&name);
+        crate::installer::build(
+            root,
+            &package.stage,
+            &path,
+            &version,
+            options.build_number,
+            channel.as_str(),
+        )?;
+        let signature = sign_archive(&secret, &path, &public_key, &version)?;
+        verify_signature(&path, &signature, &public_key)?;
+        Some((name, path, signature))
+    } else {
+        None
+    };
     require_clean_tree(root, Some(&commit))?;
     let signature = sign_archive(&secret, &package.archive, &public_key, &version)?;
     verify_signature(&package.archive, &signature, &public_key)?;
@@ -395,10 +490,18 @@ pub(crate) fn dist_github(
         &options.out.join(body_name),
         release_body(&build).as_bytes(),
     )?;
+    let mut written = vec![asset.clone(), signature_name, feed, body_name.into()];
+    if let Some((name, path, signature)) = installer {
+        fs::copy(&path, options.out.join(&name))
+            .map_err(|error| format!("{}: {error}", options.out.join(&name).display()))?;
+        let signature_name = format!("{name}.minisig");
+        write(&options.out.join(&signature_name), signature.as_bytes())?;
+        written.extend([name, signature_name]);
+    }
 
     println!("[Koru] sha256: {}", package.sha256);
     println!("[Koru] wrote into {}:", options.out.display());
-    for name in [asset.as_str(), &signature_name, &feed, body_name] {
+    for name in written {
         println!("{name}");
     }
     Ok(())
@@ -516,11 +619,13 @@ fn verify_signature(archive: &Path, signature: &str, public_key: &str) -> Result
 
 // ------------------------------------------------------------------ notes
 
-/// A nightly notes file, parsed and checked: the stable descriptor's three
-/// fields, none blank, and text only.
+/// A notes file, parsed and checked: the stable descriptor's three fields,
+/// none blank, and text only. A stable release's notes are its descriptor,
+/// `releases/<version>.toml`, the same file the update origin's page is made
+/// from.
 pub(crate) fn read_notes(path: &Path) -> Result<Descriptor, String> {
     let text = fs::read_to_string(path)
-        .map_err(|error| format!("nightly notes {}: {error}", path.display()))?;
+        .map_err(|error| format!("release notes {}: {error}", path.display()))?;
     parse_notes(&text).map_err(|error| format!("{} is invalid: {error}", path.display()))
 }
 
@@ -539,11 +644,11 @@ pub(crate) fn text_only(body: &str) -> Result<(), String> {
     for event in Parser::new(body) {
         match event {
             Event::Start(Tag::Image { .. }) => {
-                return Err("nightly notes are text only: remove the image".into());
+                return Err("release notes are text only: remove the image".into());
             }
             Event::Html(html) | Event::InlineHtml(html) => {
                 return Err(format!(
-                    "nightly notes are text only: remove the HTML {:?}",
+                    "release notes are text only: remove the HTML {:?}",
                     html.trim()
                 ));
             }

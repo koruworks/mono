@@ -2072,7 +2072,10 @@ fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
     built_in_profiles()
         .into_iter()
         .enumerate()
-        .filter(|(_, profile)| profile.kind == kind)
+        .filter(|(_, profile)| {
+            profile.kind == kind
+                && profile.label != koru_session_profiles::ProfileLabel::CodexEmbedded
+        })
         .map(|(index, _)| MenuAction::TerminalProfile(index))
         .collect()
 }

@@ -463,3 +463,77 @@ fn authoritative_resize_snapshot_moves_the_live_tail_without_another_resize() {
     );
     assert!(view.interaction_mut().intents.is_empty());
 }
+
+#[test]
+fn ctrl_end_returns_scrollback_to_bottom_and_dispatches_the_key() {
+    let mut view = view(TerminalModes::default());
+    assert!(view.scroll_lines(2));
+    view.interaction_mut().intents.clear();
+
+    let outcome = view.handle_key(TerminalKeyEvent {
+        input: TerminalKeyInput::Stroke(koru_session_protocol::KeyStroke {
+            key: koru_session_protocol::TerminalKey::End,
+            modifiers: KeyModifiers {
+                control: true,
+                primary: true,
+                ..KeyModifiers::default()
+            },
+        }),
+        phase: KeyPhase::Pressed,
+        repeat: false,
+    });
+    assert!(outcome.handled);
+    assert!(
+        outcome.redraw,
+        "returning to live tail redraws the viewport"
+    );
+    assert!(matches!(
+        view.interaction_mut().intents.as_slice(),
+        [
+            TerminalIntent::SetViewport { .. },
+            TerminalIntent::Raw(RawCommand::SendKey { key }),
+        ] if key.key == koru_session_protocol::TerminalKey::End && key.modifiers.control
+    ));
+}
+
+#[test]
+fn shift_page_up_page_down_home_and_end_scroll_history() {
+    let mut view = view(TerminalModes::default());
+    let stroke = |key: koru_session_protocol::TerminalKey| TerminalKeyEvent {
+        input: TerminalKeyInput::Stroke(koru_session_protocol::KeyStroke {
+            key,
+            modifiers: KeyModifiers {
+                shift: true,
+                ..KeyModifiers::default()
+            },
+        }),
+        phase: KeyPhase::Pressed,
+        repeat: false,
+    };
+
+    // Shift+PageUp scrolls up by page (3 lines).
+    let up = view.handle_key(stroke(koru_session_protocol::TerminalKey::PageUp));
+    assert!(up.handled);
+    assert!(up.redraw);
+    assert!(matches!(
+        view.interaction_mut().intents.last(),
+        Some(TerminalIntent::RequestScrollback { .. })
+    ));
+
+    // Shift+Home jumps to oldest available history.
+    let home = view.handle_key(stroke(koru_session_protocol::TerminalKey::Home));
+    assert!(home.handled);
+
+    // Shift+PageDown scrolls back down.
+    let down = view.handle_key(stroke(koru_session_protocol::TerminalKey::PageDown));
+    assert!(down.handled);
+
+    // Shift+End returns to live tail.
+    let end = view.handle_key(stroke(koru_session_protocol::TerminalKey::End));
+    assert!(end.handled);
+    assert!(end.redraw);
+    assert!(matches!(
+        view.interaction_mut().intents.last(),
+        Some(TerminalIntent::SetViewport { .. })
+    ));
+}

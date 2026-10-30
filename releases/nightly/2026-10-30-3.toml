@@ -1,0 +1,33 @@
+title = "Crisper terminal text, and every key reaches your terminal programs"
+
+summary = [
+  "Terminal text is sharper at small sizes, and box-drawing lines join without gaps.",
+  "Home, End, Page Up, Page Down, Insert, Delete and the function keys now reach the program in the terminal, and Shift with Page Up, Page Down, Home or End scrolls back through the output.",
+]
+
+body = """
+## Terminal
+
+**Sharper text.** Terminal text is hinted for the screen, sits on whole
+pixels, and keeps its weight at small sizes, so it reads as crisply as in
+Windows Terminal. The dark theme's background is a deeper black.
+
+**Lines that join.** Box-drawing characters, the corners, junctions and
+crosses that programs like Claude Code, htop and tree draw with, are now
+drawn as shapes that meet exactly, with no gaps between rows. Arrows,
+bullets and spinners from fallback fonts sit centered in their cell.
+
+**Keys that were dropped now work.** Home, End, Page Up, Page Down, Insert,
+Delete and F1 to F24 are sent to the program running in the terminal. Ctrl+
+Space sends what terminal programs expect.
+
+**Scrolling back from the keyboard.** Shift+Page Up and Shift+Page Down
+scroll through the output, and Shift+Home and Shift+End go to its top and
+bottom. A full-screen program, such as an editor, gets those keys itself.
+Ctrl+End also brings the view back to the newest output.
+
+## Agents
+
+**Codex (Embedded) is gone** from the new tab's Agents menu and the Agents
+tree's context menu. Codex is still there, run in a terminal.
+"""

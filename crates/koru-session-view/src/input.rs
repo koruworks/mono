@@ -79,9 +79,23 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
         }
         match event.input {
             TerminalKeyInput::Stroke(key) => {
+                if let Some(redraw) = self.handle_shift_scrollback(&key) {
+                    return InputOutcome {
+                        handled: true,
+                        redraw,
+                        ..InputOutcome::default()
+                    };
+                }
+                let returned = !self.follow_tail
+                    && key.key == TerminalKey::End
+                    && (key.modifiers.control || key.modifiers.primary);
+                if returned {
+                    self.return_to_bottom();
+                }
                 self.dispatch_raw(RawCommand::SendKey { key });
                 InputOutcome {
                     handled: true,
+                    redraw: returned,
                     ..InputOutcome::default()
                 }
             }
@@ -340,6 +354,44 @@ impl<I: SessionSurfaceInteraction> TerminalView<I> {
                 .model
                 .as_ref()
                 .is_some_and(|model| model.modes.mouse_reporting)
+    }
+
+    fn page_scroll_lines(&self) -> i32 {
+        let count = self
+            .visible_rows
+            .or(self.tail_rows)
+            .or_else(|| self.model.as_ref().map(|model| model.viewport))
+            .map_or(1, |rows| rows.count.max(1));
+        i32::from(count)
+    }
+
+    fn handle_shift_scrollback(&mut self, key: &KeyStroke) -> Option<bool> {
+        if !key.modifiers.shift
+            || key.modifiers.control
+            || key.modifiers.alt
+            || key.modifiers.primary
+            || (self.follow_tail
+                && self
+                    .model
+                    .as_ref()
+                    .is_some_and(|model| model.modes.alternate_screen))
+        {
+            return None;
+        }
+        let page = self.page_scroll_lines();
+        match key.key {
+            TerminalKey::PageUp => Some(self.scroll_lines(page)),
+            TerminalKey::PageDown => Some(self.scroll_lines(-page)),
+            TerminalKey::Home => Some(self.scroll_lines(i32::MAX)),
+            TerminalKey::End => {
+                let changed = !self.follow_tail;
+                if changed {
+                    self.return_to_bottom();
+                }
+                Some(changed)
+            }
+            _ => None,
+        }
     }
 
     fn report_mouse(

@@ -208,6 +208,9 @@ const MAC_NOTIFICATION_OWNER_PACKAGE: &str = "koru-notification-owner";
 
 pub struct Package {
     pub archive: PathBuf,
+    /// The directory the archive was made from, which the Windows installer
+    /// packs too (`crate::installer`).
+    pub stage: PathBuf,
     pub sha256: String,
     pub size: u64,
 }
@@ -325,6 +328,11 @@ pub enum Baked<'a> {
     /// built without Koru Cloud for now (NIGHTLY N5) and reads its feed from
     /// the release it is published on.
     WithoutCloud { update_base_url: &'a str },
+    /// **Every value `Production` bakes, required in full**, and the update
+    /// feed at `update_base_url` — the GitHub stable release (STABLE S8),
+    /// which carries what the stable on the update origin always carried
+    /// and reads its feed from the latest release.
+    WithCloud { update_base_url: &'a str },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -425,10 +433,11 @@ pub fn build(
     //
     // **A local bundle needs none of them**: anyone can package the public
     // source with nothing from us. `dist-local` loads the file when it is there and
-    // otherwise says which features stay unconfigured; `dist-cloud` keeps
-    // refusing to publish without every value.
+    // otherwise says which features stay unconfigured; `dist-cloud`, and
+    // `dist-github --with-cloud`, keep refusing to publish without every value.
     let production = root.join(".env.production");
     let official = native_rule == crate::native::Rule::Official;
+    let with_cloud = matches!(baked, Baked::WithCloud { .. });
     if let Baked::WithoutCloud { .. } = baked {
         if official {
             return Err("an official release bakes in .env.production; it cannot be built without Koru Cloud".into());
@@ -438,7 +447,7 @@ pub fn build(
             production.display(),
             koru_env::BAKED.join(", "),
         );
-    } else if production.is_file() || official {
+    } else if production.is_file() || official || with_cloud {
         // A file that is there but wrong is an error for either rule.
         koru_env::load_file(&production).map_err(|error| {
             format!(
@@ -454,10 +463,12 @@ pub fn build(
         );
     }
     let unset = match baked {
-        Baked::Production => unset_baked(|name| koru_env::value(name).is_some()),
+        Baked::Production | Baked::WithCloud { .. } => {
+            unset_baked(|name| koru_env::value(name).is_some())
+        }
         Baked::WithoutCloud { .. } => koru_env::BAKED.to_vec(),
     };
-    if official {
+    if official || with_cloud {
         if let Some(missing) = unset.first() {
             return Err(format!(
                 "{} does not set {missing}, which a published release bakes in",
@@ -832,6 +843,7 @@ pub fn build(
     );
     Ok(Package {
         archive,
+        stage,
         sha256,
         size,
     })
@@ -893,11 +905,17 @@ fn run_cargo(
     }
     // Removed rather than left to the shell: `option_env!` would bake a
     // value a developer happened to export, and this build promises none.
-    if let Baked::WithoutCloud { update_base_url } = baked {
-        for name in koru_env::BAKED {
-            command.env_remove(name);
+    match baked {
+        Baked::Production => {}
+        Baked::WithoutCloud { update_base_url } => {
+            for name in koru_env::BAKED {
+                command.env_remove(name);
+            }
+            command.env(koru_env::name::KORU_UPDATE_BASE_URL, update_base_url);
         }
-        command.env(koru_env::name::KORU_UPDATE_BASE_URL, update_base_url);
+        Baked::WithCloud { update_base_url } => {
+            command.env(koru_env::name::KORU_UPDATE_BASE_URL, update_base_url);
+        }
     }
     // **The product feature flags are baked here or nowhere.** Each is read by
     // `option_env!` inside `koru-features` alone — the same per-crate-compile
@@ -927,7 +945,7 @@ fn run_cargo(
     }
 }
 
-fn native_sign(path: &Path) -> Result<(), String> {
+pub(crate) fn native_sign(path: &Path) -> Result<(), String> {
     let Ok(template) = std::env::var("KORU_SIGNTOOL_COMMAND") else {
         return Ok(());
     };
@@ -944,7 +962,7 @@ fn native_sign(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(any(windows, test))]
-fn windows_package_version(version: &str, build_number: u64) -> Result<String, String> {
+pub(crate) fn windows_package_version(version: &str, build_number: u64) -> Result<String, String> {
     // Parsed strictly here, where a release is refused, before the Agent's
     // build script derives the same string leniently.
     semver::Version::parse(version.trim_start_matches('v'))
@@ -2121,7 +2139,7 @@ fn tar_gz_dir(root: &Path, archive: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn ensure_under(root: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn ensure_under(root: &Path, target: &Path) -> Result<(), String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;

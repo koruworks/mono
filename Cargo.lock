@@ -6653,6 +6653,7 @@ dependencies = [
  "fs2",
  "hmac 0.12.1",
  "image",
+ "koru-autostart",
  "koru-channel",
  "koru-delegate-preamble",
  "koru-env",
