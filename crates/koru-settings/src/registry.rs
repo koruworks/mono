@@ -79,6 +79,14 @@ pub struct SettingSpec {
 /// Global's roaming half first, then Global's device-local half, then
 /// Terminal, then the AI facade — which is the order the plan freezes them in.
 pub const REGISTRY: &[SettingSpec] = &[
+    SettingSpec {
+        field: "icon_pack",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Token,
+        doc: "In-app icon artwork: Phosphor, Tabler, or Lucide. Applied immediately.",
+    },
     // ------------------------------------ Global, roaming: preferences.conf
     SettingSpec {
         field: "theme",

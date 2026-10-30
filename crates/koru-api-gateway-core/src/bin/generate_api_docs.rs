@@ -33,7 +33,11 @@ fn main() {
 }
 
 fn write_json(path: &std::path::Path, value: &serde_json::Value) {
-    let mut bytes = serde_json::to_vec_pretty(value).expect("serialize generated API document");
+    // Dependency feature unification can enable serde_json's preserve_order.
+    // Keep generated references stable regardless of which packages are built.
+    let mut value = value.clone();
+    value.sort_all_objects();
+    let mut bytes = serde_json::to_vec_pretty(&value).expect("serialize generated API document");
     bytes.push(b'\n');
     std::fs::write(path, bytes).expect("write generated API document");
 }

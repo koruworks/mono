@@ -149,7 +149,7 @@ const GROUPS: [(&str, &[&str]); 7] = [
 ];
 
 /// Recorded by older surfaces and already shown as typography or the icon.
-const SHOWN_ELSEWHERE: [&str; 7] = [
+const SHOWN_ELSEWHERE: [&str; 9] = [
     "element",
     "font size",
     "rendered family",
@@ -157,6 +157,8 @@ const SHOWN_ELSEWHERE: [&str; 7] = [
     "font style",
     "synthetic italic",
     "icon name",
+    "icon pack",
+    "icon source",
 ];
 
 impl Inspector {
@@ -207,7 +209,16 @@ impl Inspector {
                 ),
                 "Icon" => {
                     if let Some(name) = icon_name(snapshot, index) {
-                        rows.insert(0, Row::plain("Phosphor icon", name));
+                        let pack = icon_property(snapshot, index, "icon pack").unwrap_or("Legacy");
+                        let source =
+                            icon_property(snapshot, index, "icon source").unwrap_or("Phosphor");
+                        rows.insert(
+                            0,
+                            Row::plain(
+                                format!("{pack} icon"),
+                                format!("{name} (source: {source})"),
+                            ),
+                        );
                     }
                 }
                 _ => {}

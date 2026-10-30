@@ -813,7 +813,10 @@ fn approved_of(page: Page) -> Option<&'static str> {
 
 fn compare(page: Page) {
     let got = painted_view(&page_record(page));
-    let want = painted_view(file_of(page));
+    // Geometry, state, semantics and icon identities share one baseline across
+    // supported packs. Only the selected pack's declared provenance varies;
+    // compare it to the catalog, rather than freezing Tabler into this test.
+    let want = painted_view(&baseline_for_selected_pack(file_of(page)));
     let (want_kept, _) = split(page, &want);
     let (got_kept, got_approved) = split(page, &got);
     if let Some(difference) = first_difference(&want_kept, &got_kept) {
@@ -834,6 +837,37 @@ fn compare(page: Page) {
             page.token()
         );
     }
+}
+
+fn baseline_for_selected_pack(baseline: &str) -> String {
+    baseline
+        .lines()
+        .map(|line| {
+            let name = line
+                .split_whitespace()
+                .find_map(|token| token.strip_prefix("icon_name="));
+            let def = name
+                .and_then(|name| icons::ALL.iter().find(|(n, _)| *n == name))
+                .and_then(|(_, icon)| icons::vector_def(*icon));
+            let Some(def) = def else {
+                return line.to_owned();
+            };
+            line.split_whitespace()
+                .map(|token| {
+                    if token.starts_with("icon_pack=") {
+                        format!("icon_pack={}", icons::active_pack().label())
+                    } else if token.starts_with("icon_source=") {
+                        format!("icon_source={}", def.source)
+                    } else {
+                        token.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
 }
 
 /// Today's Workspaces page, as P0 wrote it down.

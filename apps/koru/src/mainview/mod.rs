@@ -3739,10 +3739,22 @@ impl MainView {
     /// Every selection path already calls this, which is why it kept the
     /// hook rather than growing a second one.
     fn wake_workspaces_tab(&mut self) {
+        if !matches!(self.tabs().active_tab().view, TabView::Settings(_)) {
+            self.dismiss_settings_menus();
+        }
         if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
             view.refresh_cloud();
         }
         self.arm_workspaces_poll();
+    }
+
+    fn dismiss_settings_menus(&mut self) {
+        self.each_tab_mut(|tab| {
+            if let TabView::Settings(view) = &mut tab.view {
+                view.dismiss_menu();
+            }
+            false
+        });
     }
 
     /// Which documents the strip is showing, so a close can tell what it let go
@@ -6637,6 +6649,7 @@ impl MainView {
     /// [`Draft`]: tab::Draft
     /// [`promote_draft`]: Self::promote_draft
     fn new_tab(&mut self) -> bool {
+        self.dismiss_settings_menus();
         // Capture before the draft becomes active — its root is not in the
         // library, and explore.selected would track that private id.
         let anchor = self.library_create_anchor_hint();
@@ -9814,6 +9827,9 @@ impl View for MainView {
         // capture is live. A press that reaches the document's content is
         // reclassified a node click at the leaf dispatch below.
         self.observe_recording_click(x, y);
+        if !self.focused_view_rect().contains(x, y) {
+            self.dismiss_settings_menus();
+        }
         if self.font_picker.is_some() {
             return self.font_picker_mouse_down(x, y);
         }
@@ -11177,6 +11193,7 @@ impl View for MainView {
     fn set_window_focused(&mut self, focused: bool) {
         if !focused {
             self.canvas_focus_lost();
+            self.dismiss_settings_menus();
         }
         if focused {
             match &mut self.tabs_mut().active_mut().view {

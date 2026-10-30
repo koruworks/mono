@@ -558,21 +558,21 @@ paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=6
 paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
 paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
 paint foot fill primitive 60.000 644.000 242.000 1.000 color=#E0E0E0@1.000
-paint foot text_line part 61.500 658.438 15.000 15.000 line_height=15 baseline=672.5 ink_bounds=Not_exposed
-paint foot text_run primitive 61.500 658.438 15.000 15.000 font_size=15 font_weight=400 baseline=672.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint foot text_line part 61.500 658.500 15.000 15.000 line_height=15 baseline=673.5 ink_bounds=Not_exposed
+paint foot icon primitive 61.500 658.500 15.000 15.000 icon_pack=Phosphor icon_source=Phosphor icon_name=CLOUD icon_codepoint=U+E1AA icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint foot fill primitive 73.000 657.000 6.000 6.000 color=#3B6BB5@1.000
 paint foot label_line part 86.000 657.271 64.092 18.000 line_height=18 baseline=671 ink_bounds=Not_exposed
 paint foot text_run primitive 86.000 658.406 64.092 15.729 font_size=13 font_weight=500 baseline=671 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint foot KoruIconButton component 258.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=DEVICES Phosphor_codepoint=U+EBA4 layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
-paint foot text_line part 261.250 658.594 13.500 13.500 line_height=13.5 baseline=671.25 ink_bounds=Not_exposed
-paint foot text_run primitive 261.250 658.594 13.500 13.500 font_size=13.5 font_weight=400 baseline=671.25 ascent_/_descent=12.65625_/_0.84375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint foot KoruIconButton component 258.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=DEVICES icon_codepoint=U+EBA4 icon_pack=Phosphor icon_source=Phosphor layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
+paint foot text_line part 261.250 658.750 13.500 13.500 line_height=13.5 baseline=672.25 ink_bounds=Not_exposed
+paint foot icon primitive 261.250 658.750 13.500 13.500 icon_pack=Phosphor icon_source=Phosphor icon_name=DEVICES icon_codepoint=U+EBA4 icon_variant=regular icon_size=13.5 foreground=#8A8A8A@1.000
 paint foot fill primitive 266.000 650.000 16.000 16.000 color=#FFFFFF@1.000
 paint foot stroke primitive 266.000 650.000 16.000 16.000 color=#E0E0E0@1.000 width=1
 paint foot label_line part 270.000 650.999 6.778 14.000 line_height=14 baseline=662 ink_bounds=Not_exposed
 paint foot text_run primitive 270.000 651.344 6.778 13.310 font_size=11 font_weight=500 baseline=662 ascent_/_descent=10.65625_/_2.6533203 foreground=#191919@1.000 rendered_family=Inter
-paint foot KoruIconButton component 282.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=PLUS Phosphor_codepoint=U+E3D4 layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
-paint foot text_line part 285.250 658.594 13.500 13.500 line_height=13.5 baseline=671.25 ink_bounds=Not_exposed
-paint foot text_run primitive 285.250 658.594 13.500 13.500 font_size=13.5 font_weight=400 baseline=671.25 ascent_/_descent=12.65625_/_0.84375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint foot KoruIconButton component 282.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=PLUS icon_codepoint=U+E3D4 icon_pack=Phosphor icon_source=Phosphor layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
+paint foot text_line part 285.250 658.750 13.500 13.500 line_height=13.5 baseline=672.25 ink_bounds=Not_exposed
+paint foot icon primitive 285.250 658.750 13.500 13.500 icon_pack=Phosphor icon_source=Phosphor icon_name=PLUS icon_codepoint=U+E3D4 icon_variant=regular icon_size=13.5 foreground=#8A8A8A@1.000
 == profiles width=256 theme=light lang=en names=forty state=rest
 sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 194.000 258.000 500.000 size=83
 sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 40" 52.000 200.000 258.000 26.000

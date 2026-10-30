@@ -59,6 +59,7 @@ impl CaretAppearance {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Appearance {
     pub theme: ThemePreference,
+    pub icon_pack: koru_draw::icons::IconPack,
     pub caret: CaretAppearance,
     pub ui_font: FontChoice,
     pub body_font: FontChoice,
@@ -82,6 +83,7 @@ impl Appearance {
     pub fn from_section(section: &GlobalSettings) -> Self {
         Self {
             theme: ThemePreference::parse(section.theme.token()),
+            icon_pack: koru_draw::icons::IconPack::parse(section.icon_pack.token()),
             caret: CaretAppearance::from_section(section),
             ui_font: font(section.ui_font, theme::default_ui_font()),
             body_font: font(section.body_font, theme::default_body_font()),
@@ -95,6 +97,7 @@ impl Appearance {
     /// Push all of it into the process globals every layout reads.
     pub fn apply(self) {
         theme::set_theme_preference(self.theme);
+        koru_draw::icons::set_icon_pack(self.icon_pack);
         theme::set_dark(self.effective_dark());
         self.caret.apply();
         theme::set_ui_font(self.ui_font);

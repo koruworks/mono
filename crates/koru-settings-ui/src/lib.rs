@@ -196,6 +196,20 @@ struct OpenDropdown {
     index: usize,
     menu: Menu<DropdownOption>,
     actions: Vec<Action>,
+    icon_preview: Option<icons::IconPreview>,
+}
+
+impl OpenDropdown {
+    fn preview_highlight(&mut self) {
+        if let Some(Action::IconPack(choice)) = self.menu.hover.and_then(|i| self.actions.get(i)) {
+            let pack = icons::IconPack::parse(choice.token());
+            if let Some(preview) = self.icon_preview.as_mut() {
+                preview.set(pack);
+            } else {
+                self.icon_preview = Some(icons::IconPreview::new(pack));
+            }
+        }
+    }
 }
 
 /// Where the pointer is, in the surface's own vocabulary.
@@ -569,6 +583,11 @@ impl SettingsSurface {
         self.open.is_some()
     }
 
+    /// Dismiss transient choices when the host loses focus or hides this page.
+    pub fn dismiss_menu(&mut self) {
+        self.open = None;
+    }
+
     /// Show `page`, from its top. Answers whether anything changed; a page this
     /// host does not have is refused.
     pub fn show_page(&mut self, page: PageId) -> bool {
@@ -892,7 +911,15 @@ impl SettingsSurface {
     /// role's choice; when the list closes, by a choice or not, the
     /// stand-in goes and the choice (old or new) shows. Answers whether the
     /// app's faces changed, so the host can lay every window out again.
+    ///
+    /// The icon-style list previews here too, through the menu's own
+    /// [`IconPreview`](icons::IconPreview), which restores the saved style
+    /// when the menu goes. The host repaints for that one rather than laying
+    /// out, so it is not part of the answer.
     fn sync_preview(&mut self) -> bool {
+        if let Some(open) = self.open.as_mut() {
+            open.preview_highlight();
+        }
         let want =
             self.open
                 .as_ref()
@@ -1024,6 +1051,7 @@ impl SettingsSurface {
             index,
             menu,
             actions,
+            icon_preview: None,
         });
     }
 
@@ -1740,6 +1768,9 @@ impl SettingsSurface {
             }
             Action::ShowAdvanced(open) => self.advanced_open = open,
             Action::Density(choice) => theme::set_density(density(choice)),
+            Action::IconPack(choice) => {
+                icons::set_icon_pack(icons::IconPack::parse(choice.token()))
+            }
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
             Action::VoiceLanguage(language) => {
@@ -1967,6 +1998,7 @@ fn clone_action(action: &Action) -> Action {
         Action::CanvasBackground => Action::CanvasBackground,
         Action::ApplyLayoutToAll => Action::ApplyLayoutToAll,
         Action::Density(v) => Action::Density(*v),
+        Action::IconPack(v) => Action::IconPack(*v),
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),

@@ -3088,6 +3088,14 @@ among a few short words is a segmented control; a longer list — fonts,
 languages, microphones, tones, the renderer — is a dropdown showing the value
 in force, opened with a click or Enter and stepped with the arrow keys.
 
+**Icon style** is under **Settings → Appearance → Interface**. Choose
+**Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
+Hover a menu item or highlight it with the arrow keys to preview its icons.
+Click or press Enter to keep it; dismiss the menu to restore your saved style.
+Your choice is remembered when you reopen Koru. Phosphor is the initial style.
+Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
+own artwork.
+
 **Fonts and density** are on the **Appearance** page: a density control
 (Compact / Normal / Comfortable) and four font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), and three document roles, **body**,

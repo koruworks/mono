@@ -2315,6 +2315,7 @@ pub enum Key {
     SettingsTheme,
     SettingsInterface,
     SettingsDensity,
+    SettingsIconStyle,
     SettingsSpacingOfTextAndControls,
     SettingsPinnedTabs,
     SettingsIconOnly,
@@ -2578,7 +2579,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1743] = [
+    pub const ALL: [Key; 1744] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4126,6 +4127,7 @@ impl Key {
         Key::SettingsTheme,
         Key::SettingsInterface,
         Key::SettingsDensity,
+        Key::SettingsIconStyle,
         Key::SettingsSpacingOfTextAndControls,
         Key::SettingsPinnedTabs,
         Key::SettingsIconOnly,
@@ -12648,6 +12650,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsTheme, en: "Theme", es: "Tema", pt_br: "Tema", de: "Design", fr: "Thème", ar: "السمة", zh_hans: "主题", ja: "テーマ" },
     Row { key: Key::SettingsInterface, en: "Interface", es: "Interfaz", pt_br: "Interface", de: "Oberfläche", fr: "Interface", ar: "الواجهة", zh_hans: "界面", ja: "インターフェース" },
     Row { key: Key::SettingsDensity, en: "Density", es: "Densidad", pt_br: "Densidade", de: "Dichte", fr: "Densité", ar: "الكثافة", zh_hans: "密度", ja: "表示密度" },
+    Row { key: Key::SettingsIconStyle, en: "Icon style", es: "Estilo de iconos", pt_br: "Estilo dos ícones", de: "Symbolstil", fr: "Style des icônes", ar: "نمط الأيقونات", zh_hans: "图标样式", ja: "アイコンのスタイル" },
     Row { key: Key::SettingsSpacingOfTextAndControls, en: "Spacing of text and controls.", es: "Espaciado del texto y los controles.", pt_br: "Espaçamento do texto e dos controles.", de: "Abstände von Text und Bedienelementen.", fr: "Espacement du texte et des commandes.", ar: "تباعد النص وعناصر التحكم.", zh_hans: "文字和控件的间距。", ja: "テキストとコントロールの間隔。" },
     Row { key: Key::SettingsPinnedTabs, en: "Pinned tabs", es: "Pestañas fijadas", pt_br: "Abas fixadas", de: "Angeheftete Tabs", fr: "Onglets épinglés", ar: "علامات التبويب المثبتة", zh_hans: "固定标签页", ja: "固定タブ" },
     Row { key: Key::SettingsIconOnly, en: "Icon only", es: "Solo icono", pt_br: "Somente ícone", de: "Nur Symbol", fr: "Icône seule", ar: "الأيقونة فقط", zh_hans: "仅图标", ja: "アイコンのみ" },

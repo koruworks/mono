@@ -11,6 +11,30 @@
 use super::*;
 use crate::sections::GlobalSettings;
 
+#[test]
+fn icon_pack_round_trips_without_changing_other_preferences() {
+    for choice in crate::IconPackChoice::ALL {
+        let mut settings = GlobalSettings::default();
+        let patch = crate::GlobalPatch {
+            icon_pack: Some(*choice),
+            ..Default::default()
+        };
+        assert!(patch.touches_roaming());
+        patch.apply(&mut settings);
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+    let mut old = GlobalSettings::default();
+    apply_preferences("version=2\nicon_pack=future-pack\n", &mut old);
+    assert_eq!(old.icon_pack, crate::IconPackChoice::Phosphor);
+    let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
+    json.as_object_mut().unwrap().remove("icon_pack");
+    let old: GlobalSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(old.icon_pack, crate::IconPackChoice::Phosphor);
+}
+
 /// A v2 file, as `preferences_body` writes one today.
 const V2_FIXTURE: &str = "\
 # Koru preferences. These follow you, not a folder and not a machine.

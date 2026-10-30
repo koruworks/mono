@@ -1397,7 +1397,10 @@ fn selection_name(snapshot: &Snapshot, index: usize) -> String {
     if let Some(name) = icon_name(snapshot, index) {
         return match snapshot.owner(index) {
             Some(owner) => format!("{} / {name}", snapshot.records[owner].name),
-            None => format!("Phosphor / {name}"),
+            None => format!(
+                "{} / {name}",
+                icon_property(snapshot, index, "icon pack").unwrap_or("Icon")
+            ),
         };
     }
     match snapshot.owner(index) {
@@ -1414,6 +1417,7 @@ fn selection_name(snapshot: &Snapshot, index: usize) -> String {
 
 fn display_name(record: &inspect::Record) -> &str {
     match record.name {
+        "icon" => "Icon",
         "text run"
             if property(record, "rendered family")
                 .is_some_and(|family| family.starts_with("Phosphor")) =>
@@ -1428,10 +1432,14 @@ fn display_name(record: &inspect::Record) -> &str {
 
 /// Use recorded icon identity, never a guess from its visual shape. A nested
 /// component/local boundary must not borrow an unrelated outer icon's name.
-fn icon_name(snapshot: &Snapshot, mut index: usize) -> Option<&str> {
+fn icon_name(snapshot: &Snapshot, index: usize) -> Option<&str> {
+    icon_property(snapshot, index, "icon name")
+}
+
+fn icon_property<'a>(snapshot: &'a Snapshot, mut index: usize, key: &str) -> Option<&'a str> {
     loop {
         let record = snapshot.records.get(index)?;
-        if let Some(name) = property(record, "icon name") {
+        if let Some(name) = property(record, key) {
             return Some(name);
         }
         if matches!(record.kind, "component" | "unregistered") {

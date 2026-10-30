@@ -45,8 +45,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -108,8 +108,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -171,8 +171,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -234,8 +234,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -297,8 +297,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -360,8 +360,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -423,8 +423,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -486,8 +486,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -549,8 +549,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -612,8 +612,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -675,8 +675,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -738,8 +738,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -801,8 +801,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -864,8 +864,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -927,8 +927,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -990,8 +990,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1053,8 +1053,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1116,8 +1116,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1179,8 +1179,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1242,8 +1242,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1305,8 +1305,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1368,8 +1368,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1431,8 +1431,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1494,8 +1494,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 612.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 612.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1557,8 +1557,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 58.000 597.000 250.000 26.000 color=#191919@0.078
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
@@ -1566,8 +1566,8 @@ paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 602.438 15.000 15.000 line_height=15 baseline=616.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 602.438 15.000 15.000 font_size=15 font_weight=400 baseline=616.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 602.500 15.000 15.000 line_height=15 baseline=617.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 602.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1623,8 +1623,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 58.000 597.000 250.000 26.000 color=#191919@0.078
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
@@ -1633,8 +1633,8 @@ paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
 paint 2 fill primitive 282.000 599.000 24.000 22.000 color=#191919@0.078
-paint 2 text_line part 286.500 602.438 15.000 15.000 line_height=15 baseline=616.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 602.438 15.000 15.000 font_size=15 font_weight=400 baseline=616.5 ascent_/_descent=14.0625_/_0.9375 foreground=#191919@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 602.500 15.000 15.000 line_height=15 baseline=617.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 602.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#191919@1.000
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1691,8 +1691,8 @@ paint 2 text_line part 68.180 578.798 7.663 10.400 line_height=10.4 baseline=587
 paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 576.438 15.000 15.000 line_height=15 baseline=590.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 576.438 15.000 15.000 font_size=15 font_weight=400 baseline=590.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
@@ -1935,8 +1935,8 @@ paint 2 text_line part 66.883 220.798 10.608 10.400 line_height=10.4 baseline=22
 paint 3 text_run primitive 66.883 219.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=229.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 215.732 88.740 18.000 line_height=18 baseline=229.46094 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 216.867 88.740 15.729 font_size=13 font_weight=600 baseline=229.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 218.438 15.000 15.000 line_height=15 baseline=232.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 218.438 15.000 15.000 font_size=15 font_weight=400 baseline=232.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 218.500 15.000 15.000 line_height=15 baseline=233.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 218.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 239.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 242.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 66.883 246.798 10.608 10.400 line_height=10.4 baseline=255.78125 ink_bounds=Not_exposed
@@ -2278,8 +2278,8 @@ paint 2 text_line part 66.883 220.798 10.608 10.400 line_height=10.4 baseline=22
 paint 3 text_run primitive 66.883 219.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=229.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#F5F5F5@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 215.732 88.740 18.000 line_height=18 baseline=229.46094 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 216.867 88.740 15.729 font_size=13 font_weight=600 baseline=229.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
-paint 2 text_line part 286.500 218.438 15.000 15.000 line_height=15 baseline=232.5 ink_bounds=Not_exposed
-paint 3 text_run primitive 286.500 218.438 15.000 15.000 font_size=15 font_weight=400 baseline=232.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint 2 text_line part 286.500 218.500 15.000 15.000 line_height=15 baseline=233.5 ink_bounds=Not_exposed
+paint 3 icon primitive 286.500 218.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
 paint 1 Row part 54.000 239.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 242.000 20.000 20.000 color=#5E9CE0@1.000
 paint 2 text_line part 66.883 246.798 10.608 10.400 line_height=10.4 baseline=255.78125 ink_bounds=Not_exposed

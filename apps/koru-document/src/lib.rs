@@ -3562,7 +3562,11 @@ impl BuiltInDocument {
         {
             return true;
         }
-        Editing::mouse_double_click(self, ws, x, y)
+        let handled = Editing::mouse_double_click(self, ws, x, y);
+        // The double-click runs after mouse_down drained its requests. Settle
+        // its own request now rather than waiting for another pointer press.
+        self.drain_diagram_requests();
+        handled
     }
 
     /// What a point lands on in this view's own title bar — always `None` when

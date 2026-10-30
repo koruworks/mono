@@ -152,7 +152,7 @@ pub fn circle(cx: f32, cy: f32, r: f32) -> vello::kurbo::Circle {
     vello::kurbo::Circle::new((cx as f64, cy as f64), r as f64)
 }
 
-/// Draw a standalone layout's glyphs (no inline boxes), optionally recoloring.
+/// Draw a standalone layout's glyphs and tagged icon slots, optionally recoloring.
 #[track_caller]
 pub fn draw_layout(
     scene: &mut Scene,
@@ -204,6 +204,17 @@ pub fn draw_line_items(
             let c = color.unwrap_or(gr.style().brush.0);
             draw_glyph_run(scene, root, &gr, ox, oy, c);
             draw_decorations(scene, root, &gr, ox, oy);
+        } else if let PositionedLayoutItem::InlineBox(b) = item {
+            if let Some((icon, filled)) = crate::icons::unpack_box_id(b.id) {
+                crate::icons::draw_vector_icon(
+                    scene,
+                    root,
+                    icon,
+                    filled,
+                    crate::geometry::Rect::new(ox + b.x, oy + b.y, b.width, b.height),
+                    color.unwrap_or(crate::theme::p().text),
+                );
+            }
         }
     }
 }
@@ -350,6 +361,16 @@ fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for line in layout.lines() {
         for item in line.items() {
+            if let PositionedLayoutItem::InlineBox(b) = &item {
+                if crate::icons::unpack_box_id(b.id)
+                    .is_some_and(|(icon, _)| crate::icons::has_vector_icon(icon))
+                {
+                    x0 = x0.min(b.x);
+                    x1 = x1.max(b.x + b.width);
+                    y0 = y0.min(b.y);
+                    y1 = y1.max(b.y + b.height);
+                }
+            }
             let PositionedLayoutItem::GlyphRun(gr) = item else {
                 continue;
             };

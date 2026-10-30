@@ -84,6 +84,19 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     );
 
     b.card(Some(koru_i18n::t(lang, Key::SettingsInterface)));
+    b.row_dropdown(
+        koru_i18n::t(lang, Key::SettingsIconStyle),
+        None,
+        koru_draw::icons::IconPack::ALL
+            .into_iter()
+            .map(|pack| {
+                (
+                    Action::IconPack(koru_settings::IconPackChoice::parse(pack.token())),
+                    DropdownOption::new(pack.label(), pack == koru_draw::icons::active_pack()),
+                )
+            })
+            .collect(),
+    );
     let density_now = theme::density();
     // Tightest to loosest, not the registry's order.
     b.row_choice(

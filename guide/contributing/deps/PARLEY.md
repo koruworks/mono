@@ -161,9 +161,13 @@ font_cx.collection.register_fonts(blob, Some(FontInfoOverride {
 }));
 ```
 
-That is also how the Phosphor **icons** work: an icon is a glyph in a registered
-family, so it shapes and draws like any other character and inherits the
-surrounding colour. No rasteriser, no second asset pipeline.
+Known desktop icons instead use tagged inline boxes on an empty string. The
+square slot carries the stable PUA identity and filled-state bit; the shared
+scene painter resolves the compiled vector path. No font shaping is involved.
+The icon tag mask excludes the filled bit, and the painter ignores unrelated
+inline boxes. Optical centering includes the icon slot. Unknown icon characters
+retain the legacy Phosphor fallback. See [Compiled icons](../ICONS.md) for
+regeneration and the fontless tests.
 
 ## Synthesis: faux bold and faux italic
 

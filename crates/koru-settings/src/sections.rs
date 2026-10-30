@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::values::{
     AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, Field, FontSetting, GlobalShortcut, LanguageChoice,
-    PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
+    DictationShortcut, DictationTier, Field, FontSetting, GlobalShortcut, IconPackChoice,
+    LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
     TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom, validate_endpoint, validate_model,
     validate_skin_tone,
 };
@@ -104,6 +104,8 @@ pub struct RecordingPrefs {
 pub struct GlobalSettings {
     // Roaming — `preferences.conf`.
     pub theme: ThemeChoice,
+    #[serde(default)]
+    pub icon_pack: IconPackChoice,
     pub caret_color: CaretColorChoice,
     pub caret_width: CaretWidthChoice,
     pub caret_height: CaretHeightChoice,
@@ -160,6 +162,7 @@ impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::default(),
+            icon_pack: IconPackChoice::default(),
             caret_color: CaretColorChoice::default(),
             caret_width: CaretWidthChoice::default(),
             caret_height: CaretHeightChoice::default(),
@@ -210,6 +213,8 @@ impl Default for GlobalSettings {
 pub struct GlobalPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_pack: Option<IconPackChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_color: Option<CaretColorChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -284,6 +289,7 @@ impl GlobalPatch {
     /// `desktop-v1.json` and cannot fail on it.
     pub fn touches_roaming(&self) -> bool {
         self.theme.is_some()
+            || self.icon_pack.is_some()
             || self.caret_color.is_some()
             || self.caret_width.is_some()
             || self.caret_height.is_some()
@@ -420,6 +426,7 @@ impl GlobalPatch {
         }
         set!(
             theme,
+            icon_pack,
             caret_color,
             caret_width,
             caret_height,
