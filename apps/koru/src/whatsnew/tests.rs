@@ -122,3 +122,19 @@ fn an_unclosed_fence_in_the_notes_does_not_eat_the_greeting() {
     assert_eq!(texts[0].kind, RichTextKind::Paragraph);
     assert!(texts[0].text.contains("Updated to Koru 0.0.4"));
 }
+
+/// The headlines are the `## ` sections, in order, trimmed; a `#` title, a
+/// `###` sub-heading and a fenced line that looks like one are not.
+#[test]
+fn headlines_are_the_second_level_sections_in_order() {
+    let notes = "# Koru 0.1.3\n\nIntro.\n\n## Welcome  \n\ntext\n\n### Detail\n\n##   Agents in a tab\n\n##\n\n## Sync\n";
+    assert_eq!(
+        super::headlines(notes),
+        vec![
+            "Welcome".to_owned(),
+            "Agents in a tab".to_owned(),
+            "Sync".to_owned()
+        ]
+    );
+    assert!(super::headlines("no headings here").is_empty());
+}

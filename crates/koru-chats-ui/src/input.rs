@@ -5,8 +5,12 @@
 //!
 //! - focus enters on open ([`focus_first`](ChatsSurface::focus_first)) and
 //!   returns on close — Escape gives the keyboard back;
-//! - Up/Down move the selection a row, Home/End to either end;
-//! - Enter (or Space) opens; Delete asks;
+//! - Up/Down move the keyboard a row, Home/End to either end;
+//! - Enter (or Space) opens; Delete asks — for the picked chats when the
+//!   keyboard's row is one of them;
+//! - a plain press picks one chat and opens it, Ctrl toggles a chat in the
+//!   pick, Shift extends it from the anchor (the library's rules, the CTO's
+//!   note);
 //! - a row chosen by the pointer and one chosen by the keyboard mean the same
 //!   thing, because both reach [`activate`](ChatsSurface::activate).
 //!
@@ -24,25 +28,57 @@ impl ChatsSurface {
     /// A press on the list's background is still ours: it must not fall
     /// through to whatever is beside or behind the list.
     pub fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        match self.row_at(area, top, x, y) {
-            Some((row, _)) if row.pressable() => {
-                self.activate(row);
-                true
-            }
-            _ => true,
-        }
+        self.mouse_down_with(area, top, x, y, false, false)
     }
 
-    /// A right-click. Puts the keyboard on the chat under the pointer and
-    /// names it, so the host can raise its menu about that chat. `None` off a
-    /// chat row.
-    pub fn context_menu(&mut self, area: Rect, top: f32, x: f32, y: f32) -> Option<crate::ChatId> {
+    /// A press with the selection keys: Ctrl toggles the chat in the pick,
+    /// Shift extends it from the anchor, and neither opens; a plain press
+    /// picks the chat alone and opens it.
+    pub fn mouse_down_with(
+        &mut self,
+        area: Rect,
+        top: f32,
+        x: f32,
+        y: f32,
+        ctrl: bool,
+        shift: bool,
+    ) -> bool {
+        let Some((Row::Chat(index), _)) = self.row_at(area, top, x, y) else {
+            return true;
+        };
+        let Some(chat) = self.chats.get(index).map(|chat| chat.id) else {
+            return true;
+        };
+        if shift {
+            self.select_through(chat);
+        } else if ctrl {
+            self.toggle_selected(chat);
+        } else {
+            self.activate(Row::Chat(index));
+        }
+        true
+    }
+
+    /// A right-click. Names the chats the host's menu is about: the pick,
+    /// when the chat under the pointer is in it, else that chat alone, which
+    /// becomes the pick. The keyboard lands on the chat under the pointer.
+    /// `None` off a chat row.
+    pub fn context_menu(
+        &mut self,
+        area: Rect,
+        top: f32,
+        x: f32,
+        y: f32,
+    ) -> Option<Vec<crate::ChatId>> {
         let Some((Row::Chat(index), _)) = self.row_at(area, top, x, y) else {
             return None;
         };
         let chat = self.chats.get(index)?.id;
         self.focus = Some(Focus::Chat(chat));
-        Some(chat)
+        if !self.selection.contains(&chat) {
+            self.select_only(chat);
+        }
+        Some(self.selected())
     }
 
     /// A pointer move. `true` when the hover changed.
@@ -71,10 +107,8 @@ impl ChatsSurface {
 
     /// The chat the keyboard is on, if it is on one.
     pub fn focused_chat(&self) -> Option<crate::ChatId> {
-        match self.focus? {
-            Focus::Chat(chat) => Some(chat),
-            Focus::New => None,
-        }
+        let Focus::Chat(chat) = self.focus?;
+        Some(chat)
     }
 
     /// Whether the surface holds the keyboard.
@@ -99,8 +133,8 @@ impl ChatsSurface {
 
     /// **Focus enters on open.** The chat the host has open when the list
     /// holds it — so opening the list from a chat starts you on that chat —
-    /// else the newest chat, else *New chat*. Nothing changes when the
-    /// keyboard is already here.
+    /// else the newest chat. Nothing changes when the keyboard is already
+    /// here, and an empty list has nowhere to land (`false`).
     pub fn focus_first(&mut self, area: Rect, top: f32) -> bool {
         if self.focus.is_some() {
             return false;
@@ -113,12 +147,14 @@ impl ChatsSurface {
         {
             self.pending_reveal = Some(current);
         }
-        let landing = self
+        let Some(landing) = self
             .current
             .filter(|current| self.chats.iter().any(|chat| chat.id == *current))
             .or_else(|| self.chats.first().map(|chat| chat.id))
-            .map_or(Focus::New, Focus::Chat);
-        self.set_focus(landing, area, top);
+        else {
+            return false;
+        };
+        self.set_focus(Focus::Chat(landing), area, top);
         true
     }
 
@@ -156,16 +192,7 @@ impl ChatsSurface {
                     None => false,
                 };
             }
-            Press::Delete => {
-                return match self.focus {
-                    Some(Focus::Chat(chat)) => {
-                        self.ask_delete(chat);
-                        true
-                    }
-                    // *New chat* has nothing to delete; the key is not ours.
-                    _ => false,
-                };
-            }
+            Press::Delete => return self.ask_delete_selected(),
             Press::Escape => unreachable!("answered above"),
         };
         let row = rows[next];
@@ -174,12 +201,13 @@ impl ChatsSurface {
         true
     }
 
-    /// What a row does when it is chosen, however it was chosen.
+    /// What a row does when it is chosen, however it was chosen: it becomes
+    /// the pick, and it opens.
     fn activate(&mut self, row: Row) {
         match row {
-            Row::New => self.ask_new(),
             Row::Chat(index) => {
                 if let Some(chat) = self.chats.get(index).map(|chat| chat.id) {
+                    self.select_only(chat);
                     self.ask_open(chat);
                 }
             }
@@ -189,7 +217,6 @@ impl ChatsSurface {
 
     fn focus_of(&self, row: Row) -> Option<Focus> {
         match row {
-            Row::New => Some(Focus::New),
             Row::Chat(index) => self.chats.get(index).map(|chat| Focus::Chat(chat.id)),
             _ => self.focus,
         }

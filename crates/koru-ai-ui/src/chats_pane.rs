@@ -208,8 +208,8 @@ impl ChatSurface {
             return Some(true);
         }
         let (area, top) = self.chats_area();
-        if let Some(chat) = self.chats_pane.context_menu(area, top, x, y) {
-            self.open_confirmation(DestructiveAction::DeleteChat(chat));
+        if let Some(chats) = self.chats_pane.context_menu(area, top, x, y) {
+            self.open_confirmation(DestructiveAction::DeleteChats(chats));
         }
         Some(true)
     }
@@ -252,8 +252,9 @@ impl ChatSurface {
             self.create_chat();
             changed = true;
         }
-        if let Some(chat) = self.chats_pane.take_wants_delete() {
-            self.open_confirmation(DestructiveAction::DeleteChat(chat));
+        let asked = self.chats_pane.take_wants_delete();
+        if !asked.is_empty() {
+            self.open_confirmation(DestructiveAction::DeleteChats(asked));
             changed = true;
         }
         changed
@@ -339,16 +340,20 @@ mod tests {
         surface.mouse_down(button.x + 4.0, button.y + 4.0)
     }
 
-    /// **The workspace has the navigator.** In the context pane and a tab, the
-    /// *Chats* button asks the host for its Chats view — no list inside the
-    /// chat (R1).
+    /// **The workspace has the navigator.** In the context pane and a tab
+    /// the header carries no *Chats* button at all (the CTO's note): the
+    /// rail's Chats square is the door, and a press where the button would
+    /// be reaches nothing.
     #[test]
-    fn the_chats_button_asks_a_workspace_host_for_its_view() {
+    fn a_workspace_hosted_header_has_no_chats_button() {
         let mut surface = ready(SurfaceMode::ContextPane);
-        assert!(press_chats(&mut surface));
+        assert!(!surface.hosts_header_buttons());
+        assert!(!press_chats(&mut surface) || !surface.history_open);
+        assert!(
+            !surface.take_wants_chats_view(),
+            "nothing asked for the view"
+        );
         assert!(!surface.history_open, "no popover inside the chat");
-        assert!(surface.take_wants_chats_view());
-        assert!(!surface.take_wants_chats_view(), "a one-shot drain");
     }
 
     /// In the standalone window the same button opens the floating pane, and
@@ -356,6 +361,12 @@ mod tests {
     #[test]
     fn the_standalone_window_opens_the_pane_and_escape_closes_it() {
         let mut surface = ready(SurfaceMode::Standalone);
+        // A list with a row to land on: *New chat* left the list for the
+        // heading, so an empty one has nowhere for the keyboard to enter.
+        surface.chats_pane.take_listing(Ok(koru_chats_ui::Listing {
+            chats: vec![chat("One")],
+            agents: Vec::new(),
+        }));
         assert!(press_chats(&mut surface));
         assert!(surface.history_open);
         assert!(!surface.take_wants_chats_view());

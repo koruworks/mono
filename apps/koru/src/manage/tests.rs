@@ -392,6 +392,40 @@ fn the_create_form_is_hosted_beside_the_nav_and_finishing_lands_on_the_profile()
     assert_eq!(view.page(), Some(Page::Profile(work.id)));
 }
 
+/// **The page's X puts the form away and lands on the first Profile** (the
+/// CTO's note). It sits at the title line's right end, outside the form,
+/// where Linked devices keeps its own head button.
+#[test]
+fn the_new_profile_pages_x_closes_the_form_onto_the_first_profile() {
+    let (mut view, personal, _) = manage();
+    view.show(Page::NewProfile);
+    assert!(view.controller().creating());
+    let close = view
+        .laid()
+        .placed(profile_page::Control::CloseCreation)
+        .cloned()
+        .expect("the X");
+    let head = view.laid().head.clone().expect("the head");
+    let column = view.column();
+    assert!(
+        (close.rect.x + close.rect.w - (column.x + column.w)).abs() < 0.5,
+        "at the column's right edge: {:?} vs {column:?}",
+        close.rect
+    );
+    assert!(close.rect.y < head.lead.y, "on the title line");
+    assert!(
+        head.title.x + head.title.w <= close.rect.x,
+        "the title leaves it room"
+    );
+    assert!(press(&mut view, close.rect));
+    assert!(!view.controller().creating(), "the form is put away");
+    assert_eq!(
+        view.page(),
+        Some(Page::Profile(personal.id)),
+        "the first Profile"
+    );
+}
+
 // ------------------------------------------------------------- inspection
 
 #[test]

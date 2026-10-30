@@ -165,6 +165,25 @@ fn profiled_window_title(subject: &str, profile: Option<&str>, slot: &str) -> St
     parts.join(" — ")
 }
 
+/// A workspace window's title: the workspace's name, then the active tab's
+/// (the CTO's note — a second window is told apart by what it is showing,
+/// not by the app's name twice). A tab called the same as the workspace is
+/// not repeated; a named development replica stays visible as the last
+/// component, as in [`profiled_window_title`].
+fn workspace_window_title(workspace: &str, tab: Option<&str>, slot: &str) -> String {
+    let mut parts = vec![workspace.to_owned()];
+    if let Some(tab) = tab
+        .map(str::trim)
+        .filter(|tab| !tab.is_empty() && *tab != workspace)
+    {
+        parts.push(tab.to_owned());
+    }
+    if slot != session::DEFAULT_PEER {
+        parts.push(slot.to_owned());
+    }
+    parts.join(" — ")
+}
+
 fn trace_node(id: Option<NodeId>) -> String {
     id.map(|id| id.to_storage()).unwrap_or_else(|| "-".into())
 }
@@ -7302,23 +7321,30 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// process, so this runs after both sessions have been polled.
     fn sync_titles(&mut self) {
         let profile = self.runtime.profile.name();
-        let app_title = profiled_window_title(&self.name, profile.as_deref(), &self.instance.slot);
         let search_title = profiled_window_title(
             &format!("{} Search", self.name),
             profile.as_deref(),
             &self.instance.slot,
         );
+        // A workspace window is titled by its workspace and its active tab;
+        // the app's name only stands in while no workspace is open.
+        let workspace = self
+            .runtime
+            .workspace
+            .current()
+            .and_then(|id| self.runtime.profile.workspace(id))
+            .map(|entry| entry.name)
+            .filter(|name| !name.trim().is_empty());
+        let subject = workspace.as_deref().unwrap_or(&self.name);
         for pane in self.panes.values_mut() {
             let want = if pane.view.is_global_search() {
                 search_title.clone()
-            } else if let Some(root) = pane.view.document_root() {
-                profiled_window_title(
-                    &koru_workspace::name_of(&self.runtime.workspace.ws, root),
-                    profile.as_deref(),
+            } else {
+                workspace_window_title(
+                    subject,
+                    pane.view.active_tab_title().as_deref(),
                     &self.instance.slot,
                 )
-            } else {
-                app_title.clone()
             };
             if pane.title != want {
                 pane.window.set_title(&want);
@@ -8687,6 +8713,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::NewWorkspace(name) => self.new_workspace(&name),
             PaneRequest::CreateDocument(title) => self.create_document(source, &title, false),
+            PaneRequest::CreateDocumentIn { parent, title } => {
+                self.create_child_document(source, parent, &title)
+            }
             PaneRequest::CreateCanvas(title) => self.create_document(source, &title, true),
             PaneRequest::NewWorkspaceIn(owner, name) => self.new_workspace_in(owner, &name),
             PaneRequest::CreateLinkedDocument(title) => self.create_linked_document(source, &title),
@@ -11361,6 +11390,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
             let after = self.runtime.workspace.active();
             self.runtime.workspace.create_document_after(title, after)
         };
+        self.settle_created_document(source, created, canvas);
+    }
+
+    /// A document made inside another — a sidebar row's `+`
+    /// (`PaneRequest::CreateDocumentIn`): the same round trip as
+    /// [`create_document`](Self::create_document), placed as the row's last
+    /// child.
+    fn create_child_document(
+        &mut self,
+        source: WindowId,
+        parent: koru_core::DocumentId,
+        title: &str,
+    ) {
+        let created = self.runtime.workspace.create_document_in(title, parent);
+        self.settle_created_document(source, created, false);
+    }
+
+    /// What follows a creation, made or refused: the new document opens and
+    /// every pane hears the manifest changed, or the asking view and the
+    /// person are told nothing was changed.
+    fn settle_created_document(
+        &mut self,
+        source: WindowId,
+        created: Result<koru_core::DocumentId, koru_store_core::errors::Error>,
+        canvas: bool,
+    ) {
         match created {
             Ok(id) => {
                 if let Err(e) = self.runtime.workspace.open_document(id) {
@@ -18473,6 +18528,32 @@ fn other_profile_workspace<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A window is titled by its workspace and its tab** (the CTO's note):
+    /// two windows on two workspaces read apart in Alt+Tab. A tab named as
+    /// the workspace is not said twice; a replica's slot stays last.
+    #[test]
+    fn a_workspace_window_is_titled_by_its_workspace_and_its_tab() {
+        let slot = session::DEFAULT_PEER;
+        assert_eq!(
+            workspace_window_title("Execution", Some("Notes"), slot),
+            "Execution — Notes"
+        );
+        assert_eq!(workspace_window_title("Execution", None, slot), "Execution");
+        assert_eq!(
+            workspace_window_title("Execution", Some("  "), slot),
+            "Execution"
+        );
+        assert_eq!(
+            workspace_window_title("Koru", Some("Koru"), slot),
+            "Koru",
+            "not the same word twice"
+        );
+        assert_eq!(
+            workspace_window_title("Execution", Some("Home"), "b"),
+            "Execution — Home — b"
+        );
+    }
 
     /// **A canvas counts as a document** in the workspace manager's column:
     /// pages and canvases together, and nothing else the Store counts — and

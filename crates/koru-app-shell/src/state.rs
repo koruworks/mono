@@ -680,7 +680,6 @@ impl ShellWindow {
                 self.tab_scroll,
                 self.window_buttons,
                 self.context,
-                false,
                 self.host_action,
                 true,
                 self.banner.slots(),
@@ -1645,7 +1644,6 @@ impl<H: ShellHost> ShellState<H> {
             window.tab_scroll,
             window.window_buttons,
             window.context,
-            false,
             window.host_action,
             true,
             window.banner.slots(),
@@ -2044,6 +2042,9 @@ impl<H: ShellHost> ShellState<H> {
                 closable: *closable,
                 slide: window.slides.offset(index),
                 dragging: false,
+                // The shell's strip has no pin group, so no gap to keep out
+                // of a chip.
+                gap_after: 0.0,
             })
             .collect();
         tabs::draw(

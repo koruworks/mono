@@ -62,6 +62,51 @@ impl AcpDialect {
             _ => Duration::ZERO,
         }
     }
+    /// The version number in a `--version` print that is not one of the
+    /// pinned ones: the whole print for the CLIs that print a bare number,
+    /// the word after `grok` for Grok, nothing for a digest-identified
+    /// route. The caller checks it against the pin.
+    pub(super) fn printed_version(self, printed: &str) -> Option<&str> {
+        fn bare(text: &str) -> Option<&str> {
+            let text = text.strip_prefix('v').unwrap_or(text);
+            (text.starts_with(|c: char| c.is_ascii_digit())
+                && text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
+            .then_some(text)
+        }
+        match self {
+            Self::Generic | Self::Antigravity => None,
+            Self::Claude | Self::OpenCode | Self::Kimi => bare(printed),
+            // `grok <version> (<build>) [<channel>]`, that shape and no
+            // other: an adorned print is still refused.
+            Self::Grok => {
+                let words: Vec<&str> = printed.split_ascii_whitespace().collect();
+                match words.as_slice() {
+                    ["grok", version, build, channel]
+                        if build.starts_with('(')
+                            && build.ends_with(')')
+                            && channel.starts_with('[')
+                            && channel.ends_with(']') =>
+                    {
+                        bare(version)
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Whether a release newer than the pin is admitted: the CLIs that
+    /// print a version number are; a digest-identified route and a route
+    /// built by hand with its own list (the Generic dialect) are not.
+    pub(super) fn admits_newer_releases(self) -> bool {
+        matches!(
+            self,
+            Self::Claude | Self::OpenCode | Self::Kimi | Self::Grok
+        )
+    }
+
     /// The qualified pin: the first accepted version, which the probe logs
     /// as the expected one.
     pub(super) fn version(self) -> &'static str {
@@ -234,13 +279,24 @@ impl AcpRoute {
             return ProviderVersion::from_str(token.strip_prefix('v').unwrap_or(token));
         }
         let printed = output.trim();
-        let (_, version) = self
+        if let Some((_, version)) = self
             .dialect
             .versions()
             .iter()
             .find(|(expected, _)| *expected == printed)
-            .ok_or_else(rejected)?;
-        ProviderVersion::from_str(version)
+        {
+            return ProviderVersion::from_str(version);
+        }
+        // Not a pinned print: read the number the CLI printed and admit it
+        // when it is at or above the qualified pin (the CTO's note). A
+        // digest-identified route has no number to read.
+        let token = self.dialect.printed_version(printed).ok_or_else(rejected)?;
+        let version = ProviderVersion::from_str(token)?;
+        if self.supports(&version) {
+            Ok(version)
+        } else {
+            Err(rejected())
+        }
     }
 }
 

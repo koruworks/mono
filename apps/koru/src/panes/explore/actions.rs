@@ -8,11 +8,53 @@
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{icons, scene, theme};
+use koru_draw::{icons, theme};
+use koru_ui::icon_button::{self, Metrics, State};
 use vello::Scene;
 use vello::kurbo::Affine;
 
 use super::NavigatorMode;
+
+/// The `…` buttons' geometry — the heading's, the floor's and a row's: the
+/// caption's glyph size, the chip the slot itself (no tab insets, which
+/// `Metrics::STANDARD` carries for the title bar's buttons). One constant
+/// so the three dots read as one control wherever they are (the CTO's
+/// note, E76).
+pub(super) const DOTS: Metrics = Metrics {
+    icon_size: theme::CAPTION_ICON,
+    padding_x: 0.0,
+    padding_y: 0.0,
+    inset_top: 0.0,
+    inset_bottom: 0.0,
+    radius: 6.0,
+};
+
+/// A `…` in `slot`, as the shared icon button: `KoruIconButton` in the
+/// inspector, Phosphor's `dots-three`, the component's own hover chip.
+pub(super) fn draw_dots(
+    scene: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    hovered: bool,
+) {
+    if slot.w <= 0.0 {
+        return;
+    }
+    icon_button::draw_with(
+        scene,
+        root,
+        engine,
+        slot,
+        icons::DOTS_THREE,
+        State {
+            hovered,
+            active: false,
+            disabled: false,
+        },
+        DOTS,
+    );
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -38,6 +80,8 @@ pub(super) fn available(mode: NavigatorMode) -> &'static [Action] {
         // The artifacts column offers nothing at the workspace level: what
         // it can do is on its rows, and a menu of nothing is a dead end.
         NavigatorMode::Artifacts => &[],
+        // Home's nav has no folds and nothing imports into it.
+        NavigatorMode::Home => &[],
         // Nor does the Chats view: *New chat* heads its own list, and a menu
         // holding it a second time would be two doors to one room.
         NavigatorMode::Chats | NavigatorMode::Socials => &[],
@@ -55,42 +99,14 @@ pub(super) fn button(band: Rect, modes_right: f32) -> Rect {
     Rect::new(band.x + band.w - w, band.y, w, band.h)
 }
 
-// `search_button` and `at` used to live here, each deriving its answer from
-// `button(band, modes_right)` a second time. They are `ExploreView`'s now,
-// because the `…` can be **absent** — a mode with no actions draws none — and
-// the search icon has to take that room back. Two functions deriving the
-// button's rect from the premise rather than from the button is exactly how a
-// hidden control leaves a gap where it used to be.
-
-pub(super) fn draw_search_button(
+pub(super) fn draw_button(
     scene: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
     button: Rect,
     hot: bool,
 ) {
-    if button.w > 0.0 {
-        koru_shell_chrome::tabs::draw_icon(
-            scene,
-            root,
-            engine,
-            icons::SEARCH,
-            button,
-            if hot {
-                theme::p().text
-            } else {
-                theme::p().text_dim
-            },
-        );
-    }
-}
-
-pub(super) fn draw_button(scene: &mut Scene, root: Affine, button: Rect, hot: bool) {
-    if button.w <= 0.0 {
-        return;
-    }
-    let p = theme::p();
-    scene::dots_three(scene, root, button, if hot { p.text } else { p.text_dim });
+    draw_dots(scene, root, engine, button, hot);
 }
 
 pub(super) fn glyph(action: Action) -> char {
@@ -128,6 +144,7 @@ pub(super) fn label(action: Action, mode: NavigatorMode) -> &'static str {
         (Action::Import, NavigatorMode::Chats) => "Import files…",
         (Action::Import, NavigatorMode::Canvases) => "Import content…",
         (Action::Import, NavigatorMode::Socials) => "Import files…",
+        (Action::Import, NavigatorMode::Home) => "Import content…",
         (Action::CollapseAll, _) => "Collapse all",
         (Action::ExpandAll, _) => "Expand all",
     }

@@ -157,6 +157,7 @@ impl MainView {
             match &self.tabs().active_tab().view {
                 TabView::Leaf(_) => "document",
                 TabView::Welcome(_) => "welcome",
+                TabView::Home(_) => "home",
                 TabView::Manage(_) => "manage",
                 TabView::Trash(_) => "trash",
                 TabView::Tasks(_) => "tasks",
@@ -256,6 +257,7 @@ impl MainView {
             // The Tasks page's capture row is not a dictation surface this
             // release; a wrong `None` merely declines a dictation.
             TabView::Welcome(_)
+            | TabView::Home(_)
             | TabView::Manage(_)
             | TabView::Settings(_)
             | TabView::Trash(_)

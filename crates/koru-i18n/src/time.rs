@@ -512,11 +512,230 @@ pub fn absolute_date(lang: Lang, parts: DateTimeParts, include_year: bool) -> St
     }
 }
 
+/// **The day with its name**: "Thursday 22 October", "jeudi 22 octobre",
+/// "22. Oktober, Donnerstag"-style orders per language, "10月22日 星期四".
+/// What a page that *is* today prints at its head (workspace foundation,
+/// Home's Today page); the numeric [`absolute_date`] stays for labels that
+/// only answer which day. No year: the page is about today.
+///
+/// The weekday is computed from the parts (Zeller, proleptic Gregorian) so
+/// the caller passes the same `DateTimeParts` every other formatter takes.
+pub fn date_long(lang: Lang, parts: DateTimeParts) -> String {
+    let DateTimeParts {
+        year, month, day, ..
+    } = parts;
+    let weekday = weekday_of(year, month, day);
+    let m = usize::from(month.clamp(1, 12)) - 1;
+    let text = match lang {
+        Lang::En => format!("{} {day} {}", WEEKDAYS_EN[weekday], MONTHS_EN[m]),
+        Lang::Es => format!("{} {day} de {}", WEEKDAYS_ES[weekday], MONTHS_ES[m]),
+        Lang::PtBr => format!("{}, {day} de {}", WEEKDAYS_PT_BR[weekday], MONTHS_PT_BR[m]),
+        Lang::De => format!("{}, {day}. {}", WEEKDAYS_DE[weekday], MONTHS_DE[m]),
+        Lang::Fr => format!("{} {day} {}", WEEKDAYS_FR[weekday], MONTHS_FR[m]),
+        Lang::Ar => format!("{} {day} {}", WEEKDAYS_AR[weekday], MONTHS_AR[m]),
+        Lang::ZhHans => format!("{month}月{day}日 {}", WEEKDAYS_ZH_HANS[weekday]),
+        Lang::Ja => format!("{month}月{day}日（{}）", WEEKDAYS_JA[weekday]),
+    };
+    localize_digits(lang, &text)
+}
+
+/// 0 = Monday … 6 = Sunday, from a proleptic Gregorian date.
+fn weekday_of(year: i32, month: u8, day: u8) -> usize {
+    // Zeller's congruence, with January and February as months 13 and 14
+    // of the year before.
+    let (y, m) = if month < 3 {
+        (year - 1, i32::from(month) + 12)
+    } else {
+        (year, i32::from(month))
+    };
+    let d = i32::from(day);
+    let k = y.rem_euclid(100);
+    let j = y.div_euclid(100);
+    let h = (d + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j).rem_euclid(7);
+    // Zeller: 0 = Saturday … 6 = Friday → Monday-first.
+    ((h + 5) % 7) as usize
+}
+
+const WEEKDAYS_EN: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+const MONTHS_EN: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+const WEEKDAYS_ES: [&str; 7] = [
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+];
+const MONTHS_ES: [&str; 12] = [
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+];
+const WEEKDAYS_PT_BR: [&str; 7] = [
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+    "sábado",
+    "domingo",
+];
+const MONTHS_PT_BR: [&str; 12] = [
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+];
+const WEEKDAYS_DE: [&str; 7] = [
+    "Montag",
+    "Dienstag",
+    "Mittwoch",
+    "Donnerstag",
+    "Freitag",
+    "Samstag",
+    "Sonntag",
+];
+const MONTHS_DE: [&str; 12] = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+];
+const WEEKDAYS_FR: [&str; 7] = [
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+];
+const MONTHS_FR: [&str; 12] = [
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+];
+const WEEKDAYS_AR: [&str; 7] = [
+    "الاثنين",
+    "الثلاثاء",
+    "الأربعاء",
+    "الخميس",
+    "الجمعة",
+    "السبت",
+    "الأحد",
+];
+const MONTHS_AR: [&str; 12] = [
+    "يناير",
+    "فبراير",
+    "مارس",
+    "أبريل",
+    "مايو",
+    "يونيو",
+    "يوليو",
+    "أغسطس",
+    "سبتمبر",
+    "أكتوبر",
+    "نوفمبر",
+    "ديسمبر",
+];
+const WEEKDAYS_ZH_HANS: [&str; 7] = [
+    "星期一",
+    "星期二",
+    "星期三",
+    "星期四",
+    "星期五",
+    "星期六",
+    "星期日",
+];
+const WEEKDAYS_JA: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const MS: i64 = 1000;
+
+    /// Eight fixtures for one day — 22 October 2026, a Thursday — in each
+    /// language's own order and words; the weekday falls out of the parts.
+    #[test]
+    fn the_long_date_names_the_day_in_every_language() {
+        let day = DateTimeParts {
+            year: 2026,
+            month: 10,
+            day: 22,
+            hour: 9,
+            minute: 0,
+            second: 0,
+        };
+        let want = [
+            (Lang::En, "Thursday 22 October"),
+            (Lang::Es, "jueves 22 de octubre"),
+            (Lang::PtBr, "quinta-feira, 22 de outubro"),
+            (Lang::De, "Donnerstag, 22. Oktober"),
+            (Lang::Fr, "jeudi 22 octobre"),
+            (Lang::Ar, "الخميس ٢٢ أكتوبر"),
+            (Lang::ZhHans, "10月22日 星期四"),
+            (Lang::Ja, "10月22日（木）"),
+        ];
+        for (lang, text) in want {
+            assert_eq!(date_long(lang, day), text, "{lang:?}");
+        }
+        // The calendar's corners: a leap day, a New Year, a year's end.
+        assert_eq!(weekday_of(2024, 2, 29), 3, "29 Feb 2024 was a Thursday");
+        assert_eq!(weekday_of(2026, 1, 1), 3, "1 Jan 2026 is a Thursday");
+        assert_eq!(weekday_of(2000, 12, 31), 6, "31 Dec 2000 was a Sunday");
+        assert_eq!(weekday_of(2025, 10, 20), 0, "20 Oct 2025 was a Monday");
+    }
 
     #[test]
     fn narrow_buckets_match_the_spec() {

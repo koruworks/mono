@@ -25,6 +25,14 @@ impl ProfilesController {
         }
     }
 
+    /// Put the create form away without finishing it — the page's X. What
+    /// was typed goes with it.
+    pub fn cancel_profile_creation(&mut self) {
+        if self.profile_creation.take().is_some() {
+            self.hints.reset_focus = true;
+        }
+    }
+
     pub(super) fn begin_profile_creation(&mut self) {
         if self.account.stage == AccountStage::SignedIn {
             self.begin_connected_profile_creation();

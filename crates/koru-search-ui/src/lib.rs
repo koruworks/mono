@@ -137,6 +137,40 @@ pub enum Disposition {
     NewWindow,
 }
 
+/// **A row the host offers above the results: what the typed text could
+/// become.** The surface knows no document and no task; the host names the
+/// thing (*New task*, *New document*), where it would land (the subtitle)
+/// and the glyph, and the surface draws them as the first group, CREATE,
+/// while there is a query. A host that supplies none sees no group — the
+/// Agent's overlay is that host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateRow {
+    pub icon: char,
+    pub title: String,
+    pub subtitle: String,
+}
+
+/// One chip of a host's footer line — a key and what it does. When a host
+/// supplies any, they stand **in place of** the surface's own hint line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FooterChip {
+    pub key: String,
+    pub label: String,
+}
+
+/// What `↵` on a CREATE row asks for: which row, the typed text it is made
+/// from, and where it opens. `Ctrl+↵` keeps meaning *in a window* here as
+/// it does for a result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Create {
+    pub row: usize,
+    pub query: String,
+    pub disposition: Disposition,
+}
+
+const CREATE_HEADING_H: f32 = 22.0;
+const CREATE_GAP: f32 = 6.0;
+
 const HEADER_H: f32 = 44.0;
 const FOOTER_H: f32 = 34.0;
 const ROW_H: f32 = 70.0;
@@ -375,6 +409,17 @@ pub struct SearchSurface {
     app_menu: Option<koru_ui::Menu<app_menu::AppMenuRow>>,
     view: SearchView,
     show_shortcuts: bool,
+    /// The host's CREATE rows, drawn first while there is a query.
+    create_rows: Vec<CreateRow>,
+    /// The host's footer chips, drawn instead of the hint line when any.
+    footer_chips: Vec<FooterChip>,
+    /// The CREATE row the keyboard is on, if it is on one rather than a hit.
+    selected_create: Option<usize>,
+    hover_create: Option<usize>,
+    /// What `↵` on a CREATE row asked for, until the host takes it.
+    create: Option<Create>,
+    /// The host's words in the empty box, over the surface's own.
+    placeholder: Option<String>,
     tooltip: Tooltip,
     exiting: ExitList<String>,
     exiting_hits: Vec<(usize, SearchHit)>,
@@ -585,6 +630,12 @@ impl SearchSurface {
             app_menu: None,
             view: SearchView::Results,
             show_shortcuts: false,
+            create_rows: Vec::new(),
+            footer_chips: Vec::new(),
+            selected_create: None,
+            hover_create: None,
+            create: None,
+            placeholder: None,
             tooltip: Tooltip::default(),
             exiting: ExitList::new(),
             exiting_hits: Vec::new(),
@@ -1777,6 +1828,7 @@ impl SearchSurface {
         self.list.selected = 0;
         self.list.scroll = 0.0;
         self.selected_recent_query = None;
+        self.selected_create = None;
         self.clear_selection_memory();
         self.menu = SearchMenu::None;
         self.view = SearchView::Results;
@@ -1837,11 +1889,83 @@ impl SearchSurface {
         (self.viewport.1 - self.results_top() - FOOTER_H).max(0.0)
     }
 
-    fn results_top(&self) -> f32 {
-        if self.query.is_empty() {
-            HEADER_H + self.filter_line_h() + self.correction_h() + self.warning_h() + LANDING_INSET
+    /// The host's CREATE rows. Replacing them drops the keyboard off whatever
+    /// row it was on; the hits keep their selection.
+    pub fn set_create_rows(&mut self, rows: Vec<CreateRow>) {
+        self.create_rows = rows;
+        self.selected_create = None;
+        self.hover_create = None;
+    }
+
+    /// The host's footer chips, drawn in place of the hint line.
+    pub fn set_footer_chips(&mut self, chips: Vec<FooterChip>) {
+        self.footer_chips = chips;
+    }
+
+    /// The host's words in the empty box (*Search or type a command*), in
+    /// place of the surface's scope-shaped ones.
+    pub fn set_placeholder(&mut self, placeholder: Option<String>) {
+        self.placeholder = placeholder;
+    }
+
+    /// What `↵` on a CREATE row asked for, once. The host answers it the way
+    /// it answers a `Target`: by making the thing and closing the surface.
+    pub fn take_create(&mut self) -> Option<Create> {
+        self.create.take()
+    }
+
+    /// Whether the footer is the host's chips rather than the hint line.
+    pub fn footer_shows_chips(&self) -> bool {
+        !self.footer_chips.is_empty()
+            && self.view == SearchView::Results
+            && !self.replacing_results()
+    }
+
+    /// CREATE is drawn while the host gave rows and there is something typed
+    /// to make them from — never over the landing page.
+    fn create_shown(&self) -> bool {
+        !self.create_rows.is_empty() && !self.query.is_empty() && self.view == SearchView::Results
+    }
+
+    /// The group's height: heading, rows, and the gap before the results.
+    fn create_block_h(&self) -> f32 {
+        if self.create_shown() {
+            CREATE_HEADING_H + self.create_rows.len() as f32 * self.list.row_height + CREATE_GAP
         } else {
-            HEADER_H + self.filter_line_h() + self.correction_h() + self.warning_h()
+            0.0
+        }
+    }
+
+    /// Where the group sits: between the header band and the results.
+    fn create_rect(&self) -> Rect {
+        let h = self.create_block_h();
+        Rect::new(0.0, self.results_top() - h, self.results_width(), h)
+    }
+
+    fn create_row_rect(&self, row: usize) -> Rect {
+        let band = self.create_rect();
+        self.result_card_rect(band.y + CREATE_HEADING_H + row as f32 * self.list.row_height)
+    }
+
+    fn create_row_at(&self, y: f32) -> Option<usize> {
+        if !self.create_shown() {
+            return None;
+        }
+        let band = self.create_rect();
+        let top = band.y + CREATE_HEADING_H;
+        if y < top || y >= top + self.create_rows.len() as f32 * self.list.row_height {
+            return None;
+        }
+        Some(((y - top) / self.list.row_height) as usize)
+    }
+
+    fn results_top(&self) -> f32 {
+        let base = HEADER_H + self.filter_line_h() + self.correction_h() + self.warning_h();
+        if self.query.is_empty() {
+            base + LANDING_INSET
+        } else {
+            // The CREATE group leads the results, so the results begin under it.
+            base + self.create_block_h()
         }
     }
 
@@ -2465,6 +2589,36 @@ impl SearchSurface {
         if self.query.is_empty() {
             return self.move_landing_selection(delta);
         }
+        // The CREATE rows are above the hits and the arrows walk both as one
+        // column: Up from the first hit lands on the last CREATE row, Down
+        // from the last CREATE row on the first hit.
+        if self.create_shown() {
+            let last = self.create_rows.len() - 1;
+            match self.selected_create {
+                Some(row) if delta > 0 => {
+                    if row < last {
+                        self.selected_create = Some(row + 1);
+                    } else if !self.page.hits.is_empty() {
+                        self.selected_create = None;
+                        self.list.selected = 0;
+                    }
+                    return true;
+                }
+                Some(row) => {
+                    self.selected_create = Some(row.saturating_sub(1));
+                    return true;
+                }
+                None if delta < 0 && self.list.selected == 0 => {
+                    self.selected_create = Some(last);
+                    return true;
+                }
+                None if delta > 0 && self.page.hits.is_empty() => {
+                    self.selected_create = Some(0);
+                    return true;
+                }
+                None => {}
+            }
+        }
         let changed = self
             .list
             .step(delta, self.page.hits.len(), self.results_height());
@@ -2847,6 +3001,23 @@ impl SearchSurface {
         if self.replacing_results() {
             return;
         }
+        if self.create_shown() {
+            // The row the keyboard is on; with nothing found, `↵` on the typed
+            // text means the first thing it could become.
+            let row = match self.selected_create {
+                Some(row) => Some(row),
+                None if self.page.hits.is_empty() => Some(0),
+                None => None,
+            };
+            if let Some(row) = row {
+                self.create = Some(Create {
+                    row,
+                    query: self.query.raw_text().trim().to_owned(),
+                    disposition,
+                });
+                return;
+            }
+        }
         if self.query.is_empty()
             && let Some(index) = self.selected_pin
         {
@@ -2991,10 +3162,12 @@ impl SearchSurface {
             Some(p.text_dim),
         );
         let query_rect = self.query_rect();
-        let placeholder = match &self.scope {
-            SearchScope::Global => "Search pages, tasks, comments, and workspaces",
-            SearchScope::Workspace { .. } => "Search this workspace",
+        let placeholder = match (&self.placeholder, &self.scope) {
+            (Some(words), _) => words.as_str(),
+            (None, SearchScope::Global) => "Search pages, tasks, comments, and workspaces",
+            (None, SearchScope::Workspace { .. }) => "Search this workspace",
         };
+        let placeholder = placeholder.to_owned();
         self.query.draw(
             canvas,
             root,
@@ -3004,7 +3177,7 @@ impl SearchSurface {
             // Baseline-clamping this field silently replaced the configured
             // caret height, so one preference produced two different carets.
             InputStyle::bare(theme::role::row()),
-            Some(placeholder),
+            Some(placeholder.as_str()),
             caret_on,
         );
         self.paint_header_controls(canvas, root);
@@ -3028,6 +3201,9 @@ impl SearchSurface {
             self.paint_availability_warning(canvas, root);
         }
 
+        if self.create_shown() {
+            self.paint_create(canvas, root);
+        }
         if self.view != SearchView::Results {
             self.paint_secondary_view(canvas, root);
         } else if self.unavailable.is_some() {
@@ -3973,6 +4149,64 @@ impl SearchSurface {
         }
     }
 
+    /// The CREATE group: its heading and the host's rows, each a card like a
+    /// hit's — the glyph, *{title} "{query}"* in the row role, the subtitle
+    /// under it in the meta role.
+    fn paint_create(&mut self, canvas: &mut Scene, root: Affine) {
+        let p = theme::p();
+        let band = self.create_rect();
+        let heading = self.engine.simple_layout("CREATE", theme::role::hint());
+        scene::draw_layout_first_line(canvas, root, &heading, PAD, band.y + 6.0, Some(p.text_dim));
+        let query = self.query.raw_text().trim().to_owned();
+        let rows = self.create_rows.clone();
+        for (index, row) in rows.iter().enumerate() {
+            let card = self.create_row_rect(index);
+            if self.selected_create == Some(index) {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.row_selected,
+                    &scene::rrect(card.x, card.y, card.w, card.h, CARD_RADIUS),
+                );
+                scene::stroke(
+                    canvas,
+                    root,
+                    p.accent,
+                    theme::BORDER_W,
+                    &scene::rrect(card.x, card.y, card.w, card.h, CARD_RADIUS),
+                );
+            } else if self.hover_create == Some(index) {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.hover_tint,
+                    &scene::rrect(card.x, card.y, card.w, card.h, CARD_RADIUS),
+                );
+            }
+            let y = card.y - CARD_INSET_Y;
+            let icon = self.engine.icon_layout(row.icon, 16.0);
+            scene::draw_layout_first_line(canvas, root, &icon, PAD, y + 10.0, Some(p.text_dim));
+            let content_x = PAD + 26.0;
+            let content_w = (card.x + card.w - content_x - 8.0).max(1.0);
+            let title = format!("{} \u{201c}{query}\u{201d}", row.title);
+            let title = self.engine.elided(&title, theme::role::row(), content_w);
+            let title = self.engine.simple_layout(&title, theme::role::row());
+            scene::draw_layout_first_line(canvas, root, &title, content_x, y + 9.0, Some(p.text));
+            let subtitle = self
+                .engine
+                .elided(&row.subtitle, theme::role::meta(), content_w);
+            let subtitle = self.engine.simple_layout(&subtitle, theme::role::meta());
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &subtitle,
+                content_x,
+                y + 34.0,
+                Some(p.text_dim),
+            );
+        }
+    }
+
     fn paint_results(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
         let width = self.results_width();
@@ -4017,6 +4251,7 @@ impl SearchSurface {
             if index == self.list.selected
                 && self.selected_pin.is_none()
                 && self.selected_recent_query.is_none()
+                && self.selected_create.is_none()
             {
                 let card = self.result_card_rect(y);
                 scene::fill(
@@ -4211,6 +4446,37 @@ impl SearchSurface {
             self.paint_footer_profile(canvas, root);
             let profile = self.profiles_chip_rect();
             x = profile.x + profile.w + 12.0;
+        }
+        if self.footer_shows_chips() {
+            // The host's chips stand in for the hint line: a key in a small
+            // pill, what it does beside it.
+            let chips = self.footer_chips.clone();
+            for chip in &chips {
+                let key = self.engine.simple_layout(&chip.key, theme::role::hint());
+                let pill_w = key.width() + 10.0;
+                let pill = Rect::new(x, y + 7.0, pill_w, 20.0);
+                scene::stroke(
+                    canvas,
+                    root,
+                    p.panel_border,
+                    theme::BORDER_W,
+                    &scene::rrect(pill.x, pill.y, pill.w, pill.h, 4.0),
+                );
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &key,
+                    pill.x + 5.0,
+                    scene::centre_y_in(&key, pill),
+                    Some(p.text_dim),
+                );
+                x += pill_w + 5.0;
+                let label = self.engine.simple_layout(&chip.label, theme::role::hint());
+                scene::draw_layout_first_line(canvas, root, &label, x, y + 9.0, Some(p.text_dim));
+                x += label.width() + 14.0;
+            }
+            canvas.pop_layer();
+            return;
         }
         let hints: &[(char, &str)] = if self.view != SearchView::Results {
             &[(icons::CARET_LEFT, " Esc back")]
@@ -4792,6 +5058,17 @@ impl SearchSurface {
             self.toggle_deleted_pages();
             return true;
         }
+        if let Some(row) = self.create_row_at(y)
+            && self.create_row_rect(row).contains(x, y)
+        {
+            self.selected_create = Some(row);
+            self.request_open(if ctrl {
+                Disposition::NewWindow
+            } else {
+                Disposition::CurrentWindow
+            });
+            return true;
+        }
         if self.results_rect().contains(x, y)
             && let Some(row) = self.list.row_at(
                 self.results_top()
@@ -4873,7 +5150,12 @@ impl SearchSurface {
         };
         let changed = next != self.hover;
         self.hover = next;
-        changed || tooltip_changed
+        let next_create = self
+            .create_row_at(y)
+            .filter(|row| self.create_row_rect(*row).contains(x, y));
+        let create_changed = next_create != self.hover_create;
+        self.hover_create = next_create;
+        changed || create_changed || tooltip_changed
     }
 
     pub fn mouse_up(&mut self) -> bool {
@@ -5565,6 +5847,135 @@ mod tests {
 
     fn press(surface: &mut SearchSurface, key: NamedKey) -> bool {
         surface.key(&Key::Named(key), None, ModifiersState::empty())
+    }
+
+    fn command_bar() -> SearchSurface {
+        let mut surface = SearchSurface::new();
+        surface.viewport = (640.0, 400.0);
+        surface.set_create_rows(vec![
+            CreateRow {
+                icon: 'a',
+                title: "New task".into(),
+                subtitle: "Tasks · Later".into(),
+            },
+            CreateRow {
+                icon: 'b',
+                title: "New document".into(),
+                subtitle: "Documents".into(),
+            },
+        ]);
+        surface
+    }
+
+    /// **A host that supplies no rows sees no group** — the Agent's overlay
+    /// is that host — and no chips means the surface's own hint line.
+    #[test]
+    fn a_host_with_no_rows_draws_no_create_group() {
+        let mut surface = SearchSurface::new();
+        surface.viewport = (640.0, 400.0);
+        set_query(&mut surface, "fix login");
+        assert!(!surface.create_shown());
+        assert_eq!(surface.create_block_h(), 0.0);
+        assert_eq!(surface.results_top(), HEADER_H);
+        assert!(!surface.footer_shows_chips());
+        // Nothing above the (empty) hits to climb onto.
+        assert!(!press(&mut surface, NamedKey::ArrowUp));
+        assert_eq!(surface.selected_create, None);
+        press(&mut surface, NamedKey::Enter);
+        assert_eq!(surface.take_create(), None);
+    }
+
+    /// **CREATE leads the results while there is a query**, the arrows walk
+    /// the rows and the hits as one column, and `↵` on a row asks for the
+    /// thing — `Ctrl+↵` for it in a window, as for a hit.
+    #[test]
+    fn create_rows_lead_the_results_and_enter_asks_for_the_thing() {
+        let mut surface = command_bar();
+        assert!(
+            !surface.create_shown(),
+            "nothing typed: the landing page, no group"
+        );
+        set_query(&mut surface, "fix login");
+        assert!(surface.create_shown());
+        let block = surface.create_block_h();
+        assert!(block > 0.0);
+        assert_eq!(
+            surface.results_top(),
+            HEADER_H + block,
+            "the hits begin under it"
+        );
+        assert_eq!(surface.create_rect().y, HEADER_H);
+
+        // Up from the first hit lands on the last row; Up again climbs.
+        assert!(press(&mut surface, NamedKey::ArrowUp));
+        assert_eq!(surface.selected_create, Some(1));
+        assert!(press(&mut surface, NamedKey::ArrowUp));
+        assert_eq!(surface.selected_create, Some(0));
+        assert!(press(&mut surface, NamedKey::ArrowUp));
+        assert_eq!(surface.selected_create, Some(0), "the top stays the top");
+        assert!(press(&mut surface, NamedKey::ArrowDown));
+        assert_eq!(surface.selected_create, Some(1));
+        // With no hits, Down from the last row has nowhere to go.
+        assert!(press(&mut surface, NamedKey::ArrowDown));
+        assert_eq!(surface.selected_create, Some(1));
+
+        assert!(press(&mut surface, NamedKey::Enter));
+        assert_eq!(
+            surface.take_create(),
+            Some(Create {
+                row: 1,
+                query: "fix login".into(),
+                disposition: Disposition::CurrentWindow,
+            })
+        );
+        assert_eq!(surface.take_create(), None, "taken once");
+
+        surface.selected_create = Some(0);
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::CONTROL));
+        assert_eq!(
+            surface.take_create().map(|c| (c.row, c.disposition)),
+            Some((0, Disposition::NewWindow))
+        );
+
+        // Typing again drops the keyboard back onto the hits.
+        type_str(&mut surface, "!");
+        assert_eq!(surface.selected_create, None);
+        assert_eq!(surface.query.raw_text(), "fix login!");
+    }
+
+    /// A click lands on the row under it, and the pointer over one hovers it.
+    #[test]
+    fn a_click_on_a_create_row_asks_for_it() {
+        let mut surface = command_bar();
+        set_query(&mut surface, "fix");
+        let card = surface.create_row_rect(1);
+        let (x, y) = (card.x + 20.0, card.y + card.h * 0.5);
+        assert!(surface.mouse_move(x, y));
+        assert_eq!(surface.hover_create, Some(1));
+        assert!(surface.mouse_down(x, y, false));
+        assert_eq!(surface.take_create().map(|c| c.row), Some(1));
+        // Above the rows is the heading, which is not a choice.
+        let band = surface.create_rect();
+        assert!(!surface.mouse_down(PAD, band.y + 4.0, false));
+    }
+
+    /// **The host's chips replace the hint line**, and only while results are
+    /// showing — a secondary view keeps its own *Esc back*.
+    #[test]
+    fn footer_chips_replace_the_hint_line() {
+        let mut surface = command_bar();
+        set_query(&mut surface, "fix");
+        assert!(
+            !surface.footer_shows_chips(),
+            "no chips supplied: the hint line"
+        );
+        surface.set_footer_chips(vec![FooterChip {
+            key: "↵".into(),
+            label: "open".into(),
+        }]);
+        assert!(surface.footer_shows_chips());
+        surface.view = SearchView::HelpPreview;
+        assert!(!surface.footer_shows_chips());
     }
 
     /// **Choosing a temporal key opens the calendar.** A temporal key is

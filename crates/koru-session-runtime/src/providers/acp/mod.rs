@@ -406,12 +406,7 @@ impl AcpControl {
                 ProviderDiagnostic::InvalidInput,
             ));
         }
-        if !self
-            .config
-            .route
-            .supported_versions
-            .contains(&self.config.executable_version)
-        {
+        if !self.config.route.supports(&self.config.executable_version) {
             return Err(failure(
                 ErrorCode::ProviderIncompatible,
                 ProviderStage::Version,

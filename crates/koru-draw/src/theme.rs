@@ -145,6 +145,11 @@ pub struct Palette {
     pub status_bg: Color,
     /// Backing for the level-name chip on a group row.
     pub chip_bg: Color,
+    /// The window's ground — the title bar, the lane, the rail and the
+    /// edge lanes the cards sit on (E57). `chip_bg` with a fifth of its
+    /// grey taken out (the CTO's note, after ChatGPT's sidebar), so the
+    /// cards lift off it without the ground reading as a panel.
+    pub ground: Color,
     /// The tint behind a code block and an inline-code span — one colour so the
     /// two read as the same feature. Chrome only; not a name a document stores.
     pub code_bg: Color,
@@ -268,7 +273,7 @@ pub struct TerminalPalette {
     pub ansi: [Color; 16],
 }
 
-const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
+static LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0xFF, 0xFF, 0xFF),
     foreground: rgb(0x19, 0x19, 0x19),
     cursor: rgb(0x19, 0x19, 0x19),
@@ -293,7 +298,7 @@ const LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     ],
 };
 
-const DARK_TERMINAL: TerminalPalette = TerminalPalette {
+static DARK_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0x19, 0x19, 0x19),
     foreground: rgb(0xF5, 0xF5, 0xF5),
     cursor: rgb(0xF5, 0xF5, 0xF5),
@@ -323,7 +328,9 @@ const DARK_TERMINAL: TerminalPalette = TerminalPalette {
 /// They were warm once, tuned against a cream `bg`. With the page white and the
 /// text a neutral near-black, a warm grey beside it reads as a yellow cast
 /// rather than as warmth, so the whole set moved together.
-pub static LIGHT: Palette = Palette {
+/// The light table as a constant, so the fixture theme can be derived from
+/// it at compile time; [`LIGHT`] is the one the program reads.
+const LIGHT_TABLE: Palette = Palette {
     bg: rgb(0xFF, 0xFF, 0xFF),
     canvas: rgb(0xED, 0xEE, 0xF0),
     text: rgb(0x19, 0x19, 0x19),
@@ -350,6 +357,7 @@ pub static LIGHT: Palette = Palette {
 
     status_bg: rgb(0xF6, 0xF6, 0xF6),
     chip_bg: rgb(0xEA, 0xEA, 0xEA),
+    ground: rgb(0xEE, 0xEE, 0xEE),
     code_bg: rgb(0xF1, 0xF1, 0xF3),
     highlights: [
         ("yellow", Color::from_rgba8(0xFF, 0xE0, 0x66, 0x8C)),
@@ -487,6 +495,8 @@ pub static LIGHT: Palette = Palette {
 /// of collapsing into greys, and the highlight swatches are tuned separately
 /// because a highlight has to sit behind pale text without drowning it. A
 /// mechanical inversion would lose both.
+pub static LIGHT: Palette = LIGHT_TABLE;
+
 pub static DARK: Palette = Palette {
     // The light theme's text, inverted into a page.
     bg: rgb(0x19, 0x19, 0x19),
@@ -510,6 +520,7 @@ pub static DARK: Palette = Palette {
 
     status_bg: rgb(0x1A, 0x1A, 0x1A),
     chip_bg: rgb(0x33, 0x33, 0x33),
+    ground: rgb(0x2E, 0x2E, 0x2E),
     code_bg: rgb(0x23, 0x23, 0x23),
     // Dimmer and more transparent than the light set: a highlight has to sit
     // behind pale text without drowning it.
@@ -652,19 +663,14 @@ pub static DARK: Palette = Palette {
     ],
 };
 
-static DARK_MODE: AtomicBool = AtomicBool::new(false);
-
-/// The active palette.
+/// The active palette: the host's root theme at its root contrast. An
+/// element reads its frame context instead (`el::FrameCx`).
 pub fn p() -> &'static Palette {
-    if DARK_MODE.load(Ordering::Relaxed) {
-        &DARK
-    } else {
-        &LIGHT
-    }
+    themes::active().palette(themes::contrast())
 }
 
 pub fn terminal_palette() -> &'static TerminalPalette {
-    terminal_palette_for(is_dark())
+    themes::active().terminal
 }
 
 /// Resolve a terminal's own theme without mutating the application's palette.
@@ -715,8 +721,11 @@ pub fn terminal_dim(foreground: Color, background: Color) -> Color {
     ])
 }
 
+/// Whether the host's root theme is a dark one: derived from the theme's
+/// appearance, never its identity (D3). Migrated code reads its frame
+/// context and never branches on this.
 pub fn is_dark() -> bool {
-    DARK_MODE.load(Ordering::Relaxed)
+    themes::active().is_dark()
 }
 
 // The host updates this from its existing OS appearance observation. Terminal
@@ -732,8 +741,15 @@ pub fn set_system_dark(dark: bool) -> bool {
     SYSTEM_DARK.swap(dark, Ordering::Relaxed) != dark
 }
 
+/// Make the built-in light or dark theme the root one: what the preference
+/// and the OS signal resolve to. Ignored while the fixture preview has pinned
+/// a theme.
 pub fn set_dark(on: bool) {
-    DARK_MODE.store(on, Ordering::Relaxed);
+    themes::set_active(if on {
+        &themes::DARK_THEME
+    } else {
+        &themes::LIGHT_THEME
+    });
 }
 
 // --------------------------------------------------------------- theme preference
@@ -811,26 +827,30 @@ impl CaretColor {
         }
     }
 
+    /// Where this colour sits in a [`themes::CaretSet`].
+    fn index(self) -> usize {
+        match self {
+            Self::Default => 0,
+            Self::Blue => 1,
+            Self::Amber => 2,
+            Self::Violet => 3,
+        }
+    }
+
     /// Concrete paint for the current theme.
     pub fn color(self) -> Color {
-        self.color_for(is_dark())
+        themes::active().carets.colors[self.index()]
     }
 
     /// A surface with its own palette must not borrow the app's dark/light
     /// choice when resolving the same semantic caret color.
     pub fn color_for(self, dark: bool) -> Color {
-        match (self, dark) {
-            (Self::Default, false) => rgb(0x19, 0x19, 0x19),
-            (Self::Default, true) => rgb(0xF4, 0xF4, 0xF5),
-            (Self::Blue, false) => rgb(0x25, 0x63, 0xEB),
-            (Self::Blue, true) => rgb(0x60, 0xA5, 0xFA),
-            (Self::Amber, false) => rgb(0xD9, 0x77, 0x06),
-            (Self::Amber, true) => rgb(0xFB, 0xBF, 0x24),
-            // Light matches the product violet; dark is a mid violet that still
-            // reads on #18181B without blowing out selection contrast.
-            (Self::Violet, false) => rgb(0x7C, 0x3A, 0xED),
-            (Self::Violet, true) => rgb(0x8B, 0x5C, 0xF6),
-        }
+        let set = if dark {
+            &themes::DARK_CARETS
+        } else {
+            &themes::LIGHT_CARETS
+        };
+        set.colors[self.index()]
     }
 
     /// Text selection fill for the current theme — same hue as [`Self::color`],
@@ -840,18 +860,7 @@ impl CaretColor {
     /// **Dark:** solid tint at ~30–40% accent strength (stronger than light so
     /// the highlight still reads on a dark ground while text stays #F4F4F5).
     pub fn selection(self) -> Color {
-        match (self, is_dark()) {
-            // Neutral caret → neutral wash (not a leftover blue).
-            (Self::Default, false) => Color::from_rgba8(0x19, 0x19, 0x19, 0x40),
-            (Self::Default, true) => rgb(0x3F, 0x3F, 0x46),
-            (Self::Blue, false) => Color::from_rgba8(0x25, 0x63, 0xEB, 0x40),
-            (Self::Blue, true) => rgb(0x1E, 0x3A, 0x5F),
-            (Self::Amber, false) => Color::from_rgba8(0xD9, 0x77, 0x06, 0x40),
-            (Self::Amber, true) => rgb(0x5C, 0x3D, 0x12),
-            (Self::Violet, false) => Color::from_rgba8(0x7C, 0x3A, 0xED, 0x40),
-            // Hand-tuned ~35% accent of #8B5CF6 on dark chrome.
-            (Self::Violet, true) => rgb(0x4C, 0x32, 0x78),
-        }
+        themes::active().carets.selections[self.index()]
     }
 }
 
@@ -2019,6 +2028,12 @@ pub mod text_metrics {
     pub const XS: TextMetrics = TextMetrics::new(12.0, 16.0);
     pub const SM: TextMetrics = TextMetrics::new(13.0, 18.0);
     pub const UI_BODY: TextMetrics = TextMetrics::new(14.0, 20.0);
+    /// A chrome heading — a popover page's *WORKSPACES · n*. Chrome leading,
+    /// tighter than the document's at the same size (E74).
+    pub const UI_HEADING: TextMetrics = TextMetrics::new(16.0, 22.0);
+    /// A chrome title — the explore pane's app name, level with the rail's
+    /// Home square (E74; 18 after 22 read too large on screen, E77).
+    pub const UI_TITLE: TextMetrics = TextMetrics::new(18.0, 24.0);
     pub const DOC_BODY: TextMetrics = TextMetrics::new(16.0, 24.0);
     pub const DOC_BODY_COMPACT: TextMetrics = TextMetrics::new(14.0, 21.0);
     pub const DOC_BODY_COMFORTABLE: TextMetrics = TextMetrics::new(18.0, 27.0);
@@ -2066,6 +2081,19 @@ pub mod role {
     /// migration.
     pub const fn section_heading() -> TextStyle {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
+    }
+    /// The explore pane's title — the app's name over its nav, level with
+    /// the rail's Home square: `UI_TITLE` 18/24, Medium (the CTO's notes,
+    /// E72, E74 and E77, after ChatGPT's sidebar title). Drawn in the rows'
+    /// ink, `text_dim`, so the name and its rows read as one column.
+    pub const fn pane_title() -> TextStyle {
+        TextStyle::new(text_metrics::UI_TITLE, MEDIUM)
+    }
+    /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*:
+    /// `UI_HEADING` 16/22, Medium (the CTO's notes, E73 and E74; it was
+    /// `hint`, 11 px).
+    pub const fn popover_heading() -> TextStyle {
+        TextStyle::new(text_metrics::UI_HEADING, MEDIUM)
     }
     /// The default application UI — dialogs, settings, prominent controls.
     /// Compact steps it down to `SM` (13/18); Normal and Comfortable keep
@@ -2147,11 +2175,7 @@ pub const CANVAS_PRESETS_DARK: [[u8; 4]; 3] = [
 
 /// The canvas-colour presets for the active theme.
 pub fn canvas_presets() -> &'static [[u8; 4]; 3] {
-    if is_dark() {
-        &CANVAS_PRESETS_DARK
-    } else {
-        &CANVAS_PRESETS_LIGHT
-    }
+    themes::active().canvas_presets
 }
 
 impl ViewMode {
@@ -2491,15 +2515,36 @@ pub const CAPTION_BTN: f32 = 44.0;
 /// is a zero-width rect rather than an absent one, so every caller does the same
 /// arithmetic either way.
 ///
-/// **240 so the explore heading holds seven mode icons and its search button.**
-/// Seven icons at a 26 px pitch end at 188 px; the `…` and the search icon need
-/// 24 px each beyond that, so 232 — the width before Canvases became the seventh
-/// mode — dropped the search button at the default width.
-pub const SIDEBAR_W: f32 = 240.0;
+/// **256 is the sidebar's resting width on the workspace-foundation canvas**
+/// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.11), and also
+/// its floor: the apps row wraps rather than clips below it, so a narrower
+/// column would only be a narrower nav. It was 240 while the explore heading
+/// held seven mode icons and a search button in one 24 px band.
+pub const SIDEBAR_W: f32 = 256.0;
+/// How far the sidebar may be dragged, both ends. **One owner.** These were
+/// written twice — once in `koru-app-shell`'s panel and once in the
+/// workspace window's layout, both 190/500 — and a clamp applied in two
+/// places is two clamps. The canvas's range is 256–600: past 600 the pane
+/// competes with the document rather than serving it, and `regions::solve`
+/// would start eating into `CONTENT_MIN_W` on an ordinary laptop screen.
+pub const SIDEBAR_MIN_W: f32 = 256.0;
+pub const SIDEBAR_MAX_W: f32 = 600.0;
+/// The rail at the sidebar's left edge — the apps, and at its foot Settings,
+/// Help and the profile (the CTO's artboard 11). The pane and its widths
+/// above are what sits after it; the sidebar as a whole is the two together.
+/// 48, not 56: four pixels off each side (the CTO's note); a 36 px square
+/// keeps six pixels of air either side.
+pub const RAIL_W: f32 = 48.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.
 pub const CONTENT_MIN_W: f32 = 320.0;
+/// The ground's lanes at the window's right edge and along its foot, in the
+/// rail's colour, that the cards stop short of (the CTO's artboard: the
+/// explore pane and the document are cards on the window's ground, and a
+/// card needs ground around it). The main window's `Regions::with_ground`
+/// carves them.
+pub const EDGE_LANE_W: f32 = 8.0;
 /// How long a side column takes to slide in or out.
 pub const PANEL_SLIDE_MS: f32 = 140.0;
 
@@ -2593,9 +2638,19 @@ pub const POPOVER_FADE_MS: f32 = 90.0;
 
 pub mod motion;
 pub mod overlay;
+pub mod themes;
+pub mod tokens;
+
+pub use themes::{Appearance, Contrast, Theme};
+pub use tokens::{
+    Accent, IconSize, Ink, Line, Metric, Profile, Radius, Space, Surface, Tagged, TextRole, alias,
+    metrics, roles,
+};
 
 #[cfg(test)]
 mod token_guards;
+#[cfg(test)]
+mod ui_scan;
 
 pub const POPOVER_RISE: f32 = 5.0;
 
@@ -2711,19 +2766,29 @@ mod tests {
     }
 
     /// The size scale is monotonic: each tier's size and line height step up.
-    /// `DOC_BODY_COMPACT` and `DOC_BODY_COMFORTABLE` are density variants of
-    /// the document body, checked separately rather than as rungs on the ladder.
+    /// Two ladders, because the chrome and the document tiers are named by
+    /// domain and keep their own leading — `UI_HEADING` is 16/22 beside
+    /// `DOC_BODY`'s 16/24 (E74). `DOC_BODY_COMPACT` and
+    /// `DOC_BODY_COMFORTABLE` are density variants of the document body,
+    /// checked separately rather than as rungs on the ladder.
     #[test]
     fn text_metrics_form_a_monotonic_scale() {
         use text_metrics::*;
-        let ladder = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
-        for w in ladder.windows(2) {
-            assert!(w[0].size < w[1].size, "size must increase across the scale");
-            assert!(
-                w[0].line_height < w[1].line_height,
-                "line height must increase across the scale"
-            );
+        let document = [MICRO, XS, SM, UI_BODY, DOC_BODY, LG, XL, _2XL, _3XL];
+        let chrome = [MICRO, XS, SM, UI_BODY, UI_HEADING, UI_TITLE, _2XL];
+        for ladder in [&document[..], &chrome[..]] {
+            for w in ladder.windows(2) {
+                assert!(w[0].size < w[1].size, "size must increase across the scale");
+                assert!(
+                    w[0].line_height < w[1].line_height,
+                    "line height must increase across the scale"
+                );
+            }
         }
+        assert!(
+            UI_HEADING.line_height < DOC_BODY.line_height,
+            "chrome leading is tighter than the document's at the same size"
+        );
         // Document-body density variants: compact is smaller than normal,
         // comfortable is larger.
         assert!(DOC_BODY_COMPACT.size < DOC_BODY.size);

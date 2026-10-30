@@ -202,13 +202,17 @@ impl ManageView {
             ),
             Look::Action(style) if !enabled => ActionButton::new(&placed.label, style, None)
                 .draw_disabled(canvas, root, &mut self.engine, r),
-            Look::More => {
+            Look::More | Look::Close => {
                 koru_ui::icon_button::draw(
                     canvas,
                     root,
                     &mut self.engine,
                     r,
-                    koru_draw::icons::DOTS_THREE,
+                    if placed.look == Look::Close {
+                        koru_draw::icons::WINDOW_CLOSE
+                    } else {
+                        koru_draw::icons::DOTS_THREE
+                    },
                     koru_ui::icon_button::State {
                         hovered,
                         active: false,

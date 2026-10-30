@@ -38,12 +38,13 @@
 
 use accesskit::{Action, Role};
 use koru_i18n::{Key, t};
+use koru_ui::MenuItem;
 use koru_workspace_host::accessibility::{ControlPart, Occurrence, SemanticNode};
 use koru_workspace_host::routing::Blockers;
 
 use super::{MENU, SHELL, Shell, instance_of, parts};
 use crate::mainview::MainView;
-use crate::mainview::context_menu::ContextMenu;
+use crate::mainview::context_menu::{self, ContextMenu};
 
 /// Which of the three live menus a request is about. A nested flyout sits on a
 /// submenu sits on the menu, and that is the order `menu_key` answers in.
@@ -153,7 +154,7 @@ impl MainView {
         // would offer a client a control that does nothing.
         let selectable = items.iter().filter(|action| action.selectable()).count();
         let mut index = 0;
-        let children = items
+        let mut children: Vec<SemanticNode> = items
             .iter()
             .enumerate()
             .filter(|(_, action)| action.selectable())
@@ -171,6 +172,33 @@ impl MainView {
                 node
             })
             .collect();
+        // A row's buttons — a stepper's `−` and `+`, a card's Download, a
+        // strip's logos — are controls of their own, each a button named by
+        // what its tooltip says, placed where it is drawn. A readout is not
+        // a control a client can act on, and is left out.
+        for (i, action) in items.iter().enumerate() {
+            for (c, control) in action.controls().iter().enumerate() {
+                let &koru_ui::Control::Button { enabled: live, .. } = control else {
+                    continue;
+                };
+                let Some((label, _)) = context_menu::control_tooltip(*action, c) else {
+                    continue;
+                };
+                let Some(bounds) = menu.control_rect(cx.viewport, i, c) else {
+                    continue;
+                };
+                children.push(
+                    SemanticNode::new(
+                        cx.instance(MENU, menu.control_instance(i, c), ITEM),
+                        Role::Button,
+                    )
+                    .with_label(label)
+                    .with_bounds(bounds)
+                    .with_actions([Action::Click])
+                    .disabled(!live),
+                );
+            }
+        }
         SemanticNode::new(cx.instance(MENU, menu.instance, parts::ROOT), Role::Menu)
             .with_label(t(cx.lang, Key::A11yMenu))
             .with_bounds(menu.panel(cx.viewport))
@@ -186,6 +214,41 @@ impl MainView {
             menu.and_then(|menu| menu.row_of_instance(id))
                 .map(|index| (level, index))
         })
+    }
+
+    /// Which control of which row of which live menu an id names.
+    fn menu_control_at(&self, id: u64) -> Option<(Level, usize, usize)> {
+        self.live_menus().into_iter().find_map(|(level, menu)| {
+            menu.and_then(|menu| menu.control_of_instance(id))
+                .map(|(row, c)| (level, row, c))
+        })
+    }
+
+    /// Press a menu control from a client, the way the pointer does: a live
+    /// button runs its action and the menu stays up; a dimmed one refuses.
+    fn press_menu_control(&mut self, level: Level, row: usize, c: usize) -> bool {
+        let menu = match level {
+            Level::Root => self.menu.as_ref(),
+            Level::Sub => self.submenu.as_ref().map(|(_, menu)| menu),
+            Level::Nested => self.nested.as_ref().map(|(_, menu)| menu),
+        };
+        let Some(menu) = menu else {
+            return false;
+        };
+        let Some(action) = menu.items().get(row).copied() else {
+            return false;
+        };
+        let live = action.controls().get(c).is_some_and(|control| {
+            matches!(control, koru_ui::Control::Button { enabled: true, .. })
+        });
+        if !live {
+            return false;
+        }
+        let Some(pressed) = context_menu::control_action(action, c) else {
+            return false;
+        };
+        let subject = menu.subject.clone();
+        self.run_menu_action(subject, pressed)
     }
 
     fn set_menu_hover(&mut self, level: Level, index: usize) {
@@ -294,6 +357,9 @@ pub(super) fn action(view: &mut MainView, target: Occurrence, action: Action) ->
     };
     if !matches!(action, Action::Click | Action::Focus) {
         return false;
+    }
+    if let Some((level, row, c)) = view.menu_control_at(id) {
+        return action == Action::Click && view.press_menu_control(level, row, c);
     }
     let Some((level, index)) = view.menu_row_at(id) else {
         return false;

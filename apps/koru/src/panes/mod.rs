@@ -14,6 +14,8 @@
 pub mod context;
 pub mod explore;
 pub mod fold;
+pub mod home;
+pub mod sidebar;
 
 use koru_core::{NodeId, ProfileId, WorkspaceId};
 use koru_session_protocol::{ProjectId, SessionId};
@@ -73,6 +75,8 @@ pub enum Outcome {
     NewTab,
     /// Open the workspace-scoped search surface.
     Search,
+    /// The rail's `?`: the container opens the help popover beside the rail.
+    OpenHelp,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.
@@ -84,11 +88,12 @@ pub enum Outcome {
     /// the note's, not the row's. The same reasoning that keeps
     /// [`Outcome::DownloadFile`] distinct.
     OpenNote(NodeId),
-    /// Double-clicked a document row: open in a new Main tab.
-    // Unconstructed since the ADR-262 move made dead code visible; the
-    // Wave-6 Outcome split deletes or revives it deliberately.
-    #[allow(dead_code)]
-    OpenNodeInNewTab(NodeId),
+    /// Alt+click on a document or canvas row (the CTO's note): open it in a
+    /// new tab **beside** the active one, without activating it — the way a
+    /// browser's middle-click does. A double-click opened a tab of its own
+    /// for a day and felt wrong: the first click had already opened the
+    /// document, so the second looked like nothing or like a duplicate.
+    OpenNodeInBackgroundTab(NodeId),
     /// A document dragged to a new place in the explore tree. `nodes` is the
     /// carried set in document order (one entry for a plain drag); `target`
     /// is the row it was dropped on and `zone` says where relative to it.
@@ -124,11 +129,13 @@ pub enum Outcome {
     /// The Delete key on a chat row. **Nothing is deleted yet**: the
     /// container asks through its confirmation and, on yes, the Chats
     /// surface sends the delete itself.
-    DeleteAiChat(koru_chats_ui::ChatId),
+    DeleteAiChats(Vec<koru_chats_ui::ChatId>),
     /// A right-click on a chat row. The pane reports which chat; the
     /// container builds the menu, whose one verb is *Delete chat*.
     AiChatMenu {
-        chat: koru_chats_ui::ChatId,
+        /// The picked chats, in list order — one, or a multi-selection (the
+        /// CTO's note: delete several as several documents).
+        chats: Vec<koru_chats_ui::ChatId>,
         at: (f32, f32),
     },
     /// A right-click in the Agents navigator. `Some` is a project row's menu
@@ -193,6 +200,20 @@ pub enum Outcome {
     /// A double-clicked file whose bytes are already here: open it through the
     /// operating system's associated application.
     OpenFile(NodeId),
+    /// A right-click on a workspace row of the who/where popover (the CTO's
+    /// note): the container opens the workspace menu — the one a Manage
+    /// row's `•••` opens — at the pointer, with the page still under it.
+    ///
+    /// **The pane reports which workspace; it never builds the menu.** What
+    /// the workspace may have done to it is the container's to know.
+    WorkspaceMenu {
+        workspace: WorkspaceId,
+        at: (f32, f32),
+    },
+    /// A Documents row's `+` (the CTO's note, Notion's *Add a page inside*):
+    /// the container asks for a name and has the shell make a document as
+    /// this row's last child.
+    NewChildDocument(NodeId),
     /// A library row wants its menu — the `…` was pressed, or it was
     /// right-clicked.
     ///
@@ -268,19 +289,12 @@ pub enum Outcome {
     // and where a profile's folder lives are all the container's business.
     /// Show this workspace in **this** window, replacing what is open.
     SwitchWorkspace(WorkspaceId),
-    /// Show a workspace of **another** Profile in this window, switching
-    /// Profile to get there. The switcher's Workspaces page can list any
-    /// Profile's workspaces.
-    SwitchToWorkspaceIn {
-        profile: ProfileId,
-        workspace: WorkspaceId,
-    },
+    /// A Profile row on the who/where popover's Profiles page: switch this
+    /// window to that Profile, landing on the workspace it last had open.
+    SwitchProfile(ProfileId),
     /// The "New workspace" row. What it is called is asked afterwards, by the
     /// container — the same contract [`Outcome::NewTab`] has.
     NewWorkspace,
-    /// The same row while the switcher lists another Profile's workspaces: the
-    /// new one is made there, and this window switches to it.
-    NewWorkspaceIn(ProfileId),
     /// "New profile" — the Profile manager's create form.
     NewProfile,
     /// "Subscribe to Koru Cloud" — the website's Pricing page, the same
@@ -288,21 +302,29 @@ pub enum Outcome {
     SubscribeCloud,
     /// Import documents into the open workspace.
     ImportContent,
-    /// "Add Profile" — a folder picker, then a window on whatever it returns.
-    AddProfile,
-    /// "Open a profile folder" — the same picker, but it insists the folder
-    /// already holds a profile. What makes a profile the list has forgotten
-    /// reachable without a command line.
-    OpenProfile,
-    /// Open the singleton Profile/account management tab.
-    ManageProfiles,
-    /// Open the global device-linking modal. Linked devices receive every
-    /// current and future profile and workspace in the MVP.
-    LinkDevice,
-    /// "Manage workspaces…" — the Manage tab, on the page of the Profile the
-    /// switcher is listing (`None`: the open one), scrolled to its
-    /// Workspaces.
-    ManageWorkspaces(Option<ProfileId>),
+    /// The gear on a workspace row: the Manage tab on the open Profile's
+    /// page, scrolled to its Workspaces.
+    ManageWorkspace(WorkspaceId),
+    /// The gear on a Profile row: the Manage tab on that Profile's page.
+    ManageProfile(ProfileId),
+    /// The Profiles page's devices button (the CTO's note): the Manage tab
+    /// on *Linked devices*.
+    ManageDevices,
+    /// The who/where popover's heading import button: the container hangs
+    /// the import formats beside the page, which stays (the CTO's note:
+    /// the heading's ⋯ became a `+` and an import button).
+    /// The floor's `…` was pressed (the CTO's artboard): the workspace's
+    /// menu — New workspace, Import…, Invite people, Trash — hung from the
+    /// button's top-right corner, which `at` names.
+    FloorMenu {
+        at: (f32, f32),
+    },
+    /// Home's Today row: the Home tab, a singleton.
+    OpenHome,
+    /// A recent document, from Home's nav.
+    OpenRecentDocument(koru_core::DocumentId),
+    /// The rail's settings square: the Settings tab.
+    OpenSettings,
 
     // ---------------------------------------------------------------- window
     //

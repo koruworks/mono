@@ -41,10 +41,10 @@ fn focus_enters_on_the_open_chat_else_the_newest() {
     surface.focus_first(area(), TOP);
     assert_eq!(surface.focus(), Some(Focus::Chat(id(3))));
 
-    // An empty list lands on the one thing there is to do.
+    // An empty list has nowhere to land: *New chat* is the heading's.
     let mut surface = showing(Vec::new());
-    surface.focus_first(area(), TOP);
-    assert_eq!(surface.focus(), Some(Focus::New));
+    assert!(!surface.focus_first(area(), TOP));
+    assert_eq!(surface.focus(), None);
 }
 
 #[test]
@@ -59,24 +59,25 @@ fn up_down_home_and_end_move_the_selection() {
     surface.key(area(), TOP, Press::Down);
     assert_eq!(surface.focused_chat(), Some(id(3)));
     assert!(surface.key(area(), TOP, Press::Home));
-    assert_eq!(surface.focus(), Some(Focus::New));
+    assert_eq!(surface.focused_chat(), Some(id(1)), "Home is the newest");
     surface.key(area(), TOP, Press::Up);
-    assert_eq!(surface.focus(), Some(Focus::New));
+    assert_eq!(surface.focused_chat(), Some(id(1)), "Up at the top stays");
     surface.key(area(), TOP, Press::Down);
-    assert_eq!(surface.focused_chat(), Some(id(1)));
+    assert_eq!(surface.focused_chat(), Some(id(2)));
 }
 
 #[test]
-fn enter_opens_and_on_new_chat_asks_for_one() {
+fn enter_opens_and_the_heading_asks_for_a_new_chat() {
     let mut surface = three();
     surface.focus_first(area(), TOP);
     surface.key(area(), TOP, Press::Down);
     assert!(surface.key(area(), TOP, Press::Enter));
     assert_eq!(surface.take_wants_open(), Some(id(2)));
     assert_eq!(surface.take_wants_open(), None, "a one-shot drain");
+    assert_eq!(surface.selected(), [id(2)], "Enter picks what it opens");
 
-    surface.key(area(), TOP, Press::Home);
-    surface.key(area(), TOP, Press::Space);
+    // *New chat* is asked for by the host's heading button, not a row.
+    surface.ask_new();
     assert!(surface.take_wants_new());
     assert!(!surface.take_wants_new());
 }
@@ -88,12 +89,13 @@ fn delete_asks_and_deletes_nothing() {
     let mut surface = three();
     surface.focus_first(area(), TOP);
     assert!(surface.key(area(), TOP, Press::Delete));
-    assert_eq!(surface.take_wants_delete(), Some(id(1)));
+    assert_eq!(surface.take_wants_delete(), [id(1)]);
     assert_eq!(surface.chats().len(), 3);
-    // On *New chat* there is nothing to delete, and the key is not ours.
-    surface.key(area(), TOP, Press::Home);
+    // With the keyboard nowhere there is nothing to delete, and the key is
+    // not ours.
+    surface.clear_focus();
     assert!(!surface.key(area(), TOP, Press::Delete));
-    assert_eq!(surface.take_wants_delete(), None);
+    assert!(surface.take_wants_delete().is_empty());
 }
 
 #[test]
@@ -131,10 +133,10 @@ fn deleting_the_selected_row_moves_the_selection_to_its_neighbour() {
     surface.take_deleted(id(3), Ok(()));
     assert_eq!(surface.focused_chat(), Some(id(1)));
 
-    // The last chat's neighbour is *New chat*.
+    // The last chat has no neighbour: the keyboard has nowhere to be.
     surface.delete(id(1));
     surface.take_deleted(id(1), Ok(()));
-    assert_eq!(surface.focus(), Some(Focus::New));
+    assert_eq!(surface.focus(), None);
 }
 
 /// The same rule when the chat vanished because somebody else deleted it —
@@ -183,7 +185,7 @@ fn a_click_opens_and_a_right_click_names_the_chat() {
     assert_eq!(surface.take_wants_open(), Some(id(2)));
     assert_eq!(
         surface.context_menu(area(), TOP, 60.0, rect.y + 4.0),
-        Some(id(2))
+        Some(vec![id(2)])
     );
     assert_eq!(surface.focused_chat(), Some(id(2)));
 }

@@ -72,7 +72,7 @@ impl AcpCompatibilityProbe {
             let text = std::str::from_utf8(output.stdout()).map_err(|_| rejected())?;
             self.route.parse_version(text)?
         };
-        if !self.route.supported_versions.contains(&version) {
+        if !self.route.supports(&version) {
             return Err(rejected());
         }
         Ok(version)

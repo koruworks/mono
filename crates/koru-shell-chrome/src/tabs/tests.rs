@@ -457,3 +457,33 @@ fn variable_widths_pack_left_to_right() {
     assert!((rects[1].body.x - (rects[0].body.x + 80.0 + theme::TAB_GAP)).abs() < 0.01);
     assert!((rects[2].body.w - 200.0).abs() < 0.01);
 }
+
+/// **An icon-only pin centres its icon** (the CTO's note): no label and no
+/// close box, so nothing is left of or right of it to make room for. A titled
+/// tab's icon starts at the label's padding as before.
+#[test]
+fn an_icon_only_pin_centres_its_icon() {
+    let pill = Rect::new(100.0, 0.0, theme::TAB_PINNED_W, 24.0);
+    let x = icon_slot_x(pill, true);
+    assert_eq!(
+        x + crate::PAGE_ICON_SLOT * 0.5,
+        pill.x + pill.w * 0.5,
+        "the slot's centre is the pill's"
+    );
+    assert_eq!(icon_slot_x(pill, false), pill.x + theme::PANEL_PAD);
+    let titled = Tab {
+        label: "Brief",
+        icon: None,
+        closable: true,
+        slide: 0.0,
+        dragging: false,
+        gap_after: 0.0,
+    };
+    assert!(!titled.is_icon_only());
+    let pin = Tab {
+        label: "",
+        closable: false,
+        ..titled
+    };
+    assert!(pin.is_icon_only());
+}

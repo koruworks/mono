@@ -34,6 +34,8 @@ use crate::welcome::WelcomeView;
 #[allow(clippy::large_enum_variant)]
 pub enum TabView {
     Welcome(WelcomeView),
+    /// Home's Today page (workspace foundation, rung 5); a singleton.
+    Home(crate::panes::home::HomePage),
     /// The Trash. A fourth arm rather than something inside [`Leaf`], for the
     /// reason the module docs give: it has no rows, so `Editing::parts` would
     /// have to be `unreachable!()`.
@@ -121,6 +123,7 @@ impl TabView {
             // sort of thing a typed seam should be able to say without a panic.
             Self::Welcome(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
             | Self::Trash(_)
@@ -202,7 +205,7 @@ impl TabView {
             // nothing under it can have changed.
             Self::Reminders(_) => {}
             // Settings names no document, so nothing under it can have changed.
-            Self::Settings(_) | Self::Feedback(_) => {}
+            Self::Settings(_) | Self::Feedback(_) | Self::Home(_) => {}
             // A diff is over two retained snapshots; the live document
             // changing does not change what was compared.
             Self::Diff(_) => {}
@@ -260,6 +263,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Diff(_)
             | Self::AiChat(_)
             | Self::Socials(_)
@@ -304,6 +308,7 @@ impl TabView {
             Self::Tasks(t) => koru_workspace_host::View::reseat(t, ws),
             Self::Reminders(r) => koru_workspace_host::View::reseat(r, ws),
             Self::Settings(s) => koru_workspace_host::View::reseat(s, ws),
+            Self::Home(h) => koru_workspace_host::View::reseat(h, ws),
             Self::Feedback(f) => koru_workspace_host::View::reseat(f, ws),
             Self::Diff(d) => koru_workspace_host::View::reseat(d, ws),
             Self::AiChat(a) => koru_workspace_host::View::reseat(a, ws),
@@ -324,11 +329,12 @@ impl TabView {
     pub fn icon(&self) -> Option<char> {
         match self {
             Self::Trash(_) => Some(koru_draw::icons::TRASH),
+            Self::Home(_) => Some(koru_draw::icons::HOUSE),
             Self::Tasks(_) => Some(koru_draw::icons::LIST_CHECKS),
             Self::Reminders(_) => Some(koru_draw::icons::BELL),
             Self::Feedback(_) => Some(koru_draw::icons::USER_SOUND),
             Self::Diff(_) => Some(crate::diff::tab_icon()),
-            Self::AiChat(_) => Some(koru_draw::icons::SPARKLE),
+            Self::AiChat(_) => Some(koru_draw::icons::CHATS_CIRCLE),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
             // glyph: the label names it, and the glyph says it is not a page.
@@ -369,6 +375,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -396,6 +403,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -418,6 +426,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -439,6 +448,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -461,6 +471,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -483,6 +494,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -513,6 +525,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -544,6 +557,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -571,6 +585,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -594,6 +609,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -628,6 +644,7 @@ impl TabView {
             // channel: their asks go out as their own `Request` types.
             Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Diff(_)
             | Self::Tasks(_)
@@ -649,6 +666,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -692,6 +710,7 @@ impl TabView {
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
+            | Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -718,6 +737,8 @@ impl TabView {
             // deadline of its own — an idle run costs no wake.
             | Self::Run(_)
             | Self::Result(_)
+            // Home's panel is driven by the frame, as the Tasks page's is.
+            | Self::Home(_)
             | Self::Tasks(_) => None,
             // **Only while a transport-mode write it started is unanswered.**
             // This view sat in the group above until B10 gave it background
@@ -749,6 +770,7 @@ impl TabView {
             | Self::Diff(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Home(_)
             | Self::Tasks(_) => false,
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
@@ -823,6 +845,20 @@ pub struct WhatsNewTab {
     /// Not the window's workspace. Never saved, never synced, thrown away whole
     /// when the tab is closed.
     pub workspace: Workspace,
+    /// Which private page this is. The release notes were the only one; the
+    /// Sync settings placeholder is built the same way (a read-only page
+    /// over a private workspace), and the session file spells each.
+    pub page: PrivatePage,
+}
+
+/// The pages a tab can host over a private workspace.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PrivatePage {
+    /// This build's release notes.
+    WhatsNew,
+    /// The who/where popover's sync control: a page that says only its name
+    /// for now (QUESTIONS.md E31).
+    SyncSettings,
 }
 
 /// One tab: what it shows, whether it can be closed, and whether it has been
@@ -953,6 +989,16 @@ impl Tab {
         let mut tab = Self::welcome();
         tab.view = TabView::Settings(crate::settings_view::SettingsView::new());
         tab.label = "Settings".to_string();
+        tab
+    }
+
+    /// The Home tab: Today. A singleton, like Settings; `open_home_tab`
+    /// reuses the one that is open.
+    pub fn home() -> Self {
+        let mut tab = Self::welcome();
+        tab.view = TabView::Home(crate::panes::home::HomePage::new());
+        tab.label =
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::A11yTaskBucketToday).to_owned();
         tab
     }
 
@@ -1262,22 +1308,43 @@ impl Tab {
     /// failed halfway would be a mystery.
     pub fn whats_new(version: &str, notes: Option<&str>) -> Option<Self> {
         let title = format!("What's new in Koru {version}");
-        let doc = WorkspaceDoc::create(WorkspaceId::new(), &title).ok()?;
+        Self::private_page(
+            PrivatePage::WhatsNew,
+            &title,
+            &crate::whatsnew::blocks(version, notes),
+        )
+    }
+
+    /// The Sync settings tab: its name as the title and nothing under it yet
+    /// (the CTO's artboard; QUESTIONS.md E31). A singleton, like Settings.
+    pub fn sync_settings() -> Option<Self> {
+        let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::SyncSettingsTab);
+        Self::private_page(PrivatePage::SyncSettings, title, &[])
+    }
+
+    /// A read-only page over a workspace of its own, titled and filled.
+    ///
+    /// `None` only if Loro will not make a document at all. The caller opens
+    /// nothing in that case: a missing notice is invisible, where a tab that
+    /// failed halfway would be a mystery.
+    fn private_page(
+        page: PrivatePage,
+        title: &str,
+        blocks: &[koru_workspace_host::RichBlock],
+    ) -> Option<Self> {
+        let doc = WorkspaceDoc::create(WorkspaceId::new(), title).ok()?;
         let mut workspace = Workspace::new(doc);
         // The title goes in row 0 the way every document's does, so the page has
         // a real heading and the tab has a real name, with no second mechanism.
-        let root = koru_workspace::create_document(&mut workspace.ws, &title)?;
+        let root = koru_workspace::create_document(&mut workspace.ws, title)?;
         let mut leaf = Leaf::document(&workspace.ws, root);
         // **Filled before it is made read-only.** The guard refuses writes from
         // the key map, and `paste_rich` is not one — but ordering it this way
         // means the flag is true for the whole of the tab's visible life, rather
         // than for all of it except the frame nobody sees.
-        View::paste_rich(
-            &mut leaf,
-            &mut workspace.ws,
-            None,
-            &crate::whatsnew::blocks(version, notes),
-        );
+        if !blocks.is_empty() {
+            View::paste_rich(&mut leaf, &mut workspace.ws, None, blocks);
+        }
         // **Drop the empty paragraph `create_document` seeds.** Every new
         // document gets one so there is a line to type into; this page is never
         // typed into, and the blocks are *appended* after it — so left alone it
@@ -1309,11 +1376,11 @@ impl Tab {
             // Not a document in the person's workspace, so nothing in the
             // explore column or the tab-reuse check may match it.
             document: None,
-            label: title,
+            label: title.to_owned(),
             icon: None,
             sized: None,
             draft: None,
-            whats_new: Some(WhatsNewTab { workspace }),
+            whats_new: Some(WhatsNewTab { workspace, page }),
             home: None,
             pinned: None,
             show_title: false,
@@ -1470,6 +1537,7 @@ impl Tab {
             TabView::Reminders(v) => v.set_viewport(w, h),
             TabView::Diff(v) => View::set_viewport(v, w, h),
             TabView::Settings(v) => View::set_viewport(v, w, h),
+            TabView::Home(v) => View::set_viewport(v, w, h),
             TabView::AiChat(a) => View::set_viewport(a, w, h),
             TabView::Socials(a) => View::set_viewport(a, w, h),
             TabView::Session(s) => View::set_viewport(s, w, h),

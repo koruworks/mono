@@ -446,7 +446,7 @@ impl MainView {
     /// Send a consent and remember its fate. Pending while the round-trip is
     /// in flight; an immediate note when the link is already gone — a dropped
     /// click must not spend ten seconds pretending to be a slow one.
-    fn update_consent(&mut self, choice: UpdateChoice, stage: UpdateStage) {
+    pub(super) fn update_consent(&mut self, choice: UpdateChoice, stage: UpdateStage) {
         let accepted = self.updates.choose(choice);
         // The window-side date of the click, to line up against the agent's
         // "update choice arrived". Unconditional: a consent is rare, and a

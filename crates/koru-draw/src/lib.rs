@@ -16,6 +16,7 @@ pub mod brand;
 pub mod checkbox;
 pub mod chip;
 pub mod diagram;
+pub mod el;
 pub mod emoji;
 pub mod geometry;
 pub mod icons;

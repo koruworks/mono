@@ -195,7 +195,17 @@ windows = { version = "0.62.2", features = [
 [build-dependencies]
 koru-winres = { path = "../../crates/koru-winres" }
 
+[features]
+# The element layer's fixture theme in the running app, for the preview
+# ELEMENTS-PLAN P1 describes: `KORU_FIXTURE_THEME=1` applies it at startup in
+# place of the preference, `KORU_FIXTURE_CONTRAST=1` its high-contrast table.
+# Never in `koru.bat run` or a release.
+fixture-theme = ["koru-draw/fixture-theme"]
+
 [dev-dependencies]
+# **The fixture theme in this crate's tests**, which a `cfg(test)` item in
+# `koru-draw` cannot reach: a dependency is never compiled with it.
+koru-draw = { path = "../../crates/koru-draw", features = ["fixture-theme"] }
 # Every surface on by default in tests; `koru_features::testing::with` opts
 # one test into the simplified product.
 koru-features = { path = "../../crates/koru-features", features = ["testing"] }

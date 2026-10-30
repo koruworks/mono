@@ -3,8 +3,9 @@
 //! **The Chats view, as a screen reader sees it** — the Tasks rail's model
 //! (`rail/accessibility.rs`) for a list whose rows are chats.
 //!
-//! One list node, *New chat* as its first child, then one node per chat,
-//! named by its title, who answered and when (and *private* when it is). Each
+//! One list node, one node per chat, named by its title, who answered and
+//! when (and *private* when it is); *New chat* is the heading's button, in
+//! the pane's own tree (the CTO's note). Each
 //! chat row offers **Open** (its click) and carries a **Delete chat** button as
 //! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`).
 //! Geometry is never re-derived: every rect is the surface's own
@@ -29,15 +30,8 @@ use crate::panes::Outcome;
 
 /// The list, and the rows of it that are not a chat.
 const CHATS: &str = "explore-chats";
-/// *New chat* — a keyword, never the label, so its identity is the same in
-/// every language.
-const NEW: ControlPart = ControlPart::new("new-chat");
 /// The Delete button under a chat's row node.
 const DELETE: ControlPart = ControlPart::new("delete");
-
-fn new_occurrence(cx: &Context) -> Occurrence {
-    Occurrence::surface(cx.window, cx.view, CHATS, NEW)
-}
 
 fn chat_occurrence(cx: &Context, chat: koru_chats_ui::ChatId, part: ControlPart) -> Occurrence {
     Occurrence::model(cx.window, cx.view, chat.as_uuid(), part)
@@ -47,14 +41,6 @@ fn chat_occurrence(cx: &Context, chat: koru_chats_ui::ChatId, part: ControlPart)
 pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> SemanticNode {
     let focus = chats.focus();
     let mut children = Vec::new();
-    if let Some(rect) = chats.new_chat_rect(cx.area, top) {
-        children.push(
-            SemanticNode::new(new_occurrence(cx), Role::Button)
-                .with_label(t(cx.lang, Key::ChatsNew))
-                .with_bounds(rect)
-                .with_actions([Action::Focus, Action::Click]),
-        );
-    }
     let rows = chats.chat_rects(cx.area, top);
     let total = rows.len();
     for (index, (chat, rect)) in rows.into_iter().enumerate() {
@@ -87,10 +73,8 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
 /// Where the keyboard is, said as an occurrence — read off the same focus the
 /// ring is drawn from.
 pub(super) fn focus_occurrence(chats: &ChatsSurface, cx: &Context) -> Option<Occurrence> {
-    match chats.focus()? {
-        Focus::New => Some(new_occurrence(cx)),
-        Focus::Chat(chat) => Some(chat_occurrence(cx, chat, ControlPart::ROOT)),
-    }
+    let Focus::Chat(chat) = chats.focus()?;
+    Some(chat_occurrence(cx, chat, ControlPart::ROOT))
 }
 
 /// Everything the published tree is built from. The relative times are not
@@ -99,7 +83,6 @@ pub(super) fn focus_occurrence(chats: &ChatsSurface, cx: &Context) -> Option<Occ
 pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
     rev.byte(chats.load() as u8);
     match chats.focus() {
-        Some(Focus::New) => rev.byte(1),
         Some(Focus::Chat(chat)) => rev.byte(2).uuid(chat.as_uuid()),
         None => rev.byte(0),
     };
@@ -128,17 +111,6 @@ pub(super) fn action(
         return None;
     }
     match target.object {
-        ObjectKey::Surface(CHATS) if target.part == NEW => match action {
-            Action::Focus => {
-                chats.set_focus(Focus::New, area, top);
-                Some(Outcome::Consumed)
-            }
-            Action::Click => {
-                chats.ask_new();
-                chats.take_wants_new().then_some(Outcome::NewAiChat)
-            }
-            _ => None,
-        },
         ObjectKey::Model(id) => {
             let chat = chats
                 .chats()
@@ -150,7 +122,8 @@ pub(super) fn action(
                     return None;
                 }
                 chats.ask_delete(chat);
-                return chats.take_wants_delete().map(Outcome::DeleteAiChat);
+                let asked = chats.take_wants_delete();
+                return (!asked.is_empty()).then_some(Outcome::DeleteAiChats(asked));
             }
             match action {
                 // The press sets the focus; the release opens — the pair

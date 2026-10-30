@@ -6,7 +6,9 @@ rem
 rem   koru.bat run      build and launch (Koru Cloud settings from .env.production, if present)
 rem   koru.bat run-all  restart Agent (with its API Gateway) and Koru, with the same
 rem                     .env.production; --ai opens AI Chat, --profile gives only
-rem                     the Koru workspace an explicit profile
+rem                     the Koru workspace an explicit profile. Stops this
+rem                     checkout's stack first and, on the shared debug channel
+rem                     (no KORU_ROOT), every other checkout's debug stack too
 rem   koru.bat stop-all stop this worktree's Koru, AI Chat and services
 rem   koru.bat root     the same stack on one isolated root (.env.production too)
 rem   koru.bat build-root-signed  build/register a signed rooted Windows test
@@ -335,7 +337,7 @@ call :ensure_fonts || exit /b 1
 call :load_env_file "%KORU_RUN_ENV_FILE%" || exit /b 1
 call :ensure_voice_runtime || exit /b 1
 call :announce_environment
-call :stop_all_exact || exit /b 1
+call :stop_debug_channel || exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\run-all.ps1"%RUN_ALL_MCP%%RUN_ALL_PERF%%RUN_ALL_AI%%RUN_ALL_PROFILE%
 exit /b %ERRORLEVEL%
 
@@ -816,6 +818,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\stop-worktree.p
 if errorlevel 1 exit /b 1
 exit /b 0
 
+rem What `run-all` clears before it starts: this checkout's images and, without
+rem KORU_ROOT, every other checkout's debug stack as well. Debug builds share
+rem the one internal-debug channel and the channel admits one Agent, so a
+rem sibling worktree's Agent would answer "already running for this channel"
+rem and ours would never become ready. With KORU_ROOT the channel is this
+rem checkout's own, and only its images are stopped. An installed Koru is on
+rem another channel either way; `stop` is the machine-wide hatch.
+:stop_debug_channel
+if defined KORU_ROOT goto stop_all_exact
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\stop-worktree.ps1" -SharedChannel
+if errorlevel 1 exit /b 1
+exit /b 0
+
 rem Swap the logo from assets/logo.png end-to-end:
 rem   1. rebuild assets/koru.ico (the taskbar/Explorer icon) from logo.png
 rem   2. rebuild koru.exe so the new .ico is embedded into it
@@ -858,6 +873,7 @@ echo usage: koru.bat ^<command^> [args...]
 echo.
 echo   run        launch the manager: documents in one process
 echo   run-all    restart Agent, Gateway and Koru against Koru Cloud (.env.production);
+echo              stops any other checkout's debug stack on the shared channel first
 echo              --ai opens AI Chat; --mcp checks MCP
 echo              --profile ^<name^|id^|path^> gives the Koru workspace an explicit profile
 echo              --performance runs the stall watch (capture-stalls' env plus

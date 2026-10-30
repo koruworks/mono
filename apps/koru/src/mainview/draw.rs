@@ -116,6 +116,13 @@ impl MainView {
         if let Some(chord) = self.agent.take_shortcut() {
             crate::taskbar::set_shortcut(chord);
         }
+        // The release-notes headlines, once their read lands.
+        if let Some(rx) = self.help_headlines_rx.as_ref()
+            && let Ok(answer) = rx.try_recv()
+        {
+            self.help_headlines = answer;
+            self.help_headlines_rx = None;
+        }
         // Advanced here rather than on a clock of its own: the shell asked for
         // this frame *because* `animating` said so, so the frame is the tick.
         self.advance_panels(&workspace.ws);
@@ -224,6 +231,12 @@ impl MainView {
                 TabView::Tasks(t) => {
                     View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                 }
+                TabView::Home(h) => {
+                    // The Due today panel's client, as the Tasks page's: the
+                    // discovered client cloned, no request on this thread.
+                    h.panel_mut().set_client(workspace.store_client());
+                    View::draw(h, scene, workspace, images, leaf_root, caret_on, local)
+                }
                 TabView::Reminders(r) => {
                     View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
                 }
@@ -265,16 +278,13 @@ impl MainView {
                     View::draw(l, scene, ws, images, leaf_root, caret_on, local)
                 }
             }
-            // The page's Context and AI buttons live in its title row, so
-            // they draw inside the pane's boundary — and, for the inspector,
-            // inside its node too.
-            if &path == self.panes.focused_path() {
-                if let Some(button) = self.document_ai_button() {
-                    button.draw(scene, root, &mut self.engine);
-                }
-                if let Some(button) = self.document_context_button() {
-                    button.draw(scene, root, &mut self.engine);
-                }
+            // The page's AI button lives in its title row, so it draws
+            // inside the pane's boundary — and, for the inspector, inside
+            // its node too.
+            if &path == self.panes.focused_path()
+                && let Some(button) = self.document_ai_button()
+            {
+                button.draw(scene, root, &mut self.engine);
             }
         }
 
@@ -387,19 +397,42 @@ impl MainView {
 
         let sb = self.sidebar_rect();
         if sb.w > 0.0 {
-            let _inspect_sidebar = koru_draw::inspect::scope(
-                "Explore sidebar",
-                "container",
-                root,
-                scene::rect(sb.x, sb.y, sb.w, sb.h),
-                |r| r.property("layout", "Column / vertical", "explore host"),
-            );
-            let avatar = self
-                .explore
-                .avatar_hash()
-                .and_then(|h| images.get(h))
-                .map(|a| a.as_ref());
-            self.explore.draw(scene, root, &mut self.engine, sb, avatar);
+            // The ring a chrome stop wears is drawn by whoever draws the
+            // control: the column for its chips and floor, the window for
+            // the lane.
+            self.explore.set_chrome_focus(self.explore_chrome_focus());
+            // Mid-fold the contents fade as one group — lane, apps row, nav
+            // and floor together — rather than each at its own rate.
+            let alpha = self.fold_content_alpha();
+            let fading = alpha < 1.0;
+            if fading {
+                scene::fade_layer(scene, root, alpha, &scene::rect(sb.x, sb.y, sb.w, sb.h));
+            }
+            // The rail and the pane, cut from the drawn column the way the
+            // settled one is (`layout::pane_of`, `rail_of`). In the
+            // inspector the rail is the pane's sibling, not its child (the
+            // CTO's note, E75): `KoruRail` is recorded first, on its own,
+            // and the *Explore sidebar* record is the pane's.
+            let pane = Self::pane_of(sb);
+            let rail = Self::rail_of(sb);
+            self.explore
+                .draw_apps_rail(scene, root, &mut self.engine, rail);
+            {
+                let _inspect_sidebar = koru_draw::inspect::scope(
+                    "Explore sidebar",
+                    "container",
+                    root,
+                    scene::rect(pane.x, pane.y, pane.w, pane.h),
+                    |r| r.property("layout", "Column / vertical", "explore host"),
+                );
+                self.explore.draw(scene, root, &mut self.engine, pane);
+            }
+            // The lane, over the column's top band: window chrome, so it is
+            // the window that draws it.
+            self.draw_lane(scene, root, sb);
+            if fading {
+                scene.pop_layer();
+            }
         }
         let ai = self.ai_rect();
         if ai.w > 0.0 {
@@ -481,6 +514,11 @@ impl MainView {
             self.context_view
                 .draw(scene, root, &mut self.engine, cx, subject, &workspace.ws);
         }
+        // **After every column**, because it paints over their edges: the
+        // ground's lanes, the cards' outer borders and their rounded corners.
+        // Before it, the sidebar's own fill and the lane's were painting the
+        // pane's corner back square (the CTO's note).
+        self.draw_cards(scene, root);
         // **After both columns**, and deliberately not from inside the pane's
         // own `draw`: a popover hangs over the active view, so where it lands in
         // the frame is a z-order decision worth making out loud. It lives
@@ -738,10 +776,13 @@ impl MainView {
         // drawn right edge, so the logo and the tabs slide along with the pane
         // instead of jumping when it lands.
         let cap = self.drawn_caption();
+        // **The rail's colour** (the CTO's artboard): the header, the rail
+        // and the edge lane are the window's ground, one tint; the explore
+        // pane and the document are cards on it.
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            p.ground,
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
         scene::fill(
@@ -750,6 +791,130 @@ impl MainView {
             p.panel_border,
             &scene::rect(cap.x, cap.y + cap.h - 1.0, cap.w, 1.0),
         );
+    }
+
+    /// The ground the cards sit on, and their outer edges: the lanes at the
+    /// right edge and the foot in the rail's colour — and at the left edge
+    /// while the pane is shut (E71) — the outer cards' borders down the
+    /// side lanes and every card's along the foot, then a rounded corner at
+    /// each outer corner — the explore pane's left pair, or the document's
+    /// with the pane shut; the document's top-left where it meets the pane;
+    /// and the right-most card's right pair (the CTO's artboard and his
+    /// notes). Drawn after every column and the header, which laid the
+    /// straight hairlines: each corner masks the square outside its arc in
+    /// the ground's colour and strokes the arc in the hairline's.
+    ///
+    /// **Drawn edges**, not settled ones: the pane slides, and the
+    /// document's left corner rides its edge the way the caption does. The
+    /// left lane is the pane's for the slide: it shows only right of the
+    /// pane's drawn edge, and wears the document's border and corners once
+    /// the pane is gone.
+    fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
+        let p = theme::p();
+        let edge = self.regions.edge;
+        let foot = self.regions.foot;
+        let verge = self.regions.left_edge;
+        let top = self.content().y - 1.0;
+        let r = theme::PAGE_RADIUS;
+        let sb = self.sidebar_rect();
+        let pane = (sb.w > 0.0)
+            .then(|| Self::pane_of(sb))
+            .filter(|pane| pane.w > 0.0);
+        // The cards' left edge: the pane's outer border while it is drawn,
+        // or the left lane's inner column once it is gone — the document is
+        // then the left-most card, and wears the same border and corners as
+        // the right-most does at the right.
+        let lane_left = (verge.w > 0.0).then(|| verge.x + verge.w - 1.0);
+        let left = pane.map(|pane| pane.x - 1.0).or(lane_left);
+        if verge.w > 0.0 {
+            // Only right of the pane while it slides over the lane.
+            let x0 = pane.map_or(verge.x, |pane| (pane.x + pane.w).max(verge.x));
+            let lane = Rect::new(x0, verge.y, (verge.x + verge.w - x0).max(0.0), verge.h);
+            draw_gap(
+                scene,
+                root,
+                p.ground,
+                lane,
+                "window edge / document",
+                "left lane",
+            );
+            if let (None, Some(x)) = (pane, lane_left) {
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_border,
+                    &scene::rect(x, verge.y, 1.0, verge.h),
+                );
+                // The caption's hairline strays over this lane as over the
+                // right one; the ground covers it up to the border.
+                scene::fill(
+                    scene,
+                    root,
+                    p.ground,
+                    &scene::rect(verge.x, top, (x - verge.x).max(0.0), 1.0),
+                );
+            }
+        }
+        if edge.w > 0.0 {
+            draw_gap(
+                scene,
+                root,
+                p.ground,
+                edge,
+                "document / window edge",
+                "right lane",
+            );
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(edge.x, edge.y, 1.0, edge.h),
+            );
+            // The caption's hairline runs to the window's edge; over the
+            // lane it is a stray (the CTO's note), so the ground covers it.
+            scene::fill(
+                scene,
+                root,
+                p.ground,
+                &scene::rect(edge.x + 1.0, top, (edge.w - 1.0).max(0.0), 1.0),
+            );
+        }
+        if foot.h > 0.0 {
+            draw_gap(
+                scene,
+                root,
+                p.ground,
+                foot,
+                "cards / window foot",
+                "foot lane",
+            );
+            let x0 = left.unwrap_or(foot.x);
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(x0, foot.y, (edge.x + 1.0 - x0).max(0.0), 1.0),
+            );
+        }
+        let bottom = foot.y + 1.0;
+        if let Some(x) = left {
+            draw_card_corner(scene, root, x, top, r, (false, false), p);
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, x, bottom, r, (false, true), p);
+            }
+        }
+        // The document's top-left where it meets the pane; with the pane
+        // gone that corner is the lane's, drawn above.
+        let cap = self.drawn_caption();
+        if pane.is_some() && cap.x > 0.0 {
+            draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), p);
+        }
+        if edge.w > 0.0 {
+            draw_card_corner(scene, root, edge.x + 1.0, top, r, (true, false), p);
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, edge.x + 1.0, bottom, r, (true, true), p);
+            }
+        }
     }
 
     /// Takes the document because a tab's *icon* can depend on it: a document
@@ -762,28 +927,40 @@ impl MainView {
         // for the rest of the function.
         let hover_now = self.hover;
         let hovered = |h: Hit| hover_now == Some(h);
-        // **The pane's toggle wears a pane, not the brand.** The corner used to
-        // hold the Koru mark, which said whose app this is and nothing about
-        // what pressing it does — a logo is not a verb. Its open state is
-        // already visible in the layout, so the icon keeps the ordinary rest
-        // and hover treatment rather than looking permanently selected.
-        let logo_slot = caption::sidebar_toggle(cap);
-        // The same chip the `+` wears, from the same function, so the two line
-        // up with the tabs between them instead of each picking its own size —
-        // this one was 24px against the tabs' 27 and read as a smaller control.
-        // `hover_tint` at radius 6, matching the profile and workspace rows.
-        koru_ui::icon_button::draw(
-            scene,
-            root,
-            &mut self.engine,
-            logo_slot,
-            icons::PANEL_LEFT,
-            koru_ui::icon_button::State {
-                hovered: hovered(Hit::ToggleSidebar),
-                active: false,
-                disabled: false,
-            },
-        );
+        // **The leading chain**: the lane's controls, folded into the
+        // caption's left end while the pane is shut (frame 9). While it is
+        // open the chain is empty and the lane draws them (`draw_lane`).
+        // Through the fold it is drawn either way, at the drawn caption's
+        // left edge, so it rides the pane's edge out and back
+        // (`theme::motion::pane_fold`).
+        let mut leading = self.leading();
+        if self.chain_drawn() {
+            leading.folded = true;
+            let chain = caption::leading_chain(cap, leading);
+            self.draw_lane_controls(
+                scene,
+                root,
+                koru_shell_chrome::lane::LaneRects {
+                    leading: chain.leading,
+                    search: chain.search,
+                    new: chain.new,
+                    toggle: chain.toggle,
+                },
+                hovered(Hit::ToggleSidebar),
+                hovered(Hit::Search),
+                hovered(Hit::New),
+            );
+            if chain.divider.w > 0.0 {
+                let p = theme::p();
+                let x = (chain.divider.x + chain.divider.w * 0.5).floor();
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_border,
+                    &scene::rect(x, cap.y + 10.0, 1.0, (cap.h - 20.0).max(0.0)),
+                );
+            }
+        }
         // Caption controls share the same rest and hover states. Context is a
         // document action and normally lives on the title block; this remains
         // behind the zero-width product switch for compatible chrome geometry.
@@ -802,7 +979,9 @@ impl MainView {
                 koru_ui::icon_button::State {
                     hovered: hovered(Hit::ToggleContext),
                     active: false,
-                    disabled: false,
+                    // Dimmed, never hidden, while the column has nothing to
+                    // show (DESIGN.md: a disabled control explains itself).
+                    disabled: !super::context_has_sections(),
                 },
             );
         }
@@ -827,6 +1006,152 @@ impl MainView {
 
         if WINDOW_BUTTONS {
             self.draw_window_buttons(scene, root, cap);
+        }
+    }
+
+    /// The lane: the window's own band at the top of the drawn pane
+    /// (`docs/features/workspace-foundation/TECHNICAL.final.md` §5.1). The
+    /// mark leads, Search and the toggle pack against the right, and the
+    /// caption's hairline runs under it so the two read as one band.
+    fn draw_lane(&mut self, scene: &mut Scene, root: Affine, pane: Rect) {
+        let leading = self.leading();
+        if leading.folded || pane.w <= 0.0 {
+            return;
+        }
+        let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
+        let _section = koru_draw::inspect::scope(
+            "KoruLane",
+            "container",
+            root,
+            scene::rect(lane.x, lane.y, lane.w, lane.h),
+            |r| {
+                r.property("implementation", "koru_shell_chrome::lane", "geometry");
+            },
+        );
+        let p = theme::p();
+        // The lane is the header's: the rail's colour, like the caption
+        // beside it (the CTO's artboard). Its hairline is the explore
+        // card's top border, so it runs from the rail's edge, not over the
+        // rail — the rail and the header are one ground. The mark's slot
+        // no longer needs a fill or a hairline of its own (E37): the ground
+        // is already its colour, and a hairline up through the header would
+        // cut the ground in two.
+        scene::fill(
+            scene,
+            root,
+            p.ground,
+            &scene::rect(lane.x, lane.y, lane.w, lane.h),
+        );
+        let rects = koru_shell_chrome::lane::solve(lane, leading);
+        let from = rects.leading.x + rects.leading.w;
+        scene::fill(
+            scene,
+            root,
+            p.panel_border,
+            &scene::rect(
+                from,
+                lane.y + lane.h - 1.0,
+                (lane.x + lane.w - from).max(0.0),
+                1.0,
+            ),
+        );
+        let hovered = |h: Hit| self.hover == Some(h);
+        self.draw_lane_controls(
+            scene,
+            root,
+            rects,
+            hovered(Hit::ToggleSidebar),
+            hovered(Hit::Search),
+            hovered(Hit::New),
+        );
+    }
+
+    /// The lane's controls at the rects given — the same drawing whether
+    /// they sit in the lane or in the caption's chain. The mark is
+    /// `KoruLogo` at 16 px in the text colour: a logo is not a verb, so it
+    /// gets no chip and no hover.
+    fn draw_lane_controls(
+        &mut self,
+        scene: &mut Scene,
+        root: Affine,
+        rects: koru_shell_chrome::lane::LaneRects,
+        toggle_hot: bool,
+        search_hot: bool,
+        new_hot: bool,
+    ) {
+        let p = theme::p();
+        if rects.leading.w > 0.0 {
+            const MARK: f32 = 16.0;
+            koru_ui::logo::KoruLogo::new(MARK).tint(p.text).draw(
+                scene,
+                root,
+                rects.leading.x + (rects.leading.w - MARK) * 0.5,
+                rects.leading.y + (rects.leading.h - MARK) * 0.5,
+            );
+        }
+        if rects.search.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.search,
+                icons::SEARCH,
+                koru_ui::icon_button::State {
+                    hovered: search_hot,
+                    active: self.search.is_some(),
+                    disabled: false,
+                },
+            );
+        }
+        // New: the active app's primary create (zero-width when it has none).
+        if rects.new.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.new,
+                icons::PLUS,
+                koru_ui::icon_button::State {
+                    hovered: new_hot,
+                    active: false,
+                    disabled: false,
+                },
+            );
+        }
+        if rects.toggle.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.toggle,
+                icons::PANEL_LEFT,
+                koru_ui::icon_button::State {
+                    hovered: toggle_hot,
+                    active: false,
+                    disabled: false,
+                },
+            );
+        }
+        // `F6`'s ring on the focused lane control, around the hover chip.
+        let focused = match self.lane_chrome_focus() {
+            Some(super::chrome_focus::LaneControl::Toggle) if rects.toggle.w > 0.0 => {
+                Some(rects.toggle)
+            }
+            Some(super::chrome_focus::LaneControl::Search) if rects.search.w > 0.0 => {
+                Some(rects.search)
+            }
+            Some(super::chrome_focus::LaneControl::New) if rects.new.w > 0.0 => Some(rects.new),
+            _ => None,
+        };
+        if let Some(slot) = focused {
+            let chip = koru_ui::icon_button::hover_chip(slot);
+            scene::stroke(
+                scene,
+                root,
+                p.focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(chip.x - 1.0, chip.y - 1.0, chip.w + 2.0, chip.h + 2.0, 7.0),
+            );
         }
     }
 
@@ -1173,6 +1498,40 @@ impl MainView {
     }
 }
 
+/// A band of the ground that keeps two things apart — the lanes at the
+/// window's edges and foot — filled in `colour` and recorded as a **Gap**
+/// part, so the space between two components is a thing the inspector
+/// names rather than an anonymous fill (the CTO's note, E75). `separates`
+/// says what is on either side; `role` which gap it is.
+fn draw_gap(
+    scene: &mut Scene,
+    root: Affine,
+    colour: Color,
+    band: Rect,
+    separates: &'static str,
+    role: &'static str,
+) {
+    if band.w <= 0.0 || band.h <= 0.0 {
+        return;
+    }
+    let _gap = koru_draw::inspect::scope(
+        "Gap",
+        "part",
+        root,
+        scene::rect(band.x, band.y, band.w, band.h),
+        |rec| {
+            rec.property("separates", separates, "window ground");
+            rec.property("role", role, "theme::EDGE_LANE_W");
+        },
+    );
+    scene::fill(
+        scene,
+        root,
+        colour,
+        &scene::rect(band.x, band.y, band.w, band.h),
+    );
+}
+
 /// Scale a colour's alpha by `a`, to fade the zoom indicator uniformly.
 fn fade(mut c: Color, a: f32) -> Color {
     c.components[3] *= a;
@@ -1211,4 +1570,75 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
         }
     }
     (missing, waiting)
+}
+
+/// One rounded corner of a card whose straight hairlines are already drawn.
+/// `(x, y)` is the card's **outer** corner — the hairline's outside edge —
+/// and `(right, bottom)` says which corner it is: the square extends
+/// leftwards from `x` for a right corner and upwards from `y` for a bottom
+/// one. The square outside the arc is masked in `ground`, which
+/// also covers the straight hairlines' ends inside it; the arc is then
+/// stroked one pixel wide along the hairline's centre, so it meets the
+/// straight runs where they leave the square. The ground is the palette's
+/// `ground` and the border the hairline's.
+fn draw_card_corner(
+    scene: &mut Scene,
+    root: Affine,
+    x: f32,
+    y: f32,
+    r: f32,
+    (right, bottom): (bool, bool),
+    p: &theme::Palette,
+) {
+    use vello::kurbo::{BezPath, Point};
+    let (ground, border) = (p.ground, p.panel_border);
+    if r <= 1.0 {
+        return;
+    }
+    // One part per corner in the inspector — the mask and the arc together,
+    // named for the corner they are (the CTO's note, E75) — rather than two
+    // anonymous fills at the window's level.
+    let _corner = koru_draw::inspect::scope(
+        "CardCorner",
+        "part",
+        root,
+        scene::rect(
+            if right { x - r } else { x },
+            if bottom { y - r } else { y },
+            r,
+            r,
+        ),
+        |rec| {
+            rec.property(
+                "corner",
+                format!(
+                    "{}-{}",
+                    if bottom { "bottom" } else { "top" },
+                    if right { "right" } else { "left" }
+                ),
+                "draw_card_corner",
+            );
+            rec.property("radius", r, "theme::PAGE_RADIUS");
+        },
+    );
+    // Quarter-circle as one cubic, the usual constant.
+    const K: f64 = 0.552_284_75;
+    let dir_x = if right { -1.0 } else { 1.0 };
+    let dir_y = if bottom { -1.0 } else { 1.0 };
+    let (x, y, r) = (x as f64, y as f64, r as f64);
+    let pt = |dx: f64, dy: f64| Point::new(x + dir_x * dx, y + dir_y * dy);
+    // The mask: the top edge out to the arc's start, the arc back to the
+    // side edge, and the side edge up to the corner.
+    let mut mask = BezPath::new();
+    mask.move_to(pt(0.0, 0.0));
+    mask.line_to(pt(r, 0.0));
+    mask.curve_to(pt(r - K * r, 0.0), pt(0.0, r - K * r), pt(0.0, r));
+    mask.close_path();
+    scene::fill(scene, root, ground, &mask);
+    // The border's centre runs half a pixel inside the outer edge.
+    let rr = r - 0.5;
+    let mut arc = BezPath::new();
+    arc.move_to(pt(r, 0.5));
+    arc.curve_to(pt(r - K * rr, 0.5), pt(0.5, r - K * rr), pt(0.5, r));
+    scene::stroke(scene, root, border, 1.0, &arc);
 }

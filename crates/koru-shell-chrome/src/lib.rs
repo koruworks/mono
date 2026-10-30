@@ -56,6 +56,7 @@
 pub mod banner;
 pub mod branch;
 pub mod caption;
+pub mod lane;
 pub mod regions;
 pub mod status_chip;
 pub mod tabs;

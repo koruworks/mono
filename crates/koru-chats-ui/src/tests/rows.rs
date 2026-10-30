@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::text::who_answered;
-use crate::{Load, Notice};
+use crate::{Load, Notice, Press};
 
 #[test]
 fn chats_are_listed_newest_first_whatever_order_they_arrive_in() {
@@ -12,12 +12,14 @@ fn chats_are_listed_newest_first_whatever_order_they_arrive_in() {
     assert_eq!(titles(&surface), ["Newest", "Middle", "Oldest"]);
 }
 
+/// Every chat is a row and nothing heads them: *New chat* is the heading's
+/// button now (the CTO's note).
 #[test]
-fn new_chat_heads_the_list_and_every_chat_is_a_row() {
+fn every_chat_is_a_row_and_nothing_heads_them() {
     let mut surface = three();
     assert_eq!(
         rows_of(&mut surface),
-        [Row::New, Row::Chat(0), Row::Chat(1), Row::Chat(2)]
+        [Row::Chat(0), Row::Chat(1), Row::Chat(2)]
     );
 }
 
@@ -25,19 +27,13 @@ fn new_chat_heads_the_list_and_every_chat_is_a_row() {
 fn a_cold_surface_says_it_is_loading_rather_than_empty() {
     let mut surface = ChatsSurface::without_reader();
     assert_eq!(surface.load(), Load::Cold);
-    assert_eq!(
-        rows_of(&mut surface),
-        [Row::New, Row::Notice(Notice::Loading)]
-    );
+    assert_eq!(rows_of(&mut surface), [Row::Notice(Notice::Loading)]);
 }
 
 #[test]
 fn an_empty_answer_is_the_empty_notice() {
     let mut surface = showing(Vec::new());
-    assert_eq!(
-        rows_of(&mut surface),
-        [Row::New, Row::Notice(Notice::Empty)]
-    );
+    assert_eq!(rows_of(&mut surface), [Row::Notice(Notice::Empty)]);
 }
 
 /// **A service that stops answering is not an empty list.** What was on
@@ -50,7 +46,6 @@ fn an_unavailable_service_keeps_the_rows_and_says_so() {
     assert_eq!(
         rows_of(&mut surface),
         [
-            Row::New,
             Row::Notice(Notice::Unavailable),
             Row::Chat(0),
             Row::Chat(1),
@@ -132,16 +127,94 @@ fn the_band_is_the_cull_and_the_hit_test() {
     assert_eq!(hit.map(|(row, _)| row), Some(row));
 }
 
+/// **A row is the library's row** (the CTO's note): one line at
+/// `NAV_ROW_H`, the title at the pad with no lane reserved, and only a
+/// private chat's title sits one icon slot in, behind its mark.
 #[test]
-fn every_label_starts_on_one_line() {
-    let mut surface = three();
+fn a_row_is_one_line_at_the_pad_and_a_private_one_wears_its_mark() {
+    let mut chats = vec![
+        chat(1, "Plain", 1_000),
+        chat(2, "Secret", 2_000),
+        chat(3, "Other", 3_000),
+    ];
+    chats[1].private = true;
+    let mut surface = showing(chats);
     let rows = surface.rows(tall(), TOP);
-    let xs: Vec<f32> = rows
-        .iter()
-        .filter(|(row, _)| row.pressable())
-        .map(|(row, rect)| surface.row_parts(*row, *rect).title.x)
-        .collect();
-    assert!(xs.windows(2).all(|pair| pair[0] == pair[1]), "{xs:?}");
+    let area = tall();
+    for (row, rect) in &rows {
+        assert_eq!(rect.h, koru_draw::theme::NAV_ROW_H, "{row:?}");
+        let parts = surface.row_parts(*row, *rect);
+        let Row::Chat(index) = row else { continue };
+        if surface.chats()[*index].private {
+            assert!(parts.lead.w > 0.0, "a private row has its mark");
+            assert_eq!(parts.title.x, parts.lead.x + parts.lead.w + 4.0);
+        } else {
+            assert_eq!(parts.lead.w, 0.0, "no lane reserved");
+            assert_eq!(parts.title.x, area.x + koru_draw::theme::NAV_PAD);
+        }
+        assert_eq!(
+            parts.title.x + parts.title.w,
+            area.x + area.w - koru_draw::theme::NAV_PAD,
+            "the title runs to the pad"
+        );
+    }
+}
+
+/// **The pick is the library's** (the CTO's note): a plain press picks one
+/// and opens it, Ctrl toggles, Shift extends from the anchor, and a
+/// right-click on a picked row names the whole pick in list order.
+#[test]
+fn chats_are_picked_like_documents() {
+    let mut surface = three();
+    let area = tall();
+    let rows = surface.rows(area, TOP);
+    let centre = |i: usize| rows[i].1.centre();
+    let (x, y) = centre(0);
+    surface.mouse_down(area, TOP, x, y);
+    assert_eq!(surface.selected(), [id(1)], "the newest is listed first");
+    assert_eq!(
+        surface.take_wants_open(),
+        Some(id(1)),
+        "a plain press opens"
+    );
+    let (x, y) = centre(2);
+    surface.mouse_down_with(area, TOP, x, y, true, false);
+    assert_eq!(
+        surface.selected(),
+        [id(1), id(3)],
+        "Ctrl adds, in list order"
+    );
+    assert_eq!(surface.take_wants_open(), None, "and does not open");
+    surface.mouse_down_with(area, TOP, x, y, true, false);
+    assert_eq!(surface.selected(), [id(1)], "Ctrl again removes");
+    // Ctrl moved the anchor to the row it toggled, as it does in the
+    // library; a plain press re-anchors, and Shift extends from there.
+    let (x, y) = centre(0);
+    surface.mouse_down(area, TOP, x, y);
+    surface.take_wants_open();
+    let (x, y) = centre(2);
+    surface.mouse_down_with(area, TOP, x, y, false, true);
+    assert_eq!(surface.selected(), [id(1), id(2), id(3)], "Shift extends");
+    // A right-click on a picked row is about the pick; on another row, that
+    // row alone, which becomes the pick.
+    let (x, y) = centre(1);
+    assert_eq!(
+        surface.context_menu(area, TOP, x, y),
+        Some(vec![id(1), id(2), id(3)])
+    );
+    surface.select_only(id(1));
+    let (x, y) = centre(1);
+    assert_eq!(surface.context_menu(area, TOP, x, y), Some(vec![id(2)]));
+    assert_eq!(surface.selected(), [id(2)]);
+    // Delete asks for the pick when the keyboard's row is in it.
+    assert!(surface.key(area, TOP, Press::Delete));
+    assert_eq!(surface.take_wants_delete(), [id(2)]);
+    // A listing without a picked chat drops it from the pick.
+    surface.take_listing(Ok(crate::Listing {
+        chats: vec![chat(1, "Oldest", 1_000), chat(3, "Newest", 3_000)],
+        agents: Vec::new(),
+    }));
+    assert!(surface.selected().is_empty());
 }
 
 #[test]

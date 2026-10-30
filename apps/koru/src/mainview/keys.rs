@@ -153,6 +153,8 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
             _ => text.and_then(|t| t.chars().next()),
         };
         return match digit? {
+            // Home is its letter, not a digit (the CTO's note, E69).
+            'h' | 'H' => Some(Chord::ShowNavigator(NavigatorMode::Home)),
             '1' => Some(Chord::ShowNavigator(NavigatorMode::Documents)),
             '2' => Some(Chord::ShowNavigator(NavigatorMode::Files)),
             '3' => Some(Chord::ShowNavigator(NavigatorMode::Tasks)),

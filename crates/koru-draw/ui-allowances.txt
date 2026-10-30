@@ -1,0 +1,22 @@
+# Approved design exceptions in surfaces written on the element layer.
+#
+# Read by crates/koru-draw/src/theme/ui_scan.rs, which fails
+# `cargo test --workspace` on any raw colour, raw size, global palette read,
+# appearance branch, scene paint outside a leaf adapter, or literal accessible
+# name in a migrated file that has no entry here. An entry nothing matches
+# any more fails too.
+#
+# One entry per line:
+#
+#   path | rule | snippet | reason | owner | replacement
+#
+#   path         the file, from the repository root; the entry covers it only
+#   rule         raw-colour, raw-size, palette-read, appearance-branch,
+#                direct-paint or untranslated-name
+#   snippet      text the offending line contains
+#   reason       why the value cannot be a token
+#   owner        who approved it, or the review that did
+#   replacement  for a temporary exception, what replaces it; empty if none
+#
+# Regenerating this list is not a reason for an entry. The contract is
+# docs/contributing/refactor-ui/ELEMENTS.final.md §4.

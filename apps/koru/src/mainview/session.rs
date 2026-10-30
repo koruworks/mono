@@ -116,6 +116,8 @@ impl MainView {
                     // its restore is the `TabRef` arm that rebuilt the tab.
                     TabView::Reminders(r) => View::restore(r, workspace, settings),
                     TabView::Settings(s) => View::restore(s, workspace, settings),
+                    // Home keeps no per-document prefs; it is fed each frame.
+                    TabView::Home(_) => {}
                     TabView::Feedback(f) => View::restore(f, workspace, settings),
                     TabView::Diff(d) => View::restore(d, workspace, settings),
                     // A chat is a live conversation rather than a place in the
@@ -234,7 +236,7 @@ impl MainView {
                     // rather than breaks (the entry is skipped and the strip
                     // silently shortens), which is exactly why the compiler
                     // will not tell you.
-                    _ if t.whats_new.is_some() => TabRef::WhatsNew,
+                    _ if t.whats_new.is_some() => private_page_ref(t),
                     TabView::Welcome(_) => TabRef::Welcome,
                     TabView::Manage(_) => TabRef::Manage,
                     TabView::Trash(_) => TabRef::Trash,
@@ -251,7 +253,9 @@ impl MainView {
                     // it properly means a new `TabRef` variant in
                     // `koru-workspace-host`'s session file — so the behaviour
                     // is preserved rather than quietly improved.
-                    TabView::Settings(_) | TabView::Feedback(_) => TabRef::Welcome,
+                    TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => {
+                        TabRef::Welcome
+                    }
                     // Filtered out above; spelled for exhaustiveness. Were the
                     // filter ever lost, degrading to a welcome tab is the same
                     // tolerance a leaf over nothing already gets.
@@ -338,6 +342,7 @@ impl MainView {
                     TabView::Tasks(t) => View::capture(t, settings),
                     TabView::Reminders(r) => View::capture(r, settings),
                     TabView::Settings(s) => View::capture(s, settings),
+                    TabView::Home(_) => {}
                     TabView::AiChat(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
@@ -416,6 +421,10 @@ impl MainView {
                         None => continue,
                     }
                 }
+                TabRef::SyncSettings => match Tab::sync_settings() {
+                    Some(tab) => tab,
+                    None => continue,
+                },
                 TabRef::Node(id) => {
                     if ws.read(*id).is_err() {
                         continue;
@@ -680,6 +689,7 @@ impl MainView {
                 let notes = crate::whatsnew::notes_beside_the_exe();
                 Tab::whats_new(version, notes.as_deref())?
             }
+            TabRef::SyncSettings => Tab::sync_settings()?,
             TabRef::Node(id) => {
                 if ws.read(*id).is_err() {
                     return None;
@@ -755,7 +765,7 @@ impl MainView {
                 .filter_map(|t| {
                     let which = match &t.view {
                         _ if t.draft.is_some() => TabRef::Draft,
-                        _ if t.whats_new.is_some() => TabRef::WhatsNew,
+                        _ if t.whats_new.is_some() => private_page_ref(t),
                         TabView::Welcome(_) => TabRef::Welcome,
                         TabView::Manage(_) => TabRef::Manage,
                         TabView::Trash(_) => TabRef::Trash,
@@ -768,7 +778,9 @@ impl MainView {
                         // `WelcomeView` with a flag set, and a flag is not a
                         // `TabRef`. Feedback degrades the same way — there is
                         // no `TabRef` for it either.
-                        TabView::Settings(_) | TabView::Feedback(_) => TabRef::Welcome,
+                        TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => {
+                            TabRef::Welcome
+                        }
                         // Filtered out above; spelled for exhaustiveness. Were
                         // the filter ever lost, degrading to a welcome tab is
                         // the same tolerance a leaf over nothing already gets.
@@ -894,5 +906,14 @@ fn tasks_tab_ref(target: RailTarget) -> koru_workspace_host::TasksTabRef {
             Bucket::Later => "later",
             Bucket::Completed => "completed",
         }),
+    }
+}
+
+/// Which token a tab over a private workspace writes: the release notes or
+/// the Sync settings page.
+fn private_page_ref(tab: &Tab) -> TabRef {
+    match tab.whats_new.as_ref().map(|n| n.page) {
+        Some(super::tab::PrivatePage::SyncSettings) => TabRef::SyncSettings,
+        _ => TabRef::WhatsNew,
     }
 }

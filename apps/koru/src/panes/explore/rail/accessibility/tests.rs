@@ -11,6 +11,7 @@ fn cx(lang: Lang) -> Context {
         window: WindowSlot::from_raw(7),
         view: ViewSlot::from_raw(9),
         area: Rect::new(0.0, 0.0, 260.0, 600.0),
+        rail: crate::panes::explore::ExploreView::new().rail_of(Rect::new(0.0, 0.0, 260.0, 600.0)),
         viewport: (1000.0, 600.0),
         lang,
     }

@@ -783,10 +783,14 @@ pub(crate) fn keyboard_layout() -> Option<&'static str> {
 fn touch() -> Option<bool> {
     platform::touch()
 }
-fn reduced_motion() -> Option<bool> {
+/// Whether the OS asks for reduced motion. `None` when it could not say,
+/// which a caller reads as motion on. The window reads it once at
+/// construction (`docs/features/workspace-foundation/TECHNICAL.final.md`
+/// §5.8), so a change mid-session takes effect at the next launch.
+pub fn reduced_motion() -> Option<bool> {
     platform::reduced_motion()
 }
-fn high_contrast() -> Option<bool> {
+pub fn high_contrast() -> Option<bool> {
     platform::high_contrast()
 }
 fn text_scale_percent() -> Option<u64> {

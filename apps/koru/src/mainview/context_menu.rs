@@ -58,6 +58,11 @@ pub(crate) use koru_ui::menu::EDGE_MARGIN;
 pub enum MenuSubject {
     /// The caption `+` button: create or import rather than acting on a tab.
     NewTab,
+    /// The floor's `?`: the help popover. **Not [`Window`](Self::Window)**,
+    /// whose menu the caption's ⋯ tracker shuts the moment the pointer
+    /// leaves its button — which took the help popover down on the first
+    /// move.
+    Help,
     Tab(usize),
     Workspace(WorkspaceId),
     /// A right-click in the Agents navigator: a project row's menu, or —
@@ -92,7 +97,8 @@ pub enum MenuSubject {
     /// The chat's id, never a row index: the list is a cache of an answer
     /// the AI service rewrites whenever a chat changes.
     AiChat {
-        chat: koru_ai_ui::ChatId,
+        /// The picked chats, in list order.
+        chats: Vec<koru_ai_ui::ChatId>,
     },
     /// A schedule row or one of its metadata rows, captured by stable id.
     AgentSchedules {
@@ -140,11 +146,68 @@ pub enum MenuSubject {
     List(ListId),
     /// The Trash tab's own `…`. One row, and it empties the bin.
     Trash,
+    /// The floor's `…` (E60): New workspace, Import… and its formats, Invite
+    /// people, Trash.
+    Floor,
     /// The window itself — what the caption's overflow button opens. Window
     /// destinations live here; minimize, maximize and close remain direct
     /// caption controls.
     Window,
 }
+
+/// Koru's accounts, in the strip's order after the website's globe. Brand
+/// names, so no row of the catalog: a name a translator must not touch.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Social {
+    X,
+    Reddit,
+    Instagram,
+    TikTok,
+    YouTube,
+}
+
+impl Social {
+    pub const ALL: [Social; 5] = [
+        Social::X,
+        Social::Reddit,
+        Social::Instagram,
+        Social::TikTok,
+        Social::YouTube,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Social::X => "X",
+            Social::Reddit => "Reddit",
+            Social::Instagram => "Instagram",
+            Social::TikTok => "TikTok",
+            Social::YouTube => "YouTube",
+        }
+    }
+
+    pub fn url(self) -> &'static str {
+        match self {
+            Social::X => "https://x.com/korudotdo",
+            Social::Reddit => "https://www.reddit.com/r/korudo/",
+            Social::Instagram => "https://www.instagram.com/korudotdo/",
+            Social::TikTok => "https://www.tiktok.com/@korudotdo",
+            Social::YouTube => "https://www.youtube.com/@korudotdo",
+        }
+    }
+
+    pub fn glyph(self) -> char {
+        match self {
+            Social::X => koru_draw::icons::X_LOGO,
+            Social::Reddit => koru_draw::icons::REDDIT_LOGO,
+            Social::Instagram => koru_draw::icons::INSTAGRAM_LOGO,
+            Social::TikTok => koru_draw::icons::TIKTOK_LOGO,
+            Social::YouTube => koru_draw::icons::YOUTUBE_LOGO,
+        }
+    }
+}
+
+/// Where the strip's globe goes.
+pub const WEBSITE_URL: &str = "https://www.koru.do";
 
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -182,6 +245,14 @@ pub enum MenuAction {
     /// The label comes from the format's descriptor — the registry decides
     /// what can be imported, this menu only displays it.
     ImportFormat(&'static str),
+    /// The floor menu's rows (the CTO's artboard, E60): a workspace's own
+    /// verbs, where the popover's WORKSPACES heading used to carry a `+`
+    /// and an import button.
+    NewWorkspace,
+    /// Dimmed until there is an invite flow to open.
+    InvitePeople,
+    /// The Trash tab, with the count of what is in it at the row's end.
+    OpenTrash,
 
     // ------------------------------------------------------------------ tabs
     /// Pop the tab out into its own window.
@@ -510,6 +581,31 @@ pub enum MenuAction {
     HeaderFeedback,
     HeaderShortcuts,
     HeaderMobile,
+    // ------------------------------------------------------------ help
+    /// The *WHAT'S NEW* heading over the release card. It wears a dot while
+    /// a build is on offer.
+    HelpWhatsNewHeading,
+    /// The release card (the CTO's artboard): the build on offer when the
+    /// Agent has one, else the build that is running — badge, date, title,
+    /// a line under it, and the Download button at its foot, which is
+    /// [`HelpDownload`](Self::HelpDownload). Chosen as a whole (its `›`), it
+    /// opens the What's new tab.
+    HelpRelease,
+    /// The card's button. **Not a row**: reached only through the card's
+    /// control, like the zoom stepper's three, so nothing lists it.
+    HelpDownload,
+    /// The releases page on koru.do, in the browser.
+    HelpFullChangelog,
+    /// The Feedback tab. **The only feedback row** (the CTO's note): *Report
+    /// a problem* was a second door to the same tab and went.
+    HelpSendFeedback,
+    /// The strip at the popover's foot: the website and the socials, each a
+    /// control of this one row. **Not a row that is chosen**: its controls
+    /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
+    /// [`HelpSocial`](Self::HelpSocial), which nothing lists either.
+    HelpSocials,
+    HelpWebsite,
+    HelpSocial(Social),
     /// The internal session recorder: opens the setup modal
     /// (the internal session-recorder design). Only ever *built* behind the
     /// internal-and-Windows gate in [`window_items`]; a public build matches
@@ -573,6 +669,10 @@ thread_local! {
     /// than one counts them, so the menu says what it will do before it is
     /// pressed rather than in the dialog afterwards.
     static RUN_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
+    /// The same for *Delete chat*: how many chats the menu is about.
+    static CHAT_DELETE_COUNT: RefCell<usize> = const { RefCell::new(1) };
+    /// What the floor menu's *Trash* row counts.
+    static TRASH_COUNT: RefCell<usize> = const { RefCell::new(0) };
     /// What the run whose pill was right-clicked has produced — one title per
     /// row, snapshotted when the menu opens for `SESSION_PROJECT_NAMES`'
     /// reason and one more: a run that is still working registers results
@@ -717,6 +817,27 @@ pub fn set_session_project_names(names: Vec<(ProjectId, String)>) {
 /// Snapshot why *Delete run* is refused for the runs the menu is about.
 pub fn set_run_delete_refusal(reason: Option<&'static str>) {
     RUN_DELETE_REFUSAL.with(|cell| *cell.borrow_mut() = reason);
+}
+
+/// Snapshot what is in the Trash, so the floor menu's row can count it.
+pub fn set_trash_count(count: usize) {
+    TRASH_COUNT.with(|cell| *cell.borrow_mut() = count);
+}
+
+/// The floor's `…` menu (the CTO's artboard, E60).
+pub fn floor_items() -> Vec<MenuAction> {
+    vec![
+        MenuAction::NewWorkspace,
+        MenuAction::ImportAs,
+        MenuAction::Divider,
+        MenuAction::InvitePeople,
+        MenuAction::OpenTrash,
+    ]
+}
+
+/// Snapshot how many chats *Delete chat* is about, so the row can count them.
+pub fn set_chat_delete_count(count: usize) {
+    CHAT_DELETE_COUNT.with(|cell| *cell.borrow_mut() = count.max(1));
 }
 
 /// Snapshot how many runs *Delete run* is about, so the row can count them.
@@ -923,9 +1044,16 @@ impl MenuAction {
                 ));
             }
             MenuAction::DeleteAiChat => {
-                return Cow::Borrowed(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::ChatsDelete,
+                let lang = crate::format::lang();
+                let count = CHAT_DELETE_COUNT.with(|cell| *cell.borrow());
+                if count <= 1 {
+                    return Cow::Borrowed(koru_i18n::t(lang, koru_i18n::Key::ChatsDelete));
+                }
+                // The row says how many, the way *Delete run* does (the
+                // CTO's note: delete several chats as several documents).
+                return Cow::Owned(koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                    &[&koru_i18n::number::decimal(lang, count as u64)],
                 ));
             }
             MenuAction::DeleteRun => {
@@ -978,6 +1106,24 @@ impl MenuAction {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::TerminalTerminate,
+                ));
+            }
+            MenuAction::NewWorkspace => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::TerminalNewWorkspace,
+                ));
+            }
+            MenuAction::InvitePeople => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::InvitePeople,
+                ));
+            }
+            MenuAction::OpenTrash => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::WorkspacesTrash,
                 ));
             }
             MenuAction::OpenWelcome => "Welcome",
@@ -1106,6 +1252,25 @@ impl MenuAction {
             MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
+            // A heading, so in caps — the pane's *WORKSPACES · n* rule.
+            MenuAction::HelpWhatsNewHeading => {
+                return Cow::Owned(
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::WhatsNew).to_uppercase(),
+                );
+            }
+            MenuAction::HelpRelease => return Cow::Owned(help_card().title),
+            MenuAction::HelpDownload => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download)
+            }
+            MenuAction::HelpFullChangelog => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FullChangelog)
+            }
+            MenuAction::HelpSendFeedback => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
+            }
+            MenuAction::HelpSocials => "",
+            MenuAction::HelpWebsite => "koru.do",
+            MenuAction::HelpSocial(social) => social.name(),
             MenuAction::HeaderStartRecording => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::RecordingMenuStart)
             }
@@ -1155,6 +1320,12 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
+            // Not a chord: the count of what is in the Trash, at the row's
+            // end where a chord would sit (the CTO's artboard).
+            MenuAction::OpenTrash => {
+                let count = TRASH_COUNT.with(|cell| *cell.borrow());
+                (count > 0).then(|| koru_i18n::number::decimal(crate::format::lang(), count as u64))
+            }
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1216,17 +1387,27 @@ impl MenuAction {
                 Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => Some(glyph),
                 _ => None,
             },
-            MenuAction::NewAiChat => Some(koru_draw::icons::SPARKLE),
+            MenuAction::NewAiChat => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::ImportAs => Some(koru_draw::icons::IMPORT),
+            MenuAction::NewWorkspace => Some(koru_draw::icons::PLUS),
+            MenuAction::InvitePeople => Some(koru_draw::icons::USER_PLUS),
+            MenuAction::OpenTrash => Some(koru_draw::icons::TRASH),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
             MenuAction::Delegate | MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
             // A result is a document, and it opens as one.
             MenuAction::OpenRunResult(_) => Some(koru_draw::icons::FILE),
-            MenuAction::Chats => Some(koru_draw::icons::SPARKLE),
+            MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
+            // The help popover's rows, as the artboard draws them.
+            MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
+            MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
+            MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
+            MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
+            MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
                 Some(koru_draw::icons::POP_OUT)
             }
@@ -1300,7 +1481,11 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
+            MenuAction::Divider
+                | MenuAction::SelectionHeader(_)
+                | MenuAction::HeaderZoom
+                | MenuAction::HelpWhatsNewHeading
+                | MenuAction::HelpSocials
         )
     }
 
@@ -1369,7 +1554,9 @@ impl koru_ui::MenuItem for MenuAction {
     fn height(&self) -> f32 {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
-            MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
+            MenuAction::SelectionHeader(_) | MenuAction::HelpWhatsNewHeading => theme::ROW_H - 4.0,
+            // A touch taller than a row, so six logos have air around them.
+            MenuAction::HelpSocials => theme::ROW_H + 8.0,
             MenuAction::Divider => 8.0,
             _ => theme::ROW_H,
         }
@@ -1390,6 +1577,19 @@ impl koru_ui::MenuItem for MenuAction {
             .collect()
     }
 
+    fn card(&self) -> Option<koru_ui::MenuCard> {
+        matches!(self, MenuAction::HelpRelease).then(|| help_card().menu_card())
+    }
+
+    /// The changelog leaves the app: an `↗` where its chord would be.
+    fn trailing_icon(&self) -> Option<char> {
+        matches!(self, MenuAction::HelpFullChangelog).then_some(koru_draw::icons::POP_OUT)
+    }
+
+    fn unread(&self) -> bool {
+        matches!(self, MenuAction::HelpWhatsNewHeading) && help_card().unread
+    }
+
     /// A dimmed row that does not explain itself is a dead end; the rows that
     /// can be dimmed here are dimmed for reasons a person cannot see from the
     /// row, so each answers with its one reason and needs no subject.
@@ -1406,6 +1606,8 @@ impl koru_ui::MenuItem for MenuAction {
             return Some(Cow::Owned(reason));
         }
         match self {
+            // The help popover's row that waits on a later phase says so
+            // (disabled, never hidden).
             MenuAction::Open | MenuAction::OpenInNewWindow => {
                 Some(Cow::Borrowed("This workspace is already open"))
             }
@@ -2118,6 +2320,72 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
     items
 }
 
+/// What the help popover's release card says. Built by the window when the
+/// popover opens (`MainView::help_card`) and read through the thread-local
+/// below, the same arrangement the `+` menu's recent titles use: a row's
+/// label, card and controls are read from the action alone.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct HelpCard {
+    /// `STABLE · 1.0.1` — the channel in caps and the version.
+    pub badge: String,
+    /// The release date, the reader's way; empty for a build never released.
+    pub date: String,
+    pub title: String,
+    pub body: String,
+    /// The Download button: `Some(true)` while a build waits for the first
+    /// consent, `Some(false)` drawn dim when there is nothing to fetch,
+    /// `None` for no button.
+    pub download: Option<bool>,
+    /// Whether the heading wears its dot: a build is on offer.
+    pub unread: bool,
+}
+
+impl HelpCard {
+    fn menu_card(&self) -> koru_ui::MenuCard {
+        koru_ui::MenuCard {
+            badge: self.badge.clone(),
+            date: self.date.clone(),
+            title: self.title.clone(),
+            body: self.body.clone(),
+            button: self.download.map(|on| {
+                (
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::Download).to_owned(),
+                    on,
+                )
+            }),
+        }
+    }
+}
+
+thread_local! {
+    /// This window's release card, set when the help popover opens.
+    static HELP_CARD: RefCell<HelpCard> = RefCell::new(HelpCard::default());
+}
+
+fn help_card() -> HelpCard {
+    HELP_CARD.with(|c| c.borrow().clone())
+}
+
+/// The help popover's rows (the CTO's artboard, QUESTIONS.md E33): *WHAT'S
+/// NEW* over the release card, then *Full changelog*, then *Keyboard
+/// shortcuts* (dimmed until its page lands), then *Send feedback* and
+/// *Report a problem*, and the strip of the website and the socials at the
+/// foot. Support is not a row: it stays reachable through the Agent's own
+/// asks, and the CTO hid it here.
+pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
+    HELP_CARD.with(|c| *c.borrow_mut() = card);
+    vec![
+        MenuAction::HelpWhatsNewHeading,
+        MenuAction::HelpRelease,
+        MenuAction::Divider,
+        MenuAction::HelpFullChangelog,
+        MenuAction::Divider,
+        MenuAction::HelpSendFeedback,
+        MenuAction::Divider,
+        MenuAction::HelpSocials,
+    ]
+}
+
 /// **Hidden for now: Feedback is the overflow's only destination.** Support,
 /// Keyboard shortcuts, Get the mobile app, Updates and the session recorder's
 /// row are left out of [`window_items`]. Each is still built and handled, so
@@ -2210,8 +2478,46 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
+        // The card's one control: its Download button, live only while a
+        // build waits for the first consent.
+        MenuAction::HelpRelease => help_card()
+            .download
+            .map(|enabled| {
+                vec![(
+                    Control::Button {
+                        glyph: koru_draw::icons::IMPORT,
+                        enabled,
+                    },
+                    Some(MenuAction::HelpDownload),
+                )]
+            })
+            .unwrap_or_default(),
+        // The strip: the website's globe, then the socials in their order.
+        MenuAction::HelpSocials => std::iter::once((
+            Control::Button {
+                glyph: koru_draw::icons::GLOBE,
+                enabled: true,
+            },
+            Some(MenuAction::HelpWebsite),
+        ))
+        .chain(Social::ALL.into_iter().map(|social| {
+            (
+                Control::Button {
+                    glyph: social.glyph(),
+                    enabled: true,
+                },
+                Some(MenuAction::HelpSocial(social)),
+            )
+        }))
+        .collect(),
         _ => Vec::new(),
     }
+}
+
+/// How many controls `items` carry between them — the ids a menu reserves
+/// beyond its rows' (see [`ContextMenu::control_instance`]).
+fn controls_total(items: &[MenuAction]) -> usize {
+    items.iter().map(|item| row_controls(*item).len()).sum()
 }
 
 /// What *Arrange Window* opens.
@@ -2443,7 +2749,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::aligned(engine, anchor, items, align),
         }
     }
@@ -2478,7 +2784,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::as_submenu(engine, parent, items, viewport),
         }
     }
@@ -2496,7 +2802,7 @@ impl ContextMenu {
         let items = shown(items);
         Self {
             subject,
-            instance: mint_menu_instance(items.len()),
+            instance: mint_menu_instance(items.len() + controls_total(&items)),
             inner: koru_ui::Menu::at_width(anchor, items, align, width),
         }
     }
@@ -2518,6 +2824,34 @@ impl ContextMenu {
         let offset = id.checked_sub(self.instance + 1)?;
         let i = usize::try_from(offset).ok()?;
         (i < self.items().len()).then_some(i)
+    }
+
+    /// The accessibility id of control `c` of row `row` — the ids after the
+    /// rows' in this opening's block, in row order then control order, so a
+    /// stepper's `−` and a strip's logos are each named once and never by a
+    /// row's number.
+    pub fn control_instance(&self, row: usize, c: usize) -> u64 {
+        let before: usize = self
+            .items()
+            .iter()
+            .take(row)
+            .map(|item| row_controls(*item).len())
+            .sum();
+        self.instance + 1 + self.items().len() as u64 + (before + c) as u64
+    }
+
+    /// …and the control an id names, if it is one of this opening's.
+    pub fn control_of_instance(&self, id: u64) -> Option<(usize, usize)> {
+        let offset = id.checked_sub(self.instance + 1 + self.items().len() as u64)?;
+        let mut rest = usize::try_from(offset).ok()?;
+        for (row, item) in self.items().iter().enumerate() {
+            let n = row_controls(*item).len();
+            if rest < n {
+                return Some((row, rest));
+            }
+            rest -= n;
+        }
+        None
     }
 }
 

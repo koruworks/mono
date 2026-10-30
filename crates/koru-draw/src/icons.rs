@@ -303,6 +303,22 @@ pub const CIRCLE_NOTCH: char = '\u{EB44}';
 pub const LIST_CHECKS: char = '\u{EADC}';
 /// Comments and threads — `ph-chat-circle`
 pub const CHAT_CIRCLE: char = '\u{E168}';
+/// The Chats view — `ph-chats-circle`: two bubbles, the CTO's pick for the
+/// rail's square, the chat tab and the menu rows that lead there.
+pub const CHATS_CIRCLE: char = '\u{E17E}';
+/// Compose — `ph-note-pencil`: the Chats heading's *New chat* button.
+pub const NOTE_PENCIL: char = '\u{E34C}';
+/// Invite people — `ph-user-plus`: the floor menu's row.
+pub const USER_PLUS: char = '\u{E4D0}';
+/// Linked devices — `ph-devices`: the Profiles page's footer button.
+pub const DEVICES: char = '\u{EBA4}';
+/// This computer — `ph-desktop`: the Manage nav's *Linked devices* row.
+pub const DESKTOP: char = '\u{E560}';
+/// The Documents view — `ph-files`: two sheets, the one ChatGPT's library
+/// wears (the CTO's note).
+pub const FILES: char = '\u{E710}';
+/// The Tasks view — `ph-check-square-offset` (the CTO's pick).
+pub const CHECK_SQUARE_OFFSET: char = '\u{E188}';
 /// Send feedback — `ph-user-sound`. A person with sound waves; the same
 /// glyph the overflow menu and the Feedback tab share.
 pub const USER_SOUND: char = '\u{ECA8}';
@@ -487,6 +503,22 @@ pub const CLOUD: char = '\u{E1AA}';
 /// the toggle beside it already carries the on/off colour, and a colour-only
 /// difference is the one difference a person cannot see in greyscale.
 pub const CLOUD_SLASH: char = '\u{E1B6}';
+/// Two arrows chasing each other round a circle — `ph-arrows-clockwise`,
+/// U+E094 in the same stylesheet. The who/where popover's sync icon, worn in
+/// five states by colour and a dot (the CTO's artboard).
+pub const ARROWS_CLOCKWISE: char = '\u{E094}';
+
+// The help popover (workspace foundation, the CTO's artboard): its rows'
+// glyphs and the social strip at its foot. `ph-x-logo`, `ph-reddit-logo`,
+// `ph-instagram-logo`, `ph-tiktok-logo`, `ph-youtube-logo`,
+// `ph-keyboard`. The changelog's `↗` is [`POP_OUT`] and the card's Download
+// glyph is [`IMPORT`]: the same Phosphor shapes, already named.
+pub const X_LOGO: char = '\u{E4BC}';
+pub const REDDIT_LOGO: char = '\u{E59C}';
+pub const INSTAGRAM_LOGO: char = '\u{E2D0}';
+pub const TIKTOK_LOGO: char = '\u{EAF2}';
+pub const YOUTUBE_LOGO: char = '\u{E4FC}';
+pub const KEYBOARD: char = '\u{E2D8}';
 
 /// A **canvas** — `ph-squares-four`: Explore's Canvases section, the `+`
 /// menu's Canvases flyout, and the tab over a canvas.
@@ -533,7 +565,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 126] = [
+pub const ALL: [(&str, char); 140] = [
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -607,6 +639,13 @@ pub const ALL: [(&str, char); 126] = [
     ("CIRCLE_NOTCH", CIRCLE_NOTCH),
     ("LIST_CHECKS", LIST_CHECKS),
     ("CHAT_CIRCLE", CHAT_CIRCLE),
+    ("CHATS_CIRCLE", CHATS_CIRCLE),
+    ("NOTE_PENCIL", NOTE_PENCIL),
+    ("USER_PLUS", USER_PLUS),
+    ("DEVICES", DEVICES),
+    ("DESKTOP", DESKTOP),
+    ("FILES", FILES),
+    ("CHECK_SQUARE_OFFSET", CHECK_SQUARE_OFFSET),
     ("USER_SOUND", USER_SOUND),
     ("HEADSET", HEADSET),
     ("QUESTION", QUESTION),
@@ -659,7 +698,14 @@ pub const ALL: [(&str, char); 126] = [
     ("LINUX_LOGO", LINUX_LOGO),
     ("CLOUD", CLOUD),
     ("CLOUD_SLASH", CLOUD_SLASH),
+    ("ARROWS_CLOCKWISE", ARROWS_CLOCKWISE),
     ("CANVAS", CANVAS),
+    ("X_LOGO", X_LOGO),
+    ("REDDIT_LOGO", REDDIT_LOGO),
+    ("INSTAGRAM_LOGO", INSTAGRAM_LOGO),
+    ("TIKTOK_LOGO", TIKTOK_LOGO),
+    ("YOUTUBE_LOGO", YOUTUBE_LOGO),
+    ("KEYBOARD", KEYBOARD),
 ];
 
 #[cfg(test)]

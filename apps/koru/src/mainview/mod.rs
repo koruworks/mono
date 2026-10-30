@@ -65,6 +65,8 @@ mod agent_mcp;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
+mod chrome_debug;
+mod chrome_focus;
 mod closed_tabs;
 pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
@@ -387,14 +389,28 @@ struct MoveUndo {
 
 /// Whether the caption offers the context column's **toggle**.
 ///
-/// Context belongs to the active document, so its control lives with that
-/// document's title block (and on `Ctrl+J`), not beside the machine-wide AI
-/// launcher in the window caption. False deliberately produces zero-width
-/// geometry, letting the tabs reclaim the slot without another layout path.
-const CONTEXT_TOGGLE: bool = false;
+/// True again: the workspace-foundation canvas draws *Show context* at the
+/// caption's right end on every frame, beside the overflow menu
+/// (QUESTIONS.md Q4). The document title row keeps its own context and AI
+/// buttons, and the caption's toggle is drawn dimmed, never hidden, while
+/// the column has nothing to show. False would produce zero-width geometry
+/// and give the slot back to the tabs, which is still one line here, not
+/// another layout path.
+const CONTEXT_TOGGLE: bool = true;
 
-const SEARCH_MODAL_W: f32 = 620.0;
+/// Whether the context column has anything to show this build: at least
+/// one of its sections is visible. The caption's toggle dims otherwise.
+fn context_has_sections() -> bool {
+    !crate::panes::context::Section::visible().is_empty()
+}
+
+/// The command bar's place (workspace foundation frame 2): 640 wide, up to
+/// 400 tall, hung 96 px from the top rather than centred — a bar that opens
+/// where the eye already is, under the caption, not in the middle of the
+/// page it is about to leave.
+const SEARCH_MODAL_W: f32 = 640.0;
 const SEARCH_MODAL_H: f32 = 400.0;
+const SEARCH_MODAL_TOP: f32 = 96.0;
 const SEARCH_MODAL_MARGIN: f32 = 16.0;
 const MOVE_TO_MODAL_W: f32 = 420.0;
 const MOVE_TO_MODAL_H: f32 = 360.0;
@@ -402,7 +418,9 @@ const MOVE_TO_MODAL_H: f32 = 360.0;
 fn search_modal_bounds(viewport: (f32, f32)) -> Rect {
     let w = SEARCH_MODAL_W.min((viewport.0 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
     let h = SEARCH_MODAL_H.min((viewport.1 - SEARCH_MODAL_MARGIN * 2.0).max(1.0));
-    Rect::new((viewport.0 - w) * 0.5, (viewport.1 - h) * 0.5, w, h)
+    // 96 px down, or as high as the margin allows in a short window.
+    let y = SEARCH_MODAL_TOP.min((viewport.1 - h - SEARCH_MODAL_MARGIN).max(SEARCH_MODAL_MARGIN));
+    Rect::new((viewport.0 - w) * 0.5, y, w, h)
 }
 
 fn move_to_modal_bounds(viewport: (f32, f32)) -> Rect {
@@ -1080,6 +1098,21 @@ pub struct MainView {
     /// the opposite verb while you are still looking at it. Cleared the moment
     /// the pointer moves off the button, so pointing at it again asks again.
     toggle_tip_muted: bool,
+    /// Where `F6` has put the keyboard on the sidebar's chrome, if anywhere
+    /// (`chrome_focus.rs`).
+    chrome_focus: Option<chrome_focus::ChromeStop>,
+    /// The sidebar's fold in flight: when it began and whether it is
+    /// opening. `None` at rest. The slide itself is the panel's; this is the
+    /// clock the fade and the riding chain read (`theme::motion::pane_fold`).
+    fold: Option<(Instant, bool)>,
+    /// The OS's reduced-motion setting, read once at construction: under it
+    /// the fold lands at once and the fade is skipped. No preference of our
+    /// own yet (QUESTIONS.md Q8).
+    pub(super) reduced_motion: bool,
+    /// How many times the window has been re-cut. The fold's contract is one
+    /// reflow per toggle, and the layout tests count.
+    #[cfg(test)]
+    pub(super) relayouts: usize,
     /// Shared timing for the adjacent icon controls in the caption.
     tooltip: Tooltip,
     /// Recently opened documents, most recent first.
@@ -1138,6 +1171,11 @@ pub struct MainView {
     /// holds a feed that reports nothing rather than a `None` every call site
     /// has to unwrap.
     updates: crate::agent::UpdateFeed,
+    /// This build's release-notes headlines, read once off the event thread
+    /// at construction (`whatsnew::read_headlines_async`) and kept for the
+    /// help popover. `None` until the read lands or when no notes shipped.
+    help_headlines: Option<Vec<String>>,
+    help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
     /// The agent's last word on the coding-agent CLIs, and the way to answer
     /// a card. Absent in every test, like `updates`.
     agent_clis: crate::agent::AgentCliFeed,
@@ -1702,7 +1740,7 @@ impl MainView {
             foreign_targeted: false,
             // Shut by default: an empty tree beside an empty workspace is worse
             // than no tree, and the toggle is one keystroke away.
-            sidebar: Panel::new(theme::SIDEBAR_W, false),
+            sidebar: Panel::new(theme::SIDEBAR_W + theme::RAIL_W, false),
             explore: ExploreView::new(),
             explore_stale: true,
             naming: None,
@@ -1837,6 +1875,13 @@ impl MainView {
             submenu: None,
             nested: None,
             toggle_tip_muted: false,
+            chrome_focus: None,
+            fold: None,
+            reduced_motion: koru_workspace_host::environment::reduced_motion().unwrap_or(false),
+            #[cfg(test)]
+            relayouts: 0,
+            help_headlines: None,
+            help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
             tooltip: Tooltip::default(),
             recents: Vec::new(),
             recent_documents: Vec::new(),
@@ -2410,6 +2455,11 @@ impl MainView {
         };
         let bounds = self.search_bounds();
         View::set_viewport(&mut search, bounds.w, bounds.h);
+        search.make_command_bar(
+            self.command_bar_rows(),
+            Self::command_bar_chips(),
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand).to_owned(),
+        );
         self.search = Some(search);
         // The observation, not the work: one channel send, a no-op under
         // `cargo test` (nothing starts the host there).
@@ -2417,6 +2467,114 @@ impl MainView {
             koru_workspace_host::events_host::SearchSurface::InApp,
         );
         true
+    }
+
+    /// **The CREATE rows this host offers** (TECHNICAL.final §5.9): *New
+    /// task "…"* — undated and unlisted, which the model files in Later — and
+    /// *New document "…"*, landing where the `+` menu's *New document* lands
+    /// today. The rows are built when the bar opens, so the subtitle names
+    /// this workspace; `apply_create` answers them by index.
+    fn command_bar_rows(&self) -> Vec<koru_search_ui::CreateRow> {
+        use koru_i18n::{Key, t};
+        let lang = crate::format::lang();
+        let mut rows = Vec::new();
+        if koru_features::tasks() {
+            rows.push(koru_search_ui::CreateRow {
+                icon: koru_draw::icons::CHECK_SQUARE,
+                title: t(lang, Key::NewTask).to_owned(),
+                subtitle: format!(
+                    "{} · {}",
+                    t(lang, Key::A11yTasksHeading),
+                    t(lang, Key::A11yTaskBucketLater)
+                ),
+            });
+        }
+        let workspace = self
+            .pane_context
+            .as_ref()
+            .and_then(|(_, _, workspaces, current)| {
+                let current = (*current)?;
+                workspaces
+                    .iter()
+                    .find(|w| w.id == current)
+                    .map(|w| w.name.clone())
+            });
+        rows.push(koru_search_ui::CreateRow {
+            icon: koru_draw::icons::DOCUMENT,
+            title: t(lang, Key::NewDocument).to_owned(),
+            subtitle: match workspace {
+                Some(name) => format!("{} · {name}", t(lang, Key::DocumentsHeading)),
+                None => t(lang, Key::DocumentsHeading).to_owned(),
+            },
+        });
+        rows
+    }
+
+    /// The footer's chips: ↑↓ move · ↵ open · Ctrl+↵ open in window. The `/`
+    /// and `@` chips of the canvas wait for the keys they name (rung 7).
+    fn command_bar_chips() -> Vec<koru_search_ui::FooterChip> {
+        use koru_i18n::{Key, t};
+        let lang = crate::format::lang();
+        let chord = |id| koru_keys::show_hint(id, koru_keys::Section::Tooltip).unwrap_or_default();
+        vec![
+            koru_search_ui::FooterChip {
+                key: "\u{2191}\u{2193}".to_owned(),
+                label: t(lang, Key::ChipMove).to_owned(),
+            },
+            koru_search_ui::FooterChip {
+                key: "\u{21b5}".to_owned(),
+                label: t(lang, Key::ChipOpen).to_owned(),
+            },
+            koru_search_ui::FooterChip {
+                key: {
+                    let open = chord(koru_keys::ShortcutId::NewTab);
+                    // The registry prints the platform's primary modifier
+                    // for any container chord; the window's enter is that
+                    // modifier with ↵.
+                    let primary = open.split('+').next().unwrap_or("Ctrl").to_owned();
+                    format!("{primary}+\u{21b5}")
+                },
+                label: t(lang, Key::ChipOpenInWindow).to_owned(),
+            },
+        ]
+    }
+
+    /// Answer a CREATE row: make the thing and open it (`↵` creates *and*
+    /// opens, Q-B). The surface closes the way it does for a chosen result.
+    fn apply_create(&mut self, create: koru_search_ui::Create) -> bool {
+        let tasks = koru_features::tasks();
+        let row = if tasks { create.row } else { create.row + 1 };
+        chrome_debug::chrome_debug!("command bar create row {} for {:?}", row, create.query);
+        match row {
+            0 => {
+                if create.query.is_empty() {
+                    return false;
+                }
+                self.queue_task_command(
+                    koru_workspace_host::tasks::TaskCommand::Create {
+                        title: create.query,
+                        due: None,
+                        list: None,
+                        priority: None,
+                    },
+                    false,
+                );
+                // Where it landed: the Tasks page on Later (Q3).
+                self.open_tasks_tab(
+                    crate::panes::explore::rail::RailTarget::Bucket(
+                        koru_core::tasks::Bucket::Later,
+                    ),
+                    create.disposition == koru_search_ui::Disposition::NewWindow,
+                );
+                true
+            }
+            _ => {
+                self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
+                    create.query,
+                ));
+                true
+            }
+        }
     }
 
     fn service_search_outputs(&mut self) {
@@ -2429,7 +2587,15 @@ impl MainView {
         while let Some(request) = View::take_pane_request(search) {
             requests.push(request);
         }
+        let create = search.take_create();
         let window_request = View::take_window_request(search);
+        if let Some(create) = create {
+            // A CREATE row is a destination like a result: the bar closes
+            // and the thing opens.
+            self.search = None;
+            self.apply_create(create);
+            return;
+        }
         // Forwarded rather than replacing: the search panel's ask joins
         // whatever this view has already queued. A same-window target records
         // *here* — the shell landing that follows must not, or a workspace
@@ -2498,7 +2664,7 @@ impl MainView {
         if self.sidebar.is_open()
             && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files
         {
-            if let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py) {
+            if let Some(node) = self.explore.row_node_at(self.explore_area(), px, py) {
                 return self.start_file_rename(node);
             }
             let selected = self.explore.selection_nodes();
@@ -2509,13 +2675,13 @@ impl MainView {
         }
         if self.sidebar.is_open()
             && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Agents
-            && let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py)
+            && let Some(node) = self.explore.row_node_at(self.explore_area(), px, py)
             && let Some(schedule) = self.explore.agent_schedule_at(node)
         {
             return self.start_schedule_rename(schedule);
         }
         if self.sidebar.is_open()
-            && let Some(node) = self.explore.row_node_at(self.regions.sidebar, px, py)
+            && let Some(node) = self.explore.row_node_at(self.explore_area(), px, py)
         {
             return self.rename_node(ws, node);
         }
@@ -2816,6 +2982,17 @@ impl MainView {
                 NewDocument::workspace(&mut self.engine)
             });
         }
+    }
+
+    /// A sidebar row's `+` (the CTO's note): the document's name, then the
+    /// shell makes it as the row's last child and opens it.
+    fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
+        self.menu = None;
+        if self.new_document.is_none() {
+            self.new_workspace_owner = None;
+            self.new_document = Some(NewDocument::child(&mut self.engine, parent));
+        }
+        true
     }
 
     /// Ask for the workspace's name before creating any durable catalog row.
@@ -3326,6 +3503,21 @@ impl MainView {
                     sender.rename_project(id, name.trim().to_owned());
                 }
                 true
+            }
+            // A row's `+`: inside that row, as its last child. The row is
+            // unfolded first so the child shows where it lands.
+            NewDocumentAction::CreateDocument(title)
+                if matches!(purpose, PromptPurpose::ChildDocument(_)) =>
+            {
+                self.new_document = None;
+                if let PromptPurpose::ChildDocument(parent) = purpose {
+                    self.explore.expand(parent);
+                    self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
+                        parent: koru_core::DocumentId::from_uuid(parent.as_uuid()),
+                        title,
+                    });
+                }
+                return true;
             }
             NewDocumentAction::CreateDocument(title) => {
                 // **A document belongs to the workspace, not to the document in
@@ -4141,6 +4333,19 @@ impl MainView {
             MenuSubject::Trash => {
                 matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
             }
+            // *Invite people* waits for an invite flow (E60); the rest act.
+            MenuSubject::Floor => !matches!(action, MenuAction::InvitePeople),
+            // The help popover's rows are always there. The card's Download
+            // is a control, gated by its own `enabled` rather than here.
+            MenuSubject::Help => matches!(
+                action,
+                MenuAction::HelpRelease
+                    | MenuAction::HelpDownload
+                    | MenuAction::HelpFullChangelog
+                    | MenuAction::HelpSendFeedback
+                    | MenuAction::HelpWebsite
+                    | MenuAction::HelpSocial(_)
+            ),
             // Every window action is always available — the rows were built from
             // this window's state when the menu opened, and a window can always
             // be minimised, resized and closed.
@@ -4226,10 +4431,15 @@ impl MainView {
                 MenuAction::OpenRecentChat(id) => self.open_ai_chat_tab_for(id),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
                 MenuAction::ClearRecents => self.clear_recents(),
-                MenuAction::ImportFormat(format) => self.ask_pane(PaneRequest::ImportContent {
-                    format,
-                    source: koru_workspace_host::ImportSourceSelection::Picker,
-                }),
+                MenuAction::ImportFormat(format) => {
+                    // The who/where page stayed under its format menu; a
+                    // chosen format is the end of that interaction.
+                    self.explore.close_popover();
+                    self.ask_pane(PaneRequest::ImportContent {
+                        format,
+                        source: koru_workspace_host::ImportSourceSelection::Picker,
+                    })
+                }
                 MenuAction::ImportAs => false,
                 _ => false,
             },
@@ -4326,8 +4536,8 @@ impl MainView {
                 MenuAction::DeleteRun => self.queue_run_trash(runs),
                 _ => false,
             },
-            MenuSubject::AiChat { chat } => match action {
-                MenuAction::DeleteAiChat => self.ask_delete_chat(chat),
+            MenuSubject::AiChat { chats } => match action {
+                MenuAction::DeleteAiChat => self.ask_delete_chats(chats.clone()),
                 _ => false,
             },
             MenuSubject::AgentSchedules { schedules } => match action {
@@ -4610,6 +4820,40 @@ impl MainView {
                 }
                 _ => false,
             },
+            MenuSubject::Floor => match action {
+                MenuAction::NewWorkspace => self.prompt_new_workspace(),
+                MenuAction::OpenTrash => self.open_trash_tab(),
+                MenuAction::ImportFormat(format) => {
+                    self.ask_pane(PaneRequest::ImportContent {
+                        format,
+                        source: koru_workspace_host::ImportSourceSelection::Picker,
+                    });
+                    true
+                }
+                _ => false,
+            },
+            // The help popover (QUESTIONS.md E33). The card opens the What's
+            // new tab; its button sends the update's first consent; the
+            // changelog, the website and the socials open in the browser
+            // through the shell's URI port, never from the view.
+            MenuSubject::Help => match action {
+                MenuAction::HelpRelease => self.open_whats_new(env!("CARGO_PKG_VERSION")),
+                MenuAction::HelpDownload => self.help_download(),
+                MenuAction::HelpFullChangelog => {
+                    self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
+                    true
+                }
+                MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
+                MenuAction::HelpWebsite => {
+                    self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
+                    true
+                }
+                MenuAction::HelpSocial(social) => {
+                    self.ask_pane(PaneRequest::OpenUri(social.url()));
+                    true
+                }
+                _ => false,
+            },
             // Straight to the shell, the same requests the four caption buttons
             // raised. A view holds no `Window`, so it asks and the shell performs
             // it inside this press — see [`ask_window`].
@@ -4683,6 +4927,94 @@ impl MainView {
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
+        true
+    }
+
+    /// The help popover's release card: the build the Agent is offering when
+    /// it has one — its title and summary straight from the manifest, Download
+    /// live while it waits for the first consent — else the build that is
+    /// running: channel and version, the day it was released, the shipped
+    /// notes' first sections for a title and a line, and Download drawn dim
+    /// since there is nothing to fetch (the CTO's artboard). A build without
+    /// notes says so in the card rather than inventing a headline.
+    fn help_card(&self) -> context_menu::HelpCard {
+        use koru_agent_wire::UpdateStage;
+        let lang = crate::format::lang();
+        let info = koru_channel::build_info();
+        let report = self.updates.report();
+        let offered = report.as_ref().filter(|r| {
+            !r.version.is_empty()
+                && matches!(
+                    r.stage,
+                    UpdateStage::Available
+                        | UpdateStage::Downloading
+                        | UpdateStage::Verifying
+                        | UpdateStage::Ready
+                        | UpdateStage::Installing
+                        | UpdateStage::Deferred
+                )
+        });
+        if let Some(r) = offered {
+            let channel = if r.channel.is_empty() {
+                info.channel
+            } else {
+                r.channel.as_str()
+            };
+            return context_menu::HelpCard {
+                badge: format!("{} · {}", channel.to_uppercase(), r.version),
+                date: String::new(),
+                title: r.title.clone(),
+                body: r
+                    .summary
+                    .iter()
+                    .take(2)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                download: Some(matches!(
+                    r.stage,
+                    UpdateStage::Available | UpdateStage::Deferred
+                )),
+                unread: true,
+            };
+        }
+        let date = chrono::DateTime::parse_from_rfc3339(info.released_at)
+            .ok()
+            .and_then(|t| crate::format::local_parts(t.timestamp_millis()))
+            .map(|parts| koru_i18n::time::absolute_date(lang, parts, false))
+            .unwrap_or_default();
+        let headlines = self.help_headlines.as_deref().unwrap_or(&[]);
+        let (title, body) = match headlines.split_first() {
+            Some((first, rest)) => (
+                first.clone(),
+                rest.iter().take(2).cloned().collect::<Vec<_>>().join(" · "),
+            ),
+            None => (
+                format!("Koru {}", info.version),
+                koru_i18n::t(lang, koru_i18n::Key::NotShippedWithThisBuild).to_owned(),
+            ),
+        };
+        context_menu::HelpCard {
+            badge: format!("{} · {}", info.channel.to_uppercase(), info.version),
+            date,
+            title,
+            body,
+            download: Some(false),
+            unread: false,
+        }
+    }
+
+    /// The card's Download: the update's first consent, the one the banner's
+    /// own button sends. Refused unless a build is waiting for it.
+    fn help_download(&mut self) -> bool {
+        use koru_agent_wire::{UpdateChoice, UpdateStage};
+        let Some(report) = self.updates.report() else {
+            return false;
+        };
+        if !matches!(report.stage, UpdateStage::Available | UpdateStage::Deferred) {
+            return false;
+        }
+        self.update_consent(UpdateChoice::Download, report.stage);
         true
     }
 
@@ -5422,35 +5754,59 @@ impl MainView {
     /// the Chats view sends the delete on *yes*, through `settle_confirm`,
     /// which is what makes the dialog the one door. The title is the chat's
     /// own: shown, never logged.
-    fn ask_delete_chat(&mut self, chat: koru_ai_ui::ChatId) -> bool {
+    /// Ask before deleting one chat or the pick (the CTO's note): one is
+    /// named, several are counted, and a yes deletes each.
+    fn ask_delete_chats(&mut self, chats: Vec<koru_ai_ui::ChatId>) -> bool {
+        let Some(&first) = chats.first() else {
+            return false;
+        };
         let lang = crate::format::lang();
-        let title = self
-            .explore
-            .chats_mut()
-            .chats()
-            .iter()
-            .find(|candidate| candidate.id == chat)
-            .map(|candidate| koru_chats_ui::text::title(lang, candidate).to_owned())
-            .unwrap_or_default();
-        self.confirm = Some((
-            koru_ui::Confirm::new(
-                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteTitle),
+        let (title, body, verb) = if chats.len() == 1 {
+            let name = self
+                .explore
+                .chats_mut()
+                .chats()
+                .iter()
+                .find(|candidate| candidate.id == first)
+                .map(|candidate| koru_chats_ui::text::title(lang, candidate).to_owned())
+                .unwrap_or_default();
+            (
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteTitle).to_owned(),
                 koru_i18n::fill(
                     koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteBody),
-                    &[&title],
+                    &[&name],
                 ),
-                koru_i18n::t(lang, koru_i18n::Key::ChatsDelete),
-            ),
-            trash::ConfirmSubject::DeleteChat(chat),
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDelete).to_owned(),
+            )
+        } else {
+            let count = koru_i18n::number::decimal(lang, chats.len() as u64);
+            let verb = koru_i18n::fill(
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                &[&count],
+            );
+            (
+                format!("{verb}?"),
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteManyBody),
+                    &[&count],
+                ),
+                verb,
+            )
+        };
+        self.confirm = Some((
+            koru_ui::Confirm::new(title, body, verb),
+            trash::ConfirmSubject::DeleteChats(chats),
         ));
         true
     }
 
     /// A chat row's menu: one verb, *Delete chat*.
-    fn open_chat_menu(&mut self, chat: koru_ai_ui::ChatId, at: (f32, f32)) -> bool {
+    fn open_chat_menu(&mut self, chats: Vec<koru_ai_ui::ChatId>, at: (f32, f32)) -> bool {
+        // The row counts the pick, the way *Delete run* does.
+        context_menu::set_chat_delete_count(chats.len());
         let mut menu = ContextMenu::new(
             &mut self.engine,
-            MenuSubject::AiChat { chat },
+            MenuSubject::AiChat { chats },
             at,
             context_menu::ai_chat_items(),
         );
@@ -5481,10 +5837,27 @@ impl MainView {
     /// Begin renaming a workspace in place — over its Manage row, where the
     /// field goes (`workspace_rename_row`).
     fn start_workspace_rename(&mut self, id: WorkspaceId) -> bool {
-        let Some(name) = self.workspace_facts(id).map(|w| w.name) else {
+        let Some(facts) = self.workspace_facts(id) else {
             return false;
         };
-        self.workspace_rename = Some(WorkspaceRename::new(&mut self.engine, id, &name));
+        // The field is drawn over the row of whichever list shows the
+        // workspace (`workspace_rename_row`). Started where no list does —
+        // the floor chip's menu, a Manage tab on another Profile — it had
+        // nowhere to go and nothing appeared (E41). So the Manage tab is
+        // opened on the workspace's Profile first, scrolled to its
+        // Workspaces, the way the lifecycle verbs reach their controller.
+        let on_the_page = self
+            .explore
+            .popover_workspace_rect(self.explore_popover_area(), self.viewport, id)
+            .is_some();
+        let on_a_manage_row = matches!(
+            &self.tabs().active_tab().view,
+            TabView::Manage(manage) if manage.workspace_name_rect(id).is_some()
+        );
+        if !on_the_page && !on_a_manage_row {
+            self.open_manage_workspaces(facts.owner);
+        }
+        self.workspace_rename = Some(WorkspaceRename::new(&mut self.engine, id, &facts.name));
         true
     }
 
@@ -5545,12 +5918,12 @@ impl MainView {
             RenameTarget::File(id) => {
                 return self
                     .explore
-                    .row_label_rect(self.regions.sidebar, NodeId::from_uuid(id.as_uuid()));
+                    .row_label_rect(self.explore_area(), NodeId::from_uuid(id.as_uuid()));
             }
             RenameTarget::Schedule(schedule) => {
                 if let Some(row) = self
                     .explore
-                    .agent_schedule_label_rect(self.regions.sidebar, schedule)
+                    .agent_schedule_label_rect(self.explore_area(), schedule)
                 {
                     return Some(row);
                 }
@@ -5862,19 +6235,6 @@ impl MainView {
         true
     }
 
-    /// The switcher's *Manage profiles…*: Manage on the open Profile's page.
-    /// Before the
-    /// window knows its Profile, Koru Cloud — the account-wide page.
-    fn open_manage_profiles(&mut self) -> bool {
-        let page = self
-            .pane_context
-            .as_ref()
-            .map_or(crate::manage::Page::Cloud, |(_, current, _, _)| {
-                crate::manage::Page::Profile(*current)
-            });
-        self.open_manage(page)
-    }
-
     /// Hand the Manage tab what the window knows: the Profiles, the open one
     /// and its Workspaces, the account, the retained and hidden Profiles, the
     /// Workspace counts and how many devices are linked.
@@ -5910,7 +6270,8 @@ impl MainView {
     /// and its *Linked devices* page.
     fn push_linked_devices(&mut self) -> bool {
         let devices = &self.linked_devices;
-        let mut changed = false;
+        // The summary's *Link a device* row counts the others.
+        let mut changed = self.explore.set_linked_count(devices.devices().len());
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
                 if let TabView::Manage(view) = &mut tab.view {
@@ -6595,6 +6956,14 @@ impl MainView {
     }
 
     fn open_new_tab_menu(&mut self) -> bool {
+        self.ensure_tab_widths();
+        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
+        self.open_new_tab_menu_at(button)
+    }
+
+    /// The Add… menu hung under `button`: the tab strip's `+`, or the lane's
+    /// New, which opens the same list whichever app is active.
+    pub(crate) fn open_new_tab_menu_at(&mut self, button: Rect) -> bool {
         // Freshen the presence probe that dims missing programs — off the loop
         // thread, so the menu opens now on the last known answer and the
         // worker's wake re-dims the rows when the fresh one lands.
@@ -6607,8 +6976,6 @@ impl MainView {
             self.ai_chat.activate();
         }
         self.snapshot_plus_menu();
-        self.ensure_tab_widths();
-        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
         let mut menu = ContextMenu::aligned(
             &mut self.engine,
             MenuSubject::NewTab,
@@ -6635,6 +7002,85 @@ impl MainView {
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
         self.menu = Some(menu);
+        true
+    }
+
+    /// The who/where popover's heading import button: the formats, hanging
+    /// off the panel's right edge level with the button, with the page
+    /// still under it (the CTO's notes, QUESTIONS.md E29 and E37). A chosen
+    /// format shuts the page, since it is the end of the interaction.
+    /// The floor's `…` (the CTO's artboard, E60): New workspace, Import…
+    /// with its formats as a flyout, Invite people, and Trash with its
+    /// count. Beside the button to its right (the CTO's note), level with
+    /// its top; the menu lifts itself to stay on screen at the window's
+    /// foot.
+    fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
+        context_menu::set_trash_count(self.explore.trash_count());
+        let mut menu = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::Floor,
+            at,
+            context_menu::floor_items(),
+            MenuAnchor::Cursor,
+        );
+        let enabled = self.enabled_items(&menu);
+        menu.step(&enabled, 1);
+        self.menu = Some(menu);
+        true
+    }
+
+    /// The help popover beside the rail's `?`, its foot level with the
+    /// control's.
+    fn open_help_beside(&mut self) -> bool {
+        let rail = self.rail_area();
+        let help = self.explore.apps_rail_rects(rail).help;
+        if help.w <= 0.0 {
+            return false;
+        }
+        let edge = rail.x + rail.w;
+        if self.support_only {
+            return false;
+        }
+        chrome_debug::chrome_debug!("help popover opened beside its ?");
+        let items = context_menu::help_items(self.help_card());
+        let x = edge + koru_app_shell::popover::GAP;
+        let mut m = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::Help,
+            (x, help.y),
+            items,
+            MenuAnchor::Cursor,
+        );
+        let height = m.height();
+        m.set_anchor((x, (help.y + help.h - height).max(0.0)));
+        let enabled = self.enabled_items(&m);
+        m.step(&enabled, 1);
+        self.menu = Some(m);
+        true
+    }
+
+    /// The Sync settings tab: a singleton page that, for now, says only its
+    /// name (the CTO's artboard; what it holds is QUESTIONS.md E31). Nothing
+    /// opens it since the popover's toolbar went (E32); it waits for the
+    /// Sync settings design to say where its door is.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn open_sync_settings_tab(&mut self) -> bool {
+        let existing = self.tabs().iter().position(|t| {
+            t.whats_new
+                .as_ref()
+                .is_some_and(|n| n.page == tab::PrivatePage::SyncSettings)
+        });
+        if let Some(i) = existing {
+            self.select(i);
+            return true;
+        }
+        let Some(tab) = Tab::sync_settings() else {
+            return false;
+        };
+        self.tabs_mut().push(tab);
+        self.slides_mut().clear();
+        self.relayout();
+        self.select(self.tabs().len() - 1);
         true
     }
 
@@ -6786,7 +7232,9 @@ impl MainView {
             Outcome::CloseTab(i) => self.close_requested(i),
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
             Outcome::NewTab => self.open_new_tab_menu(),
+            Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
+            Outcome::OpenHelp => self.open_help_beside(),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -6799,7 +7247,7 @@ impl MainView {
             // open by the shell. It only looks like a file row because the
             // glyph that offered it sits on one.
             Outcome::OpenNote(id) => self.open_from_explore(ws, id),
-            Outcome::OpenNodeInNewTab(_) => true, // retired: double-click no longer opens a tab
+            Outcome::OpenNodeInBackgroundTab(id) => self.open_in_background_from_explore(ws, id),
             // The Agents navigator: focus the tab already on this session,
             // else open one bound to it (never a launch).
             //
@@ -6825,8 +7273,8 @@ impl MainView {
                 self.show_navigator(crate::panes::explore::NavigatorMode::Socials)
             }
             Outcome::NewAiChat => self.open_ai_chat_tab(),
-            Outcome::DeleteAiChat(chat) => self.ask_delete_chat(chat),
-            Outcome::AiChatMenu { chat, at } => self.open_chat_menu(chat, at),
+            Outcome::DeleteAiChats(chats) => self.ask_delete_chats(chats),
+            Outcome::AiChatMenu { chats, at } => self.open_chat_menu(chats, at),
             // The Agents tree's mutations: every one a typed verb to the
             // session host, with the tree reflecting the catalog that answers
             // — the container keeps no project truth (ADR-264, Q-E6).
@@ -6872,11 +7320,12 @@ impl MainView {
             // process are all the shell's; a view has neither the data
             // directory nor a `Window`. So each is recorded and drained.
             Outcome::SwitchWorkspace(id) => self.switch_workspace_here(id),
-            Outcome::SwitchToWorkspaceIn { profile, workspace } => {
-                self.ask_pane(PaneRequest::SwitchToWorkspaceIn(profile, workspace))
-            }
+            // The popover stays open on its main page, and lists the new
+            // Profile's workspaces once the switch has happened (the CTO's
+            // artboard). The window lands on the workspace that Profile
+            // last had open — each Profile keeps its own window settings.
+            Outcome::SwitchProfile(id) => self.ask_pane(PaneRequest::SwitchProfile(id)),
             Outcome::NewWorkspace => self.prompt_new_workspace(),
-            Outcome::NewWorkspaceIn(profile) => self.prompt_new_workspace_in(profile),
             Outcome::NewProfile => self.open_profile_creation(),
             Outcome::SubscribeCloud => {
                 self.ask_pane(PaneRequest::OpenWebsite(crate::website::page_url(
@@ -6886,11 +7335,18 @@ impl MainView {
                 )))
             }
             Outcome::ImportContent => self.open_import_menu(),
-            Outcome::ManageWorkspaces(profile) => self.open_manage_workspaces(profile),
-            Outcome::ManageProfiles => self.open_manage_profiles(),
-            Outcome::AddProfile => self.ask_pane(PaneRequest::AddProfile),
-            Outcome::OpenProfile => self.ask_pane(PaneRequest::OpenProfile),
-            Outcome::LinkDevice => self.open_link_device(),
+            Outcome::ManageWorkspace(_) => self.open_manage_workspaces(None),
+            Outcome::ManageProfile(profile) => {
+                self.open_manage(crate::manage::Page::Profile(profile))
+            }
+            Outcome::ManageDevices => self.open_manage(crate::manage::Page::Devices),
+            Outcome::FloorMenu { at } => self.open_floor_menu(at),
+            Outcome::WorkspaceMenu { workspace, at } => {
+                self.open_workspace_menu(workspace, at, false)
+            }
+            Outcome::OpenSettings => self.open_settings_tab(),
+            Outcome::OpenHome => self.open_home_tab(),
+            Outcome::OpenRecentDocument(id) => self.open_recent_document(id),
             Outcome::NodeMenu {
                 nodes,
                 at,
@@ -7217,7 +7673,21 @@ impl MainView {
                 self.toggle_tip_muted = true;
                 Outcome::ToggleSidebar
             }
+            // A dimmed toggle (the column has nothing to show) swallows the
+            // press rather than opening an empty column.
+            Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
+            // The lane's New: the Add… menu the tab strip's `+` opens, hung
+            // under the square instead — on the settled rect, which is what
+            // the hit test that got us here read.
+            Hit::New => {
+                let square = self.settled_lane_controls().new;
+                return if self.open_new_tab_menu_at(square) {
+                    Outcome::Consumed
+                } else {
+                    Outcome::Ignored
+                };
+            }
             Hit::Search => {
                 return if self.open_search() {
                     Outcome::Consumed
@@ -7494,7 +7964,7 @@ impl MainView {
         // so it also covers the case where the column was shut or the window was
         // still swapping workspaces.
         if visible {
-            self.explore.apply_reveal(self.regions.sidebar);
+            self.explore.apply_reveal(self.explore_area());
         }
         self.sync_taskbar_recents();
         // Never highlight a draft's private root in the library tree.
@@ -7552,7 +8022,7 @@ impl MainView {
         if reveal_ready {
             self.apply_pending_explore_reveal();
             if visible {
-                self.explore.apply_reveal(self.regions.sidebar);
+                self.explore.apply_reveal(self.explore_area());
             }
         } else {
             self.explore.set_selected(selected);
@@ -7847,7 +8317,7 @@ impl MainView {
     /// drawn and the box clicks are measured against cannot end up on two
     /// different rows.
     fn new_list_field_rect(&self) -> Option<Rect> {
-        let area = self.regions.sidebar;
+        let area = self.explore_area();
         let top = self.explore.rail_top(area);
         match self.new_list.as_ref()?.target() {
             new_list::Target::New => self.explore.rail().new_list_field_rect(area, top),
@@ -8452,6 +8922,8 @@ impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.tooltip.clear();
         self.pointer = (x, y);
+        // A press anywhere moves the keyboard off the chrome stop it was on.
+        self.chrome_focus = None;
         // Keyboard focus also decides which surface receives the matching
         // release. Opening the AI pane gives it focus, but a later press in
         // Explore used to leave that bit set: Explore seeded a latent row drag
@@ -8782,13 +9254,16 @@ impl MainView {
             // anchor may be virtual while Explore itself is shut.
             self.refresh_explore(ws, true);
             let area = self.explore_popover_area();
-            let out = self.explore.mouse_down_with_modifiers(
+            let out = self.explore.mouse_down_with(
                 area,
                 self.viewport,
                 x,
                 y,
-                ctrl,
-                self.mods.shift_key(),
+                crate::panes::explore::PressMods {
+                    ctrl,
+                    shift: self.mods.shift_key(),
+                    alt: self.mods.alt_key(),
+                },
             );
             self.refresh_drag_item_count(ws);
             self.explore_stale = true;
@@ -8825,17 +9300,31 @@ impl MainView {
         // with nothing on screen to say why.
         let unfocused = hit != Hit::Sidebar && self.explore.clear_focus();
         let dismissed = dismissed || unfocused;
+        if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
+            // The rail: an app, Settings, Help or the profile square. A press
+            // on it is a press outside the popover, so the popover shuts
+            // first (the CTO's note: the Profiles list stayed up beside the
+            // help popover the `?` opened) — unless the press is the square,
+            // the popover's own door, which toggles it.
+            let square = self.explore.apps_rail_rects(self.rail_area()).profile;
+            let shut = !square.contains(x, y) && self.explore.close_popover();
+            let out = self.explore.apps_rail_mouse_down(self.rail_area(), x, y);
+            return self.apply(ws, out) || shut;
+        }
         if hit == Hit::Sidebar {
             // Reached only by a press that landed in the column, so it is on
             // screen and its rows have to be current before they are hit-tested.
             self.refresh_explore(ws, true);
-            let out = self.explore.mouse_down_with_modifiers(
-                self.regions.sidebar,
+            let out = self.explore.mouse_down_with(
+                self.explore_area(),
                 self.viewport,
                 x,
                 y,
-                ctrl,
-                self.mods.shift_key(),
+                crate::panes::explore::PressMods {
+                    ctrl,
+                    shift: self.mods.shift_key(),
+                    alt: self.mods.alt_key(),
+                },
             );
             self.refresh_drag_item_count(ws);
             // Expanding a row changes the tree, and the tree is a cache.
@@ -8858,10 +9347,6 @@ impl MainView {
         if let Some(action) = self
             .document_ai_button()
             .and_then(|button| button.action_at(x, y))
-            .or_else(|| {
-                self.document_context_button()
-                    .and_then(|button| button.action_at(x, y))
-            })
         {
             let outcome = self.run_icon_action(action, x, y);
             return self.apply(ws, outcome) || dismissed;
@@ -8876,6 +9361,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_down(t, doc, lx, ly, ctrl),
             TabView::Reminders(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Settings(s) => View::mouse_down(s, doc, lx, ly, ctrl),
+            TabView::Home(h) => View::mouse_down(h, doc, lx, ly, ctrl),
             TabView::Feedback(f) => View::mouse_down(f, doc, lx, ly, ctrl),
             TabView::Diff(d) => View::mouse_down(d, doc, lx, ly, ctrl),
             TabView::AiChat(a) => View::mouse_down(a, doc, lx, ly, ctrl),
@@ -8908,6 +9394,7 @@ impl MainView {
         let asked = self.drain_manage_profiles_request();
         let binned = self.drain_trash_all(ws);
         self.drain_welcome();
+        self.drain_home();
         self.drain_settings_requests();
         self.drain_feedback();
         handled || opened || toasted || asked || binned || entity_changed
@@ -9078,6 +9565,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_up(t, doc),
             TabView::Reminders(r) => View::mouse_up(r, doc),
             TabView::Settings(s) => View::mouse_up(s, doc),
+            TabView::Home(h) => View::mouse_up(h, doc),
             TabView::Feedback(f) => View::mouse_up(f, doc),
             TabView::Diff(d) => View::mouse_up(d, doc),
             TabView::AiChat(a) => View::mouse_up(a, doc),
@@ -9434,9 +9922,13 @@ impl View for MainView {
         // into the arm below and did nothing at all, not even close the popover.
         if self.popover_hit(x, y) {
             self.refresh_explore(ws, true);
-            // A right-click in the switcher is not a gesture it has — workspace
-            // and Profile actions live in their managers. It is swallowed
-            // rather than falling through to the view underneath.
+            // A workspace row's menu — the same one its Manage row's `•••`
+            // opens — at the pointer, over the page (the CTO's note). Any
+            // other press on the switcher is swallowed rather than falling
+            // through to the view underneath.
+            let area = self.explore_popover_area();
+            let out = self.explore.popover_context_menu(area, self.viewport, x, y);
+            self.apply(ws, out);
             return true;
         }
         if self.ai_visible() && self.ai_rect().contains(x, y) {
@@ -9499,7 +9991,7 @@ impl View for MainView {
             // the cursor rather than under a button.
             Hit::Sidebar => {
                 self.refresh_explore(ws, true);
-                let out = self.explore.context_menu(self.regions.sidebar, x, y);
+                let out = self.explore.context_menu(self.explore_area(), x, y);
                 self.apply(ws, out)
             }
             Hit::Content => {
@@ -9525,7 +10017,7 @@ impl View for MainView {
                     TabView::Welcome(_) => false,
                     TabView::Manage(w) => View::context_menu(w, doc, lx, ly),
                     // Settings opens no context menu: every row is one press.
-                    TabView::Settings(_) | TabView::Feedback(_) => false,
+                    TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => false,
                     TabView::Diff(_) => false,
                     // The AI surface draws and handles its own popovers.
                     TabView::AiChat(_) => false,
@@ -9747,7 +10239,7 @@ impl View for MainView {
             self.refresh_explore(ws, true);
             let out = self
                 .explore
-                .mouse_double_click(self.regions.sidebar, self.viewport, x, y);
+                .mouse_double_click(self.explore_area(), self.viewport, x, y);
             return self.apply(ws, out);
         }
         if hit != Hit::Content {
@@ -9763,6 +10255,7 @@ impl View for MainView {
             TabView::Tasks(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::Reminders(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Settings(s) => View::mouse_double_click(s, doc, lx, ly),
+            TabView::Home(h) => View::mouse_double_click(h, doc, lx, ly),
             TabView::Feedback(f) => View::mouse_double_click(f, doc, lx, ly),
             TabView::Diff(d) => View::mouse_double_click(d, doc, lx, ly),
             TabView::AiChat(a) => View::mouse_double_click(a, doc, lx, ly),
@@ -9875,7 +10368,7 @@ impl View for MainView {
         }
         if self.regions.sidebar.w > 0.0 && self.regions.sidebar.contains(px, py) {
             let dy = Self::wheel_lines(delta);
-            self.explore.scroll_by(self.regions.sidebar, dy);
+            self.explore.scroll_by(self.explore_area(), dy);
             return;
         }
         if self.ai_visible() && self.ai_rect().contains(px, py) {
@@ -9942,6 +10435,7 @@ impl View for MainView {
             TabView::Tasks(t) => View::scroll_by(t, delta),
             TabView::Reminders(r) => View::scroll_by(r, delta),
             TabView::Settings(s) => View::scroll_by(s, delta),
+            TabView::Home(h) => View::scroll_by(h, delta),
             TabView::Feedback(f) => View::scroll_by(f, delta),
             TabView::Diff(d) => View::scroll_by(d, delta),
             TabView::AiChat(a) => View::scroll_by(a, delta),
@@ -10054,9 +10548,7 @@ impl View for MainView {
         }
         if self
             .document_ai_button()
-            .into_iter()
-            .chain(self.document_context_button())
-            .any(|button| button.contains(self.pointer.0, self.pointer.1))
+            .is_some_and(|button| button.contains(self.pointer.0, self.pointer.1))
         {
             return koru_ui::cursor::PRESS;
         }
@@ -10181,6 +10673,7 @@ impl View for MainView {
                 TabView::Tasks(t) => View::cursor_icon(t),
                 TabView::Reminders(r) => View::cursor_icon(r),
                 TabView::Settings(s) => View::cursor_icon(s),
+                TabView::Home(h) => View::cursor_icon(h),
                 TabView::Feedback(f) => View::cursor_icon(f),
                 TabView::Diff(d) => View::cursor_icon(d),
                 TabView::AiChat(a) => View::cursor_icon(a),
@@ -10207,6 +10700,7 @@ impl View for MainView {
             | Some(Hit::ToggleSidebar)
             | Some(Hit::ToggleContext)
             | Some(Hit::Search)
+            | Some(Hit::New)
             | Some(Hit::HostAction)
             | Some(Hit::Window(_)) => koru_ui::cursor::PRESS,
             // The caption is the part with no furniture on it: you drag the
@@ -10398,6 +10892,7 @@ impl View for MainView {
                 TabView::Tasks(t) => View::invalidate(t),
                 TabView::Reminders(r) => View::invalidate(r),
                 TabView::Settings(s) => View::invalidate(s),
+                TabView::Home(h) => View::invalidate(h),
                 TabView::Feedback(f) => View::invalidate(f),
                 TabView::Diff(d) => View::invalidate(d),
                 TabView::AiChat(a) => View::invalidate(a),
@@ -10609,6 +11104,10 @@ impl View for MainView {
 
     fn document_root(&self) -> Option<NodeId> {
         self.tabs().active_tab().view.root()
+    }
+
+    fn active_tab_title(&self) -> Option<String> {
+        Some(self.tabs().active_tab().label.clone())
     }
 
     fn delegate_folder_chosen(&mut self, chosen: koru_workspace_host::DelegateFolder) -> bool {
@@ -12567,6 +13066,7 @@ impl View for MainView {
         // A token, so a third mode is a name rather than a second flag. One
         // this build does not know reopens on Documents.
         match crate::panes::explore::NavigatorMode::parse(&settings.navigator_mode) {
+            Some(crate::panes::explore::NavigatorMode::Home) => self.explore.show_home(),
             Some(crate::panes::explore::NavigatorMode::Files) => self.explore.show_files(),
             Some(crate::panes::explore::NavigatorMode::Tasks) => self.explore.show_tasks(),
             Some(crate::panes::explore::NavigatorMode::Artifacts) => self.explore.show_artifacts(),
@@ -12896,6 +13396,50 @@ impl View for MainView {
                     }
                 }
             }
+        }
+        // Home's Today page, fed the same way: its panel asks only while the
+        // tab is in front, and the facts it draws from are compared before
+        // they are stored, so a frame with nothing new costs the compares.
+        let home_recents = self.recent_documents();
+        let home_runs: Vec<koru_runs_ui::RunRow> = if koru_features::agent_views() {
+            self.run_index.rows().to_vec()
+        } else {
+            Vec::new()
+        };
+        let home_name = self
+            .explore
+            .profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let home_offline = self.store_trouble.is_some();
+        let home_showing = matches!(self.tabs().active_tab().view, TabView::Home(_));
+        for (path, group) in self.panes.iter_groups_mut() {
+            let group_active = group.active();
+            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
+                if let TabView::Home(page) = &mut tab.view {
+                    let in_front = home_showing && path == active_path && i == group_active;
+                    if page.feed(
+                        &home_name,
+                        home_recents.clone(),
+                        home_runs.clone(),
+                        home_offline,
+                    ) {
+                        page_changed = true;
+                    }
+                    let today = crate::panes::explore::rail::RailTarget::Bucket(
+                        koru_core::tasks::Bucket::Today,
+                    );
+                    if page
+                        .panel_mut()
+                        .maintain(workspace, Some(today), in_front, now)
+                    {
+                        page_changed = true;
+                    }
+                }
+            }
+        }
+        if self.explore.home_nav_mut().set_recents(home_recents) {
+            page_changed = true;
         }
         // A finished comparison opens (or refreshes) the diff tab, once.
         let mut history_extras = false;
@@ -13325,6 +13869,12 @@ impl MainView {
         if handled {
             return true;
         }
+        // A sidebar chrome stop `F6` has landed on — lane, apps row or floor —
+        // answers the arrows, an activation and Escape, and lets everything
+        // else through, the way the bell does (`chrome_focus.rs`).
+        if self.chrome_focus.is_some() && self.chrome_focus_key(ws, key) {
+            return true;
+        }
         // An open popover takes Esc, the arrows and Enter — and **lets
         // everything else through**. A panel hanging off a column is not a
         // modal over the document, so Ctrl+E must still shut the pane under it
@@ -13370,7 +13920,7 @@ impl MainView {
             // ...but never over a prompt. A panel asking a question owns Enter,
             // whoever else has the arrows.
             && !self.tabs().active_tab().view.is_prompting()
-            && let Some(out) = self.explore.nav_key_with_modifiers(self.regions.sidebar, key, mods)
+            && let Some(out) = self.explore.nav_key_with_modifiers(self.explore_area(), key, mods)
         {
             inputdebug::write(format_args!("[Koru][input] view key claimed=explore-nav"));
             // An expand or a collapse changed which rows there are.
@@ -13467,6 +14017,7 @@ impl MainView {
             TabView::Tasks(t) => View::key(t, doc, key, text, mods),
             TabView::Reminders(r) => View::key(r, doc, key, text, mods),
             TabView::Settings(s) => View::key(s, doc, key, text, mods),
+            TabView::Home(h) => View::key(h, doc, key, text, mods),
             TabView::Feedback(f) => View::key(f, doc, key, text, mods),
             TabView::Diff(d) => View::key(d, doc, key, text, mods),
             TabView::AiChat(a) => View::key(a, doc, key, text, mods),
@@ -13496,6 +14047,7 @@ impl MainView {
             self.drain_manage_profiles_request();
             self.drain_trash_all(ws);
             self.drain_welcome();
+            self.drain_home();
             self.drain_settings_requests();
             self.drain_feedback();
             return handled || entity_changed;
@@ -13716,49 +14268,6 @@ impl MainView {
             .reminder_creation
             .key(&mut self.engine, key, text, mods);
         self.settle_reminder_creation(ws, outcome)
-    }
-
-    /// **`F6` — move the keyboard into window chrome**, one stop per press.
-    ///
-    /// It has always meant this and has always had one stop: the reminder bell
-    /// (`Shell::focus_bell`). It is a *rotation* now because a second surface
-    /// needed reaching and the alternative was a chord of its own — a shortcut
-    /// nobody discovers for a state that is rare. So the recovery pill a
-    /// refused reminder save leaves floating joins the convention rather than
-    /// inventing a rule for surfaces that own no keyboard (Q-R1, the maintainers'
-    /// answer on 2026-09-11).
-    ///
-    /// **The rotation is what is standing, never a fixed list.** A pill is a
-    /// stop only while there is one — `Surface::has_failed_pill` reads the same
-    /// geometry that draws it — so with nothing failed this is exactly what it
-    /// was before: `F6` lands on the bell, and a second `F6` leaves it there
-    /// (`focus_bell` answers `false` and the key falls through, claiming
-    /// nothing). A stop that is not there is never a dead press.
-    ///
-    /// **The pill comes first** because it is the transient one: it is standing
-    /// because something a person asked for did not happen, and the bell will
-    /// still be there on the next press. From the pill, `F6` moves on to the
-    /// bell; from the bell it wraps round to the pill if one is still standing.
-    /// Escape on the pill leaves chrome outright, which
-    /// `accessibility_focus` reads as the content region — the same place a
-    /// character would go.
-    ///
-    /// Whichever stop is taken, the other is cleared, so two rings can never be
-    /// painted at once.
-    fn focus_chrome(&mut self) -> bool {
-        // Both stops are reminder chrome; with reminders hidden F6 has
-        // nowhere to land and falls through (koru-features).
-        if !koru_features::reminders() {
-            return false;
-        }
-        // Anywhere but the pill goes to the pill, if one is standing; the pill
-        // goes on to the bell. Two stops, so the whole rotation is this line.
-        if self.reminder_creation.has_failed_pill() && !self.reminder_creation.pill_focused() {
-            let moved = self.reminder_creation.focus_first_failed_pill();
-            return self.reminder_shell.blur_bell() || moved;
-        }
-        let moved = self.reminder_shell.focus_bell();
-        self.reminder_creation.blur_pill() || moved
     }
 
     fn drain_reminder_management_request(&mut self, ws: &WorkspaceDoc) -> bool {
@@ -14966,6 +15475,113 @@ impl MainView {
     /// mistake the document's menus had already been swept for: on macOS all
     /// four taught a modifier this app does not use. Going through the seam also
     /// means tooltips can stop teaching chords without touching these rows.
+    /// Which lane controls this window offers, and where they are right now:
+    /// in the lane while the pane is open, folded into the caption's left end
+    /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
+    /// §5.1). The mark leads on every platform until the Mac catch-up swaps
+    /// it for the lights' reserve; New opens the Add… menu (QUESTIONS.md E21).
+    pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
+        koru_shell_chrome::lane::Leading {
+            mark: koru_shell_chrome::lane::Mark::Mark,
+            search: true,
+            // No New in the lane (the CTO's note, E44): the tab strip's `+`
+            // is the Add… menu's one door. E21's lane `+` is superseded.
+            new: false,
+            folded: !self.sidebar.is_open(),
+        }
+    }
+
+    /// The Tasks page on Today with the caret in its *Add a task…* row —
+    /// where a task is typed today. Home's *Add task*.
+    pub(crate) fn open_task_capture(&mut self) -> bool {
+        let opened = self.open_tasks_tab(
+            crate::panes::explore::rail::RailTarget::Bucket(koru_core::tasks::Bucket::Today),
+            false,
+        );
+        if let TabView::Tasks(tasks) = self.active_view() {
+            tasks.begin_capture();
+        }
+        opened
+    }
+
+    /// The Home tab — Today — as a singleton, on the Settings tab's pattern.
+    pub(super) fn open_home_tab(&mut self) -> bool {
+        let existing = self
+            .tabs()
+            .iter()
+            .position(|t| matches!(&t.view, TabView::Home(_)) && t.draft.is_none());
+        if let Some(i) = existing {
+            // Handled either way: a press on Today with Today in front is
+            // not a press that fell through.
+            self.select(i);
+            return true;
+        }
+        self.record_jump();
+        self.tabs_mut().push(Tab::home());
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
+        chrome_debug::chrome_debug!("home tab opened");
+        true
+    }
+
+    /// Perform what the Home page asked for. Every want is an existing
+    /// command; the page only names it.
+    fn drain_home(&mut self) {
+        let wants = match &mut self.tabs_mut().active_mut().view {
+            TabView::Home(page) => page.take_wants(),
+            _ => return,
+        };
+        use crate::panes::home::HomeWant;
+        for want in wants {
+            match want {
+                HomeWant::AddTask => {
+                    self.open_task_capture();
+                }
+                HomeWant::OpenDocument(id) => {
+                    self.open_recent_document(id);
+                }
+                HomeWant::OpenTask { document, node } => {
+                    self.open_document_at(document, node);
+                }
+                HomeWant::OpenRun(run) => {
+                    self.open_run_tab(run);
+                }
+            }
+        }
+    }
+
+    /// The lane's controls where they are **drawn** this frame: in the drawn
+    /// pane's top band, or in the drawn caption's leading chain. At rest the
+    /// drawn rects are the settled ones, which is what the hit test reads.
+    pub(crate) fn lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
+        self.lane_controls_in(self.drawn_caption(), self.sidebar_rect())
+    }
+
+    /// The same controls on the **settled** rects — where the hit test reads
+    /// them, where a menu opened from one of them hangs, and what a test
+    /// asks mid-slide.
+    pub(crate) fn settled_lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
+        self.lane_controls_in(self.regions.caption, self.regions.sidebar)
+    }
+
+    fn lane_controls_in(&self, caption: Rect, pane: Rect) -> koru_shell_chrome::lane::LaneRects {
+        let leading = self.leading();
+        if leading.folded {
+            let chain = koru_shell_chrome::caption::leading_chain(caption, leading);
+            koru_shell_chrome::lane::LaneRects {
+                leading: chain.leading,
+                search: chain.search,
+                new: chain.new,
+                toggle: chain.toggle,
+            }
+        } else {
+            let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
+            koru_shell_chrome::lane::solve(lane, leading)
+        }
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.group_drag().is_some() || self.sidebar.animating() {
             return None;
@@ -14974,13 +15590,14 @@ impl MainView {
         let hint = |id| koru_keys::show_hint(id, koru_keys::Section::Tooltip);
         match hit {
             Hit::ToggleSidebar if !self.toggle_tip_muted => {
+                let lang = crate::format::lang();
                 let label = if self.sidebar.is_open() {
-                    "Hide sidebar"
+                    koru_i18n::t(lang, koru_i18n::Key::HideSidebar)
                 } else {
-                    "Show sidebar"
+                    koru_i18n::t(lang, koru_i18n::Key::ShowSidebar)
                 };
                 Some(
-                    TooltipContent::new(1, koru_shell_chrome::caption::sidebar_toggle(cap), label)
+                    TooltipContent::new(1, self.lane_controls().toggle, label)
                         .with_optional_shortcut(hint(koru_keys::ShortcutId::ToggleExplore)),
                 )
             }
@@ -15000,16 +15617,19 @@ impl MainView {
             Hit::Search => Some(
                 TooltipContent::new(
                     3,
-                    koru_shell_chrome::caption::search_button_with_host_action(
-                        cap,
-                        WINDOW_BUTTONS,
-                        CONTEXT_TOGGLE,
-                        reminder_bell(),
-                    ),
-                    "Search",
+                    self.lane_controls().search,
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand),
                 )
                 .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),
             ),
+            // The strip's `+` words: one menu, two doors.
+            Hit::New => {
+                let square = self.lane_controls().new;
+                (square.w > 0.0).then(|| {
+                    TooltipContent::new(5, square, "Add…")
+                        .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::AddContent))
+                })
+            }
             Hit::HostAction if reminder_bell() => Some(TooltipContent::new(
                 6,
                 koru_shell_chrome::caption::host_action_with_context(
@@ -15046,13 +15666,14 @@ impl MainView {
             return None;
         }
         self.explore
-            .navigator_mode_rects(self.regions.sidebar)
+            .navigator_mode_rects(self.rail_area())
             .into_iter()
             .enumerate()
             .find(|(_, (_, rect))| rect.w > 0.0 && rect.contains(x, y))
             .map(|(i, (mode, rect))| {
                 TooltipContent::new(40 + i as u64, rect, mode.label()).with_optional_shortcut(
-                    koru_keys::show_hint(mode.shortcut(), koru_keys::Section::Tooltip),
+                    mode.shortcut()
+                        .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
                 )
             })
     }
@@ -15060,6 +15681,7 @@ impl MainView {
     /// `Alt+1..8`: show one of the explore column's views, opening the column
     /// when it is closed — the view was asked for by name.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
+        chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
             self.toggle_sidebar();
         }
@@ -15068,20 +15690,21 @@ impl MainView {
             crate::panes::explore::NavigatorMode::Files => self.explore.show_files(),
             crate::panes::explore::NavigatorMode::Tasks => {
                 self.explore.show_tasks();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
             // **Focus enters on open**: the chords that show a list put the
             // keyboard in it, on the chat in front of you when it is there.
             crate::panes::explore::NavigatorMode::Chats => {
                 self.explore.show_chats();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
+            crate::panes::explore::NavigatorMode::Home => self.explore.show_home(),
             crate::panes::explore::NavigatorMode::Agents => self.explore.show_agents(),
             crate::panes::explore::NavigatorMode::Artifacts => self.explore.show_artifacts(),
             crate::panes::explore::NavigatorMode::Canvases => self.explore.show_canvases(),
             crate::panes::explore::NavigatorMode::Socials => {
                 self.open_socials_tab();
-                self.explore.focus_tree(self.regions.sidebar);
+                self.explore.focus_tree(self.explore_area());
             }
         }
         self.explore_stale = true;
@@ -15151,7 +15774,7 @@ impl MainView {
             return self.set_sidebar_width(x - grab);
         }
         if let Some(grab) = self.ai_drag {
-            return self.set_ai_width(self.viewport.0 - (x - grab));
+            return self.set_ai_width(self.regions.edge.x - (x - grab));
         }
         // The same contract as the two pane edges above: the ratio is cheap
         // geometry, so the hairline and the strips follow the pointer live;
@@ -15302,7 +15925,7 @@ impl MainView {
             return reminder_moved
                 || self
                     .explore
-                    .mouse_move(self.regions.sidebar, self.viewport, x, y);
+                    .mouse_move(self.explore_area(), self.viewport, x, y);
         }
         // **The popover first, for the same reason `mouse_down` asks first.** It
         // is wider than the column it hangs off, so `regions::hit` answers
@@ -15418,9 +16041,13 @@ impl MainView {
 
         // Each column has its own hover, and a pointer that has left one must
         // not leave a row or a section lit behind.
-        let explore_moved = if hit == Hit::Sidebar {
-            self.explore
-                .mouse_move(self.regions.sidebar, self.viewport, x, y)
+        let explore_moved = if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
+            self.explore.clear_hover() | self.explore.apps_rail_mouse_move(self.rail_area(), x, y)
+        } else if hit == Hit::Sidebar {
+            self.explore.clear_rail_hover()
+                | self
+                    .explore
+                    .mouse_move(self.explore_area(), self.viewport, x, y)
         } else {
             self.explore.clear_hover()
         };
@@ -15444,28 +16071,52 @@ impl MainView {
         // After the chrome hovers, deliberately: a history row's tooltip is
         // read from the context column's fresh hover, and asking before the
         // update would anchor it one row behind the pointer.
-        // The page-furniture context toggle is not a caption hit — check it
+        // The page-furniture AI button is not a caption hit — check it
         // before the caption table, or a pointer on the title icon is
         // `Hit::Content` and teaches nothing.
         let tooltip = if let Some(content) = self.document_ai_tooltip() {
             Some(content)
-        } else if let Some(content) = self.document_context_tooltip() {
-            Some(content)
         } else if hit == Hit::Sidebar {
-            // The Explore header's search button, and the three view icons
-            // beside it — icon-only controls, so each carries its name and
-            // the chord that does the same (`DESIGN.md` §8: one interaction
-            // clock, flat chip).
-            let button = self.explore.search_button(self.regions.sidebar);
-            if button.w > 0.0 && button.contains(x, y) {
+            // The floor's chip, then the rail — icon-only and chip controls,
+            // so each carries its name (`DESIGN.md`: one interaction clock,
+            // flat chip).
+            let floor = self.explore.floor_rects(self.explore_area());
+            let rail = self.explore.apps_rail_rects(self.rail_area());
+            let lang = crate::format::lang();
+            let on = |r: Rect| r.w > 0.0 && r.contains(x, y);
+            if on(floor.chip) {
+                Some(TooltipContent::new(
+                    5,
+                    floor.chip,
+                    koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
+                ))
+            } else if on(rail.settings) {
+                // The chord rides the tooltip (the CTO's note), the way the
+                // lane's controls carry theirs; the Settings page's own
+                // search box no longer prints it.
                 Some(
-                    TooltipContent::new(3, button, "Search").with_optional_shortcut(
-                        koru_keys::show_hint(
-                            koru_keys::ShortcutId::Search,
-                            koru_keys::Section::Tooltip,
-                        ),
-                    ),
+                    TooltipContent::new(
+                        9,
+                        rail.settings,
+                        koru_i18n::t(lang, koru_i18n::Key::SettingsTab),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::Settings,
+                        koru_keys::Section::Tooltip,
+                    )),
                 )
+            } else if on(rail.help) {
+                Some(TooltipContent::new(
+                    6,
+                    rail.help,
+                    koru_i18n::t(lang, koru_i18n::Key::Help),
+                ))
+            } else if on(rail.profile) {
+                Some(TooltipContent::new(
+                    10,
+                    rail.profile,
+                    koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
+                ))
             } else {
                 self.navigator_mode_tooltip(x, y)
             }
@@ -15503,6 +16154,7 @@ impl MainView {
             TabView::Tasks(t) => View::mouse_move(t, lx, ly),
             TabView::Reminders(r) => View::mouse_move(r, lx, ly),
             TabView::Settings(s) => View::mouse_move(s, lx, ly),
+            TabView::Home(h) => View::mouse_move(h, lx, ly),
             TabView::Feedback(f) => View::mouse_move(f, lx, ly),
             TabView::Diff(d) => View::mouse_move(d, lx, ly),
             TabView::AiChat(a) => View::mouse_move(a, lx, ly),

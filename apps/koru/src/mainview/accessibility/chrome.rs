@@ -120,12 +120,33 @@ impl MainView {
     /// The caption's own controls — the ones the *container* performs.
     pub(super) fn caption_semantics(&self, cx: &Shell) -> Vec<SemanticNode> {
         let caption = self.regions.caption;
+        // The lane's controls, wherever they are this frame: in the pane's
+        // top band while it is open, in the caption's leading chain while it
+        // is shut. One geometry function either way (`lane_controls`).
+        let lane = self.lane_controls();
         let mut out = vec![
             SemanticNode::new(cx.surface(SHELL, parts::TOGGLE_EXPLORE), Role::Button)
                 .with_label(t(cx.lang, Key::A11yToggleNavigator))
-                .with_bounds(koru_shell_chrome::caption::sidebar_toggle(caption))
+                .with_bounds(lane.toggle)
                 .with_action(Action::Click),
         ];
+        if lane.search.w > 0.0 {
+            out.push(
+                SemanticNode::new(cx.surface(SHELL, parts::SEARCH), Role::Button)
+                    .with_label(t(cx.lang, Key::SearchOrTypeACommand))
+                    .with_bounds(lane.search)
+                    .with_action(Action::Click),
+            );
+        }
+        if lane.new.w > 0.0 {
+            out.push(
+                SemanticNode::new(cx.surface(SHELL, parts::NEW), Role::Button)
+                    .with_label(t(cx.lang, Key::A11yNewTab))
+                    .with_bounds(lane.new)
+                    .with_action(Action::Click),
+            );
+        }
+        let _ = caption;
         if crate::mainview::WINDOW_BUTTONS
             && let Some(control) = koru_ui::caption::controls(caption)
                 .into_iter()
@@ -184,6 +205,11 @@ pub(super) fn action(
             // pressing the toggle means.
             view.focus_or_toggle_sidebar(ws);
             return true;
+        }
+        p if p == parts::SEARCH => Outcome::Search,
+        p if p == parts::NEW => {
+            let square = view.settled_lane_controls().new;
+            return view.open_new_tab_menu_at(square);
         }
         p if p == parts::WINDOW_MENU => {
             let Some(button) = view.window_menu_button() else {

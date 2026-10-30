@@ -97,7 +97,7 @@ pub use font_preview::{FontPreview, FontSample};
 pub use key_chip::KeyChip;
 pub use keys::{ctrl_letter, recover_modified_editing_key};
 pub use measurement_badge::{KoruMeasurementBadge, KoruMeasurementGeometry};
-pub use menu::{Anchor, Control, Menu, MenuItem};
+pub use menu::{Anchor, Control, Menu, MenuCard, MenuItem};
 pub use nav_list::{ChipNav, NavItem, NavLeading, NavList};
 pub use page_shell::PageShell;
 pub use popover::{PopoverAlign, PopoverShell};

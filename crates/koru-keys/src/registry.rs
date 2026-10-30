@@ -144,6 +144,9 @@ pub enum ShortcutId {
     /// icons at its head sit in. Plain Alt, not the primary modifier:
     /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a tab, and the digits
     /// are free under Alt alone on every layer.
+    /// Home is first and takes its letter, `Alt+H` (the CTO's note, E69):
+    /// `Alt+0` stays free.
+    ShowHome,
     ShowDocuments,
     ShowFiles,
     ShowTasks,
@@ -603,6 +606,12 @@ pub const REGISTRY: &[Shortcut] = &[
         Layer::Container,
         "Explore",
         Chord::new(On::Letter('e'), PRIMARY_SHIFT),
+    ),
+    s(
+        ShortcutId::ShowHome,
+        Layer::Container,
+        "Home",
+        Chord::new(On::Letter('h'), crate::VIEW),
     ),
     s(
         ShortcutId::ShowDocuments,

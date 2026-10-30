@@ -638,6 +638,19 @@ fn main() {
     // happen first, and a startup measurement that began after them would be
     // reporting a launch nobody has.
     koru_core::timing::start();
+    // The element layer's fixture theme, in a build that has it: chosen here,
+    // before the host resolves the preference, and pinned so neither the
+    // preference nor the OS replaces it. Nothing is written anywhere.
+    #[cfg(feature = "fixture-theme")]
+    if koru_env::switch(koru_env::name::KORU_FIXTURE_THEME) {
+        use koru_draw::theme::{Contrast, themes};
+        let contrast = if koru_env::switch(koru_env::name::KORU_FIXTURE_CONTRAST) {
+            Contrast::High
+        } else {
+            Contrast::Standard
+        };
+        themes::pin(&themes::FIXTURE_THEME, contrast);
+    }
     // Parse once before touching the Windows activation channel. A malformed
     // command line must still reach the shell's strict error path rather than
     // being mistaken for a taskbar activation and silently handed off.
