@@ -3092,7 +3092,11 @@ in force, opened with a click or Enter and stepped with the arrow keys.
 (Compact / Normal / Comfortable) and four font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), and three document roles, **body**,
 **headings** and **code**. Each dropdown lists every family set in that
-family's own face, so you see what you are choosing. The theme is chosen from
+family's own face, so you see what you are choosing. While a font list is
+open, the family under the pointer, or reached with the arrow keys, is shown
+across the whole app at once: point down the list to compare. Only a click
+or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
+chosen font back. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
 role's family for a quick in-document switch. Twelve families span sans, serif,

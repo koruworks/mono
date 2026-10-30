@@ -221,6 +221,9 @@ pub struct SettingsSurface {
     search: TextInput,
     search_focused: bool,
     open: Option<OpenDropdown>,
+    /// The font an open font list is showing on the whole app while it is
+    /// lit, and the role it stands in for.
+    previewing: Option<(FontRole, theme::FontChoice)>,
 
     /// Geometry reserved on the Reminders page for rows that belong to the
     /// host. The shared surface knows only its height.
@@ -311,6 +314,7 @@ impl SettingsSurface {
             search,
             search_focused: false,
             open: None,
+            previewing: None,
             host_section_height: 0.0,
             global: links.global_authoritative(),
             terminal: links.terminal_authoritative(),
@@ -575,6 +579,7 @@ impl SettingsSurface {
         self.page = page;
         self.scroll = 0.0;
         self.open = None;
+        self.sync_preview();
         moved
     }
 
@@ -608,6 +613,7 @@ impl SettingsSurface {
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
         };
         self.open = None;
+        self.sync_preview();
         self.scroll = (self.scroll - lines).max(0.0);
     }
 
@@ -838,6 +844,7 @@ impl SettingsSurface {
             && open.index >= self.laid.dropdowns.len()
         {
             self.open = None;
+            self.sync_preview();
         }
     }
 
@@ -877,7 +884,33 @@ impl SettingsSurface {
             let viewport = self.viewport;
             open.menu.hover = open.menu.item_at(viewport, x, y).or(open.menu.hover);
         }
-        moved
+        self.sync_preview() || moved
+    }
+
+    /// **A font list previews the lit face on the whole app.** While a list
+    /// of fonts is open, the face its lit row names stands in for the
+    /// role's choice; when the list closes, by a choice or not, the
+    /// stand-in goes and the choice (old or new) shows. Answers whether the
+    /// app's faces changed, so the host can lay every window out again.
+    fn sync_preview(&mut self) -> bool {
+        let want =
+            self.open
+                .as_ref()
+                .and_then(|open| match open.actions.get(open.menu.hover?)? {
+                    Action::Font(role, family) => Some((*role, *family)),
+                    _ => None,
+                });
+        if want == self.previewing {
+            return false;
+        }
+        if let Some((role, _)) = self.previewing {
+            theme::set_font_preview(role.slot(), None);
+        }
+        if let Some((role, family)) = want {
+            theme::set_font_preview(role.slot(), Some(family));
+        }
+        self.previewing = want;
+        true
     }
 
     pub fn mouse_up(&mut self) -> bool {
@@ -893,6 +926,7 @@ impl SettingsSurface {
     /// mouse's.
     pub fn focus_search(&mut self) {
         self.open = None;
+        self.sync_preview();
         self.search_focused = true;
         self.search.select_all(&mut self.engine);
     }
@@ -914,6 +948,7 @@ impl SettingsSurface {
             if let Some(item) = open.menu.item_at(self.viewport, x, y) {
                 self.choose(open, item);
             }
+            self.sync_preview();
             return true;
         }
         match self.pointed(x, y) {
@@ -1020,6 +1055,7 @@ impl SettingsSurface {
                 }
                 _ => return false,
             }
+            self.sync_preview();
             return true;
         }
         if self.search_focused {
@@ -1911,6 +1947,16 @@ fn view_mode_choice(mode: theme::ViewMode) -> ViewModeChoice {
 
 /// `Action` is not `Clone` — it carries owned device names — so the one place
 /// that needs a copy names the cost rather than deriving it everywhere.
+impl Drop for SettingsSurface {
+    /// A Settings tab closed with a font list open must not leave the app in
+    /// the face it was previewing.
+    fn drop(&mut self) {
+        if let Some((role, _)) = self.previewing {
+            theme::set_font_preview(role.slot(), None);
+        }
+    }
+}
+
 fn clone_action(action: &Action) -> Action {
     match action {
         Action::Theme(v) => Action::Theme(*v),

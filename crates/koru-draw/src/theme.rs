@@ -1104,10 +1104,59 @@ static UI_FONT: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
 });
 
 /// The typeface the **chrome** is set in. Not what a document row is set in —
-/// that is `Paragraph::font`.
+/// that is `Paragraph::font`. A [preview](set_font_preview) stands in for the
+/// choice while it lasts.
 pub fn ui_font() -> FontChoice {
-    let i = UI_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Ui).unwrap_or_else(|| chosen_font(FontSlot::Ui))
+}
+
+// ------------------------------------------------------------- font previews
+//
+// Settings' font lists show each face on the whole app while the pointer or
+// the keyboard rests on it. A preview is not a choice: layout reads it, and
+// what is saved does not ([`chosen_font`]), so a preview that is never chosen
+// leaves nothing behind, even if the app closes mid-preview.
+
+/// The four font globals, as a preview names one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FontSlot {
+    Ui,
+    Body,
+    Headings,
+    Code,
+}
+
+const NO_PREVIEW: u8 = u8::MAX;
+
+static FONT_PREVIEW: [AtomicU8; 4] = [const { AtomicU8::new(NO_PREVIEW) }; 4];
+
+/// Show `font` in `slot` until the preview is cleared with `None`. Callers
+/// must invalidate laid-out text afterwards, as for a choice.
+pub fn set_font_preview(slot: FontSlot, font: Option<FontChoice>) {
+    let i = font
+        .and_then(|font| FontChoice::ALL.iter().position(|c| *c == font))
+        .map_or(NO_PREVIEW, |i| i as u8);
+    FONT_PREVIEW[slot as usize].store(i, Ordering::Relaxed);
+}
+
+fn previewed(slot: FontSlot) -> Option<FontChoice> {
+    let i = FONT_PREVIEW[slot as usize].load(Ordering::Relaxed);
+    (i != NO_PREVIEW)
+        .then(|| FontChoice::ALL.get(i as usize).copied())
+        .flatten()
+}
+
+/// What `slot` is set to, without any preview: what Settings saves and
+/// what its lists tick.
+pub fn chosen_font(slot: FontSlot) -> FontChoice {
+    let (global, fallback) = match slot {
+        FontSlot::Ui => (&UI_FONT, FontChoice::default()),
+        FontSlot::Body => (&BODY_FONT, FontChoice::default()),
+        FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
+        FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
+    };
+    let i = global.load(Ordering::Relaxed) as usize;
+    FontChoice::ALL.get(i).copied().unwrap_or(fallback)
 }
 
 /// Callers must invalidate laid-out text afterwards — the font, like the
@@ -1162,19 +1211,13 @@ pub fn default_code_font() -> FontChoice {
 }
 
 pub fn body_font() -> FontChoice {
-    let i = BODY_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Body).unwrap_or_else(|| chosen_font(FontSlot::Body))
 }
 pub fn headings_font() -> FontChoice {
-    let i = HEADINGS_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or_default()
+    previewed(FontSlot::Headings).unwrap_or_else(|| chosen_font(FontSlot::Headings))
 }
 pub fn code_font() -> FontChoice {
-    let i = CODE_FONT.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL
-        .get(i)
-        .copied()
-        .unwrap_or(FontChoice::JetBrainsMono)
+    previewed(FontSlot::Code).unwrap_or_else(|| chosen_font(FontSlot::Code))
 }
 
 /// Callers must invalidate laid-out text afterwards.

@@ -589,6 +589,65 @@ fn a_dropdown_opens_its_list_and_a_choice_closes_it() {
     theme::set_body_font(was);
 }
 
+/// **A font list previews the lit face on the whole app**, and only a
+/// choice keeps it: the face under the pointer shows everywhere at once,
+/// leaving the list without choosing puts the chosen face back, and what
+/// Settings saves (`chosen_font`) never sees the preview.
+#[test]
+fn a_font_list_previews_the_lit_face_and_only_a_choice_keeps_it() {
+    use theme::{FontChoice, FontSlot};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::chosen_font(FontSlot::Ui);
+    theme::set_ui_font(FontChoice::Inter);
+    let mut surface = koru();
+    let lora = FontChoice::Lora.label();
+    assert!(goto(&mut surface, lora));
+    // The first Lora on the page is the App font's.
+    let Some(Found::Option { dropdown, item }) = find(&surface, lora) else {
+        panic!("Lora is an option of a list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let at = |surface: &SettingsSurface| {
+        surface
+            .open
+            .as_ref()
+            .expect("the list is open")
+            .menu
+            .item_rect(surface.viewport, item)
+            .centre()
+    };
+    let (x, y) = at(&surface);
+    assert!(surface.mouse_move(x, y));
+    assert_eq!(
+        theme::ui_font(),
+        FontChoice::Lora,
+        "the app shows the lit face"
+    );
+    assert_eq!(theme::chosen_font(FontSlot::Ui), FontChoice::Inter);
+    assert!(
+        !is_active(&surface, lora),
+        "the list still ticks the choice"
+    );
+
+    // Escape: no choice, and the chosen face is back.
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(theme::ui_font(), FontChoice::Inter);
+
+    // Lit and chosen: it stays.
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(theme::ui_font(), FontChoice::Lora);
+    assert_eq!(theme::chosen_font(FontSlot::Ui), FontChoice::Lora);
+    theme::set_ui_font(was);
+}
+
 #[test]
 fn a_press_outside_an_open_list_closes_it_and_presses_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());

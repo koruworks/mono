@@ -405,6 +405,9 @@ pub(crate) struct TextKey {
     /// contrast is never handed to another.
     theme: &'static str,
     contrast: Contrast,
+    /// The chrome's face: a font change, or a Settings preview of one, is
+    /// a different shape.
+    font: crate::theme::FontChoice,
 }
 
 /// Shaped text, kept across frames. Keyed on everything that changes the
@@ -438,6 +441,7 @@ impl TextCache {
             width: width.map_or(u32::MAX, f32::to_bits),
             theme: cx.theme.key,
             contrast: cx.contrast,
+            font: crate::theme::ui_font(),
         }
     }
 

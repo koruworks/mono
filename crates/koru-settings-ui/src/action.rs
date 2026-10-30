@@ -56,12 +56,20 @@ impl FontRole {
         }
     }
 
+    /// The font chosen for this role: what its list ticks, never the one
+    /// being previewed.
     pub(crate) fn current(self) -> FontChoice {
+        koru_draw::theme::chosen_font(self.slot())
+    }
+
+    /// The theme global this role sets.
+    pub(crate) fn slot(self) -> koru_draw::theme::FontSlot {
+        use koru_draw::theme::FontSlot;
         match self {
-            Self::App => koru_draw::theme::ui_font(),
-            Self::Body => koru_draw::theme::body_font(),
-            Self::Headings => koru_draw::theme::headings_font(),
-            Self::Code => koru_draw::theme::code_font(),
+            Self::App => FontSlot::Ui,
+            Self::Body => FontSlot::Body,
+            Self::Headings => FontSlot::Headings,
+            Self::Code => FontSlot::Code,
         }
     }
 

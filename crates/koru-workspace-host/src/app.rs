@@ -13371,10 +13371,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.caret_color = theme::caret_color();
         self.runtime.settings.caret_width = theme::caret_width();
         self.runtime.settings.caret_height = theme::caret_height();
-        self.runtime.settings.font = theme::ui_font();
-        self.runtime.settings.body_font = theme::body_font();
-        self.runtime.settings.headings_font = theme::headings_font();
-        self.runtime.settings.code_font = theme::code_font();
+        // The fonts chosen, not one Settings is previewing.
+        self.runtime.settings.font = theme::chosen_font(theme::FontSlot::Ui);
+        self.runtime.settings.body_font = theme::chosen_font(theme::FontSlot::Body);
+        self.runtime.settings.headings_font = theme::chosen_font(theme::FontSlot::Headings);
+        self.runtime.settings.code_font = theme::chosen_font(theme::FontSlot::Code);
         self.runtime.settings.density = theme::density();
         self.runtime.settings.view_mode = theme::default_view_mode();
         self.runtime.settings.canvas_bg = theme::default_canvas_bg();
@@ -16891,12 +16892,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 pane.resize_edge = pane.resize_edge_at(x, y);
                 // The view lives in unscaled logical pixels — zoom is folded
                 // into the root transform — so hand it zoom-adjusted coords.
+                // Pointing at a face in Settings' font list previews it on
+                // the whole app (FontSlot), which every window lays out again.
+                let fonts = fonts_shown();
                 let changed = pane.view.mouse_move(x / self.zoom, y / self.zoom);
                 pane.sync_cursor_icon();
                 if let Some(WindowRequest::Drag) = pane.view.take_window_request() {
                     let _ = pane.window.drag_window();
                 }
-                if changed {
+                if fonts_shown() != fonts {
+                    self.invalidate_everywhere();
+                } else if changed {
                     self.request_redraw(id);
                 }
                 // A tab drag that has left this window's frame may be over
@@ -17320,7 +17326,13 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         self.rezoom(next);
                     }
                 } else if let Some(pane) = self.panes.get_mut(&id) {
+                    // Scrolling closes an open list, and with it a font
+                    // preview the list was showing.
+                    let fonts = fonts_shown();
                     pane.view.scroll_by(delta);
+                    if fonts_shown() != fonts {
+                        self.invalidate_everywhere();
+                    }
                 }
                 self.request_redraw(id);
             }
@@ -20094,4 +20106,15 @@ pub fn tasks_debug_log(line: std::fmt::Arguments<'_>) {
     {
         let _ = writeln!(f, "[koru:tasks] {line}");
     }
+}
+
+/// The faces every window is laid out in now, previews included: a change
+/// between two reads means every window lays out again.
+fn fonts_shown() -> [theme::FontChoice; 4] {
+    [
+        theme::ui_font(),
+        theme::body_font(),
+        theme::headings_font(),
+        theme::code_font(),
+    ]
 }
