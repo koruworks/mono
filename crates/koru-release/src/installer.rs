@@ -99,7 +99,12 @@ impl Defines {
 /// appears in a path or a command this pipeline produces; refusing is cheaper
 /// than an escaping rule nobody can test.
 pub(crate) fn wrapper(defines: &Defines, script: &Path) -> Result<String, String> {
-    let path = |path: &Path| path.display().to_string();
+    // **Every path is written with backslashes only.** The paths joined here
+    // mix them (`D:\a\mono\scripts/release/...`), and NSIS takes the folder
+    // of an `!include` or a `File` wildcard from the last backslash, so it
+    // looked for a file named `scripts/release/koru-installer.nsi` and found
+    // none — the 2026-10-30 nightly's Windows build failed on exactly that.
+    let path = |path: &Path| path.display().to_string().replace('/', "\\");
     let mut values = vec![
         ("PRODUCT", defines.product.clone()),
         ("VERSION", defines.version.clone()),
@@ -283,6 +288,20 @@ mod tests {
         assert!(signed.contains(
             "!define UNINSTALL_SIGN_COMMAND `\"C:\\sdk\\signtool.exe\" sign /fd SHA256 \"%1\"`\n"
         ));
+    }
+
+    #[test]
+    fn every_path_reaches_nsis_with_backslashes_only() {
+        let mut defines = nightly(None);
+        defines.stage = PathBuf::from(r"D:\a\mono\dist/cloud\koru-windows-x86_64");
+        let text = wrapper(
+            &defines,
+            Path::new(r"D:\a\mono\scripts/release/koru-installer.nsi"),
+        )
+        .unwrap();
+        assert!(text.contains("!define STAGE `D:\\a\\mono\\dist\\cloud\\koru-windows-x86_64`\n"));
+        assert!(text.ends_with("!include `D:\\a\\mono\\scripts\\release\\koru-installer.nsi`\n"));
+        assert!(!text.contains('/'));
     }
 
     #[test]
