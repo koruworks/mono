@@ -1,5 +1,648 @@
 {
   "asyncapi": "3.0.0",
+  "channels": {
+    "/v1/ai/chats/{chat}/turns": {
+      "address": "/v1/ai/chats/{chat}/turns",
+      "messages": {
+        "accepted": {
+          "summary": "Durable turn acceptance and retry-safe attempt identities",
+          "title": "accepted",
+          "x-direction": "server_to_client"
+        },
+        "event": {
+          "summary": "Ordered normalized Koru AI stream event",
+          "title": "event",
+          "x-direction": "server_to_client"
+        }
+      },
+      "servers": [
+        {
+          "$ref": "#/servers/localSse"
+        }
+      ],
+      "x-backpressured": true,
+      "x-ordered": true,
+      "x-protocol": "sse",
+      "x-version": 1
+    },
+    "/v1/ai/providers/ollama/pulls": {
+      "address": "/v1/ai/providers/ollama/pulls",
+      "messages": {
+        "accepted": {
+          "summary": "Accepted Ollama model pull",
+          "title": "accepted",
+          "x-direction": "server_to_client"
+        },
+        "event": {
+          "summary": "Normalized progress followed by one completed, failed, or cancelled event",
+          "title": "event",
+          "x-direction": "server_to_client"
+        }
+      },
+      "servers": [
+        {
+          "$ref": "#/servers/localSse"
+        }
+      ],
+      "x-backpressured": true,
+      "x-ordered": true,
+      "x-protocol": "sse",
+      "x-version": 1
+    },
+    "/v1/sessions/{session_id}/subscribe": {
+      "address": "/v1/sessions/{session_id}/subscribe",
+      "messages": {
+        "session_stream_item": {
+          "payload": {
+            "$ref": "#/components/schemas/SessionStreamItem"
+          },
+          "summary": "Per-source sequenced event/output, explicit resnapshot gap, or terminal close",
+          "title": "session_stream_item",
+          "x-direction": "server_to_client"
+        }
+      },
+      "servers": [
+        {
+          "$ref": "#/servers/localSse"
+        }
+      ],
+      "x-backpressured": true,
+      "x-explicit-gap": true,
+      "x-koru-required-capability": "sessions",
+      "x-ordered": true,
+      "x-protocol": "sse",
+      "x-required-scopes": [
+        "sessions.output.read"
+      ],
+      "x-version": 1
+    },
+    "/v1/sync": {
+      "address": "/v1/sync",
+      "messages": {
+        "ack": {
+          "summary": "Durable Store acknowledgement",
+          "title": "ack",
+          "x-direction": "server_to_client"
+        },
+        "error": {
+          "summary": "Terminal room or connection error",
+          "title": "error",
+          "x-direction": "server_to_client"
+        },
+        "join": {
+          "summary": "Join an authorized Loro room and exchange version state",
+          "title": "join",
+          "x-direction": "bidirectional"
+        },
+        "leave": {
+          "summary": "Half-close one logical room",
+          "title": "leave",
+          "x-direction": "bidirectional"
+        },
+        "update": {
+          "summary": "Bounded standard Loro Protocol update or fragment",
+          "title": "update",
+          "x-direction": "bidirectional"
+        }
+      },
+      "servers": [
+        {
+          "$ref": "#/servers/local"
+        }
+      ],
+      "x-backpressured": true,
+      "x-ordered": true,
+      "x-protocol": "loro-protocol",
+      "x-version": 1
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentTurnId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "AttachmentId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "AttentionReason": {
+        "enum": [
+          "background_output",
+          "bell",
+          "input_required",
+          "approval_required",
+          "completed",
+          "failed",
+          "exited",
+          "attachment_delivered",
+          "attachment_rejected"
+        ],
+        "type": "string"
+      },
+      "AttentionState": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttentionReason"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "requires_user": {
+            "type": "boolean"
+          },
+          "unread_count": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread_count",
+          "requires_user"
+        ],
+        "type": "object"
+      },
+      "ErrorCode": {
+        "description": "Stable error token; unknown values remain errors.",
+        "minLength": 1,
+        "type": "string"
+      },
+      "HandoverState": {
+        "description": "Where a controller handover stands.\n\nRelease, not preemption: nothing takes a lease from its holder. The\nholder is asked, releases at a boundary of its choosing, the requester\nattaches, and gives it back the same way. Each step is a state a reader\ncan see and an event a subscriber receives.",
+        "oneOf": [
+          {
+            "enum": [
+              "idle"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Someone asked while a controller was held; the holder has been told.",
+            "enum": [
+              "requested"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The holder released its lease for the handover; the next attach takes\nit.",
+            "enum": [
+              "released"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The lease was granted after a release: a person holds the session.",
+            "enum": [
+              "taken"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The person gave the lease back, or lost it; the next attach reclaims.",
+            "enum": [
+              "returned"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "RawOutputChunk": {
+        "description": "One bounded chunk for an explicitly authorized non-visual output\nsubscription. Render subscribers consume `RenderUpdate` instead.",
+        "properties": {
+          "bytes": {
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/StreamSequence"
+          },
+          "session_id": {
+            "$ref": "#/components/schemas/TerminalSessionId"
+          }
+        },
+        "required": [
+          "session_id",
+          "sequence",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "SequencedSessionEvent": {
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/SessionEvent"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/StreamSequence"
+          },
+          "session_id": {
+            "$ref": "#/components/schemas/TerminalSessionId"
+          }
+        },
+        "required": [
+          "session_id",
+          "sequence",
+          "event"
+        ],
+        "type": "object"
+      },
+      "SessionEvent": {
+        "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream.",
+        "oneOf": [
+          {
+            "properties": {
+              "byte_count": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "output"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "byte_count"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "bell"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "started"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "format": "int32",
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "exited"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "error": {
+                "$ref": "#/components/schemas/SessionFailure"
+              },
+              "kind": {
+                "enum": [
+                  "failed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "working_directory_changed"
+                ],
+                "type": "string"
+              },
+              "working_directory": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "working_directory"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "title_changed"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "title"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attention": {
+                "$ref": "#/components/schemas/AttentionState"
+              },
+              "kind": {
+                "enum": [
+                  "attention_changed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attention"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_created"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attachment_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_removed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attachment_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_rejected"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "attachment_id",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_delivered"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "attachment_id",
+              "turn_id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v14. The controller handover moved: someone asked, the holder\nreleased, the lease was taken, or it was given back. A new tag, so a\nhost never sends it to a peer that negotiated less than v14.",
+            "properties": {
+              "handover": {
+                "$ref": "#/components/schemas/HandoverState"
+              },
+              "kind": {
+                "enum": [
+                  "handover_changed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "handover"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SessionFailure": {
+        "description": "A content-free developer diagnostic. UI maps `code` to localized copy.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "SessionStreamItem": {
+        "oneOf": [
+          {
+            "properties": {
+              "event": {
+                "$ref": "#/components/schemas/SequencedSessionEvent"
+              },
+              "kind": {
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "event"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "chunk": {
+                "$ref": "#/components/schemas/RawOutputChunk"
+              },
+              "kind": {
+                "enum": [
+                  "output"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "chunk"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "actual": {
+                "$ref": "#/components/schemas/StreamSequence"
+              },
+              "expected": {
+                "$ref": "#/components/schemas/StreamSequence"
+              },
+              "kind": {
+                "enum": [
+                  "gap"
+                ],
+                "type": "string"
+              },
+              "resnapshot_required": {
+                "type": "boolean"
+              },
+              "source": {
+                "$ref": "#/components/schemas/SessionStreamSource"
+              }
+            },
+            "required": [
+              "kind",
+              "source",
+              "expected",
+              "actual",
+              "resnapshot_required"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "error": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionFailure"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "closed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SessionStreamSource": {
+        "enum": [
+          "event",
+          "output"
+        ],
+        "type": "string"
+      },
+      "StreamSequence": {
+        "format": "uint64",
+        "minimum": 1,
+        "type": "integer"
+      },
+      "TerminalSessionId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "in": "header",
+        "name": "Authorization",
+        "type": "httpApiKey"
+      }
+    }
+  },
   "info": {
     "title": "Koru API Gateway streams",
     "version": "1.0.0"
@@ -22,649 +665,6 @@
           "$ref": "#/components/securitySchemes/bearerAuth"
         }
       ]
-    }
-  },
-  "channels": {
-    "/v1/sync": {
-      "address": "/v1/sync",
-      "servers": [
-        {
-          "$ref": "#/servers/local"
-        }
-      ],
-      "messages": {
-        "join": {
-          "title": "join",
-          "summary": "Join an authorized Loro room and exchange version state",
-          "x-direction": "bidirectional"
-        },
-        "update": {
-          "title": "update",
-          "summary": "Bounded standard Loro Protocol update or fragment",
-          "x-direction": "bidirectional"
-        },
-        "ack": {
-          "title": "ack",
-          "summary": "Durable Store acknowledgement",
-          "x-direction": "server_to_client"
-        },
-        "leave": {
-          "title": "leave",
-          "summary": "Half-close one logical room",
-          "x-direction": "bidirectional"
-        },
-        "error": {
-          "title": "error",
-          "summary": "Terminal room or connection error",
-          "x-direction": "server_to_client"
-        }
-      },
-      "x-protocol": "loro-protocol",
-      "x-version": 1,
-      "x-ordered": true,
-      "x-backpressured": true
-    },
-    "/v1/ai/chats/{chat}/turns": {
-      "address": "/v1/ai/chats/{chat}/turns",
-      "servers": [
-        {
-          "$ref": "#/servers/localSse"
-        }
-      ],
-      "messages": {
-        "accepted": {
-          "title": "accepted",
-          "summary": "Durable turn acceptance and retry-safe attempt identities",
-          "x-direction": "server_to_client"
-        },
-        "event": {
-          "title": "event",
-          "summary": "Ordered normalized Koru AI stream event",
-          "x-direction": "server_to_client"
-        }
-      },
-      "x-protocol": "sse",
-      "x-version": 1,
-      "x-ordered": true,
-      "x-backpressured": true
-    },
-    "/v1/ai/providers/ollama/pulls": {
-      "address": "/v1/ai/providers/ollama/pulls",
-      "servers": [
-        {
-          "$ref": "#/servers/localSse"
-        }
-      ],
-      "messages": {
-        "accepted": {
-          "title": "accepted",
-          "summary": "Accepted Ollama model pull",
-          "x-direction": "server_to_client"
-        },
-        "event": {
-          "title": "event",
-          "summary": "Normalized progress followed by one completed, failed, or cancelled event",
-          "x-direction": "server_to_client"
-        }
-      },
-      "x-protocol": "sse",
-      "x-version": 1,
-      "x-ordered": true,
-      "x-backpressured": true
-    },
-    "/v1/sessions/{session_id}/subscribe": {
-      "address": "/v1/sessions/{session_id}/subscribe",
-      "messages": {
-        "session_stream_item": {
-          "title": "session_stream_item",
-          "summary": "Per-source sequenced event/output, explicit resnapshot gap, or terminal close",
-          "payload": {
-            "$ref": "#/components/schemas/SessionStreamItem"
-          },
-          "x-direction": "server_to_client"
-        }
-      },
-      "servers": [
-        {
-          "$ref": "#/servers/localSse"
-        }
-      ],
-      "x-protocol": "sse",
-      "x-version": 1,
-      "x-ordered": true,
-      "x-backpressured": true,
-      "x-explicit-gap": true,
-      "x-required-scopes": [
-        "sessions.output.read"
-      ],
-      "x-koru-required-capability": "sessions"
-    }
-  },
-  "components": {
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "httpApiKey",
-        "in": "header",
-        "name": "Authorization"
-      }
-    },
-    "schemas": {
-      "SessionStreamItem": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "event": {
-                "$ref": "#/components/schemas/SequencedSessionEvent"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "event"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "event"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "chunk": {
-                "$ref": "#/components/schemas/RawOutputChunk"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "output"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "chunk"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "source": {
-                "$ref": "#/components/schemas/SessionStreamSource"
-              },
-              "expected": {
-                "$ref": "#/components/schemas/StreamSequence"
-              },
-              "actual": {
-                "$ref": "#/components/schemas/StreamSequence"
-              },
-              "resnapshot_required": {
-                "type": "boolean"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "gap"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "source",
-              "expected",
-              "actual",
-              "resnapshot_required"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "error": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/SessionFailure"
-                  },
-                  {
-                    "nullable": true,
-                    "enum": [
-                      null
-                    ]
-                  }
-                ]
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "closed"
-                ]
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          }
-        ]
-      },
-      "SequencedSessionEvent": {
-        "type": "object",
-        "properties": {
-          "session_id": {
-            "$ref": "#/components/schemas/TerminalSessionId"
-          },
-          "sequence": {
-            "$ref": "#/components/schemas/StreamSequence"
-          },
-          "event": {
-            "$ref": "#/components/schemas/SessionEvent"
-          }
-        },
-        "required": [
-          "session_id",
-          "sequence",
-          "event"
-        ]
-      },
-      "TerminalSessionId": {
-        "type": "string",
-        "format": "uuid",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-      },
-      "StreamSequence": {
-        "type": "integer",
-        "format": "uint64",
-        "minimum": 1
-      },
-      "SessionEvent": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "byte_count": {
-                "type": "integer",
-                "format": "uint64",
-                "minimum": 0
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "output"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "byte_count"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "bell"
-                ]
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "started"
-                ]
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "integer",
-                "format": "int32",
-                "nullable": true
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "exited"
-                ]
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "error": {
-                "$ref": "#/components/schemas/SessionFailure"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "failed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "error"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "working_directory": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "working_directory_changed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "working_directory"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "title": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "title_changed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "title"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "attention": {
-                "$ref": "#/components/schemas/AttentionState"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "attention_changed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "attention"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "attachment_id": {
-                "$ref": "#/components/schemas/AttachmentId"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "attachment_created"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "attachment_id"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "attachment_id": {
-                "$ref": "#/components/schemas/AttachmentId"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "attachment_removed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "attachment_id"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "attachment_id": {
-                "$ref": "#/components/schemas/AttachmentId"
-              },
-              "code": {
-                "$ref": "#/components/schemas/ErrorCode"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "attachment_rejected"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "attachment_id",
-              "code"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "attachment_id": {
-                "$ref": "#/components/schemas/AttachmentId"
-              },
-              "turn_id": {
-                "$ref": "#/components/schemas/AgentTurnId"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "attachment_delivered"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "attachment_id",
-              "turn_id"
-            ]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "handover": {
-                "$ref": "#/components/schemas/HandoverState"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "handover_changed"
-                ]
-              }
-            },
-            "required": [
-              "kind",
-              "handover"
-            ],
-            "description": "Protocol v14. The controller handover moved: someone asked, the holder\nreleased, the lease was taken, or it was given back. A new tag, so a\nhost never sends it to a peer that negotiated less than v14."
-          }
-        ],
-        "description": "Lifecycle and low-volume facts for one session. Render content has its own\nbounded [`crate::RenderUpdate`] stream."
-      },
-      "SessionFailure": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "$ref": "#/components/schemas/ErrorCode"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ],
-        "description": "A content-free developer diagnostic. UI maps `code` to localized copy."
-      },
-      "ErrorCode": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Stable error token; unknown values remain errors."
-      },
-      "AttentionState": {
-        "type": "object",
-        "properties": {
-          "unread_count": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "requires_user": {
-            "type": "boolean"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AttentionReason"
-              },
-              {
-                "nullable": true,
-                "enum": [
-                  null
-                ]
-              }
-            ]
-          }
-        },
-        "required": [
-          "unread_count",
-          "requires_user"
-        ]
-      },
-      "AttentionReason": {
-        "type": "string",
-        "enum": [
-          "background_output",
-          "bell",
-          "input_required",
-          "approval_required",
-          "completed",
-          "failed",
-          "exited",
-          "attachment_delivered",
-          "attachment_rejected"
-        ]
-      },
-      "AttachmentId": {
-        "type": "string",
-        "format": "uuid",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-      },
-      "AgentTurnId": {
-        "type": "string",
-        "format": "uuid",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-      },
-      "HandoverState": {
-        "oneOf": [
-          {
-            "type": "string",
-            "enum": [
-              "idle"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "Someone asked while a controller was held; the holder has been told.",
-            "enum": [
-              "requested"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "The holder released its lease for the handover; the next attach takes\nit.",
-            "enum": [
-              "released"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "The lease was granted after a release: a person holds the session.",
-            "enum": [
-              "taken"
-            ]
-          },
-          {
-            "type": "string",
-            "description": "The person gave the lease back, or lost it; the next attach reclaims.",
-            "enum": [
-              "returned"
-            ]
-          }
-        ],
-        "description": "Where a controller handover stands.\n\nRelease, not preemption: nothing takes a lease from its holder. The\nholder is asked, releases at a boundary of its choosing, the requester\nattaches, and gives it back the same way. Each step is a state a reader\ncan see and an event a subscriber receives."
-      },
-      "RawOutputChunk": {
-        "type": "object",
-        "properties": {
-          "session_id": {
-            "$ref": "#/components/schemas/TerminalSessionId"
-          },
-          "sequence": {
-            "$ref": "#/components/schemas/StreamSequence"
-          },
-          "bytes": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "uint8",
-              "minimum": 0,
-              "maximum": 255
-            }
-          }
-        },
-        "required": [
-          "session_id",
-          "sequence",
-          "bytes"
-        ],
-        "description": "One bounded chunk for an explicitly authorized non-visual output\nsubscription. Render subscribers consume `RenderUpdate` instead."
-      },
-      "SessionStreamSource": {
-        "type": "string",
-        "enum": [
-          "event",
-          "output"
-        ]
-      }
     }
   }
 }
