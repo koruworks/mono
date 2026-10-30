@@ -43,6 +43,13 @@ somebody already on the notes page: they are the row for this release on
 https://updates.koru.do/releases/. Write them so they still make sense beside
 twenty other releases.
 
+**A Linux stable release is built from its descriptor on GitHub.** Pushing
+the `v<version>` tag of a commit that holds `releases/<version>.toml` builds
+the Linux tarball and publishes it as the GitHub release `v<version>`
+(`.github/workflows/stable.yml`); the GitHub release's page shows the same
+notes. `dist-cloud stable` writes the descriptor and the tag, so the order is:
+publish Windows and macOS with it, then `git push origin v<version>`.
+
 **The GitHub nightly is the exception.** Its notes are dated files in
 [nightly/](nightly/README.md), drafted by `./koru.sh nightly-notes` with the
 same generators, and that folder *is* the record of what each nightly said.

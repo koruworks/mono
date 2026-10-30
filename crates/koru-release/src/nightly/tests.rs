@@ -31,6 +31,10 @@ fn dist_github_parses_every_flag_and_refuses_the_rest() {
         options.download_base, "https://github.com/koruworks/mono/releases/download/nightly/",
         "the base gains its trailing slash"
     );
+    assert_eq!(
+        options.update_base, options.download_base,
+        "a nightly updates from where it was downloaded"
+    );
     assert_eq!(options.notes, Path::new("releases/nightly/2026-10-24.toml"));
     assert!(!options.key_password_stdin);
     assert_eq!(options.version, None);
@@ -46,6 +50,30 @@ fn dist_github_parses_every_flag_and_refuses_the_rest() {
     assert_eq!(
         options.version.as_deref(),
         Some("0.1.4-nightly.20261024+abc1234")
+    );
+
+    let mut with_update_base = FULL.to_vec();
+    with_update_base.extend([
+        "--update-base",
+        "https://github.com/koruworks/mono/releases/latest/download",
+    ]);
+    assert_eq!(
+        args(&with_update_base).unwrap().update_base,
+        "https://github.com/koruworks/mono/releases/latest/download/"
+    );
+    with_update_base.push("http://example.invalid/");
+    with_update_base.insert(with_update_base.len() - 1, "--update-base");
+    assert!(
+        args(&with_update_base)
+            .unwrap_err()
+            .contains("--update-base given twice")
+    );
+    let mut plain_http = FULL.to_vec();
+    plain_http.extend(["--update-base", "http://example.invalid/"]);
+    assert!(
+        args(&plain_http)
+            .unwrap_err()
+            .starts_with("--update-base must be")
     );
 
     for missing in ["--build", "--notes", "--key", "--download-base", "--out"] {
@@ -247,6 +275,73 @@ fn the_release_body_is_the_notes_then_the_build_then_the_platform_notes() {
     // so the last platform to publish cannot drop another's notes.
     let other = release_body(&build(&notes, "windows-x86_64"));
     assert_eq!(other, body);
+}
+
+fn stable_build<'a>(notes: &'a Descriptor) -> GithubBuild<'a> {
+    GithubBuild {
+        channel: ReleaseChannel::Stable,
+        version: "0.1.4",
+        download_base: "https://github.com/koruworks/mono/releases/download/v0.1.4/",
+        asset: "koru-0.1.4-linux-x86_64.tar.gz",
+        ..build(notes, "linux-x86_64")
+    }
+}
+
+/// A stable release lives on its own `v<version>` tag, so its notes link
+/// there and its package is in that release's directory (STABLE.md).
+#[test]
+fn a_stable_manifest_points_at_its_own_tagged_release() {
+    let notes = notes();
+    let manifest = github_manifest(&stable_build(&notes));
+    assert_eq!(manifest.channel, ReleaseChannel::Stable);
+    assert_eq!(manifest.version, "0.1.4");
+    assert_eq!(
+        manifest.release_notes.url.as_deref(),
+        Some("https://github.com/koruworks/mono/releases/tag/v0.1.4")
+    );
+    assert_eq!(
+        manifest.package.url,
+        "https://github.com/koruworks/mono/releases/download/v0.1.4/koru-0.1.4-linux-x86_64.tar.gz"
+    );
+    assert_eq!(
+        feed_name(ReleaseChannel::Stable, "linux-x86_64"),
+        "stable-linux-x86_64.json"
+    );
+    // The installed app's own check, with the pre-build placeholders.
+    let mut placeholder = stable_build(&notes);
+    placeholder.sha256 = PLACEHOLDER_SHA256;
+    placeholder.signature = "placeholder";
+    client_accepts(&github_manifest(&placeholder)).unwrap();
+    assert_eq!(
+        release_tag(ReleaseChannel::Nightly, "0.1.4-nightly.1"),
+        "nightly"
+    );
+    assert_eq!(release_tag(ReleaseChannel::Stable, "0.1.4"), "v0.1.4");
+}
+
+/// The stable page says what Linux lacks and where the other platforms are,
+/// and none of the nightly's own lines.
+#[test]
+fn a_stable_release_body_has_the_stable_platform_notes() {
+    let notes = notes();
+    let body = release_body(&stable_build(&notes));
+    assert!(body.contains("`0.1.4`"), "{body}");
+    assert!(body.contains("- **Linux** runs as an X11 app"), "{body}");
+    assert!(body.contains("Dictation and Koru Cloud are not available on Linux yet."));
+    assert!(body.contains("[koru.do](https://koru.do)"));
+    assert!(!body.contains("is a preview"), "{body}");
+    assert!(!body.contains("in the nightly"), "{body}");
+}
+
+/// Refused before anything is read or built: beta has no GitHub release yet,
+/// and a stable release takes its version from the tag rather than a guess.
+#[test]
+fn dist_github_refuses_beta_and_a_stable_without_its_version() {
+    let error = dist_github(Path::new("."), ReleaseChannel::Beta, args(FULL).unwrap()).unwrap_err();
+    assert!(error.contains("not beta"), "{error}");
+    let error =
+        dist_github(Path::new("."), ReleaseChannel::Stable, args(FULL).unwrap()).unwrap_err();
+    assert!(error.contains("pass --version"), "{error}");
 }
 
 #[test]

@@ -1,0 +1,220 @@
+# A stable release on GitHub: one release per `v<version>` tag of this
+# repository, built when the maintainer pushes that tag.
+#
+#   releases/<version>.toml committed (dist-cloud stable writes and tags it)
+#   git push origin v<version>
+#
+# The design is docs/features/github-release/STABLE.md. Linux is the first
+# platform built here; Windows and macOS of the same version are still
+# published to updates.koru.do by `koru-release dist-cloud stable` until their
+# jobs join this workflow.
+#
+# It is nightly.yml's shape with two differences, both because a `v*` tag
+# never moves (the repository ruleset lets only the maintainer create one, and
+# nobody move or delete it):
+#
+# - **The tag is the version.** Nothing is inferred; the notes are the
+#   version's own descriptor, `releases/<version>.toml`, at the tagged commit.
+# - **A release is added to, never replaced.** A build that fails is re-run
+#   from the Actions page ("Re-run failed jobs"), not re-tagged. A re-run keeps
+#   the plan job's build number, and uploads over its own files.
+#
+# Installed stable builds read `releases/latest/download/`, which GitHub
+# resolves to the release marked latest; the publish job marks this one only
+# when its version is the highest stable published, so a patch to an older
+# line cannot take the feed over.
+name: stable
+
+on:
+  push:
+    # A stable version only; a `v0.2.0-beta.1` does not match.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+# One publish of a version at a time, and never cancelled halfway: a publish
+# interrupted between its package and its feed would leave a feed naming an
+# older file, or none.
+concurrency:
+  group: koru-stable-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # The version from the tag, and one reading of the clock for every
+  # platform's build number, as the nightly's (N11): the UTC minute, so a
+  # stable build and a nightly compare correctly whichever is newer.
+  plan:
+    name: plan
+    if: github.repository == 'koruworks/mono'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - id: plan
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "$TAG is not a stable version tag" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+  # nightly.yml's build-linux, with the stable environment's key, the
+  # version's own descriptor, and an update base that follows the latest
+  # release instead of this tag.
+  build-linux:
+    name: build (linux-x86_64)
+    needs: plan
+    # The oldest LTS hosted image, for the glibc baseline (release design D20).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    environment: stable
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig-dev libssl-dev
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.sh') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        run: bash scripts/setup/fetch-fonts.sh
+      # **No notes, no release.** The version's descriptor must be in the
+      # tagged commit; it fails before anything is built otherwise.
+      - name: Find this version's notes
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          test -f "releases/$VERSION.toml" || {
+            echo "releases/$VERSION.toml is not in the tagged commit: a stable release needs its notes" >&2
+            exit 1
+          }
+      - name: Build, sign and write the release files
+        env:
+          RELEASE_MINISIGN_KEY: ${{ secrets.RELEASE_MINISIGN_KEY }}
+          RELEASE_MINISIGN_PASSWORD: ${{ secrets.RELEASE_MINISIGN_PASSWORD }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077 && printf '%s\n' "$RELEASE_MINISIGN_KEY" > "$key")
+          printf '%s' "$RELEASE_MINISIGN_PASSWORD" | ./koru.sh release-tool dist-github stable \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --notes "releases/$VERSION.toml" \
+            --key "$key" --key-password-stdin \
+            --download-base "https://github.com/${{ github.repository }}/releases/download/v$VERSION" \
+            --update-base "https://github.com/${{ github.repository }}/releases/latest/download" \
+            --out dist/stable
+          rm -f "$key"
+      # CI cannot open a window; this catches a missing library or a crash at
+      # load, as ci.yml's Windows packaging smoke does.
+      - name: Smoke-test the packaged binaries
+        run: |
+          archives=(dist/stable/*.tar.gz)
+          test "${#archives[@]}" -eq 1
+          smoke="$RUNNER_TEMP/koru-package"
+          mkdir -p "$smoke"
+          tar -xzf "${archives[0]}" -C "$smoke"
+          timeout 30 "$smoke/koru" --help >/dev/null
+          timeout 30 "$smoke/koru-agent" --help >/dev/null
+      # actions/attest-build-provenance v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/stable/*.tar.gz
+      # actions/upload-artifact v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: stable-linux-x86_64
+          path: dist/stable/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [plan, build-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      # One directory per platform that built, named after its artifact.
+      # actions/download-artifact v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: stable-*
+          path: stable
+      # **Packages before feeds**, as the nightly's publish: the manifest an
+      # installed app reads never names a file that is not there yet. The
+      # release is created unmarked, so `releases/latest/` does not move to it
+      # before its feed is uploaded.
+      - name: Publish the release
+        working-directory: stable
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          builds=(*/)
+          test "${#builds[@]}" -ge 1
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --latest=false \
+              --title "Koru $VERSION" --notes-file "${builds[0]}release-body.md"
+          fi
+          packages=() feeds=()
+          for build in "${builds[@]}"; do
+            feed=("$build"stable-*.json)
+            test "${#feed[@]}" -eq 1
+            feeds+=("${feed[0]}")
+            for file in "$build"*; do
+              case "$(basename "$file")" in
+                stable-*.json | release-body.md) ;;
+                *) packages+=("$file") ;;
+              esac
+            done
+          done
+          gh release upload "$TAG" "${packages[@]}" --clobber
+          gh release upload "$TAG" "${feeds[@]}" --clobber
+      # **Latest only when it is the newest stable**, by version rather than
+      # by date: GitHub's own choice would hand the feed to whichever release
+      # was created last.
+      - name: Mark it latest if it is the newest stable
+        run: |
+          set -euo pipefail
+          newest="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
+            --json tagName --jq '.[].tagName' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n 1)"
+          if [ "$newest" = "$VERSION" ]; then
+            gh release edit "$TAG" --latest
+            echo "$TAG is the latest stable release"
+          else
+            echo "$TAG is not marked latest: $newest is newer"
+          fi
