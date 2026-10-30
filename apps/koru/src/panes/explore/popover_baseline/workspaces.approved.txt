@@ -1,0 +1,694 @@
+== workspaces width=256 theme=light lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=light lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=light lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#9E9E9E@1.000 rendered_family=Inter
+== workspaces width=256 theme=light lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#9E9E9E@1.000 rendered_family=Inter
+== workspaces width=256 theme=light lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+== workspaces width=256 theme=light lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+== workspaces width=256 theme=dark lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=dark lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=dark lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#7E7E7E@1.000 rendered_family=Inter
+== workspaces width=256 theme=dark lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#7E7E7E@1.000 rendered_family=Inter
+== workspaces width=256 theme=dark lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+== workspaces width=256 theme=dark lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+== workspaces width=600 theme=light lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=600 theme=light lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=600 theme=light lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#9E9E9E@1.000 rendered_family=Inter
+== workspaces width=600 theme=light lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#9E9E9E@1.000 rendered_family=Inter
+== workspaces width=600 theme=light lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+== workspaces width=600 theme=light lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#9E9E9E@1.000 rendered_family=~
+== workspaces width=600 theme=dark lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=600 theme=dark lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=600 theme=dark lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#7E7E7E@1.000 rendered_family=Inter
+== workspaces width=600 theme=dark lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Konto- und Arbeitsbereichsmenü öffnen" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ARBEITSBEREICHE · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Arbeitsbereich verwalten" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Arbeitsbereich verwalten" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Arbeitsbereich verwalten" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbereich verwalten" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part 62.000 521.180 167.867 22.000 line_height=22 baseline=538 ink_bounds=Not_exposed
+paint heading text_run primitive 62.000 522.500 167.867 19.359 font_size=16 font_weight=500 baseline=538 ascent_/_descent=15.5_/_3.859375 foreground=#7E7E7E@1.000 rendered_family=Inter
+== workspaces width=600 theme=dark lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+== workspaces width=600 theme=dark lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "فتح قائمة الحساب ومساحة العمل" 54.000 513.000 584.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "مساحات العمل · 4" 54.000 519.000 584.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Quarterly planning for the European expansion programme" 62.000 545.000 544.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "إدارة مساحة العمل" 610.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work for Müller & Söhne GmbH, Zürich office" 62.000 571.000 544.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "إدارة مساحة العمل" 610.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 544.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "إدارة مساحة العمل" 610.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 544.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة مساحة العمل" 610.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+paint heading label_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+paint heading text_run primitive ~ ~ ~ ~ font_size=16 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#7E7E7E@1.000 rendered_family=~
+== workspaces width=256 theme=light lang=en names=normal state=hover-row
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=light lang=en names=normal state=hover-gear
+focus koru:w1/v1/n:6b6f7275000040008000000000000003#manage
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=light lang=en names=normal state=keyboard
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 513.000 258.000 142.000 size=8
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 4" 54.000 519.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Example" 62.000 545.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Client work" 62.000 571.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Reading list" 62.000 597.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Travel" 62.000 623.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=7 actions=Click,Focus
+== workspaces width=256 theme=light lang=en names=forty state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 155.000 258.000 500.000 size=80
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 40" 54.000 161.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 62.000 187.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 187.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Workspace 01" 62.000 213.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 213.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Workspace 02" 62.000 239.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 239.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Workspace 03 with a name long enough to be cut short" 62.000 265.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 265.000 20.000 26.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#root "Workspace 04" 62.000 291.000 218.000 26.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#manage "Manage workspace" 284.000 291.000 20.000 26.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#root "Workspace 05" 62.000 317.000 218.000 26.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#manage "Manage workspace" 284.000 317.000 20.000 26.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#root "Workspace 06" 62.000 343.000 218.000 26.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#manage "Manage workspace" 284.000 343.000 20.000 26.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#root "Workspace 07" 62.000 369.000 218.000 26.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#manage "Manage workspace" 284.000 369.000 20.000 26.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#root "Workspace 08" 62.000 395.000 218.000 26.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#manage "Manage workspace" 284.000 395.000 20.000 26.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#root "Workspace 09" 62.000 421.000 218.000 26.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#manage "Manage workspace" 284.000 421.000 20.000 26.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#root "Workspace 10 with a name long enough to be cut short" 62.000 447.000 218.000 26.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#manage "Manage workspace" 284.000 447.000 20.000 26.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#root "Workspace 11" 62.000 473.000 218.000 26.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#manage "Manage workspace" 284.000 473.000 20.000 26.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#root "Workspace 12" 62.000 499.000 218.000 26.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#manage "Manage workspace" 284.000 499.000 20.000 26.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#root "Workspace 13" 62.000 525.000 218.000 26.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#manage "Manage workspace" 284.000 525.000 20.000 26.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#root "Workspace 14" 62.000 551.000 218.000 26.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#manage "Manage workspace" 284.000 551.000 20.000 26.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#root "Workspace 15" 62.000 577.000 218.000 26.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#manage "Manage workspace" 284.000 577.000 20.000 26.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#root "Workspace 16" 62.000 603.000 218.000 26.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#manage "Manage workspace" 284.000 603.000 20.000 26.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#root "Workspace 17 with a name long enough to be cut short" 62.000 629.000 218.000 26.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#manage "Manage workspace" 284.000 629.000 20.000 26.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#root "Workspace 18" 62.000 655.000 218.000 26.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#manage "Manage workspace" 284.000 655.000 20.000 26.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#root "Workspace 19" 62.000 681.000 218.000 26.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#manage "Manage workspace" 284.000 681.000 20.000 26.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#root "Workspace 20" 62.000 707.000 218.000 26.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#manage "Manage workspace" 284.000 707.000 20.000 26.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#root "Workspace 21" 62.000 733.000 218.000 26.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#manage "Manage workspace" 284.000 733.000 20.000 26.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#root "Workspace 22" 62.000 759.000 218.000 26.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#manage "Manage workspace" 284.000 759.000 20.000 26.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#root "Workspace 23" 62.000 785.000 218.000 26.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#manage "Manage workspace" 284.000 785.000 20.000 26.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#root "Workspace 24 with a name long enough to be cut short" 62.000 811.000 218.000 26.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#manage "Manage workspace" 284.000 811.000 20.000 26.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#root "Workspace 25" 62.000 837.000 218.000 26.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#manage "Manage workspace" 284.000 837.000 20.000 26.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#root "Workspace 26" 62.000 863.000 218.000 26.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#manage "Manage workspace" 284.000 863.000 20.000 26.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#root "Workspace 27" 62.000 889.000 218.000 26.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#manage "Manage workspace" 284.000 889.000 20.000 26.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#root "Workspace 28" 62.000 915.000 218.000 26.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#manage "Manage workspace" 284.000 915.000 20.000 26.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#root "Workspace 29" 62.000 941.000 218.000 26.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#manage "Manage workspace" 284.000 941.000 20.000 26.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#root "Workspace 30" 62.000 967.000 218.000 26.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#manage "Manage workspace" 284.000 967.000 20.000 26.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#root "Workspace 31 with a name long enough to be cut short" 62.000 993.000 218.000 26.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#manage "Manage workspace" 284.000 993.000 20.000 26.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#root "Workspace 32" 62.000 1019.000 218.000 26.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#manage "Manage workspace" 284.000 1019.000 20.000 26.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#root "Workspace 33" 62.000 1045.000 218.000 26.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#manage "Manage workspace" 284.000 1045.000 20.000 26.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#root "Workspace 34" 62.000 1071.000 218.000 26.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#manage "Manage workspace" 284.000 1071.000 20.000 26.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#root "Workspace 35" 62.000 1097.000 218.000 26.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#manage "Manage workspace" 284.000 1097.000 20.000 26.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#root "Workspace 36" 62.000 1123.000 218.000 26.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#manage "Manage workspace" 284.000 1123.000 20.000 26.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#root "Workspace 37" 62.000 1149.000 218.000 26.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#manage "Manage workspace" 284.000 1149.000 20.000 26.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#root "Workspace 38 with a name long enough to be cut short" 62.000 1175.000 218.000 26.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#manage "Manage workspace" 284.000 1175.000 20.000 26.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#root "Workspace 39" 62.000 1201.000 218.000 26.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage workspace" 284.000 1201.000 20.000 26.000 position=79 actions=Click,Focus
+== workspaces width=256 theme=dark lang=en names=forty state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 155.000 258.000 500.000 size=80
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 40" 54.000 161.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 62.000 187.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 187.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Workspace 01" 62.000 213.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 213.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Workspace 02" 62.000 239.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 239.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Workspace 03 with a name long enough to be cut short" 62.000 265.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 265.000 20.000 26.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#root "Workspace 04" 62.000 291.000 218.000 26.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#manage "Manage workspace" 284.000 291.000 20.000 26.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#root "Workspace 05" 62.000 317.000 218.000 26.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#manage "Manage workspace" 284.000 317.000 20.000 26.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#root "Workspace 06" 62.000 343.000 218.000 26.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#manage "Manage workspace" 284.000 343.000 20.000 26.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#root "Workspace 07" 62.000 369.000 218.000 26.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#manage "Manage workspace" 284.000 369.000 20.000 26.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#root "Workspace 08" 62.000 395.000 218.000 26.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#manage "Manage workspace" 284.000 395.000 20.000 26.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#root "Workspace 09" 62.000 421.000 218.000 26.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#manage "Manage workspace" 284.000 421.000 20.000 26.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#root "Workspace 10 with a name long enough to be cut short" 62.000 447.000 218.000 26.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#manage "Manage workspace" 284.000 447.000 20.000 26.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#root "Workspace 11" 62.000 473.000 218.000 26.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#manage "Manage workspace" 284.000 473.000 20.000 26.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#root "Workspace 12" 62.000 499.000 218.000 26.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#manage "Manage workspace" 284.000 499.000 20.000 26.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#root "Workspace 13" 62.000 525.000 218.000 26.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#manage "Manage workspace" 284.000 525.000 20.000 26.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#root "Workspace 14" 62.000 551.000 218.000 26.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#manage "Manage workspace" 284.000 551.000 20.000 26.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#root "Workspace 15" 62.000 577.000 218.000 26.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#manage "Manage workspace" 284.000 577.000 20.000 26.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#root "Workspace 16" 62.000 603.000 218.000 26.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#manage "Manage workspace" 284.000 603.000 20.000 26.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#root "Workspace 17 with a name long enough to be cut short" 62.000 629.000 218.000 26.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#manage "Manage workspace" 284.000 629.000 20.000 26.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#root "Workspace 18" 62.000 655.000 218.000 26.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#manage "Manage workspace" 284.000 655.000 20.000 26.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#root "Workspace 19" 62.000 681.000 218.000 26.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#manage "Manage workspace" 284.000 681.000 20.000 26.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#root "Workspace 20" 62.000 707.000 218.000 26.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#manage "Manage workspace" 284.000 707.000 20.000 26.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#root "Workspace 21" 62.000 733.000 218.000 26.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#manage "Manage workspace" 284.000 733.000 20.000 26.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#root "Workspace 22" 62.000 759.000 218.000 26.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#manage "Manage workspace" 284.000 759.000 20.000 26.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#root "Workspace 23" 62.000 785.000 218.000 26.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#manage "Manage workspace" 284.000 785.000 20.000 26.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#root "Workspace 24 with a name long enough to be cut short" 62.000 811.000 218.000 26.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#manage "Manage workspace" 284.000 811.000 20.000 26.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#root "Workspace 25" 62.000 837.000 218.000 26.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#manage "Manage workspace" 284.000 837.000 20.000 26.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#root "Workspace 26" 62.000 863.000 218.000 26.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#manage "Manage workspace" 284.000 863.000 20.000 26.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#root "Workspace 27" 62.000 889.000 218.000 26.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#manage "Manage workspace" 284.000 889.000 20.000 26.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#root "Workspace 28" 62.000 915.000 218.000 26.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#manage "Manage workspace" 284.000 915.000 20.000 26.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#root "Workspace 29" 62.000 941.000 218.000 26.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#manage "Manage workspace" 284.000 941.000 20.000 26.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#root "Workspace 30" 62.000 967.000 218.000 26.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#manage "Manage workspace" 284.000 967.000 20.000 26.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#root "Workspace 31 with a name long enough to be cut short" 62.000 993.000 218.000 26.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#manage "Manage workspace" 284.000 993.000 20.000 26.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#root "Workspace 32" 62.000 1019.000 218.000 26.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#manage "Manage workspace" 284.000 1019.000 20.000 26.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#root "Workspace 33" 62.000 1045.000 218.000 26.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#manage "Manage workspace" 284.000 1045.000 20.000 26.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#root "Workspace 34" 62.000 1071.000 218.000 26.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#manage "Manage workspace" 284.000 1071.000 20.000 26.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#root "Workspace 35" 62.000 1097.000 218.000 26.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#manage "Manage workspace" 284.000 1097.000 20.000 26.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#root "Workspace 36" 62.000 1123.000 218.000 26.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#manage "Manage workspace" 284.000 1123.000 20.000 26.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#root "Workspace 37" 62.000 1149.000 218.000 26.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#manage "Manage workspace" 284.000 1149.000 20.000 26.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#root "Workspace 38 with a name long enough to be cut short" 62.000 1175.000 218.000 26.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#manage "Manage workspace" 284.000 1175.000 20.000 26.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#root "Workspace 39" 62.000 1201.000 218.000 26.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage workspace" 284.000 1201.000 20.000 26.000 position=79 actions=Click,Focus
+== workspaces width=256 theme=light lang=en names=forty state=scrolled-to-end
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 155.000 258.000 500.000 size=80
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 40" 54.000 161.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 62.000 -391.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 -391.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Workspace 01" 62.000 -365.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 -365.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Workspace 02" 62.000 -339.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 -339.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Workspace 03 with a name long enough to be cut short" 62.000 -313.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 -313.000 20.000 26.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#root "Workspace 04" 62.000 -287.000 218.000 26.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#manage "Manage workspace" 284.000 -287.000 20.000 26.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#root "Workspace 05" 62.000 -261.000 218.000 26.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#manage "Manage workspace" 284.000 -261.000 20.000 26.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#root "Workspace 06" 62.000 -235.000 218.000 26.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#manage "Manage workspace" 284.000 -235.000 20.000 26.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#root "Workspace 07" 62.000 -209.000 218.000 26.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#manage "Manage workspace" 284.000 -209.000 20.000 26.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#root "Workspace 08" 62.000 -183.000 218.000 26.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#manage "Manage workspace" 284.000 -183.000 20.000 26.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#root "Workspace 09" 62.000 -157.000 218.000 26.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#manage "Manage workspace" 284.000 -157.000 20.000 26.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#root "Workspace 10 with a name long enough to be cut short" 62.000 -131.000 218.000 26.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#manage "Manage workspace" 284.000 -131.000 20.000 26.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#root "Workspace 11" 62.000 -105.000 218.000 26.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#manage "Manage workspace" 284.000 -105.000 20.000 26.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#root "Workspace 12" 62.000 -79.000 218.000 26.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#manage "Manage workspace" 284.000 -79.000 20.000 26.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#root "Workspace 13" 62.000 -53.000 218.000 26.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#manage "Manage workspace" 284.000 -53.000 20.000 26.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#root "Workspace 14" 62.000 -27.000 218.000 26.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#manage "Manage workspace" 284.000 -27.000 20.000 26.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#root "Workspace 15" 62.000 -1.000 218.000 26.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#manage "Manage workspace" 284.000 -1.000 20.000 26.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#root "Workspace 16" 62.000 25.000 218.000 26.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#manage "Manage workspace" 284.000 25.000 20.000 26.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#root "Workspace 17 with a name long enough to be cut short" 62.000 51.000 218.000 26.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#manage "Manage workspace" 284.000 51.000 20.000 26.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#root "Workspace 18" 62.000 77.000 218.000 26.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#manage "Manage workspace" 284.000 77.000 20.000 26.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#root "Workspace 19" 62.000 103.000 218.000 26.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#manage "Manage workspace" 284.000 103.000 20.000 26.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#root "Workspace 20" 62.000 129.000 218.000 26.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#manage "Manage workspace" 284.000 129.000 20.000 26.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#root "Workspace 21" 62.000 155.000 218.000 26.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#manage "Manage workspace" 284.000 155.000 20.000 26.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#root "Workspace 22" 62.000 181.000 218.000 26.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#manage "Manage workspace" 284.000 181.000 20.000 26.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#root "Workspace 23" 62.000 207.000 218.000 26.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#manage "Manage workspace" 284.000 207.000 20.000 26.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#root "Workspace 24 with a name long enough to be cut short" 62.000 233.000 218.000 26.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#manage "Manage workspace" 284.000 233.000 20.000 26.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#root "Workspace 25" 62.000 259.000 218.000 26.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#manage "Manage workspace" 284.000 259.000 20.000 26.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#root "Workspace 26" 62.000 285.000 218.000 26.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#manage "Manage workspace" 284.000 285.000 20.000 26.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#root "Workspace 27" 62.000 311.000 218.000 26.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#manage "Manage workspace" 284.000 311.000 20.000 26.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#root "Workspace 28" 62.000 337.000 218.000 26.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#manage "Manage workspace" 284.000 337.000 20.000 26.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#root "Workspace 29" 62.000 363.000 218.000 26.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#manage "Manage workspace" 284.000 363.000 20.000 26.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#root "Workspace 30" 62.000 389.000 218.000 26.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#manage "Manage workspace" 284.000 389.000 20.000 26.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#root "Workspace 31 with a name long enough to be cut short" 62.000 415.000 218.000 26.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#manage "Manage workspace" 284.000 415.000 20.000 26.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#root "Workspace 32" 62.000 441.000 218.000 26.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#manage "Manage workspace" 284.000 441.000 20.000 26.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#root "Workspace 33" 62.000 467.000 218.000 26.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#manage "Manage workspace" 284.000 467.000 20.000 26.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#root "Workspace 34" 62.000 493.000 218.000 26.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#manage "Manage workspace" 284.000 493.000 20.000 26.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#root "Workspace 35" 62.000 519.000 218.000 26.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#manage "Manage workspace" 284.000 519.000 20.000 26.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#root "Workspace 36" 62.000 545.000 218.000 26.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#root "Workspace 37" 62.000 571.000 218.000 26.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#root "Workspace 38 with a name long enough to be cut short" 62.000 597.000 218.000 26.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#root "Workspace 39" 62.000 623.000 218.000 26.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=79 actions=Click,Focus
+== workspaces width=256 theme=dark lang=en names=forty state=scrolled-to-end
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Open account and workspace menu" 54.000 155.000 258.000 500.000 size=80
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "WORKSPACES · 40" 54.000 161.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#root "Workspace 00" 62.000 -391.000 218.000 26.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000001#manage "Manage workspace" 284.000 -391.000 20.000 26.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#root "Workspace 01" 62.000 -365.000 218.000 26.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000002#manage "Manage workspace" 284.000 -365.000 20.000 26.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#root "Workspace 02" 62.000 -339.000 218.000 26.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000003#manage "Manage workspace" 284.000 -339.000 20.000 26.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#root "Workspace 03 with a name long enough to be cut short" 62.000 -313.000 218.000 26.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage workspace" 284.000 -313.000 20.000 26.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#root "Workspace 04" 62.000 -287.000 218.000 26.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000005#manage "Manage workspace" 284.000 -287.000 20.000 26.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#root "Workspace 05" 62.000 -261.000 218.000 26.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000006#manage "Manage workspace" 284.000 -261.000 20.000 26.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#root "Workspace 06" 62.000 -235.000 218.000 26.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000007#manage "Manage workspace" 284.000 -235.000 20.000 26.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#root "Workspace 07" 62.000 -209.000 218.000 26.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000008#manage "Manage workspace" 284.000 -209.000 20.000 26.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#root "Workspace 08" 62.000 -183.000 218.000 26.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000009#manage "Manage workspace" 284.000 -183.000 20.000 26.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#root "Workspace 09" 62.000 -157.000 218.000 26.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000a#manage "Manage workspace" 284.000 -157.000 20.000 26.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#root "Workspace 10 with a name long enough to be cut short" 62.000 -131.000 218.000 26.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000b#manage "Manage workspace" 284.000 -131.000 20.000 26.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#root "Workspace 11" 62.000 -105.000 218.000 26.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000c#manage "Manage workspace" 284.000 -105.000 20.000 26.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#root "Workspace 12" 62.000 -79.000 218.000 26.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000d#manage "Manage workspace" 284.000 -79.000 20.000 26.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#root "Workspace 13" 62.000 -53.000 218.000 26.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000e#manage "Manage workspace" 284.000 -53.000 20.000 26.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#root "Workspace 14" 62.000 -27.000 218.000 26.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000000f#manage "Manage workspace" 284.000 -27.000 20.000 26.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#root "Workspace 15" 62.000 -1.000 218.000 26.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000010#manage "Manage workspace" 284.000 -1.000 20.000 26.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#root "Workspace 16" 62.000 25.000 218.000 26.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000011#manage "Manage workspace" 284.000 25.000 20.000 26.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#root "Workspace 17 with a name long enough to be cut short" 62.000 51.000 218.000 26.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000012#manage "Manage workspace" 284.000 51.000 20.000 26.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#root "Workspace 18" 62.000 77.000 218.000 26.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000013#manage "Manage workspace" 284.000 77.000 20.000 26.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#root "Workspace 19" 62.000 103.000 218.000 26.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000014#manage "Manage workspace" 284.000 103.000 20.000 26.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#root "Workspace 20" 62.000 129.000 218.000 26.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000015#manage "Manage workspace" 284.000 129.000 20.000 26.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#root "Workspace 21" 62.000 155.000 218.000 26.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000016#manage "Manage workspace" 284.000 155.000 20.000 26.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#root "Workspace 22" 62.000 181.000 218.000 26.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000017#manage "Manage workspace" 284.000 181.000 20.000 26.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#root "Workspace 23" 62.000 207.000 218.000 26.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000018#manage "Manage workspace" 284.000 207.000 20.000 26.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#root "Workspace 24 with a name long enough to be cut short" 62.000 233.000 218.000 26.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000019#manage "Manage workspace" 284.000 233.000 20.000 26.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#root "Workspace 25" 62.000 259.000 218.000 26.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001a#manage "Manage workspace" 284.000 259.000 20.000 26.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#root "Workspace 26" 62.000 285.000 218.000 26.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001b#manage "Manage workspace" 284.000 285.000 20.000 26.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#root "Workspace 27" 62.000 311.000 218.000 26.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001c#manage "Manage workspace" 284.000 311.000 20.000 26.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#root "Workspace 28" 62.000 337.000 218.000 26.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001d#manage "Manage workspace" 284.000 337.000 20.000 26.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#root "Workspace 29" 62.000 363.000 218.000 26.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001e#manage "Manage workspace" 284.000 363.000 20.000 26.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#root "Workspace 30" 62.000 389.000 218.000 26.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000001f#manage "Manage workspace" 284.000 389.000 20.000 26.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#root "Workspace 31 with a name long enough to be cut short" 62.000 415.000 218.000 26.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000020#manage "Manage workspace" 284.000 415.000 20.000 26.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#root "Workspace 32" 62.000 441.000 218.000 26.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000021#manage "Manage workspace" 284.000 441.000 20.000 26.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#root "Workspace 33" 62.000 467.000 218.000 26.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000022#manage "Manage workspace" 284.000 467.000 20.000 26.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#root "Workspace 34" 62.000 493.000 218.000 26.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000023#manage "Manage workspace" 284.000 493.000 20.000 26.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#root "Workspace 35" 62.000 519.000 218.000 26.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000024#manage "Manage workspace" 284.000 519.000 20.000 26.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#root "Workspace 36" 62.000 545.000 218.000 26.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000025#manage "Manage workspace" 284.000 545.000 20.000 26.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#root "Workspace 37" 62.000 571.000 218.000 26.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000026#manage "Manage workspace" 284.000 571.000 20.000 26.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#root "Workspace 38 with a name long enough to be cut short" 62.000 597.000 218.000 26.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000027#manage "Manage workspace" 284.000 597.000 20.000 26.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#root "Workspace 39" 62.000 623.000 218.000 26.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage workspace" 284.000 623.000 20.000 26.000 position=79 actions=Click,Focus

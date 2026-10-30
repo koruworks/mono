@@ -6424,11 +6424,18 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         .find(|(row, _)| matches!(row, crate::panes::explore::PopoverRow::Workspace(0)))
         .expect("the workspace row");
     let grip = v.sidebar_grip();
-    let left = rect.x.max(grip.x);
-    let right = (rect.x + rect.w).min(grip.x + grip.w);
+    // Where the row's gear and the grip overlap. Since ELEMENTS P4 a
+    // target owns its start edge and not its end edge, so the point is the
+    // middle of the overlap, not the gear's last line.
+    let gear = v
+        .explore
+        .workspace_row_parts(crate::panes::explore::PopoverRow::Workspace(0), rect)
+        .trailing;
+    let left = gear.x.max(grip.x);
+    let right = (gear.x + gear.w).min(grip.x + grip.w);
     assert!(
         left < right,
-        "this test point is where the row and the grip overlap"
+        "this test point is where the gear and the grip overlap"
     );
     let x = (left + right) * 0.5;
     let y = rect.centre().1;

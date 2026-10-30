@@ -387,6 +387,8 @@ pub(crate) struct TextEl {
     pub ink: Ink,
     pub weight: Option<FontWeight>,
     pub mode: TextMode,
+    /// A single line centred on its glyphs' ink rather than its line box.
+    pub ink_centred: bool,
 }
 
 pub(crate) struct IconEl {
@@ -524,6 +526,7 @@ pub fn text(content: impl Into<String>) -> El {
             ink: Ink::Primary,
             weight: None,
             mode: TextMode::Single,
+            ink_centred: false,
         }),
     )
 }
@@ -862,6 +865,16 @@ impl El {
     pub fn truncate(mut self) -> Self {
         if let Kind::Text(t) = &mut self.kind {
             t.mode = TextMode::Truncate;
+        }
+        self
+    }
+
+    /// Centre a single line on its ink, not its line box: the drawn glyphs
+    /// sit in the middle of the height, whatever the font's ascent and
+    /// descent say. How a row's name has always been set in the switcher.
+    pub fn ink_centred(mut self) -> Self {
+        if let Kind::Text(t) = &mut self.kind {
+            t.ink_centred = true;
         }
         self
     }

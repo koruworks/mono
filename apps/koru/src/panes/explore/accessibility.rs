@@ -207,6 +207,8 @@ impl ExploreView {
                     PopoverKind::LibraryActions => "library",
                 });
                 rev.u64(popover.hover.map_or(u64::MAX, |i| i as u64));
+                // Right onto a gear moves the focus without moving the row.
+                rev.bool(self.popover_part == Some(super::PopoverPart::Gear));
                 for row in self.popover_rows() {
                     rev.str(&self.popover_row_label(row, Lang::En));
                 }
@@ -229,6 +231,16 @@ impl ExploreView {
             let rows = self.popover_rows();
             let hovered = popover.hover.and_then(|i| rows.get(i).copied());
             return Some(match hovered {
+                // The keyboard on a workspace's gear is on the gear
+                // (ELEMENTS.final D2): its node, not the row's.
+                Some(PopoverRow::Workspace(i))
+                    if self.popover_part == Some(super::PopoverPart::Gear) =>
+                {
+                    match self.workspaces.get(i) {
+                        Some(w) => cx.model(w.id.as_uuid(), parts::MANAGE),
+                        None => cx.surface(POPOVER, parts::POPOVER),
+                    }
+                }
                 Some(row) => self.popover_row_occurrence(cx, row),
                 None => cx.surface(POPOVER, parts::POPOVER),
             });
@@ -635,6 +647,15 @@ impl ExploreView {
     /// that is on its way off the screen.
     fn popover_semantics(&self, cx: &Context) -> Option<SemanticNode> {
         let popover = self.live()?;
+        // The Workspaces page publishes its element frame: the Menu, its
+        // heading, and each row's primary beside its gear (P4).
+        if popover.kind == PopoverKind::Summary {
+            return self
+                .with_workspaces(cx.area, cx.viewport, |frame| {
+                    self.element_semantics(cx, frame)
+                })
+                .and_then(|mut roots| roots.pop());
+        }
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
         // **A head's buttons are controls of their own**: a node each, so a

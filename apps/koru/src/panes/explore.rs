@@ -24,6 +24,7 @@
 //! `rowlayout::visible_range` does for the editor: a library with a thousand
 //! nodes must cost a screenful of layouts per frame, not a thousand.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -593,8 +594,8 @@ pub enum ExploreChromeFocus {
 
 /// Every rect in a workspace row of the switcher, derived from the row alone.
 ///
-/// See [`ExploreView::workspace_row_parts`], which is the only thing that
-/// computes these.
+/// See [`ExploreView::workspace_row_parts`]: the workspace row's element,
+/// laid out, read back.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct WorkspaceRowParts {
     /// The rounded tile carrying the workspace's colour and emoji.
@@ -866,6 +867,9 @@ pub struct ExploreView {
     current: Option<WorkspaceId>,
     /// Which popover is open, and which of its rows is highlighted.
     popover: Option<Popover>,
+    /// The Workspaces page's own text engine and shaping cache, for the
+    /// frame that answers input and the accessibility tree.
+    page_layout: RefCell<popover_elements::PageLayout>,
     /// Carets part-way through their quarter turn, by node.
     ///
     /// **Only the ones actually moving.** A settled caret is not in here at all
@@ -3543,23 +3547,13 @@ impl ExploreView {
         let Some(p) = self.popover.as_ref() else {
             return Vec::new();
         };
+        // The Workspaces page is its element frame (ELEMENTS-PLAN P4).
+        if p.kind == PopoverKind::Summary {
+            return self
+                .with_workspaces(area, viewport, |frame| self.workspaces_rows(frame))
+                .unwrap_or_default();
+        }
         self.page_rects(p.kind, panel, p.scroll)
-    }
-
-    /// One row's rect, when the open page lists it.
-    /// Test-driven since the WORKSPACES heading lost its buttons (E60): the
-    /// Profiles title's `+` is pressed through it in the suites.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn popover_row_rect(
-        &self,
-        area: Rect,
-        viewport: (f32, f32),
-        want: PopoverRow,
-    ) -> Option<Rect> {
-        self.popover_rects(area, viewport)
-            .into_iter()
-            .find(|(row, _)| *row == want)
-            .map(|(_, r)| r)
     }
 
     /// Where one of the open page's fixed-row buttons is: your card's
@@ -3645,6 +3639,12 @@ impl ExploreView {
 
     fn popover_list_band(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
         let kind = self.popover.as_ref()?.kind;
+        if kind == PopoverKind::Summary {
+            return self
+                .with_workspaces(area, viewport, popover_elements::list_of)
+                .flatten()
+                .map(|(rect, _, _)| rect);
+        }
         let panel = self.settled_panel(area, viewport)?;
         self.page_band(kind, panel)
     }
@@ -3664,6 +3664,12 @@ impl ExploreView {
     }
 
     fn popover_scroll_max(&self, area: Rect, viewport: (f32, f32)) -> f32 {
+        if self.popover.as_ref().map(|p| p.kind) == Some(PopoverKind::Summary) {
+            return self
+                .with_workspaces(area, viewport, popover_elements::list_of)
+                .flatten()
+                .map_or(0.0, |(list, content, _)| (content - list.h).max(0.0));
+        }
         let visible = self.popover_list_band(area, viewport).map_or(0.0, |r| r.h);
         (self.popover_list_content_h() - visible).max(0.0)
     }
@@ -3698,6 +3704,25 @@ impl ExploreView {
         let Some(index) = self.live().and_then(|popover| popover.hover) else {
             return false;
         };
+        // The Workspaces page: the offset its frame says shows the lit part
+        // — the primary or the gear, whichever the keyboard or pointer is on.
+        if self.live().map(|p| p.kind) == Some(PopoverKind::Summary) {
+            let Some(key) = self.lit_key(Some(index)) else {
+                return false;
+            };
+            let Some(offset) = self
+                .with_workspaces(area, viewport, |frame| frame.reveal(key))
+                .flatten()
+                .map(|(_, offset)| offset)
+            else {
+                return false;
+            };
+            if let Some(popover) = self.popover.as_mut() {
+                popover.scroll = offset;
+            }
+            self.clamp_popover_scroll(area, viewport);
+            return true;
+        }
         let Some(band) = self.popover_list_band(area, viewport) else {
             return false;
         };
@@ -3724,35 +3749,24 @@ impl ExploreView {
         true
     }
 
-    /// Where each piece of a workspace row goes.
-    ///
-    /// One function, because drawing and hit-testing both come here. Zero-sized
+    /// Where each piece of a workspace row goes: the row's element laid
+    /// out in `r` and read back, so the parts are the page's own. Zero-sized
     /// rects for a row that is not a workspace, so a caller never has to ask
     /// twice.
     pub fn workspace_row_parts(&self, row: PopoverRow, r: Rect) -> WorkspaceRowParts {
         let empty = Rect::new(r.x, r.y, 0.0, 0.0);
-        if !matches!(row, PopoverRow::Workspace(_)) {
+        let PopoverRow::Workspace(i) = row else {
             return WorkspaceRowParts {
                 chip: empty,
                 name: empty,
                 trailing: empty,
             };
-        }
-        let chip = Rect::new(
-            r.x + theme::NAV_PAD,
-            r.y + (r.h - WORKSPACE_CHIP) * 0.5,
-            WORKSPACE_CHIP,
-            WORKSPACE_CHIP,
-        );
-        // The trailing lane: the tick on the workspace you are in, the gear
-        // while the pointer is on the row.
-        let trailing = trailing_lane(r);
-        let name_x = chip.x + chip.w + 8.0;
-        WorkspaceRowParts {
-            chip,
-            name: Rect::new(name_x, r.y, (trailing.x - name_x - 4.0).max(1.0), r.h),
-            trailing,
-        }
+        };
+        self.workspace_parts_in(i, r).unwrap_or(WorkspaceRowParts {
+            chip: empty,
+            name: empty,
+            trailing: empty,
+        })
     }
 
     /// Where a workspace's row is, so the container can draw a field over it.
@@ -3866,7 +3880,12 @@ impl ExploreView {
         y: f32,
     ) -> Option<(usize, PopoverRow, PopoverPart)> {
         // Deaf the moment it is dismissed, however long it is still on screen.
-        self.live()?;
+        let kind = self.live()?.kind;
+        if kind == PopoverKind::Summary {
+            return self
+                .with_workspaces(area, viewport, |frame| self.workspaces_part_at(frame, x, y))
+                .flatten();
+        }
         let band = self.popover_list_band(area, viewport);
         let (i, (row, r)) = self
             .popover_rects(area, viewport)
@@ -3919,10 +3938,14 @@ impl ExploreView {
         self.choose(row, part)
     }
 
-    /// What Enter means on `row`: the foot's `+`, else the row itself.
-    fn keyboard_part(row: PopoverRow) -> PopoverPart {
+    /// What Enter means on `row`: the foot's `+`, the gear when the
+    /// keyboard has moved onto a workspace's gear, else the row itself.
+    fn keyboard_part(&self, row: PopoverRow) -> PopoverPart {
         match row {
             PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
+            PopoverRow::Workspace(_) if self.popover_part == Some(PopoverPart::Gear) => {
+                PopoverPart::Gear
+            }
             _ => PopoverPart::Row,
         }
     }
@@ -4034,12 +4057,32 @@ impl ExploreView {
                 if let Some(p) = self.popover.as_mut() {
                     p.hover = next_selectable(&rows, from, forward);
                 }
+                // A row is reached on its primary; its gear is one Right away.
+                self.popover_part = None;
                 Some(Outcome::Consumed)
             }
-            // Enter chooses the lit row — a head's `+` when a head is lit —
-            // and shuts the popover when that choice is the end of it.
+            // **Left and Right move between a lit workspace row's primary
+            // and its gear** (ELEMENTS.final D2). Anywhere else they mean
+            // nothing here and fall through.
+            Key::Named(NamedKey::ArrowRight)
+                if matches!(hovered, Some(PopoverRow::Workspace(_)))
+                    && self.popover_part != Some(PopoverPart::Gear) =>
+            {
+                self.popover_part = Some(PopoverPart::Gear);
+                Some(Outcome::Consumed)
+            }
+            Key::Named(NamedKey::ArrowLeft)
+                if matches!(hovered, Some(PopoverRow::Workspace(_)))
+                    && self.popover_part == Some(PopoverPart::Gear) =>
+            {
+                self.popover_part = None;
+                Some(Outcome::Consumed)
+            }
+            // Enter chooses the lit part — the gear, a head's `+` when a head
+            // is lit, else the row — and shuts the popover when that choice
+            // is the end of it.
             Key::Named(NamedKey::Enter) => Some(match hovered {
-                Some(row) => self.press(row, Self::keyboard_part(row)),
+                Some(row) => self.press(row, self.keyboard_part(row)),
                 None => {
                     self.close_popover();
                     Outcome::Consumed
@@ -7775,6 +7818,10 @@ impl ExploreView {
         hover: Option<usize>,
         avatar: Option<&peniko::ImageBrush>,
     ) {
+        if kind == PopoverKind::Summary {
+            self.draw_workspaces_page(scene, root, engine, panel, scroll, hover);
+            return;
+        }
         let p = theme::p();
         let lang = crate::format::lang();
         let list_band = self.page_band(kind, panel);
@@ -7848,29 +7895,8 @@ impl ExploreView {
             let text_x = icon_x + 22.0;
             let text = |x: f32| Rect::new(x, r.y, (r.x + r.w - x - 8.0).max(1.0), r.h);
             match row {
-                PopoverRow::WorkspacesHeading => {
-                    // *WORKSPACES · n*, then its `+` and import button.
-                    let n = self
-                        .rows_for(kind)
-                        .iter()
-                        .filter(|row| matches!(row, PopoverRow::Workspace(_)))
-                        .count();
-                    let label = format!("WORKSPACES · {n}");
-                    let buttons = head_button_rects(r, row);
-                    let first = buttons.first().map_or(r.x + r.w, |(_, b)| b.x);
-                    // At the tiles' left edge, 16 px (the CTO's note, E73).
-                    let x = icon_x;
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        &label,
-                        Rect::new(x, r.y, (first - 8.0 - x).max(1.0), r.h),
-                        theme::role::popover_heading(),
-                        p.row_hint,
-                    );
-                    self.draw_head_buttons(scene, root, engine, &buttons, hot, HeadButton::New);
-                }
+                // The Workspaces page is drawn from its frame.
+                PopoverRow::WorkspacesHeading | PopoverRow::Workspace(_) => {}
                 PopoverRow::ProfilesHeading => {
                     // *PROFILES · n*, at the tiles' left edge, as the
                     // chip's page is headed (the CTO's note, E78).
@@ -7998,34 +8024,6 @@ impl ExploreView {
                         );
                     }
                 }
-                PopoverRow::Workspace(i) => {
-                    let w = &self.workspaces[i];
-                    let current = self.current == Some(w.id);
-                    let parts = self.workspace_row_parts(row, r);
-                    koru_draw::tile::Tile {
-                        icon: w.icon.as_deref(),
-                        color: w.color.as_deref(),
-                        name: &w.name,
-                    }
-                    .draw(scene, root, engine, parts.chip);
-                    let colour = if current { p.text } else { p.text_dim };
-                    let style = if current {
-                        theme::role::row().with_weight(theme::FontWeight::SemiBold)
-                    } else {
-                        theme::role::row()
-                    };
-                    let fitted = engine.elided(&label_fit(&w.name), style, parts.name.w);
-                    let label = engine.simple_layout(&fitted, style);
-                    scene::draw_layout_first_line(
-                        scene,
-                        root,
-                        &label,
-                        parts.name.x,
-                        scene::centre_y_in(&label, parts.name),
-                        Some(colour),
-                    );
-                    draw_trailing(scene, root, engine, parts.trailing, current, hot, part, p);
-                }
                 PopoverRow::LibraryAction(action) => {
                     draw_icon(
                         scene,
@@ -8105,6 +8103,48 @@ impl ExploreView {
         {
             let thumb_h = (band.h * band.h / content_h).max(24.0).min(band.h);
             let thumb_y = band.y + (band.h - thumb_h) * (scroll / scroll_max);
+            scene::fill(
+                scene,
+                root,
+                p.row_hint,
+                &scene::rrect(band.x + band.w - 4.0, thumb_y, 2.0, thumb_h, 1.0),
+            );
+        }
+    }
+}
+
+impl ExploreView {
+    /// The Workspaces page, painted from its element frame, with the band
+    /// chrome a scrolling list wears around it: the hairline under the list
+    /// and its thumb, read off the frame's own list geometry.
+    fn draw_workspaces_page(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        panel: Rect,
+        scroll: f32,
+        hover: Option<usize>,
+    ) {
+        let p = theme::p();
+        let (tree, frame) = self.workspaces_at(engine, panel, scroll, hover);
+        let list = popover_elements::list_of(&frame);
+        let scrolls = list.filter(|(band, content, _)| *content > band.h);
+        if let Some((band, _, _)) = scrolls {
+            // A list that scrolls is separated from what is under it, so rows
+            // slipping out of view read as going *under* the page's floor.
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(band.x + 8.0, band.y + band.h, (band.w - 16.0).max(0.0), 1.0),
+            );
+        }
+        frame.paint(&tree, scene, root, engine);
+        if let Some((band, content, offset)) = scrolls {
+            let scroll_max = content - band.h;
+            let thumb_h = (band.h * band.h / content).max(24.0).min(band.h);
+            let thumb_y = band.y + (band.h - thumb_h) * (offset / scroll_max);
             scene::fill(
                 scene,
                 root,
@@ -8440,9 +8480,6 @@ const POPOVER_ROW_H: f32 = theme::ROW_H;
 /// fixed head and a four-row footer around its scrolling list.
 const SWITCHER_MAX_H: f32 = 500.0;
 
-/// The rounded tile at the left of a workspace row, carrying its colour and its
-/// emoji. Square.
-const WORKSPACE_CHIP: f32 = 20.0;
 /// A Profile row on the Profiles page: two lines, the tile beside them.
 const PROFILE_ROW_H: f32 = 44.0;
 /// The Profiles page's foot: the sync state, the devices, the `+`.
@@ -8703,8 +8740,8 @@ mod slides;
 
 use slides::RowSlides;
 
-pub(crate) mod popover_elements;
 #[cfg(test)]
 mod popover_baseline;
+pub(crate) mod popover_elements;
 #[cfg(test)]
 mod tests;

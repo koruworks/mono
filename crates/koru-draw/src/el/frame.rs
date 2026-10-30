@@ -9,6 +9,7 @@
 //! subtrees laid out under two themes paint as two themes.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use parley::Layout;
 use vello::Scene;
@@ -53,7 +54,7 @@ pub struct Node {
     pub focusable: bool,
     pub actions: Vec<Action>,
     pub decorative: bool,
-    pub(crate) text: Option<Layout<Brush>>,
+    pub(crate) text: Option<Rc<Layout<Brush>>>,
 }
 
 impl Node {
@@ -245,6 +246,15 @@ impl Frame {
         self.paint_el(root, &mut next, scene, transform, engine);
     }
 
+    /// Step over `el`'s subtree without painting it: a row scrolled wholly
+    /// out of its viewport costs nothing to draw.
+    fn skip_el(el: &El, next: &mut usize) {
+        *next += 1;
+        for child in &el.children {
+            Self::skip_el(child, next);
+        }
+    }
+
     fn paint_el(
         &self,
         el: &El,
@@ -254,10 +264,20 @@ impl Frame {
         engine: &mut TextEngine,
     ) {
         let index = *next;
-        *next += 1;
         let Some(node) = self.nodes.get(index) else {
+            *next += 1;
             return;
         };
+        if let Some(clip) = node.clip
+            && {
+                let seen = intersect(node.rect, clip);
+                seen.w <= 0.0 || seen.h <= 0.0
+            }
+        {
+            Self::skip_el(el, next);
+            return;
+        }
+        *next += 1;
         let r = node.rect;
         let cx = node.cx;
         let palette = cx.palette();
@@ -302,13 +322,17 @@ impl Frame {
                         // One line, centred on its line box in the height it
                         // was given.
                         TextMode::Single | TextMode::Truncate => {
-                            let line = line_height(t);
+                            let y = if t.ink_centred {
+                                scene::centre_y_in(layout, inner)
+                            } else {
+                                inner.y + (inner.h - line_height(t)) * 0.5
+                            };
                             scene::draw_layout_first_line(
                                 scene,
                                 transform,
                                 layout,
                                 inner.x,
-                                inner.y + (inner.h - line) * 0.5,
+                                y,
                                 Some(colour),
                             );
                         }
@@ -387,9 +411,17 @@ pub(crate) struct TextKey {
 /// shape — content, role, persistent weight, mode, the width it was broken
 /// at — and on the theme and contrast, so a theme switch or a differently
 /// themed subtree never reuses a stale layout.
+///
+/// **Bounded.** A sidebar dragged wider re-breaks every visible name at
+/// every width it passes; past [`TextCache::CAP`] entries, what the last
+/// few layouts did not use is let go, so a long drag costs no memory.
 #[derive(Default)]
 pub struct TextCache {
-    map: HashMap<TextKey, Layout<Brush>>,
+    /// Shared, not copied: a hit hands back the shaped layout itself. Each
+    /// entry remembers the layout that last used it.
+    map: HashMap<TextKey, (Rc<Layout<Brush>>, u64)>,
+    /// Layouts begun with this cache.
+    generation: u64,
     hits: u64,
     misses: u64,
 }
@@ -409,18 +441,48 @@ impl TextCache {
         }
     }
 
-    pub(crate) fn get(&mut self, key: &TextKey) -> Option<Layout<Brush>> {
-        let found = self.map.get(key).cloned();
-        if found.is_some() {
-            self.hits += 1;
-        } else {
-            self.misses += 1;
-        }
-        found
+    /// Entries kept before the unused ones are let go.
+    pub const CAP: usize = 1024;
+
+    /// Layouts an entry may go unused for before it can be let go: an
+    /// input layout and a paint layout a frame, for a couple of frames.
+    const KEEP: u64 = 4;
+
+    /// A layout is starting.
+    pub(crate) fn begin(&mut self) {
+        self.generation += 1;
     }
 
-    pub(crate) fn put(&mut self, key: TextKey, layout: Layout<Brush>) {
-        self.map.insert(key, layout);
+    pub(crate) fn get(&mut self, key: &TextKey) -> Option<Rc<Layout<Brush>>> {
+        let generation = self.generation;
+        match self.map.get_mut(key) {
+            Some((layout, used)) => {
+                *used = generation;
+                self.hits += 1;
+                Some(Rc::clone(layout))
+            }
+            None => {
+                self.misses += 1;
+                None
+            }
+        }
+    }
+
+    pub(crate) fn put(&mut self, key: TextKey, layout: Rc<Layout<Brush>>) {
+        if self.map.len() >= Self::CAP {
+            let recent = self.generation.saturating_sub(Self::KEEP);
+            self.map.retain(|_, (_, used)| *used >= recent);
+        }
+        self.map.insert(key, (layout, self.generation));
+    }
+
+    /// Entries held now.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Layouts handed back without shaping.

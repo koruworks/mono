@@ -1711,8 +1711,10 @@ fn enter_on_a_profile_row_switches_and_stays_open() {
     );
 }
 
-/// Left on the main page is not the switcher's; Right on a row that is not
-/// your card is not either.
+/// Left on the main page with nothing lit is not the switcher's. On a lit
+/// workspace row, **Right lands on its gear and Left returns** (ELEMENTS.final
+/// D2); Enter on the gear opens Manage on that workspace, and the gear is
+/// revealed while the keyboard is on it.
 #[test]
 fn left_and_right_fall_through_where_they_mean_nothing() {
     use winit::keyboard::{Key, NamedKey};
@@ -1725,8 +1727,31 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
         v.popover_hover().map(|i| v.popover_rows()[i]),
         Some(PopoverRow::Workspace(0))
     );
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::ArrowRight)),
+        Some(Outcome::Consumed)
+    );
+    assert_eq!(v.popover_part, Some(PopoverPart::Gear));
+    let gear = super::popover_elements::manage(v.workspaces[0].id);
+    assert_eq!(
+        v.lit_key(v.popover_hover()),
+        Some(gear),
+        "the gear is revealed and lit"
+    );
+    // Right again is the end of the row.
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::ArrowLeft)),
+        Some(Outcome::Consumed)
+    );
+    assert_eq!(v.popover_part, None, "back on the row");
     assert!(v.popover_open());
+    v.popover_key(&Key::Named(NamedKey::ArrowRight));
+    let id = v.workspaces[0].id;
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::Enter)),
+        Some(Outcome::ManageWorkspace(id))
+    );
 }
 
 /// **The toolbar is three controls in one row**: ← and → move between

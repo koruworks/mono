@@ -5166,6 +5166,13 @@ workspaces, which opens that workspace in this window. Pressing the other half
 of the header slides to the other page; pressing the half whose page is showing,
 `Esc`, or a click anywhere else closes it. `→` or `Enter` on a profile goes in.
 
+On the **Workspaces** page, pointing at a workspace shows its **Manage**
+control at the row's end; it opens the **Manage** tab on that workspace. From
+the keyboard, `↓` and `↑` move between workspaces, `→` moves onto the lit
+workspace's Manage control and `←` back to the workspace, and `Enter` opens
+what is lit: the workspace, or Manage on it. A screen reader announces the
+control as *Manage workspace*.
+
 Click the **avatar** — or press **`Ctrl+Alt+P`** — to open the Profiles page.
 It is the same profile choice global search shows at its bottom left. The
 shortcut opens whichever profile control is in front of you and leaves Explore

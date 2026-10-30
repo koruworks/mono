@@ -8,6 +8,7 @@
 use parley::Layout;
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use super::frame::{Diagnostic, Frame, Node, TextCache, intersect};
 use super::{Align, Axis, El, ElState, FrameCx, Kind, Length, Look, Role, TextEl, TextMode};
@@ -22,6 +23,7 @@ pub(super) fn layout(
     area: Rect,
     cx: FrameCx,
 ) -> Frame {
+    cache.begin();
     let mut solver = Solver {
         engine,
         cache,
@@ -101,7 +103,7 @@ impl Solver<'_> {
     }
 
     /// `t` shaped at `width` (`None`: its natural, unwrapped line).
-    fn shape(&mut self, t: &TextEl, width: Option<f32>) -> Layout<Brush> {
+    fn shape(&mut self, t: &TextEl, width: Option<f32>) -> Rc<Layout<Brush>> {
         let style = style_of(t);
         let width = match t.mode {
             TextMode::Single => None,
@@ -111,15 +113,15 @@ impl Solver<'_> {
         if let Some(layout) = self.cache.get(&key) {
             return layout;
         }
-        let layout = match (t.mode, width) {
+        let layout = Rc::new(match (t.mode, width) {
             (TextMode::Truncate, Some(w)) => {
                 let fitted = self.engine.elided(&t.content, style, w);
                 self.engine.simple_layout(&fitted, style)
             }
             (TextMode::Wrap, Some(w)) => self.engine.simple_layout_wrapped(&t.content, style, w),
             _ => self.engine.simple_layout(&t.content, style),
-        };
-        self.cache.put(key, layout.clone());
+        });
+        self.cache.put(key, Rc::clone(&layout));
         layout
     }
 
@@ -397,6 +399,11 @@ impl Solver<'_> {
             (rect.h - top - bottom).max(0.0),
         );
         match &el.kind {
+            // Shaped only where it can be seen. Text wholly outside its
+            // viewport is placed but never painted, and a single line's
+            // height is its role's, so forty rows scrolled out of view cost
+            // no shaping (ELEMENTS-PLAN P4's frame-time rule).
+            Kind::Text(t) if clip.is_some_and(|c| hidden(rect, c)) && t.mode != TextMode::Wrap => {}
             Kind::Text(t) => {
                 let layout = self.shape(t, Some(inner.w));
                 self.frame.nodes[index].text = Some(layout);
@@ -593,4 +600,10 @@ fn distribute(claims: &[Claim], avail: f32) -> Vec<f32> {
         break;
     }
     sizes
+}
+
+/// Wholly outside the viewport clipping it: nothing of it is ever painted.
+fn hidden(rect: Rect, clip: Rect) -> bool {
+    let r = intersect(rect, clip);
+    r.w <= 0.0 || r.h <= 0.0
 }

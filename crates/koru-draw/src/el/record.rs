@@ -148,6 +148,9 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
                 TextMode::Wrap => "wrapped",
             };
             record.property("text mode", mode, "El::truncate / El::wrap");
+            if t.ink_centred {
+                record.property("centred", "on its ink", "El::ink_centred");
+            }
             if let Some(lines) = node.lines() {
                 record.property("lines", lines, "measured layout");
             }

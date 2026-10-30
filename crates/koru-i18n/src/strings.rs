@@ -2487,6 +2487,9 @@ pub enum Key {
     ManageWorkspace,
     /// A Profile row's gear: the Manage tab on that Profile.
     ManageProfile,
+    /// The switcher's Workspaces page heading, uppercased with its count
+    /// beside it like the Profiles page's (ELEMENTS-PLAN S1).
+    Workspaces,
     /// The help popover's rows and its card's button (the CTO's artboard).
     SendFeedback,
     Download,
@@ -2571,7 +2574,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1741] = [
+    pub const ALL: [Key; 1742] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4269,6 +4272,7 @@ impl Key {
         Key::NewProfile,
         Key::ManageWorkspace,
         Key::ManageProfile,
+        Key::Workspaces,
         Key::SendFeedback,
         Key::Download,
         Key::ChatsDeleteMany,
@@ -12791,6 +12795,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::NewProfile, en: "New profile", es: "Nuevo perfil", pt_br: "Novo perfil", de: "Neues Profil", fr: "Nouveau profil", ar: "ملف تعريف جديد", zh_hans: "新建配置文件", ja: "新しいプロファイル" },
     Row { key: Key::ManageWorkspace, en: "Manage workspace", es: "Gestionar espacio", pt_br: "Gerenciar espaço", de: "Arbeitsbereich verwalten", fr: "Gérer l'espace", ar: "إدارة مساحة العمل", zh_hans: "管理工作区", ja: "ワークスペースを管理" },
     Row { key: Key::ManageProfile, en: "Manage profile", es: "Gestionar perfil", pt_br: "Gerenciar perfil", de: "Profil verwalten", fr: "Gérer le profil", ar: "إدارة ملف التعريف", zh_hans: "管理配置文件", ja: "プロファイルを管理" },
+    Row { key: Key::Workspaces, en: "Workspaces", es: "Espacios de trabajo", pt_br: "Espaços de trabalho", de: "Arbeitsbereiche", fr: "Espaces de travail", ar: "مساحات العمل", zh_hans: "工作区", ja: "ワークスペース" },
     Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
     Row { key: Key::Download, en: "Download", es: "Descargar", pt_br: "Baixar", de: "Herunterladen", fr: "Télécharger", ar: "تنزيل", zh_hans: "下载", ja: "ダウンロード" },
     Row { key: Key::ChatsDeleteMany, en: "Delete {} chats", es: "Eliminar {} chats", pt_br: "Excluir {} chats", de: "{} Chats löschen", fr: "Supprimer {} discussions", ar: "حذف {} محادثات", zh_hans: "删除 {} 个聊天", ja: "{} 件のチャットを削除" },

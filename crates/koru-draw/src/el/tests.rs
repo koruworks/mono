@@ -606,3 +606,41 @@ fn no_theme_moves_anything() {
         }
     }
 }
+
+/// **The shaping cache is bounded.** A row dragged through two thousand
+/// widths re-breaks its text at each, and the cache still holds no more than
+/// its cap; the width on screen now is still a hit.
+#[test]
+fn the_text_cache_lets_go_of_widths_no_longer_shown() {
+    let mut engine = TextEngine::new();
+    let mut cache = TextCache::default();
+    let tree = || {
+        row("Row").child(
+            text("A name long enough to be elided at every width it passes")
+                .fill()
+                .truncate(),
+        )
+    };
+    for w in 0..2000 {
+        let width = 100.0 + w as f32 * 0.25;
+        tree().layout(
+            &mut engine,
+            &mut cache,
+            Rect::new(0.0, 0.0, width, 26.0),
+            FrameCx::root(),
+        );
+    }
+    assert!(cache.len() <= TextCache::CAP, "{} entries", cache.len());
+    let hits = cache.hits();
+    tree().layout(
+        &mut engine,
+        &mut cache,
+        Rect::new(0.0, 0.0, 100.0 + 1999.0 * 0.25, 26.0),
+        FrameCx::root(),
+    );
+    assert_eq!(
+        cache.hits(),
+        hits + 1,
+        "the width on screen is still cached"
+    );
+}

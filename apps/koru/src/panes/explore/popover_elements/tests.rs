@@ -212,15 +212,21 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
     let nodes = v.element_semantics(&cx, &frame);
     assert_eq!(nodes.len(), 1);
     let menu = &nodes[0];
-    let today = v
-        .semantics(&cx)
-        .children
-        .into_iter()
-        .find(|n| n.role == AkRole::Menu)
-        .expect("today's menu");
     assert_eq!(menu.role, AkRole::Menu);
-    assert_eq!(menu.occurrence, today.occurrence);
-    assert_eq!(menu.label, today.label);
+    // The locator and name the page's Menu has always had.
+    assert_eq!(
+        menu.occurrence,
+        Occurrence::surface(
+            WindowSlot::from_raw(1),
+            ViewSlot::from_raw(1),
+            SURFACE,
+            ControlPart::new("popover")
+        )
+    );
+    assert_eq!(
+        menu.label.as_deref(),
+        Some("Open account and workspace menu")
+    );
     assert_eq!(menu.size_of_set, Some(6), "three primaries, three gears");
     let roles: Vec<_> = menu.children.iter().map(|c| c.role).collect();
     assert_eq!(roles[0], AkRole::Heading);
@@ -228,9 +234,19 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
     for (i, w) in v.workspaces.iter().enumerate() {
         let primary = &menu.children[1 + i * 2];
         let gear = &menu.children[2 + i * 2];
-        let old = &today.children[i];
-        assert_eq!(primary.occurrence, old.occurrence, "today's locator");
-        assert_eq!(primary.label, old.label);
+        // The locator and name each row has always had: the workspace's
+        // own id and root part, and its title.
+        assert_eq!(
+            primary.occurrence,
+            Occurrence::model(
+                WindowSlot::from_raw(1),
+                ViewSlot::from_raw(1),
+                w.id.as_uuid(),
+                ControlPart::ROOT
+            ),
+            "today's locator"
+        );
+        assert_eq!(primary.label.as_deref(), Some(w.name.as_str()));
         assert_eq!(primary.position, Some(i * 2));
         assert_eq!(primary.selected, Some(v.current == Some(w.id)));
         assert_eq!(
@@ -640,4 +656,47 @@ fn every_element_record_reads_what_the_contract_lists() {
         inspect::rect(row.clip),
         viewport.intersect(inspect::rect(list.clip))
     );
+}
+
+/// **Rung 7: the keyboard reaches the gear.** Down lights a row on its
+/// primary; Right moves onto its gear, which the page then paints lit and
+/// reports as the focused node; Enter opens Manage on that workspace.
+#[test]
+fn right_reaches_the_gear_and_enter_opens_manage() {
+    use winit::keyboard::{Key as WKey, NamedKey};
+    let list = workspaces(3);
+    let mut v = opened(list);
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let cx = cx(a, Lang::En);
+    v.popover_key(&WKey::Named(NamedKey::ArrowDown));
+    let row = v.popover_hover().and_then(|i| match v.popover_rows()[i] {
+        PopoverRow::Workspace(i) => Some(v.workspaces[i].id),
+        _ => None,
+    });
+    let id = row.expect("a workspace row is lit");
+    assert_eq!(
+        v.accessible_focus(&cx).map(|o| o.part),
+        Some(ControlPart::ROOT),
+        "a row is reached on its primary"
+    );
+    v.popover_key(&WKey::Named(NamedKey::ArrowRight));
+    assert_eq!(
+        v.accessible_focus(&cx),
+        Some(gear_of(id)),
+        "the gear is the focused node"
+    );
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame.node(manage(id)).unwrap().state.hovered,
+        "the gear is lit"
+    );
+    assert!(
+        !frame.node(primary(id)).unwrap().state.hovered,
+        "and the primary is not"
+    );
+    assert_eq!(
+        v.popover_key(&WKey::Named(NamedKey::Enter)),
+        Some(Outcome::ManageWorkspace(id))
+    );
+    assert!(v.live().is_none(), "Manage is the end of the page");
 }

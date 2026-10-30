@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! **The Workspaces page as elements, on the app's real types** — the
-//! canonical fixture of ELEMENTS.final §3.2, compiled against the host
-//! (ELEMENTS-PLAN P2).
+//! canonical fixture of ELEMENTS.final §3.2, and since ELEMENTS-PLAN P4 the
+//! page itself.
 //!
-//! It is not drawn yet: the page still paints through `draw_page`, and P4
-//! moves it over. What is here is the host adapter that move needs — the
-//! keys, the tile and trailing-lane leaves, the row's state recipe, and the
-//! frame laid out where input is measured — proved against today's page by
-//! the tests beside it.
+//! One frame answers everything the page does: its paint, where a press
+//! lands, the rows the keyboard walks, how far the list scrolls and what it
+//! reveals, and the accessibility tree. The host keeps its policies (below)
+//! and the band chrome a scrolling list wears; nothing here repeats a row's
+//! arithmetic.
 //!
 //! **Values are today's, each through a token** (QUESTIONS E4): the row's
 //! content starts 8 in because the lit plate is `Space::S1` inside the row
@@ -18,11 +18,9 @@
 //!
 //! **Host policies stay the host's.** Input is measured against the settled
 //! page (`settled_panel`) and a closing popover answers nothing (`live`);
-//! the frame is laid out there and only then, exactly as `popover_rects`
-//! decides today.
+//! paint follows the panel as it slides and fades, exactly as before.
 
-// Built and proved here; drawn from in P4, when the page moves over.
-#![cfg_attr(not(test), allow(dead_code))]
+use std::cell::RefCell;
 
 use koru_core::WorkspaceId;
 use koru_draw::el::{
@@ -34,8 +32,31 @@ use koru_draw::theme::{Ink, Radius, Space, Surface, alias, metrics, roles};
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::{ExploreView, PopoverKind, PopoverPart, PopoverRow, draw_trailing, label_fit};
+use super::{
+    ExploreView, PopoverKind, PopoverPart, PopoverRow, WorkspaceRowParts, draw_trailing, label_fit,
+};
 use koru_draw::text::TextEngine;
+
+/// The page's shaped-text cache, shared by its paint and by the layout that
+/// answers a press, a key, a scroll and the accessibility tree, so each
+/// name is shaped once and not once per question.
+#[derive(Default)]
+pub(crate) struct PageLayout {
+    cache: TextCache,
+}
+
+thread_local! {
+    /// The engine input layouts shape with. Paint is handed the window's;
+    /// a press, a key and the accessibility tree arrive without one. One per
+    /// UI thread, made on first use, so a second window or a reopened pane
+    /// does not pay for a font context again.
+    static INPUT_ENGINE: RefCell<Option<TextEngine>> = const { RefCell::new(None) };
+}
+
+/// `f` with the thread's input-layout engine.
+fn with_input_engine<R>(f: impl FnOnce(&mut TextEngine) -> R) -> R {
+    INPUT_ENGINE.with_borrow_mut(|engine| f(engine.get_or_insert_with(TextEngine::new)))
+}
 
 /// The popover's object, as its accessibility identities name it.
 pub(crate) const SURFACE: &str = "explore-popover";
@@ -156,8 +177,11 @@ impl ExploreView {
             .iter()
             .filter(|row| matches!(row, PopoverRow::Workspace(_)))
             .count();
-        // Today's words, kept until S1's translated heading lands in P4.
-        let heading = format!("WORKSPACES · {count}");
+        // Uppercased with its count, as the Profiles page is headed (S1).
+        let heading = format!(
+            "{} · {count}",
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::Workspaces).to_uppercase()
+        );
         col("Workspaces page")
             .id(PAGE)
             .semantics(Role::Menu)
@@ -174,20 +198,23 @@ impl ExploreView {
                     .pad_x(alias::NAV_PAD)
                     .min_h(metrics::ROW_MIN),
             )
-            .child(scroll_y("Workspace list").fill().offset(scroll).children(
-                rows.into_iter().filter_map(|row| match row {
-                    PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
-                        self.workspace_row(
-                            w.id,
-                            &w.name,
-                            w.icon.clone(),
-                            w.color.clone(),
-                            self.current == Some(w.id),
-                        )
-                    }),
-                    _ => None,
-                }),
-            ))
+            .child(
+                scroll_y(LIST)
+                    .fill()
+                    .offset(scroll)
+                    .children(rows.into_iter().filter_map(|row| match row {
+                        PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
+                            self.workspace_row(
+                                w.id,
+                                &w.name,
+                                w.icon.clone(),
+                                w.color.clone(),
+                                self.current == Some(w.id),
+                            )
+                        }),
+                        _ => None,
+                    })),
+            )
     }
 
     /// One workspace row: a neutral row whose whole width presses the
@@ -203,7 +230,7 @@ impl ExploreView {
     ) -> El {
         let primary = primary(id);
         let gear = manage(id);
-        row("Workspace row")
+        row(ROW)
             .min_h(metrics::ROW_MIN)
             .pad_x(alias::ROW_PLATE_INSET)
             .hit_as(primary)
@@ -228,7 +255,7 @@ impl ExploreView {
                             .selected(current)
                             .child(
                                 leaf(
-                                    "Workspace tile",
+                                    TILE,
                                     TileLeaf {
                                         icon,
                                         color,
@@ -240,7 +267,7 @@ impl ExploreView {
                             )
                             .child(
                                 text(label_fit(name))
-                                    .named("Workspace name")
+                                    .named(NAME)
                                     .role(roles::ROW)
                                     .ink(if current {
                                         Ink::Primary
@@ -249,50 +276,50 @@ impl ExploreView {
                                     })
                                     .emphasis(current)
                                     .fill()
-                                    .truncate(),
+                                    .truncate()
+                                    .ink_centred(),
                             ),
                     )
                     .child(
-                        leaf(
-                            "Manage gear",
-                            WorkspaceTrailingAdapter { current, key: gear },
-                        )
-                        .semantic()
-                        .w(metrics::TRAILING_LANE_W)
-                        .id(gear)
-                        .activity([primary])
-                        .hit()
-                        .focusable()
-                        .action(Action::Click)
-                        .action(Action::Focus)
-                        .semantics(Role::MenuItem)
-                        .name(koru_i18n::Key::ManageWorkspace),
+                        leaf(GEAR, WorkspaceTrailingAdapter { current, key: gear })
+                            .semantic()
+                            .w(metrics::TRAILING_LANE_W)
+                            .id(gear)
+                            .activity([primary])
+                            .hit()
+                            .focusable()
+                            .action(Action::Click)
+                            .action(Action::Focus)
+                            .semantics(Role::MenuItem)
+                            .name(koru_i18n::Key::ManageWorkspace),
                     ),
             )
     }
 
-    /// The host's pointer and keyboard state, by element key: the lit row's
-    /// primary, or its gear while the pointer is on the gear.
+    /// The key the lit row lights — its primary, or its gear while the
+    /// pointer or the keyboard is on the gear — for the row at `hover`.
+    pub(crate) fn lit_key(&self, hover: Option<usize>) -> Option<Key> {
+        let rows = self.popover_rows();
+        match hover.and_then(|i| rows.get(i).copied())? {
+            PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
+                if self.popover_part == Some(PopoverPart::Gear) {
+                    manage(w.id)
+                } else {
+                    primary(w.id)
+                }
+            }),
+            _ => None,
+        }
+    }
+
+    /// The host's pointer and keyboard state, by element key, while the
+    /// page takes input.
     pub(crate) fn popover_interaction(&self) -> Interaction {
         let Some(popover) = self.live() else {
             return Interaction::default();
         };
-        let rows = self.popover_rows();
-        let hot = popover
-            .hover
-            .and_then(|i| rows.get(i).copied())
-            .and_then(|row| match row {
-                PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
-                    if self.popover_part == Some(PopoverPart::Gear) {
-                        manage(w.id)
-                    } else {
-                        primary(w.id)
-                    }
-                }),
-                _ => None,
-            });
         Interaction {
-            hot,
+            hot: self.lit_key(popover.hover),
             ..Interaction::default()
         }
     }
@@ -322,7 +349,143 @@ impl ExploreView {
         );
         Some((tree, frame))
     }
+
+    /// The settled Workspaces page's frame, open or closing, answering `f`:
+    /// its geometry, scroll extent and reveal. `None` while another page is
+    /// up. Input that must not reach a closing popover checks `live` itself.
+    pub(crate) fn with_workspaces<R>(
+        &self,
+        area: Rect,
+        viewport: (f32, f32),
+        f: impl FnOnce(&Frame) -> R,
+    ) -> Option<R> {
+        let popover = self.popover.as_ref()?;
+        if popover.kind != PopoverKind::Summary {
+            return None;
+        }
+        let panel = self.settled_panel(area, viewport)?;
+        let tree = self.workspaces_page(popover.scroll);
+        let interaction = Interaction {
+            hot: self.lit_key(popover.hover),
+            ..Interaction::default()
+        };
+        let frame = with_input_engine(|engine| {
+            tree.layout(
+                engine,
+                &mut self.page_layout.borrow_mut().cache,
+                panel,
+                FrameCx::root().with_interaction(interaction),
+            )
+        });
+        Some(f(&frame))
+    }
+
+    /// The Workspaces page laid out for paint in `panel` — where the
+    /// popover is this frame, mid-slide or settled — scrolled by `scroll`,
+    /// with the row at `hover` lit, on the window's engine.
+    pub(crate) fn workspaces_at(
+        &self,
+        engine: &mut TextEngine,
+        panel: Rect,
+        scroll: f32,
+        hover: Option<usize>,
+    ) -> (El, Frame) {
+        let tree = self.workspaces_page(scroll);
+        let interaction = Interaction {
+            hot: self.lit_key(hover),
+            ..Interaction::default()
+        };
+        let mut layout = self.page_layout.borrow_mut();
+        let frame = tree.layout(
+            engine,
+            &mut layout.cache,
+            panel,
+            FrameCx::root().with_interaction(interaction),
+        );
+        (tree, frame)
+    }
+
+    /// The page's rows in the order `popover_rows` lists them, each with
+    /// its border box: the heading, then a row per workspace.
+    pub(crate) fn workspaces_rows(&self, frame: &Frame) -> Vec<(PopoverRow, Rect)> {
+        let mut rows = row_rects(frame).into_iter();
+        self.rows_for(PopoverKind::Summary)
+            .into_iter()
+            .filter_map(|row| match row {
+                PopoverRow::WorkspacesHeading => frame.node(HEADING).map(|n| (row, n.rect)),
+                PopoverRow::Workspace(i) if self.workspaces.get(i).is_some() => {
+                    rows.next().map(|r| (row, r))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The row and part a point presses, by the frame's targets: a row's
+    /// primary or its gear; the heading's words, which press nothing but
+    /// are still the heading; `None` anywhere else.
+    pub(crate) fn workspaces_part_at(
+        &self,
+        frame: &Frame,
+        x: f32,
+        y: f32,
+    ) -> Option<(usize, PopoverRow, PopoverPart)> {
+        let rows = self.popover_rows();
+        let (row, part) = match frame.hit_at(x, y) {
+            Some(key) => row_part_of(self, key)?,
+            None if frame.node(HEADING)?.rect.contains(x, y) => {
+                (PopoverRow::WorkspacesHeading, PopoverPart::Row)
+            }
+            None => return None,
+        };
+        let index = rows.iter().position(|r| *r == row)?;
+        Some((index, row, part))
+    }
+
+    /// Workspace `i`'s row element laid out in `r`, read back as its parts.
+    pub(crate) fn workspace_parts_in(&self, i: usize, r: Rect) -> Option<WorkspaceRowParts> {
+        let w = self.workspaces.get(i)?;
+        let tree = self.workspace_row(
+            w.id,
+            &w.name,
+            w.icon.clone(),
+            w.color.clone(),
+            self.current == Some(w.id),
+        );
+        let frame = with_input_engine(|engine| {
+            tree.layout(
+                engine,
+                &mut self.page_layout.borrow_mut().cache,
+                r,
+                FrameCx::root(),
+            )
+        });
+        Some(WorkspaceRowParts {
+            chip: frame.rect_of(TILE)?,
+            name: frame.rect_of(NAME)?,
+            trailing: frame.rect_of(GEAR)?,
+        })
+    }
 }
+
+/// The scroll viewport's rect, content extent and offset, as laid out.
+pub(crate) fn list_of(frame: &Frame) -> Option<(Rect, f32, f32)> {
+    let list = frame.named(LIST).next()?;
+    let (content, offset) = list.scroll?;
+    Some((list.rect, content, offset))
+}
+
+/// Each row's border box in list order, beside the key of its primary.
+pub(crate) fn row_rects(frame: &Frame) -> Vec<Rect> {
+    frame.named(ROW).map(|node| node.rect).collect()
+}
+
+/// The developer names the host reads geometry by.
+pub(crate) const ROW: &str = "Workspace row";
+pub(crate) const LIST: &str = "Workspace list";
+pub(crate) const NAME: &str = "Workspace name";
+pub(crate) const TILE: &str = "Workspace tile";
+pub(crate) const GEAR: &str = "Manage gear";
 
 /// The popover row and part an element key stands for: what a press or an
 /// accessibility request on that key chooses.

@@ -44,6 +44,9 @@ const VIEW: (f32, f32) = (1200.0, 700.0);
 
 const WORKSPACES: &str = include_str!("popover_baseline/workspaces.txt");
 const PROFILES: &str = include_str!("popover_baseline/profiles.txt");
+/// What the plan approved the Workspaces page to change from P0 (D2, S1),
+/// held apart from the P0 record.
+const WORKSPACES_APPROVED: &str = include_str!("popover_baseline/workspaces.approved.txt");
 
 /// The faces the repository ships; anything else a run lands in is the
 /// machine's fallback.
@@ -656,13 +659,115 @@ fn file_of(page: Page) -> &'static str {
     }
 }
 
+/// **What was painted, apart from who painted it.** A paint line's depth,
+/// and the records that only group paint (an element, a `Row` part), are
+/// the inspector's ownership shape, which the element migration changes on
+/// purpose (ELEMENTS-PLAN P4). Every fill, stroke, line and run still
+/// compares, in paint order, with its bounds and values. What the page's
+/// heading paints is marked `paint heading`, whichever record owned it.
+fn painted_view(record: &str) -> String {
+    let mut out = String::with_capacity(record.len());
+    let mut heading: Option<usize> = None;
+    for line in record.lines() {
+        if let Some(rest) = line.strip_prefix("paint ") {
+            let mut tokens = rest.split_whitespace();
+            let depth: usize = tokens.next().and_then(|d| d.parse().ok()).unwrap_or(0);
+            let tokens: Vec<&str> = tokens.collect();
+            let (name, kind) = (tokens.first().copied(), tokens.get(1).copied());
+            if heading.is_some_and(|at| depth <= at) {
+                heading = None;
+            }
+            let owns_heading = (name == Some("Row")
+                && kind == Some("part")
+                && tokens.contains(&"row=WorkspacesHeading"))
+                || (name == Some("Workspaces_heading") && kind == Some("element"));
+            if owns_heading {
+                heading = Some(depth);
+            }
+            if kind == Some("element") || (name == Some("Row") && kind == Some("part")) {
+                continue;
+            }
+            out.push_str(if heading.is_some() {
+                "paint heading "
+            } else {
+                "paint "
+            });
+            out.push_str(&tokens.join(" "));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// A line the plan approved to differ from P0 on `page`: it is held to the
+/// page's approved file instead (ELEMENTS-PLAN §5), never written over P0.
+fn approved_line(page: Page, section: &str, line: &str) -> bool {
+    match page {
+        // D2: the gear is a node beside its row, and the heading is one.
+        // S1: the heading is translated, so outside English its words move.
+        Page::Workspaces => {
+            line.starts_with("sem ")
+                || (line.starts_with("paint heading ") && !section.contains(" lang=en "))
+                // D2: the pointer on the gear lights the gear, so the focus
+                // the page reports is the gear's node, not its row's.
+                || (line.starts_with("focus ") && section.ends_with("state=hover-gear"))
+        }
+        Page::Profiles => false,
+    }
+}
+
+/// `record` split into what P0 still holds and what the approved file
+/// holds; each case's title heads its section in both.
+fn split(page: Page, record: &str) -> (String, String) {
+    let (mut kept, mut approved) = (String::new(), String::new());
+    let mut section = "";
+    for line in record.lines() {
+        if line.starts_with("== ") {
+            section = line;
+            kept.push_str(line);
+            kept.push('\n');
+            approved.push_str(line);
+            approved.push('\n');
+        } else if approved_line(page, section, line) {
+            approved.push_str(line);
+            approved.push('\n');
+        } else {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    (kept, approved)
+}
+
+fn approved_of(page: Page) -> Option<&'static str> {
+    match page {
+        Page::Workspaces => Some(WORKSPACES_APPROVED),
+        Page::Profiles => None,
+    }
+}
+
 fn compare(page: Page) {
-    let got = page_record(page);
-    if let Some(difference) = first_difference(file_of(page), &got) {
+    let got = painted_view(&page_record(page));
+    let want = painted_view(file_of(page));
+    let (want_kept, _) = split(page, &want);
+    let (got_kept, got_approved) = split(page, &got);
+    if let Some(difference) = first_difference(&want_kept, &got_kept) {
         panic!(
             "the {} page no longer draws as its P0 baseline does — {difference}\n\
              A deliberate change is re-captured by name and reviewed as a diff:\n  \
              cargo test -p koru capture_popover_baseline -- --ignored",
+            page.token()
+        );
+    }
+    if let Some(approved) = approved_of(page)
+        && let Some(difference) = first_difference(approved, &got_approved)
+    {
+        panic!(
+            "the {} page's approved differences from P0 changed — {difference}\n\
+             Re-captured by name and reviewed as a diff:\n  \
+             cargo test -p koru capture_popover_approved -- --ignored",
             page.token()
         );
     }
@@ -699,6 +804,23 @@ fn capture_popover_baseline() {
     for page in [Page::Workspaces, Page::Profiles] {
         let path = format!("{dir}/{}.txt", page.token());
         std::fs::write(&path, page_record(page)).expect("write the baseline");
+        eprintln!("wrote {path}");
+    }
+}
+
+/// **Writes the approved differences**, apart from P0, for the pages that
+/// have them. Run only by name, by a developer who means it.
+#[test]
+#[ignore = "writes the approved differences; run by name: cargo test -p koru capture_popover_approved -- --ignored"]
+fn capture_popover_approved() {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/panes/explore/popover_baseline"
+    );
+    for page in [Page::Workspaces] {
+        let path = format!("{dir}/{}.approved.txt", page.token());
+        let (_, approved) = split(page, &painted_view(&page_record(page)));
+        std::fs::write(&path, approved).expect("write the approved file");
         eprintln!("wrote {path}");
     }
 }
@@ -762,11 +884,16 @@ fn the_lit_row_is_one_index_shared_by_pointer_and_arrows() {
                     .expect("the foot's +"),
                 _ => r,
             };
+            // The row's node: its whole rectangle, or since P4 the first
+            // node inside it — the workspace's primary, before its gear.
+            let inside = |b: Rect| {
+                b.x >= r.x && b.y >= r.y && b.x + b.w <= r.x + r.w && b.y + b.h <= r.y + r.h
+            };
             menu(v.semantics(&cx))
                 .expect("the popover's tree")
                 .children
                 .into_iter()
-                .find(|node| node.bounds == Some(r))
+                .find(|node| node.bounds.is_some_and(inside))
                 .map(|node| node.occurrence)
         };
         let lit = v.popover_hover().expect("the pointer lit a row");
