@@ -827,8 +827,11 @@ fn compare(page: Page) {
             page.token()
         );
     }
+    // The approved differences name icons the same way, so they are read
+    // against the selected pack too: neither file freezes a default pack.
     if let Some(approved) = approved_of(page)
-        && let Some(difference) = first_difference(approved, &got_approved)
+        && let Some(difference) =
+            first_difference(&baseline_for_selected_pack(approved), &got_approved)
     {
         panic!(
             "the {} page's approved differences from P0 changed — {difference}\n\

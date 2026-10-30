@@ -873,7 +873,7 @@ of the document viewport so their surrounding context remains visible. The
 matched authored text flashes briefly and the caret lands immediately before
 it, ready to type at the match. The flash is a local navigation cue only: it
 clears on interaction and is never saved or shared with collaborators. Search
-icons use Koru's shared Phosphor icon set; keyboard names in the footer are text,
+icons follow the app's **Icon style**; keyboard names in the footer are text,
 so they remain readable with every UI font.
 
 The header controls are ordered **Filter**, **Sort**, and **More**. The profile
@@ -3092,7 +3092,8 @@ in force, opened with a click or Enter and stepped with the arrow keys.
 **Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
 Hover a menu item or highlight it with the arrow keys to preview its icons.
 Click or press Enter to keep it; dismiss the menu to restore your saved style.
-Your choice is remembered when you reopen Koru. Phosphor is the initial style.
+Your choice is remembered when you reopen Koru. Until you choose one, Koru
+uses its default style, Tabler, and follows it if a later version changes it.
 Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
