@@ -398,6 +398,9 @@ colour_roles! {
         Primary => text,
         Secondary => text_dim,
         Hint => row_hint,
+        /// Words that are an offer: the Profiles page's *Subscribe to Koru
+        /// Cloud*.
+        Accent => accent,
     }
 }
 

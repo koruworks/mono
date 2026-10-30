@@ -28,6 +28,10 @@ pub struct Node {
     pub key: Option<Key>,
     /// The allocated border box, logical units.
     pub rect: Rect,
+    /// Everything it and its descendants can paint: its box, grown where a
+    /// single line of text is taller than the box it is centred in. What a
+    /// clip is tested against, so nothing visible is skipped.
+    pub(crate) extent: Rect,
     /// The viewport clipping it, when a scroll ancestor has one.
     pub clip: Option<Rect>,
     /// Its children's reserved sizes exceed it, or it exceeds its parent's
@@ -270,7 +274,7 @@ impl Frame {
         };
         if let Some(clip) = node.clip
             && {
-                let seen = intersect(node.rect, clip);
+                let seen = intersect(node.extent, clip);
                 seen.w <= 0.0 || seen.h <= 0.0
             }
         {
@@ -321,7 +325,7 @@ impl Frame {
                         ),
                         // One line, centred on its line box in the height it
                         // was given.
-                        TextMode::Single | TextMode::Truncate => {
+                        TextMode::Single | TextMode::Truncate | TextMode::Clip => {
                             let y = if t.ink_centred {
                                 scene::centre_y_in(layout, inner)
                             } else {

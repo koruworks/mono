@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The Workspaces page as elements, on the app's real types** — the
-//! canonical fixture of ELEMENTS.final §3.2, and since ELEMENTS-PLAN P4 the
-//! page itself.
+//! **The switcher's two pages as elements, on the app's real types** — the
+//! Workspaces page, the canonical fixture of ELEMENTS.final §3.2, since
+//! ELEMENTS-PLAN P4, and the Profiles page ([`profiles`]) since P5.
 //!
-//! One frame answers everything the page does: its paint, where a press
+//! One frame answers everything a page does: its paint, where a press
 //! lands, the rows the keyboard walks, how far the list scrolls and what it
 //! reveals, and the accessibility tree. The host keeps its policies (below)
 //! and the band chrome a scrolling list wears; nothing here repeats a row's
@@ -36,6 +36,9 @@ use super::{
     ExploreView, PopoverKind, PopoverPart, PopoverRow, WorkspaceRowParts, draw_trailing, label_fit,
 };
 use koru_draw::text::TextEngine;
+use vello::peniko::ImageBrush;
+
+pub(crate) mod profiles;
 
 /// The page's shaped-text cache, shared by its paint and by the layout that
 /// answers a press, a key, a scroll and the accessibility tree, so each
@@ -125,15 +128,16 @@ impl Leaf for TileLeaf {
 /// **The trailing lane: one allocation in every state** (§3.7). The gear
 /// while the row is lit, the tick on the current row otherwise, nothing
 /// else; the gear's own plate when the gear itself is hot. Paint-only — the
-/// gear's node, name and actions are the element's, always there.
-pub(crate) struct WorkspaceTrailingAdapter {
+/// gear's node, name and actions are the element's, always there. A
+/// workspace row's and a Profile row's alike.
+pub(crate) struct TrailingAdapter {
     pub current: bool,
     /// The gear's own key, so the lane can tell the gear being lit from the
     /// row it is in being lit.
     pub key: Key,
 }
 
-impl Leaf for WorkspaceTrailingAdapter {
+impl Leaf for TrailingAdapter {
     fn measure(&self, _width: Option<f32>) -> (f32, f32) {
         (metrics::TRAILING_LANE_W.value, 0.0)
     }
@@ -281,7 +285,7 @@ impl ExploreView {
                             ),
                     )
                     .child(
-                        leaf(GEAR, WorkspaceTrailingAdapter { current, key: gear })
+                        leaf(GEAR, TrailingAdapter { current, key: gear })
                             .semantic()
                             .w(metrics::TRAILING_LANE_W)
                             .id(gear)
@@ -300,14 +304,20 @@ impl ExploreView {
     /// pointer or the keyboard is on the gear — for the row at `hover`.
     pub(crate) fn lit_key(&self, hover: Option<usize>) -> Option<Key> {
         let rows = self.popover_rows();
+        let on_gear = self.popover_part == Some(PopoverPart::Gear);
         match hover.and_then(|i| rows.get(i).copied())? {
-            PopoverRow::Workspace(i) => self.workspaces.get(i).map(|w| {
-                if self.popover_part == Some(PopoverPart::Gear) {
-                    manage(w.id)
+            PopoverRow::Workspace(i) => self
+                .workspaces
+                .get(i)
+                .map(|w| if on_gear { manage(w.id) } else { primary(w.id) }),
+            PopoverRow::Profile(i) => self.profiles.get(i).map(|profile| {
+                if on_gear {
+                    profiles::manage(profile.id)
                 } else {
-                    primary(w.id)
+                    profiles::primary(profile.id)
                 }
             }),
+            PopoverRow::ProfilesFooter => self.lit_foot_key(),
             _ => None,
         }
     }
@@ -350,21 +360,34 @@ impl ExploreView {
         Some((tree, frame))
     }
 
-    /// The settled Workspaces page's frame, open or closing, answering `f`:
-    /// its geometry, scroll extent and reveal. `None` while another page is
-    /// up. Input that must not reach a closing popover checks `live` itself.
-    pub(crate) fn with_workspaces<R>(
+    /// A page drawn from its elements: the Workspaces page or the Profiles
+    /// page, scrolled by `scroll`. `None` for a popover that is not one.
+    pub(crate) fn page_tree(
+        &self,
+        kind: PopoverKind,
+        scroll: f32,
+        avatar: Option<&ImageBrush>,
+    ) -> Option<El> {
+        match kind {
+            PopoverKind::Summary => Some(self.workspaces_page(scroll)),
+            PopoverKind::Profiles => Some(self.profiles_page(scroll, avatar)),
+            PopoverKind::LibraryActions => None,
+        }
+    }
+
+    /// The settled page's frame, open or closing, answering `f`: its
+    /// geometry, scroll extent and reveal. `None` while the popover is not an
+    /// element page. Input that must not reach a closing popover checks
+    /// `live` itself.
+    pub(crate) fn with_page<R>(
         &self,
         area: Rect,
         viewport: (f32, f32),
         f: impl FnOnce(&Frame) -> R,
     ) -> Option<R> {
         let popover = self.popover.as_ref()?;
-        if popover.kind != PopoverKind::Summary {
-            return None;
-        }
         let panel = self.settled_panel(area, viewport)?;
-        let tree = self.workspaces_page(popover.scroll);
+        let tree = self.page_tree(popover.kind, popover.scroll, None)?;
         let interaction = Interaction {
             hot: self.lit_key(popover.hover),
             ..Interaction::default()
@@ -380,17 +403,20 @@ impl ExploreView {
         Some(f(&frame))
     }
 
-    /// The Workspaces page laid out for paint in `panel` — where the
-    /// popover is this frame, mid-slide or settled — scrolled by `scroll`,
-    /// with the row at `hover` lit, on the window's engine.
-    pub(crate) fn workspaces_at(
+    /// A page laid out for paint in `panel` — where the popover is this
+    /// frame, mid-slide or settled — scrolled by `scroll`, with the row at
+    /// `hover` lit, on the window's engine.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn page_at(
         &self,
         engine: &mut TextEngine,
+        kind: PopoverKind,
         panel: Rect,
         scroll: f32,
         hover: Option<usize>,
-    ) -> (El, Frame) {
-        let tree = self.workspaces_page(scroll);
+        avatar: Option<&ImageBrush>,
+    ) -> Option<(El, Frame)> {
+        let tree = self.page_tree(kind, scroll, avatar)?;
         let interaction = Interaction {
             hot: self.lit_key(hover),
             ..Interaction::default()
@@ -402,39 +428,59 @@ impl ExploreView {
             panel,
             FrameCx::root().with_interaction(interaction),
         );
-        (tree, frame)
+        Some((tree, frame))
     }
 
-    /// The page's rows in the order `popover_rows` lists them, each with
-    /// its border box: the heading, then a row per workspace.
-    pub(crate) fn workspaces_rows(&self, frame: &Frame) -> Vec<(PopoverRow, Rect)> {
-        let mut rows = row_rects(frame).into_iter();
-        self.rows_for(PopoverKind::Summary)
+    /// The open page's rows in the order `popover_rows` lists them, each
+    /// with its border box: the heading, a row per workspace or Profile,
+    /// and the Profiles page's foot.
+    pub(crate) fn page_rows(&self, frame: &Frame) -> Vec<(PopoverRow, Rect)> {
+        let Some(kind) = self.popover.as_ref().map(|p| p.kind) else {
+            return Vec::new();
+        };
+        let mut workspaces = row_rects(frame).into_iter();
+        let mut profiles = frame.named(profiles::ROW).map(|node| node.rect);
+        self.rows_for(kind)
             .into_iter()
             .filter_map(|row| match row {
-                PopoverRow::WorkspacesHeading => frame.node(HEADING).map(|n| (row, n.rect)),
-                PopoverRow::Workspace(i) if self.workspaces.get(i).is_some() => {
-                    rows.next().map(|r| (row, r))
+                PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => {
+                    frame.node(HEADING).map(|n| (row, n.rect))
                 }
+                PopoverRow::Workspace(i) if self.workspaces.get(i).is_some() => {
+                    workspaces.next().map(|r| (row, r))
+                }
+                PopoverRow::Profile(i) if self.profiles.get(i).is_some() => {
+                    profiles.next().map(|r| (row, r))
+                }
+                PopoverRow::ProfilesFooter => frame.rect_of(profiles::FOOT).map(|r| (row, r)),
                 _ => None,
             })
             .collect()
     }
 
     /// The row and part a point presses, by the frame's targets: a row's
-    /// primary or its gear; the heading's words, which press nothing but
-    /// are still the heading; `None` anywhere else.
-    pub(crate) fn workspaces_part_at(
+    /// primary or its gear, one of the foot's items; the heading's words,
+    /// which press nothing but are still the heading, and the foot between
+    /// its items, which is the foot; `None` anywhere else.
+    pub(crate) fn page_part_at(
         &self,
         frame: &Frame,
         x: f32,
         y: f32,
     ) -> Option<(usize, PopoverRow, PopoverPart)> {
         let rows = self.popover_rows();
+        let heading = match self.popover.as_ref()?.kind {
+            PopoverKind::Profiles => PopoverRow::ProfilesHeading,
+            _ => PopoverRow::WorkspacesHeading,
+        };
         let (row, part) = match frame.hit_at(x, y) {
             Some(key) => row_part_of(self, key)?,
-            None if frame.node(HEADING)?.rect.contains(x, y) => {
-                (PopoverRow::WorkspacesHeading, PopoverPart::Row)
+            None if frame.node(HEADING)?.rect.contains(x, y) => (heading, PopoverPart::Row),
+            None if frame
+                .rect_of(profiles::FOOT)
+                .is_some_and(|r| r.contains(x, y)) =>
+            {
+                (PopoverRow::ProfilesFooter, PopoverPart::Row)
             }
             None => return None,
         };
@@ -468,9 +514,13 @@ impl ExploreView {
     }
 }
 
-/// The scroll viewport's rect, content extent and offset, as laid out.
+/// The scroll viewport's rect, content extent and offset, as laid out:
+/// either page's list.
 pub(crate) fn list_of(frame: &Frame) -> Option<(Rect, f32, f32)> {
-    let list = frame.named(LIST).next()?;
+    let list = frame
+        .named(LIST)
+        .next()
+        .or_else(|| frame.named(profiles::LIST).next())?;
     let (content, offset) = list.scroll?;
     Some((list.rect, content, offset))
 }
@@ -490,19 +540,31 @@ pub(crate) const GEAR: &str = "Manage gear";
 /// The popover row and part an element key stands for: what a press or an
 /// accessibility request on that key chooses.
 pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, PopoverPart)> {
+    if let Some(button) = profiles::button_of(key) {
+        return Some((PopoverRow::ProfilesFooter, PopoverPart::Button(button)));
+    }
     let el::Object::Model(id) = key.object else {
         return None;
     };
-    let index = view
-        .workspaces
-        .iter()
-        .position(|w| w.id.as_uuid().as_u128() == id)?;
     let part = match key.part {
         MANAGE => PopoverPart::Gear,
         PRIMARY => PopoverPart::Row,
         _ => return None,
     };
-    Some((PopoverRow::Workspace(index), part))
+    let row = if let Some(i) = view
+        .workspaces
+        .iter()
+        .position(|w| w.id.as_uuid().as_u128() == id)
+    {
+        PopoverRow::Workspace(i)
+    } else {
+        let i = view
+            .profiles
+            .iter()
+            .position(|p| p.id.as_uuid().as_u128() == id)?;
+        PopoverRow::Profile(i)
+    };
+    Some((row, part))
 }
 
 #[cfg(test)]

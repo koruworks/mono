@@ -349,6 +349,10 @@ pub enum TextMode {
     Single,
     /// One line, elided to the box's width.
     Truncate,
+    /// One line: the words that fit the box's width, cut at a word with no
+    /// ellipsis. How chrome has long cut a label (`draw_layout_first_line`);
+    /// the Profiles page's names are set this way (ELEMENTS-PLAN P5).
+    Clip,
     /// As many lines as the width needs; height follows the breaks.
     Wrap,
 }
@@ -865,6 +869,14 @@ impl El {
     pub fn truncate(mut self) -> Self {
         if let Kind::Text(t) = &mut self.kind {
             t.mode = TextMode::Truncate;
+        }
+        self
+    }
+
+    /// One line cut at the last word that fits, without an ellipsis.
+    pub fn clip(mut self) -> Self {
+        if let Kind::Text(t) = &mut self.kind {
+            t.mode = TextMode::Clip;
         }
         self
     }

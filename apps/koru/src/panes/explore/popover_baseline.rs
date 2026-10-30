@@ -47,6 +47,8 @@ const PROFILES: &str = include_str!("popover_baseline/profiles.txt");
 /// What the plan approved the Workspaces page to change from P0 (D2, S1),
 /// held apart from the P0 record.
 const WORKSPACES_APPROVED: &str = include_str!("popover_baseline/workspaces.approved.txt");
+/// What the plan approved the Profiles page to change from P0 (D2, P5).
+const PROFILES_APPROVED: &str = include_str!("popover_baseline/profiles.approved.txt");
 
 /// The faces the repository ships; anything else a run lands in is the
 /// machine's fallback.
@@ -574,7 +576,10 @@ fn record(case: &Case) -> String {
                     let _ = writeln!(out, "part {row_key} lane {}", rect(trailing_lane(r)));
                 }
                 PopoverRow::ProfilesFooter => {
-                    for (button, b) in head_button_rects(r, row) {
+                    for button in [HeadButton::Status, HeadButton::Devices, HeadButton::New] {
+                        let b = v
+                            .popover_head_button_rect(area, VIEW, button)
+                            .expect("the foot's item");
                         let name = format!("{button:?}").to_lowercase();
                         let _ = writeln!(out, "part {row_key} {name} {}", rect(b));
                     }
@@ -667,30 +672,36 @@ fn file_of(page: Page) -> &'static str {
 /// heading paints is marked `paint heading`, whichever record owned it.
 fn painted_view(record: &str) -> String {
     let mut out = String::with_capacity(record.len());
-    let mut heading: Option<usize> = None;
+    // The page part a line was painted under, and the depth it began at.
+    let mut owner: Option<(&str, usize)> = None;
     for line in record.lines() {
         if let Some(rest) = line.strip_prefix("paint ") {
             let mut tokens = rest.split_whitespace();
             let depth: usize = tokens.next().and_then(|d| d.parse().ok()).unwrap_or(0);
             let tokens: Vec<&str> = tokens.collect();
             let (name, kind) = (tokens.first().copied(), tokens.get(1).copied());
-            if heading.is_some_and(|at| depth <= at) {
-                heading = None;
+            if owner.is_some_and(|(_, at)| depth <= at) {
+                owner = None;
             }
-            let owns_heading = (name == Some("Row")
-                && kind == Some("part")
-                && tokens.contains(&"row=WorkspacesHeading"))
-                || (name == Some("Workspaces_heading") && kind == Some("element"));
-            if owns_heading {
-                heading = Some(depth);
+            let row =
+                |want: &str| name == Some("Row") && kind == Some("part") && tokens.contains(&want);
+            let element =
+                |want: &[&str]| kind == Some("element") && name.is_some_and(|n| want.contains(&n));
+            if row("row=WorkspacesHeading")
+                || row("row=ProfilesHeading")
+                || element(&["Workspaces_heading", "Profiles_heading"])
+            {
+                owner = Some(("heading", depth));
+            } else if row("row=ProfilesFooter") || element(&["Profiles_foot"]) {
+                owner = Some(("foot", depth));
             }
             if kind == Some("element") || (name == Some("Row") && kind == Some("part")) {
                 continue;
             }
-            out.push_str(if heading.is_some() {
-                "paint heading "
-            } else {
-                "paint "
+            out.push_str(match owner {
+                Some(("heading", _)) => "paint heading ",
+                Some(("foot", _)) => "paint foot ",
+                _ => "paint ",
             });
             out.push_str(&tokens.join(" "));
         } else {
@@ -703,7 +714,8 @@ fn painted_view(record: &str) -> String {
 
 /// A line the plan approved to differ from P0 on `page`: it is held to the
 /// page's approved file instead (ELEMENTS-PLAN §5), never written over P0.
-fn approved_line(page: Page, section: &str, line: &str) -> bool {
+/// `band` is the section's list, top and bottom.
+fn approved_line(page: Page, section: &str, line: &str, band: Option<(f64, f64)>) -> bool {
     match page {
         // D2: the gear is a node beside its row, and the heading is one.
         // S1: the heading is translated, so outside English its words move.
@@ -714,8 +726,48 @@ fn approved_line(page: Page, section: &str, line: &str) -> bool {
                 // the page reports is the gear's node, not its row's.
                 || (line.starts_with("focus ") && section.ends_with("state=hover-gear"))
         }
-        Page::Profiles => false,
+        // D2, as the Workspaces page: the gear is a node beside its row,
+        // the heading is one, and the pointer on the gear is focus on it.
+        Page::Profiles => {
+            line.starts_with("sem ")
+                || (line.starts_with("focus ") && section.ends_with("state=hover-gear"))
+                // P5: the devices badge is painted with its own item, before
+                // `+`, not after it; nothing overlaps, so only the order of
+                // the foot's paint moves, and only where there is a badge.
+                || (section.ends_with("state=synced") && line.starts_with("paint foot "))
+                // E7: a Profile's name is elided like a workspace's, so a
+                // long one ends in `…` where P0 cut it at a word. The name is
+                // the list's only 18-unit line.
+                || (line.starts_with("paint ")
+                    && !line.starts_with("paint heading ")
+                    && !line.starts_with("paint foot ")
+                    && (line.contains(" line_height=18 ") || line.contains(" font_size=13 ")))
+                // P5: a row's line wholly outside the visible list was
+                // painted and clipped away; the frame does not paint what
+                // cannot be seen (P4's frame-time rule). Nothing visible.
+                || (line.starts_with("paint ")
+                    && !line.starts_with("paint heading ")
+                    && !line.starts_with("paint foot ")
+                    && paint_span(line)
+                        .zip(band)
+                        .is_some_and(|((top, bottom), (band_top, band_bottom))| {
+                            top >= band_bottom - 0.01 || bottom <= band_top + 0.01
+                        }))
+        }
     }
+}
+
+/// A paint line's top and bottom edges, when written in numbers.
+fn paint_span(line: &str) -> Option<(f64, f64)> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let at = if matches!(tokens.get(1), Some(&"heading" | &"foot")) {
+        5
+    } else {
+        4
+    };
+    let top: f64 = tokens.get(at)?.parse().ok()?;
+    let h: f64 = tokens.get(at + 2)?.parse().ok()?;
+    Some((top, top + h))
 }
 
 /// `record` split into what P0 still holds and what the approved file
@@ -723,14 +775,25 @@ fn approved_line(page: Page, section: &str, line: &str) -> bool {
 fn split(page: Page, record: &str) -> (String, String) {
     let (mut kept, mut approved) = (String::new(), String::new());
     let mut section = "";
+    let mut band: Option<(f64, f64)> = None;
     for line in record.lines() {
+        if let Some(rest) = line.strip_prefix("band ") {
+            let n: Vec<f64> = rest
+                .split_whitespace()
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            if let (Some(y), Some(h)) = (n.get(1), n.get(3)) {
+                band = Some((*y, y + h));
+            }
+        }
         if line.starts_with("== ") {
             section = line;
+            band = None;
             kept.push_str(line);
             kept.push('\n');
             approved.push_str(line);
             approved.push('\n');
-        } else if approved_line(page, section, line) {
+        } else if approved_line(page, section, line, band) {
             approved.push_str(line);
             approved.push('\n');
         } else {
@@ -744,7 +807,7 @@ fn split(page: Page, record: &str) -> (String, String) {
 fn approved_of(page: Page) -> Option<&'static str> {
     match page {
         Page::Workspaces => Some(WORKSPACES_APPROVED),
-        Page::Profiles => None,
+        Page::Profiles => Some(PROFILES_APPROVED),
     }
 }
 
@@ -817,7 +880,7 @@ fn capture_popover_approved() {
         env!("CARGO_MANIFEST_DIR"),
         "/src/panes/explore/popover_baseline"
     );
-    for page in [Page::Workspaces] {
+    for page in [Page::Workspaces, Page::Profiles] {
         let path = format!("{dir}/{}.approved.txt", page.token());
         let (_, approved) = split(page, &painted_view(&page_record(page)));
         std::fs::write(&path, approved).expect("write the approved file");
@@ -877,10 +940,8 @@ fn the_lit_row_is_one_index_shared_by_pointer_and_arrows() {
         let node_at = |v: &ExploreView, index: usize| {
             let (row, r) = v.popover_rects(area, VIEW)[index];
             let r = match row {
-                PopoverRow::ProfilesFooter => head_button_rects(r, row)
-                    .into_iter()
-                    .find(|(button, _)| *button == HeadButton::New)
-                    .map(|(_, b)| b)
+                PopoverRow::ProfilesFooter => v
+                    .popover_head_button_rect(area, VIEW, HeadButton::New)
                     .expect("the foot's +"),
                 _ => r,
             };

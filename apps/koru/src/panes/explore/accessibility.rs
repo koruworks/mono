@@ -231,13 +231,21 @@ impl ExploreView {
             let rows = self.popover_rows();
             let hovered = popover.hover.and_then(|i| rows.get(i).copied());
             return Some(match hovered {
-                // The keyboard on a workspace's gear is on the gear
-                // (ELEMENTS.final D2): its node, not the row's.
+                // The keyboard on a workspace's or Profile's gear is on the
+                // gear (ELEMENTS.final D2): its node, not the row's.
                 Some(PopoverRow::Workspace(i))
                     if self.popover_part == Some(super::PopoverPart::Gear) =>
                 {
                     match self.workspaces.get(i) {
                         Some(w) => cx.model(w.id.as_uuid(), parts::MANAGE),
+                        None => cx.surface(POPOVER, parts::POPOVER),
+                    }
+                }
+                Some(PopoverRow::Profile(i))
+                    if self.popover_part == Some(super::PopoverPart::Gear) =>
+                {
+                    match self.profiles.get(i) {
+                        Some(profile) => cx.model(profile.id.as_uuid(), parts::MANAGE),
                         None => cx.surface(POPOVER, parts::POPOVER),
                     }
                 }
@@ -647,41 +655,26 @@ impl ExploreView {
     /// that is on its way off the screen.
     fn popover_semantics(&self, cx: &Context) -> Option<SemanticNode> {
         let popover = self.live()?;
-        // The Workspaces page publishes its element frame: the Menu, its
-        // heading, and each row's primary beside its gear (P4).
-        if popover.kind == PopoverKind::Summary {
+        // The switcher's pages publish their element frames: the Menu, its
+        // heading, each row's primary beside its gear (P4, P5), and the
+        // Profiles page's three foot items.
+        if popover.kind != PopoverKind::LibraryActions {
             return self
-                .with_workspaces(cx.area, cx.viewport, |frame| {
+                .with_page(cx.area, cx.viewport, |frame| {
                     self.element_semantics(cx, frame)
                 })
                 .and_then(|mut roots| roots.pop());
         }
         let panel = self.popover_panel(cx.area, cx.viewport)?;
         let rects = self.popover_rects(cx.area, cx.viewport);
-        // **A head's buttons are controls of their own**: a node each, so a
-        // client reaches the control a press would hit rather than the row
-        // around it.
         let mut children = Vec::with_capacity(rects.len());
         for (row, rect) in rects.iter().filter(|(row, _)| row.selectable()) {
-            match row {
-                PopoverRow::ProfilesFooter => {
-                    for (button, bounds) in super::head_button_rects(*rect, *row) {
-                        let (part, label) = self.head_button_identity(button, cx.lang);
-                        children.push(
-                            SemanticNode::new(cx.surface(POPOVER, part), Role::MenuItem)
-                                .with_label(label)
-                                .with_bounds(bounds)
-                                .with_actions([Action::Click, Action::Focus]),
-                        );
-                    }
-                }
-                _ => children.push(
-                    SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
-                        .with_label(self.popover_row_label(*row, cx.lang))
-                        .with_bounds(*rect)
-                        .with_actions([Action::Click, Action::Focus]),
-                ),
-            }
+            children.push(
+                SemanticNode::new(self.popover_row_occurrence(cx, *row), Role::MenuItem)
+                    .with_label(self.popover_row_label(*row, cx.lang))
+                    .with_bounds(*rect)
+                    .with_actions([Action::Click, Action::Focus]),
+            );
         }
         let size = children.len();
         for (index, child) in children.iter_mut().enumerate() {
@@ -694,12 +687,7 @@ impl ExploreView {
         Some(
             SemanticNode::new(cx.surface(POPOVER, parts::POPOVER), Role::Menu)
                 .with_size_of_set(size)
-                .with_label(match popover.kind {
-                    // The chip's popover is the chip's name: who and where.
-                    PopoverKind::Summary => t(cx.lang, Key::FloorChipAction),
-                    PopoverKind::Profiles => t(cx.lang, Key::TerminalSwitchProfile),
-                    PopoverKind::LibraryActions => t(cx.lang, Key::A11yMoreActions),
-                })
+                .with_label(t(cx.lang, Key::A11yMoreActions))
                 .with_bounds(panel)
                 .with_children(children),
         )
@@ -727,35 +715,6 @@ impl ExploreView {
             PopoverRow::ProfilesFooter => cx.surface(POPOVER, parts::NEW_PROFILE),
             PopoverRow::LibraryAction(action) => {
                 cx.surface(POPOVER, ControlPart::new(super::actions::token(action)))
-            }
-        }
-    }
-
-    /// A fixed row's button: its part and its name.
-    fn head_button_identity(&self, button: super::HeadButton, lang: Lang) -> (ControlPart, String) {
-        use koru_i18n::fill;
-        match button {
-            super::HeadButton::New => (parts::NEW_PROFILE, t(lang, Key::NewProfile).to_string()),
-            super::HeadButton::Devices => {
-                let n = self.linked_count;
-                let key = if n == 1 {
-                    Key::DevicesCountOne
-                } else {
-                    Key::DevicesCountMany
-                };
-                (
-                    parts::PROFILE_DEVICES,
-                    fill(t(lang, key), &[&n.to_string()]),
-                )
-            }
-            super::HeadButton::Status => {
-                let state = self.sync_status();
-                let words = if state == super::SyncStatus::NotSetUp {
-                    t(lang, Key::CloudSubscribe)
-                } else {
-                    t(lang, state.key())
-                };
-                (parts::PROFILE_STATUS, words.to_string())
             }
         }
     }

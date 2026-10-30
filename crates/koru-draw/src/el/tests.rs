@@ -201,6 +201,79 @@ fn a_long_name_is_truncated_to_its_box() {
     assert_eq!(node.lines(), Some(1));
 }
 
+/// **`clip` cuts at a word, without an ellipsis** — how the Profiles page
+/// has always cut a long name (ELEMENTS-PLAN P5) — where `truncate` elides.
+#[test]
+fn clip_cuts_at_a_word_and_truncate_elides() {
+    let long = "Alexandra Konstantinopoulou-Whitfield";
+    let tree = |el: El| {
+        row("Row")
+            .w(Length::Px(186.0))
+            .child(el.named("Name").fill())
+    };
+    let clipped = lay(
+        &tree(text(long).role(roles::ROW).clip()),
+        Rect::new(0.0, 0.0, 186.0, 18.0),
+        FrameCx::root(),
+    );
+    let node = clipped.named("Name").next().unwrap();
+    let layout = node.text.as_ref().unwrap();
+    let first: String = {
+        let line = layout.lines().next().unwrap();
+        long[line.text_range()].trim_end().to_string()
+    };
+    assert_eq!(first, "Alexandra", "the words that fit, cut at a word");
+    assert_eq!(node.rect.h, roles::ROW.style().metrics.line_height);
+
+    let elided = lay(
+        &tree(text(long).role(roles::ROW).truncate()),
+        Rect::new(0.0, 0.0, 186.0, 18.0),
+        FrameCx::root(),
+    );
+    let layout = elided.named("Name").next().unwrap().text.as_ref().unwrap();
+    assert_eq!(layout.lines().count(), 1);
+    assert!(layout.width() <= 186.01);
+}
+
+/// **A line taller than its box is still seen past the box.** A name set
+/// in an 18-unit line inside a 16-unit box paints a unit above and below
+/// it; scrolled so that only that unit shows, it is shaped and painted, and
+/// only once nothing of it can show is it skipped.
+#[test]
+fn a_line_taller_than_its_box_is_painted_while_any_of_it_shows() {
+    let list = |offset: f32| {
+        scroll_y("List")
+            .h(Length::Runtime(40.0, "band"))
+            .offset(offset)
+            .child(
+                col("Lines")
+                    .pad_y(Space::S2)
+                    .child(text("Name").named("Name").role(roles::ROW).h(Space::S4))
+                    .child(spacer().named("Rest").h(Space::S12)),
+            )
+    };
+    // The name's box is 8..24 and its line 7..25: scrolled by 24.5 the box
+    // is gone and half a unit of the line is not.
+    let frame = lay(
+        &list(24.5),
+        Rect::new(0.0, 0.0, 200.0, 40.0),
+        FrameCx::root(),
+    );
+    let node = frame.named("Name").next().unwrap();
+    assert!(
+        node.rect.y + node.rect.h <= 0.0,
+        "the box is above the list"
+    );
+    assert!(node.text.is_some(), "the line reaching into it is shaped");
+    // Scrolled by 26, nothing of it shows.
+    let frame = lay(
+        &list(26.0),
+        Rect::new(0.0, 0.0, 200.0, 40.0),
+        FrameCx::root(),
+    );
+    assert!(frame.named("Name").next().unwrap().text.is_none());
+}
+
 // ---------------------------------------------- 2. capped fills and deficits
 
 fn fills(weights: &[(f32, Option<f32>, Option<f32>)]) -> El {

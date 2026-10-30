@@ -31,6 +31,14 @@ pub(super) fn layout(
         frame: Frame::new(cx),
     };
     solver.place(root, area, None, None);
+    // A box's extent holds its descendants': children follow their parent
+    // in the frame, so one pass from the end carries each into it.
+    let nodes = &mut solver.frame.nodes;
+    for i in (1..nodes.len()).rev() {
+        if let Some(parent) = nodes[i].parent {
+            nodes[parent].extent = union(nodes[parent].extent, nodes[i].extent);
+        }
+    }
     solver.validate();
     solver.frame
 }
@@ -107,7 +115,7 @@ impl Solver<'_> {
         let style = style_of(t);
         let width = match t.mode {
             TextMode::Single => None,
-            TextMode::Truncate | TextMode::Wrap => width,
+            TextMode::Truncate | TextMode::Clip | TextMode::Wrap => width,
         };
         let key = TextCache::key(t, &style, width, &self.cx);
         if let Some(layout) = self.cache.get(&key) {
@@ -118,7 +126,10 @@ impl Solver<'_> {
                 let fitted = self.engine.elided(&t.content, style, w);
                 self.engine.simple_layout(&fitted, style)
             }
-            (TextMode::Wrap, Some(w)) => self.engine.simple_layout_wrapped(&t.content, style, w),
+            // Broken at the width; paint draws only the first line.
+            (TextMode::Wrap | TextMode::Clip, Some(w)) => {
+                self.engine.simple_layout_wrapped(&t.content, style, w)
+            }
             _ => self.engine.simple_layout(&t.content, style),
         });
         self.cache.put(key, Rc::clone(&layout));
@@ -177,7 +188,9 @@ impl Solver<'_> {
         let inner = match &el.kind {
             Kind::Text(t) => match t.mode {
                 TextMode::Wrap => self.shape(t, Some(inner_w)).height(),
-                TextMode::Single | TextMode::Truncate => style_of(t).metrics.line_height,
+                TextMode::Single | TextMode::Truncate | TextMode::Clip => {
+                    style_of(t).metrics.line_height
+                }
             },
             Kind::Icon(i) => i.size.px(self.cx.profile),
             Kind::Leaf(adapter) => adapter.measure(Some(inner_w)).1,
@@ -363,12 +376,30 @@ impl Solver<'_> {
             Kind::Leaf(adapter) => adapter.hit_region(rect),
             _ => rect,
         });
+        let [start, top, end, bottom] = self.pad(el);
+        let inner = Rect::new(
+            rect.x + start,
+            rect.y + top,
+            (rect.w - start - end).max(0.0),
+            (rect.h - top - bottom).max(0.0),
+        );
+        // A single line is centred on its line box, which can be taller than
+        // the box it was given: what it paints reaches past the box.
+        let extent = match &el.kind {
+            Kind::Text(t) if t.mode != TextMode::Wrap => {
+                let line = style_of(t).metrics.line_height;
+                let centre = inner.y + inner.h * 0.5;
+                union(rect, Rect::new(rect.x, centre - line * 0.5, rect.w, line))
+            }
+            _ => rect,
+        };
         let index = self.frame.nodes.len();
         self.frame.nodes.push(Node {
             name: el.name,
             parent,
             key: el.key,
             rect,
+            extent,
             clip,
             overflow: false,
             scroll: None,
@@ -391,19 +422,13 @@ impl Solver<'_> {
             decorative: el.decorative,
             text: None,
         });
-        let [start, top, end, bottom] = self.pad(el);
-        let inner = Rect::new(
-            rect.x + start,
-            rect.y + top,
-            (rect.w - start - end).max(0.0),
-            (rect.h - top - bottom).max(0.0),
-        );
         match &el.kind {
             // Shaped only where it can be seen. Text wholly outside its
             // viewport is placed but never painted, and a single line's
             // height is its role's, so forty rows scrolled out of view cost
             // no shaping (ELEMENTS-PLAN P4's frame-time rule).
-            Kind::Text(t) if clip.is_some_and(|c| hidden(rect, c)) && t.mode != TextMode::Wrap => {}
+            Kind::Text(t)
+                if clip.is_some_and(|c| hidden(extent, c)) && t.mode != TextMode::Wrap => {}
             Kind::Text(t) => {
                 let layout = self.shape(t, Some(inner.w));
                 self.frame.nodes[index].text = Some(layout);
@@ -600,6 +625,15 @@ fn distribute(claims: &[Claim], avail: f32) -> Vec<f32> {
         break;
     }
     sizes
+}
+
+/// The smallest box holding both.
+fn union(a: Rect, b: Rect) -> Rect {
+    let x0 = a.x.min(b.x);
+    let y0 = a.y.min(b.y);
+    let x1 = (a.x + a.w).max(b.x + b.w);
+    let y1 = (a.y + a.h).max(b.y + b.h);
+    Rect::new(x0, y0, x1 - x0, y1 - y0)
 }
 
 /// Wholly outside the viewport clipping it: nothing of it is ever painted.

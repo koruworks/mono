@@ -975,7 +975,10 @@ fn a_profile_row_is_two_lines_and_the_linked_count_is_set_from_outside() {
     let a = area();
     let rects = v.popover_rects(a, VIEW);
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
-    assert_eq!(h(PopoverRow::Profile(0)), Some(super::PROFILE_ROW_H));
+    assert_eq!(
+        h(PopoverRow::Profile(0)),
+        Some(theme::metrics::PROFILE_ROW_MIN.value)
+    );
     assert!(
         h(PopoverRow::Profile(0)) > h(PopoverRow::ProfilesHeading),
         "taller than a one-line row"
@@ -1267,10 +1270,6 @@ fn every_popover_part_hit_tests_back_to_itself() {
         Some((PopoverRow::Workspace(0), PopoverPart::Row))
     );
     let r = find(&v, PopoverRow::WorkspacesHeading);
-    assert!(
-        super::head_button_rects(r, PopoverRow::WorkspacesHeading).is_empty(),
-        "the heading's `+` and import button moved to the floor's `…` (E60)"
-    );
     let (x, y) = (r.x + 30.0, r.centre().1);
     assert_eq!(
         v.popover_part_at(a, VIEW, x, y)
@@ -1754,19 +1753,57 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
     );
 }
 
-/// **The toolbar is three controls in one row**: ← and → move between
-/// them, wrapping; Enter presses the one the keyboard is on. Sync and
-/// settings are destinations that shut the page; help opens beside it and
-/// leaves it up.
+/// **Right reaches a Profile's gear, Left comes back** (ELEMENTS.final D2,
+/// ELEMENTS-PLAN P5), and Enter on the gear opens Manage on that Profile.
+/// The foot keeps its one stop: Left and Right on it still mean nothing
+/// here and fall through.
 #[test]
 fn left_and_right_fall_through_on_the_profiles_page() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
     v.toggle_profile_popover();
+    let rows = v.popover_rows();
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    let lit = v.popover_hover().expect("Down lights a row");
+    let PopoverRow::Profile(i) = rows[lit] else {
+        panic!("a Profile row is lit, not {:?}", rows[lit]);
+    };
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::ArrowRight)),
+        Some(Outcome::Consumed)
+    );
+    assert_eq!(v.popover_part, Some(PopoverPart::Gear), "on the gear");
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::ArrowLeft)),
+        Some(Outcome::Consumed)
+    );
+    assert_eq!(v.popover_part, None, "back on the row");
+    v.popover_key(&Key::Named(NamedKey::ArrowRight));
+    let id = v.profiles[i].id;
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::Enter)),
+        Some(Outcome::ManageProfile(id))
+    );
+
+    v.toggle_profile_popover();
+    if !v.popover_open() {
+        v.toggle_profile_popover();
+    }
+    let foot = v
+        .popover_rows()
+        .iter()
+        .position(|row| *row == PopoverRow::ProfilesFooter)
+        .expect("the foot");
+    v.popover.as_mut().expect("open").hover = Some(foot);
+    v.popover_part = None;
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
     assert!(v.popover_open(), "and neither dismissed it");
+    assert_eq!(
+        v.popover_key(&Key::Named(NamedKey::Enter)),
+        Some(Outcome::NewProfile),
+        "Enter on the foot presses its +"
+    );
 }
 
 /// The WORKSPACES heading carries no buttons now (the CTO's artboard, E60):

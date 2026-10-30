@@ -5184,6 +5184,12 @@ It is the same profile choice global search shows at its bottom left. The
 shortcut opens whichever profile control is in front of you and leaves Explore
 open or closed as you set it.
 
+Each profile's **Manage** control works as a workspace's does: point at the
+row to show it, or press `→` on the lit profile to move onto it and `←` to
+come back; `Enter` on it opens the **Manage** tab on that profile. A screen
+reader announces it as *Manage profile*. The page's foot is one keyboard
+stop: `Enter` there makes a new profile.
+
 Under the profiles sit **New profile**, then **Manage profiles…** and **Link a
 device…**. *New profile* opens the **Manage** tab on its create form, and *Manage
 profiles…* opens it on the open profile's page. The account chooser —

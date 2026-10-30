@@ -20,7 +20,7 @@ use vello::kurbo::Affine;
 use super::*;
 use crate::panes::Outcome;
 use crate::panes::explore::accessibility::Context;
-use crate::panes::explore::{ProfileSummary, WorkspaceEntry};
+use crate::panes::explore::{HeadButton, ProfileSummary, WorkspaceEntry};
 
 const VIEW: (f32, f32) = (1200.0, 700.0);
 
@@ -699,4 +699,196 @@ fn right_reaches_the_gear_and_enter_opens_manage() {
         Some(Outcome::ManageWorkspace(id))
     );
     assert!(v.live().is_none(), "Manage is the end of the page");
+}
+
+// ------------------------------------------------------ the Profiles page (P5)
+
+/// `n` Profiles, the second one open, the Profiles page open and settled.
+fn opened_profiles(n: usize) -> ExploreView {
+    let mut v = ExploreView::new();
+    let profiles: Vec<ProfileSummary> = (0..n)
+        .map(|i| ProfileSummary {
+            id: ProfileId::from_uuid(uuid(800 + i as u128)),
+            name: format!("Profile {i:02}"),
+            email: format!("p{i:02}@example.com"),
+            avatar: None,
+            icon: None,
+            color: None,
+            account: None,
+            folder: format!("C:/profiles/{i}"),
+        })
+        .collect();
+    let open = profiles[1].id;
+    let list = workspaces(2);
+    let current = list.first().map(|w| w.id);
+    v.set_context(profiles, open, list, current);
+    v.toggle_profile_popover();
+    v.advance_popover(std::time::Instant::now() + Duration::from_secs(5));
+    v
+}
+
+fn profile_gear(id: ProfileId) -> Occurrence {
+    Occurrence::model(
+        WindowSlot::from_raw(1),
+        ViewSlot::from_raw(1),
+        id.as_uuid(),
+        ControlPart::new("manage"),
+    )
+}
+
+/// **Rung 8's tree**: the Menu named as it always was, its heading, each
+/// Profile beside its *Manage profile* gear, the open one selected, and the
+/// foot's three items in P0's order with the names and locators they have
+/// always had.
+#[test]
+fn the_profiles_page_puts_each_gear_beside_its_profile_and_keeps_the_foot() {
+    let v = opened_profiles(3);
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let cx = cx(a, Lang::En);
+    let menu = v
+        .with_page(a, VIEW, |frame| v.element_semantics(&cx, frame))
+        .expect("the page")
+        .pop()
+        .expect("its Menu");
+    assert_eq!(menu.role, AkRole::Menu);
+    assert_eq!(menu.label.as_deref(), Some("Switch profile"));
+    assert_eq!(
+        menu.size_of_set,
+        Some(9),
+        "three Profiles, three gears, three items"
+    );
+    assert_eq!(menu.children[0].role, AkRole::Heading);
+    assert_eq!(menu.children[0].label.as_deref(), Some("PROFILES · 3"));
+    for (i, profile) in v.profiles.iter().enumerate() {
+        let primary = &menu.children[1 + i * 2];
+        let gear = &menu.children[2 + i * 2];
+        assert_eq!(primary.label.as_deref(), Some(profile.name.as_str()));
+        assert_eq!(primary.selected, Some(i == 1), "the open Profile");
+        assert_eq!(gear.occurrence, profile_gear(profile.id));
+        assert_eq!(gear.label.as_deref(), Some("Manage profile"));
+    }
+    let foot: Vec<_> = menu.children[7..]
+        .iter()
+        .map(|node| (node.occurrence.part.name(), node.label.as_deref()))
+        .collect();
+    assert_eq!(
+        foot,
+        vec![
+            ("profile-status", Some("Subscribe to Koru Cloud")),
+            ("profile-devices", Some("0 devices")),
+            ("new-profile", Some("New profile")),
+        ]
+    );
+}
+
+/// **A request for a Profile's gear acts on that gear**: Focus lights it
+/// and chooses nothing; Click opens Manage on that Profile, whatever the
+/// keyboard was on.
+#[test]
+fn focus_lights_a_profiles_gear_and_click_opens_manage_on_it() {
+    use winit::keyboard::{Key as WKey, NamedKey};
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let mut v = opened_profiles(3);
+    let target = v.profiles[2].id;
+    assert_eq!(
+        v.accessibility_action(a, profile_gear(target), AkAction::Focus, VIEW),
+        Some(Outcome::Consumed)
+    );
+    assert!(v.live().is_some(), "focus chose nothing");
+    assert_eq!(v.popover_part, Some(PopoverPart::Gear));
+    assert_eq!(
+        v.popover_interaction().hot,
+        Some(profiles::manage(target)),
+        "the gear is lit, not the row's words"
+    );
+
+    let mut v = opened_profiles(3);
+    v.popover_key(&WKey::Named(NamedKey::ArrowDown));
+    assert_eq!(
+        v.accessibility_action(a, profile_gear(target), AkAction::Click, VIEW),
+        Some(Outcome::ManageProfile(target))
+    );
+}
+
+/// **The foot's items are pressed where they are drawn**, and each does
+/// what it always did: the offer, Linked devices, and `+`.
+#[test]
+fn each_foot_item_presses_what_it_always_pressed() {
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    for (button, outcome) in [
+        (HeadButton::Status, Outcome::SubscribeCloud),
+        (HeadButton::Devices, Outcome::ManageDevices),
+        (HeadButton::New, Outcome::NewProfile),
+    ] {
+        let mut v = opened_profiles(3);
+        let r = v
+            .popover_head_button_rect(a, VIEW, button)
+            .expect("the foot's item");
+        let (x, y) = r.centre();
+        assert_eq!(
+            v.popover_part_at(a, VIEW, x, y)
+                .map(|(_, row, part)| (row, part)),
+            Some((PopoverRow::ProfilesFooter, PopoverPart::Button(button))),
+            "{button:?}"
+        );
+        assert_eq!(v.mouse_down(a, VIEW, x, y, false), outcome, "{button:?}");
+    }
+}
+
+/// **A Profile row's record names its tokens**: its minimum, the plate's
+/// inset, the name cut at a word and the detail elided, the gear's name.
+#[test]
+fn a_profile_rows_record_names_its_tokens() {
+    let v = opened_profiles(3);
+    let a = area(dtheme::SIDEBAR_MIN_W);
+    let panel = v.popover_panel(a, VIEW).expect("open");
+    let mut engine = TextEngine::new();
+    let (tree, frame) = v
+        .page_at(&mut engine, PopoverKind::Profiles, panel, 0.0, None, None)
+        .expect("the page");
+    let mut scene = vello::Scene::new();
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        koru_draw::scene::rect(0.0, 0.0, VIEW.0, VIEW.1),
+    );
+    frame.paint(&tree, &mut scene, Affine::IDENTITY, &mut engine);
+    let records = capture.finish().records;
+    let find = |name: &str| {
+        records
+            .iter()
+            .find(|r| r.kind == "element" && r.name == name)
+            .unwrap_or_else(|| panic!("no {name}"))
+    };
+    let value = |record: &inspect::Record, name: &str| {
+        record
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value.clone())
+            .unwrap_or_else(|| panic!("{}: no {name}", record.name))
+    };
+    let row = find("Profile row");
+    assert!(
+        row.source
+            .starts_with("apps/koru/src/panes/explore/popover_elements/profiles.rs:"),
+        "{}",
+        row.source
+    );
+    assert_eq!(value(row, "min_h"), "metrics::PROFILE_ROW_MIN -> 44");
+    assert_eq!(
+        value(row, "pad_x"),
+        "alias::ROW_PLATE_INSET = Space::S1 -> 4"
+    );
+    assert_eq!(value(find("Profile name"), "text mode"), "single line, elided");
+    assert_eq!(value(find("Profile name"), "h"), "Space::S4 -> 16");
+    assert_eq!(
+        value(find("Profile detail"), "text mode"),
+        "single line, elided"
+    );
+    assert_eq!(value(find("Manage gear"), "name"), "Key::ManageProfile");
+    assert_eq!(
+        value(find("Sync status words"), "ink"),
+        format!("Ink::Accent -> {}", inspect::color(Ink::Accent.of(dtheme::p())))
+    );
 }

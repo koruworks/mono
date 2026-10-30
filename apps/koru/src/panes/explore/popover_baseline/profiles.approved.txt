@@ -1,0 +1,1003 @@
+== profiles width=256 theme=light lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=light lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=en names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=en names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=de names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=de names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Profil wechseln" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILE · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Profil verwalten" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verwalten" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Koru Cloud abonnieren" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 Geräte" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "Neues Profil" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=ar names=normal state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=600 theme=dark lang=ar names=long state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "تبديل الملف" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "ملفات التعريف · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Alexandra Konstantinopoulou-Whitfield" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "إدارة ملف التعريف" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة ملف التعريف" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "الاشتراك في Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 أجهزة" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "ملف تعريف جديد" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 179.118 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 179.118 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 176.585 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 176.585 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=hover-row
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=hover-gear
+focus koru:w1/v1/n:6b6f7275000040008000000000000067#manage
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=keyboard
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=foot-status
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=foot-devices
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=foot-new
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=normal state=synced
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 480.000 258.000 214.000 size=9
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 3" 52.000 486.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "koru" 60.000 512.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 512.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "dev-data" 60.000 556.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 556.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 600.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 600.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Up to date" 60.000 644.000 190.000 44.000 position=6 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "2 devices" 258.000 656.000 20.000 20.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=8 actions=Click,Focus
+paint label_line part 92.000 517.271 27.676 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 27.676 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 56.418 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 56.418 15.729 font_size=13 font_weight=600 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 51.733 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 51.733 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint foot fill primitive 60.000 644.000 242.000 1.000 color=#E0E0E0@1.000
+paint foot text_line part 61.500 658.438 15.000 15.000 line_height=15 baseline=672.5 ink_bounds=Not_exposed
+paint foot text_run primitive 61.500 658.438 15.000 15.000 font_size=15 font_weight=400 baseline=672.5 ascent_/_descent=14.0625_/_0.9375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint foot fill primitive 73.000 657.000 6.000 6.000 color=#3B6BB5@1.000
+paint foot label_line part 86.000 657.271 64.092 18.000 line_height=18 baseline=671 ink_bounds=Not_exposed
+paint foot text_run primitive 86.000 658.406 64.092 15.729 font_size=13 font_weight=500 baseline=671 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint foot KoruIconButton component 258.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_258.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=DEVICES Phosphor_codepoint=U+EBA4 layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
+paint foot text_line part 261.250 658.594 13.500 13.500 line_height=13.5 baseline=671.25 ink_bounds=Not_exposed
+paint foot text_run primitive 261.250 658.594 13.500 13.500 font_size=13.5 font_weight=400 baseline=671.25 ascent_/_descent=12.65625_/_0.84375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+paint foot fill primitive 266.000 650.000 16.000 16.000 color=#FFFFFF@1.000
+paint foot stroke primitive 266.000 650.000 16.000 16.000 color=#E0E0E0@1.000 width=1
+paint foot label_line part 270.000 650.999 6.778 14.000 line_height=14 baseline=662 ink_bounds=Not_exposed
+paint foot text_run primitive 270.000 651.344 6.778 13.310 font_size=11 font_weight=500 baseline=662 ascent_/_descent=10.65625_/_2.6533203 foreground=#191919@1.000 rendered_family=Inter
+paint foot KoruIconButton component 282.000 656.000 20.000 20.000 implementation=koru_ui::icon_button state=State_{_hovered:_false,_active:_false,_disabled:_false_} metrics=Metrics_{_icon_size:_13.5,_padding_x:_4.0,_padding_y:_4.0,_inset_top:_0.0,_inset_bottom:_0.0,_radius:_6.0_} hit_slot=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} paint_chip=Rect_{_x:_282.0,_y:_656.0,_w:_20.0,_h:_20.0_} icon_name=PLUS Phosphor_codepoint=U+E3D4 layout=centered_glyph_or_label docs=docs/features/koruui/COMPONENTS.md
+paint foot text_line part 285.250 658.594 13.500 13.500 line_height=13.5 baseline=671.25 ink_bounds=Not_exposed
+paint foot text_run primitive 285.250 658.594 13.500 13.500 font_size=13.5 font_weight=400 baseline=671.25 ascent_/_descent=12.65625_/_0.84375 foreground=#8A8A8A@1.000 rendered_family=Phosphor
+== profiles width=256 theme=light lang=en names=forty state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 194.000 258.000 500.000 size=83
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 40" 52.000 200.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Profile 00" 60.000 226.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 226.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "Profile 01" 60.000 270.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 270.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Profile 02" 60.000 314.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 314.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#root "Profile 03 with a name long enough to be cut short" 60.000 358.000 218.000 44.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#manage "Manage profile" 282.000 358.000 20.000 44.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#root "Profile 04" 60.000 402.000 218.000 44.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#manage "Manage profile" 282.000 402.000 20.000 44.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#root "Profile 05" 60.000 446.000 218.000 44.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#manage "Manage profile" 282.000 446.000 20.000 44.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#root "Profile 06" 60.000 490.000 218.000 44.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#manage "Manage profile" 282.000 490.000 20.000 44.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#root "Profile 07" 60.000 534.000 218.000 44.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#manage "Manage profile" 282.000 534.000 20.000 44.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#root "Profile 08" 60.000 578.000 218.000 44.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#manage "Manage profile" 282.000 578.000 20.000 44.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#root "Profile 09" 60.000 622.000 218.000 44.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#manage "Manage profile" 282.000 622.000 20.000 44.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#root "Profile 10 with a name long enough to be cut short" 60.000 666.000 218.000 44.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#manage "Manage profile" 282.000 666.000 20.000 44.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#root "Profile 11" 60.000 710.000 218.000 44.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#manage "Manage profile" 282.000 710.000 20.000 44.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#root "Profile 12" 60.000 754.000 218.000 44.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#manage "Manage profile" 282.000 754.000 20.000 44.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#root "Profile 13" 60.000 798.000 218.000 44.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#manage "Manage profile" 282.000 798.000 20.000 44.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#root "Profile 14" 60.000 842.000 218.000 44.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#manage "Manage profile" 282.000 842.000 20.000 44.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#root "Profile 15" 60.000 886.000 218.000 44.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#manage "Manage profile" 282.000 886.000 20.000 44.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#root "Profile 16" 60.000 930.000 218.000 44.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#manage "Manage profile" 282.000 930.000 20.000 44.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#root "Profile 17 with a name long enough to be cut short" 60.000 974.000 218.000 44.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#manage "Manage profile" 282.000 974.000 20.000 44.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#root "Profile 18" 60.000 1018.000 218.000 44.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#manage "Manage profile" 282.000 1018.000 20.000 44.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#root "Profile 19" 60.000 1062.000 218.000 44.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#manage "Manage profile" 282.000 1062.000 20.000 44.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#root "Profile 20" 60.000 1106.000 218.000 44.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#manage "Manage profile" 282.000 1106.000 20.000 44.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#root "Profile 21" 60.000 1150.000 218.000 44.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#manage "Manage profile" 282.000 1150.000 20.000 44.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#root "Profile 22" 60.000 1194.000 218.000 44.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#manage "Manage profile" 282.000 1194.000 20.000 44.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#root "Profile 23" 60.000 1238.000 218.000 44.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#manage "Manage profile" 282.000 1238.000 20.000 44.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#root "Profile 24 with a name long enough to be cut short" 60.000 1282.000 218.000 44.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#manage "Manage profile" 282.000 1282.000 20.000 44.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#root "Profile 25" 60.000 1326.000 218.000 44.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#manage "Manage profile" 282.000 1326.000 20.000 44.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#root "Profile 26" 60.000 1370.000 218.000 44.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#manage "Manage profile" 282.000 1370.000 20.000 44.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#root "Profile 27" 60.000 1414.000 218.000 44.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#manage "Manage profile" 282.000 1414.000 20.000 44.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#root "Profile 28" 60.000 1458.000 218.000 44.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#manage "Manage profile" 282.000 1458.000 20.000 44.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#root "Profile 29" 60.000 1502.000 218.000 44.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#manage "Manage profile" 282.000 1502.000 20.000 44.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#root "Profile 30" 60.000 1546.000 218.000 44.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#manage "Manage profile" 282.000 1546.000 20.000 44.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#root "Profile 31 with a name long enough to be cut short" 60.000 1590.000 218.000 44.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#manage "Manage profile" 282.000 1590.000 20.000 44.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#root "Profile 32" 60.000 1634.000 218.000 44.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#manage "Manage profile" 282.000 1634.000 20.000 44.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#root "Profile 33" 60.000 1678.000 218.000 44.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#manage "Manage profile" 282.000 1678.000 20.000 44.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#root "Profile 34" 60.000 1722.000 218.000 44.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#manage "Manage profile" 282.000 1722.000 20.000 44.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#root "Profile 35" 60.000 1766.000 218.000 44.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#manage "Manage profile" 282.000 1766.000 20.000 44.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#root "Profile 36" 60.000 1810.000 218.000 44.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#manage "Manage profile" 282.000 1810.000 20.000 44.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#root "Profile 37" 60.000 1854.000 218.000 44.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#manage "Manage profile" 282.000 1854.000 20.000 44.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#root "Profile 38 with a name long enough to be cut short" 60.000 1898.000 218.000 44.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage profile" 282.000 1898.000 20.000 44.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 1942.000 218.000 44.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 1942.000 20.000 44.000 position=79 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=80 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=81 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=82 actions=Click,Focus
+paint fill primitive 60.000 644.000 242.000 1.000 color=#E0E0E0@1.000
+paint label_line part 92.000 231.271 60.379 18.000 line_height=18 baseline=245 ink_bounds=Not_exposed
+paint text_run primitive 92.000 232.406 60.379 15.729 font_size=13 font_weight=500 baseline=245 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 275.271 58.145 18.000 line_height=18 baseline=289 ink_bounds=Not_exposed
+paint text_run primitive 92.000 276.406 58.145 15.729 font_size=13 font_weight=600 baseline=289 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
+paint label_line part 92.000 319.271 59.998 18.000 line_height=18 baseline=333 ink_bounds=Not_exposed
+paint text_run primitive 92.000 320.406 59.998 15.729 font_size=13 font_weight=500 baseline=333 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 363.271 172.859 18.000 line_height=18 baseline=377 ink_bounds=Not_exposed
+paint text_run primitive 92.000 364.406 172.859 15.729 font_size=13 font_weight=500 baseline=377 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 407.271 60.519 18.000 line_height=18 baseline=421 ink_bounds=Not_exposed
+paint text_run primitive 92.000 408.406 60.519 15.729 font_size=13 font_weight=500 baseline=421 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 451.271 59.827 18.000 line_height=18 baseline=465 ink_bounds=Not_exposed
+paint text_run primitive 92.000 452.406 59.827 15.729 font_size=13 font_weight=500 baseline=465 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 495.271 60.176 18.000 line_height=18 baseline=509 ink_bounds=Not_exposed
+paint text_run primitive 92.000 496.406 60.176 15.729 font_size=13 font_weight=500 baseline=509 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 539.271 59.160 18.000 line_height=18 baseline=553 ink_bounds=Not_exposed
+paint text_run primitive 92.000 540.406 59.160 15.729 font_size=13 font_weight=500 baseline=553 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 583.271 60.169 18.000 line_height=18 baseline=597 ink_bounds=Not_exposed
+paint text_run primitive 92.000 584.406 60.169 15.729 font_size=13 font_weight=500 baseline=597 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 627.271 60.176 18.000 line_height=18 baseline=641 ink_bounds=Not_exposed
+paint text_run primitive 92.000 628.406 60.176 15.729 font_size=13 font_weight=500 baseline=641 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=en names=forty state=rest
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 194.000 258.000 500.000 size=83
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 40" 52.000 200.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Profile 00" 60.000 226.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 226.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "Profile 01" 60.000 270.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 270.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Profile 02" 60.000 314.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 314.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#root "Profile 03 with a name long enough to be cut short" 60.000 358.000 218.000 44.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#manage "Manage profile" 282.000 358.000 20.000 44.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#root "Profile 04" 60.000 402.000 218.000 44.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#manage "Manage profile" 282.000 402.000 20.000 44.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#root "Profile 05" 60.000 446.000 218.000 44.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#manage "Manage profile" 282.000 446.000 20.000 44.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#root "Profile 06" 60.000 490.000 218.000 44.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#manage "Manage profile" 282.000 490.000 20.000 44.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#root "Profile 07" 60.000 534.000 218.000 44.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#manage "Manage profile" 282.000 534.000 20.000 44.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#root "Profile 08" 60.000 578.000 218.000 44.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#manage "Manage profile" 282.000 578.000 20.000 44.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#root "Profile 09" 60.000 622.000 218.000 44.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#manage "Manage profile" 282.000 622.000 20.000 44.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#root "Profile 10 with a name long enough to be cut short" 60.000 666.000 218.000 44.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#manage "Manage profile" 282.000 666.000 20.000 44.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#root "Profile 11" 60.000 710.000 218.000 44.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#manage "Manage profile" 282.000 710.000 20.000 44.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#root "Profile 12" 60.000 754.000 218.000 44.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#manage "Manage profile" 282.000 754.000 20.000 44.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#root "Profile 13" 60.000 798.000 218.000 44.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#manage "Manage profile" 282.000 798.000 20.000 44.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#root "Profile 14" 60.000 842.000 218.000 44.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#manage "Manage profile" 282.000 842.000 20.000 44.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#root "Profile 15" 60.000 886.000 218.000 44.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#manage "Manage profile" 282.000 886.000 20.000 44.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#root "Profile 16" 60.000 930.000 218.000 44.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#manage "Manage profile" 282.000 930.000 20.000 44.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#root "Profile 17 with a name long enough to be cut short" 60.000 974.000 218.000 44.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#manage "Manage profile" 282.000 974.000 20.000 44.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#root "Profile 18" 60.000 1018.000 218.000 44.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#manage "Manage profile" 282.000 1018.000 20.000 44.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#root "Profile 19" 60.000 1062.000 218.000 44.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#manage "Manage profile" 282.000 1062.000 20.000 44.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#root "Profile 20" 60.000 1106.000 218.000 44.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#manage "Manage profile" 282.000 1106.000 20.000 44.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#root "Profile 21" 60.000 1150.000 218.000 44.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#manage "Manage profile" 282.000 1150.000 20.000 44.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#root "Profile 22" 60.000 1194.000 218.000 44.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#manage "Manage profile" 282.000 1194.000 20.000 44.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#root "Profile 23" 60.000 1238.000 218.000 44.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#manage "Manage profile" 282.000 1238.000 20.000 44.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#root "Profile 24 with a name long enough to be cut short" 60.000 1282.000 218.000 44.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#manage "Manage profile" 282.000 1282.000 20.000 44.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#root "Profile 25" 60.000 1326.000 218.000 44.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#manage "Manage profile" 282.000 1326.000 20.000 44.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#root "Profile 26" 60.000 1370.000 218.000 44.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#manage "Manage profile" 282.000 1370.000 20.000 44.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#root "Profile 27" 60.000 1414.000 218.000 44.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#manage "Manage profile" 282.000 1414.000 20.000 44.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#root "Profile 28" 60.000 1458.000 218.000 44.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#manage "Manage profile" 282.000 1458.000 20.000 44.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#root "Profile 29" 60.000 1502.000 218.000 44.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#manage "Manage profile" 282.000 1502.000 20.000 44.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#root "Profile 30" 60.000 1546.000 218.000 44.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#manage "Manage profile" 282.000 1546.000 20.000 44.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#root "Profile 31 with a name long enough to be cut short" 60.000 1590.000 218.000 44.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#manage "Manage profile" 282.000 1590.000 20.000 44.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#root "Profile 32" 60.000 1634.000 218.000 44.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#manage "Manage profile" 282.000 1634.000 20.000 44.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#root "Profile 33" 60.000 1678.000 218.000 44.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#manage "Manage profile" 282.000 1678.000 20.000 44.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#root "Profile 34" 60.000 1722.000 218.000 44.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#manage "Manage profile" 282.000 1722.000 20.000 44.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#root "Profile 35" 60.000 1766.000 218.000 44.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#manage "Manage profile" 282.000 1766.000 20.000 44.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#root "Profile 36" 60.000 1810.000 218.000 44.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#manage "Manage profile" 282.000 1810.000 20.000 44.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#root "Profile 37" 60.000 1854.000 218.000 44.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#manage "Manage profile" 282.000 1854.000 20.000 44.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#root "Profile 38 with a name long enough to be cut short" 60.000 1898.000 218.000 44.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage profile" 282.000 1898.000 20.000 44.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 1942.000 218.000 44.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 1942.000 20.000 44.000 position=79 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=80 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=81 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=82 actions=Click,Focus
+paint fill primitive 60.000 644.000 242.000 1.000 color=#333333@1.000
+paint label_line part 92.000 231.271 60.379 18.000 line_height=18 baseline=245 ink_bounds=Not_exposed
+paint text_run primitive 92.000 232.406 60.379 15.729 font_size=13 font_weight=500 baseline=245 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 275.271 58.145 18.000 line_height=18 baseline=289 ink_bounds=Not_exposed
+paint text_run primitive 92.000 276.406 58.145 15.729 font_size=13 font_weight=600 baseline=289 ascent_/_descent=12.59375_/_3.1357422 foreground=#F5F5F5@1.000 rendered_family=Inter
+paint label_line part 92.000 319.271 59.998 18.000 line_height=18 baseline=333 ink_bounds=Not_exposed
+paint text_run primitive 92.000 320.406 59.998 15.729 font_size=13 font_weight=500 baseline=333 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 363.271 172.859 18.000 line_height=18 baseline=377 ink_bounds=Not_exposed
+paint text_run primitive 92.000 364.406 172.859 15.729 font_size=13 font_weight=500 baseline=377 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 407.271 60.519 18.000 line_height=18 baseline=421 ink_bounds=Not_exposed
+paint text_run primitive 92.000 408.406 60.519 15.729 font_size=13 font_weight=500 baseline=421 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 451.271 59.827 18.000 line_height=18 baseline=465 ink_bounds=Not_exposed
+paint text_run primitive 92.000 452.406 59.827 15.729 font_size=13 font_weight=500 baseline=465 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 495.271 60.176 18.000 line_height=18 baseline=509 ink_bounds=Not_exposed
+paint text_run primitive 92.000 496.406 60.176 15.729 font_size=13 font_weight=500 baseline=509 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 539.271 59.160 18.000 line_height=18 baseline=553 ink_bounds=Not_exposed
+paint text_run primitive 92.000 540.406 59.160 15.729 font_size=13 font_weight=500 baseline=553 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 583.271 60.169 18.000 line_height=18 baseline=597 ink_bounds=Not_exposed
+paint text_run primitive 92.000 584.406 60.169 15.729 font_size=13 font_weight=500 baseline=597 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 627.271 60.176 18.000 line_height=18 baseline=641 ink_bounds=Not_exposed
+paint text_run primitive 92.000 628.406 60.176 15.729 font_size=13 font_weight=500 baseline=641 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=light lang=en names=forty state=scrolled-to-end
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 194.000 258.000 500.000 size=83
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 40" 52.000 200.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Profile 00" 60.000 -1116.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 -1116.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "Profile 01" 60.000 -1072.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 -1072.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Profile 02" 60.000 -1028.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 -1028.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#root "Profile 03 with a name long enough to be cut short" 60.000 -984.000 218.000 44.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#manage "Manage profile" 282.000 -984.000 20.000 44.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#root "Profile 04" 60.000 -940.000 218.000 44.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#manage "Manage profile" 282.000 -940.000 20.000 44.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#root "Profile 05" 60.000 -896.000 218.000 44.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#manage "Manage profile" 282.000 -896.000 20.000 44.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#root "Profile 06" 60.000 -852.000 218.000 44.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#manage "Manage profile" 282.000 -852.000 20.000 44.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#root "Profile 07" 60.000 -808.000 218.000 44.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#manage "Manage profile" 282.000 -808.000 20.000 44.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#root "Profile 08" 60.000 -764.000 218.000 44.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#manage "Manage profile" 282.000 -764.000 20.000 44.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#root "Profile 09" 60.000 -720.000 218.000 44.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#manage "Manage profile" 282.000 -720.000 20.000 44.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#root "Profile 10 with a name long enough to be cut short" 60.000 -676.000 218.000 44.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#manage "Manage profile" 282.000 -676.000 20.000 44.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#root "Profile 11" 60.000 -632.000 218.000 44.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#manage "Manage profile" 282.000 -632.000 20.000 44.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#root "Profile 12" 60.000 -588.000 218.000 44.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#manage "Manage profile" 282.000 -588.000 20.000 44.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#root "Profile 13" 60.000 -544.000 218.000 44.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#manage "Manage profile" 282.000 -544.000 20.000 44.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#root "Profile 14" 60.000 -500.000 218.000 44.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#manage "Manage profile" 282.000 -500.000 20.000 44.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#root "Profile 15" 60.000 -456.000 218.000 44.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#manage "Manage profile" 282.000 -456.000 20.000 44.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#root "Profile 16" 60.000 -412.000 218.000 44.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#manage "Manage profile" 282.000 -412.000 20.000 44.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#root "Profile 17 with a name long enough to be cut short" 60.000 -368.000 218.000 44.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#manage "Manage profile" 282.000 -368.000 20.000 44.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#root "Profile 18" 60.000 -324.000 218.000 44.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#manage "Manage profile" 282.000 -324.000 20.000 44.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#root "Profile 19" 60.000 -280.000 218.000 44.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#manage "Manage profile" 282.000 -280.000 20.000 44.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#root "Profile 20" 60.000 -236.000 218.000 44.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#manage "Manage profile" 282.000 -236.000 20.000 44.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#root "Profile 21" 60.000 -192.000 218.000 44.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#manage "Manage profile" 282.000 -192.000 20.000 44.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#root "Profile 22" 60.000 -148.000 218.000 44.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#manage "Manage profile" 282.000 -148.000 20.000 44.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#root "Profile 23" 60.000 -104.000 218.000 44.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#manage "Manage profile" 282.000 -104.000 20.000 44.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#root "Profile 24 with a name long enough to be cut short" 60.000 -60.000 218.000 44.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#manage "Manage profile" 282.000 -60.000 20.000 44.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#root "Profile 25" 60.000 -16.000 218.000 44.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#manage "Manage profile" 282.000 -16.000 20.000 44.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#root "Profile 26" 60.000 28.000 218.000 44.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#manage "Manage profile" 282.000 28.000 20.000 44.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#root "Profile 27" 60.000 72.000 218.000 44.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#manage "Manage profile" 282.000 72.000 20.000 44.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#root "Profile 28" 60.000 116.000 218.000 44.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#manage "Manage profile" 282.000 116.000 20.000 44.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#root "Profile 29" 60.000 160.000 218.000 44.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#manage "Manage profile" 282.000 160.000 20.000 44.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#root "Profile 30" 60.000 204.000 218.000 44.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#manage "Manage profile" 282.000 204.000 20.000 44.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#root "Profile 31 with a name long enough to be cut short" 60.000 248.000 218.000 44.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#manage "Manage profile" 282.000 248.000 20.000 44.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#root "Profile 32" 60.000 292.000 218.000 44.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#manage "Manage profile" 282.000 292.000 20.000 44.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#root "Profile 33" 60.000 336.000 218.000 44.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#manage "Manage profile" 282.000 336.000 20.000 44.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#root "Profile 34" 60.000 380.000 218.000 44.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#manage "Manage profile" 282.000 380.000 20.000 44.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#root "Profile 35" 60.000 424.000 218.000 44.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#manage "Manage profile" 282.000 424.000 20.000 44.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#root "Profile 36" 60.000 468.000 218.000 44.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#manage "Manage profile" 282.000 468.000 20.000 44.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#root "Profile 37" 60.000 512.000 218.000 44.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#manage "Manage profile" 282.000 512.000 20.000 44.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#root "Profile 38 with a name long enough to be cut short" 60.000 556.000 218.000 44.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage profile" 282.000 556.000 20.000 44.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 600.000 218.000 44.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 600.000 20.000 44.000 position=79 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=80 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=81 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=82 actions=Click,Focus
+paint fill primitive 60.000 644.000 242.000 1.000 color=#E0E0E0@1.000
+paint label_line part 92.000 209.271 60.138 18.000 line_height=18 baseline=223 ink_bounds=Not_exposed
+paint text_run primitive 92.000 210.406 60.138 15.729 font_size=13 font_weight=500 baseline=223 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 253.271 169.863 18.000 line_height=18 baseline=267 ink_bounds=Not_exposed
+paint text_run primitive 92.000 254.406 169.863 15.729 font_size=13 font_weight=500 baseline=267 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 297.271 59.757 18.000 line_height=18 baseline=311 ink_bounds=Not_exposed
+paint text_run primitive 92.000 298.406 59.757 15.729 font_size=13 font_weight=500 baseline=311 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 341.271 59.896 18.000 line_height=18 baseline=355 ink_bounds=Not_exposed
+paint text_run primitive 92.000 342.406 59.896 15.729 font_size=13 font_weight=500 baseline=355 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 385.271 60.277 18.000 line_height=18 baseline=399 ink_bounds=Not_exposed
+paint text_run primitive 92.000 386.406 60.277 15.729 font_size=13 font_weight=500 baseline=399 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 429.271 59.585 18.000 line_height=18 baseline=443 ink_bounds=Not_exposed
+paint text_run primitive 92.000 430.406 59.585 15.729 font_size=13 font_weight=500 baseline=443 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 473.271 59.935 18.000 line_height=18 baseline=487 ink_bounds=Not_exposed
+paint text_run primitive 92.000 474.406 59.935 15.729 font_size=13 font_weight=500 baseline=487 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 517.271 59.173 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 59.173 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 172.650 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 172.650 15.729 font_size=13 font_weight=500 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 59.935 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 59.935 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+== profiles width=256 theme=dark lang=en names=forty state=scrolled-to-end
+sem 0 Menu koru:w1/v1/s:explore-popover#popover "Switch profile" 52.000 194.000 258.000 500.000 size=83
+sem 1 Heading koru:w1/v1/s:explore-popover#heading "PROFILES · 40" 52.000 200.000 258.000 26.000
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#root "Profile 00" 60.000 -1116.000 218.000 44.000 position=0 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000065#manage "Manage profile" 282.000 -1116.000 20.000 44.000 position=1 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#root "Profile 01" 60.000 -1072.000 218.000 44.000 position=2 selected=true actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage profile" 282.000 -1072.000 20.000 44.000 position=3 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Profile 02" 60.000 -1028.000 218.000 44.000 position=4 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 -1028.000 20.000 44.000 position=5 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#root "Profile 03 with a name long enough to be cut short" 60.000 -984.000 218.000 44.000 position=6 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000068#manage "Manage profile" 282.000 -984.000 20.000 44.000 position=7 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#root "Profile 04" 60.000 -940.000 218.000 44.000 position=8 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000069#manage "Manage profile" 282.000 -940.000 20.000 44.000 position=9 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#root "Profile 05" 60.000 -896.000 218.000 44.000 position=10 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006a#manage "Manage profile" 282.000 -896.000 20.000 44.000 position=11 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#root "Profile 06" 60.000 -852.000 218.000 44.000 position=12 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006b#manage "Manage profile" 282.000 -852.000 20.000 44.000 position=13 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#root "Profile 07" 60.000 -808.000 218.000 44.000 position=14 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006c#manage "Manage profile" 282.000 -808.000 20.000 44.000 position=15 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#root "Profile 08" 60.000 -764.000 218.000 44.000 position=16 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006d#manage "Manage profile" 282.000 -764.000 20.000 44.000 position=17 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#root "Profile 09" 60.000 -720.000 218.000 44.000 position=18 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006e#manage "Manage profile" 282.000 -720.000 20.000 44.000 position=19 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#root "Profile 10 with a name long enough to be cut short" 60.000 -676.000 218.000 44.000 position=20 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000006f#manage "Manage profile" 282.000 -676.000 20.000 44.000 position=21 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#root "Profile 11" 60.000 -632.000 218.000 44.000 position=22 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000070#manage "Manage profile" 282.000 -632.000 20.000 44.000 position=23 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#root "Profile 12" 60.000 -588.000 218.000 44.000 position=24 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000071#manage "Manage profile" 282.000 -588.000 20.000 44.000 position=25 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#root "Profile 13" 60.000 -544.000 218.000 44.000 position=26 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000072#manage "Manage profile" 282.000 -544.000 20.000 44.000 position=27 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#root "Profile 14" 60.000 -500.000 218.000 44.000 position=28 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000073#manage "Manage profile" 282.000 -500.000 20.000 44.000 position=29 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#root "Profile 15" 60.000 -456.000 218.000 44.000 position=30 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000074#manage "Manage profile" 282.000 -456.000 20.000 44.000 position=31 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#root "Profile 16" 60.000 -412.000 218.000 44.000 position=32 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000075#manage "Manage profile" 282.000 -412.000 20.000 44.000 position=33 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#root "Profile 17 with a name long enough to be cut short" 60.000 -368.000 218.000 44.000 position=34 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000076#manage "Manage profile" 282.000 -368.000 20.000 44.000 position=35 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#root "Profile 18" 60.000 -324.000 218.000 44.000 position=36 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000077#manage "Manage profile" 282.000 -324.000 20.000 44.000 position=37 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#root "Profile 19" 60.000 -280.000 218.000 44.000 position=38 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000078#manage "Manage profile" 282.000 -280.000 20.000 44.000 position=39 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#root "Profile 20" 60.000 -236.000 218.000 44.000 position=40 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000079#manage "Manage profile" 282.000 -236.000 20.000 44.000 position=41 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#root "Profile 21" 60.000 -192.000 218.000 44.000 position=42 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007a#manage "Manage profile" 282.000 -192.000 20.000 44.000 position=43 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#root "Profile 22" 60.000 -148.000 218.000 44.000 position=44 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007b#manage "Manage profile" 282.000 -148.000 20.000 44.000 position=45 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#root "Profile 23" 60.000 -104.000 218.000 44.000 position=46 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007c#manage "Manage profile" 282.000 -104.000 20.000 44.000 position=47 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#root "Profile 24 with a name long enough to be cut short" 60.000 -60.000 218.000 44.000 position=48 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007d#manage "Manage profile" 282.000 -60.000 20.000 44.000 position=49 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#root "Profile 25" 60.000 -16.000 218.000 44.000 position=50 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007e#manage "Manage profile" 282.000 -16.000 20.000 44.000 position=51 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#root "Profile 26" 60.000 28.000 218.000 44.000 position=52 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000007f#manage "Manage profile" 282.000 28.000 20.000 44.000 position=53 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#root "Profile 27" 60.000 72.000 218.000 44.000 position=54 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000080#manage "Manage profile" 282.000 72.000 20.000 44.000 position=55 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#root "Profile 28" 60.000 116.000 218.000 44.000 position=56 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000081#manage "Manage profile" 282.000 116.000 20.000 44.000 position=57 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#root "Profile 29" 60.000 160.000 218.000 44.000 position=58 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000082#manage "Manage profile" 282.000 160.000 20.000 44.000 position=59 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#root "Profile 30" 60.000 204.000 218.000 44.000 position=60 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000083#manage "Manage profile" 282.000 204.000 20.000 44.000 position=61 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#root "Profile 31 with a name long enough to be cut short" 60.000 248.000 218.000 44.000 position=62 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000084#manage "Manage profile" 282.000 248.000 20.000 44.000 position=63 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#root "Profile 32" 60.000 292.000 218.000 44.000 position=64 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000085#manage "Manage profile" 282.000 292.000 20.000 44.000 position=65 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#root "Profile 33" 60.000 336.000 218.000 44.000 position=66 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000086#manage "Manage profile" 282.000 336.000 20.000 44.000 position=67 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#root "Profile 34" 60.000 380.000 218.000 44.000 position=68 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000087#manage "Manage profile" 282.000 380.000 20.000 44.000 position=69 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#root "Profile 35" 60.000 424.000 218.000 44.000 position=70 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000088#manage "Manage profile" 282.000 424.000 20.000 44.000 position=71 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#root "Profile 36" 60.000 468.000 218.000 44.000 position=72 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000089#manage "Manage profile" 282.000 468.000 20.000 44.000 position=73 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#root "Profile 37" 60.000 512.000 218.000 44.000 position=74 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008a#manage "Manage profile" 282.000 512.000 20.000 44.000 position=75 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#root "Profile 38 with a name long enough to be cut short" 60.000 556.000 218.000 44.000 position=76 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage profile" 282.000 556.000 20.000 44.000 position=77 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 600.000 218.000 44.000 position=78 selected=false actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 600.000 20.000 44.000 position=79 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-status "Subscribe to Koru Cloud" 60.000 644.000 190.000 44.000 position=80 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#profile-devices "0 devices" 258.000 656.000 20.000 20.000 position=81 actions=Click,Focus
+sem 1 MenuItem koru:w1/v1/s:explore-popover#new-profile "New profile" 282.000 656.000 20.000 20.000 position=82 actions=Click,Focus
+paint fill primitive 60.000 644.000 242.000 1.000 color=#333333@1.000
+paint label_line part 92.000 209.271 60.138 18.000 line_height=18 baseline=223 ink_bounds=Not_exposed
+paint text_run primitive 92.000 210.406 60.138 15.729 font_size=13 font_weight=500 baseline=223 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 253.271 169.863 18.000 line_height=18 baseline=267 ink_bounds=Not_exposed
+paint text_run primitive 92.000 254.406 169.863 15.729 font_size=13 font_weight=500 baseline=267 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 297.271 59.757 18.000 line_height=18 baseline=311 ink_bounds=Not_exposed
+paint text_run primitive 92.000 298.406 59.757 15.729 font_size=13 font_weight=500 baseline=311 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 341.271 59.896 18.000 line_height=18 baseline=355 ink_bounds=Not_exposed
+paint text_run primitive 92.000 342.406 59.896 15.729 font_size=13 font_weight=500 baseline=355 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 385.271 60.277 18.000 line_height=18 baseline=399 ink_bounds=Not_exposed
+paint text_run primitive 92.000 386.406 60.277 15.729 font_size=13 font_weight=500 baseline=399 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 429.271 59.585 18.000 line_height=18 baseline=443 ink_bounds=Not_exposed
+paint text_run primitive 92.000 430.406 59.585 15.729 font_size=13 font_weight=500 baseline=443 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 473.271 59.935 18.000 line_height=18 baseline=487 ink_bounds=Not_exposed
+paint text_run primitive 92.000 474.406 59.935 15.729 font_size=13 font_weight=500 baseline=487 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 517.271 59.173 18.000 line_height=18 baseline=531 ink_bounds=Not_exposed
+paint text_run primitive 92.000 518.406 59.173 15.729 font_size=13 font_weight=500 baseline=531 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 561.271 172.650 18.000 line_height=18 baseline=575 ink_bounds=Not_exposed
+paint text_run primitive 92.000 562.406 172.650 15.729 font_size=13 font_weight=500 baseline=575 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint label_line part 92.000 605.271 59.935 18.000 line_height=18 baseline=619 ink_bounds=Not_exposed
+paint text_run primitive 92.000 606.406 59.935 15.729 font_size=13 font_weight=500 baseline=619 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter

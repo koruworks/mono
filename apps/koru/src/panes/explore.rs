@@ -3408,37 +3408,16 @@ impl ExploreView {
         }
     }
 
+    /// A row's height for the panel's own size: the minimum the page's
+    /// element gives it, from the same tokens.
     fn popover_row_h(row: PopoverRow) -> f32 {
         match row {
-            PopoverRow::Profile(_) => PROFILE_ROW_H,
-            PopoverRow::ProfilesFooter => PROFILE_FOOT_H,
+            PopoverRow::Profile(_) => theme::metrics::PROFILE_ROW_MIN.value,
+            PopoverRow::ProfilesFooter => theme::metrics::PROFILE_FOOT_MIN.value,
             _ => POPOVER_ROW_H,
         }
     }
 
-    /// Whether `row` is one of a page's fixed top rows.
-    fn page_head(row: PopoverRow) -> bool {
-        matches!(
-            row,
-            PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading
-        )
-    }
-
-    /// Whether `row` is a page's fixed foot, pinned to the panel's floor.
-    fn page_foot(row: PopoverRow) -> bool {
-        matches!(row, PopoverRow::ProfilesFooter)
-    }
-
-    /// The height of a page's fixed foot.
-    fn page_foot_h(&self, kind: PopoverKind) -> f32 {
-        self.rows_for(kind)
-            .into_iter()
-            .filter(|row| Self::page_foot(*row))
-            .map(Self::popover_row_h)
-            .sum()
-    }
-
-    /// A page's height with every row showing, padding included.
     fn page_natural_h(&self, kind: PopoverKind) -> f32 {
         self.rows_for(kind)
             .into_iter()
@@ -3547,13 +3526,14 @@ impl ExploreView {
         let Some(p) = self.popover.as_ref() else {
             return Vec::new();
         };
-        // The Workspaces page is its element frame (ELEMENTS-PLAN P4).
-        if p.kind == PopoverKind::Summary {
+        // The switcher's pages are their element frames (ELEMENTS-PLAN P4,
+        // P5); the library's menu is a flat list.
+        if p.kind != PopoverKind::LibraryActions {
             return self
-                .with_workspaces(area, viewport, |frame| self.workspaces_rows(frame))
+                .with_page(area, viewport, |frame| self.page_rows(frame))
                 .unwrap_or_default();
         }
-        self.page_rects(p.kind, panel, p.scroll)
+        self.page_rects(p.kind, panel)
     }
 
     /// Where one of the open page's fixed-row buttons is: your card's
@@ -3566,112 +3546,39 @@ impl ExploreView {
         button: HeadButton,
     ) -> Option<Rect> {
         self.live()?;
-        self.popover_rects(area, viewport)
-            .into_iter()
-            .flat_map(|(row, r)| head_button_rects(r, row))
-            .find(|(b, _)| *b == button)
-            .map(|(_, r)| r)
+        self.with_page(area, viewport, |frame| {
+            frame
+                .node(popover_elements::profiles::key_of(button))
+                .map(|node| node.rect)
+        })
+        .flatten()
     }
 
-    /// One page's rows in `panel`: the fixed top rows, the scrolling list, and
-    /// the fixed footer pinned to the panel's floor.
-    fn page_rects(&self, kind: PopoverKind, panel: Rect, scroll: f32) -> Vec<(PopoverRow, Rect)> {
-        let rows = self.rows_for(kind);
-        if kind == PopoverKind::LibraryActions {
-            let mut y = panel.y + POPOVER_PAD;
-            return rows
-                .into_iter()
-                .map(|row| {
-                    let h = Self::popover_row_h(row);
-                    let r = Rect::new(panel.x, y, panel.w, h);
-                    y += h;
-                    (row, r)
-                })
-                .collect();
-        }
-        // A page is its fixed head, then the list scrolling under it, then
-        // its fixed foot pinned to the panel's floor (the Profiles page's,
-        // the CTO's artboard).
-        let head = rows.iter().take_while(|row| Self::page_head(**row)).count();
-        let foot: f32 = rows
-            .iter()
-            .filter(|row| Self::page_foot(**row))
-            .map(|row| Self::popover_row_h(*row))
-            .sum();
-        let mut out = Vec::with_capacity(rows.len());
+    /// The library's menu rows in `panel`, top to bottom. The switcher's
+    /// two pages are laid out by their elements instead.
+    fn page_rects(&self, kind: PopoverKind, panel: Rect) -> Vec<(PopoverRow, Rect)> {
         let mut y = panel.y + POPOVER_PAD;
-        for row in rows[..head].iter().copied() {
-            let h = Self::popover_row_h(row);
-            out.push((row, Rect::new(panel.x, y, panel.w, h)));
-            y += h;
-        }
-        let mut list_y = y - scroll;
-        let mut foot_y = panel.y + panel.h - POPOVER_PAD - foot;
-        for row in rows[head..].iter().copied() {
-            let h = Self::popover_row_h(row);
-            if Self::page_foot(row) {
-                out.push((row, Rect::new(panel.x, foot_y, panel.w, h)));
-                foot_y += h;
-            } else {
-                out.push((row, Rect::new(panel.x, list_y, panel.w, h)));
-                list_y += h;
-            }
-        }
-        out
-    }
-
-    /// The band under a page's fixed top rows, where the list scrolls.
-    fn page_band(&self, kind: PopoverKind, panel: Rect) -> Option<Rect> {
-        if kind == PopoverKind::LibraryActions {
-            return None;
-        }
-        let rows = self.rows_for(kind);
-        let head_h: f32 = rows
-            .iter()
-            .copied()
-            .take_while(|row| Self::page_head(*row))
-            .map(Self::popover_row_h)
-            .sum();
-        let top = panel.y + POPOVER_PAD + head_h;
-        let bottom = panel.y + panel.h - POPOVER_PAD - self.page_foot_h(kind);
-        Some(Rect::new(panel.x, top, panel.w, (bottom - top).max(0.0)))
+        self.rows_for(kind)
+            .into_iter()
+            .map(|row| {
+                let h = Self::popover_row_h(row);
+                let r = Rect::new(panel.x, y, panel.w, h);
+                y += h;
+                (row, r)
+            })
+            .collect()
     }
 
     fn popover_list_band(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
-        let kind = self.popover.as_ref()?.kind;
-        if kind == PopoverKind::Summary {
-            return self
-                .with_workspaces(area, viewport, popover_elements::list_of)
-                .flatten()
-                .map(|(rect, _, _)| rect);
-        }
-        let panel = self.settled_panel(area, viewport)?;
-        self.page_band(kind, panel)
-    }
-
-    fn page_list_content_h(&self, kind: PopoverKind) -> f32 {
-        self.rows_for(kind)
-            .into_iter()
-            .filter(|row| matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_)))
-            .map(Self::popover_row_h)
-            .sum()
-    }
-
-    fn popover_list_content_h(&self) -> f32 {
-        self.popover
-            .as_ref()
-            .map_or(0.0, |p| self.page_list_content_h(p.kind))
+        self.with_page(area, viewport, popover_elements::list_of)
+            .flatten()
+            .map(|(rect, _, _)| rect)
     }
 
     fn popover_scroll_max(&self, area: Rect, viewport: (f32, f32)) -> f32 {
-        if self.popover.as_ref().map(|p| p.kind) == Some(PopoverKind::Summary) {
-            return self
-                .with_workspaces(area, viewport, popover_elements::list_of)
-                .flatten()
-                .map_or(0.0, |(list, content, _)| (content - list.h).max(0.0));
-        }
-        let visible = self.popover_list_band(area, viewport).map_or(0.0, |r| r.h);
-        (self.popover_list_content_h() - visible).max(0.0)
+        self.with_page(area, viewport, popover_elements::list_of)
+            .flatten()
+            .map_or(0.0, |(list, content, _)| (content - list.h).max(0.0))
     }
 
     fn clamp_popover_scroll(&mut self, area: Rect, viewport: (f32, f32)) {
@@ -3704,46 +3611,21 @@ impl ExploreView {
         let Some(index) = self.live().and_then(|popover| popover.hover) else {
             return false;
         };
-        // The Workspaces page: the offset its frame says shows the lit part
-        // — the primary or the gear, whichever the keyboard or pointer is on.
-        if self.live().map(|p| p.kind) == Some(PopoverKind::Summary) {
-            let Some(key) = self.lit_key(Some(index)) else {
-                return false;
-            };
-            let Some(offset) = self
-                .with_workspaces(area, viewport, |frame| frame.reveal(key))
-                .flatten()
-                .map(|(_, offset)| offset)
-            else {
-                return false;
-            };
-            if let Some(popover) = self.popover.as_mut() {
-                popover.scroll = offset;
-            }
-            self.clamp_popover_scroll(area, viewport);
-            return true;
-        }
-        let Some(band) = self.popover_list_band(area, viewport) else {
+        // The offset the page's frame says shows the lit part — the primary
+        // or the gear, whichever the keyboard or pointer is on. The foot and
+        // the heading are never scrolled to.
+        let Some(key) = self.lit_key(Some(index)) else {
             return false;
         };
-        let Some((row, rect)) = self.popover_rects(area, viewport).get(index).copied() else {
+        let Some(offset) = self
+            .with_page(area, viewport, |frame| frame.reveal(key))
+            .flatten()
+            .map(|(_, offset)| offset)
+        else {
             return false;
         };
-        if !matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_)) {
-            return false;
-        }
-        let delta = if rect.y < band.y {
-            rect.y - band.y
-        } else if rect.y + rect.h > band.y + band.h {
-            rect.y + rect.h - (band.y + band.h)
-        } else {
-            0.0
-        };
-        if delta == 0.0 {
-            return false;
-        }
         if let Some(popover) = self.popover.as_mut() {
-            popover.scroll += delta;
+            popover.scroll = offset;
         }
         self.clamp_popover_scroll(area, viewport);
         true
@@ -3799,18 +3681,22 @@ impl ExploreView {
         id: ProfileId,
     ) -> Option<Rect> {
         let band = self.popover_list_band(area, viewport)?;
-        self.popover_rects(area, viewport)
+        let k = self
+            .rows_for(PopoverKind::Profiles)
             .into_iter()
-            .find_map(|(row, r)| match row {
-                PopoverRow::Profile(i)
-                    if self.profiles.get(i).is_some_and(|profile| profile.id == id)
-                        && r.y >= band.y
-                        && r.y + r.h <= band.y + band.h =>
-                {
-                    Some(koru_ui::profile_picker::row_parts(r).name)
-                }
-                _ => None,
-            })
+            .filter(|row| matches!(row, PopoverRow::Profile(_)))
+            .position(|row| {
+                matches!(row, PopoverRow::Profile(i)
+                    if self.profiles.get(i).is_some_and(|profile| profile.id == id))
+            })?;
+        // The row's height, across the width its two lines have.
+        self.with_page(area, viewport, |frame| {
+            let r = frame.named(popover_elements::profiles::ROW).nth(k)?.rect;
+            let lines = frame.named(popover_elements::profiles::LINES).nth(k)?.rect;
+            (r.y >= band.y && r.y + r.h <= band.y + band.h)
+                .then(|| Rect::new(lines.x, r.y, lines.w, r.h))
+        })
+        .flatten()
     }
 
     /// Keep the workspace that owns an open context menu visibly hot.
@@ -3881,34 +3767,16 @@ impl ExploreView {
     ) -> Option<(usize, PopoverRow, PopoverPart)> {
         // Deaf the moment it is dismissed, however long it is still on screen.
         let kind = self.live()?.kind;
-        if kind == PopoverKind::Summary {
+        if kind != PopoverKind::LibraryActions {
             return self
-                .with_workspaces(area, viewport, |frame| self.workspaces_part_at(frame, x, y))
+                .with_page(area, viewport, |frame| self.page_part_at(frame, x, y))
                 .flatten();
         }
-        let band = self.popover_list_band(area, viewport);
-        let (i, (row, r)) = self
-            .popover_rects(area, viewport)
+        self.popover_rects(area, viewport)
             .into_iter()
             .enumerate()
-            .find(|(_, (row, r))| {
-                let in_band = !matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_))
-                    || band.is_some_and(|band| band.contains(x, y));
-                in_band && r.contains(x, y)
-            })?;
-        let part = match row {
-            PopoverRow::Workspace(_) | PopoverRow::Profile(_)
-                if trailing_lane(r).contains(x, y) =>
-            {
-                PopoverPart::Gear
-            }
-            PopoverRow::ProfilesFooter => head_button_rects(r, row)
-                .into_iter()
-                .find(|(_, b)| b.contains(x, y))
-                .map_or(PopoverPart::Row, |(b, _)| PopoverPart::Button(b)),
-            _ => PopoverPart::Row,
-        };
-        Some((i, row, part))
+            .find(|(_, (_, r))| r.contains(x, y))
+            .map(|(i, (row, _))| (i, row, PopoverPart::Row))
     }
 
     /// Whether choosing `row`'s `part` keeps the popover open. A Profile row
@@ -3943,7 +3811,9 @@ impl ExploreView {
     fn keyboard_part(&self, row: PopoverRow) -> PopoverPart {
         match row {
             PopoverRow::ProfilesFooter => PopoverPart::Button(HeadButton::New),
-            PopoverRow::Workspace(_) if self.popover_part == Some(PopoverPart::Gear) => {
+            PopoverRow::Workspace(_) | PopoverRow::Profile(_)
+                if self.popover_part == Some(PopoverPart::Gear) =>
+            {
                 PopoverPart::Gear
             }
             _ => PopoverPart::Row,
@@ -4061,19 +3931,24 @@ impl ExploreView {
                 self.popover_part = None;
                 Some(Outcome::Consumed)
             }
-            // **Left and Right move between a lit workspace row's primary
-            // and its gear** (ELEMENTS.final D2). Anywhere else they mean
-            // nothing here and fall through.
+            // **Left and Right move between a lit workspace or Profile
+            // row's primary and its gear** (ELEMENTS.final D2). Anywhere else
+            // — the foot included, one stop as it has always been — they
+            // mean nothing here and fall through.
             Key::Named(NamedKey::ArrowRight)
-                if matches!(hovered, Some(PopoverRow::Workspace(_)))
-                    && self.popover_part != Some(PopoverPart::Gear) =>
+                if matches!(
+                    hovered,
+                    Some(PopoverRow::Workspace(_) | PopoverRow::Profile(_))
+                ) && self.popover_part != Some(PopoverPart::Gear) =>
             {
                 self.popover_part = Some(PopoverPart::Gear);
                 Some(Outcome::Consumed)
             }
             Key::Named(NamedKey::ArrowLeft)
-                if matches!(hovered, Some(PopoverRow::Workspace(_)))
-                    && self.popover_part == Some(PopoverPart::Gear) =>
+                if matches!(
+                    hovered,
+                    Some(PopoverRow::Workspace(_) | PopoverRow::Profile(_))
+                ) && self.popover_part == Some(PopoverPart::Gear) =>
             {
                 self.popover_part = None;
                 Some(Outcome::Consumed)
@@ -7818,52 +7693,15 @@ impl ExploreView {
         hover: Option<usize>,
         avatar: Option<&peniko::ImageBrush>,
     ) {
-        if kind == PopoverKind::Summary {
-            self.draw_workspaces_page(scene, root, engine, panel, scroll, hover);
+        if kind != PopoverKind::LibraryActions {
+            self.draw_element_page(scene, root, engine, kind, panel, scroll, hover, avatar);
             return;
         }
         let p = theme::p();
-        let lang = crate::format::lang();
-        let list_band = self.page_band(kind, panel);
-        let content_h = self.page_list_content_h(kind);
-        let scroll_max = list_band.map_or(0.0, |band| (content_h - band.h).max(0.0));
-        if let Some(band) = list_band
-            && scroll_max > 0.0
-        {
-            // A list that scrolls is separated from the fixed footer under it,
-            // so rows slipping out of view read as going *under* the commands.
-            scene::fill(
-                scene,
-                root,
-                p.panel_border,
-                &scene::rect(band.x + 8.0, band.y + band.h, (band.w - 16.0).max(0.0), 1.0),
-            );
-        }
-        // Which part of the hovered row the pointer is on; `None` while the
-        // keyboard owns the hover.
-        let part = self.popover_part;
-        for (i, (row, r)) in self.page_rects(kind, panel, scroll).into_iter().enumerate() {
-            let list_row = matches!(row, PopoverRow::Workspace(_) | PopoverRow::Profile(_));
-            if list_row {
-                let Some(band) = list_band else { continue };
-                if r.y + r.h <= band.y || r.y >= band.y + band.h {
-                    continue;
-                }
-                if matches!(row, PopoverRow::Workspace(i) if self.workspaces.get(i).is_none())
-                    || matches!(row, PopoverRow::Profile(i) if self.profiles.get(i).is_none())
-                {
-                    continue;
-                }
-                scene.push_clip_layer(
-                    peniko::Fill::NonZero,
-                    root,
-                    &scene::rect(band.x, band.y, band.w, band.h),
-                );
-            }
+        for (i, (row, r)) in self.page_rects(kind, panel).into_iter().enumerate() {
             let hot = hover == Some(i);
             // **Every row is a `Row` part** in the inspector (the CTO's
-            // note, E79) — heading, list row and foot alike — so the air
-            // between rows is read off named rects, not loose primitives.
+            // note, E79), so the air between rows is read off named rects.
             let _row = koru_draw::inspect::scope(
                 "Row",
                 "part",
@@ -7874,16 +7712,7 @@ impl ExploreView {
                     rec.property("height", r.h, "popover_row_h");
                 },
             );
-            // A head lights the button the pointer is on — its `+` for the
-            // keyboard — not the row.
-            if hot
-                && !matches!(
-                    row,
-                    PopoverRow::WorkspacesHeading
-                        | PopoverRow::ProfilesHeading
-                        | PopoverRow::ProfilesFooter
-                )
-            {
+            if hot {
                 scene::fill(
                     scene,
                     root,
@@ -7893,241 +7722,49 @@ impl ExploreView {
             }
             let icon_x = r.x + theme::NAV_PAD;
             let text_x = icon_x + 22.0;
-            let text = |x: f32| Rect::new(x, r.y, (r.x + r.w - x - 8.0).max(1.0), r.h);
-            match row {
-                // The Workspaces page is drawn from its frame.
-                PopoverRow::WorkspacesHeading | PopoverRow::Workspace(_) => {}
-                PopoverRow::ProfilesHeading => {
-                    // *PROFILES · n*, at the tiles' left edge, as the
-                    // chip's page is headed (the CTO's note, E78).
-                    let n = self
-                        .rows_for(kind)
-                        .iter()
-                        .filter(|row| matches!(row, PopoverRow::Profile(_)))
-                        .count();
-                    let label = format!(
-                        "{} · {n}",
-                        koru_i18n::t(lang, koru_i18n::Key::WorkspacesProfiles).to_uppercase()
-                    );
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        &label,
-                        text(icon_x),
-                        theme::role::popover_heading(),
-                        p.row_hint,
-                    );
-                }
-                PopoverRow::ProfilesFooter => {
-                    // A hairline over it; the sync state (or the offer) at
-                    // the left, the devices with their count and the `+` at
-                    // the right (the CTO's artboard).
-                    scene::fill(
-                        scene,
-                        root,
-                        p.panel_border,
-                        &scene::rect(r.x + 8.0, r.y, (r.w - 16.0).max(0.0), 1.0),
-                    );
-                    let buttons = head_button_rects(r, row);
-                    if let Some((_, status)) =
-                        buttons.iter().find(|(b, _)| *b == HeadButton::Status)
-                    {
-                        let lit = hot
-                            && self.popover_part == Some(PopoverPart::Button(HeadButton::Status));
-                        let state = self.sync_status();
-                        let offer = state == SyncStatus::NotSetUp;
-                        let ink = if offer {
-                            p.accent
-                        } else if lit {
-                            p.text
-                        } else {
-                            p.text_dim
-                        };
-                        let icon = Rect::new(status.x, status.y, 18.0, status.h);
-                        draw_icon(scene, root, engine, icons::CLOUD, icon, ink);
-                        let dot = match state {
-                            SyncStatus::NotSetUp => None,
-                            SyncStatus::UpToDate | SyncStatus::Syncing => Some(p.accent),
-                            SyncStatus::Offline => Some(p.row_hint),
-                            SyncStatus::NeedsAttention => {
-                                Some(theme::accent_tone("red").map_or(p.text, |tone| tone.swatch))
-                            }
-                        };
-                        if let Some(colour) = dot {
-                            const DOT: f32 = 6.0;
-                            scene::fill(
-                                scene,
-                                root,
-                                colour,
-                                &scene::rrect(
-                                    icon.x + icon.w - DOT + 1.0,
-                                    icon.y + (icon.h - 18.0) * 0.5,
-                                    DOT,
-                                    DOT,
-                                    DOT * 0.5,
-                                ),
-                            );
-                        }
-                        let words = if offer {
-                            koru_i18n::t(lang, koru_i18n::Key::CloudSubscribe)
-                        } else {
-                            koru_i18n::t(lang, state.key())
-                        };
-                        draw_middle(
-                            scene,
-                            root,
-                            engine,
-                            words,
-                            Rect::new(
-                                icon.x + icon.w + 8.0,
-                                status.y,
-                                (status.w - icon.w - 8.0).max(1.0),
-                                status.h,
-                            ),
-                            theme::role::row(),
-                            ink,
-                        );
-                    }
-                    self.draw_head_buttons(scene, root, engine, &buttons, hot, HeadButton::New);
-                    // The devices' count, a small pill over the button's corner.
-                    if self.linked_count > 0
-                        && let Some((_, devices)) =
-                            buttons.iter().find(|(b, _)| *b == HeadButton::Devices)
-                    {
-                        let count = self.linked_count.to_string();
-                        let layout = engine.simple_layout(&count, theme::role::hint());
-                        let w = (layout.width() + 8.0).max(16.0);
-                        let pill =
-                            Rect::new(devices.x + devices.w - w + 4.0, devices.y - 6.0, w, 16.0);
-                        scene::fill(
-                            scene,
-                            root,
-                            p.panel_bg,
-                            &scene::rrect(pill.x, pill.y, pill.w, pill.h, 8.0),
-                        );
-                        scene::stroke(
-                            scene,
-                            root,
-                            p.panel_border,
-                            theme::BORDER_W,
-                            &scene::rrect(pill.x, pill.y, pill.w, pill.h, 8.0),
-                        );
-                        draw_middle(
-                            scene,
-                            root,
-                            engine,
-                            &count,
-                            Rect::new(pill.x + 4.0, pill.y, (pill.w - 8.0).max(1.0), pill.h),
-                            theme::role::hint(),
-                            p.text,
-                        );
-                    }
-                }
-                PopoverRow::LibraryAction(action) => {
-                    draw_icon(
-                        scene,
-                        root,
-                        engine,
-                        actions::glyph(action),
-                        Rect::new(icon_x, r.y, 16.0, r.h),
-                        p.text_dim,
-                    );
-                    draw_middle(
-                        scene,
-                        root,
-                        engine,
-                        actions::label(action, self.mode),
-                        text(text_x),
-                        theme::role::row(),
-                        p.text_dim,
-                    );
-                }
-                PopoverRow::Profile(i) => {
-                    let profile = &self.profiles[i];
-                    let current = self.current_profile == Some(profile.id);
-                    let tile = Rect::new(
-                        r.x + theme::NAV_PAD,
-                        r.y + (r.h - PROFILE_TILE) * 0.5,
-                        PROFILE_TILE,
-                        PROFILE_TILE,
-                    );
-                    // Only the profile you are *in* has a decoded picture to
-                    // hand — the others are rows in an index, and their blobs
-                    // live in folders this process has not opened. The tile
-                    // is the honest fallback rather than a blank circle.
-                    if current && avatar.is_some() && profile.icon.is_none() {
-                        koru_ui::profile_picker::draw_avatar(
-                            scene,
-                            root,
-                            engine,
-                            tile,
-                            avatar,
-                            &profile.name,
-                            &profile.email,
-                            theme::role::row(),
-                        );
-                    } else {
-                        koru_draw::tile::Tile {
-                            icon: profile.icon.as_deref(),
-                            color: profile.color.as_deref(),
-                            name: &profile.name,
-                        }
-                        .draw(scene, root, engine, tile);
-                    }
-                    let trailing = trailing_lane(r);
-                    draw_two_lines(
-                        scene,
-                        root,
-                        engine,
-                        Rect::new(
-                            tile.x + tile.w + 8.0,
-                            r.y,
-                            (trailing.x - tile.x - tile.w - 12.0).max(1.0),
-                            r.h,
-                        ),
-                        &label_fit(&profile.name),
-                        &self.profile_detail(profile, lang),
-                        current,
-                        p,
-                    );
-                    draw_trailing(scene, root, engine, trailing, current, hot, part, p);
-                }
+            if let PopoverRow::LibraryAction(action) = row {
+                draw_icon(
+                    scene,
+                    root,
+                    engine,
+                    actions::glyph(action),
+                    Rect::new(icon_x, r.y, 16.0, r.h),
+                    p.text_dim,
+                );
+                draw_middle(
+                    scene,
+                    root,
+                    engine,
+                    actions::label(action, self.mode),
+                    Rect::new(text_x, r.y, (r.x + r.w - text_x - 8.0).max(1.0), r.h),
+                    theme::role::row(),
+                    p.text_dim,
+                );
             }
-            if list_row {
-                scene.pop_layer();
-            }
-        }
-        if let Some(band) = list_band
-            && scroll_max > 0.0
-        {
-            let thumb_h = (band.h * band.h / content_h).max(24.0).min(band.h);
-            let thumb_y = band.y + (band.h - thumb_h) * (scroll / scroll_max);
-            scene::fill(
-                scene,
-                root,
-                p.row_hint,
-                &scene::rrect(band.x + band.w - 4.0, thumb_y, 2.0, thumb_h, 1.0),
-            );
         }
     }
 }
 
 impl ExploreView {
-    /// The Workspaces page, painted from its element frame, with the band
+    /// A switcher page, painted from its element frame, with the band
     /// chrome a scrolling list wears around it: the hairline under the list
     /// and its thumb, read off the frame's own list geometry.
-    fn draw_workspaces_page(
+    #[allow(clippy::too_many_arguments)]
+    fn draw_element_page(
         &self,
         scene: &mut Scene,
         root: Affine,
         engine: &mut TextEngine,
+        kind: PopoverKind,
         panel: Rect,
         scroll: f32,
         hover: Option<usize>,
+        avatar: Option<&peniko::ImageBrush>,
     ) {
         let p = theme::p();
-        let (tree, frame) = self.workspaces_at(engine, panel, scroll, hover);
+        let Some((tree, frame)) = self.page_at(engine, kind, panel, scroll, hover, avatar) else {
+            return;
+        };
         let list = popover_elements::list_of(&frame);
         let scrolls = list.filter(|(band, content, _)| *content > band.h);
         if let Some((band, _, _)) = scrolls {
@@ -8160,86 +7797,6 @@ impl ExploreView {
 /// lines up.
 pub(crate) fn trailing_lane(r: Rect) -> Rect {
     koru_ui::profile_picker::row_parts(r).trailing
-}
-
-impl ExploreView {
-    /// A fixed row's icon buttons: compact, the one the pointer is on lit —
-    /// or `default`, what Enter would press, when the keyboard has the row
-    /// and the pointer is elsewhere. The foot's status is words, drawn by
-    /// its row.
-    fn draw_head_buttons(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        buttons: &[(HeadButton, Rect)],
-        hot: bool,
-        default: HeadButton,
-    ) {
-        for (button, rect) in buttons {
-            if *button == HeadButton::Status {
-                continue;
-            }
-            let lit = hot
-                && match self.popover_part {
-                    Some(PopoverPart::Button(on)) => on == *button,
-                    Some(_) => false,
-                    None => *button == default,
-                };
-            koru_ui::icon_button::draw_with(
-                scene,
-                root,
-                engine,
-                *rect,
-                match button {
-                    HeadButton::New => icons::PLUS,
-                    HeadButton::Devices => icons::DEVICES,
-                    HeadButton::Status => unreachable!("drawn by its row"),
-                },
-                koru_ui::icon_button::State {
-                    hovered: lit,
-                    active: false,
-                    disabled: false,
-                },
-                koru_ui::icon_button::Metrics::COMPACT,
-            );
-        }
-    }
-}
-
-/// A fixed row's buttons, packed against the trailing lane's end so the
-/// last of them lines up with every row's control; each is a compact
-/// square, `HEAD_BUTTON_GAP` apart. The foot's status is not a square: it
-/// takes the row from its leading pad to the first square.
-pub(crate) fn head_button_rects(r: Rect, row: PopoverRow) -> Vec<(HeadButton, Rect)> {
-    let lane = trailing_lane(r);
-    let y = r.y + (r.h - HEADING_BUTTON_H) * 0.5;
-    let mut x = lane.x + lane.w - HEADING_BUTTON_H;
-    let mut out: Vec<(HeadButton, Rect)> = row
-        .head_buttons()
-        .iter()
-        .rev()
-        .filter(|button| **button != HeadButton::Status)
-        .map(|button| {
-            let rect = Rect::new(x, y, HEADING_BUTTON_H, HEADING_BUTTON_H);
-            x -= HEADING_BUTTON_H + HEAD_BUTTON_GAP;
-            (*button, rect)
-        })
-        .collect();
-    out.reverse();
-    if row.head_buttons().contains(&HeadButton::Status) {
-        // From the tiles' left edge, like every row's leading mark (E73).
-        let left = r.x + theme::NAV_PAD;
-        let right = out.first().map_or(lane.x + lane.w, |(_, b)| b.x) - HEAD_BUTTON_GAP * 2.0;
-        out.insert(
-            0,
-            (
-                HeadButton::Status,
-                Rect::new(left, r.y, (right - left).max(0.0), r.h),
-            ),
-        );
-    }
-    out
 }
 
 /// A row's trailing lane: the gear while the pointer is on the row, else the
@@ -8282,50 +7839,6 @@ fn draw_trailing(
     } else if current {
         draw_icon(scene, root, engine, icons::CHECK, lane, p.text_dim);
     }
-}
-
-/// A name over a detail line, the pair centred in `at`.
-#[allow(clippy::too_many_arguments)]
-fn draw_two_lines(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    at: Rect,
-    name: &str,
-    detail: &str,
-    strong: bool,
-    p: &theme::Palette,
-) {
-    let name_style = if strong {
-        theme::role::row().with_weight(theme::FontWeight::SemiBold)
-    } else {
-        theme::role::row()
-    };
-    let name_colour = if strong { p.text } else { p.text_dim };
-    if detail.is_empty() {
-        draw_middle(scene, root, engine, name, at, name_style, name_colour);
-        return;
-    }
-    let top = at.y + (at.h - 32.0) * 0.5;
-    draw_middle(
-        scene,
-        root,
-        engine,
-        name,
-        Rect::new(at.x, top, at.w, 16.0),
-        name_style,
-        name_colour,
-    );
-    let fitted = engine.elided(detail, theme::role::hint(), at.w);
-    draw_middle(
-        scene,
-        root,
-        engine,
-        &fitted,
-        Rect::new(at.x, top + 18.0, at.w, 14.0),
-        theme::role::hint(),
-        p.text_dim,
-    );
 }
 
 /// The keyboard's ring around a chrome control: `focus_ring`, two borders
@@ -8479,15 +7992,6 @@ const POPOVER_ROW_H: f32 = theme::ROW_H;
 /// The switcher's cap. Taller than a plain menu's, because each page carries a
 /// fixed head and a four-row footer around its scrolling list.
 const SWITCHER_MAX_H: f32 = 500.0;
-
-/// A Profile row on the Profiles page: two lines, the tile beside them.
-const PROFILE_ROW_H: f32 = 44.0;
-/// The Profiles page's foot: the sync state, the devices, the `+`.
-const PROFILE_FOOT_H: f32 = 44.0;
-const PROFILE_TILE: f32 = 24.0;
-const HEADING_BUTTON_H: f32 = 20.0;
-/// Between two of a head row's buttons.
-const HEAD_BUTTON_GAP: f32 = 4.0;
 
 /// The `…` between the name and the tick.
 /// Where a row's icon sits, given its depth and whether the row carries the

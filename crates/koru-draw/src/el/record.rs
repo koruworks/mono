@@ -145,6 +145,7 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
             let mode = match t.mode {
                 TextMode::Single => "single line",
                 TextMode::Truncate => "single line, elided",
+                TextMode::Clip => "single line, cut at a word",
                 TextMode::Wrap => "wrapped",
             };
             record.property("text mode", mode, "El::truncate / El::wrap");

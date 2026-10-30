@@ -19,7 +19,11 @@ use std::path::{Path, PathBuf};
 
 /// The files written on the element layer, by path from the repository root.
 /// A surface joins when it moves over; it never leaves.
-const MIGRATED: &[&str] = &["apps/koru/src/panes/explore/popover_elements.rs"];
+const MIGRATED: &[&str] = &[
+    "apps/koru/src/panes/explore/popover_elements.rs",
+    // ELEMENTS-PLAN P5: the Profiles page.
+    "apps/koru/src/panes/explore/popover_elements/profiles.rs",
+];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");
 
