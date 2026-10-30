@@ -2418,6 +2418,10 @@ pub enum Key {
     ShowSidebar,
     /// The lane's Search, and the command bar's placeholder.
     SearchOrTypeACommand,
+    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+P`), then
+    /// the agent's machine-wide one (`Ctrl+Shift+K`), which opens search from
+    /// any app.
+    SearchChordsAnywhere,
     /// The lane's accessibility group.
     SidebarControls,
     /// The help popover's rows and foot (workspace foundation).
@@ -2574,7 +2578,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1742] = [
+    pub const ALL: [Key; 1743] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4215,6 +4219,7 @@ impl Key {
         Key::HideSidebar,
         Key::ShowSidebar,
         Key::SearchOrTypeACommand,
+        Key::SearchChordsAnywhere,
         Key::SidebarControls,
         Key::WhatsNew,
         Key::FullChangelog,
@@ -12738,6 +12743,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::HideSidebar, en: "Hide sidebar", es: "Ocultar la barra lateral", pt_br: "Ocultar a barra lateral", de: "Seitenleiste ausblenden", fr: "Masquer la barre latérale", ar: "إخفاء الشريط الجانبي", zh_hans: "隐藏侧边栏", ja: "サイドバーを隠す" },
     Row { key: Key::ShowSidebar, en: "Show sidebar", es: "Mostrar la barra lateral", pt_br: "Mostrar a barra lateral", de: "Seitenleiste einblenden", fr: "Afficher la barre latérale", ar: "إظهار الشريط الجانبي", zh_hans: "显示侧边栏", ja: "サイドバーを表示" },
     Row { key: Key::SearchOrTypeACommand, en: "Search or type a command", es: "Buscar o escribir un comando", pt_br: "Pesquisar ou digitar um comando", de: "Suchen oder einen Befehl eingeben", fr: "Rechercher ou saisir une commande", ar: "ابحث أو اكتب أمرًا", zh_hans: "搜索或输入命令", ja: "検索またはコマンドを入力" },
+    Row { key: Key::SearchChordsAnywhere, en: "{} · {} from anywhere", es: "{} · {} desde cualquier lugar", pt_br: "{} · {} de qualquer lugar", de: "{} · {} von überall", fr: "{} · {} depuis n’importe où", ar: "{} · {} من أي مكان", zh_hans: "{} · 任意位置 {}", ja: "{} · どこからでも {}" },
     Row { key: Key::SidebarControls, en: "Sidebar controls", es: "Controles de la barra lateral", pt_br: "Controles da barra lateral", de: "Steuerelemente der Seitenleiste", fr: "Commandes de la barre latérale", ar: "عناصر تحكم الشريط الجانبي", zh_hans: "侧边栏控件", ja: "サイドバーのコントロール" },
     Row { key: Key::WhatsNew, en: "What's new", es: "Novedades", pt_br: "Novidades", de: "Was ist neu", fr: "Nouveautés", ar: "ما الجديد", zh_hans: "新功能", ja: "新機能" },
     Row { key: Key::FullChangelog, en: "Full changelog", es: "Registro de cambios completo", pt_br: "Registro de alterações completo", de: "Vollständiges Änderungsprotokoll", fr: "Journal des modifications complet", ar: "سجل التغييرات الكامل", zh_hans: "完整更新日志", ja: "変更履歴をすべて表示" },

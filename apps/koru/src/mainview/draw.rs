@@ -114,6 +114,7 @@ impl MainView {
         // The chord the agent actually registered, once it has said so. The
         // taskbar's *Search* task title is rebuilt only when this changes.
         if let Some(chord) = self.agent.take_shortcut() {
+            self.global_search_chord = chord.clone();
             crate::taskbar::set_shortcut(chord);
         }
         // The release-notes headlines, once their read lands.

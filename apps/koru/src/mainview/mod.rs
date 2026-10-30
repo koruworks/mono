@@ -1176,6 +1176,10 @@ pub struct MainView {
     /// help popover. `None` until the read lands or when no notes shipped.
     help_headlines: Option<Vec<String>>,
     help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
+    /// The global-search chord the agent registered (`Ctrl+Shift+K`), once it
+    /// has said so; `None` before that, without an agent, or with no chord.
+    /// The Search tooltip teaches it beside this window's own.
+    global_search_chord: Option<String>,
     /// The agent's last word on the coding-agent CLIs, and the way to answer
     /// a card. Absent in every test, like `updates`.
     agent_clis: crate::agent::AgentCliFeed,
@@ -1882,6 +1886,7 @@ impl MainView {
             relayouts: 0,
             help_headlines: None,
             help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
+            global_search_chord: None,
             tooltip: Tooltip::default(),
             recents: Vec::new(),
             recent_documents: Vec::new(),
@@ -15582,6 +15587,20 @@ impl MainView {
         }
     }
 
+    /// The Search tooltip's chord: this window's, then the agent's global one
+    /// when it has registered one, so the button teaches both ways in. Only
+    /// when tooltips teach chords at all: `None` in stays `None`.
+    fn search_chords(&self, here: Option<String>) -> Option<String> {
+        let here = here?;
+        Some(match self.global_search_chord.as_deref() {
+            Some(anywhere) => koru_i18n::fill(
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchChordsAnywhere),
+                &[&here, anywhere],
+            ),
+            None => here,
+        })
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.group_drag().is_some() || self.sidebar.animating() {
             return None;
@@ -15620,7 +15639,7 @@ impl MainView {
                     self.lane_controls().search,
                     koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchOrTypeACommand),
                 )
-                .with_optional_shortcut(hint(koru_keys::ShortcutId::Search)),
+                .with_optional_shortcut(self.search_chords(hint(koru_keys::ShortcutId::Search))),
             ),
             // The strip's `+` words: one menu, two doors.
             Hit::New => {

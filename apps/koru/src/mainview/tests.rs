@@ -8439,6 +8439,28 @@ fn caption_search_explains_both_the_action_and_its_chord() {
     assert_eq!(tip.anchor, v.lane_controls().search);
 }
 
+/// **Search teaches the agent's global chord too**, once the agent has said
+/// which it registered: this window's chord, then the one that opens search
+/// from any app.
+#[test]
+fn caption_search_also_teaches_the_global_chord() {
+    let (mut v, _workspace) = container();
+    v.global_search_chord = Some("Ctrl+Shift+K".into());
+    let tip = v
+        .caption_tooltip(Hit::Search)
+        .expect("search has a tooltip");
+    assert_eq!(
+        tip.shortcut,
+        Some(koru_i18n::fill(
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::SearchChordsAnywhere),
+            &[
+                &koru_keys::label_of(koru_keys::ShortcutId::Search),
+                "Ctrl+Shift+K"
+            ],
+        ))
+    );
+}
+
 #[test]
 fn caption_host_action_is_the_localized_reminder_bell() {
     let (v, _workspace) = container();
