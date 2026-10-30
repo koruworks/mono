@@ -5417,6 +5417,44 @@ fn the_editors_ask_opens_the_viewer_after_the_press() {
     assert_eq!(view.editor.view.wants_open_diagram, None, "spent");
 }
 
+#[test]
+fn a_diagram_double_click_opens_without_a_third_press() {
+    let (mut ws, mut view, node) = drawn_diagram_document();
+    view.editor.reflow();
+    let row = view
+        .editor
+        .body
+        .rows
+        .iter()
+        .find(|row| row.id == node)
+        .unwrap();
+    let drawing = koru_editor::rowlayout::diagram_layout(
+        row,
+        row.diagram.as_ref().unwrap(),
+        row.height,
+        view.editor
+            .view
+            .view_mode
+            .effective_w(view.editor.view.viewport.0),
+    )
+    .drawing
+    .unwrap();
+    let x = view.editor.view.content_x + drawing.x + drawing.w * 0.5;
+    let y = row.y + drawing.y + drawing.h * 0.5 - view.editor.view.scroll;
+    view.mouse_down(&mut ws, x, y, false);
+    assert!(!view.diagram_viewer_open(), "one click selects the drawing");
+    // The shell sends the second ordinary press before its double-click hook.
+    view.mouse_down(&mut ws, x, y, false);
+    assert!(!view.diagram_viewer_open());
+    assert!(view.mouse_double_click(&ws, x, y));
+    assert!(
+        view.diagram_viewer_open(),
+        "the second click opens immediately"
+    );
+    assert_eq!(view.editor.view.wants_open_diagram, None);
+    assert_eq!(view.diagram_viewer().unwrap().node(), node);
+}
+
 /// The editor's *Copy image* control asks the same way, and the drawing it
 /// names goes on to the shell after the press — with no viewer opened.
 #[test]

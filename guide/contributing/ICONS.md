@@ -1,13 +1,19 @@
 # Compiled icon packs
 
 Desktop chrome uses named identities from `koru_draw::icons`, rendered as vector
-paths. Phosphor 2.1.2, Tabler 3.31.0 and Lucide 0.477.0 are bundled together.
+paths. Phosphor 2.1.2, Tabler 3.31.0, Lucide 0.477.0 and Remix 4.6.0 are bundled together.
 Settings → Appearance → Interface → Icon style selects the in-app pack live;
 Phosphor is the initial preference. The roaming `icon_pack` key uses the
 existing typed Global settings patch and `preferences.conf` format, with no
 version bump or migration. Old/missing values fall back to Phosphor.
 The 151 canonical identities and four aliases retain their existing PUA values.
 Changing a pack does not change stored documents or require a schema migration.
+
+Highlighting an Icon style menu item previews it without writing preferences.
+`active_pack()` remains the saved choice; `rendered_pack()` includes the preview.
+The menu owns an `IconPreview` guard, so closing it restores the saved artwork.
+Confirmation updates the saved choice and clears the preview. Both transitions
+request paint across open windows without reshaping document content.
 
 ## Regenerate artwork
 
@@ -17,6 +23,7 @@ From the repository root, with Python and Pillow installed:
 python scripts/icons/sync-icon-pack.py --pack tabler
 python scripts/icons/sync-icon-pack.py --pack lucide --stroke-width 1.85
 python scripts/icons/sync-icon-pack.py --pack phosphor
+python scripts/icons/sync-icon-pack.py --pack remix
 cargo build -p koru -p koru-ai-chat
 ```
 
@@ -25,7 +32,7 @@ the standard fetcher if absent. It updates the compiled Rust catalog, bundled
 license notices, `assets/document.ico`, and all `assets/koru-ai-chat*.ico` and
 `.png` variants. Commit those outputs together. Ordinary builds use committed
 paths and images and need neither Python, Pillow, archives nor an icon font.
-Every regeneration compiles all three packs. `--pack` selects the packaged
+Every regeneration compiles all four packs. `--pack` selects the packaged
 Windows document/taskbar assets and the renderer's bootstrap choice; saved
 settings take precedence for in-app icons. OS assets remain build-time artwork.
 
@@ -36,7 +43,13 @@ outlines into the same 24-unit slots; the app still renders compiled paths
 without needing a font. Phosphor uses its original regular and filled weights,
 so `--stroke-width` does not change its outlines.
 
-`scripts/icons/icon-map.json` maps each canonical identity to both packs.
+Remix uses its original line outlines (filled paths) and matching fill variants;
+`--stroke-width` does not change those outlines either. Version 4.6.0 is pinned
+with its Apache-2.0 license; later releases changed licensing. The generic Linux
+and Return-key icons use the existing original Koru paths. The generator retains
+the upstream license in the catalog and `icons-remix.txt` release notice.
+
+`scripts/icons/icon-map.json` maps each canonical identity to the SVG packs.
 Lucide's Windows, Apple and social brand gaps use explicitly attributed Tabler
 paths. In Tabler/Lucide, Linux Tux and the Return keycap are original Koru centerline artwork.
 The Return keycap means a keyboard key; ENTER remains a navigation arrow.
@@ -68,7 +81,7 @@ a rendered font family.
 ## Add or verify an icon
 
 Add a documented stable PUA constant, one canonical `ALL` row and entries for
-both packs in `icon-map.json`; an alternate name belongs in `ALIASES` instead.
+all SVG packs in `icon-map.json`; an alternate name belongs in `ALIASES` instead.
 The normalizer rejects unsupported SVG structure. It converts primitives and
 inherits monochrome paints without keeping runtime XML. Extend its tests before
 admitting new structure. Do not edit `icon_pack_data.rs` by hand.
@@ -80,7 +93,7 @@ cargo test -p koru-draw -p koru-ui -p koru-workspace-host -p koru-release
 ```
 
 The round-trip check compiles each pack, checks notices and image sizes, compares
-all 14 generated artifacts against a captured Tabler baseline, and restores the
+all 15 generated artifacts against a captured Tabler baseline, and restores the
 original artifacts even on failure. It leaves unrelated edits alone.
 
 The taskbar rasterizer is deliberately bounded to the document and sparkle

@@ -169,6 +169,7 @@ token_enum! {
         Phosphor => "phosphor";
         Tabler => "tabler";
         Lucide => "lucide";
+        Remix => "remix";
     }
 }
 

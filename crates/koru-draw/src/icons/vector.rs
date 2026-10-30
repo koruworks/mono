@@ -4,7 +4,7 @@
 //! it without shaping an icon font or reparsing SVG on each frame.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use vello::Scene;
 use vello::kurbo::{Affine, BezPath, Cap, Join, Stroke};
@@ -22,15 +22,17 @@ pub enum IconPack {
     Phosphor,
     Tabler,
     Lucide,
+    Remix,
 }
 
 impl IconPack {
-    pub const ALL: [Self; 3] = [Self::Phosphor, Self::Tabler, Self::Lucide];
+    pub const ALL: [Self; 4] = [Self::Phosphor, Self::Tabler, Self::Lucide, Self::Remix];
 
     pub fn parse(token: &str) -> Self {
         match token {
             "tabler" => Self::Tabler,
             "lucide" => Self::Lucide,
+            "remix" => Self::Remix,
             _ => Self::Phosphor,
         }
     }
@@ -40,6 +42,7 @@ impl IconPack {
             Self::Phosphor => "phosphor",
             Self::Tabler => "tabler",
             Self::Lucide => "lucide",
+            Self::Remix => "remix",
         }
     }
 
@@ -48,6 +51,7 @@ impl IconPack {
             Self::Phosphor => "Phosphor",
             Self::Tabler => "Tabler",
             Self::Lucide => "Lucide",
+            Self::Remix => "Remix",
         }
     }
 
@@ -56,22 +60,64 @@ impl IconPack {
             Self::Phosphor => &super::data::phosphor::ICON_DEFS,
             Self::Tabler => &super::data::tabler::ICON_DEFS,
             Self::Lucide => &super::data::lucide::ICON_DEFS,
+            Self::Remix => &super::data::remix::ICON_DEFS,
         }
     }
 }
 
 static SELECTED: AtomicU8 = AtomicU8::new(super::data::DEFAULT_PACK as u8);
+static PREVIEW: AtomicU64 = AtomicU64::new(0);
+static NEXT_PREVIEW: AtomicU64 = AtomicU64::new(1);
 
+/// The saved choice, independent of a menu's temporary preview.
 pub fn active_pack() -> IconPack {
     match SELECTED.load(Ordering::Relaxed) {
         1 => IconPack::Tabler,
         2 => IconPack::Lucide,
+        3 => IconPack::Remix,
         _ => IconPack::Phosphor,
     }
 }
 
 pub fn set_icon_pack(pack: IconPack) {
     SELECTED.store(pack as u8, Ordering::Relaxed);
+    PREVIEW.store(0, Ordering::Relaxed);
+}
+
+/// Artwork to paint now; persistence must continue to read `active_pack`.
+pub fn rendered_pack() -> IconPack {
+    match PREVIEW.load(Ordering::Relaxed) {
+        0 => active_pack(),
+        value => IconPack::ALL[(value & 0xff) as usize],
+    }
+}
+
+/// A menu owns its preview. Dismissal, navigation and destruction restore the
+/// saved choice. An older menu cannot clear or overwrite a newer preview.
+pub struct IconPreview(u64);
+
+impl IconPreview {
+    pub fn new(pack: IconPack) -> Self {
+        let value = (NEXT_PREVIEW.fetch_add(1, Ordering::Relaxed) << 8) | pack as u64;
+        PREVIEW.store(value, Ordering::Relaxed);
+        Self(value)
+    }
+
+    pub fn set(&mut self, pack: IconPack) {
+        let value = (self.0 & !0xff) | pack as u64;
+        if PREVIEW
+            .compare_exchange(self.0, value, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.0 = value;
+        }
+    }
+}
+
+impl Drop for IconPreview {
+    fn drop(&mut self) {
+        let _ = PREVIEW.compare_exchange(self.0, 0, Ordering::Relaxed, Ordering::Relaxed);
+    }
 }
 
 pub struct IconDef {
@@ -119,7 +165,7 @@ pub fn has_vector_icon(icon: char) -> bool {
 }
 
 pub fn vector_def(icon: char) -> Option<&'static IconDef> {
-    vector_def_for(active_pack(), icon)
+    vector_def_for(rendered_pack(), icon)
 }
 
 pub fn vector_def_for(pack: IconPack, icon: char) -> Option<&'static IconDef> {
@@ -132,8 +178,8 @@ struct ParsedIcon {
     active_fill: Option<BezPath>,
 }
 
-static PARSED: [[OnceLock<ParsedIcon>; ICON_DEFS.len()]; 3] =
-    [const { [const { OnceLock::new() }; ICON_DEFS.len()] }; 3];
+static PARSED: [[OnceLock<ParsedIcon>; ICON_DEFS.len()]; IconPack::ALL.len()] =
+    [const { [const { OnceLock::new() }; ICON_DEFS.len()] }; IconPack::ALL.len()];
 
 fn parsed(pack: IconPack, index: usize) -> &'static ParsedIcon {
     PARSED[pack as usize][index].get_or_init(|| {
@@ -159,7 +205,7 @@ pub fn draw_vector_icon(
     slot: Rect,
     color: Color,
 ) {
-    draw_vector_icon_for(active_pack(), scene, root, icon, filled, slot, color);
+    draw_vector_icon_for(rendered_pack(), scene, root, icon, filled, slot, color);
 }
 
 fn draw_vector_icon_for(

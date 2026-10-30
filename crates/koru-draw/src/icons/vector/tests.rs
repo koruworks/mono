@@ -43,9 +43,24 @@ fn every_pack_keeps_identity_and_has_independent_cached_geometry() {
                 assert!(!scene.encoding().path_tags.is_empty());
             }
         }
-        assert_ne!(addresses[0], addresses[1]);
-        assert_ne!(addresses[1], addresses[2]);
+        addresses.sort();
+        addresses.dedup();
+        assert_eq!(addresses.len(), IconPack::ALL.len());
     }
+}
+
+#[test]
+fn remix_preserves_its_outline_and_filled_artwork() {
+    let def = vector_def_for(IconPack::Remix, crate::icons::HOUSE).unwrap();
+    assert_eq!(def.source, "Remix");
+    assert!(
+        def.stroke_d.is_empty(),
+        "Remix line icons are filled outlines"
+    );
+    assert!(!def.fill_d.is_empty());
+    assert_ne!(def.active_fill_d.unwrap(), def.fill_d);
+    assert_eq!(IconPack::parse("remix"), IconPack::Remix);
+    assert_eq!(IconPack::Remix.token(), "remix");
 }
 
 #[test]

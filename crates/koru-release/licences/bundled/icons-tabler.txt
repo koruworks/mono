@@ -5,6 +5,8 @@ Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png
 License: MIT
 Platforms: windows, macos, linux
 ---
+Koru converts the upstream SVG artwork into compiled vector paths.
+
 MIT License
 
 Copyright (c) 2020-2024 Paweł Kuna

@@ -442,7 +442,7 @@ fn inspect_icon(
                 if let Some(def) = icons::vector_def(glyph) {
                     r.property(
                         "icon pack",
-                        icons::active_pack().label(),
+                        icons::rendered_pack().label(),
                         "selected icon pack",
                     );
                     r.property("icon source", def.source, "artwork provenance");

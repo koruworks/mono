@@ -16299,6 +16299,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Focused(focused) => {
                 self.host.window_focus_changed(focused);
+                let was_icon_paint = koru_draw::icons::rendered_pack();
                 crate::search_debug!(
                     "[Koru][search-open][pid={}] focus event: pane={id:?} focused={focused} in_tray={} global_search={}",
                     std::process::id(),
@@ -16313,6 +16314,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 if let Some(pane) = self.panes.get_mut(&id) {
                     pane.focused = focused;
                     pane.view.set_window_focused(focused);
+                }
+                if koru_draw::icons::rendered_pack() != was_icon_paint {
+                    self.repaint_icons();
                 }
                 // **The tie-break between two windows on one workspace.** The
                 // agent stamps the order it observed rather than trusting a
@@ -16664,12 +16668,16 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         std::process::id()
                     ));
                     let delta = if mods.shift_key() { -1 } else { 1 };
+                    let was_icon_paint = koru_draw::icons::rendered_pack();
                     if self
                         .panes
                         .get_mut(&id)
                         .is_some_and(|p| p.view.cycle_tab(delta))
                     {
                         self.wake(id);
+                    }
+                    if koru_draw::icons::rendered_pack() != was_icon_paint {
+                        self.repaint_icons();
                     }
                     return;
                 }
@@ -16794,6 +16802,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 let was_code = theme::code_font();
                 let was_density = theme::density();
                 let was_icons = koru_draw::icons::active_pack();
+                let was_icon_paint = koru_draw::icons::rendered_pack();
                 // Voice preferences use the same process-global path as typography.
                 let was_voice = crate::voice_prefs::snapshot();
                 let document_before = self.runtime.workspace.ws.version();
@@ -16848,6 +16857,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     || theme::density() != was_density;
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
                 let icons_moved = koru_draw::icons::active_pack() != was_icons;
+                if !icons_moved && koru_draw::icons::rendered_pack() != was_icon_paint {
+                    self.repaint_icons();
+                }
                 if typography_moved || voice_moved || icons_moved {
                     // A font or density change is baked into every layout, and a
                     // voice preference change has to be visible in every Settings
@@ -16914,10 +16926,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 pane.resize_edge = pane.resize_edge_at(x, y);
                 // The view lives in unscaled logical pixels — zoom is folded
                 // into the root transform — so hand it zoom-adjusted coords.
+                let was_icon_paint = koru_draw::icons::rendered_pack();
                 let changed = pane.view.mouse_move(x / self.zoom, y / self.zoom);
                 pane.sync_cursor_icon();
                 if let Some(WindowRequest::Drag) = pane.view.take_window_request() {
                     let _ = pane.window.drag_window();
+                }
+                if koru_draw::icons::rendered_pack() != was_icon_paint {
+                    self.repaint_icons();
                 }
                 if changed {
                     self.request_redraw(id);
@@ -17048,6 +17064,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         let was_code = theme::code_font();
                         let was_density = theme::density();
                         let was_icons = koru_draw::icons::active_pack();
+                        let was_icon_paint = koru_draw::icons::rendered_pack();
                         let was_caret = theme::caret_color();
                         let was_caret_w = theme::caret_width();
                         let was_caret_h = theme::caret_height();
@@ -17247,7 +17264,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if icons_moved {
+                        if icons_moved || koru_draw::icons::rendered_pack() != was_icon_paint {
                             self.repaint_icons();
                         }
                         if theme_pref_moved

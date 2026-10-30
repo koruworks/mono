@@ -5531,7 +5531,8 @@
         "enum": [
           "phosphor",
           "tabler",
-          "lucide"
+          "lucide",
+          "remix"
         ],
         "type": "string"
       },

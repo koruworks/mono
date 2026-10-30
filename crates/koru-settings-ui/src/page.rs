@@ -72,7 +72,7 @@ impl PageId {
     pub(crate) fn keywords(self) -> &'static str {
         match self {
             Self::Appearance => {
-                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide"
+                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix"
             }
             Self::Editor => {
                 "page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"

@@ -180,6 +180,10 @@ impl SettingsView {
         self.surface.focus_search();
     }
 
+    pub(crate) fn dismiss_menu(&mut self) {
+        self.surface.dismiss_menu();
+    }
+
     /// Whether the search box has the keyboard — what the container's test
     /// of the chord reads.
     #[cfg(test)]

@@ -9,13 +9,16 @@ at the end, and settled ones are marked ✅.
 
 ## Compiled icon artwork (2026-10-30)
 
-Desktop icon paths are generated from `@tabler/icons` 3.31.0 (MIT) and
-`lucide-static` 0.477.0 (ISC, with Feather portions under MIT). Archives are
+Desktop icon paths are generated from the pinned Phosphor 2.1.2 fonts (MIT),
+`@tabler/icons` 3.31.0 (MIT), `lucide-static` 0.477.0 (ISC, with Feather portions
+under MIT), and `remixicon` 4.6.0 (Apache-2.0). Remix is pinned to this release's
+Apache license; later releases changed licensing. SVG archives are
 checksum-pinned in `third-party/fetch.manifest` and fetched, not committed.
-The selected catalog retains the full notices in its generated Rust header.
-`icons-tabler.txt` and `icons-lucide.txt` in the release's bundled licenses
-carry their exact versions and desktop platform applicability. Both are kept
-because pack selection is a build-time choice and Lucide uses Tabler brand
+Every catalog retains the full notices in its generated Rust header, along with
+the statement that Koru converts the artwork into compiled vector paths.
+`icons-tabler.txt`, `icons-lucide.txt`, `icons-remix.txt` and `font-phosphor.txt`
+in the release's bundled licenses carry their versions and platform applicability.
+All are kept because the packs are selectable at runtime and Lucide uses Tabler brand
 fallbacks. Lucide's pinned license identifies Cole Bemis's 2013-2022 Feather
 portions; the full MIT terms are included alongside its ISC text.
 

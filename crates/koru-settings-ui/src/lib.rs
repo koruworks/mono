@@ -196,6 +196,20 @@ struct OpenDropdown {
     index: usize,
     menu: Menu<DropdownOption>,
     actions: Vec<Action>,
+    icon_preview: Option<icons::IconPreview>,
+}
+
+impl OpenDropdown {
+    fn preview_highlight(&mut self) {
+        if let Some(Action::IconPack(choice)) = self.menu.hover.and_then(|i| self.actions.get(i)) {
+            let pack = icons::IconPack::parse(choice.token());
+            if let Some(preview) = self.icon_preview.as_mut() {
+                preview.set(pack);
+            } else {
+                self.icon_preview = Some(icons::IconPreview::new(pack));
+            }
+        }
+    }
 }
 
 /// Where the pointer is, in the surface's own vocabulary.
@@ -565,6 +579,11 @@ impl SettingsSurface {
         self.open.is_some()
     }
 
+    /// Dismiss transient choices when the host loses focus or hides this page.
+    pub fn dismiss_menu(&mut self) {
+        self.open = None;
+    }
+
     /// Show `page`, from its top. Answers whether anything changed; a page this
     /// host does not have is refused.
     pub fn show_page(&mut self, page: PageId) -> bool {
@@ -876,6 +895,7 @@ impl SettingsSurface {
         if let Some(open) = self.open.as_mut() {
             let viewport = self.viewport;
             open.menu.hover = open.menu.item_at(viewport, x, y).or(open.menu.hover);
+            open.preview_highlight();
         }
         moved
     }
@@ -989,6 +1009,7 @@ impl SettingsSurface {
             index,
             menu,
             actions,
+            icon_preview: None,
         });
     }
 
@@ -1019,6 +1040,9 @@ impl SettingsSurface {
                     }
                 }
                 _ => return false,
+            }
+            if let Some(open) = self.open.as_mut() {
+                open.preview_highlight();
             }
             return true;
         }

@@ -178,6 +178,12 @@ fn icon_style_dropdown_accepts_keyboard_selection_and_escape() {
         None,
         ModifiersState::empty()
     ));
+    assert_eq!(
+        icons::active_pack(),
+        IconPack::Phosphor,
+        "preview must not persist"
+    );
+    assert_eq!(icons::rendered_pack(), IconPack::Tabler);
     assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
     assert_eq!(icons::active_pack(), IconPack::Tabler);
     assert!(press_rect(&mut surface, field));
@@ -188,6 +194,72 @@ fn icon_style_dropdown_accepts_keyboard_selection_and_escape() {
     ));
     assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
     assert_eq!(icons::active_pack(), IconPack::Tabler);
+    assert_eq!(
+        icons::rendered_pack(),
+        IconPack::Tabler,
+        "Escape cancels the preview"
+    );
+    icons::set_icon_pack(was);
+}
+
+#[test]
+fn hovering_icon_styles_previews_and_dismissal_restores_the_saved_choice() {
+    use koru_draw::icons::{self, IconPack};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Tabler);
+    let mut surface = koru();
+    let field = rect_of(&surface, "Tabler").unwrap();
+    for dismissal in 0..4 {
+        assert!(press_rect(&mut surface, field));
+        let open = surface.open.as_ref().unwrap();
+        let index = open
+            .menu
+            .items()
+            .iter()
+            .position(|item| item.label == "Remix")
+            .unwrap();
+        let (x, y) = open.menu.item_rect(surface.viewport, index).centre();
+        surface.mouse_move(x, y);
+        assert_eq!(icons::rendered_pack(), IconPack::Remix);
+        assert_eq!(icons::active_pack(), IconPack::Tabler);
+        assert!(
+            is_active(&surface, "Tabler"),
+            "the checkmark remains on the saved choice"
+        );
+        match dismissal {
+            0 => {
+                surface.mouse_down(0.0, 0.0);
+            }
+            1 => surface.focus_search(),
+            2 => surface.dismiss_menu(),
+            _ => {
+                drop(surface);
+                surface = koru();
+            }
+        }
+        assert_eq!(icons::rendered_pack(), IconPack::Tabler);
+    }
+    icons::set_icon_pack(was);
+}
+
+#[test]
+fn an_older_menu_cannot_overwrite_or_clear_a_newer_preview() {
+    use koru_draw::icons::{self, IconPack, IconPreview};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Phosphor);
+    let mut old = IconPreview::new(IconPack::Tabler);
+    let new = IconPreview::new(IconPack::Lucide);
+    old.set(IconPack::Phosphor);
+    drop(old);
+    assert_eq!(icons::rendered_pack(), IconPack::Lucide);
+    drop(new);
+    assert_eq!(icons::rendered_pack(), IconPack::Phosphor);
+    let preview = IconPreview::new(IconPack::Lucide);
+    icons::set_icon_pack(IconPack::Tabler);
+    drop(preview);
+    assert_eq!(icons::rendered_pack(), IconPack::Tabler);
     icons::set_icon_pack(was);
 }
 
