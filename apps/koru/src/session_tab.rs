@@ -356,12 +356,54 @@ impl SessionView {
             Key::Named(NamedKey::ArrowDown) => Some(TerminalKey::ArrowDown),
             Key::Named(NamedKey::ArrowLeft) => Some(TerminalKey::ArrowLeft),
             Key::Named(NamedKey::ArrowRight) => Some(TerminalKey::ArrowRight),
+            Key::Named(NamedKey::Home) => Some(TerminalKey::Home),
+            Key::Named(NamedKey::End) => Some(TerminalKey::End),
+            Key::Named(NamedKey::PageUp) => Some(TerminalKey::PageUp),
+            Key::Named(NamedKey::PageDown) => Some(TerminalKey::PageDown),
+            Key::Named(NamedKey::Insert) => Some(TerminalKey::Insert),
+            Key::Named(NamedKey::Delete) => Some(TerminalKey::Delete),
+            Key::Named(NamedKey::Space) => Some(TerminalKey::Character {
+                text: " ".to_owned(),
+            }),
+            Key::Named(named) if let Some(number) = Self::function_key_number(*named) => {
+                Some(TerminalKey::Function { number })
+            }
             Key::Character(character) => Some(TerminalKey::Character {
                 text: character.to_string(),
             }),
             _ => text.map(|text| TerminalKey::Character {
                 text: text.to_owned(),
             }),
+        }
+    }
+
+    fn function_key_number(key: NamedKey) -> Option<u8> {
+        match key {
+            NamedKey::F1 => Some(1),
+            NamedKey::F2 => Some(2),
+            NamedKey::F3 => Some(3),
+            NamedKey::F4 => Some(4),
+            NamedKey::F5 => Some(5),
+            NamedKey::F6 => Some(6),
+            NamedKey::F7 => Some(7),
+            NamedKey::F8 => Some(8),
+            NamedKey::F9 => Some(9),
+            NamedKey::F10 => Some(10),
+            NamedKey::F11 => Some(11),
+            NamedKey::F12 => Some(12),
+            NamedKey::F13 => Some(13),
+            NamedKey::F14 => Some(14),
+            NamedKey::F15 => Some(15),
+            NamedKey::F16 => Some(16),
+            NamedKey::F17 => Some(17),
+            NamedKey::F18 => Some(18),
+            NamedKey::F19 => Some(19),
+            NamedKey::F20 => Some(20),
+            NamedKey::F21 => Some(21),
+            NamedKey::F22 => Some(22),
+            NamedKey::F23 => Some(23),
+            NamedKey::F24 => Some(24),
+            _ => None,
         }
     }
 
@@ -975,6 +1017,46 @@ mod tests {
             Some("x"),
             ModifiersState::empty(),
         );
+    }
+
+    #[test]
+    fn navigation_and_function_keys_reach_the_running_terminal() {
+        let mut v = view();
+        v.surface.status = PaneStatus::Running;
+        let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+            .expect("create");
+        assert!(
+            View::key(
+                &mut v,
+                &mut ws,
+                &Key::Named(NamedKey::End),
+                None,
+                ModifiersState::CONTROL,
+            ),
+            "Ctrl+End reaches the terminal (e.g. Claude Code's Jump to bottom)"
+        );
+        for (named, expected) in [
+            (NamedKey::Home, TerminalKey::Home),
+            (NamedKey::End, TerminalKey::End),
+            (NamedKey::PageUp, TerminalKey::PageUp),
+            (NamedKey::PageDown, TerminalKey::PageDown),
+            (NamedKey::Insert, TerminalKey::Insert),
+            (NamedKey::Delete, TerminalKey::Delete),
+            (
+                NamedKey::Space,
+                TerminalKey::Character {
+                    text: " ".to_owned(),
+                },
+            ),
+            (NamedKey::F1, TerminalKey::Function { number: 1 }),
+            (NamedKey::F12, TerminalKey::Function { number: 12 }),
+            (NamedKey::F24, TerminalKey::Function { number: 24 }),
+        ] {
+            assert_eq!(
+                SessionView::terminal_key(&Key::Named(named), None),
+                Some(expected)
+            );
+        }
     }
 }
 

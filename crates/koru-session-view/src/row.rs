@@ -4,15 +4,17 @@ use std::borrow::Cow;
 
 use koru_draw::{
     scene::{draw_layout, fill, stroke},
-    text::{TextEngine, push_axes},
+    text::TextEngine,
     theme::Brush,
 };
 use koru_session_protocol::{CellWidth, TerminalCell, TerminalRow};
-use parley::style::{FontFamily, FontFeatures, FontStyle, LineHeight, StyleProperty};
+use parley::style::{
+    FontFamily, FontFeatures, FontStyle, FontVariations, FontWeight, LineHeight, StyleProperty,
+};
 use parley::{
     Layout,
     layout::{Alignment, AlignmentOptions},
-    setting::{FontFeature, Tag},
+    setting::{FontFeature, FontVariation, Tag},
 };
 use vello::{
     Scene,
@@ -37,6 +39,7 @@ pub(crate) struct CachedRow {
     horizontal_rules: Vec<PaintedHorizontalRule>,
     vertical_rules: Vec<PaintedVerticalRule>,
     corners: Vec<PaintedCorner>,
+    junctions: Vec<PaintedJunction>,
     block_elements: Vec<PaintedBlockElement>,
     pub records: Vec<PaintRecord>,
     pub style_runs: u64,
@@ -77,6 +80,7 @@ pub(crate) fn build_row(
     let mut horizontal_rules = Vec::new();
     let mut vertical_rules = Vec::new();
     let mut corners = Vec::new();
+    let mut junctions = Vec::new();
     let mut block_elements = Vec::new();
     let ground = style.palette().background;
     for run in &runs {
@@ -99,11 +103,29 @@ pub(crate) fn build_row(
         });
         if !run.text.is_empty() {
             let layout = layout_run(engine, &run.text, run.style, style);
+            // Center isolated fallback symbols (`•`, `⏺`, `❯`, `✻`, `↓`) inside
+            // their cell span using optical ink centering so symbols with
+            // asymmetric sidebearings or proportional fallback advances sit
+            // squarely in the middle of their terminal cell. Private-use
+            // glyphs (Powerline separators) keep their cell-edge origin.
+            let slot_width = f32::from(run.columns) * style.cell_width;
+            let glyph_x = if !run.mergeable_primary_grid
+                && !run.text.chars().any(is_private_use)
+                && run.text.chars().any(|c| !c.is_whitespace())
+            {
+                koru_draw::scene::centre_in(
+                    &layout,
+                    koru_draw::geometry::Rect::new(x, 0.0, slot_width, style.cell_height),
+                )
+                .0
+            } else {
+                x
+            };
             draw_layout(
                 &mut text_scene,
                 Affine::IDENTITY,
                 &layout,
-                x,
+                glyph_x,
                 0.0,
                 Some(run.style.foreground),
             );
@@ -119,6 +141,10 @@ pub(crate) fn build_row(
             }));
             corners.extend(run.corners.iter().map(|corner| PaintedCorner {
                 corner: *corner,
+                color: run.style.foreground,
+            }));
+            junctions.extend(run.junctions.iter().map(|junction| PaintedJunction {
+                junction: *junction,
                 color: run.style.foreground,
             }));
             block_elements.extend(
@@ -147,6 +173,7 @@ pub(crate) fn build_row(
         horizontal_rules,
         vertical_rules,
         corners,
+        junctions,
         block_elements,
         records,
         style_runs: runs.len() as u64,
@@ -236,11 +263,11 @@ impl DeviceGrid {
         }
     }
 
-    fn snap_x(self, value: f64) -> f64 {
+    pub(crate) fn snap_x(self, value: f64) -> f64 {
         self.x.snap(value)
     }
 
-    fn snap_y(self, value: f64) -> f64 {
+    pub(crate) fn snap_y(self, value: f64) -> f64 {
         self.y.snap(value)
     }
 }
@@ -274,6 +301,7 @@ struct StyleRun {
     horizontal_rules: Vec<HorizontalRule>,
     vertical_rules: Vec<VerticalRule>,
     corners: Vec<BoxCorner>,
+    junctions: Vec<BoxJunction>,
     block_elements: Vec<BlockElement>,
 }
 
@@ -332,6 +360,21 @@ struct PaintedCorner {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoxJunction {
+    column: u16,
+    left: Option<HorizontalRuleWeight>,
+    up: Option<HorizontalRuleWeight>,
+    right: Option<HorizontalRuleWeight>,
+    down: Option<HorizontalRuleWeight>,
+}
+
+#[derive(Clone, Copy)]
+struct PaintedJunction {
+    junction: BoxJunction,
+    color: peniko::Color,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BlockElementKind {
     Upper(u8),
     Lower(u8),
@@ -367,6 +410,7 @@ fn group_runs(cells: &[TerminalCell], terminal: TerminalStyle, columns: u16) -> 
         // A selected/system fallback may provide Nerd Font or Powerline
         // coverage; replacing them here made known-good CLI icons impossible.
         let corner = box_corner(cell.text.as_str(), cell.column.0);
+        let junction = box_junction(cell.text.as_str(), cell.column.0);
         let block_element = block_element(cell.text.as_str(), cell.column.0);
         let (text, horizontal_rule, vertical_rule) = match cell.text.as_str() {
             "\u{2500}" => (" ".to_owned(), Some(HorizontalRuleWeight::Light), None),
@@ -374,6 +418,7 @@ fn group_runs(cells: &[TerminalCell], terminal: TerminalStyle, columns: u16) -> 
             "\u{2502}" => (" ".to_owned(), None, Some(HorizontalRuleWeight::Light)),
             "\u{2503}" => (" ".to_owned(), None, Some(HorizontalRuleWeight::Heavy)),
             _ if corner.is_some() => (" ".to_owned(), None, None),
+            _ if junction.is_some() => (" ".to_owned(), None, None),
             _ if block_element.is_some() => (" ".to_owned(), None, None),
             _ => (cell.text.clone(), None, None),
         };
@@ -399,6 +444,9 @@ fn group_runs(cells: &[TerminalCell], terminal: TerminalStyle, columns: u16) -> 
             if let Some(corner) = corner {
                 last.corners.push(corner);
             }
+            if let Some(junction) = junction {
+                last.junctions.push(junction);
+            }
             if let Some(block_element) = block_element {
                 last.block_elements.push(block_element);
             }
@@ -418,6 +466,7 @@ fn group_runs(cells: &[TerminalCell], terminal: TerminalStyle, columns: u16) -> 
                 .into_iter()
                 .collect();
             let corners = corner.into_iter().collect();
+            let junctions = junction.into_iter().collect();
             let block_elements = block_element.into_iter().collect();
             runs.push(StyleRun {
                 first_column: cell.column.0,
@@ -429,6 +478,7 @@ fn group_runs(cells: &[TerminalCell], terminal: TerminalStyle, columns: u16) -> 
                 horizontal_rules,
                 vertical_rules,
                 corners,
+                junctions,
                 block_elements,
             });
         }
@@ -468,6 +518,86 @@ fn box_corner(text: &str, column: u16) -> Option<BoxCorner> {
         horizontal_weight,
         vertical_weight,
         rounded,
+    })
+}
+
+fn box_junction(text: &str, column: u16) -> Option<BoxJunction> {
+    use HorizontalRuleWeight::{Heavy as H, Light as L};
+    let (left, up, right, down) = match text {
+        // Left T-junctions (U+251C..=U+2523)
+        "\u{251c}" => (None, Some(L), Some(L), Some(L)),
+        "\u{251d}" => (None, Some(L), Some(H), Some(L)),
+        "\u{251e}" => (None, Some(H), Some(L), Some(L)),
+        "\u{251f}" => (None, Some(L), Some(L), Some(H)),
+        "\u{2520}" => (None, Some(H), Some(L), Some(H)),
+        "\u{2521}" => (None, Some(H), Some(H), Some(L)),
+        "\u{2522}" => (None, Some(L), Some(H), Some(H)),
+        "\u{2523}" => (None, Some(H), Some(H), Some(H)),
+        // Right T-junctions (U+2524..=U+252B)
+        "\u{2524}" => (Some(L), Some(L), None, Some(L)),
+        "\u{2525}" => (Some(H), Some(L), None, Some(L)),
+        "\u{2526}" => (Some(L), Some(H), None, Some(L)),
+        "\u{2527}" => (Some(L), Some(L), None, Some(H)),
+        "\u{2528}" => (Some(L), Some(H), None, Some(H)),
+        "\u{2529}" => (Some(H), Some(H), None, Some(L)),
+        "\u{252a}" => (Some(H), Some(L), None, Some(H)),
+        "\u{252b}" => (Some(H), Some(H), None, Some(H)),
+        // Top T-junctions (U+252C..=U+2533)
+        "\u{252c}" => (Some(L), None, Some(L), Some(L)),
+        "\u{252d}" => (Some(H), None, Some(L), Some(L)),
+        "\u{252e}" => (Some(L), None, Some(H), Some(L)),
+        "\u{252f}" => (Some(H), None, Some(H), Some(L)),
+        "\u{2530}" => (Some(L), None, Some(L), Some(H)),
+        "\u{2531}" => (Some(H), None, Some(L), Some(H)),
+        "\u{2532}" => (Some(L), None, Some(H), Some(H)),
+        "\u{2533}" => (Some(H), None, Some(H), Some(H)),
+        // Bottom T-junctions (U+2534..=U+253B)
+        "\u{2534}" => (Some(L), Some(L), Some(L), None),
+        "\u{2535}" => (Some(H), Some(L), Some(L), None),
+        "\u{2536}" => (Some(L), Some(L), Some(H), None),
+        "\u{2537}" => (Some(H), Some(L), Some(H), None),
+        "\u{2538}" => (Some(L), Some(H), Some(L), None),
+        "\u{2539}" => (Some(H), Some(H), Some(L), None),
+        "\u{253a}" => (Some(L), Some(H), Some(H), None),
+        "\u{253b}" => (Some(H), Some(H), Some(H), None),
+        // Crosses (U+253C..=U+254B)
+        "\u{253c}" => (Some(L), Some(L), Some(L), Some(L)),
+        "\u{253d}" => (Some(H), Some(L), Some(L), Some(L)),
+        "\u{253e}" => (Some(L), Some(L), Some(H), Some(L)),
+        "\u{253f}" => (Some(H), Some(L), Some(H), Some(L)),
+        "\u{2540}" => (Some(L), Some(H), Some(L), Some(L)),
+        "\u{2541}" => (Some(L), Some(L), Some(L), Some(H)),
+        "\u{2542}" => (Some(L), Some(H), Some(L), Some(H)),
+        "\u{2543}" => (Some(H), Some(H), Some(L), Some(L)),
+        "\u{2544}" => (Some(L), Some(H), Some(H), Some(L)),
+        "\u{2545}" => (Some(H), Some(L), Some(L), Some(H)),
+        "\u{2546}" => (Some(L), Some(L), Some(H), Some(H)),
+        "\u{2547}" => (Some(H), Some(H), Some(H), Some(L)),
+        "\u{2548}" => (Some(H), Some(L), Some(H), Some(H)),
+        "\u{2549}" => (Some(H), Some(H), Some(L), Some(H)),
+        "\u{254a}" => (Some(L), Some(H), Some(H), Some(H)),
+        "\u{254b}" => (Some(H), Some(H), Some(H), Some(H)),
+        // Half-lines and mixed-weight lines (U+2574..=U+257F)
+        "\u{2574}" => (Some(L), None, None, None),
+        "\u{2575}" => (None, Some(L), None, None),
+        "\u{2576}" => (None, None, Some(L), None),
+        "\u{2577}" => (None, None, None, Some(L)),
+        "\u{2578}" => (Some(H), None, None, None),
+        "\u{2579}" => (None, Some(H), None, None),
+        "\u{257a}" => (None, None, Some(H), None),
+        "\u{257b}" => (None, None, None, Some(H)),
+        "\u{257c}" => (Some(L), None, Some(H), None),
+        "\u{257d}" => (None, Some(L), None, Some(H)),
+        "\u{257e}" => (Some(H), None, Some(L), None),
+        "\u{257f}" => (None, Some(H), None, Some(L)),
+        _ => return None,
+    };
+    Some(BoxJunction {
+        column,
+        left,
+        up,
+        right,
+        down,
     })
 }
 
@@ -567,6 +697,9 @@ pub(crate) fn draw_terminal_shapes(
     }
     for painted in &row.corners {
         draw_corner(scene, root, *painted, style, grid, origin_x, origin_y);
+    }
+    for painted in &row.junctions {
+        draw_junction(scene, root, *painted, style, grid, origin_x, origin_y);
     }
     for painted in &row.block_elements {
         draw_block_element(scene, root, *painted, style, grid, origin_x, origin_y);
@@ -715,6 +848,160 @@ fn draw_corner(
     let (horizontal, vertical) = square_corner_rects(corner.direction, horizontal, vertical);
     fill(scene, root, painted.color, &horizontal);
     fill(scene, root, painted.color, &vertical);
+}
+
+fn draw_junction(
+    scene: &mut Scene,
+    root: Affine,
+    painted: PaintedJunction,
+    style: TerminalStyle,
+    grid: DeviceGrid,
+    origin_x: f64,
+    origin_y: f64,
+) {
+    use HorizontalRuleWeight::{Heavy, Light};
+    let junction = painted.junction;
+    let center_vertical_weight = if junction.up == Some(Heavy) || junction.down == Some(Heavy) {
+        Heavy
+    } else {
+        Light
+    };
+    let center_horizontal_weight = if junction.left == Some(Heavy) || junction.right == Some(Heavy)
+    {
+        Heavy
+    } else {
+        Light
+    };
+    let center_vertical = vertical_rule_rect(
+        VerticalRule {
+            column: junction.column,
+            weight: center_vertical_weight,
+        },
+        style,
+        grid,
+        origin_x,
+        origin_y,
+    );
+    let center_horizontal = horizontal_rule_rect(
+        HorizontalRule {
+            first_column: junction.column,
+            columns: 1,
+            weight: center_horizontal_weight,
+        },
+        style,
+        grid,
+        origin_x,
+        origin_y,
+    );
+
+    if junction.left == junction.right {
+        if let Some(weight) = junction.left {
+            let full = horizontal_rule_rect(
+                HorizontalRule {
+                    first_column: junction.column,
+                    columns: 1,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(scene, root, painted.color, &full);
+        }
+    } else {
+        if let Some(weight) = junction.left {
+            let arm = horizontal_rule_rect(
+                HorizontalRule {
+                    first_column: junction.column,
+                    columns: 1,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(
+                scene,
+                root,
+                painted.color,
+                &Rect::new(arm.x0, arm.y0, center_vertical.x1, arm.y1),
+            );
+        }
+        if let Some(weight) = junction.right {
+            let arm = horizontal_rule_rect(
+                HorizontalRule {
+                    first_column: junction.column,
+                    columns: 1,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(
+                scene,
+                root,
+                painted.color,
+                &Rect::new(center_vertical.x0, arm.y0, arm.x1, arm.y1),
+            );
+        }
+    }
+
+    if junction.up == junction.down {
+        if let Some(weight) = junction.up {
+            let full = vertical_rule_rect(
+                VerticalRule {
+                    column: junction.column,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(scene, root, painted.color, &full);
+        }
+    } else {
+        if let Some(weight) = junction.up {
+            let arm = vertical_rule_rect(
+                VerticalRule {
+                    column: junction.column,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(
+                scene,
+                root,
+                painted.color,
+                &Rect::new(arm.x0, arm.y0, arm.x1, center_horizontal.y1),
+            );
+        }
+        if let Some(weight) = junction.down {
+            let arm = vertical_rule_rect(
+                VerticalRule {
+                    column: junction.column,
+                    weight,
+                },
+                style,
+                grid,
+                origin_x,
+                origin_y,
+            );
+            fill(
+                scene,
+                root,
+                painted.color,
+                &Rect::new(arm.x0, center_horizontal.y0, arm.x1, arm.y1),
+            );
+        }
+    }
 }
 
 fn square_corner_rects(
@@ -879,11 +1166,27 @@ fn layout_run(
     builder.push_default(StyleProperty::FontFeatures(FontFeatures::List(
         Cow::Borrowed(&GRID_FEATURES),
     )));
-    let weight = match resolved.face {
-        TerminalFace::Regular | TerminalFace::Italic => 400.0,
-        TerminalFace::Bold | TerminalFace::BoldItalic => 700.0,
+    // Keep `FontWeight` at 400 / 700 so static fallback faces (`Consolas`,
+    // `Menlo`, `Segoe UI Symbol`) match their Regular or Bold face without
+    // triggering fontique's `embolden` faux-bold stroke on Regular, while
+    // driving variable faces (`JetBrains Mono`, `Source Code Pro`,
+    // `Cascadia Mono`) above 400 to compensate for vello's un-gamma-corrected,
+    // un-stem-darkened area anti-aliasing. At 13–14px (100% zoom), 435 keeps
+    // auto-hinted horizontal bars (`5`, `u`, `r`) to a single pixel row; larger
+    // sizes ramp up to 500 where counters have room for two-pixel stems.
+    let regular_axis_weight =
+        (435.0 + ((style.metrics.size - 14.0) / 2.8).clamp(0.0, 1.0) * 65.0).round();
+    let (style_weight, axis_weight) = match resolved.face {
+        TerminalFace::Regular | TerminalFace::Italic => (400.0, regular_axis_weight),
+        TerminalFace::Bold | TerminalFace::BoldItalic => (700.0, 700.0),
     };
-    push_axes(&mut builder, style.metrics.size, weight);
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(style_weight)));
+    builder.push_default(StyleProperty::FontVariations(FontVariations::List(
+        Cow::Owned(vec![
+            FontVariation::new(Tag::new(b"opsz"), style.metrics.size),
+            FontVariation::new(Tag::new(b"wght"), axis_weight),
+        ]),
+    )));
     if matches!(
         resolved.face,
         TerminalFace::Italic | TerminalFace::BoldItalic
@@ -1157,6 +1460,41 @@ mod tests {
         assert_eq!(
             runs[0].vertical_rules[0].weight,
             HorizontalRuleWeight::Heavy
+        );
+    }
+
+    #[test]
+    fn junctions_crosses_and_half_lines_leave_the_font_path() {
+        let mut engine = TextEngine::new();
+        let terminal = style(&mut engine);
+        let glyphs: Vec<String> = ('\u{251c}'..='\u{254b}')
+            .chain('\u{2574}'..='\u{257f}')
+            .map(|c| c.to_string())
+            .collect();
+        let cells = glyphs
+            .iter()
+            .enumerate()
+            .map(|(column, text)| TerminalCell {
+                column: ColumnIndex(column as u16),
+                text: text.clone(),
+                width: CellWidth::One,
+                style: CellStyle::default(),
+            })
+            .collect::<Vec<_>>();
+        let count = cells.len();
+        let runs = group_runs(&cells, terminal, count as u16);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, " ".repeat(count));
+        assert_eq!(runs[0].junctions.len(), count);
+        assert_eq!(
+            runs[0].junctions[0],
+            BoxJunction {
+                column: 0,
+                left: None,
+                up: Some(HorizontalRuleWeight::Light),
+                right: Some(HorizontalRuleWeight::Light),
+                down: Some(HorizontalRuleWeight::Light),
+            }
         );
     }
 
@@ -1478,6 +1816,13 @@ mod tests {
                     if let PositionedLayoutItem::GlyphRun(run) = item {
                         assert!(!run.run().synthesis().embolden());
                         assert!(run.run().synthesis().skew().is_none());
+                        assert!(
+                            run.run()
+                                .normalized_coords()
+                                .iter()
+                                .any(|&coord| coord != 0),
+                            "variable terminal face must drive wght axis above default 400"
+                        );
                     }
                 }
             }
@@ -1527,11 +1872,37 @@ mod tests {
         for line in layout.lines() {
             for item in line.items() {
                 if let PositionedLayoutItem::GlyphRun(run) = item {
+                    assert!(
+                        !run.run().synthesis().embolden(),
+                        "static fallback glyphs must not faux-embolden in regular terminal runs"
+                    );
                     glyph_ids.extend(run.positioned_glyphs().map(|glyph| glyph.id));
                 }
             }
         }
         assert_eq!(glyph_ids.len(), 1);
         assert_ne!(glyph_ids[0], 0, "U+23F5 must not render as tofu");
+    }
+
+    #[test]
+    fn isolated_symbols_are_optically_centered_in_their_cell_slot() {
+        let mut engine = TextEngine::new();
+        let terminal = style(&mut engine);
+        let row = TerminalRow {
+            index: RowIndex(0),
+            cells: vec![TerminalCell {
+                column: ColumnIndex(0),
+                text: "↓".into(),
+                width: CellWidth::One,
+                style: CellStyle::default(),
+            }],
+            wrapped_to_next: false,
+        };
+        let cached = build_row(&mut engine, row, terminal, 80);
+        assert_eq!(cached.records.len(), 2);
+        assert!(matches!(
+            &cached.records[1],
+            PaintRecord::Text { text, .. } if text == "↓"
+        ));
     }
 }

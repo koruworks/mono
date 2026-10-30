@@ -157,7 +157,7 @@ fn encode_character(text: &str, modifiers: KeyModifiers) -> Result<Vec<u8>, Erro
         if chars.next().is_none() && value.is_ascii() {
             let byte = value as u8;
             let control = match byte {
-                b'@'..=b'_' => byte & 0x1f,
+                b' ' | b'@'..=b'_' => byte & 0x1f,
                 b'a'..=b'z' => (byte - b'a') + 1,
                 b'?' => 0x7f,
                 _ => return Ok(text.as_bytes().to_vec()),
@@ -274,6 +274,34 @@ mod tests {
             )
             .unwrap(),
             [0x03]
+        );
+        assert_eq!(
+            encode_key(
+                &KeyStroke {
+                    key: TerminalKey::End,
+                    modifiers: KeyModifiers {
+                        control: true,
+                        ..KeyModifiers::default()
+                    },
+                },
+                modes,
+            )
+            .unwrap(),
+            b"\x1b[1;5F"
+        );
+        assert_eq!(
+            encode_key(
+                &KeyStroke {
+                    key: TerminalKey::Character { text: " ".into() },
+                    modifiers: KeyModifiers {
+                        control: true,
+                        ..KeyModifiers::default()
+                    },
+                },
+                modes,
+            )
+            .unwrap(),
+            [0x00]
         );
         modes.bracketed_paste = true;
         assert_eq!(encode_paste("hello", modes), b"\x1b[200~hello\x1b[201~");

@@ -360,6 +360,10 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
             .iter()
             .all(|a| matches!(a, MenuAction::TerminalProfile(_)))
     );
+    assert!(
+        agents.iter().all(|a| a.label() != "Codex (Embedded)"),
+        "the Agents launch flyout offers the raw Codex CLI row only, not Codex (Embedded)"
+    );
     assert_eq!(submenu(MenuAction::NewAgent), Some(agents));
     assert_eq!(
         submenu(MenuAction::Documents),

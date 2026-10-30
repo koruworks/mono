@@ -905,7 +905,7 @@ fn bundled() -> &'static [(Blob<u8>, &'static str)] {
     BUNDLED.get_or_init(|| {
         let mut out = Vec::new();
         let mut load = |file: &'static str, family: &'static str| {
-            let Some(bytes) = read_asset(file) else {
+            let Some(mut bytes) = read_asset(file) else {
                 // Not fatal by design: the font stacks fall through to the OS,
                 // so text still renders, just not identically across platforms.
                 eprintln!(
@@ -914,6 +914,7 @@ fn bundled() -> &'static [(Blob<u8>, &'static str)] {
                 );
                 return;
             };
+            strip_unhinted_prep_stub(&mut bytes);
             let blob = Blob::new(Arc::new(bytes) as Arc<dyn AsRef<[u8]> + Send + Sync>);
             out.push((blob, family));
         };
@@ -1448,6 +1449,71 @@ fn read_asset(file: &str) -> Option<Vec<u8>> {
         .find_map(|root| std::fs::read(root.join(FONTS_DIR).join(file)).ok())
 }
 
+/// Clear `fontmake`'s 7-byte boilerplate `prep` table entry when a TrueType
+/// font carries no glyph instructions (`maxp.maxSizeOfInstructions == 0`) and
+/// no `fpgm` table.
+///
+/// `skrifa`'s [`Engine::AutoFallback`](skrifa::outline::Engine::AutoFallback)
+/// chooses the TrueType bytecode interpreter over its built-in FreeType
+/// auto-hinter whenever `!(max_instructions == 0 && fpgm.is_empty() &&
+/// prep.is_empty())`. Unhinted Google Fonts variable TTFs (`JetBrainsMono.ttf`,
+/// `Inter.ttf`, `SourceCodePro.ttf`, …) have `max_instructions == 0` and no
+/// `fpgm`, yet `fontmake` writes a 7-byte `SCANCTRL`/`SCANTYPE` stub into
+/// `prep` (`b8 01 ff 85 b0 04 8d`). Leaving that stub visible makes `.hint(true)`
+/// run the bytecode interpreter on zero-instruction glyphs — a complete no-op —
+/// instead of grid-fitting horizontal stems through the auto-hinter.
+fn strip_unhinted_prep_stub(bytes: &mut [u8]) {
+    if bytes.len() < 12 {
+        return;
+    }
+    let num_tables = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+    let Some(dir_end) = 12usize.checked_add(num_tables.saturating_mul(16)) else {
+        return;
+    };
+    if bytes.len() < dir_end {
+        return;
+    }
+    let mut fpgm_len = 0u32;
+    let mut max_instructions = None;
+    let mut prep_record = None;
+    for i in 0..num_tables {
+        let rec = 12 + i * 16;
+        let tag = &bytes[rec..rec + 4];
+        let offset = u32::from_be_bytes([
+            bytes[rec + 8],
+            bytes[rec + 9],
+            bytes[rec + 10],
+            bytes[rec + 11],
+        ]) as usize;
+        let length = u32::from_be_bytes([
+            bytes[rec + 12],
+            bytes[rec + 13],
+            bytes[rec + 14],
+            bytes[rec + 15],
+        ]);
+        match tag {
+            b"fpgm" => fpgm_len = length,
+            b"prep" => prep_record = Some(rec),
+            b"maxp" => {
+                if length >= 28
+                    && let Some(end) = offset.checked_add(28)
+                    && end <= bytes.len()
+                {
+                    max_instructions =
+                        Some(u16::from_be_bytes([bytes[offset + 26], bytes[offset + 27]]));
+                }
+            }
+            _ => {}
+        }
+    }
+    if fpgm_len == 0
+        && max_instructions == Some(0)
+        && let Some(rec) = prep_record
+    {
+        bytes[rec + 12..rec + 16].copy_from_slice(&0u32.to_be_bytes());
+    }
+}
+
 #[cfg(test)]
 mod asset_tests {
     use super::*;
@@ -1544,5 +1610,34 @@ mod asset_tests {
         // The count `koru-release`'s half is pinned against. Changing it here
         // without changing it there is what this pair exists to make loud.
         assert_eq!(files.len(), 30, "the packaged set is thirty faces");
+    }
+
+    #[test]
+    fn unhinted_bundled_faces_use_the_autohinter_while_instructed_faces_keep_the_interpreter() {
+        use skrifa::MetadataProvider;
+        let faces = bundled();
+        if faces.is_empty() {
+            return;
+        }
+        let prefers_interpreter = |family: &str| {
+            let (blob, _) = faces
+                .iter()
+                .find(|(_, name)| *name == family)
+                .expect("bundled family");
+            let font = skrifa::FontRef::from_index(blob.as_ref(), 0).expect("valid font");
+            font.outline_glyphs().prefer_interpreter()
+        };
+        assert!(
+            !prefers_interpreter("JetBrains Mono"),
+            "JetBrains Mono has no glyph instructions and must use skrifa's auto-hinter"
+        );
+        assert!(
+            !prefers_interpreter("Inter"),
+            "Inter has no glyph instructions and must use skrifa's auto-hinter"
+        );
+        assert!(
+            prefers_interpreter("IBM Plex Sans"),
+            "IBM Plex Sans carries real TrueType bytecode and must keep the interpreter"
+        );
     }
 }
