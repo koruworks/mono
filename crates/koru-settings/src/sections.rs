@@ -584,6 +584,14 @@ impl TerminalPatch {
         // proportional face in a grid renderer is a broken window, not a
         // preference, so it is rejected at the door instead of silently
         // becoming the default and leaving somebody wondering.
+        // An installed family is the per-agent picker's, not this section's:
+        // the Settings page offers the bundled monospaced faces.
+        if let Some(FontSetting::Installed(_)) = &self.font {
+            return Err(Invalid::new(
+                "font",
+                "the terminal section takes a bundled monospaced font",
+            ));
+        }
         if let Some(FontSetting::Chosen(family)) = self.font
             && !family.is_mono()
         {

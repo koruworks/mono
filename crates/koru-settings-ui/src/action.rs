@@ -64,7 +64,7 @@ impl FontRole {
     }
 
     /// The theme global this role sets.
-    pub(crate) fn slot(self) -> koru_draw::theme::FontSlot {
+    pub fn slot(self) -> koru_draw::theme::FontSlot {
         use koru_draw::theme::FontSlot;
         match self {
             Self::App => FontSlot::Ui,
@@ -100,6 +100,11 @@ pub(crate) enum Action {
     Font(FontRole, FontChoice),
     /// A document body size, in px, from `DocTextSize::ALL`.
     DocTextSize(u8),
+    /// A font role set to exactly this — the row for an installed family
+    /// that is not installed here keeps it.
+    FontSetting(FontRole, koru_settings::FontSetting),
+    /// *More fonts…*: the picker over every installed family, for a role.
+    MoreFonts(FontRole),
     VoiceLanguage(DictationLanguage),
     VoiceInput(DictationInput),
     VoiceTier(DictationTier),
@@ -151,6 +156,9 @@ pub(crate) enum Action {
 /// and performs them in its own vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
+    /// *More fonts…* on a font list: the container opens the installed-font
+    /// picker for this role (it owns the window the picker stands over).
+    MoreFonts(FontRole),
     /// *Apply to all documents*. Only the container can reach every open tab.
     ApplyLayoutToAllDocuments,
     /// The canvas swatch was pressed; the host cycles it and hands the new

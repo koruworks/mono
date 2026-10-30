@@ -224,16 +224,16 @@ impl OpenDropdown {
 }
 
 /// The slot and value a list row previews, when it previews anything.
-fn previewed_by(action: &Action) -> Option<(PreviewSlot, u8)> {
+fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
     match action {
         Action::Font(role, family) => Some((
             PreviewSlot::Font(role.slot()),
             theme::font_preview_value(*family),
         )),
-        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, *px)),
+        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u16::from(*px))),
         Action::IconPack(choice) => Some((
             PreviewSlot::IconPack,
-            icons::IconPack::parse(choice.token()) as u8,
+            icons::IconPack::parse(choice.token()) as u16,
         )),
         _ => None,
     }
@@ -948,7 +948,7 @@ impl SettingsSurface {
     }
 
     /// Every slot a list can preview, as it reads now.
-    fn previews_shown() -> [Option<u8>; 6] {
+    fn previews_shown() -> [Option<u16>; 6] {
         use theme::FontSlot;
         [
             PreviewSlot::Font(FontSlot::Ui),
@@ -1795,6 +1795,8 @@ impl SettingsSurface {
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
             Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
+            Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
+            Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
             Action::VoiceLanguage(language) => {
                 self.voice_language = language.clone();
                 self.requests.push(Request::SetVoiceLanguage(language));
@@ -2014,6 +2016,8 @@ fn clone_action(action: &Action) -> Action {
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
         Action::DocTextSize(px) => Action::DocTextSize(*px),
+        Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
+        Action::MoreFonts(role) => Action::MoreFonts(*role),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),
         Action::VoiceInput(v) => Action::VoiceInput(v.clone()),
         Action::VoiceTier(v) => Action::VoiceTier(*v),

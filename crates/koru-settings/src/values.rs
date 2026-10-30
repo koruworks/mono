@@ -401,6 +401,76 @@ impl FontFamily {
     }
 }
 
+/// The longest family name Koru stores or puts into a font stack.
+const MAX_FAMILY_NAME: usize = 64;
+
+/// Whether `name` is safe to store in the settings file and to splice into a
+/// font stack: no separator of either (`,` `;` `|` `=`), no quote, no
+/// backslash, no `@` (Windows' vertical-text aliases) and no control
+/// character, and at most 64 characters.
+///
+/// **The one rule.** The terminal's per-agent font, the app's font roles and
+/// the drawing layer's installed-family scan all ask this function; there is
+/// no second copy to drift (DOCFONTSIZE Q-H, 2026-10-30).
+pub fn is_storable_family_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && name.chars().count() <= MAX_FAMILY_NAME
+        && !name.chars().any(|c| {
+            c.is_control() || matches!(c, ',' | ';' | '|' | '=' | '"' | '\'' | '`' | '\\' | '@')
+        })
+}
+
+/// An installed font family, by the name the operating system gives it.
+///
+/// Valid by construction ([`is_storable_family_name`]), on the wire too: a
+/// name with a separator or a quote fails to deserialize rather than reaching
+/// a stack.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FamilyName(String);
+
+impl FamilyName {
+    pub fn new(name: &str) -> Option<Self> {
+        is_storable_family_name(name).then(|| Self(name.trim().to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for FamilyName {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::new(&name).ok_or_else(|| {
+            "a family name is 1 to 64 characters with no separator, quote or control character"
+                .to_owned()
+        })
+    }
+}
+
+impl From<FamilyName> for String {
+    fn from(name: FamilyName) -> Self {
+        name.0
+    }
+}
+
+impl schemars::JsonSchema for FamilyName {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("FamilyName")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_FAMILY_NAME,
+        })
+    }
+}
+
 /// What a font role is set to.
 ///
 /// **"Follow the app default" is a state, not a value.** The alternative —
@@ -411,9 +481,7 @@ impl FontFamily {
 /// default. That last part is a deliberate change from the pre-SP-6 writer,
 /// which omitted a key whose value matched the default and so could not tell
 /// a choice from a habit either.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FontSetting {
     /// Use whatever this build's default for the role is, now and later.
@@ -421,14 +489,45 @@ pub enum FontSetting {
     FollowDefault,
     /// Use this family, whatever the build's default becomes.
     Chosen(FontFamily),
+    /// Use this installed family, by name. On a computer without it the role
+    /// draws its default and the choice is kept for one that has it.
+    Installed(FamilyName),
 }
 
 impl FontSetting {
-    /// The family, or `None` when the role follows the app.
-    pub fn family(self) -> Option<FontFamily> {
+    /// The bundled family, or `None` when the role follows the app or names
+    /// an installed family.
+    pub fn family(&self) -> Option<FontFamily> {
+        match self {
+            Self::Chosen(family) => Some(*family),
+            Self::FollowDefault | Self::Installed(_) => None,
+        }
+    }
+
+    /// The installed family this names, if it names one.
+    pub fn installed(&self) -> Option<&FamilyName> {
+        match self {
+            Self::Installed(name) => Some(name),
+            Self::FollowDefault | Self::Chosen(_) => None,
+        }
+    }
+
+    /// Read a font role's `preferences.conf` value: `family:<name>` names an
+    /// installed family, anything else a bundled one. A name that is not
+    /// storable follows the default.
+    pub fn parse_file_value(value: &str) -> Self {
+        match value.strip_prefix("family:") {
+            Some(name) => FamilyName::new(name).map_or(Self::FollowDefault, Self::Installed),
+            None => Self::Chosen(FontFamily::parse(value)),
+        }
+    }
+
+    /// The `preferences.conf` value, or `None` while the role follows the app.
+    pub fn file_value(&self) -> Option<String> {
         match self {
             Self::FollowDefault => None,
-            Self::Chosen(family) => Some(family),
+            Self::Chosen(family) => Some(family.token().to_owned()),
+            Self::Installed(name) => Some(format!("family:{}", name.as_str())),
         }
     }
 }

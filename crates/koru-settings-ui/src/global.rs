@@ -229,19 +229,40 @@ fn doc_size_row(b: &mut Builder<'_>, lang: Lang) {
 
 fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
     let current = role.current();
-    b.row_dropdown(
-        role.row_label(lang),
-        hint,
-        theme::FontChoice::ALL
-            .iter()
-            .map(|family| {
-                (
-                    Action::Font(role, *family),
-                    DropdownOption::new(family.label(), *family == current).in_face(family.stack()),
-                )
-            })
-            .collect(),
-    );
+    // An installed family set for this role but not installed here: the
+    // default draws, and the row says why rather than ticking the default.
+    let missing = theme::missing_font(role.slot());
+    let mut options: Vec<(Action, DropdownOption)> = theme::FontChoice::ALL
+        .iter()
+        .map(|family| {
+            (
+                Action::Font(role, *family),
+                DropdownOption::new(family.label(), missing.is_none() && *family == current)
+                    .in_face(family.stack()),
+            )
+        })
+        .collect();
+    if let Some(name) = missing {
+        options.push((
+            Action::FontSetting(role, theme::font_setting(role.slot())),
+            DropdownOption::new(
+                koru_i18n::t(lang, Key::SettingsFontNotInstalled).replace("{}", &name),
+                true,
+            ),
+        ));
+    } else if let theme::FontChoice::Installed(_) = current {
+        // The installed family in force, listed after the bundled ones, ticked
+        // and drawn in its own face.
+        options.push((
+            Action::Font(role, current),
+            DropdownOption::new(current.label(), true).in_face(current.stack()),
+        ));
+    }
+    options.push((
+        Action::MoreFonts(role),
+        DropdownOption::new(koru_i18n::t(lang, Key::SettingsMoreFonts), false),
+    ));
+    b.row_dropdown(role.row_label(lang), hint, options);
 }
 
 // ----------------------------------------------------------------- Editor

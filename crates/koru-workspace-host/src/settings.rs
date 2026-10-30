@@ -20,14 +20,13 @@
 //! none of the new keys still opens. The worst case is one clean first run,
 //! never a failure to start.
 
+use koru_settings::FontSetting;
 use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
 use koru_core::{DocumentId, NodeId, WorkspaceId};
-use koru_draw::theme::{
-    CaretColor, CaretHeight, CaretWidth, Density, FontChoice, ThemePreference, ViewMode,
-};
+use koru_draw::theme::{CaretColor, CaretHeight, CaretWidth, Density, ThemePreference, ViewMode};
 use koru_session_protocol::{
     BuiltInProfileKey, ProjectId, SessionId, SessionProfileId, SessionProfileKey,
 };
@@ -867,15 +866,17 @@ pub struct Settings {
     pub caret_width: CaretWidth,
     /// Editor caret height (Short / Medium / Tall). Chrome only.
     pub caret_height: CaretHeight,
-    /// The typeface the **chrome** is set in — tabs, the tree, pills, panels,
-    /// the status bar. Not what a document row is set in; that is the row's own.
-    pub font: FontChoice,
+    /// What the **chrome**'s typeface is set to — tabs, the tree, pills,
+    /// panels, the status bar. A setting rather than a face: a role that
+    /// follows the default, or names an installed family missing on this
+    /// computer, saves as what it is and draws its default (`theme::resolve_font`).
+    pub font: FontSetting,
     /// The typeface a document's **prose** rows are set in.
-    pub body_font: FontChoice,
+    pub body_font: FontSetting,
     /// The typeface a document's **headings** (H1–H6) are set in.
-    pub headings_font: FontChoice,
+    pub headings_font: FontSetting,
     /// The typeface **code blocks and inline code** are set in.
-    pub code_font: FontChoice,
+    pub code_font: FontSetting,
     /// The document body size the person chose, in px, or `None` while it
     /// follows the default. Documents only; the app's own text has density.
     pub doc_text_size: Option<u8>,
@@ -1101,10 +1102,10 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) icon_pack: Option<koru_draw::icons::IconPack>,
     pub(crate) caret_width: CaretWidth,
     pub(crate) caret_height: CaretHeight,
-    pub(crate) font: FontChoice,
-    pub(crate) body_font: FontChoice,
-    pub(crate) headings_font: FontChoice,
-    pub(crate) code_font: FontChoice,
+    pub(crate) font: FontSetting,
+    pub(crate) body_font: FontSetting,
+    pub(crate) headings_font: FontSetting,
+    pub(crate) code_font: FontSetting,
     pub(crate) doc_text_size: Option<u8>,
     pub(crate) density: Density,
     pub(crate) dictation_toggle: bool,
@@ -1145,10 +1146,10 @@ impl PreIdentitySettings {
             icon_pack: self.values.icon_pack,
             caret_width: self.values.caret_width,
             caret_height: self.values.caret_height,
-            font: self.values.font,
-            body_font: self.values.body_font,
-            headings_font: self.values.headings_font,
-            code_font: self.values.code_font,
+            font: self.values.font.clone(),
+            body_font: self.values.body_font.clone(),
+            headings_font: self.values.headings_font.clone(),
+            code_font: self.values.code_font.clone(),
             doc_text_size: self.values.doc_text_size,
             density: self.values.density,
             dictation_toggle: self.values.dictation_toggle,
@@ -1321,10 +1322,10 @@ impl Default for Settings {
             // The theme owns the per-role defaults — these and the theme's
             // startup atomics are two homes of one answer, held together by
             // `theme::tests::defaults_and_indices_agree`.
-            font: koru_draw::theme::default_ui_font(),
-            body_font: koru_draw::theme::default_body_font(),
-            headings_font: koru_draw::theme::default_headings_font(),
-            code_font: koru_draw::theme::default_code_font(),
+            font: FontSetting::FollowDefault,
+            body_font: FontSetting::FollowDefault,
+            headings_font: FontSetting::FollowDefault,
+            code_font: FontSetting::FollowDefault,
             doc_text_size: None,
             density: Density::default(),
             dictation_toggle: false,
@@ -3359,7 +3360,7 @@ mod tests {
             pos: Some((10, 20)),
             size: (1200.0, 800.0),
             maximized: true,
-            font: FontChoice::IbmPlexSans,
+            font: FontSetting::Chosen(koru_settings::FontFamily::IbmPlexSans),
             zoom: 1.25,
             pinned: true,
             popout_close: PopoutClose::RestoreTab,

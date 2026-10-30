@@ -94,6 +94,8 @@ const SHELL: &str = "shell";
 const TAB: &str = "tab";
 /// One opening of one menu. See `ContextMenu::instance`.
 const MENU: &str = "menu";
+/// The installed-font picker, over the window (`font_picker`).
+pub(super) const FONT_PICKER: &str = "font-picker";
 
 /// The parts of the shell that are not tabs, rows or menu items.
 pub(crate) mod parts {

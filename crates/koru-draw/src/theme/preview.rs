@@ -22,8 +22,8 @@ use super::FontSlot;
 /// What a preview stands in for.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PreviewSlot {
-    /// A font role's face, as an index into
-    /// [`FontChoice::ALL`](super::FontChoice::ALL).
+    /// A font role's face, as [`font_preview_value`](super::font_preview_value)
+    /// encodes it.
     Font(FontSlot),
     /// The document body size, in px.
     DocTextSize,
@@ -43,11 +43,12 @@ impl PreviewSlot {
     }
 }
 
-/// `0` is "no preview"; otherwise `generation << 9 | 1 << 8 | value`.
+/// `0` is "no preview"; otherwise `generation << 17 | 1 << 16 | value`.
 static SLOTS: [AtomicU64; PreviewSlot::COUNT] = [const { AtomicU64::new(0) }; PreviewSlot::COUNT];
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
-const PRESENT: u64 = 1 << 8;
+const PRESENT: u64 = 1 << 16;
+const VALUE: u64 = 0xffff;
 
 /// One menu's preview of one slot. Dropping it ends the preview, unless a
 /// newer one has taken the slot since.
@@ -59,16 +60,16 @@ pub struct Preview {
 
 impl Preview {
     /// Begin previewing `value` in `slot`, replacing whatever previewed it.
-    pub fn new(slot: PreviewSlot, value: u8) -> Self {
-        let token = (NEXT.fetch_add(1, Ordering::Relaxed) << 9) | PRESENT | u64::from(value);
+    pub fn new(slot: PreviewSlot, value: u16) -> Self {
+        let token = (NEXT.fetch_add(1, Ordering::Relaxed) << 17) | PRESENT | u64::from(value);
         SLOTS[slot.index()].store(token, Ordering::Relaxed);
         Self { slot, token }
     }
 
     /// Move this preview to `value`. Does nothing once a newer preview owns
     /// the slot.
-    pub fn set(&mut self, value: u8) {
-        let next = (self.token & !0xff) | u64::from(value);
+    pub fn set(&mut self, value: u16) {
+        let next = (self.token & !VALUE) | u64::from(value);
         if SLOTS[self.slot.index()]
             .compare_exchange(self.token, next, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
@@ -94,9 +95,9 @@ impl Drop for Preview {
 }
 
 /// The value previewed in `slot`, if anything previews it.
-pub fn previewed(slot: PreviewSlot) -> Option<u8> {
+pub fn previewed(slot: PreviewSlot) -> Option<u16> {
     let token = SLOTS[slot.index()].load(Ordering::Relaxed);
-    (token & PRESENT != 0).then_some((token & 0xff) as u8)
+    (token & PRESENT != 0).then_some((token & VALUE) as u16)
 }
 
 /// End any preview of `slot`: a choice replaces what was being shown.

@@ -85,3 +85,48 @@ fn a_preview_stands_in_for_the_chosen_size_and_saving_never_sees_it() {
     set_doc_text_size(None);
     assert_eq!(doc_text_size(), FONT_SIZE);
 }
+
+/// **A role keeps what it was set to, apart from what it draws.** An
+/// installed family missing here draws the default and keeps its name; a
+/// face chosen from a list records the matching setting; a preview of an
+/// installed family round-trips through the preview value.
+#[test]
+fn a_font_role_keeps_its_setting_apart_from_its_face() {
+    use koru_settings::{FamilyName, FontSetting};
+    let _serial = super::preview::SERIAL
+        .lock()
+        .unwrap_or_else(|held| held.into_inner());
+    let was = font_setting(FontSlot::Headings);
+    let missing = FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap());
+    set_font_setting(FontSlot::Headings, missing.clone());
+    assert_eq!(font_setting(FontSlot::Headings), missing);
+    assert_eq!(chosen_font(FontSlot::Headings), default_headings_font());
+    assert_eq!(
+        missing_font(FontSlot::Headings).as_deref(),
+        Some("No Such Face 9000")
+    );
+
+    set_headings_font(FontChoice::Lora);
+    assert_eq!(
+        font_setting(FontSlot::Headings),
+        FontSetting::Chosen(koru_settings::FontFamily::Lora)
+    );
+    assert_eq!(missing_font(FontSlot::Headings), None);
+
+    let installed = crate::installed_fonts::resolve("Inter").expect("bundled");
+    set_font_setting(
+        FontSlot::Headings,
+        FontSetting::Installed(FamilyName::new("Inter").unwrap()),
+    );
+    assert_eq!(
+        chosen_font(FontSlot::Headings),
+        FontChoice::Installed(installed)
+    );
+    assert_eq!(
+        font_of_value(font_preview_value(FontChoice::Installed(installed))),
+        Some(FontChoice::Installed(installed))
+    );
+    set_font_setting(FontSlot::Headings, FontSetting::FollowDefault);
+    assert_eq!(chosen_font(FontSlot::Headings), default_headings_font());
+    set_font_setting(FontSlot::Headings, was);
+}

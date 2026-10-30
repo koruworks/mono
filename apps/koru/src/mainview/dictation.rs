@@ -347,6 +347,9 @@ impl MainView {
             // drift. See Q-V62.
             EditableTarget::Field(FieldId::Search) => Some(self.search_bounds()),
             EditableTarget::Field(FieldId::MoveTo) => Some(self.move_to_bounds()),
+            EditableTarget::Field(FieldId::FontPicker) => {
+                self.font_picker.as_ref().map(|_| self.font_picker_bounds())
+            }
             EditableTarget::Field(FieldId::NewDocument) => self
                 .new_document
                 .as_ref()

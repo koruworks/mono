@@ -47,6 +47,10 @@ use super::{MainView, TabView};
 /// layers a caller above has already dealt with.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum Layer {
+    /// The installed-font picker. Above everything: it stands over a
+    /// terminal tab or the Settings page that opened it, and owns the keys
+    /// while it is up.
+    FontPicker,
     /// The centred *Move to…* picker. Claimed by the `View::key` wrapper.
     MoveTo,
     /// The global-search overlay. Claimed by the `View::key` wrapper.
@@ -87,7 +91,8 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
+        Self::FontPicker,
         Self::MoveTo,
         Self::Search,
         Self::Error,
@@ -113,6 +118,7 @@ impl Layer {
     /// be typed into.
     pub(crate) fn blocker(self) -> Blockers {
         match self {
+            Self::FontPicker => Blockers::Prompt(PromptKind::FontPicker),
             Self::MoveTo => Blockers::Prompt(PromptKind::MoveTo),
             Self::Search => Blockers::Prompt(PromptKind::Search),
             Self::Error => Blockers::Modal(ModalKind::Error),
@@ -182,6 +188,7 @@ impl MainView {
     /// these questions in an order of its own.
     fn layer_is_up(&self, layer: Layer) -> bool {
         match layer {
+            Layer::FontPicker => self.font_picker.is_some(),
             Layer::MoveTo => self.move_to.is_some(),
             Layer::Search => self.search.is_some(),
             Layer::Error => self.error.is_some(),
@@ -210,7 +217,7 @@ impl MainView {
     /// surfaces the `View::key` wrapper claims before the container's own chain
     /// ever runs.
     pub(crate) fn blockers(&self) -> Blockers {
-        self.blockers_from(Layer::MoveTo)
+        self.blockers_from(Layer::FontPicker)
     }
 
     /// …and the same order starting at `from`, for a caller that has already
@@ -440,6 +447,10 @@ impl MainView {
             // Routed through the surface in `deliver_to`, because committing
             // the query has result-set side effects beyond editing the field.
             FieldId::Search => None,
+            FieldId::FontPicker => Some(ComposeInto::Input(
+                self.font_picker.as_mut()?.surface.dictation_field(),
+                &mut self.engine,
+            )),
             FieldId::MoveTo => Some(ComposeInto::Input(
                 self.move_to.as_mut()?.dictation_field(),
                 &mut self.engine,

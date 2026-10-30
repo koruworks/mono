@@ -139,6 +139,8 @@ pub enum PromptKind {
     /// The delegation modal's objective — the one field in it, and the reason
     /// the surface is a prompt rather than a modal.
     Delegate,
+    /// The installed-font picker, which has a search field.
+    FontPicker,
 }
 
 /// The key-independent prefix of a view's input chain: what owns **everything**
@@ -205,6 +207,8 @@ pub enum FieldId {
     ReminderCreation,
     /// The delegation modal's objective.
     Delegate,
+    /// The installed-font picker's search field.
+    FontPicker,
 }
 
 impl From<PromptKind> for FieldId {
@@ -220,6 +224,7 @@ impl From<PromptKind> for FieldId {
             PromptKind::NewList => Self::NewList,
             PromptKind::ReminderCreation => Self::ReminderCreation,
             PromptKind::Delegate => Self::Delegate,
+            PromptKind::FontPicker => Self::FontPicker,
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use super::*;
 
-use koru_settings::{DensityChoice, TerminalCursorWidth};
+use koru_settings::{DensityChoice, FamilyName, FontFamily, TerminalCursorWidth};
 
 /// **What a window shows before it has heard anything.**
 ///
@@ -61,10 +61,11 @@ fn every_preference_round_trips_through_the_section() {
         caret_color: CaretColor::Violet,
         caret_width: CaretWidth::Thick,
         caret_height: CaretHeight::Tall,
-        font: FontChoice::Poppins,
-        body_font: FontChoice::SourceSerif4,
-        headings_font: FontChoice::Lora,
-        code_font: FontChoice::SourceCodePro,
+        font: FontSetting::Chosen(FontFamily::Poppins),
+        // An installed family round-trips by name, installed here or not.
+        body_font: FontSetting::Installed(FamilyName::new("EB Garamond").unwrap()),
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
+        code_font: FontSetting::Chosen(FontFamily::SourceCodePro),
         density: Density::Comfortable,
         zoom: 1.25,
         view_mode: ViewMode::Page,
@@ -129,7 +130,7 @@ fn a_role_that_follows_the_app_is_not_reported_as_a_choice() {
     assert!(patch(&section, &following).headings_font.is_none());
 
     let chose = Settings {
-        headings_font: FontChoice::Lora,
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
         ..Settings::default()
     };
     assert_eq!(
@@ -140,12 +141,16 @@ fn a_role_that_follows_the_app_is_not_reported_as_a_choice() {
     // And the other way: a role the authority says follows the app resolves to
     // *this build's* default, not to whatever was frozen into a file.
     let mut settings = Settings {
-        headings_font: FontChoice::Lora,
+        headings_font: FontSetting::Chosen(FontFamily::Lora),
         ..Settings::default()
     };
     adopt(&section, &mut settings);
+    assert_eq!(settings.headings_font, FontSetting::FollowDefault);
     assert_eq!(
-        settings.headings_font,
+        koru_draw::theme::resolve_font(
+            koru_draw::theme::FontSlot::Headings,
+            &settings.headings_font
+        ),
         koru_draw::theme::default_headings_font()
     );
 }
@@ -319,5 +324,41 @@ fn capture_preferences_reads_back_the_layout_globals() {
     assert!(
         source.contains("let was_canvas_bg = theme::default_canvas_bg()"),
         "same for the canvas swatch"
+    );
+}
+
+/// **The setting is compared as a setting** (D14). Choosing the bundled face
+/// a missing installed family already falls back to, or going back to the
+/// default from an explicit choice of the same face, changes nothing drawn and
+/// is still saved; nothing changed saves nothing.
+#[test]
+fn a_change_of_font_setting_is_saved_even_when_the_face_is_the_same() {
+    let garamond = FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap());
+    let section = GlobalSettings {
+        body_font: garamond.clone(),
+        ..GlobalSettings::default()
+    };
+    let unchanged = Settings {
+        body_font: garamond,
+        ..Settings::default()
+    };
+    assert_eq!(patch(&section, &unchanged).body_font, None);
+    let chose_inter = Settings {
+        body_font: FontSetting::Chosen(FontFamily::Inter),
+        ..Settings::default()
+    };
+    assert_eq!(
+        patch(&section, &chose_inter).body_font,
+        Some(FontSetting::Chosen(FontFamily::Inter))
+    );
+    let chose = GlobalSettings {
+        body_font: FontSetting::Chosen(FontFamily::Inter),
+        ..GlobalSettings::default()
+    };
+    let following = Settings::default();
+    assert_eq!(
+        patch(&chose, &following).body_font,
+        Some(FontSetting::FollowDefault),
+        "the picker's default row is a change too"
     );
 }

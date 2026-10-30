@@ -1100,3 +1100,84 @@ fn a_wide_window_keeps_the_page_beside_the_nav() {
     assert!(surface.search_rect().x >= nav.x);
     assert!(surface.nav_rect().x >= nav.x);
 }
+
+/// **The Size row previews and keeps a document size** the way the font
+/// lists do: the lit size shows on every document, the choice does not move
+/// until a click, and Escape puts it back.
+#[test]
+fn the_size_row_previews_the_lit_size_and_only_a_choice_keeps_it() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    theme::set_doc_text_size(None);
+    let mut surface = koru();
+    let twenty = "20 px";
+    assert!(goto(&mut surface, twenty));
+    let Some(Found::Option { dropdown, item }) = find(&surface, twenty) else {
+        panic!("20 px is an option of a list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let at = |surface: &SettingsSurface| {
+        surface
+            .open
+            .as_ref()
+            .expect("the list is open")
+            .menu
+            .item_rect(surface.viewport, item)
+            .centre()
+    };
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert_eq!(theme::doc_text_size(), 20.0, "documents show the lit size");
+    assert_eq!(theme::chosen_doc_text_size(), None);
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(theme::doc_text_size(), 16.0);
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = at(&surface);
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(theme::chosen_doc_text_size(), Some(20));
+    theme::set_doc_text_size(None);
+}
+
+/// *More fonts…* ends a font list and asks the host for the picker; a role
+/// set to an installed family missing here lists it, ticked, as not
+/// installed rather than ticking the default it draws.
+#[test]
+fn more_fonts_asks_the_host_and_a_missing_family_is_named() {
+    use koru_settings::{FamilyName, FontSetting};
+    use theme::FontSlot;
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::font_setting(FontSlot::Ui);
+    theme::set_font_setting(
+        FontSlot::Ui,
+        FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap()),
+    );
+    let mut surface = koru();
+    let missing = "No Such Face 9000 (not installed)";
+    assert!(goto(&mut surface, missing));
+    assert!(is_active(&surface, missing), "the missing family is ticked");
+    let more = koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::SettingsMoreFonts);
+    let Some(Found::Option { dropdown, item }) = find(&surface, more) else {
+        panic!("More fonts… ends the list");
+    };
+    let field = surface.laid.dropdowns[dropdown].field;
+    assert!(press_rect(&mut surface, field));
+    let (x, y) = surface
+        .open
+        .as_ref()
+        .expect("the list is open")
+        .menu
+        .item_rect(surface.viewport, item)
+        .centre();
+    surface.mouse_move(x, y);
+    assert!(surface.mouse_down(x, y));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::MoreFonts(crate::FontRole::App)]
+    );
+    theme::set_font_setting(FontSlot::Ui, was);
+}

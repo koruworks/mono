@@ -118,11 +118,11 @@ pub struct IconPreview(Preview);
 
 impl IconPreview {
     pub fn new(pack: IconPack) -> Self {
-        Self(Preview::new(PreviewSlot::IconPack, pack as u8))
+        Self(Preview::new(PreviewSlot::IconPack, pack as u16))
     }
 
     pub fn set(&mut self, pack: IconPack) {
-        self.0.set(pack as u8);
+        self.0.set(pack as u16);
     }
 }
 

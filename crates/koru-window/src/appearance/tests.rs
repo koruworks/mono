@@ -3,7 +3,7 @@
 use super::*;
 
 use koru_settings::{
-    CaretColorChoice, CaretWidthChoice, DensityChoice, FontFamily, ThemeChoice, Zoom,
+    CaretColorChoice, CaretWidthChoice, DensityChoice, FontFamily, FontSetting, ThemeChoice, Zoom,
 };
 
 /// **What an independent window shows before it has heard anything.** These are

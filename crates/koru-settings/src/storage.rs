@@ -160,10 +160,10 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             "caret_color" => into.caret_color = CaretColorChoice::parse(value),
             "caret_width" => into.caret_width = CaretWidthChoice::parse(value),
             "caret_height" => into.caret_height = CaretHeightChoice::parse(value),
-            "font" => into.ui_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "body_font" => into.body_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "headings_font" => into.headings_font = FontSetting::Chosen(FontFamily::parse(value)),
-            "code_font" => into.code_font = FontSetting::Chosen(FontFamily::parse(value)),
+            "font" => into.ui_font = FontSetting::parse_file_value(value),
+            "body_font" => into.body_font = FontSetting::parse_file_value(value),
+            "headings_font" => into.headings_font = FontSetting::parse_file_value(value),
+            "code_font" => into.code_font = FontSetting::parse_file_value(value),
             "density" => into.density = DensityChoice::parse(value),
             "dictation_toggle" => into.dictation_gesture = DictationGesture::parse(value),
             "dictation_language" => into.dictation_language = DictationLanguage::parse(value),
@@ -216,13 +216,13 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     line("caret_width", settings.caret_width.token());
     line("caret_height", settings.caret_height.token());
     for (key, setting) in [
-        ("font", settings.ui_font),
-        ("body_font", settings.body_font),
-        ("headings_font", settings.headings_font),
-        ("code_font", settings.code_font),
+        ("font", &settings.ui_font),
+        ("body_font", &settings.body_font),
+        ("headings_font", &settings.headings_font),
+        ("code_font", &settings.code_font),
     ] {
-        if let Some(family) = setting.family() {
-            line(key, family.token());
+        if let Some(value) = setting.file_value() {
+            line(key, &value);
         }
     }
     if let Some(size) = settings.document_text_size.chosen() {

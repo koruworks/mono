@@ -4437,6 +4437,11 @@
           }
         ]
       },
+      "FamilyName": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
       "FamilyResponse": {
         "description": "`GET /v1/artifacts/families/{family}`: the family and its versions by\nordinal.",
         "properties": {
@@ -4855,6 +4860,19 @@
             },
             "required": [
               "chosen"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Use this installed family, by name. On a computer without it the role\ndraws its default and the choice is kept for one that has it.",
+            "properties": {
+              "installed": {
+                "$ref": "#/components/schemas/FamilyName"
+              }
+            },
+            "required": [
+              "installed"
             ],
             "type": "object"
           }

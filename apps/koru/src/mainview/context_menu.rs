@@ -965,7 +965,12 @@ impl MenuAction {
             MenuAction::ListSwatch(token) => return Cow::Owned(color_label(token)),
             MenuAction::TerminalTheme => return Cow::Borrowed("Terminal theme"),
             MenuAction::TerminalFont => return Cow::Borrowed("Terminal font"),
-            MenuAction::TerminalFontMore => return Cow::Borrowed("More fonts\u{2026}"),
+            MenuAction::TerminalFontMore => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::SettingsMoreFonts,
+                ));
+            }
             MenuAction::TerminalThemeIs(token) => {
                 let name = match token {
                     None => "Default (Settings)",

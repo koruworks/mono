@@ -305,10 +305,10 @@ fn apply_settings(settings: &Settings) {
     theme::set_caret_color(settings.caret_color);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
-    theme::set_ui_font(settings.font);
-    theme::set_body_font(settings.body_font);
-    theme::set_headings_font(settings.headings_font);
-    theme::set_code_font(settings.code_font);
+    theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
+    theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
+    theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
+    theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
@@ -334,10 +334,10 @@ fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     theme::set_caret_color(settings.caret_color);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
-    theme::set_ui_font(settings.font);
-    theme::set_body_font(settings.body_font);
-    theme::set_headings_font(settings.headings_font);
-    theme::set_code_font(settings.code_font);
+    theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
+    theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
+    theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
+    theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
@@ -13406,10 +13406,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.caret_width = theme::caret_width();
         self.runtime.settings.caret_height = theme::caret_height();
         // The fonts chosen, not one Settings is previewing.
-        self.runtime.settings.font = theme::chosen_font(theme::FontSlot::Ui);
-        self.runtime.settings.body_font = theme::chosen_font(theme::FontSlot::Body);
-        self.runtime.settings.headings_font = theme::chosen_font(theme::FontSlot::Headings);
-        self.runtime.settings.code_font = theme::chosen_font(theme::FontSlot::Code);
+        // What each role is set to — never read back from the face, which
+        // cannot tell following the default from choosing its family, nor
+        // keep the name of an installed family missing here.
+        self.runtime.settings.font = theme::font_setting(theme::FontSlot::Ui);
+        self.runtime.settings.body_font = theme::font_setting(theme::FontSlot::Body);
+        self.runtime.settings.headings_font = theme::font_setting(theme::FontSlot::Headings);
+        self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
         // The size chosen, not one Settings is previewing; `None` follows.
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.density = theme::density();
@@ -20275,14 +20278,14 @@ fn reveal_due(
 /// means a save, even when nothing drawn changed — choosing the font a list is
 /// already previewing changes the choice and not one pixel. These used to be
 /// separate before-and-after copies on every event path.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 struct AppearanceShown {
     faces: [theme::FontChoice; 4],
     doc_text_size: f32,
     density: theme::Density,
     icon_paint: koru_draw::icons::IconPack,
     choices: (
-        [theme::FontChoice; 4],
+        [koru_settings::FontSetting; 4],
         Option<u8>,
         Option<koru_draw::icons::IconPack>,
     ),
@@ -20303,10 +20306,10 @@ impl AppearanceShown {
             icon_paint: koru_draw::icons::rendered_pack(),
             choices: (
                 [
-                    theme::chosen_font(FontSlot::Ui),
-                    theme::chosen_font(FontSlot::Body),
-                    theme::chosen_font(FontSlot::Headings),
-                    theme::chosen_font(FontSlot::Code),
+                    theme::font_setting(FontSlot::Ui),
+                    theme::font_setting(FontSlot::Body),
+                    theme::font_setting(FontSlot::Headings),
+                    theme::font_setting(FontSlot::Code),
                 ],
                 theme::chosen_doc_text_size(),
                 koru_draw::icons::chosen_pack(),

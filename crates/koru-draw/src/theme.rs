@@ -10,7 +10,8 @@
 //! Switching mode has to invalidate every task layout, because
 //! `layout::build_task` bakes brushes into the parley layout.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 
 use parley::BoundingBox;
 use peniko::Color;
@@ -1097,7 +1098,7 @@ pub fn set_theme_preference(pref: ThemePreference) {
 /// Stored as the variant's index into [`FontChoice::ALL`]. The initial value
 /// is [`default_ui_font`] spelled as an index — `System` (SF Pro) on macOS,
 /// `Inter` elsewhere — because a static cannot call `position()`.
-static UI_FONT: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
+static UI_FONT: AtomicU16 = AtomicU16::new(if cfg!(target_os = "macos") {
     SYSTEM
 } else {
     INTER
@@ -1126,16 +1127,33 @@ pub enum FontSlot {
     Code,
 }
 
-/// The value a font preview carries for `font`: its index in
-/// [`FontChoice::ALL`]. A [`preview::Preview`] of `PreviewSlot::Font(slot)`
-/// owns it; callers must invalidate laid-out text afterwards, as for a choice.
-pub fn font_preview_value(font: FontChoice) -> u8 {
-    FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0) as u8
+/// The value a font preview, or a role global, carries for `font`: a bundled
+/// face is its index in [`FontChoice::ALL`]; an installed family is past
+/// them, by its interned id. A [`preview::Preview`] of
+/// `PreviewSlot::Font(slot)` owns a preview; callers must invalidate laid-out
+/// text afterwards, as for a choice.
+pub fn font_preview_value(font: FontChoice) -> u16 {
+    match font {
+        FontChoice::Installed(id) => FontChoice::ALL.len() as u16 + id.index(),
+        bundled => FontChoice::ALL
+            .iter()
+            .position(|c| *c == bundled)
+            .unwrap_or(0) as u16,
+    }
+}
+
+/// The face a value from [`font_preview_value`] stands for.
+fn font_of_value(value: u16) -> Option<FontChoice> {
+    let bundled = FontChoice::ALL.len() as u16;
+    if value < bundled {
+        FontChoice::ALL.get(usize::from(value)).copied()
+    } else {
+        crate::installed_fonts::InstalledId::from_index(value - bundled).map(FontChoice::Installed)
+    }
 }
 
 fn previewed(slot: FontSlot) -> Option<FontChoice> {
-    preview::previewed(preview::PreviewSlot::Font(slot))
-        .and_then(|i| FontChoice::ALL.get(usize::from(i)).copied())
+    preview::previewed(preview::PreviewSlot::Font(slot)).and_then(font_of_value)
 }
 
 /// What `slot` is set to, without any preview: what Settings saves and
@@ -1147,15 +1165,103 @@ pub fn chosen_font(slot: FontSlot) -> FontChoice {
         FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
         FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
     };
-    let i = global.load(Ordering::Relaxed) as usize;
-    FontChoice::ALL.get(i).copied().unwrap_or(fallback)
+    font_of_value(global.load(Ordering::Relaxed)).unwrap_or(fallback)
 }
 
 /// Callers must invalidate laid-out text afterwards — the font, like the
 /// brushes, is baked into every parley layout.
 pub fn set_ui_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    UI_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Ui, setting_of(font));
+}
+
+// ------------------------------------------- what each role is set to
+//
+// **The selection is kept apart from the face.** A role set to an installed
+// family that is missing on this computer draws its default face and keeps
+// the family's name, so the choice survives to a computer that has it; and a
+// role following the default draws the same face as one that chose it, yet
+// saves differently. So the setting is held here beside the face it resolves
+// to, and what Settings saves and ticks is the setting, never read back from
+// the face (DOCFONTSIZE D12, D14).
+
+static FONT_SETTINGS: Mutex<[koru_settings::FontSetting; 4]> = Mutex::new([
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+    koru_settings::FontSetting::FollowDefault,
+]);
+
+fn role_default(slot: FontSlot) -> FontChoice {
+    match slot {
+        FontSlot::Ui => default_ui_font(),
+        FontSlot::Body => default_body_font(),
+        FontSlot::Headings => default_headings_font(),
+        FontSlot::Code => default_code_font(),
+    }
+}
+
+fn role_global(slot: FontSlot) -> &'static AtomicU16 {
+    match slot {
+        FontSlot::Ui => &UI_FONT,
+        FontSlot::Body => &BODY_FONT,
+        FontSlot::Headings => &HEADINGS_FONT,
+        FontSlot::Code => &CODE_FONT,
+    }
+}
+
+/// The setting a face chosen from a list stands for.
+fn setting_of(font: FontChoice) -> koru_settings::FontSetting {
+    match font {
+        FontChoice::Installed(id) => {
+            koru_settings::FamilyName::new(crate::installed_fonts::interned(id).name)
+                .map_or(koru_settings::FontSetting::FollowDefault, |name| {
+                    koru_settings::FontSetting::Installed(name)
+                })
+        }
+        bundled => {
+            koru_settings::FontSetting::Chosen(koru_settings::FontFamily::parse(bundled.key()))
+        }
+    }
+}
+
+/// The face `setting` draws `slot` in on this computer: an installed family
+/// if it is installed here, otherwise the role's default.
+pub fn resolve_font(slot: FontSlot, setting: &koru_settings::FontSetting) -> FontChoice {
+    use koru_settings::FontSetting;
+    match setting {
+        FontSetting::FollowDefault => role_default(slot),
+        FontSetting::Chosen(family) => FontChoice::parse(family.token()),
+        FontSetting::Installed(name) => crate::installed_fonts::resolve(name.as_str())
+            .map_or_else(|| role_default(slot), FontChoice::Installed),
+    }
+}
+
+/// Set what `slot` is set to, and draw it in the face that resolves to.
+/// Callers must invalidate laid-out text afterwards.
+pub fn set_font_setting(slot: FontSlot, setting: koru_settings::FontSetting) {
+    let face = resolve_font(slot, &setting);
+    role_global(slot).store(font_preview_value(face), Ordering::Relaxed);
+    FONT_SETTINGS
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())[slot as usize] = setting;
+}
+
+/// What `slot` is set to: what Settings saves and ticks.
+pub fn font_setting(slot: FontSlot) -> koru_settings::FontSetting {
+    FONT_SETTINGS
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())[slot as usize]
+        .clone()
+}
+
+/// The installed family `slot` is set to when it is not installed here: the
+/// list shows it as *Name (not installed)* while the default face draws.
+pub fn missing_font(slot: FontSlot) -> Option<String> {
+    let setting = font_setting(slot);
+    let name = setting.installed()?;
+    crate::installed_fonts::resolve(name.as_str())
+        .is_none()
+        .then(|| name.as_str().to_owned())
 }
 
 // ----------------------------------------------- the document font roles
@@ -1167,17 +1273,17 @@ pub fn set_ui_font(font: FontChoice) {
 // shell from `Settings` on save; loaded here at startup.
 
 /// Index of `Inter` in `FontChoice::ALL`.
-const INTER: u8 = 0;
+const INTER: u16 = 0;
 /// Index of `Manrope` in `FontChoice::ALL` — the headings role's default.
-const MANROPE: u8 = 5;
+const MANROPE: u16 = 5;
 /// Index of `JetBrainsMono` in `FontChoice::ALL` — the code role's default.
-const JETBRAINS_MONO: u8 = 9;
+const JETBRAINS_MONO: u16 = 9;
 /// Index of `System` in `FontChoice::ALL` — the app role's default on macOS.
-const SYSTEM: u8 = 12;
+const SYSTEM: u16 = 12;
 
-static BODY_FONT: AtomicU8 = AtomicU8::new(INTER);
-static HEADINGS_FONT: AtomicU8 = AtomicU8::new(MANROPE);
-static CODE_FONT: AtomicU8 = AtomicU8::new(JETBRAINS_MONO);
+static BODY_FONT: AtomicU16 = AtomicU16::new(INTER);
+static HEADINGS_FONT: AtomicU16 = AtomicU16::new(MANROPE);
+static CODE_FONT: AtomicU16 = AtomicU16::new(JETBRAINS_MONO);
 
 /// The shipped default per role, as a value — what the index consts above
 /// spell for the atomics. `Settings::default` reads these so the two homes of
@@ -1214,19 +1320,13 @@ pub fn code_font() -> FontChoice {
 
 /// Callers must invalidate laid-out text afterwards.
 pub fn set_body_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    BODY_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Body, setting_of(font));
 }
 pub fn set_headings_font(font: FontChoice) {
-    let i = FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0);
-    HEADINGS_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Headings, setting_of(font));
 }
 pub fn set_code_font(font: FontChoice) {
-    let i = FontChoice::ALL
-        .iter()
-        .position(|c| *c == font)
-        .unwrap_or(JETBRAINS_MONO as usize);
-    CODE_FONT.store(i as u8, Ordering::Relaxed);
+    set_font_setting(FontSlot::Code, setting_of(font));
 }
 
 pub fn body_stack() -> &'static str {
@@ -1641,6 +1741,10 @@ pub enum FontChoice {
     // an *index* into [`Self::ALL`], so a mid-list insertion silently reseats
     // every persisted choice.
     System,
+    /// A family installed on this computer, picked by name. Not in
+    /// [`Self::ALL`]: its name, stack and class are the interner's
+    /// ([`installed_fonts::resolve`](crate::installed_fonts::resolve)).
+    Installed(crate::installed_fonts::InstalledId),
 }
 
 /// The class a family belongs to, so a picker can group families and a role can
@@ -1684,6 +1788,14 @@ impl FontChoice {
             Self::SourceSerif4 | Self::Lora => FontClass::Serif,
             Self::Nunito => FontClass::Rounded,
             Self::JetBrainsMono | Self::SourceCodePro | Self::Mono => FontClass::Mono,
+            // A serif face is not detected; it only affects grouping.
+            Self::Installed(id) => {
+                if crate::installed_fonts::interned(id).monospace {
+                    FontClass::Mono
+                } else {
+                    FontClass::Sans
+                }
+            }
         }
     }
 
@@ -1741,6 +1853,7 @@ impl FontChoice {
             // macOS and "Segoe UI" on Windows, so the arm needs no platform
             // names of its own.
             Self::System => with_scripts!("system-ui, sans-serif"),
+            Self::Installed(id) => crate::installed_fonts::interned(id).role_stack,
         }
     }
 
@@ -1763,7 +1876,9 @@ impl FontChoice {
         // family, so 500 would set `embolden` and stroke a faux-bold second
         // pass — and 400 is what both platforms set their own chrome in, which
         // is the whole point of choosing the system face.
-        if self == Self::System {
+        // An installed family is the same case: most are static, and 500 on
+        // a static face is faux bold.
+        if matches!(self, Self::System | Self::Installed(_)) {
             return 400.0;
         }
         match self.class() {
@@ -1787,6 +1902,7 @@ impl FontChoice {
             Self::SourceCodePro => "Source Code",
             Self::Mono => "System Mono",
             Self::System => "System",
+            Self::Installed(id) => crate::installed_fonts::interned(id).name,
         }
     }
 
@@ -1807,6 +1923,9 @@ impl FontChoice {
             Self::SourceCodePro => "sourcecodepro",
             Self::Mono => "mono",
             Self::System => "system",
+            // Not a bundled key: an installed family is saved by its name,
+            // through the role's `FontSetting`, never through this.
+            Self::Installed(_) => "installed",
         }
     }
 
@@ -2022,6 +2141,7 @@ pub fn chosen_doc_text_size() -> Option<u8> {
 /// the default.
 pub fn doc_text_size() -> f32 {
     preview::previewed(preview::PreviewSlot::DocTextSize)
+        .and_then(|px| u8::try_from(px).ok())
         .or_else(chosen_doc_text_size)
         .map_or(FONT_SIZE, f32::from)
 }

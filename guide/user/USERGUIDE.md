@@ -3111,6 +3111,19 @@ also has a **Typography** group whose Body / Headings / Code rows cycle a
 role's family for a quick in-document switch. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
+**Any font installed on your computer** can be chosen for the app, body,
+headings or code: every font list ends with **More fonts…**, which opens a
+searchable list of your installed fonts, each name shown in its own face.
+Type to filter; the arrow keys preview the lit font across the app, and
+Enter or a click keeps it. For **code** the list starts with monospaced
+fonts — press Tab, or tick *Show all fonts*, to see every font. The first
+row, *Default (…)*, goes back to Koru's default for that role. A font you
+picked this way is listed, ticked, after the built-in ones. If your settings
+reach a computer that does not have that font, Koru draws its default there
+and the list shows *Name (not installed)*; your choice is kept for the
+computers that have it. The terminal's own **More fonts…**, on a terminal
+tab's font menu, uses the same list.
+
 **Document text size** is the **Size** row at the end of *Document fonts*:
 14 to 22 px, 16 by default. Every document follows it — headings, code
 blocks, checkboxes and the space between blocks grow with the text, so a

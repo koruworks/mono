@@ -674,3 +674,57 @@ fn the_wire_refuses_a_size_not_offered_and_the_schema_says_which() {
         offered
     );
 }
+
+/// An installed family is written by name and read back by name; a name that
+/// could break the file or a font stack is not storable, in the file or on
+/// the wire, and the terminal section does not take one.
+#[test]
+fn an_installed_family_round_trips_by_name_and_a_bad_name_never_lands() {
+    use crate::{FamilyName, FontSetting};
+    let garamond = FontSetting::Installed(FamilyName::new("EB Garamond").unwrap());
+    let settings = GlobalSettings {
+        body_font: garamond.clone(),
+        ..GlobalSettings::default()
+    };
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(
+        written.contains("body_font=family:EB Garamond\n"),
+        "{written}"
+    );
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(loaded.body_font, garamond);
+
+    for bad in [
+        "",
+        "  ",
+        "a,b",
+        "a;b",
+        "a|b",
+        "a=b",
+        "a\"b",
+        "a'b",
+        "a\\b",
+        "@Vertical",
+    ] {
+        assert!(FamilyName::new(bad).is_none(), "{bad:?}");
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&format!("version=2\nbody_font=family:{bad}\n"), &mut loaded);
+        assert_eq!(loaded.body_font, FontSetting::FollowDefault, "{bad:?}");
+    }
+    assert!(FamilyName::new(&"x".repeat(65)).is_none());
+    assert!(
+        serde_json::from_str::<crate::GlobalPatch>(r#"{"body_font":{"installed":"a,b"}}"#).is_err()
+    );
+    let patch: crate::GlobalPatch =
+        serde_json::from_str(r#"{"body_font":{"installed":"EB Garamond"}}"#).unwrap();
+    assert_eq!(patch.body_font, Some(garamond.clone()));
+    let terminal = crate::TerminalPatch {
+        font: Some(garamond),
+        ..crate::TerminalPatch::default()
+    };
+    assert!(
+        terminal.validate().is_err(),
+        "the terminal section takes a bundled mono"
+    );
+}

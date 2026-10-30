@@ -314,7 +314,11 @@ fn every_font_option_is_set_in_its_own_face() {
             )
         })
         .expect("the app font dropdown");
-    for (_, option) in &app_font.options {
+    // The family rows; *More fonts…* opens a picker rather than naming one.
+    for (action, option) in &app_font.options {
+        if !matches!(action, crate::action::Action::Font(..)) {
+            continue;
+        }
         let family = theme::FontChoice::ALL
             .iter()
             .find(|f| f.label() == option.label)

@@ -22,7 +22,7 @@
 use koru_draw::theme::{
     self, CaretColor, CaretHeight, CaretWidth, Density, FontChoice, ThemePreference,
 };
-use koru_settings::{FontSetting, GlobalSettings};
+use koru_settings::GlobalSettings;
 
 #[cfg(test)]
 mod tests;
@@ -88,10 +88,10 @@ impl Appearance {
                 .icon_pack
                 .map(|pack| koru_draw::icons::IconPack::parse(pack.token())),
             caret: CaretAppearance::from_section(section),
-            ui_font: font(section.ui_font, theme::default_ui_font()),
-            body_font: font(section.body_font, theme::default_body_font()),
-            headings_font: font(section.headings_font, theme::default_headings_font()),
-            code_font: font(section.code_font, theme::default_code_font()),
+            ui_font: theme::resolve_font(theme::FontSlot::Ui, &section.ui_font),
+            body_font: theme::resolve_font(theme::FontSlot::Body, &section.body_font),
+            headings_font: theme::resolve_font(theme::FontSlot::Headings, &section.headings_font),
+            code_font: theme::resolve_font(theme::FontSlot::Code, &section.code_font),
             density: Density::parse(section.density.token()),
             zoom: section.zoom.get(),
         }
@@ -124,13 +124,4 @@ impl Appearance {
             ThemePreference::Dark => true,
         }
     }
-}
-
-/// The family a role resolves to. **`FollowDefault` is *this build's* default**,
-/// resolved now — which is the whole reason the authority keeps it as a state
-/// rather than writing today's default into a file where it would freeze.
-fn font(setting: FontSetting, role_default: FontChoice) -> FontChoice {
-    setting
-        .family()
-        .map_or(role_default, |family| FontChoice::parse(family.token()))
 }

@@ -38,6 +38,8 @@ koru-channel = { path = "../koru-channel" }
 # An element's accessible name is a translation key, so a literal cannot
 # pass as chrome (ELEMENTS.final §3.8). A leaf crate with no dependencies.
 koru-i18n = { path = "../koru-i18n" }
+# The one rule for a storable font family name (DOCFONTSIZE Q-H).
+koru-settings = { path = "../koru-settings" }
 
 [features]
 # The third theme that proves there can be more than two (ELEMENTS.final

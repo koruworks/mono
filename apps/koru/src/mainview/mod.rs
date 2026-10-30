@@ -8689,6 +8689,9 @@ impl MainView {
         use koru_settings_ui::Request;
         match request {
             Request::ApplyLayoutToAllDocuments => self.apply_layout_to_all_documents(),
+            Request::MoreFonts(role) => {
+                self.open_role_font_picker(role);
+            }
             Request::CycleCanvasBackground => {
                 let cycled = koru_document::docview::cycle_canvas_bg(theme::default_canvas_bg());
                 theme::set_default_canvas_bg(cycled);
@@ -9812,15 +9815,15 @@ impl View for MainView {
         {
             return true;
         }
-        if self.font_picker.is_some() {
-            return self.font_picker_key(key, text, mods);
-        }
-        // **The two surfaces the wrapper claims**, taken from the same table
+        // **The surfaces the wrapper claims**, taken from the same table
         // the inherent `key` walks below — see `mainview::routing`. They are
         // here rather than in the container's own chain because they float
         // over the whole window: the inherent method is what the container's
         // tests drive, and it has never seen either.
         match self.blockers() {
+            Blockers::Prompt(PromptKind::FontPicker) => {
+                return self.font_picker_key(key, text, mods);
+            }
             Blockers::Prompt(PromptKind::MoveTo) => {
                 return self.move_to_key(key, text, mods);
             }
@@ -13198,6 +13201,9 @@ impl View for MainView {
                 .as_ref()
                 .and_then(koru_workspace_host::View::maintenance_deadline),
             self.tabs().active_tab().view.maintenance_deadline(),
+            // An open font picker waiting for the scan looks again soon.
+            self.font_picker_waiting()
+                .then(|| Instant::now() + std::time::Duration::from_millis(100)),
             self.socials_navigation_deadline(),
             self.document_history.deadline(),
             // Only while the Cloud tab is the section showing — a hidden one
@@ -13254,6 +13260,7 @@ impl View for MainView {
         }
         self.reminder_environment = reminder_environment();
         poll_terminal_prefs();
+        let fonts_arrived = self.font_picker_fill();
         // **Where a delegated run's own folder goes** (ADR-365). Polled here
         // rather than read when the modal opens, because opening the modal may
         // touch no disk and this is the only thread that could.
@@ -13708,6 +13715,7 @@ impl View for MainView {
             || reminder_snooze_opened
             || reminder_geometry_changed
             || delegate_folder
+            || fonts_arrived
             || delegation_requested
             || delegation_answered
             || run_pills
@@ -13866,7 +13874,7 @@ impl MainView {
                 return self.reminder_creation_key(ws, key, text, mods);
             }
             // Claimed by `View::key`, above; see `blockers_from`.
-            Blockers::Prompt(PromptKind::MoveTo | PromptKind::Search) => {}
+            Blockers::Prompt(PromptKind::FontPicker | PromptKind::MoveTo | PromptKind::Search) => {}
             // A document's own modal, never a layer of this container's: the
             // leaf answers it inside its own `key`, which the fall-through
             // below reaches. Named so adding a kind stays a compile error.

@@ -65,6 +65,13 @@ impl MainView {
         if let Some(node) = self.menu_semantics(cx) {
             return node;
         }
+        // The font picker is projected in full: a search field, the families
+        // on screen and the toggle, not a hollow dialog.
+        if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
+            && let Some(node) = self.font_picker_semantics(cx)
+        {
+            return node;
+        }
         // The reminder popover is the second surface projected in full rather
         // than named and left hollow: setting, correcting and revisiting a
         // reminder is the whole of A3, and a dialog a person cannot see the
@@ -105,6 +112,11 @@ impl MainView {
                 Some(index) => cx.instance(MENU, menu.row_instance(index), ITEM),
                 None => cx.instance(MENU, menu.instance, parts::ROOT),
             };
+        }
+        if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
+            && let Some(occurrence) = self.font_picker_focus(cx)
+        {
+            return occurrence;
         }
         // The reminder popover's own focus, which is the state its arrows move
         // and its ring is painted from.
@@ -316,6 +328,7 @@ fn prompt_keyword(kind: koru_workspace_host::routing::PromptKind) -> &'static st
         K::NewList => "new-list",
         K::ReminderCreation => "reminder-creation",
         K::Delegate => "delegate",
+        K::FontPicker => "font-picker",
     }
 }
 
