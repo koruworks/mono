@@ -141,9 +141,16 @@ pub const KORU_ENTRY: &str = "Koru";
 /// opening a window over whatever the person is doing at sign-in.
 pub const KORU_BACKGROUND_ARGUMENT: &str = "--background";
 
+/// [`channel_entry`]'s value name for a build of `segment`, for the one caller
+/// that is not that build: the Windows uninstaller `koru-release` writes, which
+/// clears the entry the installed Agent may have set.
+pub fn entry_for_segment(base: &str, segment: &str) -> String {
+    qualify(base, segment)
+}
+
 /// The rule itself, with the segment passed in.
 ///
-/// Split out only so the tests can ask it about all five segments: a test of
+/// Split out so the tests can ask it about all five segments: a test of
 /// [`channel_entry`] can only ever see the segment `cargo test` was built for,
 /// which is `internal-debug`, and would therefore assert nothing about the one
 /// case that matters — stable.

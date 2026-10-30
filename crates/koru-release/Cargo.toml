@@ -14,6 +14,8 @@ flate2.workspace = true
 # stamped with so it stages into its own build's inbox rather than a sibling
 # channel's.
 koru-channel = { path = "../koru-channel" }
+# The start-at-sign-in value name, which the Windows uninstaller clears.
+koru-autostart = { path = "../koru-autostart" }
 # The runtime values a release bakes in (`koru_env::BAKED`), loaded from
 # .env.production before the first build so `option_env!` sees them.
 koru-env = { path = "../koru-env" }

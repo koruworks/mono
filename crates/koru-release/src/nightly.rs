@@ -369,6 +369,27 @@ pub(crate) fn dist_github(
             update_base_url: &options.download_base,
         },
     )?;
+    // **Windows also gets an installer** (rev2 §12), made from the same staged
+    // files after the zip, so both carry the same signed executables. It is
+    // offered on the page beside the zip, with its own `.minisig`; the feed
+    // keeps naming the zip, which is what an installed Koru updates from.
+    let installer = if target.starts_with("windows") {
+        let name = github_asset_name(&crate::installer::file_name(&version, target));
+        let path = root.join("dist/cloud").join(&name);
+        crate::installer::build(
+            root,
+            &package.stage,
+            &path,
+            &version,
+            options.build_number,
+            channel.as_str(),
+        )?;
+        let signature = sign_archive(&secret, &path, &public_key, &version)?;
+        verify_signature(&path, &signature, &public_key)?;
+        Some((name, path, signature))
+    } else {
+        None
+    };
     require_clean_tree(root, Some(&commit))?;
     let signature = sign_archive(&secret, &package.archive, &public_key, &version)?;
     verify_signature(&package.archive, &signature, &public_key)?;
@@ -395,10 +416,18 @@ pub(crate) fn dist_github(
         &options.out.join(body_name),
         release_body(&build).as_bytes(),
     )?;
+    let mut written = vec![asset.clone(), signature_name, feed, body_name.into()];
+    if let Some((name, path, signature)) = installer {
+        fs::copy(&path, options.out.join(&name))
+            .map_err(|error| format!("{}: {error}", options.out.join(&name).display()))?;
+        let signature_name = format!("{name}.minisig");
+        write(&options.out.join(&signature_name), signature.as_bytes())?;
+        written.extend([name, signature_name]);
+    }
 
     println!("[Koru] sha256: {}", package.sha256);
     println!("[Koru] wrote into {}:", options.out.display());
-    for name in [asset.as_str(), &signature_name, &feed, body_name] {
+    for name in written {
         println!("{name}");
     }
     Ok(())

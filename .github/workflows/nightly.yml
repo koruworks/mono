@@ -269,6 +269,22 @@ jobs:
           "KORU_SIGNTOOL_COMMAND=`"$($signtool.FullName)`" sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib `"$dlib`" /dmdf `"$metadata`" {file}" >> $env:GITHUB_ENV
           "KORU_WINDOWS_PACKAGE_PUBLISHER=$env:PUBLISHER" >> $env:GITHUB_ENV
           "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+      # **The installer is NSIS** (rev2 §12, N18), which the image carries.
+      # `!uninstfinalize`, which signs the uninstaller, needs 3.08 or later.
+      - name: Find NSIS
+        shell: pwsh
+        run: |
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) {
+            $makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $makensis) { throw 'NSIS is not on this image: the Windows installer needs makensis 3.08 or later' }
+          $version = (& $makensis /VERSION).Trim()
+          if ([version]($version.TrimStart('v') -replace '[^0-9.].*$', '') -lt [version]'3.8') {
+            throw "NSIS $version is older than 3.08"
+          }
+          "NSIS $version at $makensis"
+          "MAKENSIS=$makensis" >> $env:GITHUB_ENV
       - name: Build, sign and write the release files
         shell: bash
         env:
@@ -317,10 +333,55 @@ jobs:
             & $env:SIGNTOOL verify /pa $identity[0].FullName
             if ($LASTEXITCODE -ne 0) { throw 'koru-identity.msix is not validly signed' }
           }
+      # **The installer installs, runs and uninstalls cleanly** — silently,
+      # into a directory of its own: the shortcuts and the Settings -> Apps
+      # entry appear, `--help` runs from the installed copy, and uninstalling
+      # takes all three away again. Signed, setup.exe and the uninstaller it
+      # wrote are checked too.
+      - name: Install, run and uninstall
+        shell: pwsh
+        env:
+          SIGNED: ${{ vars.ARTIFACT_SIGNING_PROFILE != '' }}
+        run: |
+          $setup = @(Get-ChildItem dist/nightly -Filter *-setup.exe)
+          if ($setup.Count -ne 1) { throw 'Expected exactly one installer' }
+          $dir = Join-Path $env:RUNNER_TEMP 'koru-installed'
+          $product = 'Koru Nightly'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Koru.Desktop.Nightly'
+          $process = Start-Process -FilePath $setup[0].FullName -ArgumentList '/S', "/D=$dir" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "setup.exe exited with $($process.ExitCode)" }
+          $koru = Join-Path $dir 'koru.exe'
+          $uninstaller = Join-Path $dir "Uninstall $product.exe"
+          foreach ($path in $koru, $uninstaller, $shortcut) {
+            if (-not (Test-Path $path)) { throw "Not installed: $path" }
+          }
+          if ((Get-ItemProperty $key).DisplayName -ne $product) { throw 'No Settings -> Apps entry' }
+          $process = Start-Process -FilePath $koru -ArgumentList '--help' -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            throw 'The installed koru.exe did not finish --help within 30 seconds'
+          }
+          if ($process.ExitCode -ne 0) { throw "The installed koru.exe exited with $($process.ExitCode)" }
+          if ($env:SIGNED -eq 'true') {
+            foreach ($path in $setup[0].FullName, $uninstaller) {
+              if ((Get-AuthenticodeSignature $path).Status -ne 'Valid') { throw "Not validly signed: $path" }
+            }
+          }
+          # The uninstaller copies itself out of the directory and returns at
+          # once, so what it did is waited for, not its process.
+          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          foreach ($path in $dir, $shortcut, $key) {
+            if (Test-Path $path) { throw "Left behind by the uninstaller: $path" }
+          }
       # actions/attest-build-provenance v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          subject-path: dist/nightly/*.zip
+          subject-path: |
+            dist/nightly/*.zip
+            dist/nightly/*-setup.exe
       # actions/upload-artifact v7.0.2
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -402,7 +463,7 @@ jobs:
             case "$keep" in *" $name "*) continue ;; esac
             for target in "${targets[@]}"; do
               case "$name" in
-                koru-*-"$target".*) gh release delete-asset nightly "$name" --yes ;;
+                koru-*-"$target".* | koru-*-"$target"-setup.*) gh release delete-asset nightly "$name" --yes ;;
               esac
             done
           done

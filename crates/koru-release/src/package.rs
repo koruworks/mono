@@ -208,6 +208,9 @@ const MAC_NOTIFICATION_OWNER_PACKAGE: &str = "koru-notification-owner";
 
 pub struct Package {
     pub archive: PathBuf,
+    /// The directory the archive was made from, which the Windows installer
+    /// packs too (`crate::installer`).
+    pub stage: PathBuf,
     pub sha256: String,
     pub size: u64,
 }
@@ -832,6 +835,7 @@ pub fn build(
     );
     Ok(Package {
         archive,
+        stage,
         sha256,
         size,
     })
@@ -927,7 +931,7 @@ fn run_cargo(
     }
 }
 
-fn native_sign(path: &Path) -> Result<(), String> {
+pub(crate) fn native_sign(path: &Path) -> Result<(), String> {
     let Ok(template) = std::env::var("KORU_SIGNTOOL_COMMAND") else {
         return Ok(());
     };
@@ -944,7 +948,7 @@ fn native_sign(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(any(windows, test))]
-fn windows_package_version(version: &str, build_number: u64) -> Result<String, String> {
+pub(crate) fn windows_package_version(version: &str, build_number: u64) -> Result<String, String> {
     // Parsed strictly here, where a release is refused, before the Agent's
     // build script derives the same string leniently.
     semver::Version::parse(version.trim_start_matches('v'))
@@ -2121,7 +2125,7 @@ fn tar_gz_dir(root: &Path, archive: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn ensure_under(root: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn ensure_under(root: &Path, target: &Path) -> Result<(), String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;

@@ -41,6 +41,7 @@ COMMENT = {
     ".ps1": f"# {SPDX}",
     ".psm1": f"# {SPDX}",
     ".bat": f"rem {SPDX}",
+    ".nsi": f"; {SPDX}",
 }
 
 ROOTS = ("apps/", "crates/", "contracts/koru/", "scripts/", "tests/", "koru.sh", "koru.bat")

@@ -5,6 +5,7 @@ mod cloud;
 #[cfg(test)]
 mod docs_crates;
 mod index;
+mod installer;
 mod native;
 mod nightly;
 mod notes;
