@@ -565,8 +565,11 @@ jobs:
           mv dist/cloud/koru-*-macos-aarch64.dmg dist/unpublished/
       # Mounted read-only, as a person's double-click mounts it: the app is
       # sealed, both binaries answer `--help`, and — signed — Gatekeeper
-      # accepts the app and the image as notarized Developer ID, with the
-      # ticket stapled in.
+      # accepts the app as notarized Developer ID, with the ticket stapled in,
+      # and the image carries the same Developer ID signature. The image is
+      # signed but not notarized, by design (package.rs, `mac_dmg`): the
+      # stapled app is what Gatekeeper judges. Gatekeeper's own assessment of
+      # the image asks for notarization and rejected the 2026-10-30 nightly.
       - name: Smoke-test the disk image
         env:
           SIGNED: ${{ steps.signing.outputs.signed }}
@@ -590,7 +593,8 @@ jobs:
             codesign --display --verbose=2 "$app" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
             spctl --assess --type execute --verbose=2 "$app"
             xcrun stapler validate "$app"
-            spctl --assess --type open --context context:primary-signature --verbose=2 "${images[0]}"
+            codesign --verify --strict --verbose=2 "${images[0]}"
+            codesign --display --verbose=2 "${images[0]}" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
           fi
       - name: Delete the signing keychain
         if: always() && steps.signing.outputs.signed == 'true'
