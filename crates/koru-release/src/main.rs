@@ -146,7 +146,7 @@ fn run() -> Result<(), String> {
         _ => Err("usage:\n  koru-release cloud-setup\n  \
              koru-release dist-cloud <stable|beta|nightly> [version] [--yes]\n  \
              koru-release dist-local <stable|beta|nightly|internal> [version] [--build <n>] [--sign-update]\n  \
-             koru-release dist-github <nightly|stable> --build <yyyymmddHHMM> --notes <file> --key <file> [--key-password-stdin] --download-base <url> [--update-base <url>] --out <dir> [--version <v>]\n  \
+             koru-release dist-github <nightly|stable> --build <yyyymmddHHMM> --notes <file> --key <file> [--key-password-stdin] --download-base <url> [--update-base <url>] [--with-cloud] --out <dir> [--version <v>]\n  \
              koru-release nightly-notes [--select <before-sha> <after-sha>]\n  \
              koru-release release-index [--keep-latest] [--dry-run <page.html>]\n  \
              koru-release voice-models plan|pin|fetch|publish|local [--only <id>] [--work <dir>] [--upload]\n  \

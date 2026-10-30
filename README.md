@@ -101,11 +101,11 @@ experimental features.
 
 | Platform | Status |
 | --- | --- |
-| **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) is published as an installer, or a zip to run without installing; either updates itself. It is not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
-| **macOS** (Apple silicon, macOS 12+) | Supported. A stable build is available from [koru.do](https://koru.do), and it builds and runs from source |
+| **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as an installer, or a zip to run without installing; either updates itself. They are not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
+| **macOS** (Apple silicon, macOS 12+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
 | **Android** | The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |
-| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs that update themselves. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input and Koru Cloud are not available on Linux yet |
+| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs that update themselves. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
 
 ## Build and run from a fresh clone
 

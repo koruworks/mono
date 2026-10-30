@@ -7,7 +7,8 @@
 //!
 //! **And the GitHub stable**, built the same way: one release per `v<version>`
 //! tag, which never moves, so its files are added and never replaced
-//! (`docs/features/github-release/STABLE.md`). Linux is its first platform.
+//! (`docs/features/github-release/STABLE.md`), and with `.env.production`
+//! baked in, as the stable on the update origin always was.
 //!
 //! Three verbs, and none of them talks to GitHub — the workflow uploads:
 //!
@@ -49,7 +50,7 @@ const FALLBACK_COMMITS: usize = 50;
 pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github <nightly|stable> \
      --build <yyyymmddHHMM> --notes <releases/...toml> --key <minisign secret key> \
      [--key-password-stdin] --download-base <https url> [--update-base <https url>] \
-     --out <dir> [--version <version>, required for stable]";
+     [--with-cloud] --out <dir> [--version <version>, required for stable]";
 
 pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\n       \
      koru-release nightly-notes --select <before-sha> <after-sha>";
@@ -68,14 +69,14 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "No Koru Cloud in the nightly yet.",
 ];
 
-/// The same for a stable release (STABLE.md). **Only Linux is built here so
-/// far**: the Windows and macOS packages of the same version are still
-/// published to the update origin, and the last line says where to find them
-/// until their jobs join this workflow and it goes.
+/// The same for a stable release (STABLE.md), which is built with Koru Cloud
+/// (S8). The Windows line goes when the release is signed, as the nightly's
+/// does.
 const STABLE_PLATFORM_NOTES: &[&str] = &[
     "**Linux** runs as an X11 app (XWayland on Wayland desktops); text may look soft at \
-     fractional scaling. Dictation and Koru Cloud are not available on Linux yet.",
-    "**Windows** and **macOS** downloads of this version are on [koru.do](https://koru.do).",
+     fractional scaling. Dictation is not available on Linux yet.",
+    "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
+     reminders show no notifications.",
 ];
 
 fn platform_notes(channel: ReleaseChannel) -> &'static [&'static str] {
@@ -106,6 +107,11 @@ pub(crate) struct DistGithubOptions {
     /// release's `v<version>` does not, and its builds read GitHub's
     /// `releases/latest/download/` instead.
     pub update_base: String,
+    /// Bake in `.env.production`, every value of it, as the stable on the
+    /// update origin always has (STABLE S8): Koru Cloud, Google Docs import,
+    /// the support and feedback links. Without it nothing is baked in, as the
+    /// nightly is built (NIGHTLY N5).
+    pub with_cloud: bool,
     pub out: PathBuf,
     pub version: Option<String>,
 }
@@ -118,6 +124,7 @@ impl DistGithubOptions {
         let mut notes = None;
         let mut key = None;
         let mut key_password_stdin = false;
+        let mut with_cloud = false;
         let mut download_base = None;
         let mut update_base = None;
         let mut out = None;
@@ -126,6 +133,10 @@ impl DistGithubOptions {
             let slot = match arg.as_str() {
                 "--key-password-stdin" => {
                     key_password_stdin = true;
+                    continue;
+                }
+                "--with-cloud" => {
+                    with_cloud = true;
                     continue;
                 }
                 "--build" => &mut build,
@@ -162,6 +173,7 @@ impl DistGithubOptions {
             key_password_stdin,
             download_base,
             update_base,
+            with_cloud,
             out: required(out, "--out")?.into(),
             version,
         })
@@ -417,11 +429,18 @@ pub(crate) fn dist_github(
         &released_at,
         &public_key,
         Some(descriptor.body.as_str()),
-        // `Official` requires .env.production and the canonical sherpa-onnx
-        // archive; this build has neither by design (no Cloud, no voice).
+        // `Official` also requires the canonical sherpa-onnx archive, and Linux
+        // has none to link (no voice there yet); CI fetches the pinned one for
+        // the others, and a different one is said out loud.
         crate::native::Rule::Local,
-        package::Baked::WithoutCloud {
-            update_base_url: &options.update_base,
+        if options.with_cloud {
+            package::Baked::WithCloud {
+                update_base_url: &options.update_base,
+            }
+        } else {
+            package::Baked::WithoutCloud {
+                update_base_url: &options.update_base,
+            }
         },
     )?;
     // **Windows also gets an installer** (rev2 §12), made from the same staged

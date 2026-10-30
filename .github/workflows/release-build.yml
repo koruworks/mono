@@ -1,0 +1,683 @@
+# One platform's release build, for the nightly and the stable release alike
+# (STABLE S6): nightly.yml and stable.yml call it once per platform, so each
+# platform's result is its own, and publish what it writes into
+# `<channel>-<target>` artifacts. Nothing here talks to a release.
+#
+# The job runs in the environment named after the channel, so its secrets are
+# that environment's: `nightly` only the `nightly` tag can deploy to, `stable`
+# only a `v*` tag. Every third-party action is pinned to a full commit SHA,
+# the tag in the comment above it.
+name: release-build
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: linux, windows or macos
+        type: string
+        required: true
+      channel:
+        description: nightly or stable, which is also the environment's name
+        type: string
+        required: true
+      build:
+        description: the build number, the UTC minute of the caller's plan (N11)
+        type: string
+        required: true
+      version:
+        description: a stable release's version, the tag's without the v; empty for the nightly
+        type: string
+        default: ""
+      download-base:
+        description: where this release's files are downloaded from
+        type: string
+        required: true
+      update-base:
+        description: where an installed build reads its next update; the download base when empty
+        type: string
+        default: ""
+      with-cloud:
+        description: bake in the environment's production values (STABLE S8)
+        type: boolean
+        default: false
+    outputs:
+      signed:
+        description: whether the macOS build was Developer ID signed, and so is published
+        value: ${{ jobs.macos.outputs.signed }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    name: build (linux-x86_64)
+    if: inputs.platform == 'linux'
+    # The oldest LTS hosted image, for the glibc baseline (release design D20).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    environment: ${{ inputs.channel }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      OUT: dist/${{ inputs.channel }}
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          # The nightly's notes step diffs the tag's previous commit against
+          # this one.
+          fetch-depth: 0
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig-dev libssl-dev
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.sh') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        run: bash scripts/setup/fetch-fonts.sh
+      # **No notes, no release**, found before anything is built. A nightly's
+      # are the one releases/nightly/*.toml added since the tag's previous
+      # position (an all-zero `before` is the tag's first push); a stable
+      # release's are its version's own descriptor, in the tagged commit.
+      - name: Find this release's notes
+        id: notes
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$CHANNEL" = nightly ]; then
+            path="$(./koru.sh release-tool nightly-notes --select "$BEFORE" "$AFTER" | tail -n 1)"
+          else
+            path="releases/$VERSION.toml"
+          fi
+          test -f "$path" || { echo "::error::$path is not in the tagged commit: a release needs its notes"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      # **What the stable on the update origin always carried** (STABLE S8):
+      # Koru Cloud, Google Docs import, the support and feedback links, from
+      # the environment the vault restores. Ignored by git, and refused by
+      # koru-release if any value is empty.
+      - name: Write .env.production
+        if: inputs.with-cloud
+        env:
+          KORU_PUBLIC_API_ORIGIN: ${{ vars.KORU_PUBLIC_API_ORIGIN }}
+          KORU_PUBLIC_API_ISSUER: ${{ vars.KORU_PUBLIC_API_ISSUER }}
+          KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT }}
+          KORU_SUPPORT_URL: ${{ vars.KORU_SUPPORT_URL }}
+          KORU_FEEDBACK_URL: ${{ vars.KORU_FEEDBACK_URL }}
+          KORU_GOOGLE_DOCS_CLIENT_ID: ${{ vars.KORU_GOOGLE_DOCS_CLIENT_ID }}
+          KORU_GOOGLE_DOCS_CLIENT_SECRET: ${{ secrets.KORU_GOOGLE_DOCS_CLIENT_SECRET }}
+        run: bash scripts/release/write-env-production.sh
+      # The Minisign pair is named for its environment: NIGHTLY_* in
+      # `nightly`, RELEASE_* in `stable`. Each holds only its own.
+      - name: Build, sign and write the release files
+        env:
+          MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY || secrets.RELEASE_MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD || secrets.RELEASE_MINISIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          DOWNLOAD_BASE: ${{ inputs.download-base }}
+          UPDATE_BASE: ${{ inputs.update-base }}
+          WITH_CLOUD: ${{ inputs.with-cloud }}
+        run: bash scripts/release/dist-github.sh ./koru.sh release-tool
+      # CI cannot open a window; this catches a missing library or a crash at
+      # load, as ci.yml's Windows packaging smoke does.
+      - name: Smoke-test the packaged binaries
+        run: |
+          archives=("$OUT"/*.tar.gz)
+          test "${#archives[@]}" -eq 1
+          smoke="$RUNNER_TEMP/koru-package"
+          mkdir -p "$smoke"
+          tar -xzf "${archives[0]}" -C "$smoke"
+          timeout 30 "$smoke/koru" --help >/dev/null
+          timeout 30 "$smoke/koru-agent" --help >/dev/null
+      # actions/attest-build-provenance v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ env.OUT }}/*.tar.gz
+      # actions/upload-artifact v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ inputs.channel }}-linux-x86_64
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  windows:
+    name: build (windows-x86_64)
+    if: inputs.platform == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 150
+    environment: ${{ inputs.channel }}
+    permissions:
+      contents: read
+      # Azure sign-in for Authenticode, and the provenance attestation.
+      id-token: write
+      attestations: write
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}\third-party\sherpa-onnx\1.13.6
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      OUT: dist/${{ inputs.channel }}
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 0
+      # The setup is ci.yml's Windows test job's: patched crates, the pinned
+      # sherpa-onnx archive the voice runtime links, the bundled fonts.
+      - name: Fetch third-party code
+        shell: pwsh
+        run: ./scripts/setup/fetch-third-party.ps1
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.ps1') }}
+      - name: Fetch the sherpa-onnx archive
+        shell: pwsh
+        run: ./scripts/setup/fetch-voice-runtime.ps1
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.ps1') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/setup/fetch-fonts.ps1
+      # (see linux)
+      - name: Find this release's notes
+        id: notes
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$CHANNEL" = nightly ]; then
+            path="$(cargo run --locked -q -p koru-release -- nightly-notes --select "$BEFORE" "$AFTER" | tail -n 1)"
+          else
+            path="releases/$VERSION.toml"
+          fi
+          test -f "$path" || { echo "::error::$path is not in the tagged commit: a release needs its notes"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      # **Authenticode, through Azure Artifact Signing** (release design D9).
+      # Off until the certificate profile exists — the organization's identity
+      # validation decides when — and then on with no change here: setting
+      # ARTIFACT_SIGNING_PROFILE and WINDOWS_PACKAGE_PUBLISHER in the
+      # environment is the switch. No key or password is stored: the job signs
+      # in to Azure with its OIDC token, as the app registration the
+      # environment's federated credential names, and Microsoft's HSM signs.
+      # azure/login v3.1.0
+      - name: Sign in to Azure
+        if: vars.ARTIFACT_SIGNING_PROFILE != ''
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # signtool from the image's newest Windows SDK, with Microsoft's signing
+      # client as its digest library — the client pinned by version and hash,
+      # as fetch-voice-runtime.ps1 pins sherpa-onnx. `koru-release` signs every
+      # executable and the notification-identity MSIX through
+      # KORU_SIGNTOOL_COMMAND, and builds that MSIX because the publisher is set.
+      - name: Prepare Authenticode signing
+        if: vars.ARTIFACT_SIGNING_PROFILE != ''
+        shell: pwsh
+        env:
+          ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          PUBLISHER: ${{ vars.WINDOWS_PACKAGE_PUBLISHER }}
+          CLIENT_VERSION: 1.0.146
+          CLIENT_SHA256: 7761e5d8f31e54b764da21d33cd8b0a2940e1b05526c7dfcb5e94b0431426f70
+        run: |
+          if (-not $env:PUBLISHER) {
+            throw 'WINDOWS_PACKAGE_PUBLISHER must be set with ARTIFACT_SIGNING_PROFILE: it is the certificate subject the MSIX names'
+          }
+          $tools = Join-Path $env:RUNNER_TEMP 'artifact-signing'
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $client = Join-Path $tools 'client.zip'
+          Invoke-WebRequest -OutFile $client -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/$env:CLIENT_VERSION/microsoft.artifactsigning.client.$env:CLIENT_VERSION.nupkg"
+          if ((Get-FileHash -Algorithm SHA256 $client).Hash -ne $env:CLIENT_SHA256) {
+            throw "Microsoft.ArtifactSigning.Client $env:CLIENT_VERSION does not match its pinned hash"
+          }
+          Expand-Archive $client -DestinationPath (Join-Path $tools 'client')
+          $dlib = Join-Path $tools 'client\bin\x64\Azure.CodeSigning.Dlib.dll'
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+            Where-Object { $_.Directory.Parent.Name -as [version] } |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+            Select-Object -First 1
+          if (-not $signtool -or [version]$signtool.Directory.Parent.Name -lt [version]'10.0.22621.0') {
+            throw 'Artifact Signing needs signtool from Windows SDK 10.0.22621 or later'
+          }
+          # The Azure CLI sign-in above is the credential; the others would
+          # only be probed first, and the managed-identity probe is slow here.
+          $metadata = Join-Path $tools 'metadata.json'
+          @{
+            Endpoint = $env:ENDPOINT
+            CodeSigningAccountName = $env:ACCOUNT
+            CertificateProfileName = $env:PROFILE
+            ExcludeCredentials = @(
+              'EnvironmentCredential', 'WorkloadIdentityCredential', 'ManagedIdentityCredential',
+              'SharedTokenCacheCredential', 'VisualStudioCredential', 'VisualStudioCodeCredential',
+              'AzurePowerShellCredential', 'AzureDeveloperCliCredential', 'InteractiveBrowserCredential'
+            )
+          } | ConvertTo-Json | Set-Content -Encoding utf8 $metadata
+          "KORU_SIGNTOOL_COMMAND=`"$($signtool.FullName)`" sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib `"$dlib`" /dmdf `"$metadata`" {file}" >> $env:GITHUB_ENV
+          "KORU_WINDOWS_PACKAGE_PUBLISHER=$env:PUBLISHER" >> $env:GITHUB_ENV
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+      # **The installer is NSIS** (rev2 §12, N18). The hosted image does not
+      # carry it, so the job fetches the portable zip, pinned like the signing
+      # client above; the hash is the one SourceForge lists, checked by hand.
+      # `!uninstfinalize`, which signs the uninstaller, needs 3.08 or later.
+      - name: Fetch NSIS
+        shell: pwsh
+        env:
+          NSIS_VERSION: "3.12"
+          NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'nsis.zip'
+          Invoke-WebRequest -OutFile $zip -UserAgent 'curl' -Uri "https://downloads.sourceforge.net/project/nsis/NSIS%203/$env:NSIS_VERSION/nsis-$env:NSIS_VERSION.zip"
+          if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $env:NSIS_SHA256) {
+            throw "NSIS $env:NSIS_VERSION does not match its pinned hash"
+          }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          $makensis = Join-Path $env:RUNNER_TEMP "nsis-$env:NSIS_VERSION\makensis.exe"
+          "NSIS $((& $makensis /VERSION).Trim()) at $makensis"
+          "MAKENSIS=$makensis" >> $env:GITHUB_ENV
+      # (see linux)
+      - name: Write .env.production
+        if: inputs.with-cloud
+        shell: bash
+        env:
+          KORU_PUBLIC_API_ORIGIN: ${{ vars.KORU_PUBLIC_API_ORIGIN }}
+          KORU_PUBLIC_API_ISSUER: ${{ vars.KORU_PUBLIC_API_ISSUER }}
+          KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT }}
+          KORU_SUPPORT_URL: ${{ vars.KORU_SUPPORT_URL }}
+          KORU_FEEDBACK_URL: ${{ vars.KORU_FEEDBACK_URL }}
+          KORU_GOOGLE_DOCS_CLIENT_ID: ${{ vars.KORU_GOOGLE_DOCS_CLIENT_ID }}
+          KORU_GOOGLE_DOCS_CLIENT_SECRET: ${{ secrets.KORU_GOOGLE_DOCS_CLIENT_SECRET }}
+        run: bash scripts/release/write-env-production.sh
+      # (see linux)
+      - name: Build, sign and write the release files
+        shell: bash
+        env:
+          MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY || secrets.RELEASE_MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD || secrets.RELEASE_MINISIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          DOWNLOAD_BASE: ${{ inputs.download-base }}
+          UPDATE_BASE: ${{ inputs.update-base }}
+          WITH_CLOUD: ${{ inputs.with-cloud }}
+        run: bash scripts/release/dist-github.sh cargo run --locked -q -p koru-release --
+      # (see linux) And, once signing is on, that it signed everything:
+      # an executable without a valid signature is the SmartScreen warning
+      # back, and a missing MSIX is reminders that silently never show.
+      - name: Smoke-test the packaged binaries
+        shell: pwsh
+        env:
+          SIGNED: ${{ vars.ARTIFACT_SIGNING_PROFILE != '' }}
+        run: |
+          $archives = @(Get-ChildItem $env:OUT -Filter *.zip)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one release archive' }
+          $package = Join-Path $env:RUNNER_TEMP 'koru-package'
+          Expand-Archive $archives[0].FullName -DestinationPath $package
+          foreach ($name in 'koru.exe', 'koru-agent.exe') {
+            $exe = @(Get-ChildItem $package -Recurse -Filter $name)
+            if ($exe.Count -ne 1) { throw "Expected exactly one packaged $name" }
+            $process = Start-Process -FilePath $exe[0].FullName -ArgumentList '--help' -WindowStyle Hidden -PassThru
+            if (-not $process.WaitForExit(30000)) {
+              $process.Kill()
+              throw "Packaged $name did not finish --help within 30 seconds"
+            }
+            if ($process.ExitCode -ne 0) { throw "Packaged $name exited with $($process.ExitCode)" }
+          }
+          if ($env:SIGNED -eq 'true') {
+            $unsigned = @(Get-ChildItem $package -Recurse -Filter *.exe |
+              Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' })
+            if ($unsigned) { throw "Not validly signed: $($unsigned.Name -join ', ')" }
+            $identity = @(Get-ChildItem $package -Recurse -Filter koru-identity.msix)
+            if ($identity.Count -ne 1) { throw 'A signed build without its notification identity package' }
+            & $env:SIGNTOOL verify /pa $identity[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw 'koru-identity.msix is not validly signed' }
+          }
+      # **The installer installs, runs and uninstalls cleanly** — silently,
+      # into a directory of its own: the shortcuts and the Settings -> Apps
+      # entry appear, `--help` runs from the installed copy, and uninstalling
+      # takes all three away again. Signed, setup.exe and the uninstaller it
+      # wrote are checked too. The names are the channel's
+      # (installer.rs, `product_name`; koru-winres, `notification_identity`).
+      - name: Install, run and uninstall
+        shell: pwsh
+        env:
+          SIGNED: ${{ vars.ARTIFACT_SIGNING_PROFILE != '' }}
+          PRODUCT: ${{ inputs.channel == 'stable' && 'Koru' || 'Koru Nightly' }}
+          IDENTITY: ${{ inputs.channel == 'stable' && 'Koru.Desktop' || 'Koru.Desktop.Nightly' }}
+        run: |
+          $setup = @(Get-ChildItem $env:OUT -Filter *-setup.exe)
+          if ($setup.Count -ne 1) { throw 'Expected exactly one installer' }
+          $dir = Join-Path $env:RUNNER_TEMP 'koru-installed'
+          $product = $env:PRODUCT
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$env:IDENTITY"
+          $process = Start-Process -FilePath $setup[0].FullName -ArgumentList '/S', "/D=$dir" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "setup.exe exited with $($process.ExitCode)" }
+          $koru = Join-Path $dir 'koru.exe'
+          $uninstaller = Join-Path $dir "Uninstall $product.exe"
+          foreach ($path in $koru, $uninstaller, $shortcut) {
+            if (-not (Test-Path $path)) { throw "Not installed: $path" }
+          }
+          if ((Get-ItemProperty $key).DisplayName -ne $product) { throw 'No Settings -> Apps entry' }
+          $process = Start-Process -FilePath $koru -ArgumentList '--help' -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            throw 'The installed koru.exe did not finish --help within 30 seconds'
+          }
+          if ($process.ExitCode -ne 0) { throw "The installed koru.exe exited with $($process.ExitCode)" }
+          if ($env:SIGNED -eq 'true') {
+            foreach ($path in $setup[0].FullName, $uninstaller) {
+              if ((Get-AuthenticodeSignature $path).Status -ne 'Valid') { throw "Not validly signed: $path" }
+            }
+          }
+          # The uninstaller copies itself out of the directory and returns at
+          # once, so what it did is waited for, not its process.
+          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          foreach ($path in $dir, $shortcut, $key) {
+            if (Test-Path $path) { throw "Left behind by the uninstaller: $path" }
+          }
+      # actions/attest-build-provenance v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: |
+            ${{ env.OUT }}/*.zip
+            ${{ env.OUT }}/*-setup.exe
+      # actions/upload-artifact v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ inputs.channel }}-windows-x86_64
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  # **macOS is published only when it is signed** (rev2 §6, N20). Until the
+  # nightly environment holds a Developer ID certificate and the notary key,
+  # the nightly builds an ad-hoc-signed disk image the way `./koru.sh
+  # dist-local` does on a Mac and keeps it as a workflow artifact for testing
+  # — not named `<channel>-*`, so no publish job sees it. A stable release
+  # has no such mode: unsigned, it fails (STABLE S6). With the material
+  # present, the same job signs, notarizes, staples and publishes. The switch
+  # is the vault and `github_environment.py --apply`, never this file.
+  macos:
+    name: build (macos-aarch64)
+    if: inputs.platform == 'macos'
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: ${{ inputs.channel }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}/third-party/sherpa-onnx/1.13.6
+      OUT: dist/${{ inputs.channel }}
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 0
+      # **All of it, or an unpublished build.** Half the material is a
+      # misconfiguration, said as one. The `.p12`'s password alone may be
+      # absent: a `.p12` exported with none is opened with none, and GitHub
+      # cannot hold an empty secret. Which certificate it is — the
+      # maintainer's individual one for now, Koru Works, Inc.'s after the
+      # account's conversion (N20) — is the vault's to say, not this file's.
+      - name: Decide whether this build is signed
+        id: signing
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          have=0
+          for value in "$P12" "$API_KEY" "$API_KEY_ID" "$API_ISSUER"; do
+            [ -n "$value" ] && have=$((have + 1))
+          done
+          if [ "$have" -eq 0 ] && [ "$CHANNEL" = nightly ]; then
+            echo "No Developer ID material: an unsigned build, not published (rev2 §6)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$have" -ne 4 ] || [ -z "$IDENTITY" ]; then
+            echo "::error::The macOS signing material is incomplete: MACOS_CERTIFICATE_P12, APPSTORE_API_KEY_P8, MACOS_SIGNING_IDENTITY, APPSTORE_API_KEY_ID and APPSTORE_API_ISSUER_ID go together (MACOS_CERTIFICATE_PASSWORD too, unless the .p12 has none), and a stable release is always signed"
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      # The setup is the other jobs': patched crates, the pinned sherpa-onnx
+      # archive the voice runtime links, the bundled fonts. Xcode's swiftc,
+      # codesign and hdiutil are on the image.
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the sherpa-onnx archive
+        run: bash scripts/setup/fetch-voice-runtime.sh
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.sh') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        run: bash scripts/setup/fetch-fonts.sh
+      # (see linux)
+      - name: Find this release's notes
+        id: notes
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$CHANNEL" = nightly ]; then
+            path="$(./koru.sh release-tool nightly-notes --select "$BEFORE" "$AFTER" | tail -n 1)"
+          else
+            path="releases/$VERSION.toml"
+          fi
+          test -f "$path" || { echo "::error::$path is not in the tagged commit: a release needs its notes"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      # **A keychain of the job's own**, made from the `.p12` and deleted at
+      # the end, and notarytool with the App Store Connect team key
+      # `koru-ci-notary` rather than an Apple ID's app-specific password.
+      # koru-release signs through KORU_MAC_SIGN_COMMAND (mac-sign.sh, which
+      # passes the entitlements on) and notarizes through
+      # KORU_MAC_NOTARIZE_COMMAND, then staples; a staple that fails fails the
+      # build.
+      - name: Prepare Developer ID signing
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          material="$RUNNER_TEMP/macos-signing"
+          (umask 077 && mkdir -p "$material")
+          keychain="$material/koru-signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          (umask 077 && printf '%s' "$P12" | base64 --decode > "$material/certificate.p12")
+          security import "$material/certificate.p12" -k "$keychain" -f pkcs12 \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$material/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          # Searched with the login keychain, so codesign finds the chain.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          if ! security find-identity -v -p codesigning "$keychain" | grep -qF "\"$IDENTITY\""; then
+            echo "::error::The .p12 does not hold a valid identity named $IDENTITY"
+            exit 1
+          fi
+          (umask 077 && printf '%s\n' "$API_KEY" > "$material/notary.p8")
+          {
+            echo "KORU_SIGNING_KEYCHAIN=$keychain"
+            echo "MACOS_SIGNING_IDENTITY=$IDENTITY"
+            echo "KORU_MAC_SIGN_COMMAND=bash \"$GITHUB_WORKSPACE/scripts/release/mac-sign.sh\" {file} {entitlements}"
+            echo "KORU_MAC_NOTARIZE_COMMAND=xcrun notarytool submit {file} --key \"$material/notary.p8\" --key-id $API_KEY_ID --issuer $API_ISSUER --wait --timeout 1h"
+          } >> "$GITHUB_ENV"
+      # (see linux)
+      - name: Write .env.production
+        if: steps.signing.outputs.signed == 'true' && inputs.with-cloud
+        env:
+          KORU_PUBLIC_API_ORIGIN: ${{ vars.KORU_PUBLIC_API_ORIGIN }}
+          KORU_PUBLIC_API_ISSUER: ${{ vars.KORU_PUBLIC_API_ISSUER }}
+          KORU_PUBLIC_API_CREDENTIAL_ROLLOUT: ${{ vars.KORU_PUBLIC_API_CREDENTIAL_ROLLOUT }}
+          KORU_SUPPORT_URL: ${{ vars.KORU_SUPPORT_URL }}
+          KORU_FEEDBACK_URL: ${{ vars.KORU_FEEDBACK_URL }}
+          KORU_GOOGLE_DOCS_CLIENT_ID: ${{ vars.KORU_GOOGLE_DOCS_CLIENT_ID }}
+          KORU_GOOGLE_DOCS_CLIENT_SECRET: ${{ secrets.KORU_GOOGLE_DOCS_CLIENT_SECRET }}
+        run: bash scripts/release/write-env-production.sh
+      # (see linux)
+      - name: Build, sign, notarize and write the release files
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY || secrets.RELEASE_MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD || secrets.RELEASE_MINISIGN_PASSWORD }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          DOWNLOAD_BASE: ${{ inputs.download-base }}
+          UPDATE_BASE: ${{ inputs.update-base }}
+          WITH_CLOUD: ${{ inputs.with-cloud }}
+        run: bash scripts/release/dist-github.sh ./koru.sh release-tool
+      # Unsigned: `dist-local`, the build a Mac developer makes — ad hoc
+      # signed, not notarized, no update signature, version
+      # `0.0.0-local.<commit>`. It opens through System Settings → Privacy &
+      # Security → Open Anyway and never updates itself; it shows that the
+      # tree builds, bundles and packs on macOS. Only the nightly gets here.
+      - name: Build the unsigned disk image
+        if: steps.signing.outputs.signed != 'true'
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          BUILD: ${{ inputs.build }}
+        run: |
+          ./koru.sh release-tool dist-local "$CHANNEL" --build "$BUILD"
+          mkdir -p dist/unpublished
+          mv dist/cloud/koru-*-macos-aarch64.dmg dist/unpublished/
+      # Mounted read-only, as a person's double-click mounts it: the app is
+      # sealed, both binaries answer `--help`, and — signed — Gatekeeper
+      # accepts the app as notarized Developer ID, with the ticket stapled in,
+      # and the image carries the same Developer ID signature. The image is
+      # signed but not notarized, by design (package.rs, `mac_dmg`): the
+      # stapled app is what Gatekeeper judges. Gatekeeper's own assessment of
+      # the image asks for notarization and rejected the 2026-10-30 nightly.
+      - name: Smoke-test the disk image
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [ "$SIGNED" = true ]; then images=("$OUT"/*.dmg); else images=(dist/unpublished/*.dmg); fi
+          test "${#images[@]}" -eq 1
+          mount="$RUNNER_TEMP/koru-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "${images[0]}"
+          trap 'hdiutil detach "$mount" -force >/dev/null' EXIT
+          app="$mount/Koru.app"
+          test -L "$mount/Applications"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # macOS has no `timeout`; perl's alarm is the same 30 seconds.
+          for name in koru koru-agent; do
+            perl -e 'alarm 30; exec @ARGV' "$app/Contents/MacOS/$name" --help >/dev/null
+          done
+          if [ "$SIGNED" = true ]; then
+            codesign --display --verbose=2 "$app" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
+            spctl --assess --type execute --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            codesign --verify --strict --verbose=2 "${images[0]}"
+            codesign --display --verbose=2 "${images[0]}" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
+          fi
+      - name: Delete the signing keychain
+        if: always() && steps.signing.outputs.signed == 'true'
+        run: |
+          if [ -n "${KORU_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$KORU_SIGNING_KEYCHAIN" || true
+          fi
+          rm -rf "$RUNNER_TEMP/macos-signing"
+      # actions/attest-build-provenance v4.2.2
+      - if: steps.signing.outputs.signed == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ env.OUT }}/*.dmg
+      # actions/upload-artifact v7.0.2
+      - if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ inputs.channel }}-macos-aarch64
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+      # actions/upload-artifact v7.0.2
+      - if: steps.signing.outputs.signed != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unpublished-macos-aarch64
+          path: dist/unpublished/
+          retention-days: 7
+          if-no-files-found: error

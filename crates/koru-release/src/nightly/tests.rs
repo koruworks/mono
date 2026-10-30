@@ -37,16 +37,19 @@ fn dist_github_parses_every_flag_and_refuses_the_rest() {
     );
     assert_eq!(options.notes, Path::new("releases/nightly/2026-10-24.toml"));
     assert!(!options.key_password_stdin);
+    assert!(!options.with_cloud, "nothing is baked in unless asked");
     assert_eq!(options.version, None);
 
     let mut with_extras = FULL.to_vec();
     with_extras.extend([
         "--key-password-stdin",
+        "--with-cloud",
         "--version",
         "0.1.4-nightly.20261024+abc1234",
     ]);
     let options = args(&with_extras).unwrap();
     assert!(options.key_password_stdin);
+    assert!(options.with_cloud);
     assert_eq!(
         options.version.as_deref(),
         Some("0.1.4-nightly.20261024+abc1234")
@@ -319,16 +322,20 @@ fn a_stable_manifest_points_at_its_own_tagged_release() {
     assert_eq!(release_tag(ReleaseChannel::Stable, "0.1.4"), "v0.1.4");
 }
 
-/// The stable page says what Linux lacks and where the other platforms are,
-/// and none of the nightly's own lines.
+/// The stable page says what Linux and Windows lack, and none of the
+/// nightly's own lines: it has Koru Cloud, so it never says it has not.
 #[test]
 fn a_stable_release_body_has_the_stable_platform_notes() {
     let notes = notes();
     let body = release_body(&stable_build(&notes));
     assert!(body.contains("`0.1.4`"), "{body}");
     assert!(body.contains("- **Linux** runs as an X11 app"), "{body}");
-    assert!(body.contains("Dictation and Koru Cloud are not available on Linux yet."));
-    assert!(body.contains("[koru.do](https://koru.do)"));
+    assert!(body.contains("Dictation is not available on Linux yet."));
+    assert!(
+        body.contains("- **Windows** is not code-signed yet"),
+        "{body}"
+    );
+    assert!(!body.contains("Koru Cloud"), "{body}");
     assert!(!body.contains("is a preview"), "{body}");
     assert!(!body.contains("in the nightly"), "{body}");
 }
