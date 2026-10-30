@@ -576,20 +576,21 @@ fn app_pick_reveals_the_tree_row_and_refreshes_properties_at_the_same_index() {
 }
 
 #[test]
-fn phosphor_hint_and_details_name_the_recorded_icon_and_respect_boundaries() {
+fn vector_hint_and_details_name_the_recorded_icon_and_respect_boundaries() {
     let mut snapshot = scene_snapshot(1);
     snapshot.records[0].name = "KoruIconButton";
     snapshot.records[0].property("icon name", "PLUS", "icons::ALL");
-    snapshot.records[1].name = "text run";
-    snapshot.records[1].property("rendered family", "Phosphor", "rendered");
+    snapshot.records[1].name = "icon";
+    snapshot.records[1].property("icon pack", "Lucide", "compiled");
+    snapshot.records[1].property("icon source", "Tabler", "brand fallback");
     assert_eq!(selection_name(&snapshot, 1), "KoruIconButton / PLUS");
     let mut inspector = Inspector::new(900.0, 700.0);
     inspector.accept(snapshot.clone());
     inspector.select(Some(1));
-    assert_eq!(inspector.lines[0], "Phosphor icon: PLUS");
+    assert_eq!(inspector.lines[0], "Lucide icon: PLUS (source: Tabler)");
     snapshot.records[1].kind = "unregistered";
     assert_eq!(icon_name(&snapshot, 1), None);
-    assert_eq!(selection_name(&snapshot, 1), "Phosphor icon");
+    assert_eq!(selection_name(&snapshot, 1), "Icon");
 }
 
 #[test]

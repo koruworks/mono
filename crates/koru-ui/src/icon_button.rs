@@ -435,10 +435,14 @@ fn inspect_icon(
                     r.property("icon name", name, "icons::ALL; aliases may share a glyph");
                 }
                 r.property(
-                    "Phosphor codepoint",
+                    "icon codepoint",
                     format!("U+{:04X}", glyph as u32),
                     "caller icon; docs/features/koruui/ICONS.md",
                 );
+                if let Some(def) = icons::vector_def(glyph) {
+                    r.property("icon pack", icons::ACTIVE_PACK, "compiled catalog");
+                    r.property("icon source", def.source, "artwork provenance");
+                }
             }
             r.property("layout", "centered glyph or label", "shared implementation");
             r.property("docs", "docs/features/koruui/COMPONENTS.md", "catalog");

@@ -139,31 +139,22 @@ fn decorated_button_metadata_stops_at_the_label() {
             1
         );
         for (i, r) in snapshot.records.iter().enumerate() {
-            if r.name == "fill"
-                || r.properties
-                    .iter()
-                    .any(|p| p.name == "rendered family" && p.value == "Phosphor")
-            {
+            if r.name == "fill" || r.name == "icon" {
                 assert_eq!(ancestor_role(&snapshot, i), None);
             }
         }
         if variant == 2 {
             assert!(
-                snapshot.records.iter().any(|r| r
-                    .properties
-                    .iter()
-                    .any(|p| p.name == "rendered family" && p.value == "Phosphor")),
+                snapshot.records.iter().any(|r| r.name == "icon"),
                 "the real trailing icon must have been captured"
             );
         }
         if variant == 1 {
             assert!(
-                snapshot.records.iter().enumerate().any(|(i, r)| r
-                    .properties
-                    .iter()
-                    .any(|p| p.name == "font size")
+                snapshot.records.iter().enumerate().any(|(i, r)| r.name == "icon"
+                    && r.properties.iter().any(|p| p.name == "icon name" && p.value == "QUESTION")
                     && ancestor_role(&snapshot, i).is_none()),
-                "Help badge has its own meta style, not the label role"
+                "Help badge is an icon outside the label's typography role"
             );
         }
     }

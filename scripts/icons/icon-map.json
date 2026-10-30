@@ -1,0 +1,757 @@
+{
+  "ALIGN_CENTER": {
+    "filled": null,
+    "lucide": "align-center",
+    "tabler": "align-center"
+  },
+  "ALIGN_JUSTIFY": {
+    "filled": null,
+    "lucide": "align-justify",
+    "tabler": "align-justified"
+  },
+  "ALIGN_LEFT": {
+    "filled": null,
+    "lucide": "align-left",
+    "tabler": "align-left"
+  },
+  "ALIGN_RIGHT": {
+    "filled": null,
+    "lucide": "align-right",
+    "tabler": "align-right"
+  },
+  "APPLE_LOGO": {
+    "filled": "brand-apple",
+    "lucide": "tabler:brand-apple",
+    "tabler": "brand-apple"
+  },
+  "ARROWS_CLOCKWISE": {
+    "filled": null,
+    "lucide": "refresh-cw",
+    "tabler": "refresh"
+  },
+  "ARROWS_IN_SIMPLE": {
+    "filled": null,
+    "lucide": "minimize-2",
+    "tabler": "arrows-minimize"
+  },
+  "ARROW_RIGHT": {
+    "filled": null,
+    "lucide": "arrow-right",
+    "tabler": "arrow-right"
+  },
+  "ARROW_UP": {
+    "filled": null,
+    "lucide": "arrow-up",
+    "tabler": "arrow-up"
+  },
+  "BELL": {
+    "filled": "bell",
+    "lucide": "bell",
+    "tabler": "bell"
+  },
+  "BELL_Z": {
+    "filled": "bell-z",
+    "lucide": "bell-off",
+    "tabler": "bell-z"
+  },
+  "BOLD": {
+    "filled": null,
+    "lucide": "bold",
+    "tabler": "bold"
+  },
+  "BUG": {
+    "filled": "bug",
+    "lucide": "bug",
+    "tabler": "bug"
+  },
+  "CANVAS": {
+    "filled": "layout-grid",
+    "lucide": "layout-grid",
+    "tabler": "layout-grid"
+  },
+  "CARET_DOUBLE_RIGHT": {
+    "filled": null,
+    "lucide": "chevrons-right",
+    "tabler": "chevrons-right"
+  },
+  "CARET_DOWN": {
+    "filled": null,
+    "lucide": "chevron-down",
+    "tabler": "chevron-down"
+  },
+  "CARET_LEFT": {
+    "filled": null,
+    "lucide": "chevron-left",
+    "tabler": "chevron-left"
+  },
+  "CARET_RIGHT": {
+    "filled": null,
+    "lucide": "chevron-right",
+    "tabler": "chevron-right"
+  },
+  "CARET_UP": {
+    "filled": null,
+    "lucide": "chevron-up",
+    "tabler": "chevron-up"
+  },
+  "CHATS_CIRCLE": {
+    "filled": null,
+    "lucide": "messages-square",
+    "tabler": "messages"
+  },
+  "CHAT_CIRCLE": {
+    "filled": "message-circle",
+    "lucide": "message-circle",
+    "tabler": "message-circle"
+  },
+  "CHECK": {
+    "filled": null,
+    "lucide": "check",
+    "tabler": "check"
+  },
+  "CHECK_SQUARE": {
+    "filled": "square-check",
+    "lucide": "square-check",
+    "tabler": "checkbox"
+  },
+  "CHECK_SQUARE_OFFSET": {
+    "filled": "square-check",
+    "lucide": "square-check-big",
+    "tabler": "square-check"
+  },
+  "CIRCLE_NOTCH": {
+    "filled": null,
+    "lucide": "loader-circle",
+    "tabler": "loader-2"
+  },
+  "CLEAR": {
+    "filled": null,
+    "lucide": "eraser",
+    "tabler": "eraser"
+  },
+  "CLOCK": {
+    "filled": null,
+    "lucide": "history",
+    "tabler": "history"
+  },
+  "CLOCK_COUNTDOWN": {
+    "filled": null,
+    "lucide": "timer",
+    "tabler": "clock-play"
+  },
+  "CLOUD": {
+    "filled": "cloud",
+    "lucide": "cloud",
+    "tabler": "cloud"
+  },
+  "CLOUD_SLASH": {
+    "filled": null,
+    "lucide": "cloud-off",
+    "tabler": "cloud-off"
+  },
+  "CODE": {
+    "filled": null,
+    "lucide": "code",
+    "tabler": "code"
+  },
+  "CONTACT": {
+    "filled": "user",
+    "lucide": "user",
+    "tabler": "user"
+  },
+  "COPY": {
+    "filled": null,
+    "lucide": "copy",
+    "tabler": "copy"
+  },
+  "CURSOR": {
+    "filled": "pointer",
+    "lucide": "mouse-pointer",
+    "tabler": "pointer"
+  },
+  "CUT": {
+    "filled": null,
+    "lucide": "scissors",
+    "tabler": "scissors"
+  },
+  "DATE": {
+    "filled": "calendar",
+    "lucide": "calendar",
+    "tabler": "calendar"
+  },
+  "DESKTOP": {
+    "filled": null,
+    "lucide": "monitor",
+    "tabler": "device-desktop"
+  },
+  "DETECTIVE": {
+    "filled": null,
+    "lucide": "venetian-mask",
+    "tabler": "spy"
+  },
+  "DEVICES": {
+    "filled": null,
+    "lucide": "monitor-smartphone",
+    "tabler": "devices"
+  },
+  "DOCUMENT": {
+    "filled": "file-text",
+    "lucide": "file-text",
+    "tabler": "file-text"
+  },
+  "DOTS_THREE": {
+    "filled": null,
+    "lucide": "ellipsis",
+    "tabler": "dots"
+  },
+  "DOTS_VERTICAL": {
+    "filled": null,
+    "lucide": "ellipsis-vertical",
+    "tabler": "dots-vertical"
+  },
+  "ENTER": {
+    "filled": null,
+    "lucide": "corner-down-left",
+    "tabler": "corner-down-left"
+  },
+  "ENVELOPE": {
+    "filled": "mail",
+    "lucide": "mail",
+    "tabler": "mail"
+  },
+  "EYE": {
+    "filled": "eye",
+    "lucide": "eye",
+    "tabler": "eye"
+  },
+  "EYE_SLASH": {
+    "filled": null,
+    "lucide": "eye-off",
+    "tabler": "eye-off"
+  },
+  "FADERS": {
+    "filled": null,
+    "lucide": "sliders-horizontal",
+    "tabler": "adjustments-horizontal"
+  },
+  "FILE": {
+    "filled": "file",
+    "lucide": "file",
+    "tabler": "file"
+  },
+  "FILES": {
+    "filled": null,
+    "lucide": "files",
+    "tabler": "files"
+  },
+  "FILE_ARROW_UP": {
+    "filled": null,
+    "lucide": "file-up",
+    "tabler": "file-upload"
+  },
+  "FILE_AUDIO": {
+    "filled": null,
+    "lucide": "file-audio",
+    "tabler": "file-music"
+  },
+  "FILE_CODE": {
+    "filled": null,
+    "lucide": "file-code",
+    "tabler": "file-code"
+  },
+  "FILE_DOC": {
+    "filled": null,
+    "lucide": "file-type",
+    "tabler": "file-type-doc"
+  },
+  "FILE_IMAGE": {
+    "filled": "photo",
+    "lucide": "file-image",
+    "tabler": "photo"
+  },
+  "FILE_MD": {
+    "filled": null,
+    "lucide": "file-code-2",
+    "tabler": "markdown"
+  },
+  "FILE_PDF": {
+    "filled": null,
+    "lucide": "file-text",
+    "tabler": "file-type-pdf"
+  },
+  "FILE_PPT": {
+    "filled": null,
+    "lucide": "presentation",
+    "tabler": "file-type-ppt"
+  },
+  "FILE_VIDEO": {
+    "filled": null,
+    "lucide": "file-video",
+    "tabler": "movie"
+  },
+  "FILE_XLS": {
+    "filled": null,
+    "lucide": "file-spreadsheet",
+    "tabler": "file-type-xls"
+  },
+  "FILE_ZIP": {
+    "filled": null,
+    "lucide": "file-archive",
+    "tabler": "file-type-zip"
+  },
+  "FLAG": {
+    "filled": "flag",
+    "lucide": "flag",
+    "tabler": "flag"
+  },
+  "FLOPPY_DISK": {
+    "filled": null,
+    "lucide": "save",
+    "tabler": "device-floppy"
+  },
+  "FOLDER": {
+    "filled": "folder",
+    "lucide": "folder",
+    "tabler": "folder"
+  },
+  "FOLD_ALL": {
+    "filled": null,
+    "lucide": "fold-vertical",
+    "tabler": "fold"
+  },
+  "GITHUB": {
+    "filled": "brand-github",
+    "lucide": "github",
+    "tabler": "brand-github"
+  },
+  "GIT_BRANCH": {
+    "filled": null,
+    "lucide": "git-branch",
+    "tabler": "git-branch"
+  },
+  "GLOBE": {
+    "filled": null,
+    "lucide": "globe",
+    "tabler": "world"
+  },
+  "GRAPH": {
+    "filled": null,
+    "lucide": "git-fork",
+    "tabler": "hierarchy-2"
+  },
+  "GRIP": {
+    "filled": null,
+    "lucide": "grip-vertical",
+    "tabler": "grip-vertical"
+  },
+  "HEADING": {
+    "filled": null,
+    "lucide": "heading",
+    "tabler": "heading"
+  },
+  "HEADING_1": {
+    "filled": null,
+    "lucide": "heading-1",
+    "tabler": "h-1"
+  },
+  "HEADING_2": {
+    "filled": null,
+    "lucide": "heading-2",
+    "tabler": "h-2"
+  },
+  "HEADING_3": {
+    "filled": null,
+    "lucide": "heading-3",
+    "tabler": "h-3"
+  },
+  "HEADING_4": {
+    "filled": null,
+    "lucide": "heading-4",
+    "tabler": "h-4"
+  },
+  "HEADSET": {
+    "filled": null,
+    "lucide": "headset",
+    "tabler": "headset"
+  },
+  "HIGHLIGHT": {
+    "filled": null,
+    "lucide": "highlighter",
+    "tabler": "highlight"
+  },
+  "HOUSE": {
+    "filled": "home",
+    "lucide": "house",
+    "tabler": "home"
+  },
+  "IMAGE": {
+    "filled": "photo",
+    "lucide": "image",
+    "tabler": "photo"
+  },
+  "IMPORT": {
+    "filled": null,
+    "lucide": "download",
+    "tabler": "download"
+  },
+  "INDENT": {
+    "filled": null,
+    "lucide": "indent-increase",
+    "tabler": "indent-increase"
+  },
+  "INSTAGRAM_LOGO": {
+    "filled": null,
+    "lucide": "tabler:brand-instagram",
+    "tabler": "brand-instagram"
+  },
+  "ITALIC": {
+    "filled": null,
+    "lucide": "italic",
+    "tabler": "italic"
+  },
+  "KEY": {
+    "filled": "key",
+    "lucide": "key-round",
+    "tabler": "key"
+  },
+  "KEYBOARD": {
+    "filled": null,
+    "lucide": "keyboard",
+    "tabler": "keyboard"
+  },
+  "KEY_RETURN": {
+    "filled": null,
+    "lucide": "koru:key-return",
+    "tabler": "koru:key-return"
+  },
+  "LIGHTBULB": {
+    "filled": "bulb",
+    "lucide": "lightbulb",
+    "tabler": "bulb"
+  },
+  "LINK": {
+    "filled": null,
+    "lucide": "link",
+    "tabler": "link"
+  },
+  "LINK_SIMPLE_BREAK": {
+    "filled": null,
+    "lucide": "unlink",
+    "tabler": "link-off"
+  },
+  "LINUX_LOGO": {
+    "filled": null,
+    "lucide": "koru:tux",
+    "tabler": "koru:tux"
+  },
+  "LIST": {
+    "filled": null,
+    "lucide": "list",
+    "tabler": "list"
+  },
+  "LIST_CHECKS": {
+    "filled": null,
+    "lucide": "list-checks",
+    "tabler": "list-check"
+  },
+  "LIST_NUM": {
+    "filled": null,
+    "lucide": "list-ordered",
+    "tabler": "list-numbers"
+  },
+  "LIST_PLAIN": {
+    "filled": null,
+    "lucide": "menu",
+    "tabler": "menu-2"
+  },
+  "MAGNIFYING_GLASS_PLUS": {
+    "filled": "zoom-in",
+    "lucide": "zoom-in",
+    "tabler": "zoom-in"
+  },
+  "MEGAPHONE": {
+    "filled": null,
+    "lucide": "megaphone",
+    "tabler": "speakerphone"
+  },
+  "MICROPHONE": {
+    "filled": "microphone",
+    "lucide": "mic",
+    "tabler": "microphone"
+  },
+  "NOTE": {
+    "filled": null,
+    "lucide": "sticky-note",
+    "tabler": "note"
+  },
+  "NOTE_PENCIL": {
+    "filled": null,
+    "lucide": "square-pen",
+    "tabler": "edit"
+  },
+  "PALETTE": {
+    "filled": "palette",
+    "lucide": "palette",
+    "tabler": "palette"
+  },
+  "PANEL_LEFT": {
+    "filled": "layout-sidebar",
+    "lucide": "panel-left",
+    "tabler": "layout-sidebar"
+  },
+  "PANEL_RIGHT": {
+    "filled": "layout-sidebar-right",
+    "lucide": "panel-right",
+    "tabler": "layout-sidebar-right"
+  },
+  "PAPERCLIP": {
+    "filled": null,
+    "lucide": "paperclip",
+    "tabler": "paperclip"
+  },
+  "PASTE": {
+    "filled": "clipboard",
+    "lucide": "clipboard",
+    "tabler": "clipboard"
+  },
+  "PASTE_PLAIN": {
+    "filled": "clipboard-text",
+    "lucide": "clipboard-type",
+    "tabler": "clipboard-text"
+  },
+  "PAUSE": {
+    "filled": "player-pause",
+    "lucide": "pause",
+    "tabler": "player-pause"
+  },
+  "PENCIL": {
+    "filled": null,
+    "lucide": "pencil",
+    "tabler": "pencil"
+  },
+  "PHONE": {
+    "filled": "phone",
+    "lucide": "phone",
+    "tabler": "phone"
+  },
+  "PLAY": {
+    "filled": "player-play",
+    "lucide": "play",
+    "tabler": "player-play"
+  },
+  "PLUS": {
+    "filled": null,
+    "lucide": "plus",
+    "tabler": "plus"
+  },
+  "POP_OUT": {
+    "filled": null,
+    "lucide": "external-link",
+    "tabler": "external-link"
+  },
+  "PUSH_PIN": {
+    "filled": "pin",
+    "lucide": "pin",
+    "tabler": "pin"
+  },
+  "QUESTION": {
+    "filled": "help-circle",
+    "lucide": "circle-help",
+    "tabler": "help-circle"
+  },
+  "QUOTES": {
+    "filled": "quote",
+    "lucide": "quote",
+    "tabler": "quote"
+  },
+  "RECORD": {
+    "filled": "player-record",
+    "lucide": "circle-dot",
+    "tabler": "player-record"
+  },
+  "REDDIT_LOGO": {
+    "filled": null,
+    "lucide": "tabler:brand-reddit",
+    "tabler": "brand-reddit"
+  },
+  "REDO": {
+    "filled": null,
+    "lucide": "redo-2",
+    "tabler": "arrow-forward-up"
+  },
+  "REPLACE": {
+    "filled": null,
+    "lucide": "arrow-left-right",
+    "tabler": "arrows-left-right"
+  },
+  "ROBOT": {
+    "filled": null,
+    "lucide": "bot",
+    "tabler": "robot"
+  },
+  "RULER": {
+    "filled": null,
+    "lucide": "ruler",
+    "tabler": "ruler-2"
+  },
+  "SEARCH": {
+    "filled": null,
+    "lucide": "search",
+    "tabler": "search"
+  },
+  "SPARKLE": {
+    "filled": null,
+    "lucide": "sparkles",
+    "tabler": "sparkles"
+  },
+  "SQUARE": {
+    "filled": "square",
+    "lucide": "square",
+    "tabler": "square"
+  },
+  "STOP": {
+    "filled": "player-stop",
+    "lucide": "square",
+    "tabler": "player-stop"
+  },
+  "STRIKE": {
+    "filled": null,
+    "lucide": "strikethrough",
+    "tabler": "strikethrough"
+  },
+  "SUBSCRIPT": {
+    "filled": null,
+    "lucide": "subscript",
+    "tabler": "subscript"
+  },
+  "SUN": {
+    "filled": "sun",
+    "lucide": "sun",
+    "tabler": "sun"
+  },
+  "SUPERSCRIPT": {
+    "filled": null,
+    "lucide": "superscript",
+    "tabler": "superscript"
+  },
+  "TABLE": {
+    "filled": "table",
+    "lucide": "table",
+    "tabler": "table"
+  },
+  "TABLE_COMPACT": {
+    "filled": null,
+    "lucide": "move-horizontal",
+    "tabler": "arrows-horizontal"
+  },
+  "TABLE_EXTEND": {
+    "filled": null,
+    "lucide": "maximize-2",
+    "tabler": "arrows-maximize"
+  },
+  "TABS": {
+    "filled": "app-window",
+    "lucide": "app-window",
+    "tabler": "app-window"
+  },
+  "TAG": {
+    "filled": "tag",
+    "lucide": "tag",
+    "tabler": "tag"
+  },
+  "TERMINAL": {
+    "filled": null,
+    "lucide": "square-terminal",
+    "tabler": "terminal-2"
+  },
+  "THUMBS_DOWN": {
+    "filled": "thumb-down",
+    "lucide": "thumbs-down",
+    "tabler": "thumb-down"
+  },
+  "THUMBS_UP": {
+    "filled": "thumb-up",
+    "lucide": "thumbs-up",
+    "tabler": "thumb-up"
+  },
+  "TIKTOK_LOGO": {
+    "filled": null,
+    "lucide": "tabler:brand-tiktok",
+    "tabler": "brand-tiktok"
+  },
+  "TRASH": {
+    "filled": "trash",
+    "lucide": "trash-2",
+    "tabler": "trash"
+  },
+  "TRAY": {
+    "filled": null,
+    "lucide": "inbox",
+    "tabler": "inbox"
+  },
+  "UNDERLINE": {
+    "filled": null,
+    "lucide": "underline",
+    "tabler": "underline"
+  },
+  "UNDO": {
+    "filled": null,
+    "lucide": "undo-2",
+    "tabler": "arrow-back-up"
+  },
+  "UNFOLD_ALL": {
+    "filled": null,
+    "lucide": "unfold-vertical",
+    "tabler": "fold-down"
+  },
+  "USER_PLUS": {
+    "filled": null,
+    "lucide": "user-plus",
+    "tabler": "user-plus"
+  },
+  "USER_SOUND": {
+    "filled": null,
+    "lucide": "message-square-warning",
+    "tabler": "message-report"
+  },
+  "WARNING": {
+    "filled": "alert-triangle",
+    "lucide": "triangle-alert",
+    "tabler": "alert-triangle"
+  },
+  "WINDOWS_LOGO": {
+    "filled": "brand-windows",
+    "lucide": "tabler:brand-windows",
+    "tabler": "brand-windows"
+  },
+  "WINDOW_CLOSE": {
+    "filled": null,
+    "lucide": "x",
+    "tabler": "x"
+  },
+  "WINDOW_MINIMISE": {
+    "filled": null,
+    "lucide": "minus",
+    "tabler": "minus"
+  },
+  "WINDOW_RESTORE": {
+    "filled": null,
+    "lucide": "minimize-2",
+    "tabler": "arrows-minimize"
+  },
+  "WRENCH": {
+    "filled": null,
+    "lucide": "wrench",
+    "tabler": "tool"
+  },
+  "X_LOGO": {
+    "filled": null,
+    "lucide": "tabler:brand-x",
+    "tabler": "brand-x"
+  },
+  "YOUTUBE_LOGO": {
+    "filled": null,
+    "lucide": "tabler:brand-youtube",
+    "tabler": "brand-youtube"
+  }
+}

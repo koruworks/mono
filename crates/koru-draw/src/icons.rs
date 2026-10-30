@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Phosphor icon glyphs, by name.
+//! Stable icon identities backed by the compiled vector catalog.
 //!
-//! Icons are a **font**, not SVG: `assets/fonts/Phosphor.ttf` is fetched like
-//! the text faces and registered into the same font collection, so an icon is
-//! a character parley shapes and vello draws. No rasteriser, no second asset
-//! pipeline, and an icon inherits the colour of the text around it.
-//!
-//! The codepoints below are lifted from the `@phosphor-icons/web` stylesheet
-//! and are stable for a given release — `scripts/setup/fetch-fonts.sh` pins the
-//! version that produced them. They live in the Private Use Area, so they carry
-//! no meaning outside this font: rendering one without Phosphor registered
-//! shows a missing-glyph box rather than a wrong character.
+//! The PUA constants retain their original Phosphor values for callers. Known
+//! icons use vector slots; the legacy font families serve unknown glyphs only.
+//! Regenerate the selected pack with `scripts/icons/sync-icon-pack.py`.
 
 // Most of these are used by the document toolbar, which is the next thing
 // built; a constant with no call site yet is vocabulary, not dead code.
 #![allow(dead_code)]
+
+#[path = "icon_pack_data.rs"]
+mod data;
+mod vector;
+pub use vector::{
+    ACTIVE_PACK, DEFAULT_STROKE_WIDTH, IconDef, draw_vector_icon, has_vector_icon, pack_box_id,
+    unpack_box_id, vector_def,
+};
 
 /// The family name `layout.rs` registers the font under.
 pub const FAMILY: &str = "Phosphor";
@@ -565,7 +566,18 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 140] = [
+pub const ALL: [(&str, char); 151] = [
+    ("GRAPH", GRAPH),
+    ("TERMINAL", TERMINAL),
+    ("TABLE_COMPACT", TABLE_COMPACT),
+    ("TABLE_EXTEND", TABLE_EXTEND),
+    ("QUOTES", QUOTES),
+    ("MAGNIFYING_GLASS_PLUS", MAGNIFYING_GLASS_PLUS),
+    ("ARROWS_IN_SIMPLE", ARROWS_IN_SIMPLE),
+    ("CARET_UP", CARET_UP),
+    ("REPLACE", REPLACE),
+    ("ENTER", ENTER),
+    ("SPARKLE", SPARKLE),
     ("MEGAPHONE", MEGAPHONE),
     ("FOLD_ALL", FOLD_ALL),
     ("UNFOLD_ALL", UNFOLD_ALL),
@@ -708,55 +720,13 @@ pub const ALL: [(&str, char); 140] = [
     ("KEYBOARD", KEYBOARD),
 ];
 
+/// Alternate names for existing identities; the gallery uses ALL instead.
+pub const ALIASES: [(&str, char); 4] = [
+    ("RESET", RESET),
+    ("MINUS", MINUS),
+    ("DIVIDER", DIVIDER),
+    ("DOWNLOAD", DOWNLOAD),
+];
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every glyph sits in the Private Use Area. One that did not would collide
-    /// with real text — an icon constant holding `A` would render as an `A`
-    /// wherever Phosphor happened not to be registered.
-    #[test]
-    fn every_icon_is_in_the_private_use_area() {
-        for (name, ch) in ALL {
-            let cp = ch as u32;
-            assert!(
-                (0xE000..=0xF8FF).contains(&cp),
-                "{name} is U+{cp:04X}, outside the PUA"
-            );
-        }
-    }
-
-    /// Two icons sharing a codepoint would draw the same glyph, which is the
-    /// sort of thing nobody notices until a toolbar has two identical buttons.
-    #[test]
-    fn no_two_icons_share_a_codepoint() {
-        let mut seen: Vec<char> = ALL.iter().map(|(_, c)| *c).collect();
-        seen.sort_unstable();
-        let before = seen.len();
-        seen.dedup();
-        assert_eq!(seen.len(), before, "duplicate codepoint among the icons");
-    }
-
-    /// Each scheme a link can carry maps to a distinct, recognisable glyph, and
-    /// anything unrecognised falls back to the generic link.
-    #[test]
-    fn for_scheme_picks_the_right_icon() {
-        assert_eq!(for_scheme(Some("https://example.com")), LINK);
-        assert_eq!(for_scheme(Some("HTTPS://x")), LINK, "case-insensitive");
-        assert_eq!(for_scheme(Some("http://example.com")), LINK_SIMPLE_BREAK);
-        assert_eq!(for_scheme(Some("mailto:a@b.com")), ENVELOPE);
-        assert_eq!(for_scheme(Some("file:///etc/hosts")), FILE);
-        assert_eq!(for_scheme(Some("ftp://host/path")), FILE_ARROW_UP);
-        assert_eq!(for_scheme(Some("sftp://host/path")), KEY);
-        assert_eq!(for_scheme(Some("ssh://host")), KEY);
-        assert_eq!(for_scheme(Some("tel:+155512345")), PHONE);
-        assert_eq!(for_scheme(Some("git://host/repo")), GITHUB);
-        assert_eq!(
-            for_scheme(Some("git+ssh://host/repo")),
-            GITHUB,
-            "git+ssh is git"
-        );
-        assert_eq!(for_scheme(Some("spotify:track:1")), LINK, "unknown scheme");
-        assert_eq!(for_scheme(None), LINK, "no url at all");
-    }
-}
+mod tests;
