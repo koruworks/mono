@@ -68,6 +68,17 @@ impl Inspector {
         }
     }
 
+    /// Select `index` as a step of its own, so Back returns to what was
+    /// selected before: an ancestor chosen from Details.
+    pub(super) fn go_to(&mut self, index: usize) {
+        if self.selected != Some(index) {
+            let from = self.view();
+            self.history.record(from);
+            self.pause_refresh();
+            self.select(Some(index));
+        }
+    }
+
     /// One step back or forward; false when there is nowhere to go.
     pub(super) fn go(&mut self, back: bool) -> bool {
         let current = self.view();

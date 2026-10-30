@@ -586,7 +586,7 @@ fn phosphor_hint_and_details_name_the_recorded_icon_and_respect_boundaries() {
     let mut inspector = Inspector::new(900.0, 700.0);
     inspector.accept(snapshot.clone());
     inspector.select(Some(1));
-    assert_eq!(inspector.lines[0], "Phosphor icon: PLUS");
+    assert!(inspector.lines.iter().any(|l| l == "Phosphor icon: PLUS"));
     snapshot.records[1].kind = "unregistered";
     assert_eq!(icon_name(&snapshot, 1), None);
     assert_eq!(selection_name(&snapshot, 1), "Phosphor icon");
@@ -1075,4 +1075,162 @@ fn history_keeps_the_current_selection_across_a_newer_capture() {
     assert!(inspector.go(true));
     assert!(inspector.show_hierarchy);
     assert_eq!(inspector.selected, Some(1));
+}
+
+/// A plate laid out as the Workspaces page lays one out: inset padding, a
+/// gap, the primary filling and the gear in its lane.
+fn plate_snapshot() -> Snapshot {
+    let frame = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
+    );
+    {
+        let _plate = inspect::scope(
+            "Workspace plate",
+            "element",
+            Affine::IDENTITY,
+            scene::rect(0.0, 0.0, 254.0, 26.0),
+            |r| {
+                r.property("element", "row", "El constructor");
+                r.property(
+                    "pad_x",
+                    "alias::ROW_PLATE_INSET = Space::S1 -> 4",
+                    "El::pad_x",
+                );
+                r.property("gap", "Space::S1 -> 4", "El::gap");
+                r.property(
+                    "fill colour",
+                    "Surface::Hover -> #2A2D33 / alpha 1.000",
+                    "state rule",
+                );
+                r.property("radius", "Radius::Px(5) exception -> 5", "El::radius");
+            },
+        );
+        {
+            let _primary = inspect::scope(
+                "Workspace primary action",
+                "element",
+                Affine::IDENTITY,
+                scene::rect(4.0, 0.0, 218.0, 26.0),
+                |r| {
+                    r.property("element", "row", "El constructor");
+                    r.property("fill", "Fill(1)", "El::fill");
+                    r.property("min_h", "metrics::ROW_MIN -> 26", "El::min_h");
+                },
+            );
+        }
+        {
+            let _gear = inspect::scope(
+                "Manage gear",
+                "element",
+                Affine::IDENTITY,
+                scene::rect(226.0, 0.0, 24.0, 26.0),
+                |r| r.property("element", "leaf", "El constructor"),
+            );
+        }
+    }
+    frame.finish()
+}
+
+/// **The box names the tokens its edges are made of.** The primary's left
+/// is the plate's inset; its right is the gap, the gear and the inset; its
+/// size reads as its rule. The numbers are kept for the hover.
+#[test]
+fn box_edges_name_the_padding_gap_and_siblings_that_make_them() {
+    let snapshot = plate_snapshot();
+    let primary = 1;
+    assert_eq!(snapshot.records[primary].name, "Workspace primary action");
+    let [left, top, right, bottom] = details::edges(&snapshot, primary).expect("a parent");
+    assert!(left.token && right.token && top.token && bottom.token);
+    assert_eq!(left.short, "ROW_PLATE_INSET");
+    assert_eq!(right.short, "S1 + Manage gear + ROW_PLATE_INSET");
+    assert_eq!(right.px, 32.0);
+    assert!(right.full.contains("gap Space::S1 → 4"), "{}", right.full);
+    assert!(right.full.ends_with("= 32.0 px"), "{}", right.full);
+    assert_eq!(top.short, "0");
+    assert_eq!(
+        details::size_rule(&snapshot.records[primary]).as_deref(),
+        Some("fill × ≥ ROW_MIN")
+    );
+}
+
+/// **A distance the tokens do not add up to says it was measured**, and a
+/// surface not on elements has no tokens to name.
+#[test]
+fn box_edges_say_measured_when_tokens_do_not_add_up() {
+    let mut snapshot = plate_snapshot();
+    snapshot.records[2].bounds[2] += 3.0; // The gear widened by hand.
+    let [left, _, right, _] = details::edges(&snapshot, 1).unwrap();
+    assert!(left.token);
+    assert!(!right.token);
+    assert_eq!(right.short, "32.0 measured");
+
+    let legacy = scene_snapshot(1);
+    let [left, ..] = details::edges(&legacy, 1).unwrap();
+    assert!(!left.token && left.full.contains("does not record its tokens"));
+    assert_eq!(details::size_rule(&legacy.records[1]), None);
+}
+
+/// **Tokens come first, grouped**: colour with its swatch, then spacing,
+/// before the measured layout; a value outside the token set is marked raw;
+/// ancestors are one breadcrumb, not every ancestor's properties; and the
+/// capture's notes are folded until asked for.
+#[test]
+fn details_group_tokens_first_and_fold_the_capture_notes() {
+    let mut inspector = Inspector::new(900.0, 700.0);
+    inspector.snapshot = plate_snapshot();
+    inspector.select(Some(1));
+    let position = |line: &str| inspector.lines.iter().position(|l| l == line);
+    let size = position("Size").expect("a Size group");
+    let layout = position("Layout (measured)").expect("a Layout group");
+    assert!(size < layout);
+    assert!(position("fill: Fill(1)").is_some());
+    assert!(position("min_h: metrics::ROW_MIN -> 26").is_some());
+    assert!(position("Ancestors: Workspace plate").is_some());
+    assert!(
+        !inspector.lines.iter().any(|l| l.starts_with("pad_x")),
+        "the parent's properties are not repeated under its child"
+    );
+    assert!(!inspector.lines.iter().any(|l| l.starts_with("coverage:")));
+    assert_eq!(inspector.lines.last().unwrap(), "About this capture");
+
+    inspector.select(Some(0));
+    let rows: Vec<&details::Row> = inspector
+        .details_lines
+        .iter()
+        .filter_map(|line| match line {
+            details::Line::Row(row) => Some(row),
+            _ => None,
+        })
+        .collect();
+    let fill = rows.iter().find(|r| r.label == "fill colour").unwrap();
+    assert_eq!(fill.token.as_deref(), Some("Surface::Hover"));
+    assert!(fill.swatch.is_some() && !fill.raw);
+    let radius = rows.iter().find(|r| r.label == "radius").unwrap();
+    assert!(radius.raw, "a Px exception is not a token");
+    let colour = inspector.lines.iter().position(|l| l == "Colour").unwrap();
+    let spacing = inspector.lines.iter().position(|l| l == "Spacing").unwrap();
+    assert!(colour < spacing);
+
+    inspector.notes_open = true;
+    inspector.rebuild_lines();
+    assert!(inspector.lines.iter().any(|l| l.starts_with("coverage:")));
+}
+
+/// **An ancestor chosen in Details is a step Back undoes.**
+#[test]
+fn choosing_an_ancestor_is_a_step_back_returns_from() {
+    let mut inspector = Inspector::new(900.0, 700.0);
+    inspector.snapshot = plate_snapshot();
+    inspector.select(Some(1));
+    inspector.activate(7);
+    inspector.go_to(0);
+    assert_eq!(inspector.selected, Some(0));
+    assert!(!inspector.show_hierarchy);
+    assert!(inspector.go(true));
+    assert_eq!(inspector.selected, Some(1));
+    assert!(!inspector.show_hierarchy);
+    assert!(inspector.go(false));
+    assert_eq!(inspector.selected, Some(0));
 }

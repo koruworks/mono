@@ -23,6 +23,7 @@ use winit::{
 use crate::accessibility::{ControlPart, Occurrence, SemanticNode, WindowSlot};
 
 mod detached;
+mod details;
 mod hierarchy;
 mod history;
 mod placement;
@@ -86,6 +87,12 @@ pub(crate) struct Inspector {
     show_hierarchy: bool,
     hierarchy_click: Option<(usize, u64, std::time::Instant, (f32, f32))>,
     history: history::History,
+    /// Details, grouped, as laid out; `lines` is its plain text.
+    details_lines: Vec<details::Line>,
+    /// Whether Details shows the capture's notes at its foot.
+    notes_open: bool,
+    /// The box's labels and what each says on hover.
+    box_tips: Vec<(Rect, String)>,
     engine: Option<TextEngine>,
     lines: Vec<String>,
     status: Option<CopyKey>,
@@ -131,6 +138,9 @@ impl Inspector {
             show_hierarchy: true,
             hierarchy_click: None,
             history: history::History::default(),
+            details_lines: Vec::new(),
+            notes_open: false,
+            box_tips: Vec::new(),
             engine: None,
             lines: Vec::new(),
             status: None,
@@ -394,6 +404,14 @@ impl Inspector {
                         }
                     } else if !self.show_hierarchy && y >= DETAILS_TOP {
                         self.focus_index = 5;
+                        match self.details_hit() {
+                            Some(details::Hit::Crumb(index)) => self.go_to(index),
+                            Some(details::Hit::Fold) => {
+                                self.notes_open = !self.notes_open;
+                                self.rebuild_lines();
+                            }
+                            None => {}
+                        }
                     }
                     result.redraw = true;
                     self.dirty_semantics = true;
@@ -730,95 +748,19 @@ impl Inspector {
         } else {
             CopyKey::InspectorEmpty
         };
+        self.details_lines.clear();
         let Some(index) = self.selected else {
             self.lines.push(t(lang, coverage).into());
+            self.details_lines
+                .push(details::Line::Prose(t(lang, coverage).into()));
             return;
         };
-        let Some(record) = self.snapshot.records.get(index) else {
+        if index >= self.snapshot.records.len() {
             return;
-        };
-        if let Some(name) = icon_name(&self.snapshot, index) {
-            self.lines.push(format!("Phosphor icon: {name}"));
         }
-        self.lines.extend(typography_details(&self.snapshot, index));
-        self.lines.push(t(lang, coverage).into());
-        self.lines.push(format!("source: {}", record.source));
-        self.lines.push(format!(
-            "frame: {:8} / draw + capture: {:8} us (not isolated overhead)",
-            self.snapshot.revision, self.capture_micros
-        ));
-        self.lines
-            .push(format!("coverage: {}", self.snapshot.coverage));
-        self.lines.push("Metadata incomplete: motion, responsive rule, margin policy and durable domain identity are not exposed.".into());
-        self.lines.push("Platform: Windows main host; mobile, Apple native, onboarding and auxiliary windows not verified. docs/features/koruui/INSPECTOR.md".into());
-        self.lines.push(format!(
-            "bounds: {} logical units",
-            rectangle_numbers(record.bounds)
-        ));
-        self.lines
-            .push(format!("clip: {}", rectangle_numbers(record.clip)));
-        if let Some(parent) = record.parent.and_then(|p| self.snapshot.records.get(p)) {
-            self.lines.push(format!("Parent: {}", display_name(parent)));
-            let a = record.rect();
-            let b = parent.rect();
-            self.lines.push(format!(
-                "edge distance L/T/R/B: {:.1} / {:.1} / {:.1} / {:.1}",
-                a.x0 - b.x0,
-                a.y0 - b.y0,
-                b.x1 - a.x1,
-                b.y1 - a.y1
-            ));
-            self.lines
-                .push("Measured distances; padding/alignment/text metrics may contribute".into());
-            self.lines.push("Spacing rays follow the center axes; labels measure edge gaps in logical px. Short/clipped/overflow gaps remain in Details.".into());
-        } else {
-            self.lines
-                .push("Parent: unavailable (no recorded parent); spacing rays unavailable".into());
-        }
-        let r = record.rect();
-        let mut horizontal: Option<f64> = None;
-        let mut vertical: Option<f64> = None;
-        for (at, other) in self.snapshot.records.iter().enumerate() {
-            if at == index || other.parent != record.parent {
-                continue;
-            }
-            let o = other.rect();
-            if o.y0 < r.y1 && o.y1 > r.y0 {
-                let gap = (o.x0 - r.x1).max(r.x0 - o.x1);
-                if gap >= 0.0 {
-                    horizontal = Some(horizontal.map_or(gap, |v| v.min(gap)));
-                }
-            }
-            if o.x0 < r.x1 && o.x1 > r.x0 {
-                let gap = (o.y0 - r.y1).max(r.y0 - o.y1);
-                if gap >= 0.0 {
-                    vertical = Some(vertical.map_or(gap, |v| v.min(gap)));
-                }
-            }
-        }
-        let gap =
-            |value: Option<f64>| value.map_or_else(|| "unavailable".into(), |n| format!("{n:.1}"));
-        self.lines.push(format!(
-            "Nearest sibling gap x/y: {} / {} (measured)",
-            gap(horizontal),
-            gap(vertical)
-        ));
-        let mut chain = Some(index);
-        while let Some(at) = chain {
-            let r = &self.snapshot.records[at];
-            self.lines.push(format!("[{}]", r.name));
-            for p in &r.properties {
-                self.lines
-                    .push(format!("{}: {} ({})", p.name, p.value, p.origin));
-            }
-            chain = r.parent;
-        }
-        self.lines
-            .push("Accessibility — prepared host semantics, not native acceptance:".into());
-        if self.semantic_details.is_empty() {
-            self.lines.push("Not exposed: attach an accessibility client to publish host semantics. No role/name is inferred from appearance.".into());
-        }
-        self.lines.extend(self.semantic_details.iter().cloned());
+        let lines = self.details(index, coverage);
+        self.lines = lines.iter().map(details::Line::text).collect();
+        self.details_lines = lines;
     }
 
     /// Pausing freezes the visual selection as well as its measurements. Stale
@@ -1025,6 +967,7 @@ impl Inspector {
             self.draw_details(canvas, root);
         }
         self.draw_scrollbar(canvas, root);
+        self.draw_box_tip(canvas, root);
         if self.focus {
             let focus = self.control_rect(self.focus_index);
             scene::stroke(
@@ -1073,80 +1016,155 @@ impl Inspector {
         self.diagnostic_text(canvas, root, text, x, y, width, theme::p().text);
     }
 
+    /// The selected element inside its parent: each edge names the
+    /// padding, gap and siblings that make it, or says it was measured; the
+    /// numbers are on hover.
     fn draw_box(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(record) = self.selected.and_then(|i| self.snapshot.records.get(i)) else {
+        self.box_tips.clear();
+        let Some(index) = self.selected else {
+            return;
+        };
+        let Some(record) = self.snapshot.records.get(index) else {
             return;
         };
         let selected = record.rect();
+        let rule = details::size_rule(record);
         let parent_name = record
             .parent
             .and_then(|i| self.snapshot.records.get(i))
-            .map(|r| display_name(r).to_string())
-            .unwrap_or_else(|| "unavailable".into());
-        let parent = record
-            .parent
-            .and_then(|i| self.snapshot.records.get(i))
-            .map(|r| r.rect());
+            .map(|r| display_name(r).to_string());
+        let edges = details::edges(&self.snapshot, index);
+        let p = theme::p();
         let b = self.bounds;
+        const SIDE: f32 = 112.0;
         let outer = scene::rect(b.x + PAD, b.y + BODY_TOP, b.w - PAD * 2.0, 102.0);
-        let inner = scene::rect(b.x + 78.0, b.y + BODY_TOP + 32.0, b.w - 156.0, 38.0);
-        scene::fill(canvas, root, theme::p().hover_tint, &outer);
-        scene::stroke(canvas, root, theme::p().text_dim, 1.0, &outer);
-        scene::fill(canvas, root, theme::p().accent.multiply_alpha(0.14), &inner);
-        scene::stroke(canvas, root, theme::p().accent, 1.0, &inner);
+        let inner = Rect::new(
+            b.x + PAD + SIDE,
+            b.y + BODY_TOP + 32.0,
+            (b.w - 2.0 * (PAD + SIDE)).max(1.0),
+            38.0,
+        );
+        let inner_shape = scene::rect(inner.x, inner.y, inner.w, inner.h);
+        scene::fill(canvas, root, p.hover_tint, &outer);
+        scene::stroke(canvas, root, p.text_dim, 1.0, &outer);
+        scene::fill(canvas, root, p.accent.multiply_alpha(0.14), &inner_shape);
+        scene::stroke(canvas, root, p.accent, 1.0, &inner_shape);
+        let size = format!("{:.1} × {:.1} px", selected.width(), selected.height());
+        let (label, tip) = match rule {
+            Some(rule) => (rule, size),
+            None => (size.clone(), format!("{size}, measured")),
+        };
         self.measurement_text(
             canvas,
             root,
-            &format!(
-                "{:7.1} × {:7.1} logical",
-                selected.width(),
-                selected.height()
-            ),
-            inner.x0 as f32 + 8.0,
-            inner.y0 as f32 + 8.0,
-            inner.width() as f32 - 16.0,
+            &label,
+            inner.x + 8.0,
+            inner.y + 8.0,
+            inner.w - 16.0,
         );
-        if let Some(p) = parent {
-            self.measurement_text(
-                canvas,
-                root,
-                &format!("Parent: {parent_name} · T {:.1}", selected.y0 - p.y0),
-                b.x + 80.0,
-                b.y + BODY_TOP + 4.0,
-                b.w - 96.0,
-            );
-            self.measurement_text(
-                canvas,
-                root,
-                &format!("L {:.1}", selected.x0 - p.x0),
-                b.x + 15.0,
-                b.y + BODY_TOP + 39.0,
-                61.0,
-            );
-            self.measurement_text(
-                canvas,
-                root,
-                &format!("R {:.1}", p.x1 - selected.x1),
-                b.x + b.w - 75.0,
-                b.y + BODY_TOP + 39.0,
-                61.0,
-            );
-            self.measurement_text(
-                canvas,
-                root,
-                &format!("B {:.1} · schematic; not all padding", p.y1 - selected.y1),
-                b.x + 80.0,
-                b.y + BODY_TOP + 76.0,
-                b.w - 96.0,
-            );
-        } else {
+        self.box_tips.push((inner, tip));
+        let (Some(parent_name), Some([left, top, right, bottom])) = (parent_name, edges) else {
             self.text(
                 canvas,
                 root,
                 "Parent: unavailable",
-                b.x + 80.0,
+                inner.x,
                 b.y + BODY_TOP + 4.0,
-                b.w - 96.0,
+                inner.w,
+            );
+            return;
+        };
+        let ink = |edge: &details::Edge| if edge.token { p.accent } else { p.text_dim };
+        let line = Rect::new(inner.x, b.y + BODY_TOP + 2.0, inner.w, ROW);
+        self.diagnostic_text(
+            canvas,
+            root,
+            &format!("{parent_name} · top {}", top.short),
+            line.x,
+            line.y + 2.0,
+            line.w,
+            ink(&top),
+        );
+        self.box_tips.push((line, format!("top\n{}", top.full)));
+        let line = Rect::new(inner.x, b.y + BODY_TOP + 74.0, inner.w, ROW);
+        self.diagnostic_text(
+            canvas,
+            root,
+            &format!("bottom {}", bottom.short),
+            line.x,
+            line.y + 2.0,
+            line.w,
+            ink(&bottom),
+        );
+        self.box_tips
+            .push((line, format!("bottom\n{}", bottom.full)));
+        for (edge, x, name) in [
+            (&left, b.x + PAD, "left"),
+            (&right, b.x + b.w - PAD - SIDE, "right"),
+        ] {
+            let parts: Vec<&str> = edge.short.split(" + ").collect();
+            for (n, part) in parts.iter().take(3).enumerate() {
+                let text = match n {
+                    0 => (*part).to_string(),
+                    2 if parts.len() > 3 => "+ …".to_string(),
+                    _ => format!("+ {part}"),
+                };
+                self.diagnostic_text(
+                    canvas,
+                    root,
+                    &text,
+                    x + 6.0,
+                    b.y + BODY_TOP + 28.0 + n as f32 * 16.0,
+                    SIDE - 12.0,
+                    ink(edge),
+                );
+            }
+            self.box_tips.push((
+                Rect::new(x, b.y + BODY_TOP + 26.0, SIDE, 50.0),
+                format!("{name}\n{}", edge.full),
+            ));
+        }
+    }
+
+    /// The hovered box label's numbers.
+    fn draw_box_tip(&mut self, canvas: &mut Scene, root: Affine) {
+        if self.show_hierarchy {
+            return;
+        }
+        let Some(text) = self
+            .box_tips
+            .iter()
+            .find(|(r, _)| r.contains(self.pointer.0, self.pointer.1))
+            .map(|(_, text)| text.clone())
+        else {
+            return;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        let b = self.bounds;
+        let width = (b.w - 2.0 * PAD).min(380.0);
+        let height = ROW * lines.len() as f32 + 6.0;
+        let x = (self.pointer.0 + 12.0)
+            .min(b.x + b.w - width - 4.0)
+            .max(b.x + 4.0);
+        let y = (self.pointer.1 + 18.0).min(b.y + b.h - height - 4.0);
+        scene::floating_panel(
+            canvas,
+            root,
+            x,
+            y,
+            width,
+            height,
+            &scene::Panel::tooltip(theme::PAGE_RADIUS),
+        );
+        for (n, line) in lines.iter().enumerate() {
+            self.diagnostic_text(
+                canvas,
+                root,
+                line,
+                x + 6.0,
+                y + 3.0 + ROW * n as f32,
+                width - 12.0,
+                theme::p().bubble_fg,
             );
         }
     }
