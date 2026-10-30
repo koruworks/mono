@@ -5113,6 +5113,19 @@
               }
             ]
           },
+          "icon_pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IconPackChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "pinned_show_title": {
             "nullable": true,
             "type": "boolean"
@@ -5275,6 +5288,14 @@
           },
           "headings_font": {
             "$ref": "#/components/schemas/FontSetting"
+          },
+          "icon_pack": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IconPackChoice"
+              }
+            ],
+            "default": "phosphor"
           },
           "pinned_show_title": {
             "type": "boolean"
@@ -5504,6 +5525,15 @@
           "entries"
         ],
         "type": "object"
+      },
+      "IconPackChoice": {
+        "description": "The in-app vector artwork, persisted as `icon_pack=`.",
+        "enum": [
+          "phosphor",
+          "tabler",
+          "lucide"
+        ],
+        "type": "string"
       },
       "IdempotencyKey": {
         "format": "uuid",

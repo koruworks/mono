@@ -14,8 +14,9 @@
 use koru_draw::theme::FontChoice;
 use koru_settings::{
     CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice, DensityChoice,
-    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, LanguageChoice,
-    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
+    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, IconPackChoice,
+    LanguageChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
+    ViewModeChoice,
 };
 
 /// Which of the four font roles a chip belongs to.
@@ -86,6 +87,7 @@ pub(crate) enum Action {
     CanvasBackground,
     ApplyLayoutToAll,
     Density(DensityChoice),
+    IconPack(IconPackChoice),
     PinnedShowTitle(bool),
     Font(FontRole, FontChoice),
     VoiceLanguage(DictationLanguage),

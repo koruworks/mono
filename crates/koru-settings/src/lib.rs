@@ -57,8 +57,8 @@ pub use values::{
     AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
     DictationShortcut, DictationTier, Field, FontFamily, FontSetting, GlobalShortcut,
-    LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
-    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
+    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink,
+    TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
 };
 
 /// The bounded wait a window gives the Gateway at startup, in milliseconds.

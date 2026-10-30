@@ -299,6 +299,7 @@ fn effective_dark(pref: theme::ThemePreference) -> bool {
 /// The theme has to be set before the first layout is built, since brushes are
 /// baked into parley layouts.
 fn apply_settings(settings: &Settings) {
+    koru_draw::icons::set_icon_pack(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
     theme::set_caret_color(settings.caret_color);
@@ -326,6 +327,7 @@ fn apply_settings(settings: &Settings) {
 }
 
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
+    koru_draw::icons::set_icon_pack(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
     theme::set_caret_color(settings.caret_color);
@@ -13269,8 +13271,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// The theme is process-global and baked into every layout, so a flip in one
-    /// window invalidates all of them.
+    /// Icon identities and slots do not change; repaint without document reflow.
+    fn repaint_icons(&self) {
+        for pane in self.panes.values() {
+            pane.needs_frame.set(true);
+            pane.window.request_redraw();
+        }
+    }
+
+    /// The theme is baked into layouts, so a flip invalidates every window.
     fn invalidate_everywhere(&mut self) {
         for pane in self.panes.values_mut() {
             pane.view.invalidate();
@@ -13367,6 +13376,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// authority last had — the click moved the live value, then the next
     /// poll wrote the stored one back over it.
     fn capture_preferences(&mut self) {
+        self.runtime.settings.icon_pack = koru_draw::icons::active_pack();
         self.runtime.settings.theme = theme::theme_preference();
         self.runtime.settings.caret_color = theme::caret_color();
         self.runtime.settings.caret_width = theme::caret_width();
@@ -13946,7 +13956,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
             }
         }
+        let icons = koru_draw::icons::IconPack::parse(section.icon_pack.token());
+        let icons_moved = self.runtime.settings.icon_pack != icons;
+        self.runtime.settings.icon_pack = icons;
         if !crate::preferences::adopt(&section, &mut self.runtime.settings) {
+            if icons_moved {
+                koru_draw::icons::set_icon_pack(icons);
+                self.repaint_icons();
+            }
             return;
         }
         // Zoom before the globals: `rezoom` compares against the live value and
@@ -16776,6 +16793,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 let was_headings = theme::headings_font();
                 let was_code = theme::code_font();
                 let was_density = theme::density();
+                let was_icons = koru_draw::icons::active_pack();
                 // Voice preferences use the same process-global path as typography.
                 let was_voice = crate::voice_prefs::snapshot();
                 let document_before = self.runtime.workspace.ws.version();
@@ -16829,11 +16847,16 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     || theme::code_font() != was_code
                     || theme::density() != was_density;
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
-                if typography_moved || voice_moved {
+                let icons_moved = koru_draw::icons::active_pack() != was_icons;
+                if typography_moved || voice_moved || icons_moved {
                     // A font or density change is baked into every layout, and a
                     // voice preference change has to be visible in every Settings
                     // tab — so every window has to relay out, not just this one.
-                    self.invalidate_everywhere();
+                    if typography_moved || voice_moved {
+                        self.invalidate_everywhere();
+                    } else {
+                        self.repaint_icons();
+                    }
                     // And it is committed by the keystroke that made it, for
                     // the same reason the press is: there is no Apply, and the
                     // next tick is a tick in which the app can be closed.
@@ -17024,6 +17047,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         let was_headings = theme::headings_font();
                         let was_code = theme::code_font();
                         let was_density = theme::density();
+                        let was_icons = koru_draw::icons::active_pack();
                         let was_caret = theme::caret_color();
                         let was_caret_w = theme::caret_width();
                         let was_caret_h = theme::caret_height();
@@ -17058,6 +17082,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                             || theme::caret_width() != was_caret_w
                             || theme::caret_height() != was_caret_h;
                         let voice_moved = crate::voice_prefs::snapshot() != was_voice;
+                        let icons_moved = koru_draw::icons::active_pack() != was_icons;
                         let layout_moved = theme::default_view_mode() != was_view_mode
                             || theme::default_canvas_bg() != was_canvas_bg;
                         // Performed here, inside the press, because winit only
@@ -17222,7 +17247,15 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if theme_pref_moved || typography_moved || voice_moved || layout_moved {
+                        if icons_moved {
+                            self.repaint_icons();
+                        }
+                        if theme_pref_moved
+                            || typography_moved
+                            || voice_moved
+                            || layout_moved
+                            || icons_moved
+                        {
                             // The cheap half only: geometry is asked for once a
                             // second, and a press must not pay 3.5 ms of window
                             // server round trips to save a colour.

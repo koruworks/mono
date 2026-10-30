@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Check Tabler -> Lucide -> Tabler against a scoped generated-artifact baseline.
+"""Check Tabler -> Lucide -> Phosphor -> Tabler against a scoped artifact baseline.
 
 Runs real Rust compilation and checks license/ICO/PNG content at each step.
 Restores the caller's original generated artifacts even on failure. It never
@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from PIL import Image
-from icon_pack import ROOT, bundled_notice, load_icons, rust_data
+from icon_pack import ROOT, bundled_notice, load_icons, rust_catalog
 
 SUFFIXES = ("", "-beta", "-nightly", "-internal-debug", "-internal-release")
 ARTIFACTS = [ROOT / "crates/koru-draw/src/icon_pack_data.rs",
@@ -27,7 +27,7 @@ def snapshot():
 
 def verify(pack):
     icons, notices = load_icons(pack)
-    assert ARTIFACTS[0].read_text(encoding="utf-8") == rust_data(pack, 1.85, icons, notices)
+    assert ARTIFACTS[0].read_text(encoding="utf-8") == rust_catalog(pack, 1.85)
     _, notices = load_icons("lucide")
     for name, notice in notices.items():
         path = ROOT / f"crates/koru-release/licences/bundled/icons-{name}.txt"
@@ -50,7 +50,7 @@ def main():
     original = snapshot()
     baseline = None
     try:
-        for pack in ("tabler", "lucide", "tabler"):
+        for pack in ("tabler", "lucide", "phosphor", "tabler"):
             subprocess.run([sys.executable, str(ROOT / "scripts/icons/sync-icon-pack.py"), "--pack", pack], check=True)
             verify(pack)
             actual = snapshot()

@@ -21,7 +21,8 @@ use koru_settings::{
 
 /// The names every setting is found under. If one disappears, a setting
 /// disappeared with it.
-const ROWS: [&str; 16] = [
+const ROWS: [&str; 17] = [
+    "Icon style",
     "Theme",
     "Density",
     "Pinned tabs",
@@ -148,6 +149,48 @@ fn the_density_row_moves_the_live_density() {
     theme::set_density(was);
 }
 
+#[test]
+fn icon_style_changes_live_and_survives_reopening_the_page() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = koru_draw::icons::active_pack();
+    let mut surface = koru();
+    for pack in koru_draw::icons::IconPack::ALL {
+        assert!(press(&mut surface, pack.label()));
+        assert_eq!(koru_draw::icons::active_pack(), pack);
+        let reopened = koru();
+        assert!(is_active(&reopened, pack.label()));
+    }
+    koru_draw::icons::set_icon_pack(was);
+}
+
+#[test]
+fn icon_style_dropdown_accepts_keyboard_selection_and_escape() {
+    use koru_draw::icons::{self, IconPack};
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = icons::active_pack();
+    icons::set_icon_pack(IconPack::Phosphor);
+    let mut surface = koru();
+    let field = rect_of(&surface, "Phosphor").unwrap();
+    assert!(press_rect(&mut surface, field));
+    assert!(surface.key(
+        &Key::Named(NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    assert_eq!(icons::active_pack(), IconPack::Tabler);
+    assert!(press_rect(&mut surface, field));
+    assert!(surface.key(
+        &Key::Named(NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
+    assert_eq!(icons::active_pack(), IconPack::Tabler);
+    icons::set_icon_pack(was);
+}
+
 /// Each font role is its own dropdown; choosing in one moves that role only.
 #[test]
 fn every_font_picker_moves_its_own_role_and_no_other() {
@@ -158,7 +201,9 @@ fn every_font_picker_moves_its_own_role_and_no_other() {
     let wanted = theme::FontChoice::Lora;
     for (index, role) in FontRole::ALL.into_iter().enumerate() {
         surface.relayout();
-        let field = surface.laid.dropdowns[index].field;
+        let field = surface.laid.dropdowns.iter().find(|dropdown| {
+            matches!(dropdown.options.first(), Some((crate::action::Action::Font(found, _), _)) if *found == role)
+        }).expect("each font role has its own dropdown").field;
         assert!(press_rect(&mut surface, field));
         let open = surface.open.as_ref().expect("the list is open");
         let item = open
@@ -186,7 +231,18 @@ fn every_font_option_is_set_in_its_own_face() {
     let mut surface = koru();
     surface.show_page(PageId::Appearance);
     surface.relayout();
-    for (_, option) in &surface.laid.dropdowns[0].options {
+    let app_font = surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            matches!(
+                dropdown.options.first(),
+                Some((crate::action::Action::Font(FontRole::App, _), _))
+            )
+        })
+        .expect("the app font dropdown");
+    for (_, option) in &app_font.options {
         let family = theme::FontChoice::ALL
             .iter()
             .find(|f| f.label() == option.label)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bounded SVG centerline renderer for the generated DOCUMENT and SPARKLE paths.
+"""Bounded SVG renderer for the generated DOCUMENT and SPARKLE paths.
 
 Supports M/L/H/V/C/A/Z (both cases), repetitions, compact numbers and subpaths.
 Curves are flattened within 0.25 supersampled pixels, then stroked with round
@@ -138,6 +138,13 @@ def flatten(path, tolerance=0.005):
 
 def generated_icon(name, source=None):
     """Read the committed data used by Rust; no archive or font is needed."""
+    stroke, fill, width = generated_paint(name, source)
+    if fill:
+        raise ValueError(f"{name}: taskbar renderer supports centerlines only")
+    return stroke, width
+
+
+def generated_paint(name, source=None):
     if source is None:
         source = (ROOT / "crates/koru-draw/src/icon_pack_data.rs").read_text(encoding="utf-8")
     literal = r'"(?:[^"\\]|\\.)*"'
@@ -146,10 +153,8 @@ def generated_icon(name, source=None):
         raise ValueError(f"generated catalog lacks {name}")
     stroke = json.loads(re.search(r"stroke_d: ("+literal+r")", row)[1])
     fill = json.loads(re.search(r"fill_d: ("+literal+r")", row)[1])
-    if fill:
-        raise ValueError(f"{name}: taskbar renderer supports centerlines only")
     width = float(re.search(r"DEFAULT_STROKE_WIDTH: f64 = ([^;]+);", source)[1])
-    return stroke, width
+    return stroke, fill, width
 
 
 def render(path, stroke_width, size=256, ink=(200, 200, 204, 255)):
@@ -171,6 +176,41 @@ def render(path, stroke_width, size=256, ink=(200, 200, 204, 255)):
     return image.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def render_icon(name, size=256, ink=(200, 200, 204, 255)):
-    path, width = generated_icon(name)
-    return render(path, width, size, ink)
+def render_filled(path, size=256, ink=(200, 200, 204, 255)):
+    """Nonzero winding scan conversion, including holes, at 4x resolution."""
+    from PIL import Image, ImageDraw
+    if not isinstance(size, int) or not 1 <= size <= 1024:
+        raise ValueError("size must be an integer in [1, 1024]")
+    scale = size * 4 / 24
+    edges = []
+    for contour in flatten(path, 0.25 / scale):
+        points = [(x * scale, y * scale) for x, y in contour]
+        for a, b in zip(points, points[1:] + points[:1]):
+            if a[1] != b[1]:
+                edges.append((a, b))
+    image = Image.new("RGBA", (size * 4, size * 4), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    for row in range(size * 4):
+        y = row + 0.5
+        crossings = []
+        for (ax, ay), (bx, by) in edges:
+            if min(ay, by) <= y < max(ay, by):
+                crossings.append((ax + (y - ay) * (bx - ax) / (by - ay), 1 if by > ay else -1))
+        winding, start = 0, 0
+        for x, direction in sorted(crossings):
+            if winding:
+                left, right = max(0, math.ceil(start - 0.5)), min(size * 4 - 1, math.ceil(x - 0.5) - 1)
+                if left <= right:
+                    draw.line((left, row, right, row), fill=ink)
+            winding += direction
+            start = x
+    return image.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def render_icon(name, size=256, ink=(200, 200, 204, 255), source=None):
+    stroke, fill, width = generated_paint(name, source)
+    if fill:
+        if stroke:
+            raise ValueError(f"{name}: mixed fill and stroke taskbar artwork is unsupported")
+        return render_filled(fill, size, ink)
+    return render(stroke, width, size, ink)

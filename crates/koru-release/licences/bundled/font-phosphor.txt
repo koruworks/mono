@@ -1,7 +1,7 @@
-Component: Phosphor Icons (font)
+Component: Phosphor Icons (font and compiled vector artwork)
 Version: @phosphor-icons/web 2.1.2
 Source: https://github.com/phosphor-icons/web
-Files: Phosphor.ttf, Phosphor-Fill.ttf
+Files: Phosphor.ttf, Phosphor-Fill.ttf, icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png
 License: MIT
 Platforms: windows, macos, linux
 ---

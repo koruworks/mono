@@ -14,8 +14,8 @@
 mod data;
 mod vector;
 pub use vector::{
-    ACTIVE_PACK, DEFAULT_STROKE_WIDTH, IconDef, draw_vector_icon, has_vector_icon, pack_box_id,
-    unpack_box_id, vector_def,
+    ACTIVE_PACK, DEFAULT_STROKE_WIDTH, IconDef, IconPack, active_pack, draw_vector_icon,
+    has_vector_icon, pack_box_id, set_icon_pack, unpack_box_id, vector_def, vector_def_for,
 };
 
 /// The family name `layout.rs` registers the font under.

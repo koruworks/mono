@@ -2,6 +2,9 @@
 # scripts/setup/fetch-fonts.* writes them).
 #
 # Rendering inputs whose exact bytes are part of fixed terminal cell geometry.
+# Original icon outlines exported by scripts/icons/sync-icon-pack.py.
+Phosphor.ttf=06b91e022b7ee899a63efced879392a74f0bacbda54e4467e9f663220d173a10
+Phosphor-Fill.ttf=a53f5d2630cab5e3b7536ecb9d69d71519a2190298c22b1f8d770dd37bc2940a
 google-fonts-revision=ade3d1533e06b2b1462ffcde8e08b129627ca360
 JetBrainsMono.ttf=48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda
 JetBrainsMono-Italic.ttf=85ae2a5cd3f56baf1ce1c21a851322c58e3d8fbe8e8ad4a4d090a820dd7fe558

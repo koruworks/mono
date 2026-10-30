@@ -36,6 +36,7 @@ mod tests;
 pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     let before = snapshot(into);
     into.theme = ThemePreference::parse(section.theme.token());
+    into.icon_pack = koru_draw::icons::IconPack::parse(section.icon_pack.token());
     into.caret_color = CaretColor::parse(section.caret_color.token());
     into.caret_width = CaretWidth::parse(section.caret_width.token());
     into.caret_height = CaretHeight::parse(section.caret_height.token());
@@ -71,6 +72,10 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
 /// the whole of what the per-field shape buys.
 pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch {
     let mut patch = GlobalPatch::default();
+    let icon_pack = koru_settings::IconPackChoice::parse(settings.icon_pack.token());
+    if icon_pack != authoritative.icon_pack {
+        patch.icon_pack = Some(icon_pack);
+    }
 
     let theme = ThemeChoice::parse(settings.theme.key());
     if theme != authoritative.theme {
@@ -212,7 +217,13 @@ fn close_behavior_to(behavior: koru_window::CloseBehavior) -> CloseBehaviorChoic
 /// forgotten here would make a real change look like no change, which is a
 /// window that does not repaint until something else happens to move.
 type Preferences = (
-    (ThemePreference, CaretColor, CaretWidth, CaretHeight),
+    (
+        ThemePreference,
+        CaretColor,
+        CaretWidth,
+        CaretHeight,
+        koru_draw::icons::IconPack,
+    ),
     (FontChoice, FontChoice, FontChoice, FontChoice),
     (Density, String, ViewMode, Option<[u8; 4]>),
     (
@@ -237,6 +248,7 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.caret_color,
             settings.caret_width,
             settings.caret_height,
+            settings.icon_pack,
         ),
         (
             settings.font,

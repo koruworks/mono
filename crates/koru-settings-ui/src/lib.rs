@@ -1704,6 +1704,9 @@ impl SettingsSurface {
             }
             Action::ShowAdvanced(open) => self.advanced_open = open,
             Action::Density(choice) => theme::set_density(density(choice)),
+            Action::IconPack(choice) => {
+                icons::set_icon_pack(icons::IconPack::parse(choice.token()))
+            }
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
             Action::VoiceLanguage(language) => {
@@ -1921,6 +1924,7 @@ fn clone_action(action: &Action) -> Action {
         Action::CanvasBackground => Action::CanvasBackground,
         Action::ApplyLayoutToAll => Action::ApplyLayoutToAll,
         Action::Density(v) => Action::Density(*v),
+        Action::IconPack(v) => Action::IconPack(*v),
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),

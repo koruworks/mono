@@ -7,7 +7,7 @@ Full upstream notices: crates/koru-release/licences/bundled/icons-*.txt.
 import math
 import unittest
 
-from render_svg_path import flatten, render
+from render_svg_path import flatten, render, render_filled
 
 FIXTURES = {
     "tabler-document": ('M14 3v4a1 1 0 0 0 1 1h4 M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z M9 9l1 0 M9 13l6 0 M9 17l6 0', 5),
@@ -18,6 +18,17 @@ FIXTURES = {
 
 
 class PathTests(unittest.TestCase):
+    def test_filled_outlines_preserve_holes_and_overlapping_winding(self):
+        outer = 'M2 2H22V22H2Z '
+        hole = 'M8 8V16H16V8Z'
+        solid = 'M8 8H16V16H8Z'
+        image = render_filled(outer + hole, 240)
+        self.assertEqual(image.getpixel((120, 120))[3], 0)
+        self.assertEqual(image.getpixel((40, 120))[3], 255)
+        self.assertEqual(image.getpixel((5, 120))[3], 0)
+        image = render_filled(outer + solid, 240)
+        self.assertEqual(image.getpixel((120, 120))[3], 255)
+
     def test_relative_move_after_close_and_implicit_lines(self):
         self.assertEqual(flatten('m2 3 4 0 0 4zh2m3-1l2 1'),
                          [[(2, 3), (6, 3), (6, 7), (2, 3), (4, 3)], [(7, 2), (9, 3)]])

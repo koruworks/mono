@@ -163,6 +163,16 @@ token_enum! {
 }
 
 token_enum! {
+    /// The in-app vector artwork, persisted as `icon_pack=`.
+    IconPackChoice, default = Phosphor, fold_case = true,
+    {
+        Phosphor => "phosphor";
+        Tabler => "tabler";
+        Lucide => "lucide";
+    }
+}
+
+token_enum! {
     /// `caret_color=`, and the terminal row's `cursor_color=`.
     CaretColorChoice, default = Default, fold_case = true,
     {

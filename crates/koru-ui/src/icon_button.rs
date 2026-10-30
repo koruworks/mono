@@ -440,7 +440,11 @@ fn inspect_icon(
                     "caller icon; docs/features/koruui/ICONS.md",
                 );
                 if let Some(def) = icons::vector_def(glyph) {
-                    r.property("icon pack", icons::ACTIVE_PACK, "compiled catalog");
+                    r.property(
+                        "icon pack",
+                        icons::active_pack().label(),
+                        "selected icon pack",
+                    );
                     r.property("icon source", def.source, "artwork provenance");
                 }
             }

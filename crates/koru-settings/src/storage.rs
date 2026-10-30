@@ -77,6 +77,7 @@ const PREFERENCES_VERSION: &str = "2";
 #[cfg(test)]
 pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "theme",
+    "icon_pack",
     "caret_color",
     "caret_width",
     "caret_height",
@@ -139,6 +140,7 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             // choice — especially `dark=0`. Ignored on read, dropped on write.
             "dark" => {}
             "theme" => into.theme = ThemeChoice::parse(value),
+            "icon_pack" => into.icon_pack = crate::IconPackChoice::parse(value),
             "caret_color" => into.caret_color = CaretColorChoice::parse(value),
             "caret_width" => into.caret_width = CaretWidthChoice::parse(value),
             "caret_height" => into.caret_height = CaretHeightChoice::parse(value),
@@ -191,6 +193,7 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     };
 
     line("theme", settings.theme.token());
+    line("icon_pack", settings.icon_pack.token());
     line("caret_color", settings.caret_color.token());
     line("caret_width", settings.caret_width.token());
     line("caret_height", settings.caret_height.token());

@@ -141,7 +141,7 @@ fn icon_slot_centering_and_inspection_follow_the_root_transform() {
     assert!(
         icon.properties
             .iter()
-            .any(|p| p.name == "icon pack" && p.value == ACTIVE_PACK)
+            .any(|p| p.name == "icon pack" && p.value == active_pack().label())
     );
     assert!(
         icon.properties

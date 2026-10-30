@@ -688,7 +688,7 @@ fn baseline_for_selected_pack(baseline: &str) -> String {
             line.split_whitespace()
                 .map(|token| {
                     if token.starts_with("icon_pack=") {
-                        format!("icon_pack={}", icons::ACTIVE_PACK)
+                        format!("icon_pack={}", icons::active_pack().label())
                     } else if token.starts_with("icon_source=") {
                         format!("icon_source={}", def.source)
                     } else {
