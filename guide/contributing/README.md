@@ -42,6 +42,7 @@ interaction on its supported platforms.
 | Test placement, isolation, process state, and native verification | [Testing](TESTING.md) |
 | Design and implementation principles | [Working principles](PRINCIPLES.md) |
 | Library behavior and platform traps | [Library primers](deps/README.md) |
+| Switching, regenerating and extending desktop icon packs | [Compiled icons](ICONS.md) |
 | Rust concepts through examples from Koru | [Rust guide](RUST.md) |
 | Adding a block kind across the model, editor, and MCP | [Block checklist](BLOCKS.md) |
 | Choosing which surfaces a build shows | [Product feature flags](FEATURE-FLAGS.md) |

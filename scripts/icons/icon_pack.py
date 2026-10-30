@@ -98,6 +98,11 @@ def normalize(svg, label="SVG"):
                 d = shape_path(el)
                 if not d.strip():
                     raise ValueError("empty visible path")
+                # Each SVG shape starts at the origin. Concatenating independent
+                # paths must not make an initial relative move inherit the end
+                # of the previous shape. Keep its implicit relative line pairs.
+                if d.lstrip().startswith("m"):
+                    d = "M0 0 " + d.lstrip()
                 if paint["stroke"] != "none":
                     strokes.append(d)
                 if paint["fill"] != "none":

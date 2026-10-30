@@ -41,7 +41,9 @@ def verify(pack):
             else:
                 image.load()
                 assert image.size == (256, 256) and image.getbbox(), path
-    subprocess.run(["cargo", "check", "--manifest-path", str(ROOT / "Cargo.toml"), "-p", "koru-draw"], check=True, cwd=ROOT)
+    cargo = ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml")]
+    subprocess.run(cargo + ["-p", "koru-draw"], check=True, cwd=ROOT)
+    subprocess.run(cargo + ["-p", "koru", "popover_baseline::the_"], check=True, cwd=ROOT)
 
 
 def main():

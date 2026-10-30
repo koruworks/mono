@@ -152,7 +152,7 @@ pub fn circle(cx: f32, cy: f32, r: f32) -> vello::kurbo::Circle {
     vello::kurbo::Circle::new((cx as f64, cy as f64), r as f64)
 }
 
-/// Draw a standalone layout's glyphs (no inline boxes), optionally recoloring.
+/// Draw a standalone layout's glyphs and tagged icon slots, optionally recoloring.
 #[track_caller]
 pub fn draw_layout(
     scene: &mut Scene,

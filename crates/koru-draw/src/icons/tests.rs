@@ -72,7 +72,7 @@ fn inline_identity_roundtrips_both_states_without_stealing_other_boxes() {
 #[test]
 fn every_icon_parses_and_paints_without_any_fonts_in_both_states() {
     use parley::layout::PositionedLayoutItem;
-    use vello::kurbo::{Affine, BezPath};
+    use vello::kurbo::{Affine, BezPath, Shape};
     let mut engine = fontless_engine();
     for def in &data::ICON_DEFS {
         assert!(
@@ -87,6 +87,14 @@ fn every_icon_parses_and_paints_without_any_fonts_in_both_states() {
         {
             let path = BezPath::from_svg(d).expect(def.name);
             assert!(!path.elements().is_empty(), "{}", def.name);
+            let bounds = path.bounding_box();
+            for coordinate in [bounds.x0, bounds.y0, bounds.x1, bounds.y1] {
+                assert!(
+                    coordinate.is_finite() && (-3.0..=27.0).contains(&coordinate),
+                    "{} lies outside the 24-unit icon grid: {bounds:?}",
+                    def.name
+                );
+            }
         }
         for filled in [false, true] {
             let layout = if filled {

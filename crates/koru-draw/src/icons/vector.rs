@@ -155,3 +155,6 @@ pub fn draw_vector_icon(
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

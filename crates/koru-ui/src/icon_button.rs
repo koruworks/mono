@@ -4,7 +4,7 @@
 //!
 //! Geometry and paint deliberately match the caption `+` and pane toggles:
 //! one square hover chip, a dim resting glyph, a normal hover glyph, and the
-//! filled Phosphor family for an on state.
+//! selected pack's filled variant or heavier outline for an on state.
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;

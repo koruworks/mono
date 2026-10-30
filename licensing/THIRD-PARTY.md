@@ -7,6 +7,24 @@ license files at the exact revisions we build, and the shipped binaries of the
 the people whose work it contains. Open items are marked **⚑** and collected
 at the end, and settled ones are marked ✅.
 
+## Compiled icon artwork (2026-10-30)
+
+Desktop icon paths are generated from `@tabler/icons` 3.31.0 (MIT) and
+`lucide-static` 0.477.0 (ISC, with Feather portions under MIT). Archives are
+checksum-pinned in `third-party/fetch.manifest` and fetched, not committed.
+The selected catalog retains the full notices in its generated Rust header.
+`icons-tabler.txt` and `icons-lucide.txt` in the release's bundled licenses
+carry their exact versions and desktop platform applicability. Both are kept
+because pack selection is a build-time choice and Lucide uses Tabler brand
+fallbacks. Lucide's pinned license identifies Cole Bemis's 2013-2022 Feather
+portions; the full MIT terms are included alongside its ISC text.
+
+The document ICO and chat sparkle overlays are generated from that same
+catalog. Original Koru Tux and Return-key centerlines are MPL-2.0; existing
+provider logos and the product logo retain their separate terms. Ordinary
+builds do not read the archives or require the legacy icon font. See the
+[icon contributor guide](../guide/contributing/ICONS.md).
+
 ## Summary
 
 - **Every package now carries its notices.** `LICENSE`, `NOTICE` and a

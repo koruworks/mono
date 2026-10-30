@@ -151,9 +151,15 @@ fn decorated_button_metadata_stops_at_the_label() {
         }
         if variant == 1 {
             assert!(
-                snapshot.records.iter().enumerate().any(|(i, r)| r.name == "icon"
-                    && r.properties.iter().any(|p| p.name == "icon name" && p.value == "QUESTION")
-                    && ancestor_role(&snapshot, i).is_none()),
+                snapshot
+                    .records
+                    .iter()
+                    .enumerate()
+                    .any(|(i, r)| r.name == "icon"
+                        && r.properties
+                            .iter()
+                            .any(|p| p.name == "icon name" && p.value == "QUESTION")
+                        && ancestor_role(&snapshot, i).is_none()),
                 "Help badge is an icon outside the label's typography role"
             );
         }

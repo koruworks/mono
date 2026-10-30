@@ -22,6 +22,12 @@ class SvgConversion(unittest.TestCase):
         stroke, fill = normalize(svg('<path fill="currentColor" d="M2 2h4v4z"/>'))
         self.assertEqual(stroke, fill)
 
+    def test_independent_relative_paths_do_not_inherit_the_previous_endpoint(self):
+        from render_svg_path import flatten
+        stroke, _ = normalize(svg('<path d="M10 10h5"/><path d="m2 3 4 0 0 4"/>'))
+        paths = flatten(stroke)
+        self.assertEqual(paths[-1], [(2, 3), (6, 3), (6, 7)])
+
     def test_primitives_and_rounded_rect_clamping(self):
         stroke, fill = normalize(svg('<line x1="1" y1="2" x2="3" y2="4"/><rect x="2" y="3" width="4" height="6" rx="8"/><polyline points="1,2 3,4 5,6"/><polygon points="1,2 3,4 5,6"/><ellipse cx="12" cy="12" rx="2" ry="3"/>'))
         self.assertIn("M1 2L3 4", stroke)
