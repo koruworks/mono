@@ -32,8 +32,9 @@ fn a_place() -> VersionPlace {
     }
 }
 
-/// A view that has read a Markdown version and laid itself out.
-fn reading() -> ResultView {
+/// A view that has read a Markdown version and laid itself out. Shared with
+/// the container's tests, which put one in a tab.
+pub(crate) fn reading() -> ResultView {
     let mut view = ResultView::new();
     View::set_viewport(&mut view, 1_200.0, 800.0);
     let opened = a_result(0x90);

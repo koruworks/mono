@@ -390,7 +390,9 @@ fn token(value: &str) -> String {
 }
 
 /// The properties a record carries that describe what was painted. Debug
-/// dumps of a face and the inspector's own disclaimers are left out.
+/// dumps of a face and the inspector's own disclaimers are left out, and so
+/// is `font source`: it says who supplied `rendered family`, which is
+/// already compared, and adds nothing that was painted.
 fn painted(name: &str) -> bool {
     !matches!(
         name,
@@ -399,6 +401,7 @@ fn painted(name: &str) -> bool {
             | "synthetic italic"
             | "tracking"
             | "font style"
+            | "font source"
     )
 }
 

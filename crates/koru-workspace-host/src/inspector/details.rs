@@ -149,10 +149,11 @@ const GROUPS: [(&str, &[&str]); 7] = [
 ];
 
 /// Recorded by older surfaces and already shown as typography or the icon.
-const SHOWN_ELSEWHERE: [&str; 9] = [
+const SHOWN_ELSEWHERE: [&str; 10] = [
     "element",
     "font size",
     "rendered family",
+    "font source",
     "font weight",
     "font style",
     "synthetic italic",

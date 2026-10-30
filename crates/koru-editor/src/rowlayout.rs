@@ -2940,6 +2940,75 @@ mod tests {
     // built out of.
 
     /// A body of `n` paragraphs, each carrying `line`.
+    /// **What one preview step costs on a long document** (DOCFONTSIZE
+    /// PLAN.final Phase A): a size step against a font step, on 2,000 rows,
+    /// laid out the way a window does — the shown band shaped, the rest
+    /// estimated. A size step reshapes what a font step reshapes, so the two
+    /// should cost about the same. Measured, not asserted (timing is the
+    /// machine's); run with `--ignored --nocapture` and read the numbers.
+    #[test]
+    #[ignore = "a measurement: run by hand with --ignored --nocapture"]
+    fn a_size_preview_step_costs_what_a_font_preview_step_costs() {
+        use std::time::{Duration, Instant};
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        let mut o = body_of(
+            &mut ws,
+            2_000,
+            "A paragraph of ordinary prose, long enough to wrap once or twice in the column.",
+        );
+        let mut engine = TextEngine::new();
+        reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+        let median = |mut samples: Vec<Duration>| {
+            samples.sort();
+            samples[samples.len() / 2]
+        };
+        let mut size = Vec::new();
+        for (i, px) in [
+            18.0f32, 20.0, 22.0, 17.0, 15.0, 14.0, 16.0, 18.0, 20.0, 22.0, 16.0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            o.text_scale = crate::body::TextScale::Fixed(px / theme::FONT_SIZE);
+            let started = Instant::now();
+            reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+            if i > 0 {
+                size.push(started.elapsed());
+            }
+        }
+        o.text_scale = crate::body::TextScale::Fixed(1.0);
+        reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+        let was = theme::body_font();
+        let mut font = Vec::new();
+        for (i, face) in [
+            theme::FontChoice::Lora,
+            theme::FontChoice::Inter,
+            theme::FontChoice::SourceSerif4,
+            theme::FontChoice::Poppins,
+            theme::FontChoice::Inter,
+            theme::FontChoice::Lora,
+            theme::FontChoice::Nunito,
+            theme::FontChoice::Inter,
+            theme::FontChoice::Manrope,
+            theme::FontChoice::Lora,
+            theme::FontChoice::Inter,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            theme::set_body_font(face);
+            o.invalidate();
+            let started = Instant::now();
+            reflow(&mut engine, &mut o, 900.0, 0.0, 0.0, 700.0);
+            if i > 0 {
+                font.push(started.elapsed());
+            }
+        }
+        theme::set_body_font(was);
+        let (size, font) = (median(size), median(font));
+        println!("2,000 rows, one preview step (median of 10): size {size:?}, font {font:?}");
+    }
+
     fn body_of(ws: &mut WorkspaceDoc, n: usize, line: &str) -> Body {
         for _ in 0..n {
             ws.insert(Parent::Root, Node::paragraph(line).unwrap())

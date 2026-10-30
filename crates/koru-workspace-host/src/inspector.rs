@@ -1511,6 +1511,10 @@ fn typography_details(snapshot: &Snapshot, index: usize) -> Vec<String> {
             property(record, "font style").unwrap_or("unavailable")
         ),
         format!("Font size: {size} px (logical)"),
+        format!(
+            "Font source: {}",
+            property(record, "font source").unwrap_or("unavailable")
+        ),
     ];
     let mut parent = record.parent;
     let mut role = None;

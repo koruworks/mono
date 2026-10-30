@@ -29,6 +29,16 @@ use crate::theme::Brush;
 /// carries, so a glyph the family lacks still draws.
 const MONO_TAIL: &str = "ui-monospace, Cascadia Mono, Menlo, Consolas, Segoe UI Symbol, Apple Symbols, Noto Sans Symbols 2, monospace, Microsoft YaHei UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Noto Sans SC, Yu Gothic UI, Hiragino Sans, Noto Sans KR, Noto Sans Arabic, Segoe UI, Geeza Pro";
 
+/// Whether `name` is an installed family a person chose by name and this
+/// process has interned — the inspector's *installed* as against *bundled*.
+pub fn is_interned(name: &str) -> bool {
+    INTERNED
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())
+        .iter()
+        .any(|entry| entry.name == name)
+}
+
 /// Whether `name` is safe to store in the profile file and to splice into a
 /// font stack. The rule is `koru-settings`' — there is one copy of it.
 pub fn is_valid_family_name(name: &str) -> bool {
@@ -77,6 +87,18 @@ impl TextEngine {
 static INSTALLED: OnceLock<Vec<InstalledFont>> = OnceLock::new();
 
 fn scan() -> Vec<InstalledFont> {
+    let started = std::time::Instant::now();
+    let fonts = scan_families();
+    tracing::debug!(
+        target: "koru::fonts",
+        families = fonts.len(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "installed font list scanned"
+    );
+    fonts
+}
+
+fn scan_families() -> Vec<InstalledFont> {
     let mut engine = TextEngine::new();
     let mut names: Vec<String> = engine
         .font_cx
@@ -229,13 +251,74 @@ pub fn interned(id: InstalledId) -> Interned {
 
 // ------------------------------------------- the list, without waiting for it
 
-static WAITING: Mutex<Vec<Box<dyn FnOnce() + Send>>> = Mutex::new(Vec::new());
-static STARTED: AtomicBool = AtomicBool::new(false);
+/// A list built once, on a thread, that never makes a reader wait: what the
+/// installed-font scan needs, held as a type so a test can build one with a
+/// scan it controls.
+pub(crate) struct Catalog<T: 'static> {
+    list: OnceLock<T>,
+    waiting: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    started: AtomicBool,
+}
+
+impl<T: Send + Sync + 'static> Catalog<T> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            list: OnceLock::new(),
+            waiting: Mutex::new(Vec::new()),
+            started: AtomicBool::new(false),
+        }
+    }
+
+    /// The list, if it has been built. Never waits.
+    pub(crate) fn ready(&'static self) -> Option<&'static T> {
+        self.list.get()
+    }
+
+    /// Build the list once, on a thread, with `scan`; call `wake` when it is
+    /// ready — at once if it already is. A second call while the scan runs
+    /// only adds its `wake`.
+    pub(crate) fn start(
+        &'static self,
+        scan: impl FnOnce() -> T + Send + 'static,
+        wake: impl FnOnce() + Send + 'static,
+    ) {
+        if self.ready().is_some() {
+            wake();
+            return;
+        }
+        self.waiting
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .push(Box::new(wake));
+        if !self.started.swap(true, Ordering::AcqRel) {
+            std::thread::spawn(move || {
+                let _ = self.list.get_or_init(scan);
+                self.wake_waiting();
+            });
+        } else if self.ready().is_some() {
+            // The scan finished between the first check and the push.
+            self.wake_waiting();
+        }
+    }
+
+    fn wake_waiting(&self) {
+        let waiting =
+            std::mem::take(&mut *self.waiting.lock().unwrap_or_else(|held| held.into_inner()));
+        for wake in waiting {
+            wake();
+        }
+    }
+}
+
+static CATALOG: Catalog<Vec<InstalledFont>> = Catalog::new();
 
 /// The installed families, if the scan has finished. Never waits — the
 /// one accessor an event thread may use.
 pub fn ready() -> Option<&'static [InstalledFont]> {
-    INSTALLED.get().map(Vec::as_slice)
+    CATALOG
+        .ready()
+        .map(Vec::as_slice)
+        .or_else(|| INSTALLED.get().map(Vec::as_slice))
 }
 
 /// Make sure the scan runs, once, on a thread, and call `wake` when the list
@@ -246,26 +329,7 @@ pub fn start(wake: impl FnOnce() + Send + 'static) {
         wake();
         return;
     }
-    WAITING
-        .lock()
-        .unwrap_or_else(|held| held.into_inner())
-        .push(Box::new(wake));
-    if !STARTED.swap(true, Ordering::AcqRel) {
-        std::thread::spawn(|| {
-            let _ = installed_fonts();
-            wake_waiting();
-        });
-    } else if ready().is_some() {
-        // The scan finished between the first check and the push.
-        wake_waiting();
-    }
-}
-
-fn wake_waiting() {
-    let waiting = std::mem::take(&mut *WAITING.lock().unwrap_or_else(|held| held.into_inner()));
-    for wake in waiting {
-        wake();
-    }
+    CATALOG.start(|| installed_fonts().to_vec(), wake);
 }
 
 #[cfg(test)]
@@ -369,6 +433,58 @@ mod installed_tests {
         );
         assert_eq!(resolve("No Such Face 9000"), None);
         assert_eq!(terminal_stack_for("a,b"), None);
+    }
+
+    /// **A held scan.** While the scan has not finished, `ready` answers
+    /// at once with nothing; a second start does not scan again; and when
+    /// the scan is let go every waiter hears, once.
+    #[test]
+    fn a_held_scan_never_makes_a_reader_wait_and_wakes_every_waiter_once() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc;
+        static HELD: Catalog<Vec<u8>> = Catalog::new();
+        let scans = Arc::new(AtomicUsize::new(0));
+        let woken = Arc::new(AtomicUsize::new(0));
+        let (release, held) = mpsc::channel::<()>();
+        let held = Arc::new(Mutex::new(held));
+        for _ in 0..2 {
+            let (scans, held, woken) = (Arc::clone(&scans), Arc::clone(&held), Arc::clone(&woken));
+            HELD.start(
+                move || {
+                    scans.fetch_add(1, Ordering::SeqCst);
+                    let _ = held.lock().unwrap().recv();
+                    vec![1, 2, 3]
+                },
+                move || {
+                    woken.fetch_add(1, Ordering::SeqCst);
+                },
+            );
+        }
+        let asked = std::time::Instant::now();
+        assert!(HELD.ready().is_none(), "nothing yet, and no wait for it");
+        assert!(asked.elapsed() < std::time::Duration::from_millis(50));
+        assert_eq!(woken.load(Ordering::SeqCst), 0);
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while woken.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(woken.load(Ordering::SeqCst), 2, "both waiters heard");
+        assert_eq!(scans.load(Ordering::SeqCst), 1, "one scan for two starts");
+        assert_eq!(HELD.ready().map(Vec::len), Some(3));
+        let late = Arc::clone(&woken);
+        HELD.start(
+            || unreachable!("never scans again"),
+            move || {
+                late.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert_eq!(
+            woken.load(Ordering::SeqCst),
+            3,
+            "a late start hears at once"
+        );
     }
 
     /// The list is started once and every waiter hears when it is ready;

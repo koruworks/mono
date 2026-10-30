@@ -223,3 +223,24 @@ fn a_picker_opened_early_fills_in_and_keeps_the_query_and_the_light() {
     assert_eq!(names(&surface), [Some("Consolas".into())]);
     assert_eq!(surface.lit(), Lit::Family("Consolas".into()));
 }
+
+/// **Every word the picker shows comes from the catalogue.** The four
+/// sentences it used to spell in English, and its default row, are not in
+/// its source any more.
+#[test]
+fn the_picker_spells_no_sentence_of_its_own() {
+    let source = include_str!("../font_picker.rs");
+    for literal in [
+        "\"Search fonts",
+        "\"No font matches",
+        "\"Show all fonts",
+        "\"Enter to choose",
+        "\"Default (Settings)",
+        "\"Looking for fonts",
+    ] {
+        assert!(
+            !source.contains(literal),
+            "{literal} is spelled in font_picker.rs"
+        );
+    }
+}

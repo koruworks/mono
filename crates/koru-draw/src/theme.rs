@@ -1231,9 +1231,32 @@ pub fn resolve_font(slot: FontSlot, setting: &koru_settings::FontSetting) -> Fon
     match setting {
         FontSetting::FollowDefault => role_default(slot),
         FontSetting::Chosen(family) => FontChoice::parse(family.token()),
-        FontSetting::Installed(name) => crate::installed_fonts::resolve(name.as_str())
-            .map_or_else(|| role_default(slot), FontChoice::Installed),
+        FontSetting::Installed(name) => match crate::installed_fonts::resolve(name.as_str()) {
+            Some(id) => FontChoice::Installed(id),
+            None => {
+                note_missing(slot, name.as_str());
+                role_default(slot)
+            }
+        },
     }
+}
+
+/// Say once per process that a chosen family is not installed here: the one
+/// fact a person comparing two computers needs, and never again per frame.
+fn note_missing(slot: FontSlot, name: &str) {
+    static NOTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut noted = NOTED.lock().unwrap_or_else(|held| held.into_inner());
+    if noted.iter().any(|seen| seen == name) {
+        return;
+    }
+    noted.push(name.to_owned());
+    tracing::info!(
+        target: "koru::fonts",
+        family = name,
+        role = ?slot,
+        default = role_default(slot).label(),
+        "a chosen font is not installed here; drawing the role's default"
+    );
 }
 
 /// Set what `slot` is set to, and draw it in the face that resolves to.

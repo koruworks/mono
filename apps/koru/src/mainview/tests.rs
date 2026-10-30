@@ -13547,3 +13547,41 @@ fn an_invalidation_lays_out_the_shown_document_and_marks_the_hidden_ones() {
         "and only once"
     );
 }
+
+/// **A result page nobody is looking at lays out when it is shown** (D13,
+/// R5-1). A Markdown result holds a whole document; an invalidation marks it
+/// while its tab is hidden, and showing the tab lays it out once.
+#[test]
+fn a_hidden_result_page_lays_out_when_shown_and_not_before() {
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let result = crate::result_view::tests::reading();
+    v.tabs_mut()
+        .push(crate::mainview::tab::Tab::result(result, "Findings"));
+    let at = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Result(_)))
+        .expect("the result tab");
+    let doc = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Leaf(Leaf::Document(_))))
+        .expect("the document tab");
+    v.tabs_mut().select(at);
+    v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0);
+    v.tabs_mut().select(doc);
+    fn reflows(v: &MainView, at: usize) -> u64 {
+        match &v.tabs().get(at).expect("a tab").view {
+            TabView::Result(result) => {
+                Editing::view(result.document().expect("a page").leaf()).reflows
+            }
+            _ => panic!("the result tab"),
+        }
+    }
+    let before = reflows(&v, at);
+    View::invalidate(&mut v);
+    assert_eq!(reflows(&v, at), before, "hidden, the page is only marked");
+    v.tabs_mut().select(at);
+    assert!(v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0));
+    assert_eq!(reflows(&v, at), before + 1, "shown, it lays out once");
+}

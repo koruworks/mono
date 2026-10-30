@@ -40,6 +40,8 @@ koru-channel = { path = "../koru-channel" }
 koru-i18n = { path = "../koru-i18n" }
 # The one rule for a storable font family name (DOCFONTSIZE Q-H).
 koru-settings = { path = "../koru-settings" }
+# Two lines about installed fonts: the scan once, a chosen family missing here once.
+tracing.workspace = true
 
 [features]
 # The third theme that proves there can be more than two (ELEMENTS.final

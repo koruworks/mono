@@ -914,6 +914,11 @@ pub fn push_axes(b: &mut RangedBuilder<'_, Brush>, size: f32, weight: f32) {
 /// no disk at all.
 static BUNDLED: OnceLock<Vec<(Blob<u8>, &'static str)>> = OnceLock::new();
 
+/// Whether `family` is one of the faces Koru ships.
+pub(crate) fn is_bundled_family(family: &str) -> bool {
+    bundled().iter().any(|(_, name)| *name == family)
+}
+
 fn bundled() -> &'static [(Blob<u8>, &'static str)] {
     BUNDLED.get_or_init(|| {
         let mut out = Vec::new();

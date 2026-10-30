@@ -62,7 +62,7 @@ use winit::window::CursorIcon;
 use crate::result_document::ResultDocument;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub struct ResultView {
     surface: ArtifactTab,
