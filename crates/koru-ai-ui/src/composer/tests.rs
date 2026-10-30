@@ -242,3 +242,19 @@ fn the_composer_grows_line_by_line_and_stops_at_the_cap() {
     assert!(three > one * 2.5);
     assert!((capped - eight).abs() < 0.5, "{capped} vs {eight}");
 }
+
+/// **The chat is not a document.** Its editor's body is pinned at the base
+/// size, so neither the document size nor a preview of one reaches it.
+#[test]
+fn the_composer_is_pinned_at_the_base_size() {
+    let composer = ChatComposer::new(None);
+    assert_eq!(
+        composer.editor.body.text_scale,
+        koru_editor::TextScale::Fixed(1.0)
+    );
+    assert_eq!(
+        composer.editor.body.metrics(),
+        koru_draw::theme::DocMetrics::BASE
+    );
+    assert_eq!(line_height(), crate::CHAT_LINE_HEIGHT);
+}

@@ -2328,6 +2328,9 @@ pub enum Key {
     SettingsBody,
     SettingsHeadings,
     SettingsCode,
+    SettingsDocumentTextSize,
+    SettingsSizePx,
+    SettingsSizeDefault,
     SettingsPageWidthForNewDocuments,
     SettingsPageBackground,
     SettingsPressToStepThroughThePageColors,
@@ -2579,7 +2582,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1744] = [
+    pub const ALL: [Key; 1747] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4140,6 +4143,9 @@ impl Key {
         Key::SettingsBody,
         Key::SettingsHeadings,
         Key::SettingsCode,
+        Key::SettingsDocumentTextSize,
+        Key::SettingsSizePx,
+        Key::SettingsSizeDefault,
         Key::SettingsPageWidthForNewDocuments,
         Key::SettingsPageBackground,
         Key::SettingsPressToStepThroughThePageColors,
@@ -12663,6 +12669,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsBody, en: "Body", es: "Cuerpo", pt_br: "Corpo", de: "Fließtext", fr: "Corps", ar: "المتن", zh_hans: "正文", ja: "本文" },
     Row { key: Key::SettingsHeadings, en: "Headings", es: "Encabezados", pt_br: "Títulos", de: "Überschriften", fr: "Titres", ar: "العناوين", zh_hans: "标题", ja: "見出し" },
     Row { key: Key::SettingsCode, en: "Code", es: "Código", pt_br: "Código", de: "Code", fr: "Code", ar: "الكود", zh_hans: "代码", ja: "コード" },
+    Row { key: Key::SettingsDocumentTextSize, en: "Size", es: "Tamaño", pt_br: "Tamanho", de: "Größe", fr: "Taille", ar: "الحجم", zh_hans: "大小", ja: "サイズ" },
+    Row { key: Key::SettingsSizePx, en: "{} px", es: "{} px", pt_br: "{} px", de: "{} px", fr: "{} px", ar: "{} px", zh_hans: "{} px", ja: "{} px" },
+    Row { key: Key::SettingsSizeDefault, en: "{} (default)", es: "{} (predeterminado)", pt_br: "{} (padrão)", de: "{} (Standard)", fr: "{} (par défaut)", ar: "{} (افتراضي)", zh_hans: "{}（默认）", ja: "{}（既定）" },
     Row { key: Key::SettingsPageWidthForNewDocuments, en: "Page width for new documents", es: "Ancho de página para documentos nuevos", pt_br: "Largura da página para novos documentos", de: "Seitenbreite neuer Dokumente", fr: "Largeur de page des nouveaux documents", ar: "عرض الصفحة للمستندات الجديدة", zh_hans: "新文档的页面宽度", ja: "新規ドキュメントのページ幅" },
     Row { key: Key::SettingsPageBackground, en: "Page background", es: "Fondo de página", pt_br: "Fundo da página", de: "Seitenhintergrund", fr: "Fond de page", ar: "خلفية الصفحة", zh_hans: "页面背景", ja: "ページ背景" },
     Row { key: Key::SettingsPressToStepThroughThePageColors, en: "Press to step through the page colors.", es: "Pulsa para recorrer los colores de página.", pt_br: "Pressione para percorrer as cores da página.", de: "Drücken, um die Seitenfarben durchzugehen.", fr: "Appuyez pour parcourir les couleurs de page.", ar: "اضغط للتنقل بين ألوان الصفحة.", zh_hans: "点击切换页面颜色。", ja: "押すとページの色が切り替わります。" },

@@ -98,6 +98,8 @@ pub(crate) enum Action {
     IconPack(IconPackChoice),
     PinnedShowTitle(bool),
     Font(FontRole, FontChoice),
+    /// A document body size, in px, from `DocTextSize::ALL`.
+    DocTextSize(u8),
     VoiceLanguage(DictationLanguage),
     VoiceInput(DictationInput),
     VoiceTier(DictationTier),

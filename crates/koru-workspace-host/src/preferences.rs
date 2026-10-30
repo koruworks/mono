@@ -49,6 +49,7 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
         koru_draw::theme::default_headings_font(),
     );
     into.code_font = font_of(section.code_font, koru_draw::theme::default_code_font());
+    into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
     into.density = Density::parse(section.density.token());
     into.zoom = section.zoom.get();
     into.view_mode = view_mode_of(section.default_view_mode);
@@ -134,6 +135,14 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
         if chosen != font_of(stored, role_default) {
             *slot = Some(FontSetting::Chosen(FontFamily::parse(chosen.key())));
         }
+    }
+    // A chosen size is named when it differs from what is stored. Following
+    // the default is never sent: no control here takes a choice back.
+    let size = settings
+        .doc_text_size
+        .and_then(koru_settings::DocTextSize::new);
+    if size.is_some() && size != authoritative.document_text_size.chosen() {
+        patch.document_text_size = size.map(koru_settings::DocTextSizeSetting::Chosen);
     }
     let density = koru_settings::DensityChoice::parse(settings.density.key());
     if density != authoritative.density {
@@ -231,7 +240,7 @@ type Preferences = (
         CaretHeight,
         Option<koru_draw::icons::IconPack>,
     ),
-    (FontChoice, FontChoice, FontChoice, FontChoice),
+    (FontChoice, FontChoice, FontChoice, FontChoice, Option<u8>),
     (Density, String, ViewMode, Option<[u8; 4]>),
     (
         bool,
@@ -262,6 +271,7 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.body_font,
             settings.headings_font,
             settings.code_font,
+            settings.doc_text_size,
         ),
         (
             settings.density,

@@ -56,9 +56,10 @@ pub use sections::{
 pub use values::{
     AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, Field, FontFamily, FontSetting, GlobalShortcut,
-    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink,
-    TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
+    DictationShortcut, DictationTier, DocTextSize, DocTextSizeSetting, Field, FontFamily,
+    FontSetting, GlobalShortcut, IconPackChoice, LanguageChoice, PopoutCloseChoice,
+    ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
+    ViewModeChoice, Zoom,
 };
 
 /// The bounded wait a window gives the Gateway at startup, in milliseconds.
@@ -68,6 +69,14 @@ pub use values::{
 /// in the authoritative section when it lands. If nothing lands inside this
 /// budget the window stays on defaults — never a hang, and never a splash
 /// screen while somebody's editor waits on a preferences file.
+///
+/// **Revised 2026-10-30 (owner, DOCFONTSIZE Q-F: "Ok").** "Renders
+/// immediately" became "renders within 400 ms": a process's *first* window
+/// is held hidden for at most `REVEAL_BUDGET` (400 ms, beside `reveal_pane`
+/// in `koru-workspace-host`) waiting for the first answer, so its first
+/// visible frame is the person's size, fonts and theme. Past the budget it is
+/// shown with the defaults and corrects when the answer lands, as before;
+/// this wait is unchanged and still bounds how long the link listens.
 ///
 /// Spelled here rather than in the client so the authority and the client
 /// cannot disagree about it; `koru-api-client` reads this constant.

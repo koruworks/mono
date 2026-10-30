@@ -24,7 +24,9 @@ use koru_core::schema::WorkspaceDoc;
 use koru_core::text::{ANCHOR, ANCHOR_LEN, TextRun};
 use koru_core::{Mark, MarkSet, Script, TextStyle};
 
+#[cfg(test)]
 use koru_draw::geometry::text_x;
+use koru_draw::geometry::text_x_in;
 use koru_draw::pill::PillInfo;
 use koru_draw::theme::{self, Brush, FontChoice};
 
@@ -184,6 +186,12 @@ pub struct Paragraph {
     pub space_above: f32,
     /// Set when the cached text or runs no longer match the document.
     pub dirty: bool,
+    /// The measurements of the text scale this row is laid out at. Its body
+    /// hands them over before each reflow ([`Body::sync_metrics`]), and a row
+    /// whose scale moved is reshaped.
+    ///
+    /// [`Body::sync_metrics`]: crate::body::Body::sync_metrics
+    pub metrics: theme::DocMetrics,
     /// Which [`rowlayout::build_row`](crate::rowlayout::build_row) call last
     /// laid this row out, or `0` for a row that has never been shaped.
     ///
@@ -317,6 +325,7 @@ impl Paragraph {
             height: 0.0,
             space_above: 0.0,
             dirty: true,
+            metrics: theme::DocMetrics::BASE,
             shaped: 0,
             is_title: false,
             composition: None,
@@ -351,17 +360,19 @@ impl Paragraph {
     /// Every row of a callout box takes the box's inset, so the text inside
     /// a box is one column and the icon has its room beside the first row.
     pub fn text_x(&self) -> f32 {
-        text_x(self.depth, self.is_task() || self.list_style.is_some())
-            + if self.kind == Kind::Quote {
-                QUOTE_INSET_X
-            } else {
-                0.0
-            }
-            + if self.callout.is_some() {
-                CALLOUT_INSET_X
-            } else {
-                0.0
-            }
+        text_x_in(
+            &self.metrics,
+            self.depth,
+            self.is_task() || self.list_style.is_some(),
+        ) + if self.kind == Kind::Quote {
+            QUOTE_INSET_X
+        } else {
+            0.0
+        } + if self.callout.is_some() {
+            CALLOUT_INSET_X
+        } else {
+            0.0
+        }
     }
 
     /// This row's step on the type scale.
@@ -370,7 +381,7 @@ impl Paragraph {
     /// rather than by `Heading`; this and [`weight`](Self::weight) are the only
     /// places that convert.
     pub fn type_step(&self) -> theme::TypeStep {
-        theme::type_step(self.level())
+        self.metrics.step(self.level())
     }
 
     /// The family this row is set in, decided by its kind/level and the three

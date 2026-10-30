@@ -876,6 +876,9 @@ pub struct Settings {
     pub headings_font: FontChoice,
     /// The typeface **code blocks and inline code** are set in.
     pub code_font: FontChoice,
+    /// The document body size the person chose, in px, or `None` while it
+    /// follows the default. Documents only; the app's own text has density.
+    pub doc_text_size: Option<u8>,
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
@@ -1102,6 +1105,7 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) body_font: FontChoice,
     pub(crate) headings_font: FontChoice,
     pub(crate) code_font: FontChoice,
+    pub(crate) doc_text_size: Option<u8>,
     pub(crate) density: Density,
     pub(crate) dictation_toggle: bool,
     pub(crate) dictation_language: Requested,
@@ -1145,6 +1149,7 @@ impl PreIdentitySettings {
             body_font: self.values.body_font,
             headings_font: self.values.headings_font,
             code_font: self.values.code_font,
+            doc_text_size: self.values.doc_text_size,
             density: self.values.density,
             dictation_toggle: self.values.dictation_toggle,
             dictation_language: self.values.dictation_language,
@@ -1320,6 +1325,7 @@ impl Default for Settings {
             body_font: koru_draw::theme::default_body_font(),
             headings_font: koru_draw::theme::default_headings_font(),
             code_font: koru_draw::theme::default_code_font(),
+            doc_text_size: None,
             density: Density::default(),
             dictation_toggle: false,
             dictation_language: Requested::Auto,

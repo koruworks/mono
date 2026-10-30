@@ -34,7 +34,7 @@ use crate::view_state::{
     Hover, LinkChip, LinkChipHit, SearchHighlight, SpellingUnderline, ViewState,
 };
 use koru_core::NodeId;
-use koru_draw::geometry::{checkbox_x, marker_right_x};
+use koru_draw::geometry::{checkbox_x, marker_right_x_in};
 use koru_draw::pill::{PillCache, draw as draw_pill_component};
 use koru_draw::scene::draw_status_bar;
 use koru_draw::scene::{draw_decorations, draw_glyph_run, draw_layout, fill, rect, rrect, stroke};
@@ -2406,8 +2406,9 @@ pub fn draw_checkbox(
     reminder_attention: bool,
 ) {
     let x = checkbox_x(row.depth);
-    let y = rowlayout::center_on_first_line(row, oy, theme::CHECKBOX_SIZE);
-    let size = theme::CHECKBOX_SIZE;
+    // The same size the hit area is built from (`rowlayout::checkbox_rect`).
+    let size = row.metrics.checkbox;
+    let y = rowlayout::center_on_first_line(row, oy, size);
     let box_rect = koru_draw::geometry::Rect::new(x, y, size, size);
 
     if hovered {
@@ -2454,17 +2455,17 @@ pub fn draw_list_marker(
 ) {
     let Some(style) = row.list_style else { return };
     let mid = rowlayout::first_line_mid_y(row, oy);
-    let right_x = marker_right_x(row.depth);
+    let right_x = marker_right_x_in(&row.metrics, row.depth);
 
     match style {
         koru_core::ListStyle::Bullet => {
             // Centred in the right half of the gutter, level with the text ink.
-            let cx = (right_x - theme::GUTTER * 0.25) as f64;
+            let cx = (right_x - row.metrics.gutter * 0.25) as f64;
             fill(
                 scene,
                 root,
                 theme::p().text,
-                &Circle::new((cx, mid as f64), theme::BULLET_R as f64),
+                &Circle::new((cx, mid as f64), row.metrics.bullet_r as f64),
             );
         }
         // Checkbox-style lists draw a checkbox, not a marker — handled by the

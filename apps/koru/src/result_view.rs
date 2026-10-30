@@ -238,6 +238,22 @@ impl ResultView {
     }
 
     /// Push the split of the viewport down: chrome above, page below.
+    /// Whether this result shows a built version as a page — the one case
+    /// that holds a document to lay out.
+    pub(crate) fn has_document(&self) -> bool {
+        self.document.is_some()
+    }
+
+    /// For a tab that is not shown: the chrome is invalidated as always (it
+    /// is cheap), the page only marked. `set_viewport` lays the page out when
+    /// the tab is next sized, through `resize_document`.
+    pub(crate) fn invalidate_deferred(&mut self) {
+        self.surface.invalidate();
+        if let Some(document) = self.document.as_mut() {
+            document.invalidate_deferred();
+        }
+    }
+
     fn resize_document(&mut self) {
         let (w, h) = self.viewport;
         let (column_x, column_w) = ResultDocument::text_column(w);

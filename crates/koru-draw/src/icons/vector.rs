@@ -4,7 +4,9 @@
 //! it without shaping an icon font or reparsing SVG on each frame.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use crate::theme::preview::{self, Preview, PreviewSlot};
 
 use vello::Scene;
 use vello::kurbo::{Affine, BezPath, Cap, Join, Stroke};
@@ -69,8 +71,6 @@ impl IconPack {
 const FOLLOW_DEFAULT: u8 = u8::MAX;
 
 static SELECTED: AtomicU8 = AtomicU8::new(FOLLOW_DEFAULT);
-static PREVIEW: AtomicU64 = AtomicU64::new(0);
-static NEXT_PREVIEW: AtomicU64 = AtomicU64::new(1);
 
 /// The pack in effect, independent of a menu's temporary preview: the
 /// person's choice, or this build's default when they have not made one.
@@ -101,42 +101,28 @@ pub fn set_icon_pack_setting(pack: Option<IconPack>) {
         pack.map_or(FOLLOW_DEFAULT, |pack| pack as u8),
         Ordering::Relaxed,
     );
-    PREVIEW.store(0, Ordering::Relaxed);
+    preview::clear(PreviewSlot::IconPack);
 }
 
 /// Artwork to paint now; persistence must continue to read `active_pack`.
 pub fn rendered_pack() -> IconPack {
-    match PREVIEW.load(Ordering::Relaxed) {
-        0 => active_pack(),
-        value => IconPack::ALL[(value & 0xff) as usize],
-    }
+    preview::previewed(PreviewSlot::IconPack)
+        .and_then(|i| IconPack::ALL.get(usize::from(i)).copied())
+        .unwrap_or_else(active_pack)
 }
 
 /// A menu owns its preview. Dismissal, navigation and destruction restore the
-/// saved choice. An older menu cannot clear or overwrite a newer preview.
-pub struct IconPreview(u64);
+/// saved choice. An older menu cannot clear or overwrite a newer preview —
+/// the shared [`Preview`] guard's rule.
+pub struct IconPreview(Preview);
 
 impl IconPreview {
     pub fn new(pack: IconPack) -> Self {
-        let value = (NEXT_PREVIEW.fetch_add(1, Ordering::Relaxed) << 8) | pack as u64;
-        PREVIEW.store(value, Ordering::Relaxed);
-        Self(value)
+        Self(Preview::new(PreviewSlot::IconPack, pack as u8))
     }
 
     pub fn set(&mut self, pack: IconPack) {
-        let value = (self.0 & !0xff) | pack as u64;
-        if PREVIEW
-            .compare_exchange(self.0, value, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            self.0 = value;
-        }
-    }
-}
-
-impl Drop for IconPreview {
-    fn drop(&mut self) {
-        let _ = PREVIEW.compare_exchange(self.0, 0, Ordering::Relaxed, Ordering::Relaxed);
+        self.0.set(pack as u8);
     }
 }
 

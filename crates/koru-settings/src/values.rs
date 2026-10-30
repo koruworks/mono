@@ -433,6 +433,93 @@ impl FontSetting {
     }
 }
 
+/// A document's body text size, in px: one of the sizes Settings offers.
+///
+/// **A closed set, enforced where the value is read.** `Zoom` is a range
+/// checked in the patch; this is a list, so a JSON `19` fails to deserialize
+/// rather than slipping in, and the generated schema names the same seven
+/// values the runtime accepts. The file codec stays tolerant on its own: an
+/// unknown `doc_text_size=` reads as following the default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct DocTextSize(u8);
+
+impl DocTextSize {
+    /// Every size offered, smallest first. Above 22 is what zoom is for.
+    pub const ALL: [u8; 7] = [14, 15, 16, 17, 18, 20, 22];
+    /// The size the type ramp is drawn at, and what follows-the-default means
+    /// in this build.
+    pub const DEFAULT: Self = Self(16);
+
+    pub fn new(px: u8) -> Option<Self> {
+        Self::ALL.contains(&px).then_some(Self(px))
+    }
+
+    pub fn px(self) -> u8 {
+        self.0
+    }
+
+    /// Read a `doc_text_size=` value, or `None` for anything not offered.
+    pub fn parse(text: &str) -> Option<Self> {
+        text.trim().parse::<u8>().ok().and_then(Self::new)
+    }
+}
+
+impl TryFrom<u8> for DocTextSize {
+    type Error = String;
+
+    fn try_from(px: u8) -> Result<Self, Self::Error> {
+        Self::new(px).ok_or_else(|| format!("a document text size is one of {:?}", Self::ALL))
+    }
+}
+
+impl From<DocTextSize> for u8 {
+    fn from(size: DocTextSize) -> Self {
+        size.0
+    }
+}
+
+impl schemars::JsonSchema for DocTextSize {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DocTextSize")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "integer",
+            "enum": Self::ALL,
+        })
+    }
+}
+
+/// What the document text size is set to.
+///
+/// The same shape as [`FontSetting`], for the same reason: following the
+/// default is a state, persisted as no key, and a chosen size is always
+/// written, even when it is today's default, so a person who picked 16 keeps
+/// 16 if the default ever moves.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocTextSizeSetting {
+    /// This build's default size, now and later.
+    #[default]
+    FollowDefault,
+    /// This size, whatever the build's default becomes.
+    Chosen(DocTextSize),
+}
+
+impl DocTextSizeSetting {
+    /// The chosen size, or `None` while the default applies.
+    pub fn chosen(self) -> Option<DocTextSize> {
+        match self {
+            Self::FollowDefault => None,
+            Self::Chosen(size) => Some(size),
+        }
+    }
+}
+
 /// A zoom factor, valid only within the range the app has always accepted.
 ///
 /// Out of range is *ignored* rather than clamped — the guarded-geometry

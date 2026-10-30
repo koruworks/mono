@@ -1537,6 +1537,16 @@ pub trait Editing {
         }
     }
 
+    /// Mark every row for reshaping and lay nothing out: what a tab that is
+    /// not shown does when the text's face or size changes. Its first
+    /// `set_viewport` when it is shown again lays it out once, at whatever the
+    /// typography is by then, so hovering through a font or size list costs
+    /// the documents nobody is looking at nothing.
+    fn invalidate_deferred(&mut self) {
+        self.view_mut().engine.clear_pill_cache();
+        self.body_mut().invalidate();
+    }
+
     fn reflow(&mut self) {
         let _watch = koru_core::timing::Watch::start("editor.reflow");
         let inset = self.top_inset();
@@ -7556,7 +7566,8 @@ pub trait Editing {
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
         let (dx, dy) = match delta {
             MouseScrollDelta::LineDelta(x, y) => {
-                let step = theme::FONT_SIZE * theme::LINE_HEIGHT * 3.0;
+                // Three lines of this document's text.
+                let step = self.body().metrics().line * 3.0;
                 (x * step, y * step)
             }
             MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),

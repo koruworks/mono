@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::values::{
     AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, Field, FontSetting, GlobalShortcut, IconPackChoice,
-    LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink, TerminalCursorHeight,
-    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom, validate_endpoint, validate_model,
-    validate_skin_tone,
+    DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting, GlobalShortcut,
+    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink,
+    TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
+    validate_endpoint, validate_model, validate_skin_tone,
 };
 
 #[cfg(test)]
@@ -115,6 +115,9 @@ pub struct GlobalSettings {
     pub body_font: FontSetting,
     pub headings_font: FontSetting,
     pub code_font: FontSetting,
+    /// The document body size. Follows the build's default until chosen.
+    #[serde(default)]
+    pub document_text_size: DocTextSizeSetting,
     pub density: DensityChoice,
     pub zoom: Zoom,
     pub default_view_mode: ViewModeChoice,
@@ -172,6 +175,7 @@ impl Default for GlobalSettings {
             body_font: FontSetting::FollowDefault,
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
+            document_text_size: DocTextSizeSetting::FollowDefault,
             density: DensityChoice::default(),
             zoom: Zoom::default(),
             default_view_mode: ViewModeChoice::default(),
@@ -231,6 +235,8 @@ pub struct GlobalPatch {
     pub headings_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_font: Option<FontSetting>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document_text_size: Option<DocTextSizeSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub density: Option<DensityChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -299,6 +305,7 @@ impl GlobalPatch {
             || self.body_font.is_some()
             || self.headings_font.is_some()
             || self.code_font.is_some()
+            || self.document_text_size.is_some()
             || self.density.is_some()
             || self.zoom.is_some()
             || self.default_view_mode.is_some()
@@ -438,6 +445,7 @@ impl GlobalPatch {
             body_font,
             headings_font,
             code_font,
+            document_text_size,
             density,
             default_view_mode,
             default_canvas_background,

@@ -84,7 +84,13 @@ impl Rect {
 /// is painted at all, not a fact about which view is drawing: a task list inside
 /// a document keeps its text one gutter right of its boxes.
 pub fn text_x(depth: impl Into<u32>, checkbox: bool) -> f32 {
-    let gutter = if checkbox { theme::GUTTER } else { 0.0 };
+    text_x_in(&theme::DocMetrics::BASE, depth, checkbox)
+}
+
+/// [`text_x`] at a document's text scale: the gutter grows with the checkbox,
+/// the column it starts from does not.
+pub fn text_x_in(metrics: &theme::DocMetrics, depth: impl Into<u32>, checkbox: bool) -> f32 {
+    let gutter = if checkbox { metrics.gutter } else { 0.0 };
     checkbox_x(depth) + gutter
 }
 
@@ -102,7 +108,12 @@ pub fn checkbox_x(depth: impl Into<u32>) -> f32 {
 /// hangs in the gutter the way a number hangs under a hanging indent, so a
 /// wrapped second line does not tuck under it.
 pub fn marker_right_x(depth: impl Into<u32>) -> f32 {
-    text_x(depth, true) - theme::MARKER_GAP
+    marker_right_x_in(&theme::DocMetrics::BASE, depth)
+}
+
+/// [`marker_right_x`] at a document's text scale.
+pub fn marker_right_x_in(metrics: &theme::DocMetrics, depth: impl Into<u32>) -> f32 {
+    text_x_in(metrics, depth, true) - metrics.marker_gap
 }
 
 #[cfg(test)]

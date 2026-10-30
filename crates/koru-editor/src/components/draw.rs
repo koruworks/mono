@@ -1690,7 +1690,8 @@ pub fn draw_name_prompt_contents(
         let glyph = if let Some(icon) = prompt.page_icon.as_deref() {
             engine.simple_layout(icon, theme::role::body())
         } else {
-            engine.icon_layout(icons::PLUS, theme::FONT_SIZE)
+            // Grows with the document's text, which it stands beside.
+            engine.icon_layout(icons::PLUS, theme::doc_text_size())
         };
         draw_layout(
             scene,

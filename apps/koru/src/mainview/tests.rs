@@ -13490,3 +13490,60 @@ fn rows_of_single(v: &mut MainView) -> usize {
         _ => 0,
     }
 }
+
+/// **A document nobody is looking at lays out when it is shown** (D13). An
+/// invalidation — what every font, size, theme or density change sends —
+/// lays out the shown tab now and only marks the hidden ones; showing one
+/// lays it out once, before its first frame, and not again.
+#[test]
+fn an_invalidation_lays_out_the_shown_document_and_marks_the_hidden_ones() {
+    let (mut v, mut w) = in_a_tab(&["first"]);
+    for i in 0..3 {
+        let doc =
+            w.ws.insert(Parent::Root, Node::document(format!("Other {i}")).unwrap())
+                .unwrap();
+        w.ws.insert(Parent::Node(doc), Node::paragraph("text").unwrap())
+            .unwrap();
+        assert!(v.open_node_in_new_tab(&w.ws, doc));
+    }
+    // The document tabs, wherever the strip puts them beside its own.
+    let docs: Vec<usize> = v
+        .tabs()
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.view, TabView::Leaf(Leaf::Document(_))))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(docs.len(), 4);
+    // Every tab shown once, as a person moving through them would.
+    for &i in &docs {
+        v.tabs_mut().select(i);
+        v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0);
+    }
+    v.tabs_mut().select(docs[0]);
+    fn reflows(v: &MainView, docs: &[usize]) -> Vec<u64> {
+        docs.iter()
+            .map(|&i| match &v.tabs().get(i).expect("a tab").view {
+                TabView::Leaf(Leaf::Document(d)) => d.editor.view.reflows,
+                _ => panic!("a document tab"),
+            })
+            .collect()
+    }
+    let before = reflows(&v, &docs);
+    View::invalidate(&mut v);
+    let after = reflows(&v, &docs);
+    assert_eq!(after[0], before[0] + 1, "the shown tab lays out now");
+    assert_eq!(&after[1..], &before[1..], "the hidden ones do not");
+
+    v.tabs_mut().select(docs[2]);
+    assert!(v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0));
+    assert_eq!(
+        reflows(&v, &docs)[2],
+        before[2] + 1,
+        "shown, it lays out once"
+    );
+    assert!(
+        !v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0),
+        "and only once"
+    );
+}

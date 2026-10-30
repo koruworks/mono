@@ -25,6 +25,8 @@ use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::tasks;
 use koru_core::{MarkSet, TextStyle};
 
+use koru_draw::theme;
+
 use crate::paragraph::Paragraph;
 use crate::pillinfo::info_for_node;
 use crate::tasks::{ActivitySink, TaskActivity};
@@ -54,6 +56,12 @@ fn note_unfinished_children(ws: &WorkspaceDoc, row: &mut Paragraph) {
 #[derive(Default)]
 pub struct Body {
     pub rows: Vec<Paragraph>,
+    /// Whether this body's text follows the person's document size.
+    ///
+    /// A document follows it. The chat composer is an editor too, laid out
+    /// through the same ramp, and is pinned at the base size so no setting or
+    /// preview reaches it.
+    pub text_scale: TextScale,
     pub focus: usize,
     /// Where a multi-row selection started, by node id.
     ///
@@ -222,7 +230,46 @@ impl Pending {
     }
 }
 
+/// Where a [`Body`] takes its text scale from.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub enum TextScale {
+    /// The person's document size, read when the body lays out.
+    #[default]
+    Follow,
+    /// This factor of the base ramp, whatever the setting says.
+    Fixed(f32),
+}
+
 impl Body {
+    /// The factor this body's text is set at now.
+    pub fn scale(&self) -> f32 {
+        match self.text_scale {
+            TextScale::Follow => theme::doc_scale(),
+            TextScale::Fixed(scale) => scale,
+        }
+    }
+
+    /// The document measurements at this body's [`scale`](Self::scale).
+    pub fn metrics(&self) -> theme::DocMetrics {
+        theme::DocMetrics::at(self.scale())
+    }
+
+    /// Hand every row this body's metrics. A row laid out at another scale is
+    /// marked for reshaping; a row already at this scale costs a comparison.
+    ///
+    /// Called at the top of every reflow, so a size change reaches a body the
+    /// next time it lays out — which for a tab that is not shown is when it is
+    /// shown, not before.
+    pub fn sync_metrics(&mut self) {
+        let metrics = self.metrics();
+        for row in &mut self.rows {
+            if row.metrics != metrics {
+                row.metrics = metrics;
+                row.dirty = true;
+            }
+        }
+    }
+
     pub fn new(ws: &WorkspaceDoc) -> Self {
         let mut outline = Self::empty_over(ws);
         outline.rebuild(ws);
@@ -2883,6 +2930,38 @@ mod tests {
             o.row_near_y(heading_top - 1.0),
             1,
             "a drag reads it the same way a click does"
+        );
+    }
+
+    /// A document follows the size setting; the composer's body is pinned.
+    /// `sync_metrics` reshapes a row only when its scale moved.
+    #[test]
+    fn a_body_takes_its_scale_and_reshapes_only_what_moved() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::paragraph("one").unwrap())
+            .unwrap();
+        let mut o = Body::new(&ws);
+        o.text_scale = TextScale::Fixed(1.25);
+        o.sync_metrics();
+        assert!(
+            o.rows
+                .iter()
+                .all(|r| r.metrics == theme::DocMetrics::at(1.25))
+        );
+        for row in &mut o.rows {
+            row.dirty = false;
+        }
+        o.sync_metrics();
+        assert!(
+            o.rows.iter().all(|r| !r.dirty),
+            "the same scale reshapes nothing"
+        );
+        o.text_scale = TextScale::Fixed(1.0);
+        o.sync_metrics();
+        assert!(
+            o.rows
+                .iter()
+                .all(|r| r.dirty && r.metrics == theme::DocMetrics::BASE)
         );
     }
 

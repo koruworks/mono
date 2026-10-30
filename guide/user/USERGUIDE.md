@@ -3111,6 +3111,16 @@ also has a **Typography** group whose Body / Headings / Code rows cycle a
 role's family for a quick in-document switch. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
+**Document text size** is the **Size** row at the end of *Document fonts*:
+14 to 22 px, 16 by default. Every document follows it — headings, code
+blocks, checkboxes and the space between blocks grow with the text, so a
+page reads the same at any size — while the app's own text, the chat box and
+the terminal keep theirs. Point down the list to preview a size in this
+workspace's open documents; a click or Enter keeps it, and other workspaces
+follow. Larger still is what zoom is for. Koru opens at your size, fonts and
+theme from its first frame when its settings answer within moments of
+starting; if they are slower it opens with the defaults and settles.
+
 The four roles are separate on purpose. Setting the app font to a monospace
 makes every *pill* monospaced and leaves the sentence around it alone. All four
 are remembered and come back when you reopen the app.

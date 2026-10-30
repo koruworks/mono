@@ -50,6 +50,13 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+/// One line of chat text: the composer's and a message's line unit.
+///
+/// The base body line, named for what it measures here. The document text
+/// size does not reach the chat (its composer's body is pinned at the base
+/// size), so this does not follow it either.
+pub(crate) const CHAT_LINE_HEIGHT: f32 = theme::FONT_SIZE * theme::LINE_HEIGHT;
+
 mod agents;
 mod chats_pane;
 mod composer;
@@ -8102,7 +8109,7 @@ mod tests {
         let grown = surface.composer_rect().h;
         // A composer line is a line of document body text; a break is a new
         // paragraph, with the editor's small gap between paragraphs.
-        let line = theme::FONT_SIZE * theme::LINE_HEIGHT;
+        let line = CHAT_LINE_HEIGHT;
         let gaps = theme::TASK_GAP * (COMPOSER_MAX_LINES - 1) as f32;
         assert!(grown > base);
         assert!(

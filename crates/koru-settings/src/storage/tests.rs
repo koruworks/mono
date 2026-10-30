@@ -219,6 +219,10 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         code_font: FontSetting::Chosen(FontFamily::Mono),
         // A pack that follows the default is absent on purpose, like a font.
         icon_pack: Some(crate::IconPackChoice::Lucide),
+        // So is a document size that follows the default.
+        document_text_size: crate::DocTextSizeSetting::Chosen(
+            crate::DocTextSize::new(18).expect("an offered size"),
+        ),
         global_dictation_enabled: Some(false),
         // Both nullable device-local keys are given a value: an absent one is
         // absent from the file on purpose, and what this test is about is a
@@ -593,4 +597,80 @@ fn a_blank_stored_delegate_folder_reads_as_absent() {
     let mut read_back = GlobalSettings::default();
     apply_desktop(bytes, &mut read_back);
     assert_eq!(read_back.delegate_temporary_root, None);
+}
+
+/// A chosen size is written, even 16; following the default writes nothing.
+#[test]
+fn a_document_size_round_trips_and_only_a_choice_writes_a_key() {
+    use crate::{DocTextSize, DocTextSizeSetting};
+    let written = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!written.contains("doc_text_size="), "{written}");
+    for px in DocTextSize::ALL {
+        let settings = GlobalSettings {
+            document_text_size: DocTextSizeSetting::Chosen(DocTextSize::new(px).unwrap()),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(
+            written.contains(&format!("doc_text_size={px}\n")),
+            "{written}"
+        );
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+}
+
+/// A size this build does not offer, or no number at all, reads as following
+/// the default rather than snapping to a size nobody chose.
+#[test]
+fn a_size_not_offered_reads_as_following_the_default() {
+    for value in ["19", "big", "0", "", "-1", "16.5", "300"] {
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&format!("version=2\ndoc_text_size={value}\n"), &mut loaded);
+        assert_eq!(
+            loaded.document_text_size,
+            crate::DocTextSizeSetting::FollowDefault,
+            "{value:?}"
+        );
+    }
+}
+
+/// The wire takes the seven sizes and nothing else, and the generated schema
+/// names exactly those seven.
+#[test]
+fn the_wire_refuses_a_size_not_offered_and_the_schema_says_which() {
+    for px in crate::DocTextSize::ALL {
+        let patch: crate::GlobalPatch =
+            serde_json::from_str(&format!(r#"{{"document_text_size":{{"chosen":{px}}}}}"#))
+                .expect("an offered size is accepted");
+        assert!(patch.touches_roaming());
+    }
+    for bad in ["19", "0", "-1", "16.5", "300", "\"16\""] {
+        let json = format!(r#"{{"document_text_size":{{"chosen":{bad}}}}}"#);
+        assert!(
+            serde_json::from_str::<crate::GlobalPatch>(&json).is_err(),
+            "{bad} is refused before anything is staged"
+        );
+    }
+    let follow: crate::GlobalPatch =
+        serde_json::from_str(r#"{"document_text_size":"follow_default"}"#).unwrap();
+    assert_eq!(
+        follow.document_text_size,
+        Some(crate::DocTextSizeSetting::FollowDefault)
+    );
+    let schema = serde_json::to_value(schemars::schema_for!(crate::DocTextSize)).unwrap();
+    let offered: Vec<u64> = crate::DocTextSize::ALL
+        .iter()
+        .map(|&px| u64::from(px))
+        .collect();
+    assert_eq!(
+        schema["enum"]
+            .as_array()
+            .expect("an enum")
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        offered
+    );
 }

@@ -55,6 +55,7 @@
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_draw::theme::preview::{self, Preview, PreviewSlot};
 use koru_draw::{icons, inspect, scene, theme};
 use koru_i18n::{Key, Lang};
 use koru_settings::{
@@ -196,19 +197,45 @@ struct OpenDropdown {
     index: usize,
     menu: Menu<DropdownOption>,
     actions: Vec<Action>,
-    icon_preview: Option<icons::IconPreview>,
+    /// What the lit row is showing on the whole app, owned by this menu: it
+    /// ends when the menu closes, by a choice or not, and a stale menu cannot
+    /// end a newer one's (`theme::preview`).
+    preview: Option<Preview>,
 }
 
 impl OpenDropdown {
+    /// Preview the lit row, if it is a choice that previews: a font, a
+    /// document size or an icon style. A row that does not preview leaves
+    /// the last preview in place.
     fn preview_highlight(&mut self) {
-        if let Some(Action::IconPack(choice)) = self.menu.hover.and_then(|i| self.actions.get(i)) {
-            let pack = icons::IconPack::parse(choice.token());
-            if let Some(preview) = self.icon_preview.as_mut() {
-                preview.set(pack);
-            } else {
-                self.icon_preview = Some(icons::IconPreview::new(pack));
-            }
+        let Some(want) = self
+            .menu
+            .hover
+            .and_then(|i| self.actions.get(i))
+            .and_then(previewed_by)
+        else {
+            return;
+        };
+        match self.preview.as_mut() {
+            Some(preview) if preview.slot() == want.0 => preview.set(want.1),
+            _ => self.preview = Some(Preview::new(want.0, want.1)),
         }
+    }
+}
+
+/// The slot and value a list row previews, when it previews anything.
+fn previewed_by(action: &Action) -> Option<(PreviewSlot, u8)> {
+    match action {
+        Action::Font(role, family) => Some((
+            PreviewSlot::Font(role.slot()),
+            theme::font_preview_value(*family),
+        )),
+        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, *px)),
+        Action::IconPack(choice) => Some((
+            PreviewSlot::IconPack,
+            icons::IconPack::parse(choice.token()) as u8,
+        )),
+        _ => None,
     }
 }
 
@@ -235,9 +262,6 @@ pub struct SettingsSurface {
     search: TextInput,
     search_focused: bool,
     open: Option<OpenDropdown>,
-    /// The font an open font list is showing on the whole app while it is
-    /// lit, and the role it stands in for.
-    previewing: Option<(FontRole, theme::FontChoice)>,
 
     /// Geometry reserved on the Reminders page for rows that belong to the
     /// host. The shared surface knows only its height.
@@ -328,7 +352,6 @@ impl SettingsSurface {
             search,
             search_focused: false,
             open: None,
-            previewing: None,
             host_section_height: 0.0,
             global: links.global_authoritative(),
             terminal: links.terminal_authoritative(),
@@ -917,27 +940,25 @@ impl SettingsSurface {
     /// when the menu goes. The host repaints for that one rather than laying
     /// out, so it is not part of the answer.
     fn sync_preview(&mut self) -> bool {
+        let shown = Self::previews_shown();
         if let Some(open) = self.open.as_mut() {
             open.preview_highlight();
         }
-        let want =
-            self.open
-                .as_ref()
-                .and_then(|open| match open.actions.get(open.menu.hover?)? {
-                    Action::Font(role, family) => Some((*role, *family)),
-                    _ => None,
-                });
-        if want == self.previewing {
-            return false;
-        }
-        if let Some((role, _)) = self.previewing {
-            theme::set_font_preview(role.slot(), None);
-        }
-        if let Some((role, family)) = want {
-            theme::set_font_preview(role.slot(), Some(family));
-        }
-        self.previewing = want;
-        true
+        Self::previews_shown() != shown
+    }
+
+    /// Every slot a list can preview, as it reads now.
+    fn previews_shown() -> [Option<u8>; 6] {
+        use theme::FontSlot;
+        [
+            PreviewSlot::Font(FontSlot::Ui),
+            PreviewSlot::Font(FontSlot::Body),
+            PreviewSlot::Font(FontSlot::Headings),
+            PreviewSlot::Font(FontSlot::Code),
+            PreviewSlot::DocTextSize,
+            PreviewSlot::IconPack,
+        ]
+        .map(preview::previewed)
     }
 
     pub fn mouse_up(&mut self) -> bool {
@@ -1051,7 +1072,7 @@ impl SettingsSurface {
             index,
             menu,
             actions,
-            icon_preview: None,
+            preview: None,
         });
     }
 
@@ -1773,6 +1794,7 @@ impl SettingsSurface {
             }
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
+            Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
             Action::VoiceLanguage(language) => {
                 self.voice_language = language.clone();
                 self.requests.push(Request::SetVoiceLanguage(language));
@@ -1978,16 +2000,6 @@ fn view_mode_choice(mode: theme::ViewMode) -> ViewModeChoice {
 
 /// `Action` is not `Clone` — it carries owned device names — so the one place
 /// that needs a copy names the cost rather than deriving it everywhere.
-impl Drop for SettingsSurface {
-    /// A Settings tab closed with a font list open must not leave the app in
-    /// the face it was previewing.
-    fn drop(&mut self) {
-        if let Some((role, _)) = self.previewing {
-            theme::set_font_preview(role.slot(), None);
-        }
-    }
-}
-
 fn clone_action(action: &Action) -> Action {
     match action {
         Action::Theme(v) => Action::Theme(*v),
@@ -2001,6 +2013,7 @@ fn clone_action(action: &Action) -> Action {
         Action::IconPack(v) => Action::IconPack(*v),
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
+        Action::DocTextSize(px) => Action::DocTextSize(*px),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),
         Action::VoiceInput(v) => Action::VoiceInput(v.clone()),
         Action::VoiceTier(v) => Action::VoiceTier(*v),

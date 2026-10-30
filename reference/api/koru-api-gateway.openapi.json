@@ -3507,6 +3507,43 @@
         ],
         "type": "string"
       },
+      "DocTextSize": {
+        "enum": [
+          14,
+          15,
+          16,
+          17,
+          18,
+          20,
+          22
+        ],
+        "type": "integer"
+      },
+      "DocTextSizeSetting": {
+        "description": "What the document text size is set to.\n\nThe same shape as [`FontSetting`], for the same reason: following the\ndefault is a state, persisted as no key, and a chosen size is always\nwritten, even when it is today's default, so a person who picked 16 keeps\n16 if the default ever moves.",
+        "oneOf": [
+          {
+            "description": "This build's default size, now and later.",
+            "enum": [
+              "follow_default"
+            ],
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "description": "This size, whatever the build's default becomes.",
+            "properties": {
+              "chosen": {
+                "$ref": "#/components/schemas/DocTextSize"
+              }
+            },
+            "required": [
+              "chosen"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "DocumentDestination": {
         "properties": {
           "index": {
@@ -5066,6 +5103,19 @@
               }
             ]
           },
+          "document_text_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocTextSizeSetting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "emoji_skin_tone": {
             "nullable": true,
             "type": "string"
@@ -5266,6 +5316,15 @@
           },
           "dictation_tier": {
             "$ref": "#/components/schemas/DictationTier"
+          },
+          "document_text_size": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocTextSizeSetting"
+              }
+            ],
+            "default": "follow_default",
+            "description": "The document body size. Follows the build's default until chosen."
           },
           "emoji_skin_tone": {
             "type": "string"

@@ -9608,6 +9608,23 @@ impl MainView {
 /// compute the same effective width, skip its own invalidation and reflow
 /// without rebuilding, leaving long lines overflowing (or, going to Full,
 /// under-wrapped). `invalidate_size` then forces that reflow on show.
+/// Mark a hidden tab's document for layout without laying it out, when it
+/// has one. Answers whether it did; every other tab kind is cheap chrome and
+/// takes its ordinary invalidation.
+fn defer_layout(view: &mut TabView) -> bool {
+    match view {
+        TabView::Leaf(leaf) => {
+            Editing::invalidate_deferred(leaf);
+            true
+        }
+        TabView::Result(result) if result.has_document() => {
+            result.invalidate_deferred();
+            true
+        }
+        _ => false,
+    }
+}
+
 fn set_tab_layout(t: &mut Tab, shown: bool, mode: theme::ViewMode, canvas: Option<[u8; 4]>) {
     let TabView::Leaf(l) = &mut t.view else {
         return;
@@ -10905,7 +10922,17 @@ impl View for MainView {
         // to re-measure them, or the chip keeps the size of a face nobody is
         // drawing in any more.
         self.remeasure_dictation();
-        for t in self.tabs_mut().iter_mut() {
+        let shown = self.tabs().active();
+        for (i, t) in self.tabs_mut().iter_mut().enumerate() {
+            // **A document nobody is looking at lays out when it is shown.**
+            // Pointing through a font or size list invalidates on every step;
+            // laying out every open document each time is the cost the
+            // preview must not have. The tab is marked, and `ensure_sized`
+            // lays it out once before its first frame, hit-test or publish.
+            if i != shown && defer_layout(&mut t.view) {
+                t.invalidate_size();
+                continue;
+            }
             match &mut t.view {
                 TabView::Welcome(w) => w.invalidate(),
                 TabView::Manage(w) => View::invalidate(w),

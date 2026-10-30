@@ -170,6 +170,17 @@ pub const REGISTRY: &[SettingSpec] = &[
         doc: "How much space the interface leaves around things.",
     },
     SettingSpec {
+        field: "document_text_size",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Token,
+        doc: "The document body size in px: 14, 15, 16, 17, 18, 20 or 22, written as \
+              `doc_text_size=`. Headings, code and block spacing scale with it; the app's \
+              own text does not. Absent until chosen, which follows the build's default \
+              (16).",
+    },
+    SettingSpec {
         field: "zoom",
         section: Section::Global,
         storage: StorageClass::Roaming,

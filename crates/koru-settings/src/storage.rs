@@ -85,6 +85,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "body_font",
     "headings_font",
     "code_font",
+    "doc_text_size",
     "density",
     "dictation_toggle",
     "dictation_language",
@@ -140,6 +141,14 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             // choice — especially `dark=0`. Ignored on read, dropped on write.
             "dark" => {}
             "theme" => into.theme = ThemeChoice::parse(value),
+            // A size this build does not offer follows the default; the file is
+            // left as it is until the next save.
+            "doc_text_size" => {
+                into.document_text_size = crate::DocTextSize::parse(value)
+                    .map_or(crate::DocTextSizeSetting::FollowDefault, |size| {
+                        crate::DocTextSizeSetting::Chosen(size)
+                    });
+            }
             // Only a pack this build knows is a choice; anything else follows
             // the default rather than snapping to whichever pack parses first.
             "icon_pack" => {
@@ -215,6 +224,9 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
         if let Some(family) = setting.family() {
             line(key, family.token());
         }
+    }
+    if let Some(size) = settings.document_text_size.chosen() {
+        line("doc_text_size", &size.px().to_string());
     }
     line("density", settings.density.token());
     line("dictation_toggle", settings.dictation_gesture.token());

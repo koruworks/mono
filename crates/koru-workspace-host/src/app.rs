@@ -309,6 +309,7 @@ fn apply_settings(settings: &Settings) {
     theme::set_body_font(settings.body_font);
     theme::set_headings_font(settings.headings_font);
     theme::set_code_font(settings.code_font);
+    theme::set_doc_text_size(settings.doc_text_size);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -337,6 +338,7 @@ fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     theme::set_body_font(settings.body_font);
     theme::set_headings_font(settings.headings_font);
     theme::set_code_font(settings.code_font);
+    theme::set_doc_text_size(settings.doc_text_size);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -2317,6 +2319,10 @@ struct App<H: Host> {
     /// one finishes what `restore` could only do against the registry's
     /// defaults — see [`View::adopt_startup_preferences`].
     settings_heard: bool,
+    /// The process's first window, drawn but not yet shown, waiting for the
+    /// settings' first answer so its first visible frame is the person's
+    /// (`reveal_if_due`).
+    pending_reveal: Option<PendingReveal>,
     background_start: bool,
     /// Keys this Koru process has seen pressed and not yet released. They are
     /// copied into a destination pane before a search-result focus handoff.
@@ -5495,6 +5501,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             )),
             settings_link,
             settings_heard: false,
+            pending_reveal: None,
             background_start: cli::background_from_args(),
             down_keys: HashSet::new(),
             dictation,
@@ -13279,6 +13286,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
+    /// After an event that may have moved or ended a Settings preview: lay
+    /// out again when text moved, repaint when only the icons' artwork did.
+    /// Answers whether anything was done.
+    fn show_appearance_change(&mut self, before: &AppearanceShown) -> bool {
+        let now = AppearanceShown::now();
+        if now.typography_moved(before) {
+            self.invalidate_everywhere();
+            true
+        } else if now.icon_paint_moved(before) {
+            self.repaint_icons();
+            true
+        } else {
+            false
+        }
+    }
+
     /// The theme is baked into layouts, so a flip invalidates every window.
     fn invalidate_everywhere(&mut self) {
         for pane in self.panes.values_mut() {
@@ -13387,6 +13410,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.body_font = theme::chosen_font(theme::FontSlot::Body);
         self.runtime.settings.headings_font = theme::chosen_font(theme::FontSlot::Headings);
         self.runtime.settings.code_font = theme::chosen_font(theme::FontSlot::Code);
+        // The size chosen, not one Settings is previewing; `None` follows.
+        self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.density = theme::density();
         self.runtime.settings.view_mode = theme::default_view_mode();
         self.runtime.settings.canvas_bg = theme::default_canvas_bg();
@@ -13970,6 +13995,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             return;
         }
+        let was_shown = AppearanceShown::now();
         // Zoom before the globals: `rezoom` compares against the live value and
         // is the one path that re-sizes every viewport.
         self.rezoom(self.runtime.settings.zoom);
@@ -13985,6 +14011,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
         }
         self.apply_theme_preference();
+        // **A font or size chosen in another workspace lays out here too.**
+        // `apply_theme_preference` invalidates only when light or dark paint
+        // moved, so typography that arrived from the authority was applied to
+        // the globals and then drawn from stale layouts until something else
+        // happened to invalidate them.
+        if AppearanceShown::now().typography_moved(&was_shown) {
+            self.invalidate_everywhere();
+        }
     }
 
     /// Pin/unpin one window above other windows. Per-window: only the window
@@ -14789,6 +14823,36 @@ Nothing was written. The store starts on demand, so this usually means it could 
     fn invalidate_accessibility(&mut self, id: WindowId) {
         if let Some(pane) = self.panes.get_mut(&id) {
             pane.access.invalidate();
+        }
+    }
+
+    /// Show the first window when its settings have answered or the budget
+    /// has passed, exactly once.
+    fn reveal_if_due(&mut self, now: Instant) {
+        let Some(window) = reveal_due(self.pending_reveal.as_ref(), self.settings_heard, now)
+        else {
+            return;
+        };
+        self.pending_reveal = None;
+        let elapsed = timing::started_at().elapsed().as_millis();
+        if self.settings_heard {
+            tracing::info!(
+                target: "koru::startup",
+                "first window revealed after settings in {elapsed}ms"
+            );
+        } else {
+            tracing::info!(
+                target: "koru::startup",
+                "first window revealed at the budget ({elapsed}ms) with defaults"
+            );
+        }
+        self.reveal_and_focus(window);
+    }
+
+    fn reveal_and_focus(&mut self, id: WindowId) {
+        self.reveal_pane(id);
+        if let Some(pane) = self.panes.get(&id) {
+            pane.window.focus_window();
         }
     }
 
@@ -16249,9 +16313,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // Background startup is the one deliberate exception: focusing a
         // window immediately before hiding it would flash and steal focus.
         if !self.background_start {
-            self.reveal_pane(id);
-            if let Some(pane) = self.panes.get(&id) {
-                pane.window.focus_window();
+            // **Shown once the person's settings are in, or at the budget.**
+            // The window is already hidden until its first frame; holding
+            // that a moment longer is what lets the first frame be drawn in
+            // their size, fonts and theme rather than the defaults it would
+            // otherwise correct a moment later. Nothing waits here: the loop
+            // keeps running, and `reveal_if_due` shows it.
+            if self.settings_heard {
+                self.reveal_and_focus(id);
+            } else {
+                self.pending_reveal = Some(PendingReveal {
+                    window: id,
+                    deadline: Instant::now() + REVEAL_BUDGET,
+                });
             }
         }
         if self.background_start {
@@ -16303,7 +16377,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Focused(focused) => {
                 self.host.window_focus_changed(focused);
-                let was_icon_paint = koru_draw::icons::rendered_pack();
+                let was_shown = AppearanceShown::now();
                 crate::search_debug!(
                     "[Koru][search-open][pid={}] focus event: pane={id:?} focused={focused} in_tray={} global_search={}",
                     std::process::id(),
@@ -16319,9 +16393,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     pane.focused = focused;
                     pane.view.set_window_focused(focused);
                 }
-                if koru_draw::icons::rendered_pack() != was_icon_paint {
-                    self.repaint_icons();
-                }
+                self.show_appearance_change(&was_shown);
                 // **The tie-break between two windows on one workspace.** The
                 // agent stamps the order it observed rather than trusting a
                 // clock, so "the window I was just in" wins — which is the
@@ -16672,7 +16744,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         std::process::id()
                     ));
                     let delta = if mods.shift_key() { -1 } else { 1 };
-                    let was_icon_paint = koru_draw::icons::rendered_pack();
+                    let was_shown = AppearanceShown::now();
                     if self
                         .panes
                         .get_mut(&id)
@@ -16680,9 +16752,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     {
                         self.wake(id);
                     }
-                    if koru_draw::icons::rendered_pack() != was_icon_paint {
-                        self.repaint_icons();
-                    }
+                    self.show_appearance_change(&was_shown);
                     return;
                 }
 
@@ -16800,15 +16870,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
                 // Font roles and density are process-global and baked into every
                 // parley layout — a change has to relay out every window.
-                let was_ui = theme::ui_font();
-                let was_body = theme::body_font();
-                let was_headings = theme::headings_font();
-                let was_code = theme::code_font();
-                let was_density = theme::density();
-                // The choice, so picking the pack already drawn by default is
-                // still a change to save.
-                let was_icons = koru_draw::icons::chosen_pack();
-                let was_icon_paint = koru_draw::icons::rendered_pack();
+                let was_shown = AppearanceShown::now();
                 // Voice preferences use the same process-global path as typography.
                 let was_voice = crate::voice_prefs::snapshot();
                 let document_before = self.runtime.workspace.ws.version();
@@ -16856,24 +16918,20 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.open_document(event_loop, doc);
                 }
 
-                let typography_moved = theme::ui_font() != was_ui
-                    || theme::body_font() != was_body
-                    || theme::headings_font() != was_headings
-                    || theme::code_font() != was_code
-                    || theme::density() != was_density;
+                let shown = AppearanceShown::now();
+                let typography_moved = shown.typography_moved(&was_shown);
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
-                let icons_moved = koru_draw::icons::chosen_pack() != was_icons;
-                if !icons_moved && koru_draw::icons::rendered_pack() != was_icon_paint {
+                let choice_moved = shown.choice_moved(&was_shown);
+                if !typography_moved && shown.icon_paint_moved(&was_shown) {
                     self.repaint_icons();
                 }
-                if typography_moved || voice_moved || icons_moved {
-                    // A font or density change is baked into every layout, and a
-                    // voice preference change has to be visible in every Settings
-                    // tab — so every window has to relay out, not just this one.
+                if typography_moved || voice_moved || choice_moved {
+                    // A font, size or density change is baked into every layout,
+                    // and a voice preference change has to be visible in every
+                    // Settings tab — so every window has to relay out, not just
+                    // this one. A choice that changed nothing drawn only saves.
                     if typography_moved || voice_moved {
                         self.invalidate_everywhere();
-                    } else {
-                        self.repaint_icons();
                     }
                     // And it is committed by the keystroke that made it, for
                     // the same reason the press is: there is no Apply, and the
@@ -16932,20 +16990,16 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 pane.resize_edge = pane.resize_edge_at(x, y);
                 // The view lives in unscaled logical pixels — zoom is folded
                 // into the root transform — so hand it zoom-adjusted coords.
-                // Pointing at a face in Settings' font list previews it on
-                // the whole app (FontSlot), which every window lays out again;
+                // Pointing at a face or a size in a Settings list previews it
+                // on the whole app, which every window lays out again;
                 // pointing at an icon style only repaints.
-                let fonts = fonts_shown();
-                let was_icon_paint = koru_draw::icons::rendered_pack();
+                let was_shown = AppearanceShown::now();
                 let changed = pane.view.mouse_move(x / self.zoom, y / self.zoom);
                 pane.sync_cursor_icon();
                 if let Some(WindowRequest::Drag) = pane.view.take_window_request() {
                     let _ = pane.window.drag_window();
                 }
-                if fonts_shown() != fonts {
-                    self.invalidate_everywhere();
-                } else if koru_draw::icons::rendered_pack() != was_icon_paint {
-                    self.repaint_icons();
+                if self.show_appearance_change(&was_shown) {
                 } else if changed {
                     self.request_redraw(id);
                 }
@@ -17069,13 +17123,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // which are baked into every layout — snapshot before so
                         // the change can relay out to every window afterwards.
                         let was_theme_pref = theme::theme_preference();
-                        let was_ui = theme::ui_font();
-                        let was_body = theme::body_font();
-                        let was_headings = theme::headings_font();
-                        let was_code = theme::code_font();
-                        let was_density = theme::density();
-                        let was_icons = koru_draw::icons::chosen_pack();
-                        let was_icon_paint = koru_draw::icons::rendered_pack();
+                        let was_shown = AppearanceShown::now();
                         let was_caret = theme::caret_color();
                         let was_caret_w = theme::caret_width();
                         let was_caret_h = theme::caret_height();
@@ -17101,16 +17149,13 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                             pane.window.focus_window();
                         }
                         let theme_pref_moved = theme::theme_preference() != was_theme_pref;
-                        let typography_moved = theme::ui_font() != was_ui
-                            || theme::body_font() != was_body
-                            || theme::headings_font() != was_headings
-                            || theme::code_font() != was_code
-                            || theme::density() != was_density
+                        let shown = AppearanceShown::now();
+                        let typography_moved = shown.typography_moved(&was_shown)
                             || theme::caret_color() != was_caret
                             || theme::caret_width() != was_caret_w
                             || theme::caret_height() != was_caret_h;
                         let voice_moved = crate::voice_prefs::snapshot() != was_voice;
-                        let icons_moved = koru_draw::icons::chosen_pack() != was_icons;
+                        let choice_moved = shown.choice_moved(&was_shown);
                         let layout_moved = theme::default_view_mode() != was_view_mode
                             || theme::default_canvas_bg() != was_canvas_bg;
                         // Performed here, inside the press, because winit only
@@ -17275,14 +17320,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if icons_moved || koru_draw::icons::rendered_pack() != was_icon_paint {
+                        if shown.icon_paint_moved(&was_shown) {
                             self.repaint_icons();
                         }
                         if theme_pref_moved
                             || typography_moved
                             || voice_moved
                             || layout_moved
-                            || icons_moved
+                            || choice_moved
                         {
                             // The cheap half only: geometry is asked for once a
                             // second, and a press must not pay 3.5 ms of window
@@ -17383,11 +17428,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 } else if let Some(pane) = self.panes.get_mut(&id) {
                     // Scrolling closes an open list, and with it a font
                     // preview the list was showing.
-                    let fonts = fonts_shown();
+                    let was_shown = AppearanceShown::now();
                     pane.view.scroll_by(delta);
-                    if fonts_shown() != fonts {
-                        self.invalidate_everywhere();
-                    }
+                    self.show_appearance_change(&was_shown);
                 }
                 self.request_redraw(id);
             }
@@ -18013,6 +18056,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
             let _phase = timing::Watch::start("maintenance.poll_settings");
             self.poll_settings();
         }
+        // After the poll, whichever way it returned: an answer that changed
+        // nothing still ends the wait, or a default-configured install would
+        // sit out the whole budget.
+        self.reveal_if_due(Instant::now());
         // A tab the container popped out becomes its own window here, between
         // events — the one place that both has the event loop and is not a press.
         {
@@ -18156,6 +18203,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         }
         if let Some(due) = self.import_cancel_hide_due {
             deadline = deadline.min(due);
+        }
+        if let Some(pending) = &self.pending_reveal {
+            deadline = deadline.min(pending.deadline);
         }
         if let Some(due) = self.image_loader.retry_due() {
             deadline = deadline.min(due);
@@ -18595,6 +18645,37 @@ fn other_profile_workspace<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The first window waits for its settings, and only so long** (D8). A
+    /// settings answer — including one that changes nothing — reveals it at
+    /// once; with no answer it is revealed at the budget; nothing reveals twice,
+    /// because the caller clears the wait when it reveals.
+    #[test]
+    fn the_first_window_is_revealed_after_settings_or_at_the_budget() {
+        let window = WindowId::from(7u64);
+        let start = Instant::now();
+        let pending = PendingReveal {
+            window,
+            deadline: start + REVEAL_BUDGET,
+        };
+        assert_eq!(
+            reveal_due(Some(&pending), false, start),
+            None,
+            "still waiting"
+        );
+        assert_eq!(
+            reveal_due(Some(&pending), true, start),
+            Some(window),
+            "an answer reveals it at once, whether or not it moved anything"
+        );
+        assert_eq!(
+            reveal_due(Some(&pending), false, start + REVEAL_BUDGET),
+            Some(window),
+            "no answer: the budget reveals it with the defaults"
+        );
+        assert_eq!(reveal_due(None, true, start + REVEAL_BUDGET * 2), None);
+        assert_eq!(REVEAL_BUDGET, Duration::from_millis(400));
+    }
 
     /// **A window is titled by its workspace and its tab** (the CTO's note):
     /// two windows on two workspaces read apart in Alt+Tab. A tab named as
@@ -20163,13 +20244,90 @@ pub fn tasks_debug_log(line: std::fmt::Arguments<'_>) {
     }
 }
 
-/// The faces every window is laid out in now, previews included: a change
-/// between two reads means every window lays out again.
-fn fonts_shown() -> [theme::FontChoice; 4] {
-    [
-        theme::ui_font(),
-        theme::body_font(),
-        theme::headings_font(),
-        theme::code_font(),
-    ]
+/// How long the first window waits for the settings' first answer before it
+/// is shown with the defaults (Q-F, 2026-10-30: "renders within 400 ms").
+const REVEAL_BUDGET: Duration = Duration::from_millis(400);
+
+/// The first window, drawn but held back for its settings.
+struct PendingReveal {
+    window: WindowId,
+    deadline: Instant,
+}
+
+/// The window to show now, if one is waiting and its wait is over: the
+/// settings have answered, or the budget has passed. Pure, so the startup
+/// sequence is tested with a clock of the test's own.
+fn reveal_due(
+    pending: Option<&PendingReveal>,
+    settings_heard: bool,
+    now: Instant,
+) -> Option<WindowId> {
+    let pending = pending?;
+    (settings_heard || now >= pending.deadline).then_some(pending.window)
+}
+
+/// What a Settings choice or preview can change in how every window draws,
+/// read before an event and again after it.
+///
+/// **One snapshot, three answers.** Text moving means every window lays out
+/// again; only the icons' artwork moving means a repaint and nothing more, so
+/// hovering an icon style never reflows a document; and a saved choice moving
+/// means a save, even when nothing drawn changed — choosing the font a list is
+/// already previewing changes the choice and not one pixel. These used to be
+/// separate before-and-after copies on every event path.
+#[derive(Copy, Clone, PartialEq)]
+struct AppearanceShown {
+    faces: [theme::FontChoice; 4],
+    doc_text_size: f32,
+    density: theme::Density,
+    icon_paint: koru_draw::icons::IconPack,
+    choices: (
+        [theme::FontChoice; 4],
+        Option<u8>,
+        Option<koru_draw::icons::IconPack>,
+    ),
+}
+
+impl AppearanceShown {
+    fn now() -> Self {
+        use theme::FontSlot;
+        Self {
+            faces: [
+                theme::ui_font(),
+                theme::body_font(),
+                theme::headings_font(),
+                theme::code_font(),
+            ],
+            doc_text_size: theme::doc_text_size(),
+            density: theme::density(),
+            icon_paint: koru_draw::icons::rendered_pack(),
+            choices: (
+                [
+                    theme::chosen_font(FontSlot::Ui),
+                    theme::chosen_font(FontSlot::Body),
+                    theme::chosen_font(FontSlot::Headings),
+                    theme::chosen_font(FontSlot::Code),
+                ],
+                theme::chosen_doc_text_size(),
+                koru_draw::icons::chosen_pack(),
+            ),
+        }
+    }
+
+    /// Text is set differently now: every window lays out again.
+    fn typography_moved(&self, before: &Self) -> bool {
+        self.faces != before.faces
+            || self.doc_text_size != before.doc_text_size
+            || self.density != before.density
+    }
+
+    /// Only the icons' artwork changed: a repaint, never a layout.
+    fn icon_paint_moved(&self, before: &Self) -> bool {
+        self.icon_paint != before.icon_paint
+    }
+
+    /// A saved choice changed, whether or not anything drawn did.
+    fn choice_moved(&self, before: &Self) -> bool {
+        self.choices != before.choices
+    }
 }

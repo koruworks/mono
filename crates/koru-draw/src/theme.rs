@@ -1126,24 +1126,16 @@ pub enum FontSlot {
     Code,
 }
 
-const NO_PREVIEW: u8 = u8::MAX;
-
-static FONT_PREVIEW: [AtomicU8; 4] = [const { AtomicU8::new(NO_PREVIEW) }; 4];
-
-/// Show `font` in `slot` until the preview is cleared with `None`. Callers
-/// must invalidate laid-out text afterwards, as for a choice.
-pub fn set_font_preview(slot: FontSlot, font: Option<FontChoice>) {
-    let i = font
-        .and_then(|font| FontChoice::ALL.iter().position(|c| *c == font))
-        .map_or(NO_PREVIEW, |i| i as u8);
-    FONT_PREVIEW[slot as usize].store(i, Ordering::Relaxed);
+/// The value a font preview carries for `font`: its index in
+/// [`FontChoice::ALL`]. A [`preview::Preview`] of `PreviewSlot::Font(slot)`
+/// owns it; callers must invalidate laid-out text afterwards, as for a choice.
+pub fn font_preview_value(font: FontChoice) -> u8 {
+    FontChoice::ALL.iter().position(|c| *c == font).unwrap_or(0) as u8
 }
 
 fn previewed(slot: FontSlot) -> Option<FontChoice> {
-    let i = FONT_PREVIEW[slot as usize].load(Ordering::Relaxed);
-    (i != NO_PREVIEW)
-        .then(|| FontChoice::ALL.get(i as usize).copied())
-        .flatten()
+    preview::previewed(preview::PreviewSlot::Font(slot))
+        .and_then(|i| FontChoice::ALL.get(usize::from(i)).copied())
 }
 
 /// What `slot` is set to, without any preview: what Settings saves and
@@ -1985,6 +1977,114 @@ pub fn type_step(heading: Option<u8>) -> TypeStep {
     }
 }
 
+/// [`type_step`] at a document's text scale: the body size over
+/// [`FONT_SIZE`].
+///
+/// **One factor for the whole ramp.** Size and the space above scale; leading
+/// is a ratio and does not, so H1 stays 1.875 × the body at every size and the
+/// rhythm between blocks holds. Not rounded: parley sets fractional sizes, and
+/// rounding would bend the ramp at the odd sizes.
+pub fn type_step_at(heading: Option<u8>, scale: f32) -> TypeStep {
+    let step = type_step(heading);
+    TypeStep {
+        size: step.size * scale,
+        line_height: step.line_height,
+        space_above: step.space_above * scale,
+    }
+}
+
+// --------------------------------------------------- the document text size
+//
+// The person's body size for documents, a process global for the same reason
+// the font roles are: layout reads it in leaf calls that have no settings to
+// be handed. A document's `Body` decides whether to follow it — the chat
+// composer is an editor too, and is pinned at the base size.
+
+/// The size the person chose, in px; `0` while it follows the default.
+static DOC_TEXT_SIZE: AtomicU8 = AtomicU8::new(0);
+
+/// Set the chosen size, or `None` to follow the default. Clears any preview.
+pub fn set_doc_text_size(px: Option<u8>) {
+    DOC_TEXT_SIZE.store(px.unwrap_or(0), Ordering::Relaxed);
+    preview::clear(preview::PreviewSlot::DocTextSize);
+}
+
+/// The person's choice, or `None` while the default applies. What Settings
+/// saves and ticks; never the preview.
+pub fn chosen_doc_text_size() -> Option<u8> {
+    match DOC_TEXT_SIZE.load(Ordering::Relaxed) {
+        0 => None,
+        px => Some(px),
+    }
+}
+
+/// The body size documents are laid out at now: a preview, the choice, or
+/// the default.
+pub fn doc_text_size() -> f32 {
+    preview::previewed(preview::PreviewSlot::DocTextSize)
+        .or_else(chosen_doc_text_size)
+        .map_or(FONT_SIZE, f32::from)
+}
+
+/// [`doc_text_size`] as a factor of the base ramp.
+pub fn doc_scale() -> f32 {
+    doc_text_size() / FONT_SIZE
+}
+
+/// The document measurements that grow with its text.
+///
+/// The checkbox and its column, a bullet, the gap after a list marker, a code
+/// block's padding, the `+` affordance's glyph and a body line: what the eye
+/// reads as part of the text. The page's own geometry — the margins, the
+/// indent per level, the page width, the affordance lane — stays put, so a
+/// larger size gets fewer words per line, as a larger font does anywhere.
+///
+/// Paint, hit-testing and accessibility bounds all read one of these, so a
+/// checkbox cannot be drawn at one size and answer clicks at another.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DocMetrics {
+    /// The body size over [`FONT_SIZE`].
+    pub scale: f32,
+    pub checkbox: f32,
+    /// Checkbox column to text column, [`GUTTER`] at the base size.
+    pub gutter: f32,
+    pub bullet_r: f32,
+    pub marker_gap: f32,
+    pub code_pad: f32,
+    pub code_pad_x: f32,
+    /// The `+` affordance's glyph size.
+    pub glyph: f32,
+    /// One line of body text.
+    pub line: f32,
+    pub title_gap: f32,
+}
+
+impl DocMetrics {
+    /// The measurements at the base size — every document before this
+    /// setting existed, and the chat composer always.
+    pub const BASE: Self = Self::at(1.0);
+
+    pub const fn at(scale: f32) -> Self {
+        Self {
+            scale,
+            checkbox: CHECKBOX_SIZE * scale,
+            gutter: GUTTER * scale,
+            bullet_r: BULLET_R * scale,
+            marker_gap: MARKER_GAP * scale,
+            code_pad: CODE_PAD * scale,
+            code_pad_x: CODE_PAD_X * scale,
+            glyph: FONT_SIZE * scale,
+            line: FONT_SIZE * LINE_HEIGHT * scale,
+            title_gap: TITLE_GAP_BELOW * scale,
+        }
+    }
+
+    /// The step a block is set at, at these metrics' scale.
+    pub fn step(&self, heading: Option<u8>) -> TypeStep {
+        type_step_at(heading, self.scale)
+    }
+}
+
 // ------------------------------------------------------------- the type system
 //
 // A two-layer system, the way Tailwind pairs a size scale with semantic names.
@@ -2679,8 +2779,11 @@ pub const AUTO_SCROLL_MAX_SPEED: f32 = 600.0;
 /// from the other end.
 pub const POPOVER_FADE_MS: f32 = 90.0;
 
+#[cfg(test)]
+mod doc_size_tests;
 pub mod motion;
 pub mod overlay;
+pub mod preview;
 pub mod themes;
 pub mod tokens;
 

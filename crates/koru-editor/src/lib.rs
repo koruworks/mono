@@ -67,7 +67,7 @@ pub mod trigger;
 pub mod utils;
 pub mod view_state;
 
-pub use body::Body;
+pub use body::{Body, TextScale};
 pub use diagram::{DiagramEntry, DiagramRequest, DiagramState};
 pub use dictation::{Affinity, Composition, Mapped, ProvisionalRun};
 pub use editor::{AttrPicker, Editing, Editor, prepare};

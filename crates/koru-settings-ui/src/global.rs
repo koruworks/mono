@@ -144,6 +144,7 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     font_row(b, lang, FontRole::Body, None);
     font_row(b, lang, FontRole::Headings, None);
     font_row(b, lang, FontRole::Code, None);
+    doc_size_row(b, lang);
 
     b.card(Some(koru_i18n::t(lang, Key::SettingsCaret)));
     let color_now = crate::caret_color_choice(theme::caret_color());
@@ -198,6 +199,34 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
 }
 
 /// One font role: a dropdown of every family, each set in its own face.
+/// The document body size: last in *Document fonts*, labelled in px.
+///
+/// Ticks the size in force — the choice, or the default while there is none —
+/// never the one being previewed.
+fn doc_size_row(b: &mut Builder<'_>, lang: Lang) {
+    let default = koru_settings::DocTextSize::DEFAULT.px();
+    let current = theme::chosen_doc_text_size().unwrap_or(default);
+    b.row_dropdown(
+        koru_i18n::t(lang, Key::SettingsDocumentTextSize),
+        None,
+        koru_settings::DocTextSize::ALL
+            .iter()
+            .map(|&px| {
+                let size = koru_i18n::t(lang, Key::SettingsSizePx).replace("{}", &px.to_string());
+                let label = if px == default {
+                    koru_i18n::t(lang, Key::SettingsSizeDefault).replace("{}", &size)
+                } else {
+                    size
+                };
+                (
+                    Action::DocTextSize(px),
+                    DropdownOption::new(label, px == current),
+                )
+            })
+            .collect(),
+    );
+}
+
 fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
     let current = role.current();
     b.row_dropdown(
