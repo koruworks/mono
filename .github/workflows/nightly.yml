@@ -7,8 +7,9 @@
 #
 # The design is docs/features/linux/NIGHTLY.rev2.md (and the 2026-10-24
 # amendment at the top of docs/features/github-release/TECHNICAL.final.md).
-# One build job per platform, all feeding one publish job; macOS joins when
-# its Developer ID certificate is Koru Works, Inc.'s (NIGHTLY rev2 §6).
+# One build job per platform, all feeding one publish job. macOS builds every
+# time but is published only when it is Developer ID signed and notarized
+# (NIGHTLY rev2 §6); until then its disk image is a workflow artifact.
 #
 # The rules differ from ci.yml's on purpose, and only here: this workflow
 # signs and publishes, so its secrets live in the `nightly` environment, which
@@ -390,14 +391,244 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # **macOS builds every nightly; it is published once it is signed** (rev2
+  # §6, N20). Until the `nightly` environment holds a Developer ID
+  # certificate and the notary key, the job builds
+  # an ad-hoc-signed disk image the way `./koru.sh dist-local` does on a Mac
+  # and keeps it as a workflow artifact for testing — not named `nightly-*`,
+  # so the publish job never sees it. With the material present, the same job
+  # signs, notarizes, staples and publishes. The switch is the vault and
+  # `github_environment.py --apply`, as Windows's is, never this file.
+  build-macos:
+    name: build (macos-aarch64)
+    needs: plan
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: nightly
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      signed: ${{ steps.signing.outputs.signed }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      SHERPA_ONNX_ARCHIVE_DIR: ${{ github.workspace }}/third-party/sherpa-onnx/1.13.6
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 0
+      # **All of it, or an unpublished build.** Half the material is a
+      # misconfiguration, said as one. The `.p12`'s password alone may be
+      # absent: a `.p12` exported with none is opened with none, and GitHub
+      # cannot hold an empty secret. Which certificate it is — the
+      # maintainer's individual one for now, Koru Works, Inc.'s after the
+      # account's conversion (N20) — is the vault's to say, not this file's.
+      - name: Decide whether this build is signed
+        id: signing
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          have=0
+          for value in "$P12" "$API_KEY" "$API_KEY_ID" "$API_ISSUER"; do
+            [ -n "$value" ] && have=$((have + 1))
+          done
+          if [ "$have" -eq 0 ]; then
+            echo "No Developer ID material: an unsigned build, not published (rev2 §6)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$have" -ne 4 ] || [ -z "$IDENTITY" ]; then
+            echo "::error::The macOS signing material is incomplete: MACOS_CERTIFICATE_P12, APPSTORE_API_KEY_P8, MACOS_SIGNING_IDENTITY, APPSTORE_API_KEY_ID and APPSTORE_API_ISSUER_ID go together (MACOS_CERTIFICATE_PASSWORD too, unless the .p12 has none)"
+            exit 1
+          fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      # The setup is the other jobs': patched crates, the pinned sherpa-onnx
+      # archive the voice runtime links, the bundled fonts. Xcode's swiftc,
+      # codesign and hdiutil are on the image.
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the sherpa-onnx archive
+        run: bash scripts/setup/fetch-voice-runtime.sh
+      # actions/cache v6.1.0
+      - id: fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: assets/fonts/
+          key: fonts-${{ hashFiles('scripts/setup/fonts.manifest', 'scripts/setup/fetch-fonts.sh') }}
+      - name: Fetch fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
+        run: bash scripts/setup/fetch-fonts.sh
+      # (see build-linux)
+      - name: Select this nightly's notes
+        id: notes
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          path="$(./koru.sh release-tool nightly-notes --select "$BEFORE" "$AFTER" | tail -n 1)"
+          test -f "$path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      # **A keychain of the job's own**, made from the `.p12` and deleted at
+      # the end, and notarytool with the App Store Connect team key
+      # `koru-ci-notary` rather than an Apple ID's app-specific password.
+      # koru-release signs through KORU_MAC_SIGN_COMMAND (mac-sign.sh, which
+      # passes the entitlements on) and notarizes through
+      # KORU_MAC_NOTARIZE_COMMAND, then staples; a staple that fails fails the
+      # build.
+      - name: Prepare Developer ID signing
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          material="$RUNNER_TEMP/macos-signing"
+          (umask 077 && mkdir -p "$material")
+          keychain="$material/koru-signing.keychain-db"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          (umask 077 && printf '%s' "$P12" | base64 --decode > "$material/certificate.p12")
+          security import "$material/certificate.p12" -k "$keychain" -f pkcs12 \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$material/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          # Searched with the login keychain, so codesign finds the chain.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          if ! security find-identity -v -p codesigning "$keychain" | grep -qF "\"$IDENTITY\""; then
+            echo "::error::The .p12 does not hold a valid identity named $IDENTITY"
+            exit 1
+          fi
+          (umask 077 && printf '%s\n' "$API_KEY" > "$material/notary.p8")
+          {
+            echo "KORU_SIGNING_KEYCHAIN=$keychain"
+            echo "MACOS_SIGNING_IDENTITY=$IDENTITY"
+            echo "KORU_MAC_SIGN_COMMAND=bash \"$GITHUB_WORKSPACE/scripts/release/mac-sign.sh\" {file} {entitlements}"
+            echo "KORU_MAC_NOTARIZE_COMMAND=xcrun notarytool submit {file} --key \"$material/notary.p8\" --key-id $API_KEY_ID --issuer $API_ISSUER --wait --timeout 1h"
+          } >> "$GITHUB_ENV"
+      - name: Build, sign, notarize and write the release files
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          NIGHTLY_MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY }}
+          NIGHTLY_MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077 && printf '%s\n' "$NIGHTLY_MINISIGN_KEY" > "$key")
+          printf '%s' "$NIGHTLY_MINISIGN_PASSWORD" | ./koru.sh release-tool dist-github nightly \
+            --build "$BUILD" \
+            --notes "$NOTES" \
+            --key "$key" --key-password-stdin \
+            --download-base "https://github.com/${{ github.repository }}/releases/download/nightly" \
+            --out dist/nightly
+          rm -f "$key"
+      # Unsigned: `dist-local`, the build a Mac developer makes — ad hoc
+      # signed, not notarized, no update signature, version
+      # `0.0.0-local.<commit>`. It opens through System Settings → Privacy &
+      # Security → Open Anyway and never updates itself; it shows that the
+      # tree builds, bundles and packs on macOS.
+      - name: Build the unsigned disk image
+        if: steps.signing.outputs.signed != 'true'
+        env:
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          ./koru.sh release-tool dist-local nightly --build "$BUILD"
+          mkdir -p dist/unpublished
+          mv dist/cloud/koru-*-macos-aarch64.dmg dist/unpublished/
+      # Mounted read-only, as a person's double-click mounts it: the app is
+      # sealed, both binaries answer `--help`, and — signed — Gatekeeper
+      # accepts the app and the image as notarized Developer ID, with the
+      # ticket stapled in.
+      - name: Smoke-test the disk image
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [ "$SIGNED" = true ]; then images=(dist/nightly/*.dmg); else images=(dist/unpublished/*.dmg); fi
+          test "${#images[@]}" -eq 1
+          mount="$RUNNER_TEMP/koru-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "${images[0]}"
+          trap 'hdiutil detach "$mount" -force >/dev/null' EXIT
+          app="$mount/Koru.app"
+          test -L "$mount/Applications"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # macOS has no `timeout`; perl's alarm is the same 30 seconds.
+          for name in koru koru-agent; do
+            perl -e 'alarm 30; exec @ARGV' "$app/Contents/MacOS/$name" --help >/dev/null
+          done
+          if [ "$SIGNED" = true ]; then
+            codesign --display --verbose=2 "$app" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
+            spctl --assess --type execute --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            spctl --assess --type open --context context:primary-signature --verbose=2 "${images[0]}"
+          fi
+      - name: Delete the signing keychain
+        if: always() && steps.signing.outputs.signed == 'true'
+        run: |
+          if [ -n "${KORU_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$KORU_SIGNING_KEYCHAIN" || true
+          fi
+          rm -rf "$RUNNER_TEMP/macos-signing"
+      # actions/attest-build-provenance v4.2.2
+      - if: steps.signing.outputs.signed == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/nightly/*.dmg
+      # actions/upload-artifact v7.0.2
+      - if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nightly-macos-aarch64
+          path: dist/nightly/
+          retention-days: 7
+          if-no-files-found: error
+      # actions/upload-artifact v7.0.2
+      - if: steps.signing.outputs.signed != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unpublished-macos-aarch64
+          path: dist/unpublished/
+          retention-days: 7
+          if-no-files-found: error
+
   publish:
     name: publish
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     # Whatever built is published (rev2 §3); only a nightly where nothing
-    # built, or one that was cancelled, publishes nothing.
+    # built, or one that was cancelled, publishes nothing. An unsigned macOS
+    # build is not a published platform: it neither counts here nor is said
+    # to have failed on the page.
     if: >-
       !cancelled() &&
-      (needs.build-linux.result == 'success' || needs.build-windows.result == 'success')
+      (needs.build-linux.result == 'success' || needs.build-windows.result == 'success' ||
+       (needs.build-macos.result == 'success' && needs.build-macos.outputs.signed == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -408,6 +639,7 @@ jobs:
       RESULTS: >-
         linux-x86_64=${{ needs.build-linux.result }}
         windows-x86_64=${{ needs.build-windows.result }}
+        ${{ needs.build-macos.outputs.signed == 'true' && format('macos-aarch64={0}', needs.build-macos.result) || '' }}
     steps:
       # One directory per platform that built, named after its artifact.
       # actions/download-artifact v8.0.2
