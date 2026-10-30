@@ -861,7 +861,8 @@ pub struct Settings {
     pub theme: ThemePreference,
     /// Editor caret colour (named swatch). Chrome only — not stored in documents.
     pub caret_color: CaretColor,
-    pub icon_pack: koru_draw::icons::IconPack,
+    /// The chosen icon pack, or `None` to follow the build's default.
+    pub icon_pack: Option<koru_draw::icons::IconPack>,
     /// Editor caret stroke width (Thin…8×). Chrome only — not stored in documents.
     pub caret_width: CaretWidth,
     /// Editor caret height (Short / Medium / Tall). Chrome only.
@@ -1094,7 +1095,7 @@ pub(crate) struct PreIdentitySettings {
 pub(crate) struct PreIdentityPreferences {
     pub(crate) theme: ThemePreference,
     pub(crate) caret_color: CaretColor,
-    pub(crate) icon_pack: koru_draw::icons::IconPack,
+    pub(crate) icon_pack: Option<koru_draw::icons::IconPack>,
     pub(crate) caret_width: CaretWidth,
     pub(crate) caret_height: CaretHeight,
     pub(crate) font: FontChoice,
@@ -1309,7 +1310,7 @@ impl Default for Settings {
             maximized: false,
             theme: ThemePreference::System,
             caret_color: CaretColor::Default,
-            icon_pack: koru_draw::icons::IconPack::Phosphor,
+            icon_pack: None,
             caret_width: CaretWidth::Medium,
             caret_height: CaretHeight::Medium,
             // The theme owns the per-role defaults — these and the theme's

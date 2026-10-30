@@ -37,7 +37,7 @@ fn the_fallback_appearance_is_unchanged_from_the_parser_it_replaces() {
 fn every_appearance_value_comes_from_the_section() {
     let section = GlobalSettings {
         theme: ThemeChoice::Dark,
-        icon_pack: koru_settings::IconPackChoice::Lucide,
+        icon_pack: Some(koru_settings::IconPackChoice::Lucide),
         caret_color: CaretColorChoice::Amber,
         caret_width: CaretWidthChoice::Thick,
         caret_height: koru_settings::CaretHeightChoice::Short,
@@ -51,7 +51,10 @@ fn every_appearance_value_comes_from_the_section() {
     };
     let appearance = Appearance::from_section(&section);
     assert_eq!(appearance.theme, ThemePreference::Dark);
-    assert_eq!(appearance.icon_pack, koru_draw::icons::IconPack::Lucide);
+    assert_eq!(
+        appearance.icon_pack,
+        Some(koru_draw::icons::IconPack::Lucide)
+    );
     assert_eq!(appearance.caret.color, CaretColor::Amber);
     assert_eq!(appearance.caret.width, CaretWidth::Thick);
     assert_eq!(appearance.caret.height, CaretHeight::Short);

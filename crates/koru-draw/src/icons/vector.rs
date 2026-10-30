@@ -65,22 +65,42 @@ impl IconPack {
     }
 }
 
-static SELECTED: AtomicU8 = AtomicU8::new(super::data::DEFAULT_PACK as u8);
+/// `SELECTED` while nobody has chosen a pack: draw this build's default.
+const FOLLOW_DEFAULT: u8 = u8::MAX;
+
+static SELECTED: AtomicU8 = AtomicU8::new(FOLLOW_DEFAULT);
 static PREVIEW: AtomicU64 = AtomicU64::new(0);
 static NEXT_PREVIEW: AtomicU64 = AtomicU64::new(1);
 
-/// The saved choice, independent of a menu's temporary preview.
+/// The pack in effect, independent of a menu's temporary preview: the
+/// person's choice, or this build's default when they have not made one.
 pub fn active_pack() -> IconPack {
-    match SELECTED.load(Ordering::Relaxed) {
-        1 => IconPack::Tabler,
-        2 => IconPack::Lucide,
-        3 => IconPack::Remix,
-        _ => IconPack::Phosphor,
-    }
+    chosen_pack().unwrap_or(super::data::DEFAULT_PACK)
 }
 
+/// The person's choice, or `None` while the app's default applies.
+///
+/// **What is saved, not what is drawn.** "Follow the default" persists as no
+/// key, as a font role does, so a later build's default reaches everybody who
+/// never chose; reading the drawn pack back would freeze today's default into
+/// every file on its first save.
+pub fn chosen_pack() -> Option<IconPack> {
+    IconPack::ALL
+        .get(SELECTED.load(Ordering::Relaxed) as usize)
+        .copied()
+}
+
+/// Choose `pack`. Clears any preview.
 pub fn set_icon_pack(pack: IconPack) {
-    SELECTED.store(pack as u8, Ordering::Relaxed);
+    set_icon_pack_setting(Some(pack));
+}
+
+/// Set the saved state: a choice, or `None` to follow the build's default.
+pub fn set_icon_pack_setting(pack: Option<IconPack>) {
+    SELECTED.store(
+        pack.map_or(FOLLOW_DEFAULT, |pack| pack as u8),
+        Ordering::Relaxed,
+    );
     PREVIEW.store(0, Ordering::Relaxed);
 }
 

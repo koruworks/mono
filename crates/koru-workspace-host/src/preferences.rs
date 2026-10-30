@@ -36,7 +36,9 @@ mod tests;
 pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     let before = snapshot(into);
     into.theme = ThemePreference::parse(section.theme.token());
-    into.icon_pack = koru_draw::icons::IconPack::parse(section.icon_pack.token());
+    into.icon_pack = section
+        .icon_pack
+        .map(|pack| koru_draw::icons::IconPack::parse(pack.token()));
     into.caret_color = CaretColor::parse(section.caret_color.token());
     into.caret_width = CaretWidth::parse(section.caret_width.token());
     into.caret_height = CaretHeight::parse(section.caret_height.token());
@@ -72,9 +74,14 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
 /// the whole of what the per-field shape buys.
 pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch {
     let mut patch = GlobalPatch::default();
-    let icon_pack = koru_settings::IconPackChoice::parse(settings.icon_pack.token());
-    if icon_pack != authoritative.icon_pack {
-        patch.icon_pack = Some(icon_pack);
+    // A choice is named when it differs from what is stored. Following the
+    // default is never sent: it is the authority's state, and no control here
+    // takes a choice back.
+    let icon_pack = settings
+        .icon_pack
+        .map(|pack| koru_settings::IconPackChoice::parse(pack.token()));
+    if icon_pack.is_some() && icon_pack != authoritative.icon_pack {
+        patch.icon_pack = icon_pack;
     }
 
     let theme = ThemeChoice::parse(settings.theme.key());
@@ -222,7 +229,7 @@ type Preferences = (
         CaretColor,
         CaretWidth,
         CaretHeight,
-        koru_draw::icons::IconPack,
+        Option<koru_draw::icons::IconPack>,
     ),
     (FontChoice, FontChoice, FontChoice, FontChoice),
     (Density, String, ViewMode, Option<[u8; 4]>),

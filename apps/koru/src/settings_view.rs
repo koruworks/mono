@@ -548,7 +548,7 @@ impl View for SettingsView {
     fn restore(&mut self, _ws: &Workspace, settings: &Settings) {
         self.adopt_preferences(settings);
         theme::set_caret_color(settings.caret_color);
-        koru_draw::icons::set_icon_pack(settings.icon_pack);
+        koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
         theme::set_caret_width(settings.caret_width);
         theme::set_caret_height(settings.caret_height);
     }
@@ -572,7 +572,7 @@ impl View for SettingsView {
         settings.pinned_show_title = self.surface.pinned_show_title();
         settings.canvas_bg = self.surface.canvas_background();
         settings.caret_color = theme::caret_color();
-        settings.icon_pack = koru_draw::icons::active_pack();
+        settings.icon_pack = koru_draw::icons::chosen_pack();
         settings.caret_width = theme::caret_width();
         settings.caret_height = theme::caret_height();
     }

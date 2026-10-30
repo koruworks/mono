@@ -5290,12 +5290,19 @@
             "$ref": "#/components/schemas/FontSetting"
           },
           "icon_pack": {
-            "allOf": [
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/IconPackChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
               }
             ],
-            "default": "phosphor"
+            "default": null,
+            "description": "`None` follows the build's default artwork, now and later; it is\npersisted as no key, like a font role that follows the app."
           },
           "pinned_show_title": {
             "type": "boolean"

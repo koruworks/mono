@@ -28,11 +28,28 @@ fn icon_pack_round_trips_without_changing_other_preferences() {
     }
     let mut old = GlobalSettings::default();
     apply_preferences("version=2\nicon_pack=future-pack\n", &mut old);
-    assert_eq!(old.icon_pack, crate::IconPackChoice::Phosphor);
+    assert_eq!(old.icon_pack, None, "an unknown pack follows the default");
     let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
     json.as_object_mut().unwrap().remove("icon_pack");
     let old: GlobalSettings = serde_json::from_value(json).unwrap();
-    assert_eq!(old.icon_pack, crate::IconPackChoice::Phosphor);
+    assert_eq!(old.icon_pack, None);
+}
+
+/// Nobody chose a pack: nothing is written, so a later default reaches them.
+/// A chosen pack is written even when it is today's default.
+#[test]
+fn an_unchosen_icon_pack_writes_no_key_and_a_chosen_one_always_does() {
+    let settings = GlobalSettings::default();
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(!written.contains("icon_pack="), "{written}");
+    for choice in crate::IconPackChoice::ALL {
+        let settings = GlobalSettings {
+            icon_pack: Some(*choice),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(written.contains(&format!("icon_pack={}\n", choice.token())));
+    }
 }
 
 /// A v2 file, as `preferences_body` writes one today.
@@ -200,6 +217,8 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         body_font: FontSetting::Chosen(FontFamily::Lora),
         headings_font: FontSetting::Chosen(FontFamily::Nunito),
         code_font: FontSetting::Chosen(FontFamily::Mono),
+        // A pack that follows the default is absent on purpose, like a font.
+        icon_pack: Some(crate::IconPackChoice::Lucide),
         global_dictation_enabled: Some(false),
         // Both nullable device-local keys are given a value: an absent one is
         // absent from the file on purpose, and what this test is about is a

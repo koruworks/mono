@@ -104,8 +104,10 @@ pub struct RecordingPrefs {
 pub struct GlobalSettings {
     // Roaming — `preferences.conf`.
     pub theme: ThemeChoice,
+    /// `None` follows the build's default artwork, now and later; it is
+    /// persisted as no key, like a font role that follows the app.
     #[serde(default)]
-    pub icon_pack: IconPackChoice,
+    pub icon_pack: Option<IconPackChoice>,
     pub caret_color: CaretColorChoice,
     pub caret_width: CaretWidthChoice,
     pub caret_height: CaretHeightChoice,
@@ -162,7 +164,7 @@ impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::default(),
-            icon_pack: IconPackChoice::default(),
+            icon_pack: None,
             caret_color: CaretColorChoice::default(),
             caret_width: CaretWidthChoice::default(),
             caret_height: CaretHeightChoice::default(),
@@ -424,9 +426,11 @@ impl GlobalPatch {
                 $( if let Some(value) = self.$field { current.$field = value; } )+
             };
         }
+        if let Some(pack) = self.icon_pack {
+            current.icon_pack = Some(pack);
+        }
         set!(
             theme,
-            icon_pack,
             caret_color,
             caret_width,
             caret_height,

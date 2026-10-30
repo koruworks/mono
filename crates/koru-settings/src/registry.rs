@@ -85,7 +85,9 @@ pub const REGISTRY: &[SettingSpec] = &[
         storage: StorageClass::Roaming,
         backing: Backing::PreferencesConf,
         kind: ValueKind::Token,
-        doc: "In-app icon artwork: Phosphor, Tabler, or Lucide. Applied immediately.",
+        doc: "In-app icon artwork: Phosphor, Tabler, Lucide or Remix. Absent until the \
+              person chooses one, which follows the build's default artwork. Applied \
+              immediately.",
     },
     // ------------------------------------ Global, roaming: preferences.conf
     SettingSpec {

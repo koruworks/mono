@@ -56,7 +56,7 @@ fn a_patch_names_only_what_moved() {
 #[test]
 fn every_preference_round_trips_through_the_section() {
     let settings = Settings {
-        icon_pack: koru_draw::icons::IconPack::Lucide,
+        icon_pack: Some(koru_draw::icons::IconPack::Lucide),
         theme: ThemePreference::Light,
         caret_color: CaretColor::Violet,
         caret_width: CaretWidth::Thick,
