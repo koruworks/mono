@@ -988,3 +988,91 @@ fn a_new_inspector_opens_on_the_hierarchy_and_a_pick_keeps_it_there() {
     assert_eq!(inspector.selected, Some(1));
     assert!(inspector.show_hierarchy);
 }
+
+fn thumb(button: MouseButton) -> WindowEvent {
+    WindowEvent::MouseInput {
+        device_id: DeviceId::dummy(),
+        state: ElementState::Pressed,
+        button,
+    }
+}
+
+/// **The mouse's thumb buttons walk the panel's tabs.** A double-click opens
+/// Details; Back returns to the Hierarchy with the same row selected, and
+/// Forward returns to Details.
+#[test]
+fn mouse_back_and_forward_walk_between_hierarchy_and_details() {
+    let mut inspector = Inspector::new(900.0, 700.0);
+    inspector.panel_viewport(520.0, 720.0);
+    inspector.snapshot = scene_snapshot(1);
+    inspector.activate(8);
+    let now = std::time::Instant::now();
+    inspector.click_hierarchy_row(1, now);
+    assert!(inspector.click_hierarchy_row(1, now + std::time::Duration::from_millis(100)));
+    assert!(!inspector.show_hierarchy);
+
+    inspector.pointer = (PAD + 20.0, DETAILS_TOP + ROW);
+    let back = inspector.panel_event(&thumb(MouseButton::Back), 1.0, ModifiersState::empty());
+    assert!(back.consumed && back.redraw && back.structure_changed);
+    assert!(inspector.show_hierarchy);
+    assert_eq!(inspector.selected, Some(1));
+    assert_eq!(inspector.focus_index, 8);
+
+    inspector.panel_event(&thumb(MouseButton::Forward), 1.0, ModifiersState::empty());
+    assert!(!inspector.show_hierarchy);
+    assert_eq!(inspector.selected, Some(1));
+
+    // Nothing further ahead: Forward is a no-op, not a toggle.
+    let nowhere = inspector.panel_event(&thumb(MouseButton::Forward), 1.0, ModifiersState::empty());
+    assert!(nowhere.consumed && !nowhere.redraw);
+    assert!(!inspector.show_hierarchy);
+}
+
+/// **Each view keeps its own selection, and a new step drops what was ahead.**
+#[test]
+fn history_restores_each_views_selection_and_a_new_step_clears_forward() {
+    let mut inspector = Inspector::new(900.0, 700.0);
+    inspector.snapshot = scene_snapshot(1);
+    inspector.activate(8);
+    inspector.select(Some(0));
+    inspector.activate(7); // Details of 0.
+    inspector.activate(8);
+    inspector.select(Some(1));
+    inspector.activate(7); // Details of 1.
+
+    assert!(inspector.go(true));
+    assert!(inspector.show_hierarchy);
+    assert_eq!(inspector.selected, Some(1));
+    assert!(inspector.go(true));
+    assert!(!inspector.show_hierarchy);
+    assert_eq!(
+        inspector.selected,
+        Some(0),
+        "Details of the first row again"
+    );
+    assert!(inspector.go(true));
+    assert!(inspector.show_hierarchy);
+    assert!(!inspector.go(true), "the start of the history");
+
+    assert!(inspector.go(false));
+    assert!(!inspector.show_hierarchy);
+    // A tab chosen here is a new step: what was ahead is gone.
+    inspector.activate(8);
+    assert!(!inspector.go(false));
+}
+
+/// **A record index belongs to its capture.** Stepping back across a refresh
+/// returns to the tab but keeps today's selection.
+#[test]
+fn history_keeps_the_current_selection_across_a_newer_capture() {
+    let mut inspector = Inspector::new(900.0, 700.0);
+    inspector.snapshot = scene_snapshot(1);
+    inspector.activate(8);
+    inspector.select(Some(0));
+    inspector.activate(7);
+    inspector.snapshot = scene_snapshot(2);
+    inspector.select(Some(1));
+    assert!(inspector.go(true));
+    assert!(inspector.show_hierarchy);
+    assert_eq!(inspector.selected, Some(1));
+}

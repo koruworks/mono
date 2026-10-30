@@ -308,7 +308,9 @@ F12 resumes paused picking, or closes the inspector when picking is active.
 The inspector's X always closes it and leaves the app open. The inspector
 has a header ruler toggle (F11) for spacing rays. Hierarchy is the left tab;
 double-click a node to open its Details on the right and bring the inspected
-app window forward if it is in the background. The first version
+app window forward if it is in the background. The mouse's Back and Forward
+buttons, or Alt+Left and Alt+Right, step between the two tabs as in a browser.
+The first version
 covers shared buttons, icon buttons and selected drawing/layout seams, with
 incomplete coverage clearly reported.
 

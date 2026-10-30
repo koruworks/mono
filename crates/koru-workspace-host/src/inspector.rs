@@ -24,6 +24,7 @@ use crate::accessibility::{ControlPart, Occurrence, SemanticNode, WindowSlot};
 
 mod detached;
 mod hierarchy;
+mod history;
 mod placement;
 mod scrolling;
 mod spacing;
@@ -84,6 +85,7 @@ pub(crate) struct Inspector {
     collapsed_hierarchy: BTreeSet<usize>,
     show_hierarchy: bool,
     hierarchy_click: Option<(usize, u64, std::time::Instant, (f32, f32))>,
+    history: history::History,
     engine: Option<TextEngine>,
     lines: Vec<String>,
     status: Option<CopyKey>,
@@ -128,6 +130,7 @@ impl Inspector {
             // its details are one double-click or the Details tab away.
             show_hierarchy: true,
             hierarchy_click: None,
+            history: history::History::default(),
             engine: None,
             lines: Vec::new(),
             status: None,
@@ -298,6 +301,14 @@ impl Inspector {
                     return result;
                 }
                 self.captured_press = result.consumed;
+                // The mouse's thumb buttons walk the panel's history, as
+                // they walk a browser's.
+                if inside && matches!(button, MouseButton::Back | MouseButton::Forward) {
+                    self.hierarchy_click = None;
+                    result.redraw = self.go(*button == MouseButton::Back);
+                    result.structure_changed = previous_tab != self.show_hierarchy;
+                    return result;
+                }
                 if !self.show_hierarchy
                     || !self
                         .control_rect(4)
@@ -455,6 +466,11 @@ impl Inspector {
                     Key::Named(NamedKey::Enter | NamedKey::Space) => {
                         result.close = self.activate(self.focus_index);
                     }
+                    Key::Named(key @ (NamedKey::ArrowLeft | NamedKey::ArrowRight))
+                        if mods.alt_key() =>
+                    {
+                        self.go(*key == NamedKey::ArrowLeft);
+                    }
                     Key::Named(
                         key @ (NamedKey::ArrowUp
                         | NamedKey::ArrowDown
@@ -525,7 +541,7 @@ impl Inspector {
 
     fn navigate(&mut self, key: NamedKey) {
         self.pause_refresh();
-        self.show_hierarchy = true;
+        self.show_tab(true);
         let rows = self.hierarchy_rows();
         if rows.is_empty() {
             return;
@@ -611,24 +627,30 @@ impl Inspector {
                 return self.activate(7);
             }
             7 | 8 => {
-                self.hierarchy_click = None;
                 let was_hierarchy = self.show_hierarchy;
-                self.show_hierarchy = index == 8;
-                if self.show_hierarchy {
-                    self.pause_refresh();
-                    if !was_hierarchy && let Some(selected) = self.selected {
-                        let visible = (self.control_rect(4).h / ROW).floor().max(1.0) as usize;
-                        self.hierarchy_scroll = selected.saturating_sub(visible / 2);
-                        self.clamp_scroll();
-                    }
-                }
-                self.focus_index = index;
-                self.focus = true;
+                self.show_tab(index == 8);
+                self.tab_shown(was_hierarchy);
             }
             _ => {}
         }
         self.dirty_semantics = true;
         false
+    }
+
+    /// What follows a tab change, whether clicked or walked to through the
+    /// history.
+    fn tab_shown(&mut self, was_hierarchy: bool) {
+        self.hierarchy_click = None;
+        if self.show_hierarchy {
+            self.pause_refresh();
+            if !was_hierarchy && let Some(selected) = self.selected {
+                let visible = (self.control_rect(4).h / ROW).floor().max(1.0) as usize;
+                self.hierarchy_scroll = selected.saturating_sub(visible / 2);
+                self.clamp_scroll();
+            }
+        }
+        self.focus_index = if self.show_hierarchy { 8 } else { 7 };
+        self.focus = true;
     }
 
     fn pause_refresh(&mut self) {
