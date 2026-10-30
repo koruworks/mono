@@ -1,0 +1,27 @@
+title = "A Windows installer"
+
+summary = [
+  "Windows now has a setup.exe beside the zip: it installs Koru for you alone, with no administrator prompt, and adds Start menu and desktop shortcuts.",
+]
+
+body = """
+## Windows
+
+The nightly now has a Windows installer, `setup.exe`, next to the zip.
+
+- It installs Koru Nightly into your own programs folder
+  (`%LOCALAPPDATA%\\Programs\\Koru Nightly`), or another empty folder you
+  choose, without asking for administrator rights. It adds Start menu and
+  desktop shortcuts and lists Koru under Settings → Apps.
+- Running it over an existing install closes Koru first and upgrades it in
+  place.
+- After the first install Koru updates itself from this page, the same way an
+  unzipped Koru does. The zip is still here if you prefer it.
+- Uninstalling from Settings → Apps closes Koru and removes the program, its
+  shortcuts, `koru://` links and start-at-sign-in. **Your workspaces stay.**
+  Before it starts, it asks why you are leaving. That is optional: leave the
+  box empty and nothing is sent.
+
+The installer is English only for now. Like the zip it is not code-signed
+yet, so SmartScreen asks before it runs.
+"""
