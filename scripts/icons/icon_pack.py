@@ -174,6 +174,14 @@ def load_icons(pack, root=ROOT):
             if license_path is None:
                 raise ValueError(f"{source}: archive lacks license")
             notices[source] = archives[source].extractfile(license_path).read().decode("utf-8")
+            if source == "lucide":
+                # The pinned npm LICENSE names Feather's MIT portions but omits
+                # the MIT terms. Retain its attribution and the full MIT text.
+                # See https://lucide.dev/license for the upstream split.
+                mit = (root / "crates/koru-release/licences/spdx/MIT.txt").read_text(encoding="utf-8")
+                notices[source] += "\nFeather-derived portions:\n\n" + mit.replace(
+                    "Copyright (c) <year> <copyright holders>",
+                    "Copyright (c) 2013-2022 Cole Bemis")
         return archives[source]
     def read(source, slug, kind, name):
         path = f"package/icons/{kind + '/' if source == 'tabler' else ''}{slug}.svg"
@@ -215,3 +223,13 @@ def rust_data(pack, width, icons, notices):
         fields = [f"codepoint: '\\u{{{icon.codepoint:X}}}'", f"name: {json.dumps(icon.name)}", f"source: {json.dumps(icon.source)}", f"stroke_d: {json.dumps(icon.stroke)}", f"fill_d: {json.dumps(icon.fill)}", "active_fill_d: " + (f"Some({json.dumps(icon.active_fill)})" if icon.active_fill else "None")]
         out.append("    IconDef { " + ", ".join(fields) + " },")
     return "\n".join(out + ["];", ""])
+
+
+def bundled_notice(pack, notice):
+    version = "3.31.0" if pack == "tabler" else "0.477.0"
+    source = "https://github.com/tabler/tabler-icons" if pack == "tabler" else "https://github.com/lucide-icons/lucide"
+    license = "MIT" if pack == "tabler" else "ISC AND MIT"
+    return (f"Component: {pack.title()} Icons (compiled vector artwork)\n"
+            f"Version: {version}\nSource: {source}\n"
+            "Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png\n"
+            f"License: {license}\nPlatforms: windows, macos, linux\n---\n" + notice)

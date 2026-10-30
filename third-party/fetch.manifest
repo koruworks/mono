@@ -11,6 +11,7 @@
 # How to change an entry: README.md beside this file.
 
 # Build-time icon generator inputs. No Python or archive access at runtime.
+file third-party/icons/lucide-static-0.477.0.tgz d6aae3a0e1303679ff4fea360ee74a662a8bd27500cb20fb43b75825be3bbce6 https://registry.npmjs.org/lucide-static/-/lucide-static-0.477.0.tgz
 file third-party/icons/tabler-icons-3.31.0.tgz ff1057024d11d9eb36e2292433aa4c1488a7c29f2378dd42d8a0be2623cc3819 https://registry.npmjs.org/@tabler/icons/-/icons-3.31.0.tgz
 
 crate onenote_parser 2.0.0 d9850dc986316a0f729457917284a8e63ff06a359be2ba1ce051239d37e1c978 1e3de0cdc819830c09b425f9d4943b008e7cb996e03ff3da2d4ffabe729039c8
