@@ -168,7 +168,9 @@ jobs:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      # One directory per platform that built, named after its artifact.
+      # One directory per platform that built, named after its artifact —
+      # except that a pattern matching a single artifact unpacks it straight
+      # into `path`, which the next step puts right.
       # actions/download-artifact v8.0.2
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -183,6 +185,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # A lone artifact was unpacked here rather than into a directory.
+          if [ -z "$(find . -mindepth 1 -maxdepth 1 -type d -print -quit)" ]; then
+            mkdir lone && find . -maxdepth 1 -type f -exec mv -t lone {} +
+          fi
           builds=(*/)
           test "${#builds[@]}" -ge 1
           if ! gh release view "$TAG" >/dev/null 2>&1; then
