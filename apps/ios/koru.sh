@@ -540,7 +540,7 @@ of a simulator's or phone's name. A named simulator is booted for you.
 
 Examples:
   ./koru.sh simulators
-  ./koru.sh boot "iPhone 16"
+  ./koru.sh boot "iPhone 17"         the iPhone 17 on iOS 26.5 the tests run on
   ./koru.sh run
   ./koru.sh setup ABCDE12345 00008110-001234560123401E physical
   ./koru.sh deploy
