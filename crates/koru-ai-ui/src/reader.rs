@@ -63,6 +63,9 @@ pub(crate) enum Command {
     /// Titles for documents a sent chip names, for drawing it as a titled
     /// link. Resolved here, off the window thread, through the Store catalog.
     DocumentTitles(Vec<koru_ai_core::DocumentId>),
+    /// A picture attachment's thumbnail, for a tile on screen
+    /// (chat-attachments F2): fetched here, decoded off the window thread.
+    AttachmentThumbnail(ChatId, koru_ai_core::ChatAttachmentId),
 }
 
 impl Command {
@@ -97,6 +100,7 @@ impl Command {
             Self::Pull(_) => "pull",
             Self::CancelPull => "cancel_pull",
             Self::DocumentTitles(_) => "document_titles",
+            Self::AttachmentThumbnail(..) => "attachment_thumbnail",
         }
     }
 }
@@ -151,6 +155,14 @@ pub(crate) enum Update {
     /// The titles `Command::DocumentTitles` could find. A document the Store
     /// cannot place is simply absent: its link keeps the fallback word.
     DocumentTitles(Vec<(koru_ai_core::DocumentId, String)>),
+    /// The PNG bytes of a thumbnail, or none when it could not be read.
+    AttachmentThumbnail {
+        id: koru_ai_core::ChatAttachmentId,
+        bytes: Option<Vec<u8>>,
+    },
+    /// A send refused because of one of its attachments, with the code
+    /// and the attachment the service named.
+    SendRefused(koru_ai_wire::Failure),
     Failure(String),
 }
 
@@ -245,7 +257,7 @@ impl Reader {
     }
 }
 
-fn connect_client(root: Option<&Path>) -> Result<koru_api_client::Client, String> {
+pub(crate) fn connect_client(root: Option<&Path>) -> Result<koru_api_client::Client, String> {
     match root {
         Some(root) => koru_api_client::Client::open_at_with_scopes(
             koru_channel::segment(),
@@ -475,6 +487,11 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
                 Ok(stream) => stream_attempt(client.clone(), request.chat_id, stream, &updates),
+                // Refused for one of its attachments: the surface puts the
+                // drafts back and says which (chat-attachments §10).
+                Err(failure) if refused_for_attachment(&failure) => {
+                    let _ = updates.send(Update::SendRefused(failure));
+                }
                 Err(failure) => {
                     let _ = updates.send(Update::Failure(failure.message));
                 }
@@ -672,8 +689,33 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     return;
                 }
             }
+            Command::AttachmentThumbnail(chat, id) => {
+                let bytes = client.ai().attachment_thumbnail(chat, id).ok();
+                if updates
+                    .send(Update::AttachmentThumbnail { id, bytes })
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
     }
+}
+
+fn refused_for_attachment(failure: &koru_ai_wire::Failure) -> bool {
+    use koru_ai_wire::attachment_codes as code;
+    [
+        code::TOO_LARGE,
+        code::LIMIT,
+        code::TYPE_NOT_ALLOWED,
+        code::NOT_FOUND,
+        code::MISSING,
+        code::SENT,
+        code::UNSUPPORTED,
+        code::WORKSPACE_NOT_GRANTED,
+        code::WORKSPACE_FILE_UNAVAILABLE,
+    ]
+    .contains(&failure.code.as_str())
 }
 
 fn workspace_catalog_failure() -> koru_ai_wire::Failure {

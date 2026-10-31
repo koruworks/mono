@@ -1267,6 +1267,17 @@ says **Searching the web…**. Cited pages appear afterward in a wrapped
 **Sources:** row; click a source title to open its HTTPS page. Sources are saved
 with the response and return when the chat is reopened.
 
+**Send a picture to a local agent.** In a chat with a local agent (Claude,
+OpenCode, Codex and the others), paste a screenshot with `Ctrl+V`: it appears as
+a thumbnail above the text, dimmed while Koru stores it, with a × to take it
+out. Send, and the agent gets it — as a picture when it can see pictures,
+otherwise told where the file is, with one line under the turn saying so. A
+message may be the picture alone; one message carries up to 10 attachments and
+50 MB in all, each at most 20 MB. The picture stays on its message after a
+reload or a restart: it is kept with the chat on this computer, never in Koru
+Cloud, and deleting the chat deletes it. An OpenAI, Ollama or Koru AI chat says
+that pictures go to local agents only.
+
 Long conversations use the same thin overlay scrollbar as documents: its
 wider invisible gutter pages when clicked, the thumb drags without jumping,
 hover or drag strengthens its colour, and the pointer becomes the vertical

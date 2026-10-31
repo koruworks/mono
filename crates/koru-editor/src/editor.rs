@@ -4719,11 +4719,17 @@ pub trait Editing {
                 return crate::clipboard::cut(self, ws);
             }
             // A composer takes both pastes as its own text: lines at the caret,
-            // never rows, marks or links (`crate::policy`).
+            // never rows, marks or links (`crate::policy`). Text wins; a
+            // paste with none asks the host for the clipboard's picture or
+            // files, which it reads off this thread (chat-attachments D9).
             Action::Paste | Action::PastePlain
                 if self.view().policy == crate::policy::Policy::Composer =>
             {
-                return crate::clipboard::paste_as_lines(self, ws);
+                if crate::clipboard::paste_as_lines(self, ws) {
+                    return true;
+                }
+                self.view_mut().wants_paste_attachment = true;
+                return true;
             }
             Action::Paste => return crate::clipboard::paste(self, ws),
             Action::PastePlain => return crate::clipboard::paste_unformatted(self, ws),

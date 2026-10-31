@@ -111,6 +111,17 @@ pub enum ImagePayload {
     Empty,
 }
 
+/// What a paste into the AI chat's composer offers as attachments, once it
+/// found no text: the copied files, every one in the platform's order
+/// (which of them may be attached is the caller's allowlist), else a bitmap
+/// normalized to PNG, else nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttachmentPayload {
+    Files(Vec<PathBuf>),
+    Bitmap(PngBitmap),
+    Empty,
+}
+
 /// Platform rich formats are raw transport. HTML/RTF/Markdown interpretation
 /// remains with the document domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,6 +216,22 @@ impl<B: Backend> Clipboard<B> {
         }
     }
 
+    /// Files first, then a bitmap — [`Self::images`] without its filter on
+    /// image extensions.
+    pub fn attachments(&self, limits: ImageLimits) -> Result<AttachmentPayload, Error> {
+        let paths = self.backend.image_paths();
+        if let Ok(paths) = &paths
+            && !paths.is_empty()
+        {
+            return Ok(AttachmentPayload::Files(paths.clone()));
+        }
+        match self.backend.bitmap() {
+            Ok(Some(bitmap)) => normalize_png(bitmap, limits).map(AttachmentPayload::Bitmap),
+            Ok(None) if paths.is_ok() => Ok(AttachmentPayload::Empty),
+            Ok(None) | Err(_) => Err(Error::new(ErrorCode::Unavailable)),
+        }
+    }
+
     pub fn raw(&self, format: RawFormat) -> Result<Option<RawPayload>, Error> {
         self.backend.raw(format)
     }
@@ -250,6 +277,26 @@ pub fn spawn_image_read_with<B: Backend + 'static>(
     std::thread::Builder::new()
         .name("koru-clipboard image read".into())
         .spawn(move || complete(Clipboard::new(backend).images(limits)))
+}
+
+/// Read what a paste offers as attachments on a named worker, never on the
+/// thread that answers the person; the completion runs on the worker.
+pub fn spawn_attachment_read(
+    limits: ImageLimits,
+    complete: impl FnOnce(Result<AttachmentPayload, Error>) + Send + 'static,
+) -> io::Result<std::thread::JoinHandle<()>> {
+    spawn_attachment_read_with(SystemBackend, limits, complete)
+}
+
+/// The injectable form of [`spawn_attachment_read`].
+pub fn spawn_attachment_read_with<B: Backend + 'static>(
+    backend: B,
+    limits: ImageLimits,
+    complete: impl FnOnce(Result<AttachmentPayload, Error>) + Send + 'static,
+) -> io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("koru-clipboard attachment read".into())
+        .spawn(move || complete(Clipboard::new(backend).attachments(limits)))
 }
 
 /// PNG bytes for `width × height` tightly packed RGBA8 pixels — the

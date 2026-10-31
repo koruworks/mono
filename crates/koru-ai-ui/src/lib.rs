@@ -58,6 +58,7 @@ pub(crate) fn chat_line_height() -> f32 {
 }
 
 mod agents;
+mod attachments;
 mod chats_pane;
 mod composer;
 mod doc_links;
@@ -503,6 +504,19 @@ pub struct ChatSurface {
     /// was picked for, so it holds still while shown and a new chat gets a
     /// new one.
     greeting: Option<(Option<ChatId>, usize)>,
+    /// Each chat's draft attachments, kept per chat (chat-attachments D15).
+    strips: attachments::Strips,
+    /// The clipboard, upload and thumbnail threads behind them.
+    attachment_work: attachments::Work,
+    /// Thumbnails by attachment id: a draft's, then the same picture's on
+    /// its sent card.
+    thumbnails: HashMap<koru_ai_core::ChatAttachmentId, attachments::Thumb>,
+    /// The tiles of the message just sent, for its card before the
+    /// transcript carries it.
+    pending_user_tiles: Vec<attachments::Tile>,
+    /// The drafts of the message just sent, put back if the send is refused.
+    sent_drafts: Option<(ChatId, Vec<attachments::Draft>)>,
+    clipboard_reading: bool,
     lang: koru_i18n::Lang,
 }
 
@@ -559,6 +573,7 @@ impl ChatSurface {
     pub fn new_at(mode: SurfaceMode, root: Option<PathBuf>) -> Self {
         let mut engine = TextEngine::new();
         let composer = ChatComposer::new(root.clone());
+        let attachment_work = attachments::Work::new(root.clone());
         let workspace_search = TextInput::new(&mut engine, role::ui());
         let openai_key = TextInput::new(&mut engine, role::row());
         let openai_model = TextInput::new(&mut engine, role::row());
@@ -696,6 +711,12 @@ impl ChatSurface {
             history_cursor: None,
             history_draft: None,
             greeting: None,
+            strips: attachments::Strips::default(),
+            attachment_work,
+            thumbnails: HashMap::new(),
+            pending_user_tiles: Vec::new(),
+            sent_drafts: None,
+            clipboard_reading: false,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -970,6 +991,7 @@ impl ChatSurface {
             self.web_search_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
+            self.attachment_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -1001,6 +1023,7 @@ impl ChatSurface {
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
         changed |= self.composer.maintain();
+        changed |= self.maintain_attachments();
         changed | self.pill_strip.maintain(_now)
     }
 
@@ -1228,7 +1251,12 @@ impl ChatSurface {
         {
             return self.composer.insert_break();
         }
-        self.composer.key(key, text, mods)
+        let handled = self.composer.key(key, text, mods);
+        // A paste with no text: its picture is read off this thread (D9).
+        if self.composer.take_wants_paste_attachment() {
+            return self.begin_attachment_paste() || handled;
+        }
+        handled
     }
 
     /// This chord belongs to a visible chat surface even when another part of
@@ -1374,6 +1402,9 @@ impl ChatSurface {
         // The composer and every control on it are hit where they are now:
         // centred under an empty chat's greeting, or at the bottom.
         self.composer_rect();
+        if let Some(handled) = self.strip_mouse_down(x, y) {
+            return handled;
+        }
         // The `@` picker floats over the conversation, so a press on it is the
         // composer's before anything underneath can claim it.
         if self
@@ -2302,6 +2333,7 @@ impl ChatSurface {
                 }
             }
             Update::ModelUpdated(chat, reasoning_control) => {
+                let chat_id = chat.id;
                 self.waiting = false;
                 self.chat_model_open = false;
                 self.remember_chat(&chat, true);
@@ -2313,6 +2345,7 @@ impl ChatSurface {
                 }
                 self.status =
                     Some("This chat will use the selected model on its next turn.".into());
+                self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
                 self.waiting = false;
@@ -2403,6 +2436,7 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
+                self.sent_drafts = None;
                 self.attempt = Some(accepted.attempt_id);
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
                 self.messages_dirty = true;
@@ -2699,6 +2733,17 @@ impl ChatSurface {
                 self.waiting = false;
                 self.destination_open = None;
                 self.status = Some(format!("Stored “{title}” in Koru."));
+            }
+            Update::AttachmentThumbnail { id, bytes } => self.on_thumbnail(id, bytes),
+            Update::SendRefused(failure) => {
+                self.waiting = false;
+                self.attempt = None;
+                self.pending_assistant_message_id = None;
+                self.pending_user = None;
+                self.pulse = None;
+                self.messages_dirty = true;
+                self.status = Some(failure.message.clone());
+                self.restore_refused_drafts(&failure);
             }
             Update::Failure(message) => {
                 tracing::warn!(
@@ -3030,7 +3075,7 @@ impl ChatSurface {
         }
         let message = self.composer.message();
         let typed = message.markdown;
-        if typed.trim().is_empty() && self.pending_quotes.is_empty() {
+        if typed.trim().is_empty() && self.pending_quotes.is_empty() && !self.has_strip() {
             return false;
         }
         let Some(chat_id) = self.transcript.as_ref().map(|t| t.chat.id) else {
@@ -3045,9 +3090,13 @@ impl ChatSurface {
             return self.send_command(Command::Usage(chat_id));
         }
         let markdown = compose_markdown(&self.pending_quotes, &typed);
-        if markdown.is_empty() {
+        if markdown.is_empty() && !self.has_strip() {
             return false;
         }
+        // Not while an attachment is still being stored, or could not be.
+        let Some(attachment_ids) = self.take_attachments_for_send(chat_id) else {
+            return true;
+        };
         // A chat still called *New chat* takes its name from this, its
         // first message (the CTO's note): the way ChatGPT names a chat,
         // without a model call — the first line, cut at a word.
@@ -3092,7 +3141,9 @@ impl ChatSurface {
         self.draft.clear();
         self.composer.clear();
         self.forget_input_walk();
-        self.sent_inputs.push((chat_id, markdown.clone()));
+        if !markdown.is_empty() {
+            self.sent_inputs.push((chat_id, markdown.clone()));
+        }
         self.messages_dirty = true;
         let request = SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -3109,7 +3160,7 @@ impl ChatSurface {
                 .then(|| self.system_prompt.value())
                 .filter(|prompt| !prompt.trim().is_empty()),
             replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
-            attachment_ids: Vec::new(),
+            attachment_ids,
         };
         let sent = if self.mode == SurfaceMode::ContextPane && self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
@@ -3666,7 +3717,8 @@ impl ChatSurface {
                 COMPOSER_MAX_LINES,
             )
             .ceil();
-        let height = COMPOSER_PAD_TOP
+        let height = self.strip_band()
+            + COMPOSER_PAD_TOP
             + text_h
             + COMPOSER_TEXT_GAP
             + COMPOSER_TOOLBAR_H
@@ -3713,11 +3765,13 @@ impl ChatSurface {
     /// toolbar row. The editor insets its words by the same padding
     /// ([`composer`]).
     fn composer_text_rect(&self) -> Rect {
+        // Below the strip of attachments, when the message has any.
+        let band = self.strip_band();
         Rect::new(
             self.composer_hit_rect.x,
-            self.composer_hit_rect.y,
+            self.composer_hit_rect.y + band,
             self.composer_hit_rect.w,
-            (self.composer_hit_rect.h - COMPOSER_TOOLBAR_H - COMPOSER_PAD_BOTTOM).max(1.0),
+            (self.composer_hit_rect.h - band - COMPOSER_TOOLBAR_H - COMPOSER_PAD_BOTTOM).max(1.0),
         )
     }
 
@@ -4754,6 +4808,7 @@ impl ChatSurface {
                 &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
             );
         }
+        self.draw_strip(canvas, root, composer);
         {
             let text = self.composer_text_rect();
             let _text = koru_draw::inspect::scope(
@@ -4790,7 +4845,8 @@ impl ChatSurface {
             let send = self.send_button();
             let send_enabled = self.attempt.is_some()
                 || !self.composer.is_blank()
-                || !self.pending_quotes.is_empty();
+                || !self.pending_quotes.is_empty()
+                || self.has_strip();
             draw_composer_action(
                 canvas,
                 root,
@@ -5157,6 +5213,12 @@ impl ChatSurface {
                             .rev()
                             .find(|event| event.message_id == Some(message.id))
                             .map(|event| event.value),
+                        attachments: transcript
+                            .attachments
+                            .iter()
+                            .filter(|attachment| attachment.message_id == Some(message.id))
+                            .map(attachments::Tile::of)
+                            .collect(),
                     });
                 }
             }
@@ -5258,6 +5320,7 @@ impl ChatSurface {
                 markdown,
                 blocks: Vec::new(),
                 rating: None,
+                attachments: Vec::new(),
             });
         }
         if let Some(markdown) = &self.pending_user {
@@ -5285,6 +5348,7 @@ impl ChatSurface {
                 sources: None,
                 blocks: Vec::new(),
                 rating: None,
+                attachments: self.pending_user_tiles.clone(),
             });
             let assistant_width = message_wrap_width(ChatRole::Assistant, width);
             let usage_text = (!self.draft.is_empty())
@@ -5325,6 +5389,7 @@ impl ChatSurface {
                 ),
                 blocks: Vec::new(),
                 rating: None,
+                attachments: Vec::new(),
             });
         }
         self.message_layouts = messages;
@@ -5524,6 +5589,7 @@ impl ChatSurface {
         canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
         let p = theme::p();
         let now = Instant::now();
+        let mut card_tiles: Vec<(Rect, attachments::Tile)> = Vec::new();
         for (message_index, message) in self.message_layouts.iter().enumerate() {
             let h = message_height(message);
             let y = area.y - self.conversation_scroll + message.top;
@@ -5536,6 +5602,22 @@ impl ChatSurface {
                         p.row_selected,
                         &scene::rrect(card.x, card.y, card.w, card.h, 8.0),
                     );
+                    // Its pictures under its words, drawn once the cards are.
+                    if !message.attachments.is_empty() {
+                        let top = if message.display.trim().is_empty() {
+                            card.y + PAD
+                        } else {
+                            card.y + PAD + message.layout.height() + attachments::TILE_GAP
+                        };
+                        let (rects, _) =
+                            attachments::card_tiles(&message.attachments, message.wrap_width);
+                        for (rect, tile) in rects.iter().zip(&message.attachments) {
+                            card_tiles.push((
+                                Rect::new(card.x + PAD + rect.x, top + rect.y, rect.w, rect.h),
+                                tile.clone(),
+                            ));
+                        }
+                    }
                 }
                 if message.blocks.is_empty() {
                     if message.state == MessageState::Pending && message.display.is_empty() {
@@ -5897,7 +5979,10 @@ impl ChatSurface {
                 }
             }
         }
+        card_tiles.retain(|(rect, _)| rect.y + rect.h >= area.y && rect.y <= area.y + area.h);
+        self.draw_card_tiles(canvas, root, &card_tiles);
         canvas.pop_layer();
+        self.request_thumbnails(&card_tiles);
         if let Some(scrollbar) = self.conversation_scrollbar() {
             let active = self.conversation_scroll_drag.is_some()
                 || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
@@ -7313,6 +7398,16 @@ fn message_wrap_width(role: ChatRole, width: f32) -> f32 {
 }
 
 fn message_content_width(message: &MessageLayout) -> f32 {
+    if !message.attachments.is_empty() {
+        let (rects, _) = attachments::card_tiles(&message.attachments, message.wrap_width);
+        let tiles = rects.iter().map(|rect| rect.x + rect.w).fold(0.0, f32::max);
+        let text = if message.display.trim().is_empty() {
+            0.0
+        } else {
+            message.layout.width()
+        };
+        return tiles.max(text);
+    }
     if message.blocks.is_empty() {
         message.layout.width()
     } else {

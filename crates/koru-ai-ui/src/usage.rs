@@ -27,6 +27,16 @@ pub(crate) fn message_height(message: &MessageLayout) -> f32 {
 }
 
 pub(crate) fn message_content_height(message: &MessageLayout) -> f32 {
+    if !message.attachments.is_empty() {
+        // The person's own words, then their pictures and files; a message
+        // of attachments only is its tiles alone.
+        let (_, tiles) = crate::attachments::card_tiles(&message.attachments, message.wrap_width);
+        return if message.display.trim().is_empty() {
+            tiles
+        } else {
+            message.layout.height() + crate::attachments::TILE_GAP + tiles
+        };
+    }
     if message.blocks.is_empty() {
         if message.state == koru_ai_core::MessageState::Pending && message.markdown.is_empty() {
             role::ui().metrics.line_height

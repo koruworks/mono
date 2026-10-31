@@ -5311,12 +5311,14 @@ dependencies = [
 name = "koru-ai-ui"
 version = "0.0.3"
 dependencies = [
+ "bytes",
  "image",
  "koru-ai-core",
  "koru-ai-wire",
  "koru-api-client",
  "koru-channel",
  "koru-chats-ui",
+ "koru-clipboard",
  "koru-core",
  "koru-draw",
  "koru-editor",
