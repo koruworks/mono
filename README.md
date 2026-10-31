@@ -103,9 +103,9 @@ experimental features.
 | --- | --- |
 | **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as an installer, or a zip to run without installing; either updates itself. They are not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
 | **macOS** (Apple silicon, macOS 12+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
-| **Android** | The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
+| **Android** | Not released yet. The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |
-| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs that update themselves. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
+| **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs for glibc 2.35 or newer that update themselves; 0.1.4 is the first stable Linux release. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
 
 ## Build and run from a fresh clone
 
@@ -228,7 +228,8 @@ koru.bat test                  REM cargo test --workspace, the whole suite
 koru.bat dist-local beta       REM an unsigned local package under dist\ (needs the voice archive)
 ```
 
-Android needs JDK 17 and Android SDK 37. The Gradle wrapper is fetched, not
+Android needs JDK 17 and Android SDK Platform 37 to compile against (the app
+targets API 36 and runs on API 29 or newer). The Gradle wrapper is fetched, not
 committed, so on a fresh clone run `scripts\setup\fetch-third-party.ps1` (or
 `bash scripts/setup/fetch-third-party.sh`) once, then `cd apps/android` and
 `./gradlew testDebugUnitTest assembleDebug`. See the
