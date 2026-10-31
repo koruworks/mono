@@ -5861,11 +5861,11 @@ stopped, the chat stays and says so, and you can delete it again. If the agent
 had gone by the time you write again, Koru starts it fresh, hands it the
 conversation so far, and tells you.
 
-Before your first message, a folder button on the composer's toolbar (it
-reads *Home folder* until you choose) opens a picker for the folder the
-agent works in; the chosen folder is named in the header next to the title,
-and a chat branched from this one keeps it. Once the first message is sent
-the folder is fixed — start a new chat to work somewhere else.
+Before your first message, the folder under the composer, at its left edge
+(it reads *Home folder* until you choose), opens a picker for the folder the
+agent works in; the chosen folder stays named there, and a chat branched from
+this one keeps it. Once the first message is sent the folder is fixed — start
+a new chat to work somewhere else.
 
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort

@@ -102,8 +102,8 @@ const HIGHLIGHT_FOR: Duration = Duration::from_secs(2);
 const CONVERSATION_SCROLL_SPEED: f32 = 1.8;
 const CONTENT_MAX_W: f32 = 800.0;
 const USER_MESSAGE_MAX_FRACTION: f32 = 0.70;
-/// The composer's toolbar row — the private mark, the spaces, the mode, an
-/// agent's folder, the model chip and the send button: one control tall.
+/// The composer's toolbar row — the private mark, the spaces, the mode, the
+/// model chip and the send button: one control tall.
 const COMPOSER_TOOLBAR_H: f32 = BUTTON_H;
 /// **The composer's inner padding**, one constant per side, read by the
 /// layout ([`ChatSurface::composer_rect`]), by the editor's placement inside
@@ -119,6 +119,13 @@ const COMPOSER_PAD_X: f32 = 16.0;
 const COMPOSER_PAD_TOP: f32 = 12.0;
 const COMPOSER_TEXT_GAP: f32 = 4.0;
 const COMPOSER_PAD_BOTTOM: f32 = 8.0;
+/// **The quiet row under the composer box**, left-aligned with it: an agent
+/// chat's folder, small and dim, the way a checkout is named under a prompt.
+/// `COMPOSER_FOOTER_GAP` below the box, `COMPOSER_FOOTER_H` tall; a chat with
+/// nothing to show there gives it no room at all
+/// ([`ChatSurface::composer_footer_rect`]).
+const COMPOSER_FOOTER_GAP: f32 = 4.0;
+const COMPOSER_FOOTER_H: f32 = 22.0;
 /// How long a first Escape during a turn waits for the second that stops
 /// it. Past it the hint goes away and the next Escape starts over.
 const STOP_ESCAPE_WINDOW: Duration = Duration::from_millis(1500);
@@ -350,6 +357,9 @@ pub struct ChatSurface {
     /// The chip's measured label width from the last draw, so the chip
     /// is as wide as its words (an agent and its model can be long).
     chip_label_w: f32,
+    /// The folder control's measured width — its icon, its name and the air
+    /// around them — from the last [`ChatSurface::composer_rect`].
+    folder_button_w: f32,
     /// A press on the effort slider: the stop under the pointer until
     /// release, when it becomes the chat's setting.
     effort_drag: Option<ReasoningChoice>,
@@ -579,6 +589,7 @@ impl ChatSurface {
             web_search_armed: false,
             effort_drag: None,
             chip_label_w: 0.0,
+            folder_button_w: 0.0,
             live_reasoning: String::new(),
             reasoning_expanded: false,
             attempt: None,
@@ -3662,7 +3673,7 @@ impl ChatSurface {
     /// row, inside the padding. At the bottom of a chat with messages;
     /// centred, under the greeting, in an empty one. Everything on or around
     /// the composer — the send button, the toolbar, the `@` picker's room,
-    /// the conversation above — derives from this.
+    /// the conversation above, the quiet row below — derives from this.
     fn composer_rect(&mut self) -> Rect {
         let content = self.content_rect();
         let width = content.w.max(MIN_COMPOSER_W);
@@ -3681,17 +3692,30 @@ impl ChatSurface {
             + COMPOSER_TEXT_GAP
             + COMPOSER_TOOLBAR_H
             + COMPOSER_PAD_BOTTOM;
-        let bottom = self.viewport.y + self.viewport.h - PAD - height;
+        // The quiet row under the box, when there is one, is part of the
+        // block: the box stands on it rather than on the window's edge.
+        let below = self.composer_footer_h();
+        let bottom = self.viewport.y + self.viewport.h - PAD - below - height;
         let y = if self.chat_is_empty() {
-            // The greeting and the composer as one block, centred; never
-            // lower than where the composer sits once the chat has begun.
+            // The greeting, the composer and its row as one block, centred;
+            // never lower than where the composer sits once the chat has begun.
             let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
-            (self.viewport.y + (self.viewport.h - above - height) * 0.5 + above).min(bottom)
+            (self.viewport.y + (self.viewport.h - above - height - below) * 0.5 + above).min(bottom)
         } else {
             bottom
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
+        if below > 0.0 {
+            // The folder control is as wide as what it shows.
+            let label = self.folder_label_shown();
+            let icon = self
+                .engine
+                .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE)
+                .width();
+            let text = self.engine.simple_layout(&label, role::meta()).width();
+            self.folder_button_w = ActionButton::PAD_X * 2.0 + icon + ActionButton::GAP + text;
+        }
         // The picker may float anywhere above the composer's text, below
         // the header: over the conversation, never over the toolbar.
         let text = self.composer_text_rect();
@@ -3932,8 +3956,8 @@ impl ChatSurface {
 
     fn chat_model_button(&self) -> Rect {
         let toolbar = self.composer_toolbar_rect();
-        // As wide as its label wants, up to half the toolbar; the mode and
-        // folder controls give way to its left.
+        // As wide as its label wants, up to half the toolbar; the mode
+        // control gives way to its left.
         let width = (self.chip_label_w + 44.0)
             .max(78.0)
             .min((toolbar.w * 0.5).max(78.0))
@@ -3941,27 +3965,58 @@ impl ChatSurface {
         Rect::new(toolbar.x + toolbar.w - width, toolbar.y, width, toolbar.h)
     }
 
-    /// An agent chat's folder, between the approval control and the chip.
-    /// Before the first message it chooses the folder; the agent starts in
-    /// it, so the choice closes with that message, and from then on a chosen
-    /// folder stays named here, unpressable — the title row that used to
-    /// name it is gone. A chat left in the home folder, the default, shows
-    /// nothing here once it has begun.
-    fn folder_button(&self) -> Option<Rect> {
-        let transcript = self.transcript.as_ref()?;
-        if !agents::is_agent_provider(&transcript.chat.current_model.provider)
-            || !(self.folder_editable() || transcript.chat.agent_working_folder.is_some())
-        {
+    /// Whether the composer has its quiet row below: an agent chat's folder
+    /// to show. Before the first message it chooses the folder; afterwards a
+    /// chosen folder stays named, and a chat left in the home folder, the
+    /// default, shows nothing — and the row takes no room.
+    fn shows_composer_footer(&self) -> bool {
+        self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+                && (self.folder_editable() || transcript.chat.agent_working_folder.is_some())
+        })
+    }
+
+    /// The height the quiet row takes under the composer, its gap included:
+    /// nothing when there is no row.
+    fn composer_footer_h(&self) -> f32 {
+        if self.shows_composer_footer() {
+            COMPOSER_FOOTER_GAP + COMPOSER_FOOTER_H
+        } else {
+            0.0
+        }
+    }
+
+    /// **The quiet row under the composer box**, as wide as the box and
+    /// left-aligned with it. Derived from the box ([`Self::composer_rect`]),
+    /// which leaves room for it, so drawing, hit-testing and the hover
+    /// cursor all read the same place.
+    fn composer_footer_rect(&self) -> Option<Rect> {
+        if !self.shows_composer_footer() {
             return None;
         }
-        let toolbar = self.composer_toolbar_rect();
-        let model = self.chat_model_button();
-        let width = (toolbar.w * 0.2).clamp(60.0, 110.0);
+        let composer = self.composer_hit_rect;
         Some(Rect::new(
-            (model.x - 6.0 - width).max(toolbar.x),
-            toolbar.y,
-            width.min((model.x - toolbar.x - 6.0).max(1.0)),
-            toolbar.h,
+            composer.x,
+            composer.y + composer.h + COMPOSER_FOOTER_GAP,
+            composer.w,
+            COMPOSER_FOOTER_H,
+        ))
+    }
+
+    /// An agent chat's folder, in the quiet row under the composer — a
+    /// folder icon and its name, outside the box like a checkout under a
+    /// prompt (it sat in the toolbar until then). Before the first message
+    /// it chooses the folder; the agent starts in it, so the choice closes
+    /// with that message, and from then on a chosen folder stays named here,
+    /// unpressable. A chat left in the home folder, the default, shows
+    /// nothing here once it has begun.
+    fn folder_button(&self) -> Option<Rect> {
+        let row = self.composer_footer_rect()?;
+        Some(Rect::new(
+            row.x,
+            row.y,
+            self.folder_button_w.max(60.0).min(row.w),
+            row.h,
         ))
     }
 
@@ -3971,6 +4026,19 @@ impl ChatSurface {
             agents::is_agent_provider(&transcript.chat.current_model.provider)
                 && transcript.messages.is_empty()
         })
+    }
+
+    /// [`folder_label`](Self::folder_label) cut with an ellipsis to fit the
+    /// composer's width beside the folder icon, so a long folder name never
+    /// runs past the box it sits under.
+    fn folder_label_shown(&mut self) -> String {
+        let label = self.folder_label();
+        let icon = self
+            .engine
+            .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE)
+            .width();
+        let room = self.composer_hit_rect.w - ActionButton::PAD_X * 2.0 - icon - ActionButton::GAP;
+        self.engine.elided(&label, role::meta(), room)
     }
 
     fn folder_label(&self) -> String {
@@ -3990,14 +4058,12 @@ impl ChatSurface {
 
     fn tool_mode_button(&self) -> Rect {
         let toolbar = self.composer_toolbar_rect();
-        let right_neighbour = self
-            .folder_button()
-            .unwrap_or_else(|| self.chat_model_button());
+        let model = self.chat_model_button();
         let width = (toolbar.w * 0.24).clamp(72.0, 105.0);
         Rect::new(
-            (right_neighbour.x - 6.0 - width).max(toolbar.x),
+            (model.x - 6.0 - width).max(toolbar.x),
             toolbar.y,
-            width.min((right_neighbour.x - toolbar.x - 6.0).max(1.0)),
+            width.min((model.x - toolbar.x - 6.0).max(1.0)),
             toolbar.h,
         )
     }
@@ -4701,20 +4767,41 @@ impl ChatSurface {
             mode_button,
             mode_button.contains(self.pointer.0, self.pointer.1),
         );
-        if let Some(folder_button) = self.folder_button() {
-            let label = self.folder_label();
-            let button = ActionButton::new(&label, ActionStyle::Ghost, Some(icons::FOLDER));
-            if self.folder_editable() {
-                button.draw(
+        if let Some(folder) = self.folder_button() {
+            // Quiet, under the box: the icon and the name in the meta face,
+            // dim; a hover tint while the folder can still be chosen.
+            let hovered = self.folder_editable() && folder.contains(self.pointer.0, self.pointer.1);
+            if hovered {
+                scene::fill(
                     canvas,
                     root,
-                    &mut self.engine,
-                    folder_button,
-                    folder_button.contains(self.pointer.0, self.pointer.1),
+                    p.hover_tint,
+                    &scene::rrect(folder.x, folder.y, folder.w, folder.h, 4.0),
                 );
-            } else {
-                button.draw_disabled(canvas, root, &mut self.engine, folder_button);
             }
+            let colour = if hovered { p.text } else { p.text_dim };
+            let icon = self
+                .engine
+                .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE);
+            let shown = self.folder_label_shown();
+            let label = self.engine.simple_layout(&shown, role::meta());
+            let x = folder.x + ActionButton::PAD_X;
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &icon,
+                x,
+                folder.y + (folder.h - icon.height()) * 0.5,
+                Some(colour),
+            );
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &label,
+                x + icon.width() + ActionButton::GAP,
+                folder.y + (folder.h - label.height()) * 0.5,
+                Some(colour),
+            );
         }
         if let Some(privacy) = self.privacy_button() {
             let private = self
@@ -9375,6 +9462,72 @@ mod tests {
             .chat
             .agent_working_folder = None;
         assert!(surface.folder_button().is_none());
+    }
+
+    /// **An agent chat's folder sits under the composer, not in it.** The
+    /// quiet row is left-aligned with the box and below it, inside the
+    /// window in both of the composer's places; a press there asks for a
+    /// folder and a press in the box does not; the toolbar closes up where
+    /// the folder used to be. A chat with no folder to show gives the row
+    /// no room.
+    #[test]
+    fn the_folder_sits_under_the_composer_left_aligned() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        transcript.chat.current_model.requested_model = AGENT_DEFAULT_MODEL.into();
+        let chat = transcript.chat.id;
+        surface.transcript = Some(transcript);
+        surface.validated_ready = true;
+
+        // Centred: the greeting, the box and the row are one block.
+        let composer = surface.composer_rect();
+        let folder = surface
+            .folder_button()
+            .expect("an empty agent chat offers its folder");
+        let row = surface.composer_footer_rect().expect("the row is shown");
+        assert_eq!(folder.x, composer.x);
+        assert_eq!(row.x, composer.x);
+        assert_eq!(folder.y, composer.y + composer.h + COMPOSER_FOOTER_GAP);
+        assert!(folder.w < composer.w);
+        let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
+        let middle = (composer.y - above + folder.y + folder.h) * 0.5;
+        assert!((middle - surface.viewport.h * 0.5).abs() < 1.0);
+        let (fx, fy) = (folder.x + folder.w * 0.5, folder.y + folder.h * 0.5);
+        assert!(!composer.contains(fx, fy), "the folder is outside the box");
+
+        // The toolbar no longer holds it: the mode stands next to the chip.
+        let mode = surface.tool_mode_button();
+        let model = surface.chat_model_button();
+        assert!((mode.x + mode.w + 6.0 - model.x).abs() < 0.01);
+        assert!(!mode.contains(fx, fy) && !model.contains(fx, fy));
+
+        // Hit where it is drawn, and only there.
+        assert_eq!(surface.control_hover_at(fx, fy), Some((5, 12)));
+        let text = surface.composer_text_rect();
+        surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5);
+        assert!(surface.take_working_folder_request().is_none());
+        assert!(surface.mouse_down(fx, fy));
+        assert_eq!(surface.take_working_folder_request().unwrap().chat, chat);
+
+        // At the bottom, the row stands on the window's padding.
+        surface.pending_user = Some("hello".to_owned());
+        let composer = surface.composer_rect();
+        let folder = surface.folder_button().expect("still choosable");
+        assert_eq!(folder.x, composer.x);
+        assert_eq!(folder.y + folder.h, surface.viewport.h - PAD);
+        let conversation = surface.conversation_rect();
+        assert!(conversation.y + conversation.h < composer.y);
+
+        // Begun in the home folder: no row, and no room kept for it.
+        surface.pending_user = None;
+        let message = user_message(surface.transcript.as_ref().unwrap(), "hello");
+        surface.transcript.as_mut().unwrap().messages.push(message);
+        let composer = surface.composer_rect();
+        assert!(surface.composer_footer_rect().is_none());
+        assert!(surface.folder_button().is_none());
+        assert_eq!(composer.y + composer.h, surface.viewport.h - PAD);
     }
 
     #[test]
