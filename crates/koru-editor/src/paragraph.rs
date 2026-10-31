@@ -1063,7 +1063,15 @@ impl Paragraph {
         if !range.is_empty() {
             let _ = ws.delete_text(id, range);
         }
-        let _ = ws.insert_text(id, at, s);
+        // **A refused edit says so, and the caret stays.** The text a row
+        // shows is the document's; when the document will not take the edit,
+        // advancing the caret anyway is what made typing look accepted while
+        // nothing changed (the "I can't type, Backspace only moves" report).
+        if let Err(error) = ws.insert_text(id, at, s) {
+            refused(id, "insert", &error);
+            self.refresh(ws);
+            return;
+        }
 
         // Marks expand rightwards, so text typed after a bold word arrives bold
         // on its own. An armed set is applied on top — including turning marks
@@ -1113,7 +1121,11 @@ impl Paragraph {
             // Word boundaries and cluster boundaries both come from parley, so
             // a pill anchor is one unit either way — never a partial anchor.
             let prev = self.before(caret, by_word);
-            let _ = ws.delete_text(id, prev..caret);
+            if let Err(error) = ws.delete_text(id, prev..caret) {
+                refused(id, "delete", &error);
+                self.refresh(ws);
+                return true;
+            }
             self.refresh(ws);
             self.pending_caret = Some(prev);
         } else {
@@ -1121,7 +1133,11 @@ impl Paragraph {
                 return false;
             }
             let next = self.after(caret, by_word);
-            let _ = ws.delete_text(id, caret..next);
+            if let Err(error) = ws.delete_text(id, caret..next) {
+                refused(id, "delete", &error);
+                self.refresh(ws);
+                return true;
+            }
             self.refresh(ws);
             self.pending_caret = Some(caret);
         }
@@ -1763,4 +1779,31 @@ fn snap_grapheme_on_boundary(text: &str, at: usize) -> usize {
         }
     }
     at
+}
+
+/// Say that the document refused an edit to `id`, once per row and error, so
+/// a run of keystrokes is one line in the log rather than one per key.
+///
+/// The error is the evidence: a node the document does not hold means the
+/// row was built against another document than the one being edited; a Loro
+/// error means the document itself would not take the write.
+fn refused(id: NodeId, what: &'static str, error: &koru_core::schema::StoreError) {
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<(NodeId, String)>> = Mutex::new(None);
+    let text = error.to_string();
+    let mut last = LAST.lock().unwrap_or_else(|held| held.into_inner());
+    if last
+        .as_ref()
+        .is_some_and(|(node, seen)| *node == id && *seen == text)
+    {
+        return;
+    }
+    *last = Some((id, text.clone()));
+    tracing::warn!(
+        target: "koru::editor",
+        node = %id.to_storage(),
+        what,
+        error = %text,
+        "the document refused an edit; the row is left as it was"
+    );
 }
