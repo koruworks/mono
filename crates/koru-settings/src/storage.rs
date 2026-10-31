@@ -33,8 +33,8 @@ use crate::values::{
     CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice,
     DensityChoice, DictationGesture, DictationInput, DictationLanguage, DictationShortcut,
     DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice, PopoutCloseChoice,
-    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
-    Zoom,
+    RgbColor, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
+    ViewModeChoice, Zoom,
 };
 
 #[cfg(test)]
@@ -86,6 +86,8 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "headings_font",
     "code_font",
     "doc_text_size",
+    "base_color_light",
+    "base_color_dark",
     "density",
     "dictation_toggle",
     "dictation_language",
@@ -149,6 +151,10 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
                         crate::DocTextSizeSetting::Chosen(size)
                     });
             }
+            // Any `#rrggbb` is a choice, not only a swatch offered today.
+            // Anything else follows the theme, like a size not offered.
+            "base_color_light" => into.base_color_light = RgbColor::parse(value),
+            "base_color_dark" => into.base_color_dark = RgbColor::parse(value),
             // Only a pack this build knows is a choice; anything else follows
             // the default rather than snapping to whichever pack parses first.
             "icon_pack" => {
@@ -227,6 +233,16 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     }
     if let Some(size) = settings.document_text_size.chosen() {
         line("doc_text_size", &size.px().to_string());
+    }
+    // A base color is written only once chosen: following the theme is no
+    // key, so a file that never chose one is byte-identical to before.
+    for (key, color) in [
+        ("base_color_light", settings.base_color_light),
+        ("base_color_dark", settings.base_color_dark),
+    ] {
+        if let Some(color) = color {
+            line(key, &color.token());
+        }
     }
     line("density", settings.density.token());
     line("dictation_toggle", settings.dictation_gesture.token());

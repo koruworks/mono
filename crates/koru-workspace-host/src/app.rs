@@ -310,6 +310,7 @@ fn apply_settings(settings: &Settings) {
     theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
     theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
+    apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -327,6 +328,15 @@ fn apply_settings(settings: &Settings) {
     crate::spelling::set_preferred(settings.spellcheck_language);
 }
 
+/// The window's base color for each theme, `None` following the theme.
+///
+/// Split out of [`apply_settings`] so a test can prove it without moving
+/// every other global that function writes.
+fn apply_base_colors(light: Option<u32>, dark: Option<u32>) {
+    theme::set_base_color(false, light);
+    theme::set_base_color(true, dark);
+}
+
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
@@ -339,6 +349,7 @@ fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
     theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
+    apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
@@ -13415,6 +13426,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
         // The size chosen, not one Settings is previewing; `None` follows.
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
+        self.runtime.settings.base_color_light = theme::base_color(false);
+        self.runtime.settings.base_color_dark = theme::base_color(true);
         self.runtime.settings.density = theme::density();
         self.runtime.settings.view_mode = theme::default_view_mode();
         self.runtime.settings.canvas_bg = theme::default_canvas_bg();
@@ -14018,10 +14031,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // `apply_theme_preference` invalidates only when light or dark paint
         // moved, so typography that arrived from the authority was applied to
         // the globals and then drawn from stale layouts until something else
-        // happened to invalidate them.
-        if AppearanceShown::now().typography_moved(&was_shown) {
-            self.invalidate_everywhere();
-        }
+        // happened to invalidate them. A base color that arrived is paint
+        // only, so it repaints without a layout.
+        self.show_appearance_change(&was_shown);
     }
 
     /// Pin/unpin one window above other windows. Per-window: only the window
@@ -19216,6 +19228,21 @@ mod tests {
         }
     }
 
+    /// Applying settings sets the theme's base color for each theme, and
+    /// `None` puts the theme's own back. The only test in this crate that
+    /// moves that global, so it needs no lock of its own.
+    #[test]
+    fn applying_settings_sets_each_themes_base_color() {
+        apply_base_colors(Some(0xDDE7F6), Some(0x293750));
+        assert_eq!(theme::base_color(false), Some(0xDDE7F6));
+        assert_eq!(theme::base_color(true), Some(0x293750));
+        apply_base_colors(None, Some(0x0A0B0C));
+        assert_eq!(theme::base_color(false), None);
+        assert_eq!(theme::base_color(true), Some(0x0A0B0C));
+        apply_base_colors(None, None);
+        assert_eq!(theme::base_color(true), None);
+    }
+
     #[test]
     fn reminder_startup_facts_are_projected_from_the_global_authority() {
         let section = koru_settings::GlobalSettings {
@@ -20284,7 +20311,8 @@ struct AppearanceShown {
     doc_text_size: f32,
     density: theme::Density,
     icon_paint: koru_draw::icons::IconPack,
-    /// The base colour per theme: paint only, like the icons' artwork.
+    /// The base color per theme: paint only, like the icons' artwork, and
+    /// a saved choice, which the icons' artwork is not.
     base: [Option<u32>; 2],
     choices: (
         [koru_settings::FontSetting; 4],
@@ -20332,8 +20360,9 @@ impl AppearanceShown {
         self.icon_paint != before.icon_paint || self.base != before.base
     }
 
-    /// A saved choice changed, whether or not anything drawn did.
+    /// A saved choice changed, whether or not anything drawn did. The base
+    /// color is both: a swatch has no preview, so what is drawn is the choice.
     fn choice_moved(&self, before: &Self) -> bool {
-        self.choices != before.choices
+        self.choices != before.choices || self.base != before.base
     }
 }

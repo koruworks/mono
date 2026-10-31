@@ -362,3 +362,67 @@ fn a_change_of_font_setting_is_saved_even_when_the_face_is_the_same() {
         "the picker's default row is a change too"
     );
 }
+
+/// **The base color travels both ways, per theme.** A color the authority
+/// holds lands in this window; a swatch picked here is named in the patch; the
+/// theme's own swatch is sent as a clear, because going back to the theme is
+/// a choice this row offers — and nothing moved names nothing.
+#[test]
+fn a_base_color_is_adopted_patched_and_taken_back_per_theme() {
+    use koru_settings::{Field, RgbColor};
+    let section = GlobalSettings {
+        base_color_dark: RgbColor::new(0x293750),
+        ..GlobalSettings::default()
+    };
+    let mut settings = Settings::default();
+    assert!(adopt(&section, &mut settings), "a held color is a change");
+    assert_eq!(settings.base_color_light, None);
+    assert_eq!(settings.base_color_dark, Some(0x293750));
+    assert!(patch(&section, &settings).is_empty(), "nothing moved");
+
+    let picked = Settings {
+        base_color_light: Some(0xDDE7F6),
+        ..settings.clone()
+    };
+    let sent = patch(&section, &picked);
+    assert_eq!(
+        sent.base_color_light,
+        Field::Set(RgbColor::new(0xDDE7F6).unwrap())
+    );
+    assert!(
+        sent.base_color_dark.is_unchanged(),
+        "the other theme keeps its own"
+    );
+    assert!(sent.touches_roaming());
+
+    let back = Settings {
+        base_color_dark: None,
+        ..settings
+    };
+    let sent = patch(&section, &back);
+    assert_eq!(sent.base_color_dark, Field::Clear);
+    assert!(sent.base_color_light.is_unchanged());
+}
+
+/// The base colors take the road every other appearance preference takes:
+/// pushed into the theme by both `apply_*` functions, read back by
+/// `capture_preferences`, and counted as a saved choice by the snapshot that
+/// decides whether a press patches. Missing any one of them is a swatch that
+/// paints and is then reset by the next poll, or never saved at all.
+#[test]
+fn the_base_colors_are_applied_captured_and_saved_like_any_preference() {
+    let source = include_str!("../app.rs");
+    assert_eq!(
+        source
+            .matches("apply_base_colors(settings.base_color_light, settings.base_color_dark);")
+            .count(),
+        2,
+        "apply_settings and apply_pre_identity_preferences"
+    );
+    assert!(source.contains("settings.base_color_light = theme::base_color(false)"));
+    assert!(source.contains("settings.base_color_dark = theme::base_color(true)"));
+    assert!(
+        source.contains("self.choices != before.choices || self.base != before.base"),
+        "a swatch click has to count as a choice, or the press never patches"
+    );
+}

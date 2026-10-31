@@ -4944,6 +4944,22 @@
             "nullable": true,
             "type": "boolean"
           },
+          "base_color_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "The same for the dark theme."
+          },
+          "base_color_light": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "`#rrggbb` sets the light theme's base color; `null` puts the theme's\nown back. Settings offers that as its first swatch, so unlike the text\nsize this choice can be taken back — which is why this is a [`Field`]\nand not an `Option`."
+          },
           "body_font": {
             "anyOf": [
               {
@@ -5290,6 +5306,36 @@
         "properties": {
           "automatic_update_checks": {
             "type": "boolean"
+          },
+          "base_color_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The same for the dark theme. Each theme keeps its own; neither is\nderived from the other."
+          },
+          "base_color_light": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The window's base color — the frame around the panes — for the light\ntheme, as `#rrggbb`. `null` follows the theme, now and later, and is\npersisted as no key, like a font role that follows the app."
           },
           "body_font": {
             "$ref": "#/components/schemas/FontSetting"
@@ -6914,6 +6960,19 @@
         "anyOf": [
           {
             "$ref": "#/components/schemas/AiProvider"
+          },
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          }
+        ]
+      },
+      "Nullable_RgbColor": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/RgbColor"
           },
           {
             "enum": [
@@ -9436,6 +9495,10 @@
           "counter"
         ],
         "type": "object"
+      },
+      "RgbColor": {
+        "pattern": "^#[0-9A-Fa-f]{6}$",
+        "type": "string"
       },
       "RowRange": {
         "properties": {

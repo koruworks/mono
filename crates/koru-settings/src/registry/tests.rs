@@ -116,9 +116,10 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
     };
     assert_eq!(
         count(Section::Global, StorageClass::Roaming),
-        23,
+        25,
         "Global roaming: theme, icon pack, three caret values, four fonts, the \
-         document text size (DOCFONTSIZE, 2026-10-30), density, \
+         document text size (DOCFONTSIZE, 2026-10-30), the base color per \
+         theme (2026-10-31), density, \
          zoom, view mode, canvas background, pinned title, popout close, \
          skin tone, four dictation values, and two spelling values \
          (spell-check plan P5, D7)"
@@ -152,7 +153,7 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
         "every AI row is delegated: the authority faces `ai.db` and the vault, \
          it does not own them"
     );
-    assert_eq!(REGISTRY.len(), 47);
+    assert_eq!(REGISTRY.len(), 49);
 }
 
 #[test]

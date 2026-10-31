@@ -722,14 +722,14 @@ pub fn terminal_dim(foreground: Color, background: Color) -> Color {
     ])
 }
 
-/// Whether the host's root theme is a dark one: derived from the theme's
-/// appearance, never its identity (D3). Migrated code reads its frame
-/// context and never branches on this.
-// ------------------------------------------- the base colour (a trial)
+// ------------------------------------------------------- the base color
 //
-// One colour per theme, never derived from the other: a tint that sits well
-// on light is wrong on dark. Chosen from a list in Settings for now, and held
-// in memory only — it is a trial of how it looks, not yet a saved setting.
+// One color per theme, never derived from the other: a tint that sits well
+// on light is wrong on dark. Chosen from a list in Settings for now, and
+// saved: `base_color_light=` / `base_color_dark=` in `preferences.conf`, as
+// `#rrggbb`. The host applies both at startup and whenever the authority
+// answers, and saves a swatch click like any other appearance choice. The
+// file takes any `#rrggbb`, so a free-form picker needs no format change.
 
 /// `0` follows the theme; otherwise `0xFF00_0000 | rgb`. Light, then dark.
 static BASE_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
@@ -768,6 +768,9 @@ pub fn base_fill() -> Color {
     base_color(is_dark()).map_or(p().ground, rgb_hex)
 }
 
+/// Whether the host's root theme is a dark one: derived from the theme's
+/// appearance, never its identity (D3). Migrated code reads its frame
+/// context and never branches on this.
 pub fn is_dark() -> bool {
     themes::active().is_dark()
 }

@@ -696,6 +696,74 @@ impl CanvasBackground {
     }
 }
 
+/// An opaque color, persisted as `#rrggbb` in lowercase — today the window's
+/// base color for one theme.
+///
+/// **Any color, not only the swatches Settings offers.** The list is what a
+/// person can pick today; the file and the wire take every `#rrggbb`, so a
+/// free-form picker later needs no format change. Read in either case and
+/// written in lowercase. Anything that is not `#` and six hex digits is not a
+/// color: the file reads it as absent, and the wire refuses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RgbColor(u32);
+
+impl RgbColor {
+    /// An `0xRRGGBB` value, or `None` for one with bits above the 24.
+    pub fn new(rgb: u32) -> Option<Self> {
+        (rgb <= 0xFF_FFFF).then_some(Self(rgb))
+    }
+
+    /// The color as `0xRRGGBB`.
+    pub fn rgb(self) -> u32 {
+        self.0
+    }
+
+    /// The exact spelling written: `#rrggbb`, lowercase.
+    pub fn token(self) -> String {
+        format!("#{:06x}", self.0)
+    }
+
+    /// Read `#rrggbb`, or `None` for anything else.
+    ///
+    /// Every digit is checked as a hex digit before parsing, because
+    /// `from_str_radix` takes a leading `+` and `#+12345` is not a color.
+    pub fn parse(text: &str) -> Option<Self> {
+        let hex = text.trim().strip_prefix('#')?;
+        if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        u32::from_str_radix(hex, 16).ok().and_then(Self::new)
+    }
+}
+
+impl TryFrom<String> for RgbColor {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::parse(&text).ok_or_else(|| "a color is written #rrggbb".to_owned())
+    }
+}
+
+impl From<RgbColor> for String {
+    fn from(color: RgbColor) -> Self {
+        color.token()
+    }
+}
+
+impl schemars::JsonSchema for RgbColor {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("RgbColor")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+        })
+    }
+}
+
 /// A language preference: automatic, or one BCP 47 tag.
 ///
 /// The authority validates the *shape* of a tag and never resolves it: the

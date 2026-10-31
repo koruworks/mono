@@ -223,6 +223,9 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         document_text_size: crate::DocTextSizeSetting::Chosen(
             crate::DocTextSize::new(18).expect("an offered size"),
         ),
+        // And the base colors that follow the theme.
+        base_color_light: crate::RgbColor::new(0xDDE7F6),
+        base_color_dark: crate::RgbColor::new(0x293750),
         global_dictation_enabled: Some(false),
         // Both nullable device-local keys are given a value: an absent one is
         // absent from the file on purpose, and what this test is about is a
@@ -634,6 +637,153 @@ fn a_size_not_offered_reads_as_following_the_default() {
             "{value:?}"
         );
     }
+}
+
+/// Each theme's base color round-trips as lowercase `#rrggbb`, any color and
+/// not only a swatch; following the theme writes no key, so a file that never
+/// chose one is exactly what it was.
+#[test]
+fn a_base_color_round_trips_per_theme_and_only_a_choice_writes_a_key() {
+    use crate::RgbColor;
+    let written = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!written.contains("base_color_"), "{written}");
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(
+        (loaded.base_color_light, loaded.base_color_dark),
+        (None, None)
+    );
+
+    for (light, dark) in [
+        (Some(0xDDE7F6), None),
+        (None, Some(0x293750)),
+        (Some(0x000000), Some(0xFFFFFF)),
+        (Some(0x12AB9F), Some(0x0A0B0C)),
+    ] {
+        let settings = GlobalSettings {
+            base_color_light: light.and_then(RgbColor::new),
+            base_color_dark: dark.and_then(RgbColor::new),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        for (key, rgb) in [("base_color_light", light), ("base_color_dark", dark)] {
+            match rgb {
+                Some(rgb) => assert!(
+                    written.contains(&format!("{key}=#{rgb:06x}\n")),
+                    "{written}"
+                ),
+                None => assert!(!written.contains(&format!("{key}=")), "{written}"),
+            }
+        }
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded, settings);
+    }
+
+    // Read in either case, written in lowercase.
+    let mut loaded = GlobalSettings::default();
+    apply_preferences("version=2\nbase_color_dark=#2A3B4C\n", &mut loaded);
+    assert_eq!(loaded.base_color_dark, RgbColor::new(0x2A3B4C));
+    let written = render_preferences(&loaded, &PreferencesFile::default());
+    assert!(written.contains("base_color_dark=#2a3b4c\n"), "{written}");
+}
+
+/// A value that is not a color reads as following the theme, and costs
+/// nothing else in the file.
+#[test]
+fn a_base_color_that_is_not_a_color_reads_as_following_the_theme() {
+    for value in [
+        "",
+        "#",
+        "blue",
+        "dde7f6",
+        "#dde7f",
+        "#dde7f60",
+        "#ggg000",
+        "#+12345",
+        "# 12345",
+        "#dde7f6ff",
+    ] {
+        let mut loaded = GlobalSettings::default();
+        let file = apply_preferences(
+            &format!(
+                "version=2\ntheme=dark\nbase_color_light={value}\nbase_color_dark={value}\n\
+                 caret_color=blue\ndoc_text_size=18\nemoji_recents=x\n"
+            ),
+            &mut loaded,
+        );
+        assert_eq!(loaded.base_color_light, None, "{value:?}");
+        assert_eq!(loaded.base_color_dark, None, "{value:?}");
+        assert_eq!(loaded.theme, ThemeChoice::Dark, "{value:?}");
+        assert_eq!(loaded.caret_color, CaretColorChoice::parse("blue"));
+        assert_eq!(
+            loaded.document_text_size.chosen().map(|size| size.px()),
+            Some(18)
+        );
+        assert_eq!(
+            file.carried,
+            vec![("emoji_recents".to_owned(), "x".to_owned())],
+            "a bad color is ignored, not carried as somebody else's key"
+        );
+    }
+}
+
+/// A patch sets a base color, clears it back to the theme with `null`, and
+/// leaves it alone when it does not name it; the wire refuses what is not a
+/// color before anything is staged.
+#[test]
+fn a_base_color_patch_sets_clears_and_refuses_what_is_not_a_color() {
+    use crate::{Field, GlobalPatch, RgbColor};
+    let set: GlobalPatch = serde_json::from_str(r##"{"base_color_light":"#DDE7F6"}"##).unwrap();
+    assert_eq!(
+        set.base_color_light,
+        Field::Set(RgbColor::new(0xDDE7F6).unwrap())
+    );
+    assert!(set.base_color_dark.is_unchanged());
+    assert!(set.touches_roaming() && !set.touches_device());
+    let mut settings = GlobalSettings {
+        base_color_dark: RgbColor::new(0x293750),
+        ..GlobalSettings::default()
+    };
+    set.apply(&mut settings);
+    assert_eq!(settings.base_color_light, RgbColor::new(0xDDE7F6));
+    assert_eq!(
+        settings.base_color_dark,
+        RgbColor::new(0x293750),
+        "untouched"
+    );
+    assert_eq!(
+        serde_json::to_value(&settings).unwrap()["base_color_light"],
+        "#dde7f6"
+    );
+
+    let clear: GlobalPatch = serde_json::from_str(r#"{"base_color_dark":null}"#).unwrap();
+    assert_eq!(clear.base_color_dark, Field::Clear);
+    assert!(clear.touches_roaming());
+    clear.apply(&mut settings);
+    assert_eq!(settings.base_color_dark, None);
+    assert_eq!(settings.base_color_light, RgbColor::new(0xDDE7F6));
+
+    for bad in [
+        r#""blue""#,
+        r##""#12345""##,
+        r#""dde7f6""#,
+        "13",
+        r#"["1"]"#,
+    ] {
+        let json = format!(r#"{{"base_color_light":{bad}}}"#);
+        assert!(
+            serde_json::from_str::<GlobalPatch>(&json).is_err(),
+            "{bad} is refused"
+        );
+    }
+    // A section written before the keys existed still reads.
+    let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
+    let object = json.as_object_mut().unwrap();
+    object.remove("base_color_light");
+    object.remove("base_color_dark");
+    let old: GlobalSettings = serde_json::from_value(json).unwrap();
+    assert_eq!((old.base_color_light, old.base_color_dark), (None, None));
 }
 
 /// The wire takes the seven sizes and nothing else, and the generated schema

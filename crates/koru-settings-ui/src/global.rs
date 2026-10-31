@@ -200,7 +200,6 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     );
 }
 
-/// One font role: a dropdown of every family, each set in its own face.
 /// The base colour for one theme: the theme's own first, then the tints
 /// offered for that theme. Each theme keeps its own; neither is derived from
 /// the other.
@@ -258,6 +257,7 @@ fn doc_size_row(b: &mut Builder<'_>, lang: Lang) {
     );
 }
 
+/// One font role: a dropdown of every family, each set in its own face.
 fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
     let current = role.current();
     // An installed family set for this role but not installed here: the

@@ -16,9 +16,9 @@ use crate::values::{
     AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
     DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting, GlobalShortcut,
-    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, TerminalCursorBlink,
-    TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
-    validate_endpoint, validate_model, validate_skin_tone,
+    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, RgbColor,
+    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
+    Zoom, validate_endpoint, validate_model, validate_skin_tone,
 };
 
 #[cfg(test)]
@@ -118,6 +118,15 @@ pub struct GlobalSettings {
     /// The document body size. Follows the build's default until chosen.
     #[serde(default)]
     pub document_text_size: DocTextSizeSetting,
+    /// The window's base color — the frame around the panes — for the light
+    /// theme, as `#rrggbb`. `null` follows the theme, now and later, and is
+    /// persisted as no key, like a font role that follows the app.
+    #[serde(default)]
+    pub base_color_light: Option<RgbColor>,
+    /// The same for the dark theme. Each theme keeps its own; neither is
+    /// derived from the other.
+    #[serde(default)]
+    pub base_color_dark: Option<RgbColor>,
     pub density: DensityChoice,
     pub zoom: Zoom,
     pub default_view_mode: ViewModeChoice,
@@ -176,6 +185,8 @@ impl Default for GlobalSettings {
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
             document_text_size: DocTextSizeSetting::FollowDefault,
+            base_color_light: None,
+            base_color_dark: None,
             density: DensityChoice::default(),
             zoom: Zoom::default(),
             default_view_mode: ViewModeChoice::default(),
@@ -237,6 +248,15 @@ pub struct GlobalPatch {
     pub code_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_text_size: Option<DocTextSizeSetting>,
+    /// `#rrggbb` sets the light theme's base color; `null` puts the theme's
+    /// own back. Settings offers that as its first swatch, so unlike the text
+    /// size this choice can be taken back — which is why this is a [`Field`]
+    /// and not an `Option`.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub base_color_light: Field<RgbColor>,
+    /// The same for the dark theme.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub base_color_dark: Field<RgbColor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub density: Option<DensityChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,6 +326,8 @@ impl GlobalPatch {
             || self.headings_font.is_some()
             || self.code_font.is_some()
             || self.document_text_size.is_some()
+            || !self.base_color_light.is_unchanged()
+            || !self.base_color_dark.is_unchanged()
             || self.density.is_some()
             || self.zoom.is_some()
             || self.default_view_mode.is_some()
@@ -459,6 +481,8 @@ impl GlobalPatch {
             reminder_start_on_login_explained,
             automatic_update_checks,
         );
+        self.base_color_light.apply(&mut current.base_color_light);
+        self.base_color_dark.apply(&mut current.base_color_dark);
         if let Some(zoom) = self.zoom.and_then(Zoom::new) {
             current.zoom = zoom;
         }

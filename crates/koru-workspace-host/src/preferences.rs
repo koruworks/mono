@@ -16,8 +16,9 @@
 use koru_draw::theme::{CaretColor, CaretHeight, CaretWidth, Density, ThemePreference, ViewMode};
 use koru_settings::{
     CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice,
-    DictationGesture, DictationInput, DictationLanguage, DictationTier, FontSetting, GlobalPatch,
-    GlobalSettings, LanguageChoice, PopoutCloseChoice, ThemeChoice, ViewModeChoice,
+    DictationGesture, DictationInput, DictationLanguage, DictationTier, Field, FontSetting,
+    GlobalPatch, GlobalSettings, LanguageChoice, PopoutCloseChoice, RgbColor, ThemeChoice,
+    ViewModeChoice,
 };
 
 use crate::settings::Settings;
@@ -45,6 +46,8 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     into.headings_font = section.headings_font.clone();
     into.code_font = section.code_font.clone();
     into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
+    into.base_color_light = section.base_color_light.map(RgbColor::rgb);
+    into.base_color_dark = section.base_color_dark.map(RgbColor::rgb);
     into.density = Density::parse(section.density.token());
     into.zoom = section.zoom.get();
     into.view_mode = view_mode_of(section.default_view_mode);
@@ -130,6 +133,26 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
         .and_then(koru_settings::DocTextSize::new);
     if size.is_some() && size != authoritative.document_text_size.chosen() {
         patch.document_text_size = size.map(koru_settings::DocTextSizeSetting::Chosen);
+    }
+    // **Unlike the size, a base color can be taken back**: the theme's own
+    // swatch comes first in the row, so going back to the theme is a change
+    // and is sent as a clear.
+    for (chosen, stored, slot) in [
+        (
+            settings.base_color_light,
+            authoritative.base_color_light,
+            &mut patch.base_color_light,
+        ),
+        (
+            settings.base_color_dark,
+            authoritative.base_color_dark,
+            &mut patch.base_color_dark,
+        ),
+    ] {
+        let chosen = chosen.and_then(RgbColor::new);
+        if chosen != stored {
+            *slot = chosen.map_or(Field::Clear, Field::Set);
+        }
     }
     let density = koru_settings::DensityChoice::parse(settings.density.key());
     if density != authoritative.density {
@@ -248,6 +271,7 @@ type Preferences = (
         koru_voice::InputChoice,
     ),
     (bool, Option<koru_spell::SpellLang>),
+    (Option<u32>, Option<u32>),
 );
 
 fn snapshot(settings: &Settings) -> Preferences {
@@ -285,6 +309,7 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.dictation_input.clone(),
         ),
         (settings.spellcheck_enabled, settings.spellcheck_language),
+        (settings.base_color_light, settings.base_color_dark),
     )
 }
 

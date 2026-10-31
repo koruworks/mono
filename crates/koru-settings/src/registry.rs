@@ -181,6 +181,27 @@ pub const REGISTRY: &[SettingSpec] = &[
               (16).",
     },
     SettingSpec {
+        field: "base_color_light",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The window's base color — the rail, header, side lanes and foot — in the \
+              light theme, written as `base_color_light=#rrggbb`. Any `#rrggbb`, not only \
+              the swatches offered. Absent, or `null` in a patch, follows the theme.",
+    },
+    SettingSpec {
+        field: "base_color_dark",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The window's base color in the dark theme, written as \
+              `base_color_dark=#rrggbb`. Kept apart from the light one: a tint that sits \
+              well on light is wrong on dark. Absent, or `null` in a patch, follows the \
+              theme.",
+    },
+    SettingSpec {
         field: "zoom",
         section: Section::Global,
         storage: StorageClass::Roaming,

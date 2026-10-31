@@ -880,6 +880,11 @@ pub struct Settings {
     /// The document body size the person chose, in px, or `None` while it
     /// follows the default. Documents only; the app's own text has density.
     pub doc_text_size: Option<u8>,
+    /// The window's base color — the frame around the panes — chosen for the
+    /// light theme, as `0xRRGGBB`, or `None` while it follows the theme.
+    pub base_color_light: Option<u32>,
+    /// The same for the dark theme.
+    pub base_color_dark: Option<u32>,
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
@@ -1107,6 +1112,8 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) headings_font: FontSetting,
     pub(crate) code_font: FontSetting,
     pub(crate) doc_text_size: Option<u8>,
+    pub(crate) base_color_light: Option<u32>,
+    pub(crate) base_color_dark: Option<u32>,
     pub(crate) density: Density,
     pub(crate) dictation_toggle: bool,
     pub(crate) dictation_language: Requested,
@@ -1151,6 +1158,8 @@ impl PreIdentitySettings {
             headings_font: self.values.headings_font.clone(),
             code_font: self.values.code_font.clone(),
             doc_text_size: self.values.doc_text_size,
+            base_color_light: self.values.base_color_light,
+            base_color_dark: self.values.base_color_dark,
             density: self.values.density,
             dictation_toggle: self.values.dictation_toggle,
             dictation_language: self.values.dictation_language,
@@ -1327,6 +1336,8 @@ impl Default for Settings {
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
             doc_text_size: None,
+            base_color_light: None,
+            base_color_dark: None,
             density: Density::default(),
             dictation_toggle: false,
             dictation_language: Requested::Auto,
