@@ -2018,6 +2018,15 @@ impl ChatSurface {
                 destinations,
                 destination_error,
             } => {
+                // A tab opened for a new chat does not take the service's
+                // current chat from the boot either — the last one used —
+                // the same rule `HistoryChanged` keeps below. The chat it
+                // asked for is created once the provider validates.
+                let transcript = if self.fresh_chat_wanted {
+                    None
+                } else {
+                    transcript
+                };
                 self.waiting = false;
                 self.apply_settings_fields(&settings);
                 self.setup_provider = selected_setup_provider(&settings);
@@ -7813,6 +7822,44 @@ mod tests {
             }
             _ => panic!("composer send must issue a turn"),
         }
+    }
+
+    /// **New chat opens a new chat, not the last one.** The boot is the
+    /// first answer a fresh tab gets, and it carries the service's current
+    /// chat; a tab that asked for a new chat drops it there too.
+    #[test]
+    fn a_new_chat_tab_does_not_take_the_last_chat_from_the_boot() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        assert!(surface.start_new_chat());
+        let last = transcript();
+        surface.apply_update(Update::Boot {
+            settings: ProviderSettingsResponse {
+                selected_provider: Some(AiProviderId::parse("openai").unwrap()),
+                openai: koru_ai_wire::OpenAiSettingsView {
+                    model: Some("gpt-5.1".into()),
+                    reasoning: ReasoningChoice::Default,
+                    credential_configured: true,
+                },
+                ollama: koru_ai_wire::OllamaSettingsView {
+                    endpoint: "http://localhost:11434".into(),
+                    model: None,
+                    reasoning: ReasoningChoice::Default,
+                },
+                agents: Vec::new(),
+            },
+            chats: vec![last.chat.clone()],
+            transcript: Some(last.clone()),
+            destinations: Vec::new(),
+            destination_error: None,
+        });
+        assert!(
+            surface.transcript.is_none(),
+            "the last chat is not this tab's"
+        );
+        assert!(surface.fresh_chat_wanted, "the new chat is still owed");
+        assert_eq!(surface.chats.len(), 1, "the list is still the list");
     }
 
     /// **A tab opened for a new chat gets one** (the CTO's note): the boot
