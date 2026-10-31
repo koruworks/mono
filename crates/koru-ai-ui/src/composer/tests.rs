@@ -243,18 +243,27 @@ fn the_composer_grows_line_by_line_and_stops_at_the_cap() {
     assert!((capped - eight).abs() < 0.5, "{capped} vs {eight}");
 }
 
-/// **The chat is not a document.** Its editor's body is pinned at the base
-/// size, so neither the document size nor a preview of one reaches it.
+/// **The chat is not a document.** Its editor is set in the app's font and
+/// size, like the messages above it, so no document font, size or preview of
+/// one reaches it.
 #[test]
-fn the_composer_is_pinned_at_the_base_size() {
+fn the_composer_is_set_in_the_apps_face() {
+    use koru_draw::theme;
     let composer = ChatComposer::new(None);
+    assert_eq!(composer.editor.body.text_scale, koru_editor::TextScale::Ui);
+    let metrics = composer.editor.body.metrics();
+    assert_eq!(metrics, theme::DocMetrics::ui());
+    assert_eq!(metrics.face, theme::TextFace::Ui);
     assert_eq!(
-        composer.editor.body.text_scale,
-        koru_editor::TextScale::Fixed(1.0)
+        metrics.scale * theme::FONT_SIZE,
+        theme::role::ui().metrics.size,
+        "the app's text size"
     );
+    let row = composer.editor.body.first_body_row();
     assert_eq!(
-        composer.editor.body.metrics(),
-        koru_draw::theme::DocMetrics::BASE
+        composer.editor.body.rows[row].font_choice(),
+        theme::ui_font(),
+        "the app font, not the document body font"
     );
-    assert_eq!(line_height(), crate::CHAT_LINE_HEIGHT);
+    assert_eq!(line_height(), crate::chat_line_height());
 }

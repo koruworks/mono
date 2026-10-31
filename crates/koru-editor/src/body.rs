@@ -238,20 +238,24 @@ pub enum TextScale {
     Follow,
     /// This factor of the base ramp, whatever the setting says.
     Fixed(f32),
+    /// The app's own text — its font and size, following density — for an
+    /// editor that is part of the app, not a document: the chat composer.
+    Ui,
 }
 
 impl Body {
     /// The factor this body's text is set at now.
     pub fn scale(&self) -> f32 {
-        match self.text_scale {
-            TextScale::Follow => theme::doc_scale(),
-            TextScale::Fixed(scale) => scale,
-        }
+        self.metrics().scale
     }
 
     /// The document measurements at this body's [`scale`](Self::scale).
     pub fn metrics(&self) -> theme::DocMetrics {
-        theme::DocMetrics::at(self.scale())
+        match self.text_scale {
+            TextScale::Follow => theme::DocMetrics::at(theme::doc_scale()),
+            TextScale::Fixed(scale) => theme::DocMetrics::at(scale),
+            TextScale::Ui => theme::DocMetrics::ui(),
+        }
     }
 
     /// Hand every row this body's metrics. A row laid out at another scale is

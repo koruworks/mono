@@ -2219,6 +2219,16 @@ pub fn doc_scale() -> f32 {
 
 /// The document measurements that grow with its text.
 ///
+/// Whose font an editor's text is set in.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum TextFace {
+    /// The document font roles: body, headings, code.
+    #[default]
+    Document,
+    /// The app font ([`ui_font`]); a code block keeps the code font.
+    Ui,
+}
+
 /// The checkbox and its column, a bullet, the gap after a list marker, a code
 /// block's padding, the `+` affordance's glyph and a body line: what the eye
 /// reads as part of the text. The page's own geometry — the margins, the
@@ -2231,6 +2241,8 @@ pub fn doc_scale() -> f32 {
 pub struct DocMetrics {
     /// The body size over [`FONT_SIZE`].
     pub scale: f32,
+    /// Whose font the text is set in: the document's, or the app's.
+    pub face: TextFace,
     pub checkbox: f32,
     /// Checkbox column to text column, [`GUTTER`] at the base size.
     pub gutter: f32,
@@ -2253,6 +2265,7 @@ impl DocMetrics {
     pub const fn at(scale: f32) -> Self {
         Self {
             scale,
+            face: TextFace::Document,
             checkbox: CHECKBOX_SIZE * scale,
             gutter: GUTTER * scale,
             bullet_r: BULLET_R * scale,
@@ -2262,6 +2275,17 @@ impl DocMetrics {
             glyph: FONT_SIZE * scale,
             line: FONT_SIZE * LINE_HEIGHT * scale,
             title_gap: TITLE_GAP_BELOW * scale,
+        }
+    }
+
+    /// **The app's own text**, for an editor that is part of the app rather
+    /// than a document — the chat composer: the app font, at the size the
+    /// app's text is set at for the current density ([`role::ui`]), so what
+    /// is typed reads like the messages above it.
+    pub fn ui() -> Self {
+        Self {
+            face: TextFace::Ui,
+            ..Self::at(role::ui().metrics.size / FONT_SIZE)
         }
     }
 

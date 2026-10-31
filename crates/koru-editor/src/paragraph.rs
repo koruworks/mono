@@ -388,10 +388,13 @@ impl Paragraph {
     /// document font roles: a code block uses the code font, a heading the
     /// headings font, and everything else the body font. Read live from the
     /// globals, so a role change re-shapes every row once the body is
-    /// invalidated.
+    /// invalidated. An editor set in the app's face ([`theme::TextFace::Ui`],
+    /// the chat composer) uses the app font for all but code.
     pub fn font_choice(&self) -> FontChoice {
         if self.kind == Kind::Code {
             theme::code_font()
+        } else if self.metrics.face == theme::TextFace::Ui {
+            theme::ui_font()
         } else if self.level().is_some() {
             theme::headings_font()
         } else {

@@ -72,10 +72,10 @@ fn side() -> f32 {
 
 /// One line of body text, the unit the composer grows by.
 ///
-/// The composer's body is pinned at the base size ([`fresh`]), so its box and
+/// The composer's body is set in the app's face ([`fresh`]), so its box and
 /// its text are measured from the same number whatever the document size is.
 fn line_height() -> f32 {
-    crate::CHAT_LINE_HEIGHT
+    crate::chat_line_height()
 }
 
 /// What a composed message is at send.
@@ -627,9 +627,10 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     .expect("a paragraph in a fresh document");
     ws.enable_undo();
     let mut editor = Editor::rooted_at(&ws, root, true);
-    // A chat message is not a document: the document text size does not
-    // reach it, and neither does a preview of one.
-    editor.body.text_scale = koru_editor::TextScale::Fixed(1.0);
+    // A chat message is not a document: it is set in the app's font and
+    // size, like the messages above it, and no document font, size or
+    // preview of one reaches it.
+    editor.body.text_scale = koru_editor::TextScale::Ui;
     editor.body.title_row = false;
     editor.body.rebuild(&ws);
     editor.view.apply_policy(Policy::Composer);
