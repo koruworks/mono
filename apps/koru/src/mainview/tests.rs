@@ -13630,9 +13630,9 @@ fn an_invalidation_reaches_the_document_in_another_pane_group() {
     );
 }
 
-/// **Settings moves to the other tab group like any tab.** Torn off its strip
-/// it becomes a cross-group drag, and dropped on the other group it lands
-/// there; only a document may leave the window.
+/// **Settings and Welcome move to the other tab group like any tab.** Torn
+/// off its strip a tab becomes a cross-group drag, and dropped on the other
+/// group it lands there; only a document may leave the window.
 #[test]
 fn the_settings_tab_can_be_carried_to_another_group() {
     use crate::mainview::panes::{PanePath, SplitDir};
@@ -13659,7 +13659,7 @@ fn the_settings_tab_can_be_carried_to_another_group() {
         .iter()
         .position(|t| matches!(t.view, TabView::Welcome(_)));
     if let Some(welcome) = welcome {
-        assert!(!v.is_pane_draggable(welcome), "the placeholder stays");
+        assert!(v.is_pane_draggable(welcome), "Welcome moves too");
     }
     let id = v.tabs().get(settings).expect("a tab").id;
     let tab = v

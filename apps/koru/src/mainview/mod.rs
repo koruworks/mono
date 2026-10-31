@@ -3871,15 +3871,12 @@ impl MainView {
     /// Whether tab `i` can be carried to another tab group, or split off
     /// into a new one.
     ///
-    /// **Every tab but the placeholder.** Settings, Home, Tasks and the other
-    /// pages are tabs like a document's and belong wherever the person puts
-    /// them; only the empty Welcome placeholder has no reason to travel.
+    /// **Every tab.** Welcome, Settings, Home, Tasks and the other pages are
+    /// tabs like a document's and belong wherever the person puts them.
     /// Leaving the *window* is a separate rule — only a document pops out
     /// ([`pane_drag_poppable`](Self::pane_drag_poppable)).
     fn is_pane_draggable(&self, i: usize) -> bool {
-        self.tabs()
-            .get(i)
-            .is_some_and(|t| !matches!(t.view, TabView::Welcome(_)))
+        self.tabs().get(i).is_some()
     }
 
     /// Whether the tab a cross-pane drag is carrying can pop out. Looked up in
