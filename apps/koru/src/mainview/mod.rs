@@ -3854,10 +3854,32 @@ impl MainView {
     /// another group, or split out. Documents can also leave the window
     /// entirely (`is_poppable`); shell and agent tabs are views over live
     /// state, so they move and split but never pop out.
+    /// Whether a carried tab has left its own strip: pulled down (or up) off
+    /// it, or — when there is another group to go to — out past either end,
+    /// which is where the next group's strip is when two groups sit side by
+    /// side. With one group a sideways drag stays a reorder: there is nowhere
+    /// out there to drop it.
+    fn torn_off(&self, d: &panes::TabDrag) -> bool {
+        if (d.y - d.origin_y).abs() >= panes::TEAR_OFF_PX {
+            return true;
+        }
+        let strip = self.strip();
+        let sideways = d.x < strip.x || d.x > strip.x + strip.w;
+        sideways && self.panes.leaf_rects(self.content()).len() > 1
+    }
+
+    /// Whether tab `i` can be carried to another tab group, or split off
+    /// into a new one.
+    ///
+    /// **Every tab but the placeholder.** Settings, Home, Tasks and the other
+    /// pages are tabs like a document's and belong wherever the person puts
+    /// them; only the empty Welcome placeholder has no reason to travel.
+    /// Leaving the *window* is a separate rule — only a document pops out
+    /// ([`pane_drag_poppable`](Self::pane_drag_poppable)).
     fn is_pane_draggable(&self, i: usize) -> bool {
-        self.tabs().get(i).is_some_and(|t| {
-            t.view.root().is_some() || matches!(t.view, TabView::Session(_) | TabView::AiChat(_))
-        })
+        self.tabs()
+            .get(i)
+            .is_some_and(|t| !matches!(t.view, TabView::Welcome(_)))
     }
 
     /// Whether the tab a cross-pane drag is carrying can pop out. Looked up in
@@ -7223,9 +7245,10 @@ impl MainView {
     /// loose for a move or a split but have nowhere to pop out *to*.
     fn drag_tearing(&self) -> bool {
         self.pane_drag.is_some()
-            || self.group_drag().as_ref().is_some_and(|d| {
-                self.is_pane_draggable(d.index) && (d.y - d.origin_y).abs() >= panes::TEAR_OFF_PX
-            })
+            || self
+                .group_drag()
+                .as_ref()
+                .is_some_and(|d| self.is_pane_draggable(d.index) && self.torn_off(d))
     }
 
     /// Which tab the pointer is carrying, and how far from its slot it is being
@@ -16071,9 +16094,11 @@ impl MainView {
             // Once a draggable tab has torn far enough off its strip, switch to
             // the cross-pane drag mode that can split or — documents only —
             // pop out.
-            if self.group_drag().as_ref().is_some_and(|d| {
-                self.is_pane_draggable(d.index) && (d.y - d.origin_y).abs() >= panes::TEAR_OFF_PX
-            }) {
+            if self
+                .group_drag()
+                .as_ref()
+                .is_some_and(|d| self.is_pane_draggable(d.index) && self.torn_off(d))
+            {
                 if let Some(d) = self.group_drag().clone() {
                     let source = self.panes.focused_path().clone();
                     let tab_id = self.tabs().get(d.index).map(|t| t.id);

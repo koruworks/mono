@@ -13629,3 +13629,53 @@ fn an_invalidation_reaches_the_document_in_another_pane_group() {
         "the document beside the focused group lays out again"
     );
 }
+
+/// **Settings moves to the other tab group like any tab.** Torn off its strip
+/// it becomes a cross-group drag, and dropped on the other group it lands
+/// there; only a document may leave the window.
+#[test]
+fn the_settings_tab_can_be_carried_to_another_group() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let active = v.tabs().active_tab().id;
+    let doc = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), active)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, doc);
+    v.panes.set_focus(PanePath::root().child(0));
+    v.tabs_mut().push(crate::mainview::tab::Tab::settings());
+    let settings = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Settings(_)))
+        .expect("the Settings tab");
+    assert!(
+        v.is_pane_draggable(settings),
+        "Settings can leave its group"
+    );
+    let welcome = v
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.view, TabView::Welcome(_)));
+    if let Some(welcome) = welcome {
+        assert!(!v.is_pane_draggable(welcome), "the placeholder stays");
+    }
+    let id = v.tabs().get(settings).expect("a tab").id;
+    let tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root().child(0), id)
+        .expect("took Settings");
+    assert!(
+        !tab.view.pops_out(),
+        "and only a document leaves the window"
+    );
+    v.panes.insert_into_group(&PanePath::root().child(1), tab);
+    assert!(
+        v.panes
+            .group(&PanePath::root().child(1))
+            .expect("the right group")
+            .iter_tabs()
+            .any(|t| matches!(t.view, TabView::Settings(_)))
+    );
+}
