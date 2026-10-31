@@ -4435,6 +4435,9 @@ impl MainView {
                         | MenuAction::WindowResetPosition
                 ),
             },
+            // The page's `…`: opening it in a chat needs nothing but Koru AI,
+            // which `shown_in_product` already answers.
+            MenuSubject::Document { .. } => matches!(action, MenuAction::OpenInChat),
         }
     }
 
@@ -4957,7 +4960,29 @@ impl MainView {
                 MenuAction::WindowArrange => false,
                 _ => false,
             },
+            MenuSubject::Document { document, title } => match action {
+                MenuAction::OpenInChat => self.open_document_in_chat(document, title),
+                _ => false,
+            },
         }
+    }
+
+    /// **Open in chat**, from a page's `…`: a new Koru AI chat in a split
+    /// to the right of the document's pane, the document already a chip in
+    /// its composer, as `@` would put it there. The new pane takes the
+    /// focus, so typing goes to the chat; the page stays open beside it.
+    fn open_document_in_chat(&mut self, document: koru_core::DocumentId, title: String) -> bool {
+        if !koru_features::ai() {
+            return false;
+        }
+        let document = koru_store_core::DocumentId::from_uuid(document.as_uuid());
+        let tab = Tab::ai_chat_on_document(document, title);
+        let beside = self.panes.focused_path().clone();
+        self.panes.split(&beside, panes::SplitDir::Right, tab);
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.slides_mut().clear();
+        true
     }
 
     /// Open the window-menu button's menu, hanging from the button's bottom edge.
@@ -8927,10 +8952,15 @@ impl MainView {
             // opens the panel that owns them.
             // A tab of its own, beside Settings — not the side panel, which
             // is for chatting next to a document.
+            //
+            // **For now it opens a chat, not the setup**, which nothing
+            // opens ([`koru_ai_ui::ChatSurface::open_setup`]): the model is
+            // chosen in the chat's composer, so a fresh chat is where
+            // setting Koru AI up starts. `Tab::ai_setup` is the door back.
             Request::OpenAiSetup if !koru_features::ai() => {}
             Request::OpenAiSetup => {
                 self.record_jump();
-                self.tabs_mut().push(Tab::ai_setup());
+                self.tabs_mut().push(Tab::ai_chat());
                 self.slides_mut().clear();
                 self.mark_tab_widths_stale();
                 self.size_visible_groups();

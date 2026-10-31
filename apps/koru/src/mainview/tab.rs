@@ -1139,8 +1139,18 @@ impl Tab {
     }
 
     /// A Koru AI tab opened on its provider setup.
+    ///
+    /// Dormant: nothing opens the setup for now, and *Open Koru AI setup…*
+    /// opens [`Self::ai_chat`] instead. Kept so turning it back on is one line.
+    #[allow(dead_code)]
     pub fn ai_setup() -> Self {
         Self::ai_chat_view(AiChatView::setup())
+    }
+
+    /// A Koru AI chat tab on a fresh chat that starts with `document` as a
+    /// chip in its composer — the page's `…` → *Open in chat*.
+    pub fn ai_chat_on_document(document: koru_store_core::DocumentId, title: String) -> Self {
+        Self::ai_chat_view(AiChatView::on_document(document, title))
     }
 
     /// A Koru AI chat tab seated on an existing conversation.

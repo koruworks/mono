@@ -13159,10 +13159,11 @@ fn a_peer_import_does_the_windows_housekeeping_once_and_the_containers_not_at_al
 
 mod task_queue_focus;
 
-/// Settings' *Open Koru AI setup…* opens a tab on the provider setup, not the
-/// side panel.
+/// Settings' and Welcome's *Open Koru AI setup…* opens a tab, not the side
+/// panel — and, while the setup is dormant, a chat rather than the setup:
+/// the model is chosen in the chat's composer now.
 #[test]
-fn opening_ai_setup_from_settings_is_a_tab_not_the_side_panel() {
+fn opening_ai_setup_from_settings_is_a_chat_tab_not_the_setup() {
     let (mut v, _workspace) = container();
     let before = v.tabs().len();
     let panel_was = v.ai_visible();
@@ -13171,7 +13172,56 @@ fn opening_ai_setup_from_settings_is_a_tab_not_the_side_panel() {
     let TabView::AiChat(chat) = &v.tabs().active_tab().view else {
         panic!("an AI tab is showing");
     };
-    assert!(chat.setup_open(), "it opens on the provider setup");
+    assert!(!chat.setup_open(), "no door opens the provider setup");
+    assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
+}
+
+/// **The page's `…` replaces the ✦.** It opens a menu whose one row,
+/// *Open in chat*, puts a new chat in a split beside the document with the
+/// document already a chip in its composer; the side panel is not touched.
+#[test]
+fn a_documents_more_menu_opens_it_in_a_chat_beside_it() {
+    let (mut v, _workspace) = on_document();
+    // In-memory tabs carry no `DocumentId`; a Store document's tab does.
+    let document = koru_core::DocumentId::new();
+    let i = v.tabs().active();
+    v.tabs_mut()
+        .get_mut(i)
+        .expect("the document's tab")
+        .document = Some(document);
+    let groups_before = v.panes.iter_groups().count();
+    let panel_was = v.ai_visible();
+
+    let button = v.document_ai_button().expect("a document has its `…`");
+    assert_eq!(button.glyph(), koru_draw::icons::DOTS_THREE, "a `…`, no ✦");
+    let rect = button.rect();
+    assert!(v.open_document_menu(rect));
+    let menu = v.menu.as_ref().expect("the menu is open");
+    let MenuSubject::Document {
+        document: subject, ..
+    } = &menu.subject
+    else {
+        panic!("the page's menu: {:?}", menu.subject);
+    };
+    assert_eq!(*subject, document, "about the page it opened over");
+    assert_eq!(menu.items(), &[MenuAction::OpenInChat][..]);
+    let subject = menu.subject.clone();
+    v.menu = None;
+
+    assert!(v.run_menu_action_for_test(subject, MenuAction::OpenInChat));
+    assert_eq!(
+        v.panes.iter_groups().count(),
+        groups_before + 1,
+        "a split, not a tab"
+    );
+    let TabView::AiChat(chat) = &mut v.tabs_mut().active_mut().view else {
+        panic!("the new pane shows a chat");
+    };
+    let text = chat.composer_text();
+    assert!(
+        text.contains(&koru_link::document_link(document.as_uuid(), None)),
+        "the document is a chip in the composer: {text:?}"
+    );
     assert_eq!(v.ai_visible(), panel_was, "the side panel did not move");
 }
 

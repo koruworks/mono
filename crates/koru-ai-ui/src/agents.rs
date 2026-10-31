@@ -80,6 +80,10 @@ impl AgentStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PickerRow {
     Model(String),
+    /// A built-in provider — Koru AI, OpenAI, Ollama — to start the chat on,
+    /// offered while it has no message yet. Its model is the one it offers
+    /// once asked ([`crate::ChatSurface::pick_provider`]).
+    Provider(AiProviderId),
     Header,
     Agent(AiProviderId),
     /// One of an agent's model groups, when it has more than one.
@@ -99,7 +103,9 @@ pub(crate) enum PickerRow {
 impl PickerRow {
     pub(crate) fn selectable(&self, status: &HashMap<AiProviderId, AgentStatus>) -> bool {
         match self {
-            Self::Model(_) | Self::Group { .. } | Self::AgentModel { .. } => true,
+            Self::Model(_) | Self::Provider(_) | Self::Group { .. } | Self::AgentModel { .. } => {
+                true
+            }
             Self::Header | Self::Note(_) => false,
             Self::Agent(id) => status.get(id).is_some_and(|status| status.selectable()),
         }
@@ -290,6 +296,17 @@ pub(crate) fn agent_label(agents: &[AgentProviderView], provider: &AiProviderId)
         .find(|agent| &agent.id == provider)
         .map(|agent| agent.label.clone())
         .unwrap_or_else(|| provider.as_str().to_owned())
+}
+
+/// A built-in provider's row in the picker: Koru AI by its catalog name,
+/// OpenAI and Ollama by theirs, which are brands and not translated.
+pub(crate) fn provider_label(provider: &AiProviderId, lang: Lang) -> String {
+    match provider.as_str() {
+        AiProviderId::KORU => t(lang, Key::AiKoruProvider).to_owned(),
+        AiProviderId::OPENAI => "OpenAI".to_owned(),
+        AiProviderId::OLLAMA => "Ollama".to_owned(),
+        other => other.to_owned(),
+    }
 }
 
 /// Whether a durable row is a local agent's, and so reads by kind and
@@ -787,7 +804,9 @@ impl crate::ChatSurface {
     }
 
     /// The picker's rows: the chat's provider's models, and — while the chat
-    /// has no message yet — every local agent with its readiness word.
+    /// has no message yet, or there is no chat yet — the other built-in
+    /// providers and every local agent with its readiness word. With the
+    /// setup dormant this is where a provider is chosen.
     pub(crate) fn chat_model_rows(&self) -> Vec<PickerRow> {
         let mut rows: Vec<PickerRow> = self
             .chat_model_options()
@@ -799,7 +818,11 @@ impl crate::ChatSurface {
             .as_ref()
             .map(|settings| settings.agents.as_slice())
             .unwrap_or_default();
-        if !agents.is_empty() && chat_is_empty(self.transcript.as_ref()) {
+        let open = self.transcript.is_none() || chat_is_empty(self.transcript.as_ref());
+        if open {
+            rows.extend(self.picker_providers().into_iter().map(PickerRow::Provider));
+        }
+        if !agents.is_empty() && open {
             rows.push(PickerRow::Header);
             for agent in agents {
                 rows.push(PickerRow::Agent(agent.id.clone()));
@@ -809,6 +832,31 @@ impl crate::ChatSurface {
             }
         }
         rows
+    }
+
+    /// The built-in providers the picker offers to start on, the chat's own
+    /// left out (its models are the rows above). OpenAI only with a saved
+    /// key: the key was entered in the setup, which nothing opens for now, so
+    /// without one the row could only ever say it cannot start.
+    fn picker_providers(&self) -> Vec<AiProviderId> {
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| &transcript.chat.current_model.provider);
+        let keyed = self
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.openai.credential_configured);
+        [
+            AiProviderId::KORU,
+            AiProviderId::OPENAI,
+            AiProviderId::OLLAMA,
+        ]
+        .into_iter()
+        .filter(|id| *id != AiProviderId::OPENAI || keyed)
+        .filter_map(|id| AiProviderId::parse(id).ok())
+        .filter(|id| Some(id) != current)
+        .collect()
     }
 
     /// Under an expanded agent: the *Default* row first — the agent's own
@@ -878,6 +926,13 @@ impl crate::ChatSurface {
                 dim: false,
                 current: current_provider.is_some_and(|provider| !is_agent_provider(provider))
                     && current_model == model,
+                trailing: Trailing::None,
+            },
+            PickerRow::Provider(provider) => PickerRowView {
+                label: provider_label(provider, self.lang),
+                level: 0,
+                dim: false,
+                current: current_provider == Some(provider),
                 trailing: Trailing::None,
             },
             PickerRow::Header => PickerRowView {
@@ -979,6 +1034,10 @@ impl crate::ChatSurface {
                 self.close_picker();
                 self.change_chat_model(model)
             }
+            PickerRow::Provider(provider) => {
+                self.close_picker();
+                self.pick_provider(provider)
+            }
             PickerRow::Header | PickerRow::Note(_) => true,
             PickerRow::Agent(agent) => {
                 let caret_end = self
@@ -1006,7 +1065,7 @@ impl crate::ChatSurface {
         }
     }
 
-    fn close_picker(&mut self) {
+    pub(crate) fn close_picker(&mut self) {
         self.chat_model_open = false;
         self.chat_model_scroll_drag = None;
     }
@@ -1115,29 +1174,26 @@ impl crate::ChatSurface {
     }
 
     /// Make a local agent the one who answers this chat, on the model
-    /// named or its own default. Only offered on a chat with no message
-    /// yet, and only for an agent that is ready.
+    /// named or its own default — or, with no chat yet, the one a new chat
+    /// is made with. Only offered on a chat with no message yet, and only
+    /// for an agent that is ready.
     pub(crate) fn choose_agent_model(
         &mut self,
         agent: AiProviderId,
         requested_model: String,
     ) -> bool {
-        let Some(transcript) = &self.transcript else {
-            return false;
-        };
-        if !chat_is_empty(Some(transcript)) {
+        if self
+            .transcript
+            .as_ref()
+            .is_some_and(|transcript| !chat_is_empty(Some(transcript)))
+        {
             return true;
         }
-        let model = koru_ai_core::ModelSelection {
+        self.start_chat_on(koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,
             default_reasoning: koru_ai_core::ReasoningChoice::Default,
-        };
-        self.web_search_armed = false;
-        self.send_command(crate::reader::Command::UpdateModel(
-            transcript.chat.id,
-            koru_ai_wire::UpdateChatModelRequest { model },
-        ))
+        })
     }
 
     /// Answer an agent's permission request by the choice clicked.

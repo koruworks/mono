@@ -154,6 +154,14 @@ pub enum MenuSubject {
     /// destinations live here; minimize, maximize and close remain direct
     /// caption controls.
     Window,
+    /// **A document's `…`, in its title row** — where Koru AI's ✦ stood.
+    /// The document and its title are taken when the menu opens, so a row
+    /// acts on the page it was opened over, not whatever tab is active by
+    /// the time it is chosen.
+    Document {
+        document: koru_core::DocumentId,
+        title: String,
+    },
 }
 
 /// Koru's accounts, in the strip's order after the website's globe. Brand
@@ -296,6 +304,9 @@ pub enum MenuAction {
     Chats,
     /// Open a new Koru AI chat as a main tab.
     NewAiChat,
+    /// **Open in chat**, on a document's `…`: a new Koru AI chat in a split
+    /// beside the document, the document already a chip in its composer.
+    OpenInChat,
     Socials,
     NewSocialPost,
     /// **Hand work to an agent** (ROADMAP D7). One row in the `+` menu and
@@ -908,6 +919,7 @@ impl MenuAction {
             // Koru AI chat and Delegate, with the runs and schedules Delegate
             // makes.
             Self::NewAiChat
+            | Self::OpenInChat
             | Self::Chats
             | Self::OpenRecentChat(_)
             | Self::DeleteAiChat
@@ -1032,6 +1044,9 @@ impl MenuAction {
             }
             MenuAction::Chats => "Chats",
             MenuAction::NewAiChat => "New",
+            MenuAction::OpenInChat => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::DocumentOpenInChat)
+            }
             MenuAction::Socials => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
@@ -1395,6 +1410,8 @@ impl MenuAction {
                 _ => None,
             },
             MenuAction::NewAiChat => Some(koru_draw::icons::CHATS_CIRCLE),
+            // Koru AI's mark, the one the ✦ button this menu replaced wore.
+            MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
             MenuAction::ImportAs => Some(koru_draw::icons::IMPORT),
@@ -2196,6 +2213,11 @@ pub fn trashed_items() -> Vec<MenuAction> {
 /// The Trash tab's own `…`.
 pub fn trash_items() -> Vec<MenuAction> {
     vec![MenuAction::EmptyTrash]
+}
+
+/// A document's `…`, in its title row. One row for now.
+pub fn document_items() -> Vec<MenuAction> {
+    vec![MenuAction::OpenInChat]
 }
 
 /// A rail list's menu: the three things you can do to a list.

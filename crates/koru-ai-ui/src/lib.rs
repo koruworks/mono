@@ -476,6 +476,10 @@ pub struct ChatSurface {
     expanded_group: Option<String>,
     /// The agent picked on the *Local agents* card.
     setup_agent: Option<AiProviderId>,
+    /// A built-in provider picked in the composer's model picker, asked
+    /// whether it is ready; its answer starts the chat on it or says why
+    /// not ([`ChatSurface::answer_provider_pick`]).
+    provider_pick: Option<AiProviderId>,
     /// A folder pick the host owes this surface (the native dialog is the
     /// window's, never the surface's).
     working_folder_request: Option<WorkingFolderRequest>,
@@ -557,10 +561,14 @@ impl ChatSurface {
             .or_else(|| self.open_document_request.take())
     }
 
-    /// The host could not open a document this surface asked for. Said on the
-    /// status line, in the person's language.
-    /// Show the provider setup — what the header's settings button opens —
-    /// for a host that arrives here from its own Settings.
+    /// Show the provider setup, for a host that arrives here from its own
+    /// Settings.
+    ///
+    /// **Dormant: nothing opens the setup for now.** A chat opens on the
+    /// chat view whether or not a provider was ever chosen, and the model is
+    /// picked in the composer's picker; the header's settings button, the
+    /// boot and a host's *Open Koru AI setup…* no longer come here. The view
+    /// and this door stay, unreached, so turning it back on is one call.
     pub fn open_setup(&mut self) {
         self.chat_model_open = false;
         self.tool_access_open = false;
@@ -575,6 +583,35 @@ impl ChatSurface {
         self.setup_open
     }
 
+    /// Start the message with `document` as a chip, the way `@` puts one in
+    /// the text: what a host does when it opens a chat *on* a document — the
+    /// page's `…` → *Open in chat*. At send the chip pins the document, like
+    /// any chip. Anything already typed stays after it.
+    pub fn attach_document(&mut self, document: DocumentId, title: String) -> bool {
+        if !title.trim().is_empty() {
+            self.document_titles.insert(document, title);
+        }
+        let chip = format!(
+            "[[{}]] ",
+            koru_link::document_link(document.as_uuid(), None)
+        );
+        let typed = self.composer.text();
+        let titles = &self.document_titles;
+        let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+        self.composer
+            .set_message(&format!("{chip}{typed}"), |document| {
+                titles
+                    .get(&document)
+                    .filter(|title| !title.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| untitled.to_owned())
+            });
+        self.focus = Focus::Composer;
+        true
+    }
+
+    /// The host could not open a document this surface asked for. Said on the
+    /// status line, in the person's language.
     pub fn open_document_failed(&mut self) -> bool {
         self.status = Some(koru_i18n::t(self.lang, koru_i18n::Key::AiOpenDocumentFailed).into());
         true
@@ -703,6 +740,7 @@ impl ChatSurface {
             expanded_agent: None,
             expanded_group: None,
             setup_agent: None,
+            provider_pick: None,
             working_folder_request: None,
             response_hover: None,
             response_message_hover: None,
@@ -1634,15 +1672,13 @@ impl ChatSurface {
             }
         }
         if self.chat_model_button().contains(x, y) {
-            self.history_open = false;
-            self.tool_access_open = false;
-            self.tool_mode_open = false;
-            self.chat_model_offset = 0;
-            self.chat_model_scroll_drag = None;
-            self.chat_model_open = !self.chat_model_open;
             if self.chat_model_open {
-                self.refresh_agent_status();
-                self.prefetch_agent_models();
+                self.history_open = false;
+                self.tool_access_open = false;
+                self.tool_mode_open = false;
+                self.close_picker();
+            } else {
+                self.open_model_picker();
             }
             if self.chat_model_open
                 && self.chat_model_rows().is_empty()
@@ -1664,15 +1700,8 @@ impl ChatSurface {
             self.tool_mode_open = false;
             return self.press_chats_button();
         }
-        if self.hosts_header_buttons() && self.settings_button().contains(x, y) {
-            self.chat_model_open = false;
-            self.tool_access_open = false;
-            self.tool_mode_open = false;
-            self.setup_open = true;
-            self.history_open = false;
-            self.focus = Focus::None;
-            return true;
-        }
+        // The header's *Settings* opened the provider setup here; it is
+        // dormant and the button is not drawn, so nothing is hit there.
         if self.hosts_header_buttons() && self.new_chat_button().contains(x, y) {
             self.chat_model_open = false;
             self.tool_access_open = false;
@@ -1689,7 +1718,10 @@ impl ChatSurface {
                 return self.send_command(Command::Cancel(attempt));
             }
         } else if self.send_button().contains(x, y) {
-            self.send_composer();
+            // Off while the chat waits for a model: the chip is the way on.
+            if !self.awaiting_model() {
+                self.send_composer();
+            }
             return true;
         }
         if let Some(message) = self.tool_group_at(x, y) {
@@ -2126,8 +2158,12 @@ impl ChatSurface {
         }
     }
 
+    /// Whether the provider setup is drawn instead of the chat. Only when
+    /// opened on purpose, which nothing does for now ([`Self::open_setup`]):
+    /// a surface with no ready provider shows the chat view, its chip asking
+    /// for a model. It used to show the setup until a provider validated.
     fn showing_setup(&self) -> bool {
-        self.setup_open || !self.validated_ready
+        self.setup_open
     }
 
     fn send_command(&mut self, command: Command) -> bool {
@@ -2289,7 +2325,9 @@ impl ChatSurface {
                     .selected_provider
                     .clone()
                     .filter(agents::is_agent_provider);
-                self.setup_open = true;
+                // The chat view either way (the setup is dormant): a chat
+                // is made once the chosen provider validates, and with
+                // none chosen the chip asks for a model.
                 self.validated_ready = false;
                 let selected = settings.selected_provider.clone();
                 self.settings = Some(settings);
@@ -2622,7 +2660,6 @@ impl ChatSurface {
             Update::Settings(settings) => {
                 self.waiting = false;
                 self.validated_ready = false;
-                self.setup_open = true;
                 self.apply_settings_fields(&settings);
                 if let Some(agent) = settings
                     .selected_provider
@@ -2690,9 +2727,14 @@ impl ChatSurface {
                     if self.setup_provider == SetupProvider::Agents
                         && self.setup_agent.as_ref() == Some(&validation.provider)
                         && !status.selectable()
+                        && (self.setup_open || self.awaiting_model())
                     {
                         self.status = self.agent_not_ready_line(&validation.provider);
                     }
+                }
+                if self.provider_pick.as_ref() == Some(&validation.provider) {
+                    self.provider_pick = None;
+                    return self.answer_provider_pick(&validation);
                 }
                 let current_provider = self.setup_provider_id();
                 if current_provider.as_ref() != Some(&validation.provider) {
@@ -2712,11 +2754,10 @@ impl ChatSurface {
                     // A daemon or catalog that disappears during the session
                     // must revoke an earlier successful validation.
                     self.validated_ready = validation.status == ProviderValidationStatus::Ready;
-                    // The provider is ready now and the tab still owes the
-                    // fresh chat it was opened for.
-                    if self.validated_ready && self.fresh_chat_wanted && self.transcript.is_none() {
-                        self.create_chat();
-                    }
+                    // A tab that still owes the fresh chat it was opened
+                    // for gets it below, where a ready provider makes the
+                    // chat any surface without one is waiting for. (It was
+                    // also made here, so such a tab asked for two.)
                 }
                 self.constrain_reasoning(&validation);
                 let mut discovered_model = false;
@@ -2738,24 +2779,21 @@ impl ChatSurface {
                     if self.transcript.is_none() {
                         self.create_chat();
                     }
+                } else if !self.setup_open {
+                    // **The chat view says only why the chosen provider
+                    // cannot make the chat it is waiting for** — the one
+                    // line, above the composer whose chip asks for a model.
+                    // Advice about saving, or about a provider nobody
+                    // chose, was the setup's to give.
+                    if validates_selected_provider && self.awaiting_model() {
+                        self.status = Some(self.validation_line(&validation));
+                    }
                 } else if validation.status == ProviderValidationStatus::Ready {
                     self.status = Some("Provider ready. Save & check to use it.".into());
                 } else if discovered_model {
                     self.status = Some("Choose an available model, then Save & check.".into());
-                } else if validation.provider.as_str() == AiProviderId::KORU
-                    && validation.status == ProviderValidationStatus::Unconfigured
-                {
-                    self.status =
-                        Some(koru_i18n::t(self.lang, koru_i18n::Key::AiKoruUnconfigured).into());
-                } else if validation.provider.as_str() == AiProviderId::KORU
-                    && validation.status == ProviderValidationStatus::Unavailable
-                {
-                    self.status =
-                        Some(koru_i18n::t(self.lang, koru_i18n::Key::AiKoruUnreachable).into());
-                } else if let Some(failure) = &validation.failure {
-                    self.status = Some(failure_text(failure, self.lang));
                 } else {
-                    self.status = Some(validation_status_text(validation.status).into());
+                    self.status = Some(self.validation_line(&validation));
                 }
                 self.validation = Some(validation);
                 if let Some(provider) = self.pending_model_prefetch.take() {
@@ -2832,6 +2870,9 @@ impl ChatSurface {
                 self.pending_assistant_message_id = None;
                 self.live_sources.clear();
                 self.open_searches.clear();
+                // A provider picked in the composer whose check failed
+                // outright is not started later by some other answer.
+                self.provider_pick = None;
                 self.status = Some(message);
             }
         }
@@ -3028,8 +3069,19 @@ impl ChatSurface {
 
     fn create_chat(&mut self) -> bool {
         let Some(selection) = self.current_selection() else {
-            self.setup_open = true;
-            self.status = Some("Choose and validate a provider first.".into());
+            // **Nothing chosen yet: the chat view waits for a model.** No
+            // setup opens; the chip asks for one, and the composer's picker
+            // makes the chat once it is chosen ([`Self::start_chat_on`]).
+            // A chat being shown is left for the new one, which is owed.
+            self.fresh_chat_wanted = true;
+            if self.transcript.take().is_some() {
+                self.forget_input_walk();
+                self.usage_report = None;
+                self.expanded_tool_activity = None;
+                self.question_navigation = None;
+                self.question_navigation_anchor = None;
+                self.messages_dirty = true;
+            }
             return true;
         };
         self.send_command(Command::Create(CreateChatRequest {
@@ -3058,6 +3110,168 @@ impl ChatSurface {
             requested_model,
             default_reasoning,
         })
+    }
+
+    /// **No chat yet, and none on its way from a link**: the chat view is
+    /// waiting for a model. Its chip asks for one, send is off, and Enter
+    /// opens the picker.
+    fn awaiting_model(&self) -> bool {
+        self.transcript.is_none() && self.pending_link_chat.is_none()
+    }
+
+    /// Open the composer's model picker, as a press on its chip does.
+    fn open_model_picker(&mut self) -> bool {
+        self.history_open = false;
+        self.tool_access_open = false;
+        self.tool_mode_open = false;
+        self.chat_model_offset = 0;
+        self.chat_model_scroll_drag = None;
+        self.chat_model_open = true;
+        self.refresh_agent_status();
+        self.prefetch_agent_models();
+        true
+    }
+
+    /// **Start this surface's chat on `model`**, picked in the composer: a
+    /// chat with no message yet takes it, and a surface with no chat yet makes
+    /// one with it. The pick is remembered as what new chats start on — the
+    /// choice the setup used to save — so the next chat opens on it.
+    pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
+        self.web_search_armed = false;
+        let sent = match &self.transcript {
+            Some(transcript) if transcript.messages.is_empty() => {
+                let chat = transcript.chat.id;
+                self.send_command(Command::UpdateModel(
+                    chat,
+                    UpdateChatModelRequest {
+                        model: model.clone(),
+                    },
+                ))
+            }
+            // A chat that has begun keeps its provider; only its models are
+            // offered.
+            Some(_) => return true,
+            None => self.send_command(Command::Create(CreateChatRequest {
+                chat_id: ChatId::new(),
+                title: DEFAULT_CHAT_TITLE.into(),
+                model: model.clone(),
+            })),
+        };
+        self.remember_choice(&model);
+        sent
+    }
+
+    /// Save `model` as the provider (and, for OpenAI and Ollama, the model)
+    /// a new chat starts on. After the chat's own command, so the chat is
+    /// made before the settings answer asks for validation again.
+    fn remember_choice(&mut self, model: &ModelSelection) {
+        let Some(settings) = &self.settings else {
+            return;
+        };
+        let same_provider = settings.selected_provider.as_ref() == Some(&model.provider);
+        let model_update = match model.provider.as_str() {
+            AiProviderId::OPENAI
+                if settings.openai.model.as_deref() != Some(model.requested_model.as_str()) =>
+            {
+                Some(Command::UpdateOpenAi(UpdateOpenAiSettingsRequest {
+                    model: Some(model.requested_model.clone()),
+                    // A level belongs to a model; a new model starts on
+                    // the provider's default, as a chat's switch does.
+                    reasoning: ReasoningChoice::Default,
+                }))
+            }
+            AiProviderId::OLLAMA
+                if settings.ollama.model.as_deref() != Some(model.requested_model.as_str()) =>
+            {
+                Some(Command::UpdateOllama(UpdateOllamaSettingsRequest {
+                    endpoint: settings.ollama.endpoint.clone(),
+                    model: Some(model.requested_model.clone()),
+                    reasoning: ReasoningChoice::Default,
+                }))
+            }
+            _ => None,
+        };
+        if let Some(command) = model_update {
+            self.send_command(command);
+        }
+        if !same_provider {
+            self.send_command(Command::SelectProvider(SelectProviderRequest {
+                provider: model.provider.clone(),
+            }));
+        }
+    }
+
+    /// A built-in provider picked in the composer. Whether it can answer is
+    /// the service's to say, so it is asked first; the answer arrives as a
+    /// validation ([`Self::answer_provider_pick`]).
+    pub(crate) fn pick_provider(&mut self, provider: AiProviderId) -> bool {
+        self.provider_pick = Some(provider.clone());
+        self.send_command(Command::Validate(provider))
+    }
+
+    /// The answer to a provider picked in the composer: the chat starts on
+    /// the model it offers, or the status line says why it cannot — the
+    /// one line the chat shows for any provider that is not ready. Nothing
+    /// opens the setup.
+    fn answer_provider_pick(&mut self, validation: &ProviderValidationResponse) -> bool {
+        match self.pick_selection(validation) {
+            Some(model) => self.start_chat_on(model),
+            None => {
+                self.status = Some(self.validation_line(validation));
+                true
+            }
+        }
+    }
+
+    /// What a picked provider starts on: the hosted model once Koru AI is
+    /// ready; for OpenAI and Ollama the saved model when it is still listed,
+    /// else the first the provider lists. `None` when it lists none.
+    fn pick_selection(&self, validation: &ProviderValidationResponse) -> Option<ModelSelection> {
+        let saved = |provider: &str| {
+            self.settings.as_ref().and_then(|settings| match provider {
+                AiProviderId::OPENAI => settings.openai.model.clone(),
+                AiProviderId::OLLAMA => settings.ollama.model.clone(),
+                _ => None,
+            })
+        };
+        let requested_model = match validation.provider.as_str() {
+            AiProviderId::KORU => (validation.status == ProviderValidationStatus::Ready)
+                .then(|| AiProviderId::KORU_HOSTED_MODEL.to_owned())?,
+            provider @ (AiProviderId::OPENAI | AiProviderId::OLLAMA) => saved(provider)
+                .filter(|model| validation.models.contains(model))
+                .or_else(|| {
+                    if provider == AiProviderId::OPENAI {
+                        preferred_openai_model(&validation.models).map(str::to_owned)
+                    } else {
+                        let mut models = validation.models.clone();
+                        sort_model_options(&mut models);
+                        models.into_iter().next()
+                    }
+                })?,
+            _ => return None,
+        };
+        Some(ModelSelection {
+            provider: validation.provider.clone(),
+            requested_model,
+            default_reasoning: ReasoningChoice::Default,
+        })
+    }
+
+    /// The one line a provider's validation reads as when it is not ready.
+    fn validation_line(&self, validation: &ProviderValidationResponse) -> String {
+        let koru = validation.provider.as_str() == AiProviderId::KORU;
+        match validation.status {
+            ProviderValidationStatus::Unconfigured if koru => {
+                koru_i18n::t(self.lang, koru_i18n::Key::AiKoruUnconfigured).into()
+            }
+            ProviderValidationStatus::Unavailable if koru => {
+                koru_i18n::t(self.lang, koru_i18n::Key::AiKoruUnreachable).into()
+            }
+            status => match &validation.failure {
+                Some(failure) => failure_text(failure, self.lang),
+                None => validation_status_text(status).into(),
+            },
+        }
     }
 
     /// Move between authored user turns without making transcript navigation a
@@ -3140,6 +3354,11 @@ impl ChatSurface {
     fn send_composer(&mut self) -> bool {
         if self.attempt.is_some() {
             return false;
+        }
+        // **No model yet, so nothing to send to**: Enter opens the picker,
+        // and the message waits in the composer for the chat it makes.
+        if self.awaiting_model() {
+            return self.chat_model_open || self.open_model_picker();
         }
         // **A provisional dictation is not sent.** The words are still being
         // heard; the send waits for them to become text.
@@ -4416,7 +4635,8 @@ impl ChatSurface {
     /// The chip's text: the model, then its effort when the model has one.
     pub(crate) fn chip_label(&self) -> String {
         let Some(transcript) = &self.transcript else {
-            return "Choose model".into();
+            // No chat yet: the chip asks for the model that will make one.
+            return koru_i18n::t(self.lang, koru_i18n::Key::AiChooseModel).into();
         };
         let model = &transcript.chat.current_model;
         let name = if model.provider.as_str() == AiProviderId::KORU {
@@ -4796,15 +5016,13 @@ impl ChatSurface {
                 return Some((9, index));
             }
             let header = self.hosts_header_buttons();
+            // No *Settings* among them: it is not drawn while the setup is
+            // dormant. The send button keeps its identity, 4.
             for (index, rect) in [
-                self.history_button(),
-                self.new_chat_button(),
-                self.settings_button(),
-                self.send_button(),
-            ]
-            .into_iter()
-            .enumerate()
-            {
+                (0, self.history_button()),
+                (1, self.new_chat_button()),
+                (3, self.send_button()),
+            ] {
                 if (header || index == 3) && rect.contains(x, y) {
                     return Some((5, index + 1));
                 }
@@ -4835,10 +5053,9 @@ impl ChatSurface {
                 history.contains(self.pointer.0, self.pointer.1),
                 self.history_open,
             );
-            for (rect, label) in [
-                (self.new_chat_button(), "New chat"),
-                (self.settings_button(), "Settings"),
-            ] {
+            // *Settings* opened the provider setup, which is dormant, so
+            // it is not drawn ([`Self::open_setup`]); its place stays.
+            for (rect, label) in [(self.new_chat_button(), "New chat")] {
                 draw_surface_button(
                     canvas,
                     root,
@@ -4971,10 +5188,12 @@ impl ChatSurface {
                 |_| {},
             );
             let send = self.send_button();
+            // Off while the chat waits for a model, whatever is typed.
             let send_enabled = self.attempt.is_some()
-                || !self.composer.is_blank()
-                || !self.pending_quotes.is_empty()
-                || self.has_strip();
+                || (!self.awaiting_model()
+                    && (!self.composer.is_blank()
+                        || !self.pending_quotes.is_empty()
+                        || self.has_strip()));
             draw_composer_action(
                 canvas,
                 root,
@@ -8436,6 +8655,337 @@ mod tests {
             Some(existing.chat.id),
             "a later snapshot applies as it always did"
         );
+    }
+
+    /// Settings where nothing was ever chosen: no provider, no OpenAI key,
+    /// no Ollama model, and the agents named.
+    fn unchosen_settings(agents: &[&str]) -> ProviderSettingsResponse {
+        ProviderSettingsResponse {
+            selected_provider: None,
+            openai: koru_ai_wire::OpenAiSettingsView {
+                model: None,
+                reasoning: ReasoningChoice::Default,
+                credential_configured: false,
+            },
+            ollama: koru_ai_wire::OllamaSettingsView {
+                endpoint: "http://localhost:11434".into(),
+                model: None,
+                reasoning: ReasoningChoice::Default,
+            },
+            agents: agents
+                .iter()
+                .map(|id| koru_ai_wire::AgentProviderView {
+                    id: AiProviderId::parse(*id).unwrap(),
+                    label: "Claude".into(),
+                })
+                .collect(),
+        }
+    }
+
+    fn boot(surface: &mut ChatSurface, settings: ProviderSettingsResponse) {
+        surface.apply_update(Update::Boot {
+            settings,
+            chats: Vec::new(),
+            transcript: None,
+            destinations: Vec::new(),
+            destination_error: None,
+        });
+    }
+
+    /// **Nothing opens the provider setup**, for now: not the boot with no
+    /// provider chosen, not a settings answer, not a new chat with nothing
+    /// to make it with, not the standalone header's old *Settings* place.
+    #[test]
+    fn no_door_opens_the_provider_setup() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        assert!(surface.start_new_chat());
+        boot(&mut surface, unchosen_settings(&[]));
+        assert!(!surface.setup_open, "the boot opens the chat view");
+        assert!(!surface.showing_setup(), "no ready provider is no setup");
+        surface.apply_update(Update::Settings(unchosen_settings(&[])));
+        assert!(!surface.showing_setup(), "nor does a settings answer");
+        assert!(surface.create_chat());
+        assert!(!surface.showing_setup(), "nor a chat with no model");
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: AiProviderId::parse(AiProviderId::OLLAMA).unwrap(),
+            status: ProviderValidationStatus::Unavailable,
+            models: Vec::new(),
+            selected_model: None,
+            failure: None,
+        }));
+        assert!(!surface.showing_setup(), "nor a provider that is down");
+        let header = surface.settings_button();
+        surface.mouse_down(header.x + header.w / 2.0, header.y + header.h / 2.0);
+        assert!(!surface.showing_setup(), "nor the header's old Settings");
+        assert_eq!(
+            surface.control_hover_at(header.x + header.w / 2.0, header.y + header.h / 2.0),
+            None,
+            "which is no longer a control"
+        );
+    }
+
+    /// **A new chat with no model ever chosen is the chat view**: the
+    /// greeting and the composer, the chip asking for a model, send off.
+    /// Enter opens the picker instead of sending, and the message waits.
+    #[test]
+    fn a_fresh_chat_with_no_model_waits_on_the_chip() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        assert!(surface.start_new_chat());
+        boot(&mut surface, unchosen_settings(&[]));
+        while commands.try_recv().is_ok() {}
+        assert!(surface.transcript.is_none());
+        assert!(surface.awaiting_model());
+        assert!(surface.greeting().is_some(), "the greeting shows");
+        assert_eq!(
+            surface.chip_label(),
+            koru_i18n::t(surface.lang, koru_i18n::Key::AiChooseModel),
+            "the chip asks for a model"
+        );
+        assert_eq!(
+            koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::AiChooseModel),
+            "Choose a model"
+        );
+
+        surface.composer.set_text("Plan the launch");
+        surface.composer_rect();
+        let send = surface.send_button();
+        assert!(surface.mouse_down(send.x + send.w / 2.0, send.y + send.h / 2.0));
+        assert!(!surface.chat_model_open, "the send button is off");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+        assert!(surface.chat_model_open, "Enter opens the picker");
+        while let Ok(command) = commands.try_recv() {
+            assert!(
+                !matches!(command, Command::Send(_) | Command::Create(_)),
+                "nothing is sent or made before a model is chosen"
+            );
+        }
+        assert_eq!(surface.composer.text(), "Plan the launch", "it waits");
+    }
+
+    /// The picker of a chat with no model offers the built-in providers —
+    /// OpenAI only with a saved key — and the local agents.
+    #[test]
+    fn the_picker_of_a_chat_with_no_model_offers_every_provider() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        let koru = AiProviderId::parse(AiProviderId::KORU).unwrap();
+        let ollama = AiProviderId::parse(AiProviderId::OLLAMA).unwrap();
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        assert_eq!(
+            surface.chat_model_rows(),
+            vec![
+                PickerRow::Provider(koru.clone()),
+                PickerRow::Provider(ollama.clone()),
+                PickerRow::Header,
+                PickerRow::Agent(claude),
+            ]
+        );
+        surface
+            .settings
+            .as_mut()
+            .unwrap()
+            .openai
+            .credential_configured = true;
+        assert!(
+            surface
+                .chat_model_rows()
+                .contains(&PickerRow::Provider(AiProviderId::parse("openai").unwrap())),
+            "OpenAI once a key is saved"
+        );
+        // A chat that has begun offers only its own provider's models.
+        let mut begun = transcript();
+        begun.messages.push(koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: begun.chat.id,
+            ordinal: 0,
+            role: ChatRole::User,
+            state: MessageState::Complete,
+            markdown: "hi".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
+        });
+        surface.transcript = Some(begun);
+        assert!(
+            !surface
+                .chat_model_rows()
+                .iter()
+                .any(|row| matches!(row, PickerRow::Provider(_) | PickerRow::Agent(_)))
+        );
+    }
+
+    /// **Picking a model makes the chat**, and remembers the choice so the
+    /// next chat opens on it: an agent at once, since its readiness is
+    /// already known.
+    #[test]
+    fn picking_an_agent_with_no_chat_makes_the_chat_on_it() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        surface
+            .agent_status
+            .insert(claude.clone(), AgentStatus::Ready);
+        assert!(surface.choose_agent_model(claude.clone(), AGENT_DEFAULT_MODEL.into()));
+        let Command::Create(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the chat is made");
+        };
+        assert_eq!(request.model.provider, claude);
+        assert_eq!(request.model.requested_model, AGENT_DEFAULT_MODEL);
+        let Command::SelectProvider(selected) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("and the choice is remembered");
+        };
+        assert_eq!(selected.provider, claude);
+        assert!(!surface.showing_setup());
+    }
+
+    /// **A built-in provider is asked first.** One that cannot start — here
+    /// Ollama not running — says why on the status line, as the chat says any
+    /// provider's failure, and opens no setup; once it lists models the chat
+    /// is made on the first, and the choice remembered.
+    #[test]
+    fn picking_a_provider_that_cannot_start_says_why_and_opens_nothing() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.settings = Some(unchosen_settings(&[]));
+        let ollama = AiProviderId::parse(AiProviderId::OLLAMA).unwrap();
+        assert!(surface.pick_provider(ollama.clone()));
+        let Command::Validate(asked) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the provider is asked first");
+        };
+        assert_eq!(asked, ollama);
+        let failure = koru_ai_wire::Failure {
+            code: "ai_network".into(),
+            message: "Koru could not reach Ollama.".into(),
+            retryable: true,
+            details: Default::default(),
+        };
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: ollama.clone(),
+            status: ProviderValidationStatus::Unavailable,
+            models: Vec::new(),
+            selected_model: None,
+            failure: Some(failure.clone()),
+        }));
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(failure_text(&failure, surface.lang).as_str())
+        );
+        assert!(!surface.showing_setup(), "no setup opens");
+        assert!(commands.try_recv().is_err(), "and no chat is made");
+
+        assert!(surface.pick_provider(ollama.clone()));
+        let _ = commands.recv_timeout(Duration::from_millis(50));
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: ollama.clone(),
+            status: ProviderValidationStatus::Unconfigured,
+            models: vec!["gemma4:e4b".into(), "qwen3.5:4b".into()],
+            selected_model: None,
+            failure: None,
+        }));
+        let Command::Create(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the chat is made on a listed model");
+        };
+        assert_eq!(request.model.provider, ollama);
+        assert!(["gemma4:e4b", "qwen3.5:4b"].contains(&request.model.requested_model.as_str()));
+        let Command::UpdateOllama(saved) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("its model is remembered");
+        };
+        assert_eq!(saved.model, Some(request.model.requested_model.clone()));
+        let Command::SelectProvider(selected) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("and the provider");
+        };
+        assert_eq!(selected.provider, ollama);
+    }
+
+    /// **A chat chosen before opens as it did**: the remembered provider
+    /// validates and the chat is made on it — once, not twice (a tab that
+    /// owed a fresh chat asked for two).
+    #[test]
+    fn a_remembered_provider_makes_one_chat_for_a_fresh_tab() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        assert!(surface.start_new_chat());
+        let mut settings = unchosen_settings(&[]);
+        settings.selected_provider = Some(AiProviderId::parse(AiProviderId::KORU).unwrap());
+        boot(&mut surface, settings);
+        while commands.try_recv().is_ok() {}
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: AiProviderId::parse(AiProviderId::KORU).unwrap(),
+            status: ProviderValidationStatus::Ready,
+            models: vec![AiProviderId::KORU_HOSTED_MODEL.into()],
+            selected_model: None,
+            failure: None,
+        }));
+        let mut creates = 0;
+        while let Ok(command) = commands.try_recv() {
+            if let Command::Create(request) = command {
+                assert_eq!(request.model.provider.as_str(), AiProviderId::KORU);
+                creates += 1;
+            }
+        }
+        assert_eq!(creates, 1);
+        assert!(!surface.showing_setup());
+    }
+
+    /// **A chat chosen before whose provider is down** opens on the chat view
+    /// too, the provider's one line above the composer.
+    #[test]
+    fn a_remembered_provider_that_is_down_says_so_on_the_chat_view() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut settings = unchosen_settings(&[]);
+        settings.selected_provider = Some(AiProviderId::parse(AiProviderId::KORU).unwrap());
+        boot(&mut surface, settings);
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: AiProviderId::parse(AiProviderId::KORU).unwrap(),
+            status: ProviderValidationStatus::Unavailable,
+            models: Vec::new(),
+            selected_model: None,
+            failure: None,
+        }));
+        assert!(!surface.showing_setup());
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::AiKoruUnreachable
+            ))
+        );
+    }
+
+    /// **The page's *Open in chat* seeds the composer with its chip**, the
+    /// way `@` puts one there; anything typed stays after it.
+    #[test]
+    fn attaching_a_document_puts_its_chip_in_the_composer() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let document = DocumentId::new();
+        surface.composer.set_text("summarise");
+        assert!(surface.attach_document(document, "Launch plan".into()));
+        let message = surface.composer.message();
+        assert_eq!(message.documents, vec![(document, "Launch plan".into())]);
+        assert!(message.markdown.ends_with("summarise"), "{message:?}");
     }
 
     /// **A chat's first message names it** (the CTO's note), the way ChatGPT

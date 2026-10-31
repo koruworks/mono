@@ -539,6 +539,14 @@ fn table() -> String {
 /// `arrow-down` and `enter` are `handled=Y`: Manage's nav walks its rows with
 /// the arrows and opens one with Enter. The other four keys route as the
 /// Workspaces tab's did.
+///
+/// **Moved a fourth time, deliberately, when the Koru AI setup went
+/// dormant.** The `ai-focused` pane has no provider in the suite, so it used
+/// to show the provider setup, whose unfocused fields claimed no key. It
+/// shows the chat now, whatever is configured: `char-x` types into the
+/// composer, `escape` and `arrow-down` are the composer's, and `enter` opens
+/// the model picker — all four `handled=Y`. `ctrl-t` and `f13` route as
+/// before.
 const EXPECTED: &str = include_str!("routing.table");
 
 #[test]

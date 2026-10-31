@@ -263,6 +263,8 @@ pub enum Key {
     AiAgentModelsFailed,
     AiAgentNoModels,
     AiModelAgentDefault,
+    /// The composer's model chip before any model is chosen.
+    AiChooseModel,
     // The chip composer (AGENTUX I6).
     AiComposerPlaceholder,
     AiDocumentLinkUntitled,
@@ -2639,13 +2641,15 @@ pub enum Key {
     VoiceConsentWithLicence,
     VoiceConsentClosing,
     PageMenuGlobalSettings,
+    /// The only row of a document's `…` in its title row, for now.
+    DocumentOpenInChat,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1804] = [
+    pub const ALL: [Key; 1806] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2804,6 +2808,7 @@ impl Key {
         Key::AiAgentModelsFailed,
         Key::AiAgentNoModels,
         Key::AiModelAgentDefault,
+        Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
         Key::AiTooManyDocuments,
@@ -4450,6 +4455,7 @@ impl Key {
         Key::VoiceConsentWithLicence,
         Key::VoiceConsentClosing,
         Key::PageMenuGlobalSettings,
+        Key::DocumentOpenInChat,
     ];
 }
 
@@ -6234,6 +6240,18 @@ pub const ROWS: &[Row] = &[
         ar: "الافتراضي",
         zh_hans: "默认",
         ja: "既定",
+    },
+    // The model chip of a chat that has no model yet: picking one starts it.
+    Row {
+        key: Key::AiChooseModel,
+        en: "Choose a model",
+        es: "Elige un modelo",
+        pt_br: "Escolha um modelo",
+        de: "Modell wählen",
+        fr: "Choisir un modèle",
+        ar: "اختر نموذجًا",
+        zh_hans: "选择模型",
+        ja: "モデルを選択",
     },
     // The chip composer (AGENTUX I6).
     Row {
@@ -13513,5 +13531,17 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "الإعدادات العامة",
         zh_hans: "全局设置",
         ja: "全体の設定",
+    },
+    // A document's `…`: a new Koru AI chat beside it, the document attached.
+    Row {
+        key: Key::DocumentOpenInChat,
+        en: "Open in chat",
+        es: "Abrir en un chat",
+        pt_br: "Abrir em um chat",
+        de: "Im Chat öffnen",
+        fr: "Ouvrir dans un chat",
+        ar: "فتح في محادثة",
+        zh_hans: "在聊天中打开",
+        ja: "チャットで開く",
     },
 ];

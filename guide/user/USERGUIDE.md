@@ -1123,7 +1123,7 @@ The side panes stay hidden until you ask:
 | | |
 | --- | --- |
 | `Ctrl+Shift+E` | **Explore** — focus the tree on this tab's document (may switch workspace). Click the arrow beside something to expand it |
-| `Ctrl+Shift+J` or the title-block sparkle | **Koru AI pane** — opens the shared chat from the right, replacing Context when it is open, with the current document shown as a removable pill above the composer |
+| `Ctrl+Shift+J` | **Koru AI pane** — opens the shared chat from the right, replacing Context when it is open, with the current document shown as a removable pill above the composer |
 | `Ctrl+J` | **Context** — comments, assets, tasks and threads for whatever the current tab is showing, on the right. The icon at the right of the document title does the same |
 | `Alt+1` / `Alt+2` / `Alt+3` | **Documents**, **Files**, **Tasks** — the three views at the head of the Explore column, in the order their icons sit; opens the column if it is closed. Hover an icon for its name and chord. **On a Mac these are `⌃⌘1` / `⌃⌘2` / `⌃⌘3`**, because Option with a digit types a character there (`¡`, `™`, `£` on a US keyboard) |
 | `Alt+7` (`⌃⌘7` on a Mac) | **Canvases** — the seventh icon: every canvas in this workspace, as one list. See [Canvases](#canvases) |
@@ -1230,30 +1230,41 @@ The content settles when you let go rather than following the drag. That is
 deliberate: relaying a long document costs real time, and doing it for every
 pixel of a drag would make the whole window stutter.
 
-**Ask Koru AI from its own pane.** Press `Ctrl+Shift+J` or the sparkle immediately
-left of the Context control on a document's title block. The title controls stay
-anchored to row 0 rather than floating beside later paragraphs. The pane opens
+**Ask Koru AI from its own pane.** Press `Ctrl+Shift+J`. The pane opens
 from the right, replaces Context when it is open, carries a left-side divider,
 and can be dragged from 400 to 900 logical pixels wide.
-Its open state and chosen width survive restart. First use shows three cards:
-**Koru AI**, OpenAI, and **On this device — Ollama**. Click a card to select it.
-**Koru AI** needs no key: **Save & start chat** (or **Save & check** from
-Settings) validates the hosted model. For OpenAI, paste a project API key and
-choose **Save & check**. Koru saves it in the OS credential vault and immediately asks
-OpenAI for every model available to that project; the model field opens the
-scrollable returned list with GPT models first. A saved key has explicit
-**Replace** and **Clear** actions; its value is never read back into the field.
-Ollama lists locally installed models in the same field. Typing an uninstalled
-name exposes an inline **Pull** action (or press `Enter`), and an empty local
-catalog links to Ollama's model browser. Pull changes to **Cancel** immediately,
-before Ollama has emitted its first progress update; a stopped or failed pull
-can be retried. Failed reachability and an empty catalog offer **Retry**, so a
-daemon or model installed while Settings is open can be discovered without
-restarting Koru. If a previously ready daemon or selected model disappears,
-the next check revokes readiness until validation succeeds again.
-After validation, Settings offers only the
-reasoning choices that the selected model reports; models without a reasoning
-control show none. On a Koru AI chat, a lightbulb next to the composer turns
+Its open state and chosen width survive restart.
+
+**Open a document in a chat.** The `…` at the right end of a document's title
+row (where a sparkle used to be) opens a small menu; **Open in chat** opens a
+new chat in a split beside the document, with the document already a chip in
+the composer, as typing `@` and picking it would. Type your question and send:
+the chip gives the chat the document. The title controls stay anchored to row 0
+rather than floating beside later paragraphs.
+
+**Choose the model in the chat.** **New chat**, and every other way a chat
+opens, goes straight to the chat: the greeting, and the composer with its
+chips, workspace access, approval mode, the model chip and send. Until a
+model has been chosen the model chip reads **Choose a model**, the send button
+is off, and `Enter` opens the model picker instead of sending; what you typed
+waits in the composer. The picker lists **Koru AI**, OpenAI (once a key has
+been saved), **Ollama** and the **Local agents**. A local agent starts the chat
+at once; Koru AI, OpenAI and Ollama are checked first — OpenAI and Ollama
+start on their saved model, or the first one they list — and one that cannot
+start says why in the line above the composer (*The hosted service is
+unreachable…*, Ollama not running, no models installed) and opens nothing
+else. Whatever you pick is remembered: the next new chat opens on it, as it
+did before. Until a chat has a message, the picker also offers the other
+providers, so a chat can still change provider before it starts.
+
+The provider setup page — the **Koru AI**, OpenAI and **On this device —
+Ollama** cards with **Save & start chat** — is not shown for now: no menu,
+button or setting opens it, and **Open Koru AI setup…** opens a new chat
+instead. While it is hidden, an OpenAI key cannot be entered or replaced from
+Koru, and an Ollama model cannot be pulled from Koru; a key saved earlier keeps
+working, and models installed with Ollama itself are listed.
+
+On a Koru AI chat, a lightbulb next to the composer turns
 thinking on or off for the next send. While the model is thinking, a
 **Thinking…** drawer can be expanded; after the answer it collapses to
 **Reasoning**. Reloading the chat keeps the answer and drops the thoughts.
@@ -5858,7 +5869,7 @@ restart.
 | `Ctrl+Alt+J` | step the Context column to its next section (opens it first) |
 | `Ctrl+Alt+K` | copy the Cloud sync section's facts to the clipboard |
 | `Alt+1` / `Alt+2` / `Alt+3` | the Explore column's Documents, Files, Tasks |
-| `Ctrl+Shift+J`, title-block sparkle, or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
+| `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 | `Ctrl+Shift+I` | open or foreground the standalone Koru AI chat |
 
 ## Chatting with a local agent

@@ -50,11 +50,30 @@ impl AiChatView {
     }
 
     /// A chat tab opened on its provider setup — where Settings' *Open Koru
-    /// AI setup…* lands, as a tab of its own rather than the side panel.
+    /// AI setup…* landed, as a tab of its own rather than the side panel.
+    ///
+    /// Dormant: nothing opens the setup for now (`ChatSurface::open_setup`).
+    #[allow(dead_code)]
     pub fn setup() -> Self {
         let mut view = Self::new();
         view.surface.open_setup();
         view
+    }
+
+    /// A fresh chat that starts with `document` as a chip in the composer,
+    /// as `@` would put it there: the page's `…` → *Open in chat*. The chip
+    /// pins the document when the message is sent.
+    pub fn on_document(document: DocumentId, title: String) -> Self {
+        let mut view = Self::new();
+        view.surface.attach_document(document, title);
+        view
+    }
+
+    /// The message in the composer, chips in their `[[koru://doc/…]]`
+    /// spelling.
+    #[cfg(test)]
+    pub fn composer_text(&mut self) -> String {
+        self.surface.dictation_composer().text()
     }
 
     #[cfg(test)]
