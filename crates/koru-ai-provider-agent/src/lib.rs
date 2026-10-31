@@ -82,6 +82,17 @@ pub fn agent_provider_kinds() -> Vec<AgentProviderKind> {
         .collect()
 }
 
+/// Whether Koru AI's agent picker offers this agent.
+///
+/// **Every agent but Codex (Embedded)** (the user's call): it read *Needs a
+/// supported version* on most machines, and a terminal's Agents menu already
+/// offers the plain Codex CLI instead. Not offered is not removed — the
+/// provider stays registered, so a chat already on it still runs, and Codex
+/// still serves delegation.
+pub fn offered_in_picker(kind: &AgentProviderKind) -> bool {
+    kind.kind.as_str() != koru_session_profiles::CODEX_REGISTRATION.kind
+}
+
 /// The name a person knows the agent by — the profile's brand name, which
 /// is the same in every language.
 pub fn brand_label(kind: &AgentProviderKind) -> String {
@@ -344,6 +355,22 @@ mod tests {
         assert!(!is_agent_provider(
             &AiProviderId::parse("agent-nobody").unwrap()
         ));
+    }
+
+    /// **The picker leaves out Codex (Embedded)** and offers every other
+    /// agent; the provider itself stays in the list, so chats already on it
+    /// still run.
+    #[test]
+    fn the_picker_offers_every_agent_but_codex_embedded() {
+        let kinds = agent_provider_kinds();
+        let offered: Vec<&str> = kinds
+            .iter()
+            .filter(|kind| offered_in_picker(kind))
+            .map(|kind| kind.kind.as_str())
+            .collect();
+        assert!(!offered.contains(&"codex"), "{offered:?}");
+        assert_eq!(offered.len(), kinds.len() - 1, "{offered:?}");
+        assert!(kinds.iter().any(|kind| kind.kind.as_str() == "codex"));
     }
 
     #[test]

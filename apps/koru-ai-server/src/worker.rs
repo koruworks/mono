@@ -1203,6 +1203,7 @@ fn run_worker(
                 }
                 agent_views = koru_ai_provider_agent::agent_provider_kinds()
                     .iter()
+                    .filter(|kind| koru_ai_provider_agent::offered_in_picker(kind))
                     .map(|kind| koru_ai_wire::AgentProviderView {
                         id: kind.id.clone(),
                         label: koru_ai_provider_agent::brand_label(kind),
