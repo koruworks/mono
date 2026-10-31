@@ -455,8 +455,12 @@ pub struct ChatSurface {
     /// When the agents' readiness was last asked for, so a running check is
     /// followed up while the picker or the card shows it.
     agent_status_asked: Option<Instant>,
-    /// Each agent's listed models, once its row was expanded.
+    /// Each agent's listed models, asked for when settings arrive and again
+    /// each time the picker opens.
     agent_models: HashMap<AiProviderId, agents::AgentModels>,
+    /// The agents whose list has been asked for and not answered yet, so a
+    /// second ask waits for the first and a list on screen stays there.
+    agent_models_asked: std::collections::HashSet<AiProviderId>,
     /// The agent row expanded in the picker, and the group under it.
     expanded_agent: Option<AiProviderId>,
     expanded_group: Option<String>,
@@ -667,6 +671,7 @@ impl ChatSurface {
             agent_status: HashMap::new(),
             agent_status_asked: None,
             agent_models: HashMap::new(),
+            agent_models_asked: Default::default(),
             expanded_agent: None,
             expanded_group: None,
             setup_agent: None,
@@ -1583,6 +1588,7 @@ impl ChatSurface {
             self.chat_model_open = !self.chat_model_open;
             if self.chat_model_open {
                 self.refresh_agent_status();
+                self.prefetch_agent_models();
             }
             if self.chat_model_open
                 && self.chat_model_rows().is_empty()
@@ -2559,16 +2565,30 @@ impl ChatSurface {
                 let selected = settings.selected_provider.clone();
                 self.settings = Some(settings);
                 self.validate_models_after_settings(selected);
+                self.prefetch_agent_models();
             }
             Update::AgentModels(response) => {
+                self.agent_models_asked.remove(&response.provider);
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
                 );
             }
+            Update::AgentModelsPending(provider) => {
+                // Listing models… stays, as does a list already on screen;
+                // the next open of the picker asks again.
+                self.agent_models_asked.remove(&provider);
+            }
             Update::AgentModelsFailed(provider) => {
-                self.agent_models
-                    .insert(provider, agents::AgentModels::Failed);
+                self.agent_models_asked.remove(&provider);
+                // A list already on screen stays: the next open asks again.
+                if !matches!(
+                    self.agent_models.get(&provider),
+                    Some(agents::AgentModels::Listed(_))
+                ) {
+                    self.agent_models
+                        .insert(provider, agents::AgentModels::Failed);
+                }
             }
             Update::Validation(validation) => {
                 tracing::info!(
@@ -2586,8 +2606,17 @@ impl ChatSurface {
                 }
                 if agents::is_agent_provider(&validation.provider) {
                     let status = AgentStatus::from_validation(&validation);
-                    self.agent_status
+                    let was = self
+                        .agent_status
                         .insert(validation.provider.clone(), status);
+                    // An agent that turns ready while the picker is open
+                    // has a list worth asking for again.
+                    if self.chat_model_open
+                        && status == AgentStatus::Ready
+                        && was != Some(AgentStatus::Ready)
+                    {
+                        self.ask_agent_models(validation.provider.clone());
+                    }
                     self.messages_dirty = true;
                     if self.setup_provider == SetupProvider::Agents
                         && self.setup_agent.as_ref() == Some(&validation.provider)
@@ -4260,7 +4289,12 @@ impl ChatSurface {
                 .as_ref()
                 .map(|settings| settings.agents.as_slice())
                 .unwrap_or_default();
-            agent_chip_label(agents, &model.provider, &model.requested_model)
+            agent_chip_label(
+                agents,
+                &model.provider,
+                &model.requested_model,
+                self.listed_agent_models(&model.provider),
+            )
         } else {
             model.requested_model.clone()
         };
@@ -9665,6 +9699,97 @@ mod tests {
             .insert(claude.clone(), AgentStatus::CheckFailed);
         surface.follow_agent_checks(Instant::now() + Duration::from_secs(5));
         assert!(commands.try_recv().is_err());
+    }
+
+    /// Agent-models D8: every agent's list is asked for when settings
+    /// arrive, so the picker opens on it; one ask is out at a time; a list
+    /// on screen stays through a failed or pending ask; and an agent that
+    /// turns ready while the picker is open is asked again.
+    #[test]
+    fn agent_models_are_asked_for_ahead_of_the_picker_and_kept_meanwhile() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        let settings = ProviderSettingsResponse {
+            selected_provider: Some(AiProviderId::parse(AiProviderId::OPENAI).unwrap()),
+            openai: koru_ai_wire::OpenAiSettingsView {
+                model: None,
+                reasoning: ReasoningChoice::Default,
+                credential_configured: false,
+            },
+            ollama: koru_ai_wire::OllamaSettingsView {
+                endpoint: "http://localhost:11434".into(),
+                model: None,
+                reasoning: ReasoningChoice::Default,
+            },
+            agents: vec![koru_ai_wire::AgentProviderView {
+                id: claude.clone(),
+                label: "Claude".into(),
+            }],
+        };
+        let discover = |commands: &std::sync::mpsc::Receiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter(|command| matches!(command, Command::DiscoverModels(_)))
+                .count()
+        };
+
+        surface.apply_update(Update::Settings(settings));
+        assert_eq!(discover(&commands), 1, "asked as settings arrive");
+        assert_eq!(
+            surface.agent_models.get(&claude),
+            Some(&agents::AgentModels::Loading)
+        );
+        surface.prefetch_agent_models();
+        assert_eq!(discover(&commands), 0, "one ask out at a time");
+
+        let listed = vec![koru_ai_wire::AgentModelView {
+            id: "opus".into(),
+            group: "claude".into(),
+            name: Some("Claude Opus 4.7".into()),
+            description: None,
+            group_name: None,
+            legacy: false,
+        }];
+        surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
+            provider: claude.clone(),
+            models: listed.clone(),
+        }));
+        surface.prefetch_agent_models();
+        assert_eq!(discover(&commands), 1, "asked again once answered");
+        assert_eq!(
+            surface.agent_models.get(&claude),
+            Some(&agents::AgentModels::Listed(listed.clone())),
+            "the list stays while the answer is on its way"
+        );
+        surface.apply_update(Update::AgentModelsFailed(claude.clone()));
+        assert_eq!(
+            surface.agent_models.get(&claude),
+            Some(&agents::AgentModels::Listed(listed)),
+            "a failed ask does not take a list off the screen"
+        );
+        // A list the host is still building: what is on screen stays, and
+        // the next open asks again.
+        surface.prefetch_agent_models();
+        assert_eq!(discover(&commands), 1);
+        surface.apply_update(Update::AgentModelsPending(claude.clone()));
+        assert!(matches!(
+            surface.agent_models.get(&claude),
+            Some(agents::AgentModels::Listed(_))
+        ));
+
+        surface.chat_model_open = true;
+        surface
+            .agent_status
+            .insert(claude.clone(), AgentStatus::Checking);
+        surface.apply_update(Update::Validation(ProviderValidationResponse {
+            provider: claude.clone(),
+            status: ProviderValidationStatus::Ready,
+            models: Vec::new(),
+            selected_model: None,
+            failure: None,
+        }));
+        assert_eq!(discover(&commands), 1, "turning ready asks again");
     }
 
     #[test]

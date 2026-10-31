@@ -126,9 +126,11 @@ pub const ROUTES: &[AiRoute] = &[
         path: "/v1/ai/providers/{provider}/models",
         scope: AiScope::ManageProviders,
         summary: "List the models a local agent offers",
-        returns: "The agent's models in its own ids, each with the agent's grouping; empty when it lists none.",
+        returns: "The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ \"refresh\": true }` the list is rebuilt first.",
         handler: || post(discover_agent_models),
-        request: None,
+        request: Some(|generator| {
+            generator.subschema_for::<koru_ai_wire::DiscoverAgentModelsRequest>()
+        }),
         response: |generator| generator.subschema_for::<koru_ai_wire::AgentModelsResponse>(),
         stream: false,
         path_parameter: Some("provider"),
@@ -685,15 +687,39 @@ async fn discover_agent_models(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,
     Path(provider): Path<String>,
+    body: axum::body::Bytes,
 ) -> Response {
     let Ok(provider) = AiProviderId::parse(provider) else {
         return invalid_identity("provider");
+    };
+    let request = match agent_models_request(&body) {
+        Ok(request) => request,
+        Err(response) => return response,
     };
     let (client, context) = match admitted(&state, principal, AiScope::ManageProviders) {
         Ok(values) => values,
         Err(response) => return response,
     };
-    answer(call(move || client.discover_agent_models(context, provider)).await)
+    answer(call(move || client.discover_agent_models(context, provider, request)).await)
+}
+
+/// The models route's optional body. An empty body asks for the list
+/// already known, so every client that predates the body keeps working.
+fn agent_models_request(body: &[u8]) -> Result<koru_ai_wire::DiscoverAgentModelsRequest, Response> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(Default::default());
+    }
+    serde_json::from_slice(body).map_err(|_| {
+        ai_failure(
+            StatusCode::BAD_REQUEST,
+            Failure {
+                code: "invalid_request".into(),
+                message: "The agent models request body is invalid.".into(),
+                retryable: false,
+                details: Default::default(),
+            },
+        )
+    })
 }
 
 async fn pull_ollama_model(
@@ -1448,7 +1474,8 @@ fn status_for(failure: &Failure) -> StatusCode {
         "ai_worker_saturated"
         | "ai_unavailable"
         | "ai_context_unavailable"
-        | "ai_provider_management_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        | "ai_provider_management_unavailable"
+        | "agent_models_listing" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

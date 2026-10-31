@@ -9,6 +9,10 @@ pub(super) struct CodexModel {
     pub model: String,
     pub image: bool,
     pub is_default: bool,
+    /// What the app-server calls it for a person (`displayName`), and its
+    /// `description`, within `ModelLabel`'s bounds.
+    pub display_name: Option<koru_session_protocol::ModelLabel>,
+    pub description: Option<koru_session_protocol::ModelLabel>,
 }
 
 pub(super) struct ModelPage {
@@ -49,6 +53,9 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
     {
         return None;
     }
+    let label = |key: &str| model.get(key).and_then(Value::as_str);
+    let display_name = label("displayName").and_then(koru_session_protocol::ModelLabel::name);
+    let description = label("description").and_then(koru_session_protocol::ModelLabel::description);
     let model = model.get("model")?.as_str()?;
     if !valid_token(model, 128) {
         return None;
@@ -59,6 +66,8 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
             .iter()
             .any(|value| value.as_str() == Some("image")),
         is_default,
+        display_name,
+        description,
     })
 }
 

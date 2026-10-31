@@ -76,6 +76,20 @@ impl SessionPaths {
         self.sessions_dir.join("projects.conf.unreadable")
     }
 
+    /// The host's model catalog: each agent's model list, kept across
+    /// restarts. A cache, never an authority — a rooted host keeps its own,
+    /// and one that cannot be read is simply rebuilt.
+    pub fn provider_models_file(&self) -> PathBuf {
+        self.sessions_dir.join("provider-models.json")
+    }
+
+    /// The same mechanism as [`profiles_atomic_path`](Self::profiles_atomic_path):
+    /// the one session host writes the whole catalog beside its destination
+    /// and replaces it in one filesystem operation.
+    pub fn provider_models_atomic_path(&self) -> AtomicPath {
+        AtomicPath::for_target(self.provider_models_file())
+    }
+
     /// The sole subtree startup cleanup is allowed to traverse.
     pub fn attachments_directory(&self) -> PathBuf {
         self.sessions_dir.join("attachments")

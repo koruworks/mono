@@ -113,6 +113,10 @@ impl ManagedProviderFactory for AcpFactory {
         )
     }
 
+    fn catalog_source(&self) -> CatalogSource {
+        self.route.dialect.catalog_source()
+    }
+
     fn compatibility_probe(
         &self,
         executable: OsString,
@@ -230,6 +234,23 @@ impl CompatibilityProbe for AcpCompatibilityProbe {
     }
 
     fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure> {
+        self.probe_with_models(limits)
+            .map(|(capabilities, _)| capabilities)
+    }
+
+    /// The same start a chat's session makes; its `model` option's values
+    /// are kept when this route's catalog comes from the probe, rather than
+    /// thrown away and asked for again by a discovery session.
+    fn probe_with_models(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<
+        (
+            AgentCapabilities,
+            Option<koru_session_protocol::ProviderModels>,
+        ),
+        ProviderFailure,
+    > {
         let version = self.version(limits)?;
         let config = AcpConfig::new(
             self.route.clone(),
@@ -241,9 +262,15 @@ impl CompatibilityProbe for AcpCompatibilityProbe {
         .with_limits(limits)?;
         let mut control = AcpControl::new(config);
         let result = control.start(AgentStart::fresh(SessionId::mint(), None));
+        let models = (self.route.dialect.catalog_source() == CatalogSource::Probe)
+            .then(|| {
+                koru_session_protocol::ProviderModels::try_from(control.model_options().to_vec())
+                    .ok()
+            })
+            .flatten();
         let shutdown = control.shutdown();
         let capabilities = result?;
         shutdown?;
-        Ok(capabilities)
+        Ok((capabilities, models))
     }
 }

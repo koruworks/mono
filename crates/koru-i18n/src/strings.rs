@@ -248,6 +248,7 @@ pub enum Key {
     AiAgentModelsLoading,
     AiAgentModelsFailed,
     AiAgentNoModels,
+    AiModelAgentDefault,
     // The chip composer (AGENTUX I6).
     AiComposerPlaceholder,
     AiDocumentLinkUntitled,
@@ -2621,7 +2622,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1780] = [
+    pub const ALL: [Key; 1781] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2765,6 +2766,7 @@ impl Key {
         Key::AiAgentModelsLoading,
         Key::AiAgentModelsFailed,
         Key::AiAgentNoModels,
+        Key::AiModelAgentDefault,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
         Key::AiTooManyDocuments,
@@ -6019,6 +6021,18 @@ pub const ROWS: &[Row] = &[
         ar: "لا توجد نماذج",
         zh_hans: "未列出模型",
         ja: "モデルはありません",
+    },
+    // The first row under an agent: whatever model the agent itself picks.
+    Row {
+        key: Key::AiModelAgentDefault,
+        en: "Default",
+        es: "Predeterminado",
+        pt_br: "Padrão",
+        de: "Standard",
+        fr: "Par défaut",
+        ar: "الافتراضي",
+        zh_hans: "默认",
+        ja: "既定",
     },
     // The chip composer (AGENTUX I6).
     Row {

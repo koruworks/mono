@@ -3293,6 +3293,57 @@ mod tests {
         assert!(report.report.groups.is_empty());
     }
 
+    /// The models route's optional body (agent-models D13): no body and
+    /// `{ "refresh": true }` both reach the AI service — which, with no
+    /// session host here, says local agents are not available — while a
+    /// body that is not the request is refused before it gets there.
+    #[tokio::test]
+    async fn the_agent_models_route_takes_an_optional_refresh_body() {
+        let (_root, state) = state_with_production_ai();
+        let (token, _) = state.sessions.mint(
+            "provider-manager",
+            &["ai.manage_providers".into()],
+            now_millis(),
+        );
+        let code = |status: StatusCode, bytes: &[u8]| {
+            let failure: koru_ai_wire::Failure = serde_json::from_slice(bytes).unwrap();
+            (status, failure.code)
+        };
+        let mut answers = Vec::new();
+        for body in [
+            "",
+            r#"{"refresh":true}"#,
+            r#"{"refresh":"yes"}"#,
+            r#"{"refresh":true,"other":1}"#,
+        ] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/providers/agent-opencode/models")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            answers.push(code(status, &bytes));
+        }
+        assert_eq!(answers[0].1, "agent_service_unavailable");
+        assert_eq!(answers[1], answers[0], "a refresh reaches the same service");
+        for refused in &answers[2..] {
+            assert_eq!(
+                refused,
+                &(StatusCode::BAD_REQUEST, "invalid_request".to_owned())
+            );
+        }
+    }
+
     #[tokio::test]
     async fn provider_settings_cross_the_public_gateway_without_secrets() {
         let (_root, state) = state_with_production_ai();

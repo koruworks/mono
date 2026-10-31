@@ -486,7 +486,7 @@ Returns: A safe provider state, available model names, and selected-model capabi
 
 List the models a local agent offers
 
-Returns: The agent's models in its own ids, each with the agent's grouping; empty when it lists none.
+Returns: The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ "refresh": true }` the list is rebuilt first.
 
 ## POST `/v1/ai/providers/ollama/pulls`
 

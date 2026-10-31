@@ -714,6 +714,21 @@ impl AiClient<'_> {
         )
     }
 
+    /// The agent's list rebuilt first — the manual refresh: the host
+    /// re-probes the agent and lists it again before answering.
+    pub fn refresh_agent_models(
+        &self,
+        provider: &AiProviderId,
+    ) -> AiResult<koru_ai_wire::AgentModelsResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/providers/{provider}/models"),
+            Some(json_body(&koru_ai_wire::DiscoverAgentModelsRequest {
+                refresh: true,
+            })?),
+        )
+    }
+
     pub fn pull_ollama_model(
         &self,
         request: &PullOllamaModelRequest,

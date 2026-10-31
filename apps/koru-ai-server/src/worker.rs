@@ -465,11 +465,13 @@ impl AiServerPort for AiWorkerClient {
         &self,
         context: RequestContext,
         provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentModelsRequest,
     ) -> ApiResult<koru_ai_wire::AgentModelsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DiscoverAgentModels {
             context,
             provider,
+            refresh: request.refresh,
             reply,
         })?;
         receive_api(response)
@@ -907,6 +909,8 @@ enum WorkerCommand {
     DiscoverAgentModels {
         context: RequestContext,
         provider: AiProviderId,
+        /// Rebuild the agent's list before answering (the manual refresh).
+        refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
     },
     PullOllamaModel {
@@ -1443,8 +1447,9 @@ impl WorkerState {
             WorkerCommand::DiscoverAgentModels {
                 context,
                 provider,
+                refresh,
                 reply,
-            } => self.discover_agent_models(context, provider, reply),
+            } => self.discover_agent_models(context, provider, refresh, reply),
             WorkerCommand::PullOllamaModel {
                 context,
                 request,
@@ -1783,6 +1788,7 @@ impl WorkerState {
         &self,
         context: RequestContext,
         provider: AiProviderId,
+        refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
     ) {
         if let Err(error) = authorize(&context, AiScope::ManageProviders) {
@@ -1800,7 +1806,7 @@ impl WorkerState {
         let spawned = std::thread::Builder::new()
             .name("koru-ai-agent-models".into())
             .spawn(move || {
-                let _ = reply.send(agents::agent_models(&agents, provider));
+                let _ = reply.send(agents::agent_models(&agents, provider, refresh));
             });
         if spawned.is_err() {
             tracing::warn!("could not start the agent model listing thread");

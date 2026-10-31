@@ -146,6 +146,8 @@ pub(crate) enum Update {
     Validation(ProviderValidationResponse),
     AgentModels(koru_ai_wire::AgentModelsResponse),
     AgentModelsFailed(AiProviderId),
+    /// The host is still building the agent's list.
+    AgentModelsPending(AiProviderId),
     Pull(ModelPullEvent),
     Exported(String),
     /// The titles `Command::DocumentTitles` could find. A document the Store
@@ -577,30 +579,15 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 send_result(&updates, result);
             }
             Command::DiscoverModels(provider) => {
-                let started = Instant::now();
-                let update = match client.ai().discover_agent_models(&provider) {
-                    Ok(response) => {
-                        tracing::info!(
-                            target: "koru_ai::ui",
-                            provider = %provider,
-                            model_count = response.models.len(),
-                            elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
-                            "AI UI agent models listed"
-                        );
-                        Update::AgentModels(response)
-                    }
-                    Err(failure) => {
-                        tracing::warn!(
-                            target: "koru_ai::ui",
-                            provider = %provider,
-                            code = failure.code.as_str(),
-                            elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
-                            "AI UI agent models failed"
-                        );
-                        Update::AgentModelsFailed(provider)
-                    }
-                };
-                send_result(&updates, Ok::<_, koru_ai_wire::Failure>(update));
+                // An agent's list can be seconds away the first time it is
+                // built. Every other command — sending a turn, reading a
+                // chat, validating — must not queue behind it.
+                let client = client.clone();
+                let listing_updates = updates.clone();
+                off_thread("koru-ai-ui-agent-models", move || {
+                    let update = list_agent_models(&client, provider);
+                    let _ = listing_updates.send(update);
+                });
             }
             Command::Validate(provider) => {
                 let started = Instant::now();
@@ -927,6 +914,82 @@ fn decorate_tool_activity(
     activity
 }
 
+/// How many times one ask is made while the host says the list is still
+/// being built. Each answer comes within the host's budget, and the host
+/// keeps listing between them, so the later asks find the list it made.
+const LISTING_ASKS: usize = 3;
+
+fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -> Update {
+    let started = Instant::now();
+    let mut asks = 0;
+    let answer = loop {
+        asks += 1;
+        match client.ai().discover_agent_models(&provider) {
+            Err(failure) if failure.code == AGENT_MODELS_LISTING && asks < LISTING_ASKS => {}
+            answer => break answer,
+        }
+    };
+    match answer {
+        Ok(response) => {
+            tracing::info!(
+                target: "koru_ai::ui",
+                provider = %provider,
+                model_count = response.models.len(),
+                elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                "AI UI agent models listed"
+            );
+            Update::AgentModels(response)
+        }
+        // Still being built after every ask: the picker keeps saying so,
+        // and the next open asks again.
+        Err(failure) if failure.code == AGENT_MODELS_LISTING => {
+            tracing::info!(
+                target: "koru_ai::ui",
+                provider = %provider,
+                elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                "AI UI agent models still listing"
+            );
+            Update::AgentModelsPending(provider)
+        }
+        Err(failure) => {
+            tracing::warn!(
+                target: "koru_ai::ui",
+                provider = %provider,
+                code = failure.code.as_str(),
+                elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                "AI UI agent models failed"
+            );
+            Update::AgentModelsFailed(provider)
+        }
+    }
+}
+
+/// The AI service's answer for a list the host is still building.
+const AGENT_MODELS_LISTING: &str = "agent_models_listing";
+
+/// Run `work` on a short-lived thread of its own, the way a pull's stream
+/// is read, so the client thread goes straight on to the next command. A
+/// thread that cannot be started runs the work here instead: late beats
+/// never.
+fn off_thread(name: &str, work: impl FnOnce() + Send + 'static) {
+    let work = std::sync::Arc::new(std::sync::Mutex::new(Some(work)));
+    let spawned = {
+        let work = work.clone();
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                if let Some(work) = work.lock().ok().and_then(|mut work| work.take()) {
+                    work();
+                }
+            })
+    };
+    if spawned.is_err()
+        && let Some(work) = work.lock().ok().and_then(|mut work| work.take())
+    {
+        work();
+    }
+}
+
 fn send_result<T>(updates: &SyncSender<Update>, result: Result<Update, T>)
 where
     T: IntoFailure,
@@ -949,8 +1012,27 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 #[cfg(test)]
 mod tests {
-    use super::{CLIENT_SCOPES, authoritative_attempt_missing, workspace_catalog_failure};
+    use super::{
+        CLIENT_SCOPES, authoritative_attempt_missing, off_thread, workspace_catalog_failure,
+    };
     use koru_ai_wire::Failure;
+
+    /// A listing that is still waiting on its agent does not hold the next
+    /// command: the work after it finishes first.
+    #[test]
+    fn a_slow_listing_runs_off_the_client_thread() {
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (done, finished) = std::sync::mpsc::channel::<&'static str>();
+        let listing_done = done.clone();
+        off_thread("fixture-agent-models", move || {
+            released.recv().unwrap();
+            listing_done.send("listing").unwrap();
+        });
+        done.send("validate").unwrap();
+        assert_eq!(finished.recv().unwrap(), "validate");
+        release.send(()).unwrap();
+        assert_eq!(finished.recv().unwrap(), "listing");
+    }
 
     #[test]
     fn client_requests_gateway_namespaced_store_scopes() {

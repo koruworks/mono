@@ -37,6 +37,19 @@ impl AcpDialect {
         self == Self::Antigravity
     }
 
+    /// OpenCode's list comes from its catalog commands, because the
+    /// session's own `model` option is not filtered to the accounts the
+    /// person connected; a generic route lists nothing; every other route's
+    /// readiness probe already receives its list.
+    pub(super) fn catalog_source(self) -> crate::providers::CatalogSource {
+        use crate::providers::CatalogSource;
+        match self {
+            Self::OpenCode => CatalogSource::Listing,
+            Self::Generic => CatalogSource::OnDemand,
+            Self::Claude | Self::Kimi | Self::Grok | Self::Antigravity => CatalogSource::Probe,
+        }
+    }
+
     /// Whether closing stdin ends the process. Antigravity's server was
     /// measured still running 60 s after EOF, with or without a session, so
     /// its shutdown is the owned tree's termination, not an EOF wait.

@@ -473,7 +473,9 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // no chat-origin session and the host treats its creates as manual.
     // **v17 is a tool's own words** (ADR-431, ADR-432): optional fields on
     // the tool events a terminal view leaves unread; no capability.
-    assert_eq!(offer.versions.max, 17);
+    // **v18 is what an agent says about its models** (agent-models D10):
+    // optional fields on a listed model; no capability.
+    assert_eq!(offer.versions.max, 18);
     assert!(offer.capabilities.supports(capability::PROVIDER_MODELS));
     assert!(
         offer

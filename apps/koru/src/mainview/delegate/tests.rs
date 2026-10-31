@@ -2150,10 +2150,10 @@ fn repeat_keeps_live_context_model_and_its_schedule_crumb_anchor() {
     let mut modal = open(&mut engine, world);
     modal.models.offered = true;
     modal.models.catalog = Some(
-        vec![koru_session_protocol::ProviderModel {
-            id: "openai/gpt-5".parse().unwrap(),
-            group: "openai".parse().unwrap(),
-        }]
+        vec![koru_session_protocol::ProviderModel::new(
+            "openai/gpt-5".parse().unwrap(),
+            "openai".parse().unwrap(),
+        )]
         .try_into()
         .unwrap(),
     );

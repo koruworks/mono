@@ -3858,22 +3858,8 @@
   "LaunchReasoning": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
-    "enum": [
-      "off",
-      "on",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "max"
-    ],
-    "title": "LaunchReasoning",
-    "type": "string"
-  },
-  "LaunchSelection": {
-    "$defs": {
-      "LaunchReasoning": {
-        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+    "oneOf": [
+      {
         "enum": [
           "off",
           "on",
@@ -3884,6 +3870,38 @@
           "max"
         ],
         "type": "string"
+      },
+      {
+        "const": "xhigh",
+        "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+        "type": "string"
+      }
+    ],
+    "title": "LaunchReasoning"
+  },
+  "LaunchSelection": {
+    "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
       },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
@@ -4000,11 +4018,73 @@
     "title": "ModelIdentity",
     "type": "object"
   },
+  "ModelLabel": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+    "title": "ModelLabel",
+    "type": "string"
+  },
   "ModelName": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
     "title": "ModelName",
     "type": "string"
+  },
+  "ModelReasoning": {
+    "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
+    "properties": {
+      "default": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LaunchReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's stated default level; `None` when the agent decides unseen."
+      },
+      "levels": {
+        "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+        "items": {
+          "$ref": "#/$defs/LaunchReasoning"
+        },
+        "type": "array"
+      },
+      "off": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "levels"
+    ],
+    "title": "ModelReasoning",
+    "type": "object"
   },
   "MouseAction": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4998,18 +5078,122 @@
   },
   "ProviderModel": {
     "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
+      },
+      "ModelReasoning": {
+        "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LaunchReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's stated default level; `None` when the agent decides unseen."
+          },
+          "levels": {
+            "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+            "items": {
+              "$ref": "#/$defs/LaunchReasoning"
+            },
+            "type": "array"
+          },
+          "off": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "levels"
+        ],
+        "type": "object"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
     "properties": {
+      "description": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "group": {
         "$ref": "#/$defs/ModelName"
       },
+      "group_name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for the group: ACP's group `name`."
+      },
       "id": {
         "$ref": "#/$defs/ModelName"
+      },
+      "legacy": {
+        "description": "The agent marks the model as older. Never inferred by Koru.",
+        "type": "boolean"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for the model: ACP's option `name`, Codex's\n`displayName`, OpenCode's `name`."
+      },
+      "reasoning": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The reasoning levels the agent offers for this model."
       }
     },
     "required": [
@@ -5021,17 +5205,121 @@
   },
   "ProviderModels": {
     "$defs": {
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      },
       "ModelName": {
         "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
         "type": "string"
       },
-      "ProviderModel": {
+      "ModelReasoning": {
+        "description": "The reasoning levels one model offers, in Koru's own vocabulary.",
         "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LaunchReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's stated default level; `None` when the agent decides unseen."
+          },
+          "levels": {
+            "description": "Koru's order: minimal < low < medium < high < xhigh < max. Never Off/On.",
+            "items": {
+              "$ref": "#/$defs/LaunchReasoning"
+            },
+            "type": "array"
+          },
+          "off": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "levels"
+        ],
+        "type": "object"
+      },
+      "ProviderModel": {
+        "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "group": {
             "$ref": "#/$defs/ModelName"
           },
+          "group_name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for the group: ACP's group `name`."
+          },
           "id": {
             "$ref": "#/$defs/ModelName"
+          },
+          "legacy": {
+            "description": "The agent marks the model as older. Never inferred by Koru.",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for the model: ACP's option `name`, Codex's\n`displayName`, OpenCode's `name`."
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reasoning levels the agent offers for this model."
           }
         },
         "required": [

@@ -685,11 +685,34 @@ pub(super) fn agent_validation(
     })
 }
 
+/// The code a client reads when an agent's models could not be answered.
+/// `Backpressure` from the host — or a host that did not answer in time — is
+/// a list still being built: `agent_models_listing`, which a client asks
+/// again for rather than calling a failure. Anything else is
+/// `agent_models_failed`.
+pub(super) fn agent_models_failure(code: koru_session_protocol::ErrorCode) -> Failure {
+    if code == koru_session_protocol::ErrorCode::Backpressure {
+        failure(
+            "agent_models_listing",
+            "The agent's models are still being listed.",
+            true,
+        )
+    } else {
+        failure(
+            "agent_models_failed",
+            "The agent could not list its models.",
+            true,
+        )
+    }
+}
+
 /// The models an agent lists, in the picker's shape. An agent that lists
 /// none answers with an empty list, which the picker shows as no level.
+/// With `refresh`, the list is rebuilt first (the manual refresh).
 pub(super) fn agent_models(
     agents: &AgentSessions,
     provider: AiProviderId,
+    refresh: bool,
 ) -> ApiResult<AgentModelsResponse> {
     let Some(kind) = agent_kind_of(&provider) else {
         return Err(failure(
@@ -698,21 +721,26 @@ pub(super) fn agent_models(
             false,
         ));
     };
-    let models = agents.discover_models(&kind).map_err(|_| {
-        failure(
-            "agent_models_failed",
-            "The agent could not list its models.",
-            true,
-        )
-    })?;
+    let models = agents
+        .discover_models(&kind, refresh)
+        .map_err(agent_models_failure)?;
     Ok(AgentModelsResponse {
         provider,
         models: models
             .models()
             .iter()
-            .map(|model| AgentModelView {
-                id: model.id.as_str().to_owned(),
-                group: model.group.as_str().to_owned(),
+            .map(|model| {
+                let label = |label: &Option<koru_session_protocol::ModelLabel>| {
+                    label.as_ref().map(|label| label.as_str().to_owned())
+                };
+                AgentModelView {
+                    id: model.id.as_str().to_owned(),
+                    group: model.group.as_str().to_owned(),
+                    name: label(&model.name),
+                    description: label(&model.description),
+                    group_name: label(&model.group_name),
+                    legacy: model.legacy,
+                }
             })
             .collect(),
     })

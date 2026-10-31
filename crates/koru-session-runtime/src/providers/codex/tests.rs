@@ -1969,8 +1969,10 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
                 "id": 2,
                 "result": {
                     "data": [
-                        { "isDefault": true, "model": "fixture-default", "inputModalities": ["text"] },
-                        { "isDefault": false, "model": "fixture-other", "inputModalities": ["text"] },
+                        { "isDefault": true, "model": "fixture-default", "inputModalities": ["text"],
+                          "displayName": "Fixture", "description": "fixture" },
+                        { "isDefault": false, "model": "fixture-other", "inputModalities": ["text"],
+                          "displayName": "", "description": null },
                         { "isDefault": false, "model": "voice-only", "inputModalities": ["audio"] }
                     ],
                     "nextCursor": null
@@ -1992,6 +1994,13 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
             .iter()
             .all(|model| model.group.as_str() == "openai")
     );
+    // The app-server's own name and description ride along; an empty one
+    // is no name, and the picker formats the id instead.
+    let first = &models.models()[0];
+    assert_eq!(first.name.as_ref().unwrap().as_str(), "Fixture");
+    assert_eq!(first.description.as_ref().unwrap().as_str(), "fixture");
+    assert!(models.models()[1].name.is_none());
+    assert!(models.models()[1].description.is_none());
     let sent = state.lock().unwrap().sent.clone();
     assert_eq!(
         sent.len(),
