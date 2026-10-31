@@ -986,8 +986,8 @@ impl crate::ChatSurface {
         self.chat_model_scroll_drag = None;
     }
 
-    /// Expand or collapse an agent's row. Its models are asked for on the
-    /// first expansion, and again after a failed listing.
+    /// Expand or collapse an agent's row. Its models are usually already
+    /// here; they are asked for when nothing is, or the last ask failed.
     fn toggle_agent_models(&mut self, agent: AiProviderId) {
         if self.expanded_agent.as_ref() == Some(&agent) {
             self.expanded_agent = None;
@@ -995,13 +995,52 @@ impl crate::ChatSurface {
         }
         self.expanded_agent = Some(agent.clone());
         self.expanded_group = None;
-        if !matches!(
-            self.agent_models.get(&agent),
-            Some(AgentModels::Loading | AgentModels::Listed(_))
-        ) {
+        if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
+            self.ask_agent_models(agent);
+        }
+    }
+
+    /// Ask for every agent's models, so the picker opens on lists already
+    /// known (agent-models D8): when settings arrive, and each time the
+    /// picker opens. The host answers from memory.
+    pub(crate) fn prefetch_agent_models(&mut self) {
+        let agents: Vec<AiProviderId> = self
+            .settings
+            .as_ref()
+            .map(|settings| {
+                settings
+                    .agents
+                    .iter()
+                    .map(|agent| agent.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for agent in agents {
+            self.ask_agent_models(agent);
+        }
+    }
+
+    /// Ask for one agent's models unless an ask is already out. A list on
+    /// screen stays while the answer is on its way; only an agent with no
+    /// list reads *Listing models…*.
+    pub(crate) fn ask_agent_models(&mut self, agent: AiProviderId) {
+        if self.agent_models_asked.contains(&agent) {
+            return;
+        }
+        if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
             self.agent_models
                 .insert(agent.clone(), AgentModels::Loading);
-            self.send_command(crate::reader::Command::DiscoverModels(agent));
+        }
+        // Straight to the reader: a background ask is not something the
+        // person is waiting on, so it neither marks the surface busy nor
+        // clears its status line.
+        let sent = self.reader.as_ref().is_some_and(|reader| {
+            reader
+                .send(crate::reader::Command::DiscoverModels(agent.clone()))
+                .is_ok()
+        });
+        if sent {
+            self.agent_models_asked.insert(agent);
         }
     }
 

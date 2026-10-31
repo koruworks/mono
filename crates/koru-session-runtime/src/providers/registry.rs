@@ -83,6 +83,14 @@ impl ManagedProviderRegistry {
             .compatibility_probe(entry.registration.executable.into(), working_directory)
     }
 
+    /// Where the model catalog gets `kind`'s list; `None` for a kind that
+    /// is not registered.
+    pub fn catalog_source(&self, kind: &ProviderKind) -> Option<super::CatalogSource> {
+        self.entries
+            .get(kind)
+            .map(|entry| entry.factory.catalog_source())
+    }
+
     pub fn discover_models(
         &self,
         kind: &ProviderKind,

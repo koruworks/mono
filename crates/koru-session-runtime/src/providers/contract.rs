@@ -192,6 +192,23 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
             ProviderDiagnostic::HandshakeRejected,
         ))
     }
+
+    /// Where the host's model catalog gets this provider's list.
+    fn catalog_source(&self) -> CatalogSource {
+        CatalogSource::OnDemand
+    }
+}
+
+/// Where the host's model catalog gets a provider's list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogSource {
+    /// The readiness probe's own session start receives it, so keeping it
+    /// costs no process (`CompatibilityProbe::probe_with_models`).
+    Probe,
+    /// A listing of its own, run in the background once per agent version.
+    Listing,
+    /// A listing run only when somebody asks.
+    OnDemand,
 }
 
 /// Provider-neutral attachment metadata. The adapter resolves an id through

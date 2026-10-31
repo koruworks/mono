@@ -7,6 +7,7 @@
 //! endpoint admission, request routing, bounded connection lanes, and the
 //! summary-only registry.
 
+mod catalog_store;
 mod lifecycle;
 pub mod projects;
 mod server;

@@ -48,11 +48,21 @@ fn host(registry: ManagedProviderRegistry) -> Arc<HostState> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("unused-test-root");
     let paths = koru_session_paths::SessionPaths::from_resolved_directory(root.clone());
     let registry = Arc::new(registry);
+    let catalog = ProviderCatalogCache::new(
+        Arc::clone(&registry),
+        root.clone(),
+        Box::new(koru_session_runtime::providers::MemoryCatalogStore::default()),
+        false,
+    );
     Arc::new(HostState {
-        model_providers: Arc::clone(&registry),
-        model_slots: Semaphore::new(2),
         registry: SessionRegistry::new(SessionRuntimeConfig::default()),
-        providers: ProviderReadinessCache::new(registry, root.clone()),
+        providers: ProviderReadinessCache::with_catalog(
+            Arc::clone(&registry),
+            root.clone(),
+            true,
+            Arc::clone(&catalog),
+        ),
+        catalog,
         projects: ProjectRegistry::in_memory(&paths),
         attachments: Arc::new(
             koru_session_attachments::AttachmentStore::new(

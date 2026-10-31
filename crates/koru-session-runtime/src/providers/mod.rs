@@ -7,6 +7,7 @@
 
 mod acp;
 mod acp_failure;
+mod catalog;
 mod codex;
 mod contract;
 mod delegation;
@@ -20,6 +21,10 @@ pub use readiness::ProviderReadinessCache;
 
 pub use acp::*;
 pub use acp_failure::*;
+pub use catalog::{
+    CATALOG_FORMAT, CatalogDrop, CatalogStore, MAX_CATALOG_FILE_BYTES, MemoryCatalogStore,
+    ModelSlot, ModelSlots, ProviderCatalogCache,
+};
 pub use codex::*;
 pub use contract::*;
 pub use delegation::*;

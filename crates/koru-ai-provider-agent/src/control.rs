@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use koru_ai_core::{AiError, AiErrorClass, AiProvider, AiProviderId, ChatId};
@@ -93,10 +93,6 @@ pub struct AgentSessions {
     commands: SyncSender<Command>,
     endpoint: koru_ipc::Endpoint,
     live: Arc<LiveTurns>,
-    /// Each agent's listed models, once asked. One slot per agent so a
-    /// second picker waits for the first listing instead of starting its
-    /// own; a failed listing keeps nothing and is asked again.
-    catalogs: Arc<Mutex<HashMap<ProviderKind, Arc<Mutex<Option<ProviderModels>>>>>>,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -108,19 +104,10 @@ pub(crate) fn default_working_directory() -> std::path::PathBuf {
 impl AgentSessions {
     /// The models an agent lists, on a connection of its own so a slow
     /// catalog never holds the control connection. An agent whose route
-    /// lists nothing answers with an empty catalog.
+    /// lists nothing answers with an empty catalog. Nothing is kept here:
+    /// the session host's catalog is the one cache, and a copy here would
+    /// hide every refresh it makes (agent-models D2).
     pub fn discover_models(&self, kind: &AgentProviderKind) -> Result<ProviderModels, ErrorCode> {
-        let slot = self
-            .catalogs
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
-            .entry(kind.kind.clone())
-            .or_default()
-            .clone();
-        let mut slot = slot.lock().unwrap_or_else(|held| held.into_inner());
-        if let Some(models) = slot.as_ref() {
-            return Ok(models.clone());
-        }
         let started = Instant::now();
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
@@ -150,7 +137,6 @@ impl AgentSessions {
             elapsed_ms = started.elapsed().as_millis() as u64,
             "agent models listed"
         );
-        *slot = Some(models.clone());
         Ok(models)
     }
 
@@ -168,7 +154,6 @@ impl AgentSessions {
             commands,
             endpoint,
             live: Arc::new(LiveTurns::default()),
-            catalogs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

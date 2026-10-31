@@ -13,7 +13,7 @@ use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
 use koru_session_runtime::providers::{
-    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry,
+    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
 };
 use koru_session_runtime::{
     AgentEventUpdate, AttachmentPathResolver, EnvironmentPolicy, RawOutputUpdate, SessionCreate,
@@ -85,8 +85,8 @@ impl std::error::Error for HostError {}
 
 struct HostState {
     registry: SessionRegistry,
-    model_providers: Arc<ManagedProviderRegistry>,
-    model_slots: Semaphore,
+    /// Each agent's model list, answered from memory (agent-models D2).
+    catalog: Arc<ProviderCatalogCache>,
     providers: Arc<koru_session_runtime::providers::ProviderReadinessCache>,
     projects: ProjectRegistry,
     attachments: Arc<koru_session_attachments::AttachmentStore>,
@@ -295,15 +295,25 @@ pub async fn serve(
             .expect("built-in provider registrations are valid and unique");
     }
     let managed_providers = Arc::new(managed_providers);
-    let providers = koru_session_runtime::providers::ProviderReadinessCache::with_probe_policy(
+    // The catalog loads its file before the first probe, so a persisted
+    // list is there to show while every agent still reads *Checking*.
+    let catalog = ProviderCatalogCache::new(
+        Arc::clone(&managed_providers),
+        bootstrap.sessions_directory.clone(),
+        Box::new(crate::catalog_store::FileCatalogStore::new(
+            paths.provider_models_atomic_path(),
+        )),
+        !cfg!(feature = "no-provider-probes"),
+    );
+    let providers = koru_session_runtime::providers::ProviderReadinessCache::with_catalog(
         Arc::clone(&managed_providers),
         bootstrap.sessions_directory.clone(),
         !cfg!(feature = "no-provider-probes"),
+        Arc::clone(&catalog),
     );
     providers.refresh_all();
     let state = Arc::new(HostState {
-        model_providers: Arc::clone(&managed_providers),
-        model_slots: Semaphore::new(2),
+        catalog,
         providers,
         registry: SessionRegistry::new(
             SessionRuntimeConfig::from_env(Arc::clone(&lifecycle))
@@ -916,14 +926,16 @@ fn handle_request(
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else if !working_directory.is_absolute() {
                 Err(failure(ErrorCode::InvalidRequest))
-            } else if let Ok(_slot) = state.model_slots.try_acquire() {
-                state
-                    .model_providers
-                    .discover_models(&provider, working_directory)
-                    .map(|models| Response::ProviderModels { models })
-                    .map_err(|error| failure(error.code))
             } else {
-                Err(failure(ErrorCode::Backpressure))
+                // From the catalog's memory; a listing it has to run holds
+                // one of its two slots, or is refused with `Backpressure`.
+                // The list is the agent's user-level one whatever folder
+                // the request names (agent-models §11).
+                state
+                    .catalog
+                    .serve(&provider)
+                    .map(|models| Response::ProviderModels { models })
+                    .map_err(failure)
             }
         }
         Request::SubscribeProviders => {

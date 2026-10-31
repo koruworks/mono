@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use koru_session_protocol::{ErrorCode, ProviderKind};
+use koru_session_protocol::{ErrorCode, ProviderKind, ProviderModels};
 
 use super::{AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage};
 
@@ -68,6 +68,8 @@ pub struct ProviderDiscovery {
     pub provider: ProviderKind,
     pub raw_available: bool,
     pub managed: ManagedAvailability,
+    /// The model list the probe's session start received, for the catalog.
+    pub models: Option<ProviderModels>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,6 +168,16 @@ pub trait CompatibilityProbe: Send + 'static {
     fn provider(&self) -> ProviderKind;
     fn raw_available(&self) -> bool;
     fn probe(&self, limits: ProbeLimits) -> Result<AgentCapabilities, ProviderFailure>;
+
+    /// The probe, and the model list its session start received when the
+    /// provider's catalog comes from the probe (`CatalogSource::Probe`).
+    /// Keeping it costs nothing: the start already happened.
+    fn probe_with_models(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<(AgentCapabilities, Option<ProviderModels>), ProviderFailure> {
+        self.probe(limits).map(|capabilities| (capabilities, None))
+    }
 }
 
 /// A discovery run starts bounded provider probes on named background threads.
@@ -193,8 +205,12 @@ impl DiscoveryRun {
                 .spawn(move || {
                     let raw_available =
                         catch_unwind(AssertUnwindSafe(|| probe.raw_available())).unwrap_or(false);
-                    let managed = match catch_unwind(AssertUnwindSafe(|| probe.probe(limits))) {
-                        Ok(Ok(capabilities)) if capabilities.provider == provider => {
+                    let mut models = None;
+                    let managed = match catch_unwind(AssertUnwindSafe(|| {
+                        probe.probe_with_models(limits)
+                    })) {
+                        Ok(Ok((capabilities, captured))) if capabilities.provider == provider => {
+                            models = captured;
                             ManagedAvailability::Compatible(capabilities)
                         }
                         Ok(Ok(_)) => ManagedAvailability::Incompatible {
@@ -211,6 +227,7 @@ impl DiscoveryRun {
                         provider,
                         raw_available,
                         managed,
+                        models,
                     });
                 })
                 .map_err(|_| {
