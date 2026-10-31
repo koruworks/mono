@@ -495,7 +495,7 @@ To reinstall on or launch against one specific device, use its serial:
 
 `assembleRelease` builds the Rust library release-optimized for both ABIs
 (`cargo build --release`, copied from `target/<triple>/release/`), then
-minifies and packages the app:
+packages the app (R8 minification is not enabled):
 
 ```powershell
 .\gradlew.bat assembleRelease
