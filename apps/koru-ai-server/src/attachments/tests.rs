@@ -266,3 +266,59 @@ fn a_branch_links_every_folder_or_none() {
     assert!(store.link_for_branch(&[fresh.clone(), link]).is_err());
     assert!(!store.attachment_dir(fresh.to.0, fresh.to.1).exists());
 }
+
+#[test]
+fn a_sent_copy_of_pure_noise_still_fits_its_bytes() {
+    let mut state = 0x9e37_79b9_u32;
+    let noise = ImageBuffer::from_fn(3_000, 3_000, |_, _| {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        let [r, g, b, _] = state.to_le_bytes();
+        Rgb([r, g, b])
+    });
+    let sent = sent_copy(&DynamicImage::ImageRgb8(noise)).unwrap();
+    assert!(sent.bytes.len() as u64 <= MAX_SENT_COPY_BYTES);
+    let decoded = image::load_from_memory(&sent.bytes).unwrap();
+    assert!(decoded.width() <= SENT_COPY_EDGE);
+}
+
+#[test]
+fn a_picture_too_big_to_decode_is_attached_as_a_file() {
+    // A 16-bit picture spends eight bytes a pixel; a bound below that is
+    // what a 48 MP one meets at the real limit.
+    let image = image::ImageBuffer::<image::Rgba<u16>, _>::from_pixel(
+        64,
+        64,
+        image::Rgba([1, 2, 3, 65_535]),
+    );
+    let mut bytes = Vec::new();
+    DynamicImage::ImageRgba16(image)
+        .write_to(Cursor::new(&mut bytes), ImageFormat::Png)
+        .unwrap();
+    let picture = prepare_picture_within(&bytes, "deep.png", 64 * 64 * 4).unwrap();
+    assert!(matches!(
+        picture,
+        Picture::TooLargeToPreview {
+            media_type: "image/png"
+        }
+    ));
+    assert!(matches!(
+        prepare_picture(&bytes, "deep.png").unwrap(),
+        Picture::Previewed { .. }
+    ));
+}
+
+#[test]
+fn an_id_is_stored_by_one_upload_at_a_time() {
+    let (_directory, store) = store();
+    let id = ChatAttachmentId::new();
+    let claim = store.claim(id).unwrap();
+    assert!(
+        store.claim(id).is_none(),
+        "a second upload of the id waits its turn"
+    );
+    assert!(store.claim(ChatAttachmentId::new()).is_some());
+    drop(claim);
+    assert!(store.claim(id).is_some());
+}

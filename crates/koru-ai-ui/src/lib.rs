@@ -320,6 +320,15 @@ struct ResponseTextHit {
     link: Option<String>,
 }
 
+/// A message sent and not yet accepted: everything the composer held —
+/// its text with its chips and undo, its quotes, its attachments.
+struct SentMessage {
+    chat: ChatId,
+    composer: composer::Draft,
+    quotes: Vec<PendingQuote>,
+    attachments: Vec<attachments::Draft>,
+}
+
 /// One AI conversation surface, usable as a window body or in Koru's context
 /// column. Constructing it in tests starts no service client.
 pub struct ChatSurface {
@@ -509,13 +518,17 @@ pub struct ChatSurface {
     /// The clipboard, upload and thumbnail threads behind them.
     attachment_work: attachments::Work,
     /// Thumbnails by attachment id: a draft's, then the same picture's on
-    /// its sent card.
-    thumbnails: HashMap<koru_ai_core::ChatAttachmentId, attachments::Thumb>,
+    /// its sent card; bounded, the least recently drawn going first.
+    thumbnails: attachments::ThumbCache,
     /// The tiles of the message just sent, for its card before the
     /// transcript carries it.
     pending_user_tiles: Vec<attachments::Tile>,
-    /// The drafts of the message just sent, put back if the send is refused.
-    sent_drafts: Option<(ChatId, Vec<attachments::Draft>)>,
+    /// The message just sent, whole, until the service accepts it: put
+    /// back in the composer if the send does not go.
+    sent_message: Option<SentMessage>,
+    /// A title lookup is with the reader; one at a time, so background
+    /// lookups never crowd a person's own command out of its queue.
+    titles_in_flight: bool,
     clipboard_reading: bool,
     lang: koru_i18n::Lang,
 }
@@ -713,9 +726,10 @@ impl ChatSurface {
             greeting: None,
             strips: attachments::Strips::default(),
             attachment_work,
-            thumbnails: HashMap::new(),
+            thumbnails: attachments::ThumbCache::default(),
             pending_user_tiles: Vec::new(),
-            sent_drafts: None,
+            sent_message: None,
+            titles_in_flight: false,
             clipboard_reading: false,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
@@ -1048,7 +1062,10 @@ impl ChatSurface {
             .staged_embedded_send
             .take()
             .expect("a staged send was checked above");
-        self.send_command(Command::Send(request))
+        if !self.queue_command(Command::Send(request)) {
+            self.give_back_sent(None);
+        }
+        true
     }
 
     pub fn animating(&self) -> bool {
@@ -1209,7 +1226,7 @@ impl ChatSurface {
         // Enter, Tab and Escape choose or dismiss a document; Enter sends only
         // once it has closed.
         if self.composer.picker_open() {
-            return self.composer.key(key, text, mods);
+            return self.composer_key(key, text, mods);
         }
         if matches!(key, Key::Named(NamedKey::Escape))
             && let Some(attempt) = self.attempt
@@ -1251,8 +1268,14 @@ impl ChatSurface {
         {
             return self.composer.insert_break();
         }
+        self.composer_key(key, text, mods)
+    }
+
+    /// A key for the composer. A paste that found no text is answered here,
+    /// at once, whichever path the key took: its picture is read off this
+    /// thread (D9), and nothing is left armed for a later key.
+    fn composer_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         let handled = self.composer.key(key, text, mods);
-        // A paste with no text: its picture is read off this thread (D9).
         if self.composer.take_wants_paste_attachment() {
             return self.begin_attachment_paste() || handled;
         }
@@ -2087,14 +2110,22 @@ impl ChatSurface {
     }
 
     fn send_command(&mut self, command: Command) -> bool {
+        self.queue_command(command);
+        true
+    }
+
+    /// Hand a command to the reader, and say truthfully whether it was
+    /// queued; a full or gone queue says so on the status line.
+    fn queue_command(&mut self, command: Command) -> bool {
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
-            return true;
+            return false;
         };
         match reader.send(command) {
             Ok(()) => {
                 self.waiting = true;
                 self.status = None;
+                return true;
             }
             Err(SendError::Full) => {
                 tracing::warn!(
@@ -2111,7 +2142,7 @@ impl ChatSurface {
                 self.status = Some("Koru AI service is not connected.".into());
             }
         }
-        true
+        false
     }
 
     fn validate_models_after_settings(&mut self, selected: Option<AiProviderId>) {
@@ -2436,7 +2467,7 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
-                self.sent_drafts = None;
+                self.sent_message = None;
                 self.attempt = Some(accepted.attempt_id);
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
                 self.messages_dirty = true;
@@ -2714,6 +2745,7 @@ impl ChatSurface {
                 });
             }
             Update::DocumentTitles(titles) => {
+                self.titles_in_flight = false;
                 // Another command may still be streaming; keep polling for it.
                 self.waiting = self.attempt.is_some();
                 let mut changed = false;
@@ -2734,16 +2766,13 @@ impl ChatSurface {
                 self.destination_open = None;
                 self.status = Some(format!("Stored “{title}” in Koru."));
             }
-            Update::AttachmentThumbnail { id, bytes } => self.on_thumbnail(id, bytes),
-            Update::SendRefused(failure) => {
-                self.waiting = false;
-                self.attempt = None;
-                self.pending_assistant_message_id = None;
-                self.pending_user = None;
-                self.pulse = None;
-                self.messages_dirty = true;
-                self.status = Some(failure.message.clone());
-                self.restore_refused_drafts(&failure);
+            Update::SendFailed(failure) => {
+                tracing::warn!(
+                    target: "koru_ai::ui",
+                    code = failure.code,
+                    "AI UI send was not accepted; the message is back in the composer"
+                );
+                self.give_back_sent(Some(&failure));
             }
             Update::Failure(message) => {
                 tracing::warn!(
@@ -3094,9 +3123,10 @@ impl ChatSurface {
             return false;
         }
         // Not while an attachment is still being stored, or could not be.
-        let Some(attachment_ids) = self.take_attachments_for_send(chat_id) else {
+        let Some(sent_attachments) = self.take_attachments_for_send(chat_id) else {
             return true;
         };
+        let attachment_ids = sent_attachments.iter().map(|draft| draft.id).collect();
         // A chat still called *New chat* takes its name from this, its
         // first message (the CTO's note): the way ChatGPT names a chat,
         // without a model call — the first line, cut at a word.
@@ -3120,7 +3150,7 @@ impl ChatSurface {
             .collect();
         let (explicit_refs, overflowed) = self.turn_refs(&chips);
         self.pending_user = Some(markdown.clone());
-        self.pending_quotes.clear();
+        let quotes = std::mem::take(&mut self.pending_quotes);
         self.staged_chat = None;
         self.comment_editor = None;
         self.pill_strip.clear_tooltip();
@@ -3139,7 +3169,14 @@ impl ChatSurface {
         self.scroll_to_pending_question = true;
         self.pending_question_anchor = None;
         self.draft.clear();
-        self.composer.clear();
+        // Set aside whole rather than cleared: a send that does not go puts
+        // the message back as it was, chips and undo included.
+        self.sent_message = Some(SentMessage {
+            chat: chat_id,
+            composer: self.composer.stash(),
+            quotes,
+            attachments: sent_attachments,
+        });
         self.forget_input_walk();
         if !markdown.is_empty() {
             self.sent_inputs.push((chat_id, markdown.clone()));
@@ -3168,16 +3205,54 @@ impl ChatSurface {
             self.waiting = true;
             true
         } else {
-            self.send_command(Command::Send(request))
+            self.queue_command(Command::Send(request))
         };
-        if sent && let Some(title) = auto_title {
+        if !sent {
+            // The queue would not take it: the message comes back.
+            self.give_back_sent(None);
+            return true;
+        }
+        if let Some(title) = auto_title {
             self.send_command(Command::Rename(chat_id, RenameChatRequest { title }));
         }
         // After the send, which clears the status line on success.
         if overflowed {
             self.too_many_documents();
         }
-        sent
+        true
+    }
+
+    /// The send did not go: the message comes back to the composer as it
+    /// was — text, chips, quotes and attachments, the one the service named
+    /// red — and the reason is said. Something typed since is kept rather
+    /// than overwritten.
+    fn give_back_sent(&mut self, failure: Option<&koru_ai_wire::Failure>) {
+        self.waiting = false;
+        self.attempt = None;
+        self.pending_assistant_message_id = None;
+        self.pending_user = None;
+        self.pending_user_tiles.clear();
+        self.pulse = None;
+        self.messages_dirty = true;
+        if let Some(failure) = failure {
+            self.status = Some(if Self::refused_for_attachment(failure) {
+                attachments::failure_line(failure, self.lang).0
+            } else {
+                failure.message.clone()
+            });
+        }
+        let Some(sent) = self.sent_message.take() else {
+            return;
+        };
+        if self.current_chat_id() == Some(sent.chat) {
+            if self.composer.is_blank() {
+                self.composer.unstash(sent.composer);
+            }
+            if self.pending_quotes.is_empty() {
+                self.pending_quotes = sent.quotes;
+            }
+        }
+        self.restore_drafts(sent.chat, sent.attachments, failure);
     }
 
     /// The documents a turn carries, as `explicit_refs`.
@@ -3261,8 +3336,12 @@ impl ChatSurface {
         let Some(reader) = &self.reader else {
             return;
         };
+        if self.titles_in_flight {
+            return;
+        }
         if reader.send(Command::DocumentTitles(wanted.clone())).is_ok() {
             self.waiting = true;
+            self.titles_in_flight = true;
             self.titles_requested.extend(wanted);
         }
     }

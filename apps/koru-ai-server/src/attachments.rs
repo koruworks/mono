@@ -20,12 +20,12 @@
 //! never leaves half an attachment where a row could name it. Logs carry
 //! no file name, path, hash or content.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Instant, SystemTime};
 
@@ -51,12 +51,33 @@ const SENT_JPEG: &str = "sent.jpg";
 /// The JPEG qualities tried, in order, for a sent copy PNG cannot keep
 /// under [`MAX_SENT_COPY_BYTES`].
 const JPEG_QUALITIES: [u8; 3] = [85, 75, 65];
+/// The smallest a sent copy is made while it still will not fit; a JPEG of
+/// this size is far under the bound whatever it shows.
+const MIN_SENT_COPY_EDGE: u32 = 256;
 
 /// Where the attachment folders of one AI root live, and the one place that
 /// knows their layout.
 #[derive(Clone, Debug)]
 pub(crate) struct AttachmentStore {
     root: Arc<PathBuf>,
+    /// The ids being stored right now, so a second upload of the same id
+    /// cannot publish over the first's folder.
+    storing: Arc<Mutex<HashSet<ChatAttachmentId>>>,
+}
+
+/// One id's claim on being stored; released when dropped.
+pub(crate) struct StoringClaim {
+    storing: Arc<Mutex<HashSet<ChatAttachmentId>>>,
+    id: ChatAttachmentId,
+}
+
+impl Drop for StoringClaim {
+    fn drop(&mut self) {
+        self.storing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.id);
+    }
 }
 
 /// One store, checked and written to staging, not yet published.
@@ -86,7 +107,20 @@ impl AttachmentStore {
     pub(crate) fn new(ai_root: &Path) -> Self {
         Self {
             root: Arc::new(ai_root.join(ATTACHMENTS_DIR)),
+            storing: Arc::default(),
         }
+    }
+
+    /// Claim an id for one upload; `None` while another upload of it runs.
+    pub(crate) fn claim(&self, id: ChatAttachmentId) -> Option<StoringClaim> {
+        self.storing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id)
+            .then(|| StoringClaim {
+                storing: Arc::clone(&self.storing),
+                id,
+            })
     }
 
     pub(crate) fn chat_dir(&self, chat: ChatId) -> PathBuf {
@@ -385,6 +419,17 @@ struct SentCopy {
 }
 
 fn prepare_picture(bytes: &[u8], file_name: &str) -> Result<Picture, Failure> {
+    // RGBA at the pixel limit, and room for the decoder's own buffers.
+    prepare_picture_within(bytes, file_name, MAX_PREVIEW_PIXELS * 4 + 64 * 1024 * 1024)
+}
+
+/// [`prepare_picture`] with the decoder's allocation bound named, so a test
+/// can reach it without a picture of tens of megapixels.
+fn prepare_picture_within(
+    bytes: &[u8],
+    file_name: &str,
+    max_alloc: u64,
+) -> Result<Picture, Failure> {
     let media_type =
         picture_media_type(bytes).ok_or_else(|| type_not_allowed(file_name, "content"))?;
     let format = image::guess_format(bytes).map_err(|_| type_not_allowed(file_name, "content"))?;
@@ -404,13 +449,18 @@ fn prepare_picture(bytes: &[u8], file_name: &str) -> Result<Picture, Failure> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_PREVIEW_EDGE);
     limits.max_image_height = Some(MAX_PREVIEW_EDGE);
-    // RGBA at the pixel limit, and room for the decoder's own buffers.
-    limits.max_alloc = Some(MAX_PREVIEW_PIXELS * 4 + 64 * 1024 * 1024);
+    limits.max_alloc = Some(max_alloc);
     reader.limits(limits);
-    let decoded = reader.decode().map_err(|error| match error {
-        image::ImageError::Limits(_) => type_not_allowed(file_name, "decode_limit"),
-        _ => type_not_allowed(file_name, "content"),
-    })?;
+    let decoded = match reader.decode() {
+        Ok(decoded) => decoded,
+        // Within the byte limit but more than a preview may decode (a
+        // 16-bit picture spends eight bytes a pixel): attached as a file,
+        // never refused (D5, §10).
+        Err(image::ImageError::Limits(_)) => {
+            return Ok(Picture::TooLargeToPreview { media_type });
+        }
+        Err(_) => return Err(type_not_allowed(file_name, "content")),
+    };
 
     let thumbnail = if width.max(height) > THUMBNAIL_EDGE {
         decoded.resize(
@@ -459,20 +509,34 @@ fn sent_copy(decoded: &DynamicImage) -> image::ImageResult<SentCopy> {
             bytes: png,
         });
     }
-    let flattened = flatten_on_white(&resized);
-    let mut last = Vec::new();
-    for quality in JPEG_QUALITIES {
-        last.clear();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut last, quality)
-            .encode_image(&flattened)?;
-        if last.len() as u64 <= MAX_SENT_COPY_BYTES {
-            break;
+    let mut flattened = flatten_on_white(&resized);
+    loop {
+        for quality in JPEG_QUALITIES {
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)
+                .encode_image(&flattened)?;
+            if bytes.len() as u64 <= MAX_SENT_COPY_BYTES {
+                return Ok(SentCopy {
+                    format: ImageFormat::Jpeg,
+                    bytes,
+                });
+            }
         }
+        // Still over at the lowest quality (a picture of noise): smaller,
+        // a quarter at a time, until it fits. Ten copies must fit the 16 MiB
+        // prompt frame, so the bound is never let go.
+        let (width, height) = (flattened.width(), flattened.height());
+        if width.max(height) <= MIN_SENT_COPY_EDGE {
+            return Err(image::ImageError::Limits(
+                image::error::LimitError::from_kind(image::error::LimitErrorKind::DimensionError),
+            ));
+        }
+        flattened = flattened.resize(
+            (width * 3 / 4).max(1),
+            (height * 3 / 4).max(1),
+            image::imageops::FilterType::Lanczos3,
+        );
     }
-    Ok(SentCopy {
-        format: ImageFormat::Jpeg,
-        bytes: last,
-    })
 }
 
 fn encode_png(image: &DynamicImage) -> image::ImageResult<Vec<u8>> {

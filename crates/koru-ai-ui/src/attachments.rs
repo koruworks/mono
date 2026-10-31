@@ -14,7 +14,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
 
 use koru_ai_core::{AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ChatId};
 use koru_ai_wire::{Failure, attachment_codes};
@@ -41,7 +42,11 @@ const FILE_TILE_W: f32 = 168.0;
 /// The long edge a decoded thumbnail is kept at: enough for a sharp tile on
 /// a high-density screen, small enough to keep many.
 const THUMB_EDGE: u32 = 512;
-const UPLOAD_QUEUE: usize = 16;
+/// How much decoded thumbnail a window keeps.
+const THUMB_CACHE_BYTES: usize = 64 * 1024 * 1024;
+/// How long a thumbnail that could not be read waits before it is asked
+/// for again.
+const THUMB_RETRY: Duration = Duration::from_secs(30);
 
 /// Where one attachment of the draft stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,9 +229,97 @@ pub(crate) fn failure_line(failure: &Failure, lang: Lang) -> (String, bool) {
 /// key before and after the send, so a sent card shows the strip's picture
 /// without fetching it again.
 pub(crate) enum Thumb {
+    /// Asked for once; not asked again while it is on its way.
     Pending,
     Ready(LoadedImage),
-    Failed,
+    /// Could not be read or decoded; asked again after [`THUMB_RETRY`].
+    Failed(Instant),
+}
+
+/// The thumbnails a window keeps: decoded brushes up to [`THUMB_CACHE_BYTES`],
+/// the least recently drawn going first. An evicted picture is fetched
+/// again when it is next on screen.
+#[derive(Default)]
+pub(crate) struct ThumbCache {
+    entries: HashMap<ChatAttachmentId, (Thumb, u64)>,
+    bytes: usize,
+    tick: u64,
+}
+
+impl ThumbCache {
+    /// The thumbnail to draw, marking it as just used.
+    pub(crate) fn get(&mut self, id: ChatAttachmentId) -> Option<&Thumb> {
+        self.tick += 1;
+        let tick = self.tick;
+        let (thumb, used) = self.entries.get_mut(&id)?;
+        *used = tick;
+        Some(thumb)
+    }
+
+    /// Whether a tile on screen should ask for its thumbnail: never asked,
+    /// or failed long enough ago to try again.
+    pub(crate) fn wants(&self, id: ChatAttachmentId, now: Instant) -> bool {
+        match self.entries.get(&id) {
+            None => true,
+            Some((Thumb::Failed(at), _)) => now.duration_since(*at) >= THUMB_RETRY,
+            Some(_) => false,
+        }
+    }
+
+    pub(crate) fn pending(&mut self, id: ChatAttachmentId) {
+        self.put(id, Thumb::Pending);
+    }
+
+    pub(crate) fn failed(&mut self, id: ChatAttachmentId, now: Instant) {
+        self.put(id, Thumb::Failed(now));
+    }
+
+    pub(crate) fn ready(&mut self, id: ChatAttachmentId, image: LoadedImage) {
+        self.put(id, Thumb::Ready(image));
+        while self.bytes > THUMB_CACHE_BYTES {
+            let oldest = self
+                .entries
+                .iter()
+                .filter(|(other, (thumb, _))| **other != id && matches!(thumb, Thumb::Ready(_)))
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(other, _)| *other);
+            let Some(oldest) = oldest else {
+                break;
+            };
+            self.remove(oldest);
+        }
+    }
+
+    pub(crate) fn remove(&mut self, id: ChatAttachmentId) {
+        if let Some((thumb, _)) = self.entries.remove(&id) {
+            self.bytes = self.bytes.saturating_sub(weight(&thumb));
+        }
+    }
+
+    pub(crate) fn any_pending(&self) -> bool {
+        self.entries
+            .values()
+            .any(|(thumb, _)| matches!(thumb, Thumb::Pending))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn put(&mut self, id: ChatAttachmentId, thumb: Thumb) {
+        self.remove(id);
+        self.tick += 1;
+        self.bytes += weight(&thumb);
+        self.entries.insert(id, (thumb, self.tick));
+    }
+}
+
+fn weight(thumb: &Thumb) -> usize {
+    match thumb {
+        Thumb::Ready(image) => image.width as usize * image.height as usize * 4,
+        Thumb::Pending | Thumb::Failed(_) => 0,
+    }
 }
 
 /// Answers from the threads, drained on the surface's maintenance tick.
@@ -237,6 +330,8 @@ pub(crate) enum Event {
         id: ChatAttachmentId,
         result: Result<ChatAttachment, Failure>,
     },
+    /// A thumbnail decoded, or not: fetched for a sent picture, or a
+    /// draft's own bytes.
     Decoded {
         id: ChatAttachmentId,
         image: Option<LoadedImage>,
@@ -257,16 +352,28 @@ enum Upload {
     },
 }
 
-/// The threads behind the strip and the tiles, started on first use.
+enum ThumbJob {
+    /// A draft's own bytes, already here.
+    Decode(ChatAttachmentId, bytes::Bytes),
+    /// A sent picture's thumbnail, from the service.
+    Fetch(ChatId, ChatAttachmentId),
+}
+
+/// The threads behind the strip and the tiles, started on first use. None
+/// of them shares the reader's queue, so a screen of thumbnails can never
+/// keep a person's own command out of it.
 pub(crate) struct Work {
     root: Option<PathBuf>,
     events_tx: Sender<Event>,
     events: Receiver<Event>,
-    uploads: Option<SyncSender<Upload>>,
-    decodes: Option<Sender<(ChatAttachmentId, Vec<u8>)>>,
+    uploads: Option<Sender<Upload>>,
+    thumbs: Option<Sender<ThumbJob>>,
     /// Jobs handed out and not yet answered: while any is, the surface
     /// keeps a maintenance deadline.
     in_flight: usize,
+    /// The thumbnails a test asked for, which it answers itself.
+    #[cfg(test)]
+    pub(crate) fetched: Vec<ChatAttachmentId>,
 }
 
 impl Work {
@@ -277,8 +384,10 @@ impl Work {
             events_tx,
             events,
             uploads: None,
-            decodes: None,
+            thumbs: None,
             in_flight: 0,
+            #[cfg(test)]
+            fetched: Vec::new(),
         }
     }
 
@@ -310,7 +419,7 @@ impl Work {
         let Some(bytes) = draft.bytes.clone() else {
             return;
         };
-        self.submit(Upload::Put {
+        self.upload(Upload::Put {
             chat,
             id: draft.id,
             file_name: draft.file_name.clone(),
@@ -319,19 +428,20 @@ impl Work {
         });
     }
 
-    /// Remove a staged attachment the person took out of the strip.
+    /// Remove a staged attachment the person took out of the strip. Queued
+    /// behind its own upload, so it goes after it whatever that answered —
+    /// a timed-out upload may still have been stored.
     pub(crate) fn remove(&mut self, chat: ChatId, id: ChatAttachmentId) {
-        self.submit(Upload::Remove { chat, id });
+        self.upload(Upload::Remove { chat, id });
     }
 
-    fn submit(&mut self, job: Upload) {
+    fn upload(&mut self, job: Upload) {
         // A test, or a host built without a client, dials nothing: the job
         // goes nowhere and its answer is the test's to hand in.
         if cfg!(any(test, feature = "no-client")) {
             return;
         }
-        let answers_back = matches!(job, Upload::Put { .. });
-        let failed = match &job {
+        let put = match &job {
             Upload::Put { chat, id, .. } => Some((*chat, *id)),
             Upload::Remove { .. } => None,
         };
@@ -339,32 +449,48 @@ impl Work {
         let sender = self
             .uploads
             .get_or_insert_with(|| spawn_uploader(root, events));
-        match sender.try_send(job) {
-            Ok(()) => {
-                if answers_back {
-                    self.in_flight += 1;
-                }
-            }
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-                if let Some((chat, id)) = failed {
-                    // Answered at once, through the same door, so the tile
-                    // turns red rather than spinning.
-                    self.in_flight += 1;
-                    let _ = self.events_tx.send(Event::Stored {
-                        chat,
-                        id,
-                        result: Err(unavailable()),
-                    });
-                }
+        // Unbounded: a strip holds at most ten drafts, and a removal must
+        // never be dropped for want of room.
+        let sent = sender.send(job).is_ok();
+        if let Some((chat, id)) = put {
+            self.in_flight += 1;
+            if !sent {
+                // Answered at once, through the same door, so the tile turns
+                // red rather than spinning.
+                let _ = self.events_tx.send(Event::Stored {
+                    chat,
+                    id,
+                    result: Err(unavailable()),
+                });
             }
         }
     }
 
-    /// Decode a thumbnail on `koru-ai-thumbs`.
-    pub(crate) fn decode(&mut self, id: ChatAttachmentId, bytes: Vec<u8>) {
-        let events = self.events_tx.clone();
-        let sender = self.decodes.get_or_insert_with(|| spawn_decoder(events));
-        if sender.send((id, bytes)).is_ok() {
+    /// Decode a draft's own bytes on `koru-ai-thumbs`; the bytes are shared,
+    /// never copied.
+    pub(crate) fn decode(&mut self, id: ChatAttachmentId, bytes: bytes::Bytes) {
+        self.thumb(ThumbJob::Decode(id, bytes));
+    }
+
+    /// Fetch and decode a sent picture's thumbnail on `koru-ai-thumbs`, on
+    /// a client of its own.
+    pub(crate) fn fetch_thumbnail(&mut self, chat: ChatId, id: ChatAttachmentId) {
+        let job = ThumbJob::Fetch(chat, id);
+        // A test answers its own fetches; nothing is dialed.
+        #[cfg(test)]
+        if let ThumbJob::Fetch(_, id) = job {
+            self.fetched.push(id);
+        }
+        #[cfg(not(test))]
+        self.thumb(job);
+    }
+
+    fn thumb(&mut self, job: ThumbJob) {
+        let (root, events) = (self.root.clone(), self.events_tx.clone());
+        let sender = self
+            .thumbs
+            .get_or_insert_with(|| spawn_thumbnailer(root, events));
+        if sender.send(job).is_ok() {
             self.in_flight += 1;
         }
     }
@@ -394,8 +520,8 @@ fn unavailable() -> Failure {
 
 /// `koru-ai-upload`: one job at a time on a client of its own; a store
 /// answers that the service is not available when no client connects.
-fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> SyncSender<Upload> {
-    let (sender, jobs) = sync_channel::<Upload>(UPLOAD_QUEUE);
+fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Upload> {
+    let (sender, jobs) = channel::<Upload>();
     let spawned = std::thread::Builder::new()
         .name("koru-ai-upload".into())
         .spawn(move || {
@@ -453,22 +579,38 @@ fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> SyncSender<Up
     sender
 }
 
-/// `koru-ai-thumbs`: PNG or picture bytes to a brush no larger than
-/// [`THUMB_EDGE`], never on the window thread.
-fn spawn_decoder(events: Sender<Event>) -> Sender<(ChatAttachmentId, Vec<u8>)> {
-    let (sender, jobs) = channel::<(ChatAttachmentId, Vec<u8>)>();
+/// `koru-ai-thumbs`: fetch a sent picture's thumbnail on a client of its
+/// own, or take a draft's bytes, and decode either to a brush no larger
+/// than [`THUMB_EDGE`] — never on the window thread, never through the
+/// reader's queue.
+fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<ThumbJob> {
+    let (sender, jobs) = channel::<ThumbJob>();
     let spawned = std::thread::Builder::new()
         .name("koru-ai-thumbs".into())
         .spawn(move || {
-            while let Ok((id, bytes)) = jobs.recv() {
+            let mut client = None;
+            while let Ok(job) = jobs.recv() {
                 let started = std::time::Instant::now();
-                let image = decode_thumbnail(&bytes);
+                let (id, bytes) = match job {
+                    ThumbJob::Decode(id, bytes) => (id, Some(bytes)),
+                    ThumbJob::Fetch(chat, id) => {
+                        if client.is_none() {
+                            client = super::reader::connect_client(root.as_deref()).ok();
+                        }
+                        let bytes = client
+                            .as_ref()
+                            .and_then(|client| client.ai().attachment_thumbnail(chat, id).ok())
+                            .map(bytes::Bytes::from);
+                        (id, bytes)
+                    }
+                };
+                let image = bytes.as_deref().and_then(decode_thumbnail);
                 tracing::debug!(
                     target: "koru_ai_ui::attachments",
                     attachment_id = %id,
                     decoded = image.is_some(),
                     thumbnail_ms = started.elapsed().as_secs_f64() * 1_000.0,
-                    "attachment thumbnail decoded"
+                    "attachment thumbnail ready"
                 );
                 if events.send(Event::Decoded { id, image }).is_err() {
                     return;
@@ -621,24 +763,19 @@ impl ChatSurface {
                     self.on_clipboard(result);
                 }
                 Event::Stored { chat, id, result } => self.on_stored(chat, id, result),
-                Event::Decoded { id, image } => {
-                    self.thumbnails
-                        .insert(id, image.map_or(Thumb::Failed, Thumb::Ready));
-                }
+                Event::Decoded { id, image } => match image {
+                    Some(image) => self.thumbnails.ready(id, image),
+                    None => self.thumbnails.failed(id, Instant::now()),
+                },
             }
         }
         changed
     }
 
-    /// While a thread owes an answer, or a thumbnail is on its way back from
-    /// the reader, the host keeps ticking.
-    pub(super) fn attachment_deadline(&self) -> Option<std::time::Instant> {
-        let waiting = self.attachment_work.busy()
-            || self
-                .thumbnails
-                .values()
-                .any(|thumb| matches!(thumb, Thumb::Pending));
-        waiting.then(|| std::time::Instant::now() + std::time::Duration::from_millis(50))
+    /// While a thread owes an answer, the host keeps ticking.
+    pub(super) fn attachment_deadline(&self) -> Option<Instant> {
+        let waiting = self.attachment_work.busy() || self.thumbnails.any_pending();
+        waiting.then(|| Instant::now() + Duration::from_millis(50))
     }
 
     fn on_clipboard(
@@ -687,8 +824,9 @@ impl ChatSurface {
             return;
         }
         if let Some(bytes) = &draft.bytes {
-            self.thumbnails.insert(draft.id, Thumb::Pending);
-            self.attachment_work.decode(draft.id, bytes.to_vec());
+            // Shared, not copied: the bytes are counted, never duplicated.
+            self.thumbnails.pending(draft.id);
+            self.attachment_work.decode(draft.id, bytes.clone());
         }
         self.attachment_work.put(chat, &draft);
         self.strips.push(chat, draft);
@@ -701,11 +839,8 @@ impl ChatSurface {
         result: Result<ChatAttachment, Failure>,
     ) {
         let Some(draft) = self.strips.draft_mut(chat, id) else {
-            // Taken out of the strip while it was being stored: what was
-            // stored goes again.
-            if result.is_ok() {
-                self.attachment_work.remove(chat, id);
-            }
+            // Taken out of the strip while it was being stored: its removal
+            // is already queued behind this upload.
             return;
         };
         match result {
@@ -726,8 +861,9 @@ impl ChatSurface {
         }
     }
 
-    /// A press on the strip: × takes a draft out (and its stored copy
-    /// with it); a red draft the service could not take for a passing
+    /// A press on the strip: × takes a draft out and removes its stored copy
+    /// whatever its state — one whose upload timed out here may still have
+    /// been stored; a red draft the service could not take for a passing
     /// reason is tried again with the same id.
     pub(super) fn strip_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
         let chat = self.current_chat_id()?;
@@ -741,11 +877,9 @@ impl ChatSurface {
         let draft = &self.strips.get(chat)[index];
         let id = draft.id;
         if remove_button(rects[index]).contains(x, y) {
-            let removed = self.strips.remove(chat, id)?;
-            if removed.state == DraftState::Stored {
-                self.attachment_work.remove(chat, id);
-            }
-            self.thumbnails.remove(&id);
+            self.strips.remove(chat, id)?;
+            self.attachment_work.remove(chat, id);
+            self.thumbnails.remove(id);
             return Some(true);
         }
         if draft.state == (DraftState::Failed { retryable: true }) && draft.bytes.is_some() {
@@ -760,11 +894,9 @@ impl ChatSurface {
 
     /// What a send carries, or `None` when it must wait: while a draft is
     /// still being stored (*Adding 1 attachment…*), or while one could not
-    /// be stored. The drafts move to the sent card as its tiles.
-    pub(super) fn take_attachments_for_send(
-        &mut self,
-        chat: ChatId,
-    ) -> Option<Vec<ChatAttachmentId>> {
+    /// be stored. The drafts move to the sent card as its tiles, and are
+    /// kept with the sent message until the service accepts it.
+    pub(super) fn take_attachments_for_send(&mut self, chat: ChatId) -> Option<Vec<Draft>> {
         let storing = self.strips.storing(chat);
         if storing > 0 {
             self.status = Some(if storing == 1 {
@@ -783,20 +915,19 @@ impl ChatSurface {
         }
         let drafts = self.strips.take(chat);
         self.pending_user_tiles = drafts.iter().map(Draft::tile).collect();
-        let ids = drafts.iter().map(|draft| draft.id).collect();
-        self.sent_drafts = (!drafts.is_empty()).then_some((chat, drafts));
-        Some(ids)
+        Some(drafts)
     }
 
-    /// The send was refused for one of its attachments: the drafts go back
-    /// to the strip, the one named red, and the reason is said.
-    pub(super) fn restore_refused_drafts(&mut self, failure: &Failure) {
-        let Some((chat, drafts)) = self.sent_drafts.take() else {
-            return;
-        };
+    /// A send that did not go: its drafts go back to the strip, the one the
+    /// service named red.
+    pub(super) fn restore_drafts(
+        &mut self,
+        chat: ChatId,
+        drafts: Vec<Draft>,
+        failure: Option<&Failure>,
+    ) {
         let named = failure
-            .details
-            .get("attachment_id")
+            .and_then(|failure| failure.details.get("attachment_id"))
             .and_then(|value| value.as_str())
             .and_then(ChatAttachmentId::parse);
         for mut draft in drafts {
@@ -805,7 +936,24 @@ impl ChatSurface {
             }
             self.strips.push(chat, draft);
         }
-        self.status = Some(failure_line(failure, self.lang).0);
+    }
+
+    /// Whether a send's failure is about one of its attachments, so its line
+    /// is the attachment's own.
+    pub(super) fn refused_for_attachment(failure: &Failure) -> bool {
+        [
+            attachment_codes::TOO_LARGE,
+            attachment_codes::LIMIT,
+            attachment_codes::TYPE_NOT_ALLOWED,
+            attachment_codes::NOT_FOUND,
+            attachment_codes::MISSING,
+            attachment_codes::SENT,
+            attachment_codes::UNSUPPORTED,
+            attachment_codes::STORAGE,
+            attachment_codes::WORKSPACE_NOT_GRANTED,
+            attachment_codes::WORKSPACE_FILE_UNAVAILABLE,
+        ]
+        .contains(&failure.code.as_str())
     }
 
     /// A chat whose provider is no longer a local agent takes no
@@ -815,45 +963,26 @@ impl ChatSurface {
             return;
         }
         for draft in self.strips.take(chat) {
-            if draft.state == DraftState::Stored {
-                self.attachment_work.remove(chat, draft.id);
-            }
-            self.thumbnails.remove(&draft.id);
+            self.attachment_work.remove(chat, draft.id);
+            self.thumbnails.remove(draft.id);
         }
         self.status =
             Some(koru_i18n::t(self.lang, Key::AiAttachmentsRemovedForProvider).to_owned());
     }
 
-    /// The reader's answer for a thumbnail: decoded on its own thread.
-    pub(super) fn on_thumbnail(&mut self, id: ChatAttachmentId, bytes: Option<Vec<u8>>) {
-        match bytes {
-            Some(bytes) => self.attachment_work.decode(id, bytes),
-            None => {
-                self.thumbnails.insert(id, Thumb::Failed);
-            }
-        }
-    }
-
-    /// Ask for the thumbnails of tiles on screen that have none yet; a
-    /// hidden chat, or a tile scrolled away, fetches nothing.
+    /// Ask once for the thumbnails of tiles on screen that have none yet; a
+    /// hidden chat, or a tile scrolled away, fetches nothing. They go on the
+    /// thumbnail thread's own client, never the reader's queue, so a screen
+    /// of pictures cannot keep a person's own command out of it.
     pub(super) fn request_thumbnails(&mut self, tiles: &[(Rect, Tile)]) {
         let Some(chat) = self.current_chat_id() else {
             return;
         };
+        let now = Instant::now();
         for (_, tile) in tiles {
-            if tile.kind != AttachmentKind::Image || self.thumbnails.contains_key(&tile.id) {
-                continue;
-            }
-            // Straight to the reader: a thumbnail is not a command the
-            // person gave, so it neither clears the status line nor waits.
-            let Some(reader) = &self.reader else {
-                return;
-            };
-            if reader
-                .send(super::Command::AttachmentThumbnail(chat, tile.id))
-                .is_ok()
-            {
-                self.thumbnails.insert(tile.id, Thumb::Pending);
+            if tile.kind == AttachmentKind::Image && self.thumbnails.wants(tile.id, now) {
+                self.thumbnails.pending(tile.id);
+                self.attachment_work.fetch_thumbnail(chat, tile.id);
             }
         }
     }
@@ -938,7 +1067,7 @@ impl ChatSurface {
         let p = theme::p();
         let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0);
         scene::fill(canvas, root, p.code_bg, &shape);
-        let picture = match self.thumbnails.get(&tile.id) {
+        let picture = match self.thumbnails.get(tile.id) {
             Some(Thumb::Ready(image)) if tile.kind == AttachmentKind::Image => Some(image),
             _ => None,
         };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use koru_ai_core::{AiProviderId, Chat, ModelSelection, ReasoningChoice, Timestamp};
 use koru_ai_wire::ChatTranscript;
@@ -255,15 +255,33 @@ fn the_message_limits_hold_in_the_strip() {
     );
 }
 
-#[test]
-fn a_refused_send_puts_the_drafts_back_with_the_named_one_red() {
-    let (mut surface, chat, _commands) = surface_with_agent_chat();
+fn sent_request(commands: &std::sync::mpsc::Receiver<Command>) -> koru_ai_wire::SendTurnRequest {
+    loop {
+        match commands.recv_timeout(Duration::from_millis(200)).unwrap() {
+            Command::Send(request) => return request,
+            _ => continue,
+        }
+    }
+}
+
+/// A stored draft and some words, ready to send.
+fn ready_to_send(surface: &mut ChatSurface, chat: ChatId) -> Draft {
     let draft = Draft::pasted(png(4, 4), std::time::SystemTime::now());
     surface.add_draft(chat, draft.clone());
     surface.attachment_work.inject(stored(chat, &draft));
     surface.maintain_attachments();
+    surface.composer.set_text("look at this");
+    draft
+}
+
+#[test]
+fn a_refused_send_gives_the_message_back_with_the_named_attachment_red() {
+    let (mut surface, chat, commands) = surface_with_agent_chat();
+    let draft = ready_to_send(&mut surface, chat);
     assert!(surface.send_composer());
+    sent_request(&commands);
     assert!(!surface.has_strip());
+    assert!(surface.composer.is_blank());
     let mut failure = Failure {
         code: attachment_codes::MISSING.into(),
         message: "This file is no longer on this computer.".into(),
@@ -273,15 +291,122 @@ fn a_refused_send_puts_the_drafts_back_with_the_named_one_red() {
     failure
         .details
         .insert("attachment_id".into(), draft.id.to_storage().into());
-    surface.apply_update(Update::SendRefused(failure));
+    surface.apply_update(Update::SendFailed(failure));
+    assert_eq!(surface.composer.text(), "look at this", "the text stays");
     assert_eq!(
         surface.strip()[0].state,
         DraftState::Failed { retryable: false }
     );
+    assert!(surface.pending_user.is_none(), "no card is left pending");
     assert_eq!(
         surface.status.as_deref(),
         Some(koru_i18n::t(surface.lang, Key::AiAttachmentMissing))
     );
+}
+
+#[test]
+fn a_send_that_fails_for_any_reason_gives_everything_back() {
+    let (mut surface, chat, commands) = surface_with_agent_chat();
+    let draft = ready_to_send(&mut surface, chat);
+    assert!(surface.send_composer());
+    sent_request(&commands);
+    surface.apply_update(Update::SendFailed(Failure {
+        code: "ai_worker_saturated".into(),
+        message: "The AI service is busy. Try again.".into(),
+        retryable: true,
+        details: Default::default(),
+    }));
+    assert_eq!(surface.composer.text(), "look at this");
+    assert_eq!(surface.strip()[0].id, draft.id);
+    assert_eq!(
+        surface.strip()[0].state,
+        DraftState::Stored,
+        "nothing named"
+    );
+    assert_eq!(
+        surface.status.as_deref(),
+        Some("The AI service is busy. Try again.")
+    );
+
+    // Sent again and accepted, nothing is held back any more.
+    assert!(surface.send_composer());
+    let request = sent_request(&commands);
+    assert_eq!(request.attachment_ids, vec![draft.id]);
+    surface.apply_update(Update::Accepted(koru_ai_wire::SendTurnAccepted {
+        attempt_id: koru_ai_core::InferenceAttemptId::new(),
+        user_message_id: koru_ai_core::MessageId::new(),
+        assistant_message_id: koru_ai_core::MessageId::new(),
+        replayed: false,
+    }));
+    assert!(surface.sent_message.is_none());
+}
+
+#[test]
+fn a_send_the_queue_will_not_take_puts_the_message_back() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    let draft = ready_to_send(&mut surface, chat);
+    // Fill the reader's queue with commands nobody is reading.
+    while surface.queue_command(Command::Read(chat)) {}
+    assert!(surface.send_composer());
+    assert_eq!(surface.composer.text(), "look at this");
+    assert_eq!(surface.strip()[0].id, draft.id);
+    assert!(surface.pending_user.is_none());
+    assert!(surface.sent_message.is_none());
+}
+
+#[test]
+fn a_paste_with_the_picker_open_is_answered_at_once() {
+    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    surface.transcript = Some(agent_transcript(AiProviderId::OPENAI));
+    surface.composer.arm_paste_attachment();
+    surface.composer_key(
+        &winit::keyboard::Key::Character("a".into()),
+        Some("a"),
+        Default::default(),
+    );
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(koru_i18n::t(surface.lang, Key::AiAttachmentsAgentsOnly))
+    );
+    surface.status = None;
+    surface.composer_key(
+        &winit::keyboard::Key::Character("b".into()),
+        Some("b"),
+        Default::default(),
+    );
+    assert_eq!(
+        surface.status, None,
+        "nothing was left armed for a later key"
+    );
+}
+
+#[test]
+fn the_thumbnail_cache_keeps_the_most_recently_drawn_within_its_bound() {
+    let mut cache = ThumbCache::default();
+    let picture = || decode_thumbnail(&png(512, 512).bytes).unwrap();
+    let ids: Vec<_> = (0..70).map(|_| ChatAttachmentId::new()).collect();
+    for id in &ids {
+        cache.ready(*id, picture());
+        // The first stays in use, so it is never the one to go.
+        assert!(cache.get(ids[0]).is_some());
+    }
+    assert!(cache.bytes() <= THUMB_CACHE_BYTES);
+    assert!(cache.get(ids[0]).is_some());
+    assert!(
+        cache.get(ids[1]).is_none(),
+        "the least recently drawn went first"
+    );
+    assert!(
+        cache.wants(ids[1], Instant::now()),
+        "and is fetched again when seen"
+    );
+
+    // A failure is retried, but not at once.
+    let failed = ChatAttachmentId::new();
+    let now = Instant::now();
+    cache.failed(failed, now);
+    assert!(!cache.wants(failed, now));
+    assert!(cache.wants(failed, now + THUMB_RETRY));
 }
 
 #[test]
@@ -343,14 +468,12 @@ fn a_sent_messages_pictures_are_laid_out_under_its_words() {
     assert_eq!(message_content_height(layout), CARD_TILE_H);
     assert_eq!(message_content_width(layout), CARD_TILE_H * 2.0);
 
-    // Drawn on screen, its thumbnail is asked of the reader once.
+    // Drawn on screen, its thumbnail is asked for once — on the thumbnail
+    // thread, never the reader's queue — and not again on the next draw.
     surface.request_thumbnails(&[(Rect::new(0.0, 0.0, 1.0, 1.0), Tile::of(&attachment))]);
     surface.request_thumbnails(&[(Rect::new(0.0, 0.0, 1.0, 1.0), Tile::of(&attachment))]);
-    let asked: Vec<_> = commands
-        .try_iter()
-        .filter(|command| matches!(command, Command::AttachmentThumbnail(_, id) if *id == attachment.id))
-        .collect();
-    assert_eq!(asked.len(), 1);
+    assert_eq!(surface.attachment_work.fetched, vec![attachment.id]);
+    assert!(commands.try_iter().next().is_none());
     assert!(surface.attachment_deadline().is_some());
 }
 

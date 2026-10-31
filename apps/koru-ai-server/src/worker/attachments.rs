@@ -382,6 +382,16 @@ pub(super) fn put_attachment(
             false,
         ));
     }
+    // One upload of an id at a time: a second, while the first runs,
+    // would publish over its folder.
+    let Some(_claim) = client.attachments.claim(id) else {
+        return Err(attachment_failure(
+            attachment_codes::CONFLICT,
+            "This attachment is still being stored.",
+            true,
+            id,
+        ));
+    };
     let (reply, response) = sync_channel(1);
     client.send(WorkerCommand::AttachmentAdmission {
         context: context.clone(),

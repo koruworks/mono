@@ -333,6 +333,13 @@ impl ChatComposer {
         std::mem::take(&mut self.editor.view.wants_paste_attachment)
     }
 
+    /// Arm the paste flag as a paste with no text would, for a test that
+    /// must not touch the desktop clipboard.
+    #[cfg(test)]
+    pub(crate) fn arm_paste_attachment(&mut self) {
+        self.editor.view.wants_paste_attachment = true;
+    }
+
     pub(crate) fn take_open_request(&mut self) -> Option<koru_link::KoruLink> {
         self.open_request.take()
     }

@@ -114,7 +114,7 @@ pub(crate) fn start(
         .last()
         .map(|message| message.attachments.as_slice())
         .unwrap_or_default();
-    let delivered = deliver_pictures(
+    let mut delivered = deliver_pictures(
         pictures,
         |native| {
             let bytes = std::fs::read(native).map_err(|_| None)?;
@@ -130,16 +130,31 @@ pub(crate) fn start(
         },
         |id| remove_session_copy(&client, ensured.session, lease, id),
     );
-    let sent = match client.send_pending_input(
-        ensured.session,
-        lease,
-        PendingInput {
-            idempotency_key: IdempotencyKey::mint(),
-            text,
-            attachment_ids: delivered.native.clone(),
-        },
-    ) {
+    let send = |attachment_ids: Vec<AttachmentId>| {
+        client.send_pending_input(
+            ensured.session,
+            lease,
+            PendingInput {
+                idempotency_key: IdempotencyKey::mint(),
+                text: text.clone(),
+                attachment_ids,
+            },
+        )
+    };
+    let sent = match send(delivered.native.clone()) {
         Ok(sent) => sent,
+        // The pictures did not fit the prompt frame after all: they go as
+        // paths, with the notice, rather than failing every retry the same
+        // way (D4, D6).
+        Err(ClientError::Session(failure))
+            if failure.code == ErrorCode::InputTooLarge && !delivered.native.is_empty() =>
+        {
+            for id in std::mem::take(&mut delivered.native) {
+                remove_session_copy(&client, ensured.session, lease, id);
+            }
+            delivered.as_files = true;
+            send(Vec::new()).map_err(|error| session_error("send", error))?
+        }
         Err(error) => {
             for id in &delivered.native {
                 remove_session_copy(&client, ensured.session, lease, *id);

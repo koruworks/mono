@@ -456,3 +456,28 @@ fn a_message_may_be_attachments_only_but_never_nothing() {
         AttemptStatus::Complete
     );
 }
+
+#[test]
+fn a_second_upload_of_an_id_still_being_stored_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let (worker, _requests) = agent_worker(directory.path());
+    let client = worker.client();
+    let chat = create_agent_chat(&client);
+    let id = ChatAttachmentId::new();
+    let first = client.attachments.claim(id).unwrap();
+    let refused = client
+        .put_attachment(context(), chat, id, upload("a.txt", b"a".to_vec()))
+        .unwrap_err();
+    assert_eq!(refused.code, attachment_codes::CONFLICT);
+    assert!(refused.retryable);
+    assert!(
+        !chat_folder(directory.path(), chat).exists(),
+        "nothing was published"
+    );
+    drop(first);
+    assert!(
+        client
+            .put_attachment(context(), chat, id, upload("a.txt", b"a".to_vec()))
+            .is_ok()
+    );
+}
