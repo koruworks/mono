@@ -108,6 +108,18 @@ fn contiguous_siblings(ws: &WorkspaceDoc, ids: &[NodeId]) -> bool {
 ///
 /// A list block is never a row, so a selection can only ever name its items;
 /// this is what lets "select the list, make it a callout" mean the list.
+/// The nearest toggle above `id` whose body holds it.
+fn enclosing_toggle(ws: &WorkspaceDoc, id: NodeId) -> Option<NodeId> {
+    let mut at = ws.parent(id).ok()?;
+    while let Parent::Node(parent) = at {
+        if ws.kind_of(parent) == Some(Kind::Toggle) {
+            return Some(parent);
+        }
+        at = ws.parent(parent).ok()?;
+    }
+    None
+}
+
 fn callout_targets(ws: &WorkspaceDoc, rows: &[NodeId]) -> Vec<NodeId> {
     let mut out: Vec<NodeId> = Vec::with_capacity(rows.len());
     for &id in rows {
@@ -4727,6 +4739,7 @@ pub trait Editing {
             Action::SetListStyle(style) => self.set_list_style(ws, style),
             Action::CodeBlock => self.toggle_code_block(ws),
             Action::ToggleCallout => self.toggle_callout(ws),
+            Action::ToggleFold => self.toggle_fold(ws),
             Action::InsertDivider => self.insert_divider(ws),
             Action::ClearFormatting => self.clear_formatting(ws),
 
@@ -5802,6 +5815,13 @@ pub trait Editing {
             self.view_mut().overlay = Overlay::None;
             if let Some(t) = trigger {
                 self.commit_callout(ws, t, "");
+            }
+            return;
+        }
+        if cmd == command_menu::Command::Toggle {
+            self.view_mut().overlay = Overlay::None;
+            if let Some(t) = trigger {
+                self.commit_toggle(ws, t);
             }
             return;
         }
@@ -7039,6 +7059,65 @@ pub trait Editing {
         }
     }
 
+    /// `/toggle`, one undo step. On an ordinary line the line becomes the
+    /// toggle's title and the caret stays where the command was typed. With
+    /// several lines selected around it — contiguous siblings, or nothing
+    /// moves — they all go into the body of a new toggle with an empty title,
+    /// and the caret goes to that title (collapse/expand QUESTIONS.md Q4). A
+    /// list item, a callout's line and the document's title are left alone:
+    /// a toggle is a line of prose, not an item of something else.
+    fn commit_toggle(&mut self, ws: &mut WorkspaceDoc, trigger: Trigger) {
+        if !self.view().quotes_enabled || self.title_focused() {
+            return;
+        }
+        let Some(row) = self.body().row(trigger.node) else {
+            return;
+        };
+        if row.list_style.is_some() || row.callout.is_some() || row.kind == Kind::Toggle {
+            return;
+        }
+        let id = row.id;
+        let marked = if self.body().has_row_selection() {
+            self.body().selection_roots(ws)
+        } else {
+            Vec::new()
+        };
+        let wrap = marked.len() > 1 && marked.contains(&id);
+
+        ws.checkpoint();
+        ws.begin_group();
+        let focus = if wrap {
+            self.take_trigger_text(ws, &trigger);
+            match ws.wrap_in_toggle_many(&marked) {
+                Ok(toggle) => Some((toggle, 0)),
+                Err(_) => {
+                    ws.checkpoint();
+                    self.body_mut().rebuild(ws);
+                    self.view_mut().notice = Some(
+                        koru_i18n::t(
+                            koru_i18n::current(),
+                            koru_i18n::Key::ToggleWrapNotContiguous,
+                        )
+                        .into(),
+                    );
+                    return;
+                }
+            }
+        } else {
+            self.relabel_row(ws, &trigger, Kind::Toggle)
+                .map(|id| (id, trigger.start))
+        };
+        ws.checkpoint();
+        if wrap {
+            self.body_mut().clear_selection();
+        }
+        self.body_mut().rebuild(ws);
+        if let Some((id, at)) = focus {
+            self.body_mut().focus_on(id);
+            self.place_caret(at);
+        }
+    }
+
     /// `/callout`, with or without a look typed after it (`/callout blue`,
     /// `/callout ⚠️`, `/callout red 🔥`; a color is a Koru token, `default`
     /// or `none`, and anything else that is an emoji is the icon).
@@ -7113,6 +7192,40 @@ pub trait Editing {
             ));
         } else if inside.is_some() && icon.is_none() && tint.is_none() {
             self.open_callout_look_picker(ws, callout);
+        }
+    }
+
+    /// `Ctrl+Alt+Enter`: open or close a toggle from the keyboard. The
+    /// target is the focused toggle, or the toggle whose body holds the caret
+    /// — closing that one moves the caret to its title. With rows selected,
+    /// every selected toggle takes the value the focused (or first selected)
+    /// toggle does not have, so the result is one state, never a mix.
+    fn toggle_fold(&mut self, ws: &mut WorkspaceDoc) {
+        let selected: Vec<NodeId> = self
+            .body()
+            .selected_ids()
+            .into_iter()
+            .filter(|id| ws.kind_of(*id) == Some(Kind::Toggle))
+            .collect();
+        let Some(focused) = self.body().focused_id() else {
+            return;
+        };
+        let target = if ws.kind_of(focused) == Some(Kind::Toggle) {
+            Some(focused)
+        } else {
+            selected.first().copied().or_else(|| enclosing_toggle(ws, focused))
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let closed = !self.body().is_fold_closed(target);
+        let ids = if selected.contains(&target) {
+            selected
+        } else {
+            vec![target]
+        };
+        if self.body_mut().set_folds(ws, &ids, closed) {
+            self.reflow();
         }
     }
 
@@ -8298,6 +8411,9 @@ pub trait Editing {
         if self.checkbox_rect(i).is_some_and(|r| r.contains(x, doc_y)) {
             return Some(Hover::Checkbox(i));
         }
+        if self.fold_rect(i).is_some_and(|r| r.contains(x, doc_y)) {
+            return Some(Hover::Fold(i));
+        }
         if self
             .callout_icon_rect(i)
             .is_some_and(|r| r.contains(x, doc_y))
@@ -8805,6 +8921,16 @@ pub trait Editing {
         if self.checkbox_rect(i).is_some_and(|r| r.contains(cx, doc_y)) {
             let (id, done) = (self.body_mut().rows[i].id, self.body_mut().rows[i].done);
             self.body_mut().set_done(ws, id, !done);
+            self.reflow();
+            return true;
+        }
+
+        // A toggle's arrow opens or closes its body for this reader only.
+        // Allowed in a read-only view too: folding is not an edit.
+        if self.fold_rect(i).is_some_and(|r| r.contains(cx, doc_y)) {
+            let row = &self.body().rows[i];
+            let (id, closed) = (row.id, row.fold_closed);
+            self.body_mut().set_fold(ws, id, !closed);
             self.reflow();
             return true;
         }
@@ -9729,6 +9855,13 @@ pub trait Editing {
         // became a third caller: a control published somewhere other than where
         // it answers is a control a screen reader cannot press.
         rowlayout::checkbox_band(row, row.y)
+    }
+
+    /// Rect of a toggle row's open/close arrow, in document coordinates —
+    /// `None` on every other row.
+    fn fold_rect(&self, i: usize) -> Option<Rect> {
+        let row = self.body().rows.get(i)?;
+        rowlayout::fold_band(row, row.y)
     }
 
     /// Rect of the icon beside the first row of a callout box, in document

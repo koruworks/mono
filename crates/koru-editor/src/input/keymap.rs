@@ -328,6 +328,11 @@ pub const DEFAULT: &[(Chord, Action)] = &[
         Chord::new(named(NamedKey::Enter), false, false, true),
         Action::InsertParagraphAbove,
     ),
+    // `koru_keys::ShortcutId::ToggleFold`.
+    (
+        Chord::new(named(NamedKey::Enter), C, false, true),
+        Action::ToggleFold,
+    ),
     (
         Chord::new(named(NamedKey::Backspace), false, false, false),
         Action::DeleteBack { by_word: false },

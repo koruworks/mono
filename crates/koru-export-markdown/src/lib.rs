@@ -322,6 +322,25 @@ fn emit_node(
         Kind::Callout => {
             emit_callout(ws, id, node, list_depth, blobs, assets_rel, out, assets)?;
         }
+        // A toggle is a `<details>` block with its title as the summary and its
+        // whole body inside, whatever the reader has folded: whether it is open
+        // is a private view preference, never exported.
+        Kind::Toggle => {
+            out.push_str("<details>\n<summary>");
+            out.push_str(&inline_line(ws, id, node)?);
+            out.push_str("</summary>\n\n");
+            emit_children(
+                ws,
+                Parent::Node(id),
+                0,
+                None,
+                blobs,
+                assets_rel,
+                out,
+                assets,
+            )?;
+            out.push_str("</details>\n\n");
+        }
         Kind::Paragraph | Kind::Task | Kind::Quote | Kind::Contact => {
             if let Some(style) = parent_list {
                 let indent = "  ".repeat(list_depth);

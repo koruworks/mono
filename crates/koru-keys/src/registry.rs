@@ -268,6 +268,8 @@ pub enum ShortcutId {
     NumberedList,
     Checklist,
     Callout,
+    /// Open or close the toggle the caret is in, for this reader only.
+    ToggleFold,
     ClearFormatting,
     Superscript,
     Subscript,
@@ -933,6 +935,14 @@ pub const REGISTRY: &[Shortcut] = &[
         Layer::Editor,
         "Tick checkbox",
         Chord::new(named(NamedKey::Enter), PRIMARY_SHIFT),
+    ),
+    // Unbound at every layer before this: Enter takes Primary (done),
+    // Primary+Shift (tick), Alt (paragraph above) and Shift (split above).
+    s(
+        ShortcutId::ToggleFold,
+        Layer::Editor,
+        "Open or close toggle",
+        Chord::new(named(NamedKey::Enter), PRIMARY_ALT),
     ),
     s(
         ShortcutId::SaveDiagramAs,

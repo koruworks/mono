@@ -76,6 +76,7 @@ pub mod runpill;
 pub mod schedulepill;
 pub mod searchdebug;
 pub mod settings;
+pub mod folds;
 pub mod spelling;
 mod url_file;
 

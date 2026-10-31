@@ -144,6 +144,11 @@ pub enum Command {
     /// Make this block a callout: a tinted box with an icon. Document-only,
     /// offered wherever quotes are.
     Callout,
+    /// Make this line a toggle: its text becomes the title and what follows
+    /// is written in its body, which a reader can hide. With several lines
+    /// selected, puts them all in the body of a new toggle. Document-only,
+    /// offered wherever quotes are.
+    Toggle,
     /// Make this block a heading. The only entry that does not become another
     /// picker — there is nothing left to choose once the level is named.
     Heading(Heading),
@@ -225,7 +230,7 @@ impl Command {
     ///
     /// Image, Code, Divider, the lists and the headings are filtered out by
     /// [`matching`] for views that do not offer them.
-    pub const ALL: [Command; 30] = [
+    pub const ALL: [Command; 31] = [
         Command::Attachment,
         Command::Attr,
         Command::Callout,
@@ -256,6 +261,7 @@ impl Command {
         Command::Tag,
         Command::Task,
         Command::TaskList,
+        Command::Toggle,
     ];
 
     /// What the row reads.
@@ -307,6 +313,8 @@ impl Command {
             // Localized for the reason `Delegate` is: a new row, and the
             // standing rule that a new string ships in every language.
             Self::Diagram => koru_i18n::t(koru_i18n::current(), koru_i18n::Key::DiagramCommand),
+            // Localized for the same reason: a new row.
+            Self::Toggle => koru_i18n::t(koru_i18n::current(), koru_i18n::Key::ToggleCommand),
         }
     }
 
@@ -327,6 +335,7 @@ impl Command {
             Self::Divider => icons::DIVIDER,
             Self::Quote => icons::QUOTES,
             Self::Callout => icons::LIGHTBULB,
+            Self::Toggle => icons::CARET_RIGHT,
             Self::Heading(Heading::H1) => icons::HEADING_1,
             Self::Heading(Heading::H2) => icons::HEADING_2,
             Self::Heading(Heading::H3) => icons::HEADING_3,
@@ -381,6 +390,7 @@ impl Command {
             Self::Divider => "divider",
             Self::Quote => "quote",
             Self::Callout => "callout",
+            Self::Toggle => "toggle",
             Self::Heading(Heading::H1) => "header1",
             Self::Heading(Heading::H2) => "header2",
             Self::Heading(Heading::H3) => "header3",
@@ -450,6 +460,8 @@ impl Command {
             Self::Divider => "---",
             Self::Quote => ">",
             Self::Callout => "",
+            // No chord is allocated (collapse/expand QUESTIONS.md Q8).
+            Self::Toggle => "",
             Self::Heading(Heading::H1) => "#",
             Self::Heading(Heading::H2) => "##",
             Self::Heading(Heading::H3) => "###",
@@ -533,7 +545,7 @@ pub fn matching(q: &str, allows: &Allows) -> Vec<Command> {
         .filter(|c| !matches!(c, Command::Code | Command::Diagram) || allows.code)
         .filter(|c| *c != Command::Table || allows.table)
         .filter(|c| *c != Command::Divider || allows.divider)
-        .filter(|c| !matches!(c, Command::Quote | Command::Callout) || allows.quote)
+        .filter(|c| !matches!(c, Command::Quote | Command::Callout | Command::Toggle) || allows.quote)
         .filter(|c| !matches!(c, Command::Heading(_)) || allows.headings)
         // A surface this build hides is absent, not dimmed — the same answer
         // `voice` gets, for the same reason: it is not part of this product.

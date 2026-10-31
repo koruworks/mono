@@ -43,6 +43,7 @@
 
 pub mod bundle;
 pub mod commit_signal;
+pub mod document_private;
 pub mod errors;
 pub mod fixtures;
 pub mod ids;
