@@ -7926,7 +7926,7 @@ fn draw_rail_glyph(
 /// `CAPTION_ICON`, the size of a *command*: a close box, a window button, the
 /// `+`. A disclosure caret is not a command, it is punctuation on the row, and
 /// at command size it competed with the file icon beside it for attention.
-/// [`CARET_SIZE`] is half of it.
+/// [`CARET_SIZE`] is three quarters of it.
 fn draw_caret(
     scene: &mut Scene,
     root: Affine,
@@ -7982,10 +7982,10 @@ const HEADER_PAD: f32 = apps_rail::PAD_TOP;
 /// The lane's band at the top of the pane: `CAPTION_H` tall, one row with the
 /// caption across the divide, drawn by the window (`MainView::draw_lane`).
 const WORKSPACE_ROW_H: f32 = theme::CAPTION_H;
-/// A tree row's disclosure caret, at **half** `CAPTION_ICON`. It is
-/// punctuation on the row rather than a command, and at command size it
-/// competed with the file icon beside it.
-const CARET_SIZE: f32 = theme::CAPTION_ICON * 0.5;
+/// A tree row's disclosure caret, at **three quarters** of `CAPTION_ICON`.
+/// It is punctuation on the row rather than a command, and at command size it
+/// competed with the file icon beside it; at half it was too small to see.
+const CARET_SIZE: f32 = theme::CAPTION_ICON * 0.75;
 
 /// Heights of a popover's rows.
 const SECTION_H: f32 = 20.0;
