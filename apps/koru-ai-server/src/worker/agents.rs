@@ -687,9 +687,11 @@ pub(super) fn agent_validation(
 
 /// The models an agent lists, in the picker's shape. An agent that lists
 /// none answers with an empty list, which the picker shows as no level.
+/// With `refresh`, the list is rebuilt first (the manual refresh).
 pub(super) fn agent_models(
     agents: &AgentSessions,
     provider: AiProviderId,
+    refresh: bool,
 ) -> ApiResult<AgentModelsResponse> {
     let Some(kind) = agent_kind_of(&provider) else {
         return Err(failure(
@@ -698,7 +700,7 @@ pub(super) fn agent_models(
             false,
         ));
     };
-    let models = agents.discover_models(&kind).map_err(|_| {
+    let models = agents.discover_models(&kind, refresh).map_err(|_| {
         failure(
             "agent_models_failed",
             "The agent could not list its models.",

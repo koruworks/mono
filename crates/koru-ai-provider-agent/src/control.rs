@@ -93,6 +93,9 @@ pub struct AgentSessions {
     commands: SyncSender<Command>,
     endpoint: koru_ipc::Endpoint,
     live: Arc<LiveTurns>,
+    /// The manual refreshes under way, one per agent: a second joins the
+    /// first rather than asking the host to re-probe again.
+    refreshes: Arc<crate::joined::Joined<ProviderKind, Result<ProviderModels, ErrorCode>>>,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -107,10 +110,41 @@ impl AgentSessions {
     /// lists nothing answers with an empty catalog. Nothing is kept here:
     /// the session host's catalog is the one cache, and a copy here would
     /// hide every refresh it makes (agent-models D2).
-    pub fn discover_models(&self, kind: &AgentProviderKind) -> Result<ProviderModels, ErrorCode> {
+    ///
+    /// With `refresh` — the manual refresh (D13) — the host is first asked
+    /// to re-probe the agent, which drops its list, and the answer is the
+    /// list the re-probe rebuilt; the host's catalog waits for it within
+    /// the adapter's budget. A refresh already under way for the agent is
+    /// joined.
+    pub fn discover_models(
+        &self,
+        kind: &AgentProviderKind,
+        refresh: bool,
+    ) -> Result<ProviderModels, ErrorCode> {
+        if refresh {
+            return self
+                .refreshes
+                .run(kind.kind.clone(), || self.list_models(kind, true));
+        }
+        self.list_models(kind, false)
+    }
+
+    fn list_models(
+        &self,
+        kind: &AgentProviderKind,
+        refresh: bool,
+    ) -> Result<ProviderModels, ErrorCode> {
         let started = Instant::now();
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
+                if refresh {
+                    client.refresh_provider(kind.kind.clone())?;
+                    tracing::info!(
+                        target: "koru_ai::agent",
+                        provider = %kind.kind,
+                        "agent models refresh requested"
+                    );
+                }
                 client.discover_provider_models(kind.kind.clone(), default_working_directory())
             });
         let models = match listed {
@@ -154,6 +188,7 @@ impl AgentSessions {
             commands,
             endpoint,
             live: Arc::new(LiveTurns::default()),
+            refreshes: Arc::new(crate::joined::Joined::new()),
         })
     }
 
@@ -526,7 +561,12 @@ impl Control {
                     self.drop_client();
                     continue;
                 }
-                Err(error) => return Err(session_error("create", error)),
+                Err(error) => {
+                    if is_code(&error, ErrorCode::ProviderModelUnavailable) {
+                        self.refresh_after_refusal(&kind.kind);
+                    }
+                    return Err(session_error("create", error));
+                }
             }
         }
     }
@@ -637,10 +677,7 @@ impl Control {
         if row
             .as_ref()
             .is_some_and(|row| matches!(row.availability, ExecutableAvailability::Failed { .. }))
-            && self
-                .refreshed
-                .get(kind)
-                .is_none_or(|at| at.elapsed() >= REFRESH_WINDOW)
+            && refresh_due(&self.refreshed, kind, Instant::now())
         {
             let client = self.client.as_ref().expect("connected above");
             match client.refresh_provider(kind.clone()) {
@@ -661,8 +698,48 @@ impl Control {
     }
 }
 
-/// How long a failed readiness row stands before a look is asked for again.
+impl Control {
+    /// A model the agent refused at the start of a chat's session says its
+    /// list may be out of date — an account disconnected, a model withdrawn
+    /// — so the host is asked to re-probe the agent, which rebuilds its
+    /// list, at most once per window (agent-models D7). The turn still
+    /// fails visibly; the next open of the picker shows the list as it is.
+    fn refresh_after_refusal(&mut self, kind: &ProviderKind) {
+        if !refresh_due(&self.refreshed, kind, Instant::now()) {
+            return;
+        }
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        match client.refresh_provider(kind.clone()) {
+            Ok(()) => {
+                self.refreshed.insert(kind.clone(), Instant::now());
+                tracing::info!(target: "koru_ai::agent", event = "agent.model_refused.refresh",
+                    provider = %kind, reason = "model", "agent refused a model; its list is being rebuilt");
+            }
+            Err(error) => {
+                tracing::warn!(target: "koru_ai::agent", provider = %kind, error = %error,
+                    "agent refused a model and its list could not be refreshed");
+            }
+        }
+    }
+}
+
+/// How long a failed readiness row stands before a look is asked for again,
+/// and how long after one re-probe a refused model may ask for another.
 const REFRESH_WINDOW: Duration = Duration::from_secs(30);
+
+/// Whether `kind` may be re-probed again: never asked, or asked longer than
+/// a window ago.
+fn refresh_due(
+    refreshed: &HashMap<ProviderKind, Instant>,
+    kind: &ProviderKind,
+    now: Instant,
+) -> bool {
+    refreshed
+        .get(kind)
+        .is_none_or(|at| now.saturating_duration_since(*at) >= REFRESH_WINDOW)
+}
 
 /// End one session through the one lease this connection may hold: take
 /// it, say terminate, give it back. A session that already exited answers
@@ -697,3 +774,6 @@ fn client_code(error: &ClientError) -> ErrorCode {
         _ => ErrorCode::ProviderUnavailable,
     }
 }
+
+#[cfg(test)]
+mod tests;

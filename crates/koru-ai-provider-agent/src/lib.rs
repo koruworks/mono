@@ -47,6 +47,7 @@ use koru_session_protocol::{
 };
 
 mod control;
+mod joined;
 mod turn;
 
 pub use control::{AgentSessions, EndOutcome, EnsuredSession};

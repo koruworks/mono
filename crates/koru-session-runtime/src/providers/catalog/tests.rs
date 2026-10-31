@@ -321,6 +321,45 @@ fn an_on_demand_agent_is_listed_when_asked_and_then_served_from_memory() {
     assert_eq!(world.calls(), 1);
 }
 
+/// A refresh drops the entry and writes the file without it, and a listing
+/// that started before the drop cannot put the old list back.
+#[test]
+fn a_refresh_drops_the_entry_and_a_listing_from_before_cannot_restore_it() {
+    let world = World::new(false);
+    let store = Arc::new(MemoryCatalogStore::default());
+    let cache = world.cache(store.clone(), false);
+    cache.observe(&available("codex", "1"), None);
+    let listing = {
+        let cache = cache.clone();
+        std::thread::spawn(move || cache.serve(&kind("codex")))
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while world.calls() == 0 {
+        assert!(Instant::now() < deadline, "the listing never started");
+        std::thread::yield_now();
+    }
+    cache.drop_entry(&kind("codex"), CatalogDrop::Refresh);
+    world.open();
+    assert_eq!(
+        ids(&listing.join().unwrap().unwrap()),
+        ["gpt-5"],
+        "the asker still gets its answer"
+    );
+    assert!(
+        !cache.lock().entries.contains_key(&kind("codex")),
+        "but the catalog does not keep a list from before the refresh"
+    );
+
+    cache.observe(&available("claude", "0.76.0"), Some(catalog(&["opus"])));
+    let saves = store.saves();
+    cache.drop_entry(&kind("claude"), CatalogDrop::Refresh);
+    assert_eq!(store.saves(), saves + 1);
+    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    assert!(written["providers"].get("claude").is_none());
+    cache.drop_entry(&kind("claude"), CatalogDrop::Refresh);
+    assert_eq!(store.saves(), saves + 1, "dropping nothing writes nothing");
+}
+
 /// The worker holds one of the two slots while it lists; a person's
 /// request for the same agent waits on that listing rather than starting
 /// its own, and the second slot stays free for anyone else.

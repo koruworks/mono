@@ -13,7 +13,7 @@ use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
 use koru_session_runtime::providers::{
-    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
+    AcpFactory, AcpRoute, CatalogDrop, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
 };
 use koru_session_runtime::{
     AgentEventUpdate, AttachmentPathResolver, EnvironmentPolicy, RawOutputUpdate, SessionCreate,
@@ -988,6 +988,11 @@ fn handle_request(
             {
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
+                // A re-probe is asked for because something about the agent
+                // changed — its CLI was updated, a model was refused, a
+                // person pressed refresh — so its model list goes with it,
+                // and the probe and listing that follow rebuild it.
+                state.catalog.drop_entry(&kind, CatalogDrop::Refresh);
                 state
                     .providers
                     .refresh(kind)

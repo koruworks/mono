@@ -2866,6 +2866,11 @@ impl Agent {
         if self.last_broadcast_cli_report.as_ref() == Some(&report) {
             return;
         }
+        let targets =
+            crate::cli_updates::refresh_targets(self.last_broadcast_cli_report.as_ref(), &report);
+        if !targets.is_empty() {
+            self.refresh_providers(targets);
+        }
         let ids: Vec<ConnectionId> = self.connections.iter().map(|c| c.id()).collect();
         for id in ids {
             self.push(
@@ -2876,6 +2881,50 @@ impl Agent {
             );
         }
         self.last_broadcast_cli_report = Some(report);
+    }
+
+    /// Ask the session host to re-probe each agent whose CLI just changed,
+    /// which also drops and rebuilds its model list (agent-models D6). On a
+    /// short-lived thread with a host client of its own, the way the agents
+    /// menu holds one — never on the winit thread. Never under test: the
+    /// endpoint would be the real host's.
+    fn refresh_providers(&self, targets: Vec<(String, koru_session_protocol::ProviderKind)>) {
+        if cfg!(test) {
+            return;
+        }
+        let Ok(endpoint) = crate::session_endpoint(&self.paths) else {
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("koru-agent cli refresh".into())
+            .stack_size(96 * 1024)
+            .spawn(move || {
+                let client = match koru_session_client::SessionClient::connect(
+                    &endpoint,
+                    "koru-agent-cli-updates",
+                    crate::cli_updates::refresh_offer(),
+                ) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        tracing::warn!(target: "koru::cli_updates", error = %error,
+                            "an updated agent's readiness could not be refreshed");
+                        return;
+                    }
+                };
+                for (cli, provider) in targets {
+                    match client.refresh_provider(provider.clone()) {
+                        Ok(()) => tracing::info!(target: "koru::cli_updates",
+                            event = "cli_updates.refresh_provider", cli = %cli, provider = %provider,
+                            "an agent's CLI changed; its readiness and models are being rebuilt"),
+                        Err(error) => tracing::warn!(target: "koru::cli_updates",
+                            cli = %cli, provider = %provider, error = %error,
+                            "an updated agent's readiness could not be refreshed"),
+                    }
+                }
+            });
+        if spawned.is_err() {
+            tracing::warn!(target: "koru::cli_updates", "the agent refresh thread could not start");
+        }
     }
 
     /// Tell one window, which is what a window that has just arrived needs.

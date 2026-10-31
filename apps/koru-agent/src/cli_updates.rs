@@ -17,6 +17,7 @@
 
 use koru_agent_wire::{AgentCliChoice, AgentCliReport, AgentCliRow, AgentCliStage};
 use koru_cli_updates::{CliStage, Controller, Report};
+use koru_session_protocol::ProviderKind;
 
 /// Where the Agent keeps which card a person closed, beside its other state.
 pub const STATE_FILE: &str = "cli-updates.json";
@@ -44,6 +45,78 @@ pub fn report_for(report: &Report) -> AgentCliReport {
                 detail: row.detail.clone(),
             })
             .collect(),
+    }
+}
+
+/// The managed agents whose CLI changed between two reports, each with the
+/// card it came from: a row whose stage became *Updated* (an update Koru
+/// ran), or whose installed version moved (an update made outside Koru,
+/// seen by the daily check or *Check now*). The session host re-probes each
+/// one, which also rebuilds its model list (agent-models D6).
+///
+/// A card maps to an agent when the CLI it updates is the program that
+/// agent's managed route runs — today `opencode`, `kimi`, `grok` and
+/// `codex`. Claude's route runs its own pinned wrapper and Antigravity's a
+/// server identified by digest, so updating the `claude` CLI changes
+/// neither; a new build of either arrives with a new Koru, which restarts
+/// the host. With no checked report before this one there is nothing to
+/// compare, so the first check after a start refreshes nothing.
+pub fn refresh_targets(
+    previous: Option<&AgentCliReport>,
+    next: &AgentCliReport,
+) -> Vec<(String, ProviderKind)> {
+    let Some(previous) = previous.filter(|report| report.checked) else {
+        return Vec::new();
+    };
+    let mut targets: Vec<(String, ProviderKind)> = Vec::new();
+    for row in &next.clis {
+        let Some(before) = previous.clis.iter().find(|before| before.id == row.id) else {
+            continue;
+        };
+        let updated = row.stage == AgentCliStage::Updated && before.stage != AgentCliStage::Updated;
+        if !updated && row.installed == before.installed {
+            continue;
+        }
+        if let Some(kind) = managed_kind(&row.id)
+            && !targets.iter().any(|(_, known)| *known == kind)
+        {
+            targets.push((row.id.clone(), kind));
+        }
+    }
+    targets
+}
+
+/// The managed agent whose route runs the program card `cli` updates.
+fn managed_kind(cli: &str) -> Option<ProviderKind> {
+    let program = koru_cli_updates::catalogue::KNOWN
+        .iter()
+        .find(|known| known.id == cli)?
+        .program;
+    koru_session_profiles::MANAGED_PROVIDER_REGISTRATIONS
+        .iter()
+        .find(|registration| registration.executable == program)?
+        .kind
+        .parse()
+        .ok()
+}
+
+/// What the refreshing client may do: ask for a re-probe, nothing else.
+pub fn refresh_offer() -> koru_session_protocol::ProtocolOffer {
+    use koru_session_protocol::{
+        CapabilityName, CapabilitySet, MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ProtocolRange,
+        capability,
+    };
+    use std::str::FromStr;
+
+    koru_session_protocol::ProtocolOffer {
+        versions: ProtocolRange {
+            min: MIN_PROTOCOL_VERSION,
+            max: MAX_PROTOCOL_VERSION,
+        },
+        capabilities: CapabilitySet::new([CapabilityName::from_str(
+            capability::PROVIDER_READINESS,
+        )
+        .expect("built-in capability")]),
     }
 }
 

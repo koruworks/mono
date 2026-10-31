@@ -97,11 +97,13 @@ pub trait AiServerPort: Send + Sync {
         context: RequestContext,
         provider: koru_ai_core::AiProviderId,
     ) -> Result<ProviderValidationResponse>;
-    /// The models a local agent lists, for the picker's level under it.
+    /// The models a local agent lists, for the picker's level under it;
+    /// rebuilt first when the request asks for a refresh.
     fn discover_agent_models(
         &self,
         context: RequestContext,
         provider: koru_ai_core::AiProviderId,
+        request: koru_ai_wire::DiscoverAgentModelsRequest,
     ) -> Result<koru_ai_wire::AgentModelsResponse>;
     fn pull_ollama_model(
         &self,

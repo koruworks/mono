@@ -3526,6 +3526,17 @@
         ],
         "type": "string"
       },
+      "DiscoverAgentModelsRequest": {
+        "additionalProperties": false,
+        "description": "The models route's optional body. With `refresh`, the agent's list is\nrebuilt before it is answered: the session host re-probes the agent and\nlists it again, as it does after a CLI update. A request already\nrebuilding the same agent's list is joined, not repeated. With no body,\nthe list already known is answered.",
+        "properties": {
+          "refresh": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "DocTextSize": {
         "enum": [
           14,
@@ -18431,7 +18442,7 @@
     },
     "/v1/ai/providers/{provider}/models": {
       "post": {
-        "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none.",
+        "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ \"refresh\": true }` the list is rebuilt first.",
         "operationId": "ai_discover_agent_models",
         "parameters": [
           {
@@ -18444,6 +18455,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAgentModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -18453,7 +18474,7 @@
                 }
               }
             },
-            "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none."
+            "description": "The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ \"refresh\": true }` the list is rebuilt first."
           },
           "400": {
             "content": {

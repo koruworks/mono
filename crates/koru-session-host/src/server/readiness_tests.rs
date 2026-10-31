@@ -194,6 +194,96 @@ async fn cold_subscription_slow_probe_and_retry_use_the_real_host_dispatch() {
     }).await;
 }
 
+/// A factory whose list is made when asked, counting each listing. It has
+/// no probe, so a re-probe settles at once as a failure.
+struct ListingFactory {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ManagedProviderFactory for ListingFactory {
+    fn create(&self, _: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
+        unreachable!("listing never creates a session")
+    }
+    fn discover_models(
+        &self,
+        _: OsString,
+        _: PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(vec![koru_session_protocol::ProviderModel::new(
+            "model".parse().unwrap(),
+            "fixture".parse().unwrap(),
+        )]
+        .try_into()
+        .unwrap())
+    }
+}
+
+/// `RefreshProvider` drops the agent's model list with its readiness, so
+/// the next answer is a list made again, not the one from before (D6, D7,
+/// D13 all arrive here).
+#[tokio::test]
+async fn refresh_provider_drops_the_agents_model_list() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let mut registry = ManagedProviderRegistry::default();
+            registry
+                .register(
+                    koru_session_profiles::ManagedProviderRegistration {
+                        kind: "fixture",
+                        ..koru_session_profiles::CODEX_REGISTRATION
+                    },
+                    Arc::new(ListingFactory {
+                        calls: calls.clone(),
+                    }),
+                )
+                .unwrap();
+            let state = host(registry);
+            let kind: ProviderKind = "fixture".parse().unwrap();
+            let ready = koru_session_protocol::ProviderReadiness {
+                kind: kind.clone(),
+                availability: A::Available {
+                    version: Some("1".into()),
+                },
+                capabilities: Default::default(),
+                failure: None,
+            };
+            let listings = || calls.load(std::sync::atomic::Ordering::SeqCst);
+            state.catalog.observe(&ready, None);
+            assert!(state.catalog.serve(&kind).is_ok());
+            assert!(state.catalog.serve(&kind).is_ok());
+            assert_eq!(listings(), 1, "the second answer came from memory");
+
+            let (mut peer, task) = open(state.clone(), true).await;
+            assert_eq!(
+                request(
+                    &mut peer,
+                    1,
+                    Request::RefreshProvider { kind: kind.clone() }
+                )
+                .await,
+                Response::Ok
+            );
+            // The re-probe has no probe to run and settles as a failure.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while state
+                .providers
+                .snapshot()
+                .iter()
+                .any(|row| row.kind == kind && row.availability == A::Checking)
+            {
+                assert!(Instant::now() < deadline, "the re-probe never settled");
+                tokio::task::yield_now().await;
+            }
+            state.catalog.observe(&ready, None);
+            assert!(state.catalog.serve(&kind).is_ok());
+            assert_eq!(listings(), 2, "the list was dropped and made again");
+            drop(peer);
+            task.await.unwrap().unwrap();
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn an_old_client_gets_no_new_updates_and_its_connection_survives() {
     tokio::task::LocalSet::new()
