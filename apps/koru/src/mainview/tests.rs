@@ -8091,8 +8091,8 @@ fn successful_search_navigation_retains_the_surface_for_the_next_ctrl_p() {
     ));
     assert_eq!(
         view.explore.navigator_mode(),
-        crate::panes::explore::NavigatorMode::Documents,
-        "opening a page result must leave the Files projection"
+        crate::panes::explore::NavigatorMode::Files,
+        "opening a page leaves the sidebar's view where the person had it"
     );
     assert!(view.search.is_none());
     assert!(view.retained_search.is_some());
@@ -13677,5 +13677,26 @@ fn the_settings_tab_can_be_carried_to_another_group() {
             .expect("the right group")
             .iter_tabs()
             .any(|t| matches!(t.view, TabView::Settings(_)))
+    );
+}
+
+/// **Opening a task's document keeps the Tasks view.** The page opens in a
+/// tab; the sidebar stays where the person was looking.
+#[test]
+fn opening_a_document_from_tasks_keeps_the_tasks_view() {
+    let (mut view, mut workspace) = container();
+    let document = a_document(&mut workspace.ws, "A task's page");
+    view.explore.show_tasks();
+    assert!(View::open_search_target(
+        &mut view,
+        &workspace.ws,
+        None,
+        Some(document),
+        None,
+        None,
+    ));
+    assert_eq!(
+        view.explore.navigator_mode(),
+        crate::panes::explore::NavigatorMode::Tasks
     );
 }

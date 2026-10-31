@@ -11536,12 +11536,11 @@ impl View for MainView {
             );
             return false;
         }
-        // A page result belongs to Documents even if search was opened while
-        // the navigator was showing Files. Opaque files arrive through the
-        // dedicated `open_file_search_target` entry point instead.
-        if trash_root.is_none() {
-            self.explore.show_documents();
-        }
+        // **Opening a page leaves the sidebar's view alone** (the user's
+        // call): a file's note opened from Files, a task's document from
+        // Tasks, a search hit — each opens in a tab, and the person stays
+        // where they were looking. Only the explicit *show me where this tab
+        // lives* switches the view (`reveal_tab_in_explore`).
         let completing_history_route = self.history_pending_routed && self.restoring;
         if completing_history_route && self.history_pending.is_none() {
             // `show_active_document` already restored the spot. Landing again
@@ -11674,7 +11673,11 @@ impl View for MainView {
             // `document` is already the row's key. `rebuild_from_entries` keys
             // every row `NodeId::from_uuid(entry.id.as_uuid())`, and that is what
             // the search surface puts in this field.
+            //
+            // Only while Documents is the view showing: the view is not
+            // switched to it (above), and another view has no row to show.
             if trash_root.is_none()
+                && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Documents
                 && let Some(document) = document
             {
                 if self.explore.reveal(document) {
