@@ -29,9 +29,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The targets this verb publishes, and the extension each package carries.
-/// `android` is the whole name, not `android-<arch>`: the one APK carries
-/// both ABIs (D12), and the publish job's cleanup matches `koru-*-android.*`.
-const MOBILE_TARGETS: &[(&str, &str)] = &[("android", "apk")];
+/// **`android-aarch64` names the one universal APK** (D12, D25): it carries
+/// both ABIs, and the architecture is in the name only so it has the
+/// `<platform>-<arch>` shape every reader of a target already parses — the
+/// publish job's cleanup (`koru-*-android-aarch64.*`) and the update feed's
+/// `nightly-android-aarch64.json` among them.
+const MOBILE_TARGETS: &[(&str, &str)] = &[("android-aarch64", "apk")];
 
 /// The instant versionCode 0 would name: 2026-01-01 00:00 UTC, the year the
 /// nightly's `yyyymmddHHMM` build numbers start (N11).

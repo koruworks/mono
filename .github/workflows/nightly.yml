@@ -181,7 +181,7 @@ jobs:
         linux-x86_64=${{ needs.build-linux.result }}
         windows-x86_64=${{ needs.build-windows.result }}
         ${{ needs.build-macos.outputs.signed == 'true' && format('macos-aarch64={0}', needs.build-macos.result) || '' }}
-        ${{ needs.build-android.outputs.signed == 'true' && format('android={0}', needs.build-android.result) || '' }}
+        ${{ needs.build-android.outputs.signed == 'true' && format('android-aarch64={0}', needs.build-android.result) || '' }}
     steps:
       # One directory per platform that built, named after its artifact.
       # actions/download-artifact v8.0.2
@@ -206,11 +206,11 @@ jobs:
           builds=(*/)
           if [ "${#builds[@]}" -eq 0 ]; then
             flat=(nightly-*.json)
-            apk=(koru-*-android.apk)
+            apk=(koru-*-android-aarch64.apk)
             if [ "${#flat[@]}" -eq 1 ]; then
               dir="${flat[0]%.json}"
             elif [ "${#apk[@]}" -eq 1 ]; then
-              dir=nightly-android
+              dir=nightly-android-aarch64
             else
               echo "::error::one platform's files, but neither a feed nor an APK"
               exit 1
@@ -242,7 +242,7 @@ jobs:
             target="${name#nightly-}"
             targets+=("$target")
             feed=("$build"nightly-*.json)
-            if [ "$target" = android ]; then
+            if [ "$target" = android-aarch64 ]; then
               test "${#feed[@]}" -eq 0
             else
               test "${#feed[@]}" -eq 1

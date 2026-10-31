@@ -273,7 +273,7 @@ fn the_release_body_is_the_notes_then_the_build_then_the_platform_notes() {
     ));
     assert!(body.contains("- **Windows** is not code-signed yet"));
     assert!(body.contains("- No Koru Cloud in the nightly yet."));
-    assert!(body.contains("- **Android** nightlies (the `-android.apk` below"));
+    assert!(body.contains("- **Android** nightlies (the `-android-aarch64.apk` below"));
 
     // One page for every platform: whichever build writes it, it is the same,
     // so the last platform to publish cannot drop another's notes.

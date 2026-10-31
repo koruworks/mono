@@ -57,7 +57,7 @@ fn parse(values: &[&str]) -> Result<PackageOptions, String> {
 
 const FULL: &[&str] = &[
     "--target",
-    "android",
+    "android-aarch64",
     "--package",
     "apps/android/app/build/outputs/apk/release/app-release.apk",
     "--version",
@@ -77,7 +77,7 @@ const FULL: &[&str] = &[
 #[test]
 fn dist_github_package_parses_every_flag() {
     let options = parse(FULL).unwrap();
-    assert_eq!(options.target, "android");
+    assert_eq!(options.target, "android-aarch64");
     assert_eq!(options.build_number, 202_610_311_530);
     assert_eq!(options.version, "0.1.5-nightly.20261031+abc1234");
     assert_eq!(
@@ -101,7 +101,7 @@ fn dist_github_package_refuses_what_it_does_not_understand() {
         assert!(parse(&missing).is_err(), "without {}", FULL[index]);
     }
     let mut twice = FULL.to_vec();
-    twice.extend(["--target", "android"]);
+    twice.extend(["--target", "android-aarch64"]);
     assert!(parse(&twice).is_err());
     let mut unknown = FULL.to_vec();
     unknown.push("--with-cloud");
@@ -114,10 +114,10 @@ fn dist_github_package_refuses_what_it_does_not_understand() {
 #[test]
 fn the_apk_is_named_like_every_other_package() {
     // GitHub turns the `+` into a `.`, and the publish job's cleanup of the
-    // previous nightly matches `koru-*-android.*`.
+    // previous nightly matches `koru-*-android-aarch64.*`.
     assert_eq!(
-        package_asset_name("0.1.5-nightly.20261031+abc1234", "android").as_deref(),
-        Some("koru-0.1.5-nightly.20261031.abc1234-android.apk")
+        package_asset_name("0.1.5-nightly.20261031+abc1234", "android-aarch64").as_deref(),
+        Some("koru-0.1.5-nightly.20261031.abc1234-android-aarch64.apk")
     );
     assert_eq!(package_asset_name("0.1.5", "linux-x86_64"), None);
 }

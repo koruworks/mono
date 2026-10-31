@@ -74,7 +74,7 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Linux** is a preview — X11 only (XWayland on Wayland desktops), no dictation yet.",
     "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
      reminders show no notifications.",
-    "**Android** nightlies (the `-android.apk` below, when it is listed) install as their own \
+    "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
      app, *Koru Nightly*, beside Koru, and do not update themselves: install the next one over it.",
     "No Koru Cloud in the nightly yet.",
 ];
