@@ -432,3 +432,27 @@ fn the_start_up_sweep_removes_what_no_row_names() {
     wait_until(|| !orphan_chat.exists() && !staging.exists());
     assert!(foreign.is_dir());
 }
+
+#[test]
+fn a_message_may_be_attachments_only_but_never_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let (worker, requests) = agent_worker(directory.path());
+    let client = worker.client();
+    let chat = create_agent_chat(&client);
+    let empty = refusal(send_with(&client, chat, "  ", Vec::new()));
+    assert_eq!(empty.code, "invalid_request");
+
+    let id = ChatAttachmentId::new();
+    client
+        .put_attachment(context(), chat, id, upload("shot.png", png(4, 4)))
+        .unwrap();
+    let stream = send_with(&client, chat, "", vec![id]).unwrap();
+    let request = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let last = request.messages.last().unwrap();
+    assert!(last.markdown.is_empty());
+    assert_eq!(last.attachments.len(), 1);
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+}

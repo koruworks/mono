@@ -2898,7 +2898,8 @@ impl WorkerState {
         {
             return replay_stream(&self.repository, existing);
         }
-        if request.markdown.trim().is_empty() {
+        // A message may be attachments only (chat-attachments D3).
+        if request.markdown.trim().is_empty() && request.attachment_ids.is_empty() {
             return Err(failure("invalid_request", "A message is required.", false));
         }
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {

@@ -1227,6 +1227,7 @@ fn decode_ai_event(data: &str) -> AiResult<Option<StreamEvent>> {
             | "text_delta"
             | "usage"
             | "tool_activity"
+            | "notice"
             | "web_search"
             | "citation"
             | "completed"
@@ -1651,5 +1652,21 @@ mod tests {
             decode_ai_event(malformed).unwrap_err().code,
             "invalid_response"
         );
+    }
+
+    #[test]
+    fn a_notice_reaches_the_chat() {
+        let attempt = InferenceAttemptId::new();
+        let notice = format!(
+            r#"{{"version":1,"sequence":2,"event":{{"type":"notice","attempt_id":"{attempt}","notice":"images_as_files","at":1}}}}"#
+        );
+        let event = decode_ai_event(&notice).unwrap().unwrap();
+        assert!(matches!(
+            event.event,
+            koru_ai_wire::PublicAiEvent::Notice {
+                notice: koru_ai_core::AttemptNotice::ImagesAsFiles,
+                ..
+            }
+        ));
     }
 }

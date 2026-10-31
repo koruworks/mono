@@ -10,8 +10,16 @@
 //! polling cancellation and pending approval answers between them, and
 //! translates each into the chat's own event. The stream ends at the turn's
 //! terminal event and gives the lease back.
+//!
+//! **Attachments** (chat-attachments D3, D4; ADR-480). The message's pictures
+//! are ingested into the session with the turn's lease and go natively when
+//! the session takes them; every attachment, picture or file, is also named
+//! by path in a block after the person's words, so an agent that cannot see
+//! pictures — or a file it should read — still has them. The session's copies
+//! are removed when the turn ends, which frees the host's slots.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -19,15 +27,16 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AgentActivityEvent, AgentToolFailure, AgentToolKind, AiError, AiErrorClass, AiEvent, AiRequest,
-    AiUsage, AttemptNotice, Cancellation, ChatRole, ChoiceIntent, ContextItem, InferenceAttemptId,
-    OfferedChoice, ProviderStream, Timestamp, ToolInvocationId, UsageSource, bound_agent_content,
-    bound_live_text,
+    AiUsage, AttachmentInput, AttachmentKind, AttemptNotice, Cancellation, ChatRole, ChoiceIntent,
+    ContextItem, InferenceAttemptId, OfferedChoice, ProviderStream, Timestamp, ToolInvocationId,
+    UsageSource, bound_agent_content, bound_live_text,
 };
 use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
-    AgentEvent, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
-    CancelReason, ControllerLeaseToken, IdempotencyKey, LaunchReasoning, LaunchSelection,
-    ModelName, PendingInput, SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
+    AgentEvent, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent, Attachment,
+    AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode, ErrorCode,
+    IdempotencyKey, LaunchReasoning, LaunchSelection, ModelName, PendingInput, SessionId,
+    ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
 };
 use koru_session_wire::SubscriptionUpdate;
 
@@ -100,17 +109,44 @@ pub(crate) fn start(
 
     let had_history = request.messages.len() > 1;
     let text = compose_prompt(&request, ensured.fresh);
-    let sent = client
-        .send_pending_input(
-            ensured.session,
-            lease,
-            PendingInput {
-                idempotency_key: IdempotencyKey::mint(),
-                text,
-                attachment_ids: Vec::new(),
-            },
-        )
-        .map_err(|error| session_error("send", error))?;
+    let pictures = request
+        .messages
+        .last()
+        .map(|message| message.attachments.as_slice())
+        .unwrap_or_default();
+    let delivered = deliver_pictures(
+        pictures,
+        |native| {
+            let bytes = std::fs::read(native).map_err(|_| None)?;
+            client
+                .ingest_attachment(
+                    ensured.session,
+                    lease,
+                    AttachmentId::mint(),
+                    AttachmentSource::PublicUpload,
+                    &bytes,
+                )
+                .map_err(Some)
+        },
+        |id| remove_session_copy(&client, ensured.session, lease, id),
+    );
+    let sent = match client.send_pending_input(
+        ensured.session,
+        lease,
+        PendingInput {
+            idempotency_key: IdempotencyKey::mint(),
+            text,
+            attachment_ids: delivered.native.clone(),
+        },
+    ) {
+        Ok(sent) => sent,
+        Err(error) => {
+            for id in &delivered.native {
+                remove_session_copy(&client, ensured.session, lease, *id);
+            }
+            return Err(session_error("send", error));
+        }
+    };
 
     let (answers_tx, answers) = sync_channel(ANSWER_CAPACITY);
     provider.live.register(attempt, chat, answers_tx);
@@ -119,6 +155,21 @@ pub(crate) fn start(
         queued.push_back(AiEvent::Notice {
             attempt_id: attempt,
             notice: AttemptNotice::FreshStart,
+            at: Timestamp::now(),
+        });
+    }
+    if delivered.as_files {
+        tracing::info!(
+            target: "koru_ai::agent",
+            pictures = pictures
+                .iter()
+                .filter(|attachment| attachment.kind == AttachmentKind::Image)
+                .count(),
+            "an agent takes no pictures here; they went as file paths"
+        );
+        queued.push_back(AiEvent::Notice {
+            attempt_id: attempt,
+            notice: AttemptNotice::ImagesAsFiles,
             at: Timestamp::now(),
         });
     }
@@ -149,8 +200,83 @@ pub(crate) fn start(
         tools: HashMap::new(),
         approvals: HashMap::new(),
         usage: None,
+        ingested: delivered.native,
         done: false,
     }))
+}
+
+/// What became of a message's pictures: the session copies that go
+/// natively, and whether any picture fell back to its path.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Delivered {
+    native: Vec<AttachmentId>,
+    as_files: bool,
+}
+
+/// Hand each picture's native copy to the session. One the session takes
+/// natively goes in the input; one it does not, or one it refuses (a
+/// picture it cannot read, its slots full, a file gone from disk), falls
+/// back to its path, which the prompt's block names anyway (D4). `ingest`
+/// answers `Err(None)` when the file could not be read.
+fn deliver_pictures(
+    attachments: &[AttachmentInput],
+    mut ingest: impl FnMut(&Path) -> Result<Attachment, Option<ClientError>>,
+    mut remove: impl FnMut(AttachmentId),
+) -> Delivered {
+    let mut delivered = Delivered::default();
+    for attachment in attachments {
+        if attachment.kind != AttachmentKind::Image {
+            continue;
+        }
+        let Some(native) = attachment.native.as_deref() else {
+            delivered.as_files = true;
+            continue;
+        };
+        match ingest(native) {
+            Ok(ingested) if ingested.delivery_mode == DeliveryMode::NativeStructured => {
+                tracing::debug!(
+                    target: "koru_ai::agent",
+                    attachment_id = %ingested.id,
+                    "picture ingested for native delivery"
+                );
+                delivered.native.push(ingested.id);
+            }
+            Ok(ingested) => {
+                tracing::debug!(
+                    target: "koru_ai::agent",
+                    delivery_mode = ?ingested.delivery_mode,
+                    "the session delivers no pictures natively"
+                );
+                remove(ingested.id);
+                delivered.as_files = true;
+            }
+            Err(Some(ClientError::Session(failure)))
+                if failure.code == ErrorCode::UnsupportedMedia =>
+            {
+                delivered.as_files = true;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "koru_ai::agent",
+                    error = %error.map_or_else(|| "unreadable".to_owned(), |error| error.to_string()),
+                    "a picture could not be handed to the session; it goes as a path"
+                );
+                delivered.as_files = true;
+            }
+        }
+    }
+    delivered
+}
+
+fn remove_session_copy(
+    client: &SessionClient,
+    session: SessionId,
+    lease: ControllerLeaseToken,
+    id: AttachmentId,
+) {
+    if let Err(error) = client.remove_attachment(session, lease, id) {
+        tracing::debug!(target: "koru_ai::agent", error = %error, "a session's picture copy was not removed");
+    }
 }
 
 /// The explicit selection a chat's model column asks for: none for the
@@ -258,8 +384,16 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
         let mut parts = Vec::new();
         let mut used = 0usize;
         for message in prior.iter().rev() {
+            let attached = if message.attachments.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n{}",
+                    attachment_block("Attached to that message:", &message.attachments)
+                )
+            };
             let part = format!(
-                "{}\n{}\n\n",
+                "{}\n{}{attached}\n\n",
                 match message.role {
                     ChatRole::User => "**Person:**",
                     ChatRole::Assistant => "**Assistant:**",
@@ -283,8 +417,46 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
     }
     if let Some(last) = last {
         text.push_str(&last.markdown);
+        if !last.attachments.is_empty() {
+            if !last.markdown.trim().is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&attachment_block(
+                "Attached to this message (stored on this computer; read a file from disk if you need it):",
+                &last.attachments,
+            ));
+        }
     }
     text
+}
+
+/// The Koru-authored list of a message's attachments: name, media type,
+/// size and the absolute path of the stored original. English, like the
+/// rest of what the agent reads from Koru.
+pub(crate) fn attachment_block(heading: &str, attachments: &[AttachmentInput]) -> String {
+    let mut block = String::from(heading);
+    for attachment in attachments {
+        block.push_str(&format!(
+            "\n- {} — {}, {} — {}",
+            attachment.file_name,
+            attachment.media_type,
+            human_size(attachment.byte_count),
+            attachment.path.display()
+        ));
+    }
+    block
+}
+
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{} KB", bytes.div_ceil(KB))
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 struct TurnStream {
@@ -302,6 +474,8 @@ struct TurnStream {
     tools: HashMap<ToolCallId, ToolInvocationId>,
     approvals: HashMap<ApprovalId, ToolInvocationId>,
     usage: Option<AiUsage>,
+    /// The session's copies of this turn's pictures, removed when it ends.
+    ingested: Vec<AttachmentId>,
     done: bool,
 }
 
@@ -604,6 +778,9 @@ impl TurnStream {
         }
         self.done = true;
         self.live.unregister(self.attempt);
+        for id in std::mem::take(&mut self.ingested) {
+            remove_session_copy(&self.client, self.session, self.lease, id);
+        }
         let _ = self.client.detach(self.session, self.lease);
     }
 }
@@ -761,5 +938,144 @@ mod tests {
             choice_intent(ApprovalIntent::AllowRemembered),
             ChoiceIntent::AllowAlways
         );
+    }
+
+    fn attachment(name: &str, kind: AttachmentKind) -> AttachmentInput {
+        let path = std::env::temp_dir()
+            .join("attachments")
+            .join("chat")
+            .join("id")
+            .join("file")
+            .join(name);
+        AttachmentInput {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            kind,
+            file_name: name.into(),
+            media_type: if kind == AttachmentKind::Image {
+                "image/png".into()
+            } else {
+                "application/pdf".into()
+            },
+            byte_count: 2_516_582,
+            native: (kind == AttachmentKind::Image).then(|| path.clone()),
+            path,
+        }
+    }
+
+    fn session_copy(mode: DeliveryMode) -> Attachment {
+        Attachment {
+            id: AttachmentId::mint(),
+            session_id: SessionId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            source: AttachmentSource::PublicUpload,
+            media_type: "image/png".into(),
+            byte_count: 10,
+            dimensions: None,
+            status: koru_session_protocol::AttachmentStatus::Pending,
+            delivery_mode: mode,
+            delivery: koru_session_protocol::DeliveryState::Pending,
+            turn_id: None,
+            preview_available: false,
+            created_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn every_attachment_is_named_by_path_after_the_persons_words() {
+        let mut request = request(&[(ChatRole::User, "What is in these?")]);
+        let picture = attachment("shot.png", AttachmentKind::Image);
+        let report = attachment("report.pdf", AttachmentKind::File);
+        request.messages[0].attachments = vec![picture.clone(), report.clone()];
+        let text = compose_prompt(&request, true);
+        assert!(text.starts_with("What is in these?\n\nAttached to this message"));
+        assert!(text.contains(&format!(
+            "- shot.png — image/png, 2.4 MB — {}",
+            picture.path.display()
+        )));
+        assert!(text.contains(&format!(
+            "- report.pdf — application/pdf, 2.4 MB — {}",
+            report.path.display()
+        )));
+
+        // A message of attachments only is the block alone.
+        request.messages[0].markdown = String::new();
+        assert!(compose_prompt(&request, false).starts_with("Attached to this message"));
+    }
+
+    #[test]
+    fn a_fresh_session_hears_of_earlier_attachments_by_path() {
+        let mut request = request(&[
+            (ChatRole::User, "Look"),
+            (ChatRole::Assistant, "A cat."),
+            (ChatRole::User, "And now?"),
+        ]);
+        let earlier = attachment("cat.png", AttachmentKind::Image);
+        request.messages[0].attachments = vec![earlier.clone()];
+        let fresh = compose_prompt(&request, true);
+        assert!(fresh.contains("**Person:**\nLook\nAttached to that message:"));
+        assert!(fresh.contains(&earlier.path.display().to_string()));
+        assert!(fresh.ends_with("And now?"));
+        // A session that saw it already is not told again.
+        assert_eq!(compose_prompt(&request, false), "And now?");
+    }
+
+    #[test]
+    fn a_picture_goes_natively_only_when_the_session_takes_it() {
+        let pictures = [
+            attachment("a.png", AttachmentKind::Image),
+            attachment("report.pdf", AttachmentKind::File),
+        ];
+        let native = session_copy(DeliveryMode::NativeStructured);
+        let delivered = deliver_pictures(
+            &pictures,
+            |_| Ok(native.clone()),
+            |_| panic!("a native copy is kept"),
+        );
+        assert_eq!(
+            delivered,
+            Delivered {
+                native: vec![native.id],
+                as_files: false
+            }
+        );
+
+        // A session that delivers no pictures: its copy is removed, the
+        // picture goes as a path and the notice is owed.
+        let quoted = session_copy(DeliveryMode::QuotedPath);
+        let mut removed = Vec::new();
+        let delivered = deliver_pictures(&pictures, |_| Ok(quoted.clone()), |id| removed.push(id));
+        assert_eq!(removed, vec![quoted.id]);
+        assert!(delivered.native.is_empty() && delivered.as_files);
+
+        // Refused (unsupported, or the slots full) or unreadable: a path.
+        for code in [ErrorCode::UnsupportedMedia, ErrorCode::AttachmentLimit] {
+            let delivered = deliver_pictures(
+                &pictures,
+                |_| {
+                    Err(Some(ClientError::Session(
+                        koru_session_protocol::SessionFailure {
+                            code: code.clone(),
+                            message: String::new(),
+                        },
+                    )))
+                },
+                |_| {},
+            );
+            assert!(delivered.native.is_empty() && delivered.as_files);
+        }
+        let unreadable = deliver_pictures(&pictures, |_| Err(None), |_| {});
+        assert!(unreadable.native.is_empty() && unreadable.as_files);
+
+        // Files are never ingested; with no picture there is no notice.
+        let delivered =
+            deliver_pictures(&pictures[1..], |_| panic!("a file is not ingested"), |_| {});
+        assert_eq!(delivered, Delivered::default());
+    }
+
+    #[test]
+    fn sizes_read_as_a_person_reads_them() {
+        assert_eq!(human_size(900), "900 B");
+        assert_eq!(human_size(412 * 1024), "412 KB");
+        assert_eq!(human_size(2_516_582), "2.4 MB");
     }
 }

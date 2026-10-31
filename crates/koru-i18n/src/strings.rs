@@ -243,6 +243,7 @@ pub enum Key {
     AiAgentOutcomeWaiting,
     AiAgentOutcomeRunning,
     AiAgentStartedFresh,
+    AiAgentImagesAsFiles,
     AiAgentAllow,
     AiAgentReject,
     AiAgentModelsLoading,
@@ -2618,7 +2619,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1780] = [
+    pub const ALL: [Key; 1781] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2757,6 +2758,7 @@ impl Key {
         Key::AiAgentOutcomeWaiting,
         Key::AiAgentOutcomeRunning,
         Key::AiAgentStartedFresh,
+        Key::AiAgentImagesAsFiles,
         Key::AiAgentAllow,
         Key::AiAgentReject,
         Key::AiAgentModelsLoading,
@@ -5961,6 +5963,17 @@ pub const ROWS: &[Row] = &[
         ar: "بدأ الوكيل من جديد وتلقّى المحادثة حتى الآن.",
         zh_hans: "代理已重新启动，并获得了到目前为止的对话内容。",
         ja: "エージェントは新しく開始し、これまでの会話を受け取りました。",
+    },
+    Row {
+        key: Key::AiAgentImagesAsFiles,
+        en: "This agent can't see pictures directly; it was told where the files are.",
+        es: "Este agente no puede ver imágenes directamente; se le indicó dónde están los archivos.",
+        pt_br: "Este agente não consegue ver imagens diretamente; ele foi informado de onde estão os arquivos.",
+        de: "Dieser Agent kann Bilder nicht direkt sehen; ihm wurde gesagt, wo die Dateien liegen.",
+        fr: "Cet agent ne peut pas voir les images directement ; on lui a indiqué où se trouvent les fichiers.",
+        ar: "لا يستطيع هذا الوكيل رؤية الصور مباشرةً؛ أُخبِر بمكان الملفات.",
+        zh_hans: "此代理无法直接查看图片；已告知它文件所在的位置。",
+        ja: "このエージェントは画像を直接見られないため、ファイルの場所を伝えました。",
     },
     Row {
         key: Key::AiAgentAllow,

@@ -2430,6 +2430,10 @@ impl ChatSurface {
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiAgentStartedFresh)
                                     .to_owned()
                             }
+                            koru_ai_core::AttemptNotice::ImagesAsFiles => {
+                                koru_i18n::t(self.lang, koru_i18n::Key::AiAgentImagesAsFiles)
+                                    .to_owned()
+                            }
                         });
                     }
                     PublicAiEvent::WebSearch { call_id, phase, .. } => match phase {

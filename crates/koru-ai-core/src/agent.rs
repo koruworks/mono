@@ -227,13 +227,17 @@ impl AgentToolFailure {
 }
 
 /// A fact about the attempt the surface shows as one line and nothing
-/// stores: the agent could not be reattached and a replacement was started
-/// with the conversation so far.
+/// stores.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AttemptNotice {
+    /// The agent could not be reattached and a replacement was started with
+    /// the conversation so far.
     FreshStart,
+    /// The agent takes no pictures: it was told where the files are instead
+    /// (chat-attachments D4).
+    ImagesAsFiles,
 }
 
 #[cfg(test)]

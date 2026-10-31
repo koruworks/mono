@@ -179,7 +179,8 @@ pub(super) struct StdioJsonRpc {
     inbound: Arc<TransportWake>,
     reader: Option<JoinHandle<()>>,
     process_tree: ProcessTree,
-    maximum_frame_bytes: usize,
+    /// The bound on what this process writes; reads have their own.
+    maximum_outbound_frame_bytes: usize,
     shutting_down: bool,
     /// A directory only this tree writes into, removed once the tree is gone.
     scratch: Option<std::path::PathBuf>,
@@ -227,7 +228,8 @@ impl StdioJsonRpc {
         argv: &[OsString],
         env: &[(OsString, OsString)],
         cwd: &Path,
-        maximum_frame_bytes: usize,
+        maximum_inbound_frame_bytes: usize,
+        maximum_outbound_frame_bytes: usize,
         inbound: Arc<TransportWake>,
     ) -> Result<Self, ProviderFailure> {
         let process_tree = ProcessTree::new()?;
@@ -263,7 +265,7 @@ impl StdioJsonRpc {
         let reader = match std::thread::Builder::new()
             .name("koru-codex-jsonl-reader".into())
             .stack_size(256 * 1024)
-            .spawn(move || read_frames(stdout, maximum_frame_bytes, reader_inbound))
+            .spawn(move || read_frames(stdout, maximum_inbound_frame_bytes, reader_inbound))
         {
             Ok(reader) => reader,
             Err(error) => {
@@ -277,7 +279,7 @@ impl StdioJsonRpc {
             inbound,
             reader: Some(reader),
             process_tree,
-            maximum_frame_bytes,
+            maximum_outbound_frame_bytes,
             shutting_down: false,
             scratch: None,
         })
@@ -304,7 +306,7 @@ impl JsonRpcTransport for StdioJsonRpc {
                 ProviderDiagnostic::InvalidState,
             )
         })?;
-        write_json_line(stdin, message, self.maximum_frame_bytes)?;
+        write_json_line(stdin, message, self.maximum_outbound_frame_bytes)?;
         std::io::Write::flush(stdin)
             .map_err(|error| ProviderFailure::io(ProviderStage::Write, &error))
     }

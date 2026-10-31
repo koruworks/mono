@@ -766,7 +766,56 @@ fn native_images_use_base64_not_path_and_combined_frame_is_bounded() {
     );
     assert!(!prompt.to_string().contains("never-read.png"));
     drop(state);
-    h.control.config.maximum_frame_bytes = 10;
+    h.control.config.maximum_prompt_frame_bytes = 10;
+    assert_eq!(
+        h.control.prompt(&input).unwrap_err().code,
+        ErrorCode::InputTooLarge
+    );
+}
+
+struct MebibyteImages;
+impl input::ImageReader for MebibyteImages {
+    fn read(&self, _path: &std::path::Path, maximum: usize) -> Result<Vec<u8>, ProviderFailure> {
+        let bytes = vec![7; 1024 * 1024];
+        assert!(bytes.len() <= maximum);
+        Ok(bytes)
+    }
+}
+
+#[test]
+fn ten_one_mebibyte_pictures_fit_the_prompt_frame_while_reads_stay_bounded() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    h.control.config.attachment_paths = Arc::new(ImagePath);
+    h.control.image_reader = Box::new(MebibyteImages);
+    // What the agent sends Koru keeps its small bound; only Koru's own
+    // prompt frame grew (chat-attachments D6).
+    assert_eq!(
+        h.control.config.maximum_inbound_frame_bytes,
+        crate::providers::DEFAULT_PROVIDER_FRAME_BYTES
+    );
+    assert_eq!(
+        h.control.config.maximum_prompt_frame_bytes,
+        16 * 1024 * 1024
+    );
+    start(&mut h.control);
+    let mut input = input(AgentTurnId::mint());
+    for _ in 0..10 {
+        input.attachments.push(AgentAttachment {
+            id: koru_session_protocol::AttachmentId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            media_type: "image/png".into(),
+        });
+    }
+    let prompt = h.control.prompt(&input).unwrap();
+    assert_eq!(prompt.len(), 11, "the text and ten pictures");
+    // Thirteen are past the frame and refused before anything is sent.
+    for _ in 0..3 {
+        input.attachments.push(AgentAttachment {
+            id: koru_session_protocol::AttachmentId::mint(),
+            kind: koru_session_protocol::AttachmentKind::Image,
+            media_type: "image/png".into(),
+        });
+    }
     assert_eq!(
         h.control.prompt(&input).unwrap_err().code,
         ErrorCode::InputTooLarge
