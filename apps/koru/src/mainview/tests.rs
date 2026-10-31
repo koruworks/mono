@@ -13585,3 +13585,47 @@ fn a_hidden_result_page_lays_out_when_shown_and_not_before() {
     assert!(v.tabs_mut().active_mut().ensure_sized(1200.0, 700.0));
     assert_eq!(reflows(&v, at), before + 1, "shown, it lays out once");
 }
+
+/// **A document in another pane group follows a font change too.** With the
+/// Settings side focused and a document split beside it, an invalidation —
+/// what a font preview or choice sends — lays out the document in the other
+/// group, not only the focused group's tab.
+#[test]
+fn an_invalidation_reaches_the_document_in_another_pane_group() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut v, _w) = in_a_tab(&["first"]);
+    let active = v.tabs().active_tab().id;
+    let tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), active)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, tab);
+    let right = PanePath::root().child(1);
+    v.panes.set_focus(PanePath::root().child(0));
+    fn reflows(v: &MainView, path: &PanePath) -> u64 {
+        match &v
+            .panes
+            .group(path)
+            .expect("the group")
+            .tabs()
+            .active_tab()
+            .view
+        {
+            TabView::Leaf(Leaf::Document(d)) => d.editor.view.reflows,
+            _ => panic!("the split side holds the document"),
+        }
+    }
+    v.panes
+        .group_mut(&right)
+        .expect("the group")
+        .tabs_mut()
+        .active_mut()
+        .ensure_sized(600.0, 700.0);
+    let before = reflows(&v, &right);
+    View::invalidate(&mut v);
+    assert_eq!(
+        reflows(&v, &right),
+        before + 1,
+        "the document beside the focused group lays out again"
+    );
+}

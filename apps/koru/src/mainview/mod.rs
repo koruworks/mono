@@ -10925,34 +10925,41 @@ impl View for MainView {
         // to re-measure them, or the chip keeps the size of a face nobody is
         // drawing in any more.
         self.remeasure_dictation();
-        let shown = self.tabs().active();
-        for (i, t) in self.tabs_mut().iter_mut().enumerate() {
-            // **A document nobody is looking at lays out when it is shown.**
-            // Pointing through a font or size list invalidates on every step;
-            // laying out every open document each time is the cost the
-            // preview must not have. The tab is marked, and `ensure_sized`
-            // lays it out once before its first frame, hit-test or publish.
-            if i != shown && defer_layout(&mut t.view) {
-                t.invalidate_size();
-                continue;
-            }
-            match &mut t.view {
-                TabView::Welcome(w) => w.invalidate(),
-                TabView::Manage(w) => View::invalidate(w),
-                TabView::Trash(t) => View::invalidate(t),
-                TabView::Tasks(t) => View::invalidate(t),
-                TabView::Reminders(r) => View::invalidate(r),
-                TabView::Settings(s) => View::invalidate(s),
-                TabView::Home(h) => View::invalidate(h),
-                TabView::Feedback(f) => View::invalidate(f),
-                TabView::Diff(d) => View::invalidate(d),
-                TabView::AiChat(a) => View::invalidate(a),
-                TabView::Socials(a) => View::invalidate(a),
-                TabView::Session(s) => View::invalidate(s),
-                TabView::Run(r) => View::invalidate(r),
-                TabView::Result(r) => View::invalidate(r),
-                TabView::Canvas(c) => View::invalidate(c),
-                TabView::Leaf(l) => View::invalidate(l),
+        // **Every pane group, not only the focused one.** A document split
+        // beside the Settings page is in a group of its own; walking only the
+        // focused group left it shaped in the old face, so a font preview or
+        // choice never reached it (a size did, by its own metrics check).
+        // Each group's shown tab lays out now; its hidden tabs are marked.
+        for (_, group) in self.panes.iter_groups_mut() {
+            let shown = group.active();
+            for (i, t) in group.iter_tabs_mut().enumerate() {
+                // **A document nobody is looking at lays out when it is shown.**
+                // Pointing through a font or size list invalidates on every step;
+                // laying out every open document each time is the cost the
+                // preview must not have. The tab is marked, and `ensure_sized`
+                // lays it out once before its first frame, hit-test or publish.
+                if i != shown && defer_layout(&mut t.view) {
+                    t.invalidate_size();
+                    continue;
+                }
+                match &mut t.view {
+                    TabView::Welcome(w) => w.invalidate(),
+                    TabView::Manage(w) => View::invalidate(w),
+                    TabView::Trash(t) => View::invalidate(t),
+                    TabView::Tasks(t) => View::invalidate(t),
+                    TabView::Reminders(r) => View::invalidate(r),
+                    TabView::Settings(s) => View::invalidate(s),
+                    TabView::Home(h) => View::invalidate(h),
+                    TabView::Feedback(f) => View::invalidate(f),
+                    TabView::Diff(d) => View::invalidate(d),
+                    TabView::AiChat(a) => View::invalidate(a),
+                    TabView::Socials(a) => View::invalidate(a),
+                    TabView::Session(s) => View::invalidate(s),
+                    TabView::Run(r) => View::invalidate(r),
+                    TabView::Result(r) => View::invalidate(r),
+                    TabView::Canvas(c) => View::invalidate(c),
+                    TabView::Leaf(l) => View::invalidate(l),
+                }
             }
         }
     }
