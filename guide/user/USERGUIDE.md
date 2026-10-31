@@ -3118,6 +3118,14 @@ also has a **Typography** group whose Body / Headings / Code rows cycle a
 role's family for a quick in-document switch. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
+**Base color** is two rows of swatches on the same **Appearance** page, one
+for the light theme and one for the dark. It tints the window's frame — the
+title bar, the rails and the margins around your pages. The first swatch is
+the theme's own color; the others are a few tints chosen for that theme. Each
+theme keeps its own choice, so switching between light and dark shows the
+color you picked for each. The choice is saved with your other appearance
+settings and follows you to your other computers.
+
 **Any font installed on your computer** can be chosen for the app, body,
 headings or code: every font list ends with **More fonts…**, which opens a
 searchable list of your installed fonts, each name shown in its own face.
