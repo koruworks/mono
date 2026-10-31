@@ -114,10 +114,11 @@ pub(crate) enum AgentModels {
     Failed,
 }
 
-/// The groups an agent's models fall into, in the order first seen.
+/// The groups an agent's models fall into, in the order first seen. The
+/// agent's own `default` entry is the *Default* row, in no group.
 pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
     let mut groups: Vec<String> = Vec::new();
-    for model in models {
+    for model in listed_models(models) {
         if !groups.contains(&model.group) {
             groups.push(model.group.clone());
         }
@@ -125,14 +126,83 @@ pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
     groups
 }
 
-/// A model's name under its group: `deepseek/v4-pro` under `deepseek`
-/// reads as `v4-pro`; an id that does not start with its group reads whole.
-pub(crate) fn model_short_name(model: &AgentModelView) -> String {
+/// An agent's models other than its own `default` entry, which is drawn as
+/// the *Default* row at the top instead of a second time in the list.
+pub(crate) fn listed_models(models: &[AgentModelView]) -> impl Iterator<Item = &AgentModelView> {
+    models
+        .iter()
+        .filter(|model| model.id != AGENT_DEFAULT_MODEL)
+}
+
+/// A model's label: the agent's own name for it, or the id formatted.
+pub(crate) fn model_label(model: &AgentModelView) -> String {
     model
-        .id
-        .strip_prefix(&format!("{}/", model.group))
-        .unwrap_or(&model.id)
-        .to_owned()
+        .name
+        .clone()
+        .unwrap_or_else(|| fallback_label(&model.id, &model.group))
+}
+
+/// A group's heading: the agent's own name for it, or the id formatted.
+pub(crate) fn group_label(models: &[AgentModelView], group: &str) -> String {
+    models
+        .iter()
+        .filter(|model| model.group == group)
+        .find_map(|model| model.group_name.clone())
+        .unwrap_or_else(|| fallback_label(group, ""))
+}
+
+/// The *Default* row's label: the agent's own `default` entry's name when
+/// it lists one (Claude does), otherwise Koru's word.
+pub(crate) fn default_model_label(models: &[AgentModelView], lang: Lang) -> String {
+    models
+        .iter()
+        .find(|model| model.id == AGENT_DEFAULT_MODEL)
+        .and_then(|model| model.name.clone())
+        .unwrap_or_else(|| t(lang, Key::AiModelAgentDefault).to_owned())
+}
+
+/// A model id as a person would write it, when the agent sends no name. A
+/// formatting rule rather than a table, so it never goes stale: the group
+/// prefix (or else everything up to the last `/`) goes, `-`, `_` and spaces
+/// split words, runs of one- and two-digit numbers join with `.`, and each
+/// word that starts with a letter is capitalised. `claude-opus-4-1` reads
+/// `Claude Opus 4.1`; `deepseek/v4-pro` under `deepseek` reads `V4 Pro`.
+pub(crate) fn fallback_label(id: &str, group: &str) -> String {
+    let tail = id
+        .strip_prefix(&format!("{group}/"))
+        .filter(|_| !group.is_empty())
+        .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id));
+    let short_number =
+        |token: &str| (1..=2).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit());
+    let mut words: Vec<String> = Vec::new();
+    let mut previous_short_number = false;
+    for token in tail
+        .split(['-', '_', ' '])
+        .filter(|token| !token.is_empty())
+    {
+        let number = short_number(token);
+        match words.last_mut() {
+            Some(last) if number && previous_short_number => {
+                last.push('.');
+                last.push_str(token);
+            }
+            _ => {
+                let mut chars = token.chars();
+                words.push(match chars.next() {
+                    Some(first) if first.is_alphabetic() => {
+                        first.to_uppercase().chain(chars).collect()
+                    }
+                    _ => token.to_owned(),
+                });
+            }
+        }
+        previous_short_number = number;
+    }
+    if words.is_empty() {
+        id.to_owned()
+    } else {
+        words.join(" ")
+    }
 }
 
 /// How one picker row draws.
@@ -160,12 +230,16 @@ pub(crate) fn chat_is_empty(transcript: Option<&ChatTranscript>) -> bool {
     transcript.is_some_and(|transcript| transcript.messages.is_empty())
 }
 
-/// The chip's text for an agent chat: the agent's name, then its model
-/// when one was chosen rather than the agent's own default.
+/// The chip's text for an agent chat: the agent's name, then its model's
+/// label when one was chosen rather than the agent's own default. A model
+/// no longer listed reads as its id formatted. When the label already
+/// starts with the agent's brand (*Claude Opus 4.7* under *Claude Code*),
+/// the brand is not said twice.
 pub(crate) fn agent_chip_label(
     agents: &[AgentProviderView],
     provider: &AiProviderId,
     requested_model: &str,
+    models: &[AgentModelView],
 ) -> String {
     let name = agents
         .iter()
@@ -173,9 +247,18 @@ pub(crate) fn agent_chip_label(
         .map(|agent| agent.label.as_str())
         .unwrap_or(provider.as_str());
     if requested_model == AGENT_DEFAULT_MODEL || requested_model.is_empty() {
-        name.to_owned()
+        return name.to_owned();
+    }
+    let label = models
+        .iter()
+        .find(|model| model.id == requested_model)
+        .map(model_label)
+        .unwrap_or_else(|| fallback_label(requested_model, ""));
+    let first_word = |text: &str| text.split_whitespace().next().map(str::to_lowercase);
+    if first_word(&label).is_some() && first_word(&label) == first_word(name) {
+        label
     } else {
-        format!("{name} · {requested_model}")
+        format!("{name} · {label}")
     }
 }
 
@@ -334,45 +417,121 @@ mod tests {
         }
     }
 
-    #[test]
-    fn models_group_in_first_seen_order_and_read_short_under_their_group() {
-        let models = vec![
-            AgentModelView {
-                id: "deepseek/v4-pro".into(),
-                group: "deepseek".into(),
-            },
-            AgentModelView {
-                id: "anthropic/claude".into(),
-                group: "anthropic".into(),
-            },
-            AgentModelView {
-                id: "deepseek/v4-flash".into(),
-                group: "deepseek".into(),
-            },
-        ];
-        assert_eq!(model_groups(&models), vec!["deepseek", "anthropic"]);
-        assert_eq!(model_short_name(&models[0]), "v4-pro");
-        let flat = AgentModelView {
-            id: "gpt-5.6".into(),
-            group: "openai".into(),
-        };
-        assert_eq!(model_short_name(&flat), "gpt-5.6");
+    fn model(id: &str, group: &str) -> AgentModelView {
+        AgentModelView {
+            id: id.into(),
+            group: group.into(),
+            name: None,
+            description: None,
+            group_name: None,
+            legacy: false,
+        }
+    }
+
+    fn named(id: &str, group: &str, name: &str) -> AgentModelView {
+        AgentModelView {
+            name: Some(name.into()),
+            ..model(id, group)
+        }
     }
 
     #[test]
-    fn the_chip_names_the_agent_and_only_a_chosen_model() {
-        let agents = vec![AgentProviderView {
-            id: AiProviderId::parse("agent-opencode").unwrap(),
-            label: "OpenCode".into(),
-        }];
-        let id = AiProviderId::parse("agent-opencode").unwrap();
+    fn models_group_in_first_seen_order_and_read_by_name_or_formatted_id() {
+        let mut deepseek = named("deepseek/v4-pro", "deepseek", "DeepSeek V4 Pro");
+        deepseek.group_name = Some("DeepSeek".into());
+        let models = vec![
+            named("default", "claude", "Default (recommended)"),
+            deepseek,
+            model("anthropic/claude", "anthropic"),
+            model("deepseek/v4-flash", "deepseek"),
+        ];
         assert_eq!(
-            agent_chip_label(&agents, &id, AGENT_DEFAULT_MODEL),
+            model_groups(&models),
+            vec!["deepseek", "anthropic"],
+            "the agent's own default is the Default row, in no group"
+        );
+        assert_eq!(model_label(&models[1]), "DeepSeek V4 Pro");
+        assert_eq!(model_label(&models[3]), "V4 Flash");
+        assert_eq!(group_label(&models, "deepseek"), "DeepSeek");
+        assert_eq!(group_label(&models, "anthropic"), "Anthropic");
+        assert_eq!(
+            default_model_label(&models, Lang::En),
+            "Default (recommended)"
+        );
+        assert_eq!(default_model_label(&models[1..], Lang::En), "Default");
+        assert_eq!(
+            listed_models(&models).count(),
+            3,
+            "an agent-listed default replaces the synthetic row"
+        );
+    }
+
+    /// TECHNICAL §8's table, and the edges around it.
+    #[test]
+    fn a_model_id_is_formatted_by_rule_when_the_agent_sends_no_name() {
+        for (id, group, label) in [
+            ("claude-opus-4-1", "claude", "Claude Opus 4.1"),
+            (
+                "claude-sonnet-4-5-20250929",
+                "claude",
+                "Claude Sonnet 4.5 20250929",
+            ),
+            ("deepseek/v4-pro", "deepseek", "V4 Pro"),
+            ("gpt-5.1-codex-mini", "openai", "Gpt 5.1 Codex Mini"),
+            ("kimi-k2-0905", "kimi", "Kimi K2 0905"),
+            (
+                "openrouter/deepseek/deepseek-chat",
+                "openrouter",
+                "Deepseek/deepseek Chat",
+            ),
+            ("vendor/model_name", "other", "Model Name"),
+            ("v-1-2-3", "", "V 1.2.3"),
+            ("--", "g", "--"),
+        ] {
+            assert_eq!(fallback_label(id, group), label, "{id} under {group}");
+        }
+        assert_eq!(
+            fallback_label("deepseek", ""),
+            "Deepseek",
+            "a group heading"
+        );
+    }
+
+    #[test]
+    fn the_chip_names_the_agent_and_a_chosen_models_label_once() {
+        let agents = vec![
+            AgentProviderView {
+                id: AiProviderId::parse("agent-opencode").unwrap(),
+                label: "OpenCode".into(),
+            },
+            AgentProviderView {
+                id: AiProviderId::parse("agent-claude").unwrap(),
+                label: "Claude Code".into(),
+            },
+        ];
+        let opencode = AiProviderId::parse("agent-opencode").unwrap();
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        let listed = vec![
+            named("opencode/beam-free", "opencode", "Beam Free"),
+            named("opus", "claude", "Claude Opus 4.7"),
+        ];
+        assert_eq!(
+            agent_chip_label(&agents, &opencode, AGENT_DEFAULT_MODEL, &listed),
             "OpenCode"
         );
         assert_eq!(
-            agent_chip_label(&agents, &id, "deepseek/v4-pro"),
-            "OpenCode · deepseek/v4-pro"
+            agent_chip_label(&agents, &opencode, "opencode/beam-free", &listed),
+            "OpenCode · Beam Free"
+        );
+        assert_eq!(
+            agent_chip_label(&agents, &opencode, "deepseek/v4-pro", &[]),
+            "OpenCode · V4 Pro",
+            "a model no longer listed reads as its id formatted"
+        );
+        assert_eq!(
+            agent_chip_label(&agents, &claude, "opus", &listed),
+            "Claude Opus 4.7",
+            "the brand is not said twice"
         );
     }
 
@@ -627,23 +786,31 @@ impl crate::ChatSurface {
         rows
     }
 
+    /// Under an expanded agent: the *Default* row first — the agent's own
+    /// `default` entry when it lists one — then its models, by group when
+    /// there is more than one. A failed listing still offers the default.
     fn push_agent_model_rows(&self, agent: &AiProviderId, rows: &mut Vec<PickerRow>) {
+        let default_row = PickerRow::AgentModel {
+            agent: agent.clone(),
+            id: AGENT_DEFAULT_MODEL.to_owned(),
+        };
         match self.agent_models.get(agent) {
             None | Some(AgentModels::Loading) => {
                 rows.push(PickerRow::Note(Key::AiAgentModelsLoading))
             }
-            Some(AgentModels::Failed) => rows.push(PickerRow::Note(Key::AiAgentModelsFailed)),
-            Some(AgentModels::Listed(models)) if models.is_empty() => {
-                rows.push(PickerRow::Note(Key::AiAgentNoModels))
+            Some(AgentModels::Failed) => {
+                rows.push(PickerRow::Note(Key::AiAgentModelsFailed));
+                rows.push(default_row);
             }
             Some(AgentModels::Listed(models)) => {
+                rows.push(default_row);
                 let groups = model_groups(models);
                 let model_row = |model: &AgentModelView| PickerRow::AgentModel {
                     agent: agent.clone(),
                     id: model.id.clone(),
                 };
-                if groups.len() == 1 {
-                    rows.extend(models.iter().map(model_row));
+                if groups.len() <= 1 {
+                    rows.extend(listed_models(models).map(model_row));
                     return;
                 }
                 for group in groups {
@@ -653,14 +820,21 @@ impl crate::ChatSurface {
                     });
                     if self.expanded_group.as_ref() == Some(&group) {
                         rows.extend(
-                            models
-                                .iter()
+                            listed_models(models)
                                 .filter(|model| model.group == group)
                                 .map(model_row),
                         );
                     }
                 }
             }
+        }
+    }
+
+    /// The models listed for `agent`, empty while none are known.
+    pub(crate) fn listed_agent_models(&self, agent: &AiProviderId) -> &[AgentModelView] {
+        match self.agent_models.get(agent) {
+            Some(AgentModels::Listed(models)) => models,
+            _ => &[],
         }
     }
 
@@ -707,35 +881,34 @@ impl crate::ChatSurface {
                     },
                 }
             }
-            PickerRow::Group { agent, group } => PickerRowView {
-                label: group.clone(),
-                level: 1,
-                dim: false,
-                current: on_agent(agent)
-                    && current_model.starts_with(&format!("{group}/"))
-                    && self.expanded_group.as_ref() != Some(group),
-                trailing: Trailing::Caret {
-                    expanded: self.expanded_group.as_ref() == Some(group),
-                },
-            },
+            PickerRow::Group { agent, group } => {
+                let models = self.listed_agent_models(agent);
+                PickerRowView {
+                    label: group_label(models, group),
+                    level: 1,
+                    dim: false,
+                    current: on_agent(agent)
+                        && listed_models(models)
+                            .any(|model| &model.group == group && model.id == current_model)
+                        && self.expanded_group.as_ref() != Some(group),
+                    trailing: Trailing::Caret {
+                        expanded: self.expanded_group.as_ref() == Some(group),
+                    },
+                }
+            }
             PickerRow::AgentModel { agent, id } => {
-                let single_group =
-                    self.agent_models
-                        .get(agent)
-                        .is_some_and(|models| match models {
-                            AgentModels::Listed(models) => model_groups(models).len() == 1,
-                            _ => true,
-                        });
-                let label = self
-                    .agent_models
-                    .get(agent)
-                    .and_then(|models| match models {
-                        AgentModels::Listed(models) => models.iter().find(|model| &model.id == id),
-                        _ => None,
-                    })
-                    .filter(|_| !single_group)
-                    .map(model_short_name)
-                    .unwrap_or_else(|| id.clone());
+                let models = self.listed_agent_models(agent);
+                let default = id == AGENT_DEFAULT_MODEL;
+                let single_group = default || model_groups(models).len() <= 1;
+                let label = if default {
+                    default_model_label(models, self.lang)
+                } else {
+                    models
+                        .iter()
+                        .find(|model| &model.id == id)
+                        .map(model_label)
+                        .unwrap_or_else(|| fallback_label(id, ""))
+                };
                 PickerRowView {
                     label,
                     level: if single_group { 1 } else { 2 },

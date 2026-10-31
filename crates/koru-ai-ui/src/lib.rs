@@ -4245,7 +4245,12 @@ impl ChatSurface {
                 .as_ref()
                 .map(|settings| settings.agents.as_slice())
                 .unwrap_or_default();
-            agent_chip_label(agents, &model.provider, &model.requested_model)
+            agent_chip_label(
+                agents,
+                &model.provider,
+                &model.requested_model,
+                self.listed_agent_models(&model.provider),
+            )
         } else {
             model.requested_model.clone()
         };

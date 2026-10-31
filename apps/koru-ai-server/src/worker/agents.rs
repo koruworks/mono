@@ -710,9 +710,18 @@ pub(super) fn agent_models(
         models: models
             .models()
             .iter()
-            .map(|model| AgentModelView {
-                id: model.id.as_str().to_owned(),
-                group: model.group.as_str().to_owned(),
+            .map(|model| {
+                let label = |label: &Option<koru_session_protocol::ModelLabel>| {
+                    label.as_ref().map(|label| label.as_str().to_owned())
+                };
+                AgentModelView {
+                    id: model.id.as_str().to_owned(),
+                    group: model.group.as_str().to_owned(),
+                    name: label(&model.name),
+                    description: label(&model.description),
+                    group_name: label(&model.group_name),
+                    legacy: model.legacy,
+                }
             })
             .collect(),
     })

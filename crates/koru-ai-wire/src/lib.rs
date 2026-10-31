@@ -565,6 +565,19 @@ pub struct AgentModelView {
     pub id: String,
     /// The agent's grouping of it — OpenCode's provider, Codex's one group.
     pub group: String,
+    /// The agent's own name for the model, e.g. `Claude Opus 4.7`. Absent
+    /// when the agent sends none; a client then formats the id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The agent's own description of the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The agent's own name for the group, e.g. `DeepSeek`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
+    /// The agent marks the model as older. Koru never infers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

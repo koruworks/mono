@@ -30,9 +30,11 @@ fn model_world() -> World {
 }
 fn catalog(ids: &[&str]) -> ProviderModels {
     ids.iter()
-        .map(|id| ProviderModel {
-            id: id.parse().unwrap(),
-            group: id.split_once('/').unwrap().0.parse().unwrap(),
+        .map(|id| {
+            ProviderModel::new(
+                id.parse().unwrap(),
+                id.split_once('/').unwrap().0.parse().unwrap(),
+            )
         })
         .collect::<Vec<_>>()
         .try_into()

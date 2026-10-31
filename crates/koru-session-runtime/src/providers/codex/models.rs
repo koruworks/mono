@@ -78,10 +78,10 @@ impl CodexControl {
         let models: Vec<ProviderModel> = listed?
             .into_iter()
             .filter_map(|model| {
-                Some(ProviderModel {
-                    id: model.model.parse().ok()?,
-                    group: group.clone(),
-                })
+                let mut listed = ProviderModel::new(model.model.parse().ok()?, group.clone());
+                listed.name = model.display_name;
+                listed.description = model.description;
+                Some(listed)
             })
             .collect();
         models.try_into().map_err(|_| handshake_rejected())

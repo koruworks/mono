@@ -99,6 +99,10 @@ pub enum LaunchReasoning {
     Low,
     Medium,
     High,
+    /// v18: an older peer cannot read it, so it is sent only to a v18 host.
+    /// Spelled `xhigh`, as the agents and the AI core spell it.
+    #[serde(rename = "xhigh")]
+    XHigh,
     Max,
 }
 
@@ -111,6 +115,7 @@ impl LaunchReasoning {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
             Self::Max => "max",
         }
     }
@@ -127,6 +132,7 @@ impl FromStr for LaunchReasoning {
             "low" => Self::Low,
             "medium" => Self::Medium,
             "high" => Self::High,
+            "xhigh" => Self::XHigh,
             "max" => Self::Max,
             _ => return Err(TokenParseError("invalid reasoning token")),
         })

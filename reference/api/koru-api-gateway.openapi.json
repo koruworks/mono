@@ -271,12 +271,31 @@
       },
       "AgentModelView": {
         "properties": {
+          "description": {
+            "description": "The agent's own description of the model.",
+            "nullable": true,
+            "type": "string"
+          },
           "group": {
             "description": "The agent's grouping of it — OpenCode's provider, Codex's one group.",
             "type": "string"
           },
+          "group_name": {
+            "description": "The agent's own name for the group, e.g. `DeepSeek`.",
+            "nullable": true,
+            "type": "string"
+          },
           "id": {
             "description": "The id the agent itself takes, e.g. `deepseek/v4-pro`.",
+            "type": "string"
+          },
+          "legacy": {
+            "description": "The agent marks the model as older. Koru never infers it.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The agent's own name for the model, e.g. `Claude Opus 4.7`. Absent\nwhen the agent sends none; a client then formats the id.",
+            "nullable": true,
             "type": "string"
           }
         },

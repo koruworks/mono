@@ -3,7 +3,7 @@
 //! OpenCode owns configuration, credentials and catalog resolution. No prompt is sent.
 use super::*;
 use crate::AttachmentPathResolver;
-use koru_session_protocol::{ModelName, ProviderModel, ProviderModels};
+use koru_session_protocol::{ModelLabel, ModelName, ProviderModel, ProviderModels};
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 mod accounts;
@@ -51,17 +51,37 @@ pub(super) fn discover(
                 &cwd,
                 &["debug", "paths"],
                 remaining(deadline)?.min(Duration::from_secs(5)),
+                CATALOG_OUTPUT_BYTES,
             )?;
             accounts::read(accounts::data_path(output.stdout())?)?
         };
-        let output = catalog_command(
+        // `--verbose` carries each model's own name. A listing that fails,
+        // overflows or does not parse falls back to the plain one: the ids
+        // are what a chat needs, the names only what the picker shows.
+        let verbose = catalog_command(
             route,
             &executable,
             &cwd,
-            &["models"],
+            &["models", "--verbose"],
             remaining(deadline)?.min(Duration::from_secs(20)),
-        )?;
-        let models = parse_catalog(output.stdout())?;
+            VERBOSE_CATALOG_OUTPUT_BYTES,
+        )
+        .and_then(|output| parse_verbose_catalog(output.stdout()));
+        let models = match verbose {
+            Ok(models) => models,
+            Err(_) => {
+                tracing::warn!(target: "koru::acp", event = "acp.models.verbose.fallback", provider = "opencode", operation = %operation);
+                let output = catalog_command(
+                    route,
+                    &executable,
+                    &cwd,
+                    &["models"],
+                    remaining(deadline)?.min(Duration::from_secs(20)),
+                    CATALOG_OUTPUT_BYTES,
+                )?;
+                parse_catalog(output.stdout())?
+            }
+        };
         tracing::info!(target: "koru::acp", event = "acp.models.connections.filtered", provider = "opencode", operation = %operation,
             resolved_models = models.models().len(), explicit_connections = connections.len());
         remaining(deadline)?;
@@ -113,8 +133,9 @@ const SESSION_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The `model` option's values as a catalog: a flat list under the route's
 /// own kind, or ACP's groups under each group's id. A value that is not a
-/// model name, or a repeat, is left out; nothing else the option carries
-/// (names, descriptions) is kept.
+/// model name, or a repeat, is left out. Each option's `name` and
+/// `description`, and each group's `name`, are kept as the agent sent them,
+/// within `ModelLabel`'s bounds; one past them is dropped, not refused.
 pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
     let Ok(option) = option(session) else {
         return Vec::new();
@@ -124,7 +145,7 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut models = Vec::new();
-    let mut keep = |value: &Value, group: &str| {
+    let mut keep = |value: &Value, group: &str, group_name: Option<ModelLabel>| {
         let Some(id) = value["value"]
             .as_str()
             .and_then(|value| value.parse::<ModelName>().ok())
@@ -139,7 +160,13 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
             },
         };
         if seen.insert(id.clone()) && models.len() < koru_session_protocol::MAX_PROVIDER_MODELS {
-            models.push(ProviderModel { id, group });
+            let mut model = ProviderModel::new(id, group);
+            model.name = value["name"].as_str().and_then(ModelLabel::name);
+            model.description = value["description"]
+                .as_str()
+                .and_then(ModelLabel::description);
+            model.group_name = group_name;
+            models.push(model);
         }
     };
     for entry in entries {
@@ -149,11 +176,12 @@ pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<Provid
                     .as_str()
                     .or_else(|| entry["name"].as_str())
                     .unwrap_or(fallback_group);
+                let group_name = entry["name"].as_str().and_then(ModelLabel::name);
                 for member in members {
-                    keep(member, group);
+                    keep(member, group, group_name.clone());
                 }
             }
-            None => keep(entry, fallback_group),
+            None => keep(entry, fallback_group, None),
         }
     }
     models
@@ -172,12 +200,19 @@ fn remaining(deadline: Instant) -> Result<Duration, ProviderFailure> {
         })
 }
 
+/// The most a plain catalog command may print.
+const CATALOG_OUTPUT_BYTES: usize = 1024 * 1024;
+/// The most `opencode models --verbose` may print: about 1.5 KB a model,
+/// 350 KB for the 233 models seen on one machine (1.19.5).
+const VERBOSE_CATALOG_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+
 fn catalog_command(
     route: &AcpRoute,
     executable: &std::ffi::OsStr,
     cwd: &std::path::Path,
     tokens: &[&'static str],
     timeout: Duration,
+    maximum_output_bytes: usize,
 ) -> Result<super::super::discovery::ProbeOutput, ProviderFailure> {
     // Only fixed adapter-owned tokens reach Windows batch launchers.
     let (program, mut args) = route.launch(executable, true)?;
@@ -195,7 +230,7 @@ fn catalog_command(
         command,
         ProbeLimits {
             timeout,
-            maximum_output_bytes: 1024 * 1024,
+            maximum_output_bytes,
         },
     )?;
     if !output.success() {
@@ -216,13 +251,8 @@ fn parse_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid_catalog())?;
     let mut models = std::collections::BTreeMap::new();
     for line in text.lines().filter(|line| !line.is_empty()) {
-        let id: ModelName = line.parse().map_err(|_| invalid_catalog())?;
-        let (group, name) = line.split_once('/').ok_or_else(invalid_catalog)?;
-        if name.is_empty() {
-            return Err(invalid_catalog());
-        }
-        let group = group.parse().map_err(|_| invalid_catalog())?;
-        models.insert(id.clone(), ProviderModel { id, group });
+        let model = catalog_model(line)?;
+        models.insert(model.id.clone(), model);
         if models.len() > koru_session_protocol::MAX_PROVIDER_MODELS {
             return Err(invalid_catalog());
         }
@@ -232,6 +262,50 @@ fn parse_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| invalid_catalog())
+}
+
+/// `opencode models --verbose`: each `provider/model` id on a line of its
+/// own, then a JSON object about that model. The id line is held to the
+/// plain listing's rules, and the object's `name` is kept. Anything else in
+/// the output refuses the whole listing, and the plain one is used instead.
+fn parse_verbose_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid_catalog())?;
+    let mut models = std::collections::BTreeMap::new();
+    let mut rest = text.trim_start();
+    while !rest.is_empty() {
+        let (line, after) = rest.split_once('\n').ok_or_else(invalid_catalog)?;
+        let mut model = catalog_model(line.trim_end_matches('\r'))?;
+        let mut facts = serde_json::Deserializer::from_str(after).into_iter::<Value>();
+        let Some(Ok(facts_value)) = facts.next() else {
+            return Err(invalid_catalog());
+        };
+        if !facts_value.is_object() {
+            return Err(invalid_catalog());
+        }
+        rest = after[facts.byte_offset()..].trim_start();
+        model.name = facts_value["name"].as_str().and_then(ModelLabel::name);
+        models.insert(model.id.clone(), model);
+        if models.len() > koru_session_protocol::MAX_PROVIDER_MODELS {
+            return Err(invalid_catalog());
+        }
+    }
+    models
+        .into_values()
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| invalid_catalog())
+}
+
+/// One `provider/model` line: the provider is the group, and a line with no
+/// model after the slash is not a model.
+fn catalog_model(line: &str) -> Result<ProviderModel, ProviderFailure> {
+    let id: ModelName = line.parse().map_err(|_| invalid_catalog())?;
+    let (group, name) = line.split_once('/').ok_or_else(invalid_catalog)?;
+    if name.is_empty() {
+        return Err(invalid_catalog());
+    }
+    let group = group.parse().map_err(|_| invalid_catalog())?;
+    Ok(ProviderModel::new(id, group))
 }
 
 pub(super) fn selection_unavailable() -> ProviderFailure {
