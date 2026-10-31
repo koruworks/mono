@@ -6491,8 +6491,8 @@ fn the_rail_keeps_its_squares_at_every_pane_width() {
             r.profile.y + r.profile.h * 0.5,
             rail.y + rail.h - crate::panes::sidebar::floor::H * 0.5
         );
-        assert!(r.settings.y + r.settings.h <= r.help.y);
-        assert!(r.help.y + r.help.h <= r.profile.y);
+        assert!(r.help.y + r.help.h <= r.settings.y);
+        assert!(r.settings.y + r.settings.h <= r.profile.y);
         assert!(view.actions_button(a).w > 0.);
     }
 }

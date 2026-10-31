@@ -82,7 +82,7 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
             shown[documents + 1],
             "Enter shows the app"
         );
-        // Past the last app are Settings, Help and the profile square, then
+        // Past the last app are Help, Settings and the profile square, then
         // it wraps. ↓ walks the rail as → does.
         for _ in 0..shown.len() + 2 {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);

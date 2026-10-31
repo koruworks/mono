@@ -22,7 +22,7 @@ use super::{MainView, WorkspaceDoc};
 use crate::panes::explore::{ExploreChromeFocus, NavigatorMode};
 
 /// Where the keyboard is, when it is on the sidebar's chrome.
-/// The rail's controls after the apps: Settings, Help, the profile square.
+/// The rail's controls after the apps: Help, Settings, the profile square.
 /// (*Manage apps* is out until the manager lands, E68.)
 const RAIL_FOOT: usize = 3;
 
@@ -30,7 +30,7 @@ const RAIL_FOOT: usize = 3;
 pub(super) enum ChromeStop {
     Lane(LaneControl),
     /// An index down the rail: the shown apps in order, then *Manage apps*
-    /// at `visible.len()`, then Settings, Help and the profile square.
+    /// at `visible.len()`, then Help, Settings and the profile square.
     Apps(usize),
     Floor(FloorControl),
 }
@@ -201,7 +201,7 @@ impl MainView {
                 ChromeStop::Lane(shown.get(j).copied().unwrap_or(LaneControl::Toggle))
             }
             ChromeStop::Apps(i) => {
-                // The apps, then the foot: Settings, Help, the profile
+                // The apps, then the foot: Help, Settings, the profile
                 // square.
                 let n = NavigatorMode::visible().len() + RAIL_FOOT;
                 ChromeStop::Apps(if forward {
@@ -269,8 +269,8 @@ impl MainView {
                     ExploreChromeFocus::App(i)
                 } else {
                     match i - apps {
-                        0 => ExploreChromeFocus::RailSettings,
-                        1 => ExploreChromeFocus::RailHelp,
+                        0 => ExploreChromeFocus::RailHelp,
+                        1 => ExploreChromeFocus::RailSettings,
                         _ => ExploreChromeFocus::RailProfile,
                     }
                 })

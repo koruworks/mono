@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The rail: the apps down the sidebar's left edge, under the lane, and at
-//! its foot Settings, Help and the profile square (the CTO's artboard 11,
-//! QUESTIONS.md E32).
+//! its foot Help, Settings and the profile square (the CTO's artboard 11,
+//! QUESTIONS.md E32). Settings sits on the profile square: both are about
+//! the person, Help is about Koru.
 //!
 //! ```text
 //! ┌────┬──────────────────
@@ -10,8 +11,8 @@
 //! │ ▤  │
 //! │ ☑  │
 //! │    │
-//! │ ⚙  │  Settings
 //! │ ?  │  Help
+//! │ ⚙  │  Settings
 //! │(S) │  the profile's tile — opens the who/where popover
 //! └────┴──────────────────
 //! ```
@@ -80,12 +81,12 @@ pub fn solve(rail: Rect, apps: &[NavigatorMode]) -> Rects {
         r
     };
     let apps = apps.iter().map(|m| (*m, place(&mut y))).collect();
-    // The foot, bottom up: the profile square on the band's floor, Help
-    // over it, Settings over that — the same order as the popover's strip.
+    // The foot, bottom up: the profile square on the band's floor,
+    // Settings over it, Help over that.
     let foot = band.y + band.h - PAD_BOTTOM;
     let profile = Rect::new(x, foot - side, side, side);
-    let help = Rect::new(x, profile.y - GAP - side, side, side);
-    let settings = Rect::new(x, help.y - GAP - side, side, side);
+    let settings = Rect::new(x, profile.y - GAP - side, side, side);
+    let help = Rect::new(x, settings.y - GAP - side, side, side);
     Rects {
         band,
         apps,
@@ -148,9 +149,9 @@ mod tests {
         }
         let last = r.apps.last().unwrap().1;
         assert_eq!(r.profile.y + r.profile.h, r.band.y + r.band.h - PAD_BOTTOM);
-        assert!(r.help.y + r.help.h <= r.profile.y);
-        assert!(r.settings.y + r.settings.h <= r.help.y);
-        assert!(last.y + last.h <= r.settings.y, "room between");
+        assert!(r.settings.y + r.settings.h <= r.profile.y);
+        assert!(r.help.y + r.help.h <= r.settings.y);
+        assert!(last.y + last.h <= r.help.y, "room between");
         for rect in r
             .apps
             .iter()

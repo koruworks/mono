@@ -86,7 +86,7 @@ pub(crate) mod parts {
     pub const FLOOR_CHIP: ControlPart = ControlPart::new("floor-chip");
     /// The `…` right of the chip: the workspace's menu.
     pub const FLOOR_MENU: ControlPart = ControlPart::new("floor-menu");
-    /// The rail's foot: Settings, Help and the profile square.
+    /// The rail's foot: Help, Settings and the profile square.
     pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
     pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
@@ -586,7 +586,7 @@ impl ExploreView {
         })
     }
 
-    /// The rail's foot: Settings, Help and the profile square, each a
+    /// The rail's foot: Help, Settings and the profile square, each a
     /// button with its name.
     fn rail_foot_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let r = self.apps_rail_rects(cx.rail);
@@ -598,13 +598,13 @@ impl ExploreView {
             .map(|p| p.name.clone())
             .unwrap_or_else(|| t(cx.lang, Key::TerminalSwitchProfile).to_string());
         vec![
-            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_SETTINGS), Role::Button)
-                .with_label(t(cx.lang, Key::SettingsTab))
-                .with_bounds(r.settings)
-                .with_action(Action::Click),
             SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_HELP), Role::Button)
                 .with_label(t(cx.lang, Key::Help))
                 .with_bounds(r.help)
+                .with_action(Action::Click),
+            SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_SETTINGS), Role::Button)
+                .with_label(t(cx.lang, Key::SettingsTab))
+                .with_bounds(r.settings)
                 .with_action(Action::Click),
             SemanticNode::new(cx.surface(EXPLORE, parts::RAIL_PROFILE), Role::Button)
                 .with_label(format!("{person}, {}", t(cx.lang, Key::FloorChipAction)))
