@@ -4693,32 +4693,6 @@ impl ChatSurface {
         self.draw_messages(canvas, root);
         let composer = self.composer_rect();
         self.draw_greeting(canvas, root);
-        scene::fill(
-            canvas,
-            root,
-            p.panel_bg,
-            &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-        );
-        scene::stroke(
-            canvas,
-            root,
-            if self.focus == Focus::Composer {
-                p.focus_ring
-            } else {
-                p.panel_border
-            },
-            theme::BORDER_W,
-            &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
-        );
-        let focused = self.focus == Focus::Composer;
-        self.composer.set_focused(focused);
-        self.composer.draw(
-            canvas,
-            root,
-            focused,
-            self.pointer,
-            koru_i18n::t(self.lang, koru_i18n::Key::AiComposerPlaceholder),
-        );
         let pill_band = self.pill_band_rect();
         let context_document = self.context_document_pill();
         self.pill_strip.draw(
@@ -4730,113 +4704,6 @@ impl ChatSurface {
             pill_band,
             self.viewport,
             Instant::now(),
-        );
-        let send = self.send_button();
-        let send_enabled =
-            self.attempt.is_some() || !self.composer.is_blank() || !self.pending_quotes.is_empty();
-        draw_composer_action(
-            canvas,
-            root,
-            &mut self.engine,
-            send,
-            self.attempt.is_some(),
-            send_enabled,
-            send.contains(self.pointer.0, self.pointer.1),
-        );
-        let chip_label = self.chip_label();
-        self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-        let access_button = self.tool_access_button();
-        let access_label = self.tool_access_label();
-        ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN)).draw(
-            canvas,
-            root,
-            &mut self.engine,
-            access_button,
-            access_button.contains(self.pointer.0, self.pointer.1),
-        );
-        let mode_button = self.tool_mode_button();
-        ActionButton::new(
-            self.tool_mode_label(),
-            ActionStyle::Ghost,
-            Some(icons::CARET_DOWN),
-        )
-        .draw(
-            canvas,
-            root,
-            &mut self.engine,
-            mode_button,
-            mode_button.contains(self.pointer.0, self.pointer.1),
-        );
-        if let Some(folder) = self.folder_button() {
-            // Quiet, under the box: the icon and the name in the meta face,
-            // dim; a hover tint while the folder can still be chosen.
-            let hovered = self.folder_editable() && folder.contains(self.pointer.0, self.pointer.1);
-            if hovered {
-                scene::fill(
-                    canvas,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(folder.x, folder.y, folder.w, folder.h, 4.0),
-                );
-            }
-            let colour = if hovered { p.text } else { p.text_dim };
-            let icon = self
-                .engine
-                .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE);
-            let shown = self.folder_label_shown();
-            let label = self.engine.simple_layout(&shown, role::meta());
-            let x = folder.x + ActionButton::PAD_X;
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                x,
-                folder.y + (folder.h - icon.height()) * 0.5,
-                Some(colour),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &label,
-                x + icon.width() + ActionButton::GAP,
-                folder.y + (folder.h - label.height()) * 0.5,
-                Some(colour),
-            );
-        }
-        if let Some(privacy) = self.privacy_button() {
-            let private = self
-                .transcript
-                .as_ref()
-                .is_some_and(|transcript| transcript.chat.private);
-            IconButton::new(icons::DETECTIVE, privacy)
-                .with_state(IconButtonState {
-                    hovered: privacy.contains(self.pointer.0, self.pointer.1),
-                    active: private,
-                    disabled: false,
-                })
-                .draw(canvas, root, &mut self.engine);
-        }
-        if let Some(search) = self.web_search_button() {
-            IconButton::new(icons::GLOBE, search)
-                .with_state(IconButtonState {
-                    hovered: search.contains(self.pointer.0, self.pointer.1),
-                    active: self.web_search_armed,
-                    disabled: false,
-                })
-                .draw(canvas, root, &mut self.engine);
-        }
-        self.draw_reasoning_drawer(canvas, root, composer);
-        let model_button = self.chat_model_button();
-        let koru_chat = self.koru_chat();
-        let model_label = self.chip_label();
-        let model_caret =
-            (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
-        ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
-            canvas,
-            root,
-            &mut self.engine,
-            model_button,
-            model_button.contains(self.pointer.0, self.pointer.1),
         );
         if let Some(line) = self.footer_line().map(str::to_owned) {
             let content = self.content_rect();
@@ -4856,6 +4723,211 @@ impl ChatSurface {
                 Some(p.text_dim),
             );
         }
+        // **The composer is one component** in the inspector, every primitive
+        // it paints inside it: the box, the text, the toolbar's controls and
+        // the folder row under the box — so a review sees `KoruComposer` and
+        // its parts rather than loose fills and strokes.
+        let footer_row = self.composer_footer_rect();
+        let whole = match footer_row {
+            Some(row) => Rect::new(
+                composer.x,
+                composer.y,
+                composer.w,
+                row.y + row.h - composer.y,
+            ),
+            None => composer,
+        };
+        let _composer = koru_draw::inspect::scope(
+            "KoruComposer",
+            "component",
+            root,
+            scene::rect(whole.x, whole.y, whole.w, whole.h),
+            |r| {
+                r.property("radius", 8.0, "box corners");
+                r.property("pad x", COMPOSER_PAD_X, "text and toolbar inset");
+                r.property("pad top", COMPOSER_PAD_TOP, "above the text");
+                r.property("pad bottom", COMPOSER_PAD_BOTTOM, "below the toolbar");
+            },
+        );
+        {
+            let _box = koru_draw::inspect::scope(
+                "ComposerBox",
+                "part",
+                root,
+                scene::rect(composer.x, composer.y, composer.w, composer.h),
+                |_| {},
+            );
+            scene::fill(
+                canvas,
+                root,
+                p.panel_bg,
+                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
+            );
+            scene::stroke(
+                canvas,
+                root,
+                if self.focus == Focus::Composer {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                },
+                theme::BORDER_W,
+                &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
+            );
+        }
+        {
+            let text = self.composer_text_rect();
+            let _text = koru_draw::inspect::scope(
+                "ComposerText",
+                "part",
+                root,
+                scene::rect(text.x, text.y, text.w, text.h),
+                |r| r.property("editor", "koru-editor", "a private document"),
+            );
+            let focused = self.focus == Focus::Composer;
+            self.composer.set_focused(focused);
+            self.composer.draw(
+                canvas,
+                root,
+                focused,
+                self.pointer,
+                koru_i18n::t(self.lang, koru_i18n::Key::AiComposerPlaceholder),
+            );
+        }
+        {
+            let toolbar = Rect::new(
+                composer.x,
+                composer.y + composer.h - COMPOSER_PAD_BOTTOM - COMPOSER_TOOLBAR_H,
+                composer.w,
+                COMPOSER_TOOLBAR_H,
+            );
+            let _toolbar = koru_draw::inspect::scope(
+                "ComposerToolbar",
+                "part",
+                root,
+                scene::rect(toolbar.x, toolbar.y, toolbar.w, toolbar.h),
+                |_| {},
+            );
+            let send = self.send_button();
+            let send_enabled = self.attempt.is_some()
+                || !self.composer.is_blank()
+                || !self.pending_quotes.is_empty();
+            draw_composer_action(
+                canvas,
+                root,
+                &mut self.engine,
+                send,
+                self.attempt.is_some(),
+                send_enabled,
+                send.contains(self.pointer.0, self.pointer.1),
+            );
+            let chip_label = self.chip_label();
+            self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
+            let access_button = self.tool_access_button();
+            let access_label = self.tool_access_label();
+            ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN)).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                access_button,
+                access_button.contains(self.pointer.0, self.pointer.1),
+            );
+            let mode_button = self.tool_mode_button();
+            ActionButton::new(
+                self.tool_mode_label(),
+                ActionStyle::Ghost,
+                Some(icons::CARET_DOWN),
+            )
+            .draw(
+                canvas,
+                root,
+                &mut self.engine,
+                mode_button,
+                mode_button.contains(self.pointer.0, self.pointer.1),
+            );
+            if let Some(privacy) = self.privacy_button() {
+                let private = self
+                    .transcript
+                    .as_ref()
+                    .is_some_and(|transcript| transcript.chat.private);
+                IconButton::new(icons::DETECTIVE, privacy)
+                    .with_state(IconButtonState {
+                        hovered: privacy.contains(self.pointer.0, self.pointer.1),
+                        active: private,
+                        disabled: false,
+                    })
+                    .draw(canvas, root, &mut self.engine);
+            }
+            if let Some(search) = self.web_search_button() {
+                IconButton::new(icons::GLOBE, search)
+                    .with_state(IconButtonState {
+                        hovered: search.contains(self.pointer.0, self.pointer.1),
+                        active: self.web_search_armed,
+                        disabled: false,
+                    })
+                    .draw(canvas, root, &mut self.engine);
+            }
+            self.draw_reasoning_drawer(canvas, root, composer);
+            let model_button = self.chat_model_button();
+            let koru_chat = self.koru_chat();
+            let model_label = self.chip_label();
+            let model_caret =
+                (!koru_chat || self.effort_control().is_some()).then_some(icons::CARET_DOWN);
+            ActionButton::new(&model_label, ActionStyle::Ghost, model_caret).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                model_button,
+                model_button.contains(self.pointer.0, self.pointer.1),
+            );
+        }
+        if let Some(footer_row) = footer_row {
+            let _row = koru_draw::inspect::scope(
+                "ComposerFolderRow",
+                "part",
+                root,
+                scene::rect(footer_row.x, footer_row.y, footer_row.w, footer_row.h),
+                |_| {},
+            );
+            if let Some(folder) = self.folder_button() {
+                // Quiet, under the box: the icon and the name in the meta face,
+                // dim; a hover tint while the folder can still be chosen.
+                let hovered =
+                    self.folder_editable() && folder.contains(self.pointer.0, self.pointer.1);
+                if hovered {
+                    scene::fill(
+                        canvas,
+                        root,
+                        p.hover_tint,
+                        &scene::rrect(folder.x, folder.y, folder.w, folder.h, 4.0),
+                    );
+                }
+                let colour = if hovered { p.text } else { p.text_dim };
+                let icon = self
+                    .engine
+                    .icon_layout(icons::FOLDER, ActionButton::ICON_SIZE);
+                let shown = self.folder_label_shown();
+                let label = self.engine.simple_layout(&shown, role::meta());
+                let x = folder.x + ActionButton::PAD_X;
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &icon,
+                    x,
+                    folder.y + (folder.h - icon.height()) * 0.5,
+                    Some(colour),
+                );
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &label,
+                    x + icon.width() + ActionButton::GAP,
+                    folder.y + (folder.h - label.height()) * 0.5,
+                    Some(colour),
+                );
+            }
+        }
+        drop(_composer);
         if self.history_open {
             self.draw_chats_pane(canvas, root);
         }
@@ -10361,5 +10433,72 @@ mod tests {
             assert!(surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5));
             assert_eq!(surface.focus, Focus::Composer, "{mode:?}");
         }
+    }
+
+    /// **The composer is one component in the inspector**, its box, text,
+    /// toolbar and folder row parts under it, and every primitive it paints
+    /// — the box's fill and stroke among them — inside one of those.
+    #[test]
+    fn the_composer_is_one_component_with_its_parts_inside() {
+        use koru_draw::inspect;
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
+        transcript.chat.current_model.requested_model = AGENT_DEFAULT_MODEL.into();
+        transcript.messages.clear();
+        surface.transcript = Some(transcript);
+        surface.validated_ready = true;
+        surface.setup_open = false;
+        let root = Affine::IDENTITY;
+        let capture = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 900.0, 600.0));
+        surface.draw(&mut Scene::new(), root);
+        let records = capture.finish().records;
+        let composer = records
+            .iter()
+            .position(|r| r.name == "KoruComposer")
+            .expect("the composer is a component");
+        let under = |mut i: usize| {
+            while let Some(parent) = records[i].parent {
+                if parent == composer {
+                    return true;
+                }
+                i = parent;
+            }
+            false
+        };
+        for part in [
+            "ComposerBox",
+            "ComposerText",
+            "ComposerToolbar",
+            "ComposerFolderRow",
+        ] {
+            let i = records
+                .iter()
+                .position(|r| r.name == part)
+                .unwrap_or_else(|| panic!("{part} is drawn"));
+            assert_eq!(
+                records[i].parent,
+                Some(composer),
+                "{part} is the composer's part"
+            );
+        }
+        let the_box = records
+            .iter()
+            .position(|r| r.name == "ComposerBox")
+            .unwrap();
+        let primitives: Vec<usize> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.parent == Some(the_box))
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            !primitives.is_empty(),
+            "the box's fill and stroke are inside it"
+        );
+        assert!(primitives.into_iter().all(under));
     }
 }
