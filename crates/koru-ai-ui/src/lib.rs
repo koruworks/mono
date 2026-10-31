@@ -341,6 +341,8 @@ pub struct ChatSurface {
     chats_pane_started: bool,
     /// A chat being renamed in the pane: the field over its row's title.
     chats_rename: Option<chats_pane::ChatsRename>,
+    /// The pane's right-click menu over a row, and the chats it is about.
+    chats_menu: Option<chats_pane::ChatsMenu>,
     /// A chat was created, renamed, deleted, re-pointed or answered since the
     /// host last asked ([`ChatSurface::take_chat_list_changed`]).
     chat_list_changed: bool,
@@ -579,6 +581,7 @@ impl ChatSurface {
             chats_pane: koru_chats_ui::ChatsSurface::without_reader(),
             chats_pane_started: false,
             chats_rename: None,
+            chats_menu: None,
             chat_list_changed: false,
             chat_list_changed_for_pane: false,
             wants_chats_view: false,
@@ -1036,7 +1039,7 @@ impl ChatSurface {
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
-        if self.confirm.is_some() || self.response_menu.is_some() {
+        if self.confirm.is_some() || self.response_menu.is_some() || self.chats_menu.is_some() {
             return CursorIcon::Default;
         }
         let p = self.pointer;
@@ -1312,8 +1315,9 @@ impl ChatSurface {
 
     /// Step through [`ChatSurface::input_history`]: `older` is Up. Leaving the
     /// message being typed sets it aside whole, chips and all, and Down past
-    /// the newest gives it back. `false` when there is nowhere to go, so the
-    /// key falls through to the editor.
+    /// the newest gives it back. A recalled message keeps its chips too.
+    /// `false` when there is nowhere to go, so the key falls through to the
+    /// editor.
     fn recall_input(&mut self, older: bool) -> bool {
         let entries = self.input_history();
         let next = match (self.history_cursor, older) {
@@ -1332,7 +1336,18 @@ impl ChatSurface {
                     self.history_draft = Some(self.composer.stash());
                 }
                 self.history_cursor = Some(index);
-                self.composer.set_text(&entries[index]);
+                // The chips come back as chips, named as the conversation
+                // names them: the caption sent, a title looked up since, or
+                // the word an unknown one reads as.
+                let titles = &self.document_titles;
+                let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+                self.composer.set_message(&entries[index], |document| {
+                    titles
+                        .get(&document)
+                        .filter(|title| !title.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| untitled.to_owned())
+                });
             }
             None => {
                 self.history_cursor = None;
@@ -1655,7 +1670,7 @@ impl ChatSurface {
             return self.perform_response_action(action);
         }
         if let Some(url) = self.source_link_at(x, y) {
-            let _ = open_web_link(&url);
+            open_web_link(&url);
             return true;
         }
         if let Some(url) = self.user_link_at(x, y) {
@@ -1690,7 +1705,7 @@ impl ChatSurface {
                 true
             }
             _ => {
-                let _ = open_web_link(url);
+                open_web_link(url);
                 true
             }
         }
@@ -1764,8 +1779,8 @@ impl ChatSurface {
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         // Over the open Chats pane the pane is all there is: nothing under it
-        // hovers.
-        if self.history_open && self.chats_panel().contains(x, y) {
+        // hovers. While its row menu is up, the menu is all there is.
+        if self.history_open && (self.chats_menu.is_some() || self.chats_panel().contains(x, y)) {
             self.pointer = (x, y);
             return self.chats_pane_mouse_move(x, y);
         }
@@ -7584,19 +7599,44 @@ fn load_remote_image(url: &str) -> ImageResult {
     })
 }
 
-fn open_web_link(url: &str) -> Result<(), String> {
+/// Hand a web link the person clicked to the desktop. `false` when the
+/// allow-list refused it.
+///
+/// **Not on the thread that draws.** The shell call can take as long as the
+/// desktop likes — a browser starting cold, an association dialog — and the
+/// frame must not wait for it, so it runs on a thread of its own and a
+/// failure is logged there; nothing on screen could act on it anyway.
+fn open_web_link(url: &str) -> bool {
     if !is_web_url(url) {
-        return Err(format!("refusing to open a non-web URL: {url}"));
+        return false;
     }
     if cfg!(any(test, feature = "no-client")) {
-        return Ok(());
+        return true;
     }
     // **`koru_window::open_uri`, not `webbrowser`.** The workspace dropped that
     // crate deliberately: it launches the default browser with the URL on its
     // *command line*, where this asks the shell to open it. The allow-list
     // above is what makes this call safe, and it stays here because the URL is
     // remote input — it arrives in a model's response.
-    koru_window::open_uri(url).map_err(|error| format!("could not open {url}: {error}"))
+    let url = url.to_owned();
+    let spawned = std::thread::Builder::new()
+        .name("koru-ai-open-link".into())
+        .spawn(move || {
+            // The URL is not logged: it came out of a conversation.
+            if let Err(error) = koru_window::open_uri(&url) {
+                tracing::warn!(
+                    target: "koru_ai::ui",
+                    "AI UI could not open a web link: {error}"
+                );
+            }
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(
+            target: "koru_ai::ui",
+            "AI UI could not start the thread that opens a web link: {error}"
+        );
+    }
+    true
 }
 
 fn action_rect(card: Rect, index: usize) -> Rect {
@@ -10109,7 +10149,11 @@ mod tests {
         assert!(!is_web_url("file:///C:/secret.png"));
         assert!(!is_web_url("javascript:alert(1)"));
         assert!(is_web_url("https://example.com/image.png"));
-        assert!(open_web_link("https://example.com/source").is_ok());
+        assert!(open_web_link("https://example.com/source"));
+        // The allow-list answers on the calling thread, before any thread
+        // is started for the shell.
+        assert!(!open_web_link("javascript:alert(1)"));
+        assert!(!open_web_link("file:///C:/secret.png"));
     }
 
     #[test]
@@ -10267,6 +10311,39 @@ mod tests {
         press(&mut surface, NamedKey::ArrowUp);
         assert!(surface.history_cursor.is_none());
         assert_eq!(surface.composer.text(), "@");
+    }
+
+    /// **A recalled message keeps its chips**, as the draft does: Up gives
+    /// back the document it named as a chip, captioned with the title the
+    /// conversation reads it under, so sending it again carries the document.
+    #[test]
+    fn up_recalls_a_message_with_its_document_chips() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let known = DocumentId::new();
+        let unknown = DocumentId::new();
+        let sent = format!("Compare [[koru://doc/{known}]] and [[koru://doc/{unknown}]]");
+        let mut chat = transcript();
+        let message = user_message(&chat, &sent);
+        chat.messages.push(message);
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.document_titles.insert(known, "Budget".to_owned());
+
+        assert!(press(&mut surface, NamedKey::ArrowUp));
+        let recalled = surface.composer.message();
+        assert_eq!(recalled.markdown, sent, "it leaves again as it was sent");
+        assert_eq!(
+            recalled.documents,
+            vec![
+                (known, "Budget".to_owned()),
+                (
+                    unknown,
+                    koru_i18n::t(surface.lang, koru_i18n::Key::AiDocumentLinkUntitled).to_owned()
+                ),
+            ]
+        );
     }
 
     /// **An empty chat greets the person**, with one line picked when the

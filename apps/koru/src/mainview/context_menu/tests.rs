@@ -873,6 +873,22 @@ fn a_file_menu_opens_or_copies_the_opaque_file() {
     assert_eq!(file_items(1, None)[4].label(), "Move to trash");
 }
 
+/// *Rename…* speaks the window's language — the chat row's, the file's and
+/// the workspace's are one row, and one key with a schedule's.
+#[test]
+fn rename_is_localized_like_a_schedules() {
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            let word = koru_i18n::t(lang, koru_i18n::Key::ScheduleRename);
+            assert_eq!(MenuAction::Rename.label(), word, "{lang:?}");
+            assert_eq!(ai_chat_items(1)[0].label(), word, "{lang:?}");
+        });
+    }
+    koru_i18n::with_current(koru_i18n::Lang::De, || {
+        assert_eq!(MenuAction::Rename.label(), "Umbenennen\u{2026}");
+    });
+}
+
 /// *Add note* when the file has none, *Open note* when it does — one row,
 /// decided when the menu is built, never both. A multi-selection has no single
 /// note to open, so it offers neither.

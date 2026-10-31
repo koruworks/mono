@@ -1350,12 +1350,13 @@ the switch off outside a trusted development session.
 A new chat opens on a short greeting with the composer in the middle; once the
 first message is sent the composer moves to the bottom and stays there. In the
 composer, `Up` on its first line brings back the messages you sent in this chat,
-newest first, and `Down` on its last line walks forward again, back to whatever
-you were typing. `Enter` sends and `Ctrl+Shift+Enter` (or
-`Cmd+Shift+Enter` on macOS) inserts a newline. It grows to eight lines and then
-scrolls inside itself, independently of the conversation. Embedded questions
-include the active document by stable identity only after Koru has received a
-durable Store acknowledgement, so the answer sees the saved revision rather
+newest first, with the documents they mentioned still chips, and `Down` on its
+last line walks forward again, back to whatever you were typing. `Enter` sends
+and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
+grows to eight lines and then scrolls inside itself, independently of the
+conversation. Embedded questions include the active document by stable
+identity only after Koru has received a durable Store acknowledgement, so the
+answer sees the saved revision rather
 than an older snapshot. **Chats** shows the left column's Chats view with this
 chat selected (see *Finding a chat again*) and **New chat** starts another
 thread. Closing the pane stops its background
@@ -5911,7 +5912,8 @@ appears in the list straight away.
 
 In the standalone Koru AI window, **Chats** — or Ctrl+Shift+E — opens the same
 list as a small floating pane. Choosing a row reads that chat in the window;
-Escape or a click outside closes the pane. **F2** renames the row the keyboard
+Escape or a click outside closes the pane. Right-click a row there for the
+same **Rename…** and **Delete chat**, and **F2** renames the row the keyboard
 is on, in the same box.
 
 ### Mentioning a document with @

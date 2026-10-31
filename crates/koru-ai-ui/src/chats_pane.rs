@@ -29,7 +29,14 @@
 //! [`ChatSurface::rename_chat`], the rename command the chat's title row used
 //! before the row was removed, so a chat open here takes its new name with
 //! the list.
+//!
+//! **A right-click on a row opens its menu** — the workspace window's Chats
+//! menu: *Rename…* for one chat, which opens the same field `F2` does, and
+//! the delete row for the pick, through the Delete key's confirmation. It is
+//! the shared popover menu (`koru_ui::Menu`), as the conversation's own
+//! right-click menu is.
 
+use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use koru_ai_core::ChatId;
@@ -38,6 +45,7 @@ use koru_chats_ui::Press;
 use koru_draw::geometry::Rect;
 use koru_draw::{scene, theme};
 use koru_ui::text_input::{InputStyle, TextInput};
+use koru_ui::{Menu, MenuItem};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -64,6 +72,84 @@ pub(crate) struct ChatsRename {
     /// Why the last Enter was refused. The next keystroke clears it: you are
     /// already fixing it.
     hint: Option<&'static str>,
+}
+
+/// **A row's right-click menu**, and the chats it is about — fixed when it
+/// opened, by id, for the reason the workspace's is: the list is rewritten
+/// whenever a chat changes.
+pub(crate) struct ChatsMenu {
+    menu: Menu<ChatsMenuItem>,
+    chats: Vec<ChatId>,
+}
+
+/// One row of [`ChatsMenu`], in the window's language.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChatsMenuItem {
+    action: ChatsMenuAction,
+    lang: koru_i18n::Lang,
+    /// How many chats the delete row is about, so it can count them.
+    count: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ChatsMenuAction {
+    Rename,
+    Delete,
+}
+
+impl ChatsMenuItem {
+    /// The rows for a pick of `count` chats: rename, then delete. Rename is
+    /// single-only, as the workspace's is — one field cannot name several.
+    fn rows(count: usize, lang: koru_i18n::Lang) -> Vec<Self> {
+        let actions: &[ChatsMenuAction] = if count > 1 {
+            &[ChatsMenuAction::Delete]
+        } else {
+            &[ChatsMenuAction::Rename, ChatsMenuAction::Delete]
+        };
+        actions
+            .iter()
+            .map(|&action| Self {
+                action,
+                lang,
+                count,
+            })
+            .collect()
+    }
+}
+
+impl MenuItem for ChatsMenuItem {
+    fn label(&self) -> Cow<'_, str> {
+        match self.action {
+            ChatsMenuAction::Rename => {
+                Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ScheduleRename))
+            }
+            ChatsMenuAction::Delete if self.count <= 1 => {
+                Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ChatsDelete))
+            }
+            ChatsMenuAction::Delete => Cow::Owned(koru_i18n::fill(
+                koru_i18n::t(self.lang, koru_i18n::Key::ChatsDeleteMany),
+                &[&koru_i18n::number::decimal(self.lang, self.count as u64)],
+            )),
+        }
+    }
+
+    fn icon(&self) -> Option<char> {
+        (self.action == ChatsMenuAction::Delete).then_some(koru_draw::icons::TRASH)
+    }
+
+    fn shortcut(&self) -> Option<String> {
+        match self.action {
+            ChatsMenuAction::Rename => koru_keys::show_hint(
+                koru_keys::ShortcutId::RenameDocument,
+                koru_keys::Section::Menu,
+            ),
+            ChatsMenuAction::Delete => None,
+        }
+    }
+
+    fn destructive(&self) -> bool {
+        self.action == ChatsMenuAction::Delete
+    }
 }
 
 fn epoch_ms() -> i64 {
@@ -127,6 +213,7 @@ impl ChatSurface {
         self.tool_mode_open = false;
         self.history_open = true;
         self.chats_rename = None;
+        self.chats_menu = None;
         let current = self.current_chat_id();
         let (area, top) = self.chats_area();
         let pane = &mut self.chats_pane;
@@ -155,6 +242,7 @@ impl ChatSurface {
         }
         self.history_open = false;
         self.chats_rename = None;
+        self.chats_menu = None;
         self.chats_pane.clear_focus();
         self.chats_pane.clear_hover();
         self.focus = Focus::Composer;
@@ -195,6 +283,10 @@ impl ChatSurface {
         if self.history_open && self.chats_rename.is_some() {
             return Some(self.chats_rename_key(key, text, mods));
         }
+        // So does an open row menu: its rows are what the arrows step.
+        if self.history_open && self.chats_menu.is_some() {
+            return Some(self.chats_menu_key(key));
+        }
         if self.hosts_chats_pane() && Self::is_reveal_chord(key, text, mods) {
             return Some(self.open_chats_pane());
         }
@@ -223,6 +315,17 @@ impl ChatSurface {
         if !self.history_open {
             return None;
         }
+        // An open row menu is modal too: a press chooses one of its rows or
+        // closes it, and reaches nothing under it.
+        if let Some(open) = &self.chats_menu {
+            return Some(match open.menu.item_at(self.menu_viewport(), x, y) {
+                Some(item) => self.choose_chats_menu_item(item),
+                None => {
+                    self.chats_menu = None;
+                    true
+                }
+            });
+        }
         // The rename field is modal over the list: a press either moves its
         // caret or finishes it, and never also chooses a row.
         if self.chats_rename.is_some() {
@@ -250,8 +353,9 @@ impl ChatSurface {
         None
     }
 
-    /// A right-click on a row asks to delete it, through the same
-    /// confirmation the Delete key reaches. `None` when the pane has no say.
+    /// A right-click on a row opens its menu at the pointer, about the pick
+    /// when the row is in it, else that chat alone. `None` when the pane has
+    /// no say.
     pub(crate) fn chats_pane_context_menu(&mut self, x: f32, y: f32) -> Option<bool> {
         if !self.history_open {
             return None;
@@ -260,20 +364,80 @@ impl ChatSurface {
             self.finish_chats_rename();
             return Some(true);
         }
+        // A second right-click moves the menu rather than stacking another.
+        self.chats_menu = None;
         if !self.chats_panel().contains(x, y) {
             self.close_chats_pane();
             return Some(true);
         }
         let (area, top) = self.chats_area();
         if let Some(chats) = self.chats_pane.context_menu(area, top, x, y) {
-            self.open_confirmation(DestructiveAction::DeleteChats(chats));
+            let rows = ChatsMenuItem::rows(chats.len(), self.lang);
+            let enabled = vec![true; rows.len()];
+            let mut menu = Menu::new(&mut self.engine, (x, y), rows);
+            menu.step(&enabled, 1);
+            self.chats_menu = Some(ChatsMenu { menu, chats });
         }
         Some(true)
+    }
+
+    /// A key while the row menu is open: the arrows step its rows, Enter
+    /// chooses one, Escape closes it and leaves the pane open. Nothing else
+    /// reaches the list underneath.
+    fn chats_menu_key(&mut self, key: &Key) -> bool {
+        let Some(open) = self.chats_menu.as_mut() else {
+            return false;
+        };
+        match key {
+            Key::Named(NamedKey::Escape) => {
+                self.chats_menu = None;
+                true
+            }
+            Key::Named(step @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) => {
+                let delta = if *step == NamedKey::ArrowUp { -1 } else { 1 };
+                let enabled = vec![true; open.menu.items().len()];
+                open.menu.step(&enabled, delta);
+                true
+            }
+            Key::Named(NamedKey::Enter) => {
+                let item = open.menu.hover.unwrap_or(0);
+                self.choose_chats_menu_item(item)
+            }
+            _ => false,
+        }
+    }
+
+    /// Do what a row of the menu says, and close it. *Rename…* opens the
+    /// field `F2` opens; the delete row asks as the Delete key does.
+    fn choose_chats_menu_item(&mut self, item: usize) -> bool {
+        let Some(open) = self.chats_menu.take() else {
+            return false;
+        };
+        let Some(row) = open.menu.items().get(item) else {
+            return true;
+        };
+        match row.action {
+            ChatsMenuAction::Rename => match open.chats.as_slice() {
+                [chat] => self.start_chats_rename_of(*chat),
+                _ => true,
+            },
+            ChatsMenuAction::Delete => {
+                self.open_confirmation(DestructiveAction::DeleteChats(open.chats));
+                true
+            }
+        }
     }
 
     pub(crate) fn chats_pane_mouse_move(&mut self, x: f32, y: f32) -> bool {
         if !self.history_open {
             return false;
+        }
+        let viewport = self.menu_viewport();
+        if let Some(open) = self.chats_menu.as_mut() {
+            let next = open.menu.item_at(viewport, x, y);
+            let changed = open.menu.hover != next;
+            open.menu.hover = next;
+            return changed;
         }
         let (area, top) = self.chats_area();
         if self.chats_panel().contains(x, y) {
@@ -358,6 +522,12 @@ impl ChatSurface {
         self.chats_pane
             .draw(canvas, root, &mut self.engine, area, top);
         self.draw_chats_rename(canvas, root);
+        let viewport = self.menu_viewport();
+        if let Some(open) = &self.chats_menu {
+            let enabled = vec![true; open.menu.items().len()];
+            open.menu
+                .draw(canvas, root, &mut self.engine, viewport, &enabled);
+        }
     }
 
     /// **Rename a chat** through the reader's rename command — the one the
@@ -379,12 +549,17 @@ impl ChatSurface {
         ))
     }
 
-    /// `F2` on the pane: open the field over the keyboard's chat, its title
-    /// selected — renaming usually means replacing it.
+    /// `F2` on the pane: open the field over the keyboard's chat.
     pub(crate) fn start_chats_rename(&mut self) -> bool {
         let Some(chat) = self.chats_pane.focused_chat() else {
             return false;
         };
+        self.start_chats_rename_of(chat)
+    }
+
+    /// Open the field over `chat`'s row, its title selected — renaming
+    /// usually means replacing it. `F2` and the menu's *Rename…*.
+    fn start_chats_rename_of(&mut self, chat: ChatId) -> bool {
         let Some(was) = self
             .chats_pane
             .chats()
@@ -498,6 +673,8 @@ mod tests {
 
     use koru_ai_core::{AiProviderId, Chat, ChatId, ModelSelection, ReasoningChoice, Timestamp};
     use winit::keyboard::{Key, ModifiersState, NamedKey};
+
+    use koru_ui::MenuItem;
 
     use crate::reader::{Command, Reader, Update};
     use crate::{ChatSurface, Focus, SurfaceMode};
@@ -759,6 +936,125 @@ mod tests {
         let (mut surface, _commands, _updates) = pane_on(Vec::new());
         assert!(!press(&mut surface, NamedKey::F2));
         assert!(surface.chats_rename.is_none());
+    }
+
+    /// A right-click on `chat`'s row.
+    fn right_click(surface: &mut ChatSurface, chat: ChatId) -> bool {
+        let (area, top) = surface.chats_area();
+        let title = surface
+            .chats_pane
+            .title_rect(area, top, chat)
+            .expect("the row is showing");
+        surface.context_menu(title.x + 4.0, title.y + title.h * 0.5)
+    }
+
+    fn menu_labels(surface: &ChatSurface) -> Vec<String> {
+        surface
+            .chats_menu
+            .as_ref()
+            .expect("the menu is open")
+            .menu
+            .items()
+            .iter()
+            .map(|item| item.label().into_owned())
+            .collect()
+    }
+
+    /// **The pane's rows have a menu**, as the workspace window's Chats
+    /// view's do: a right-click offers *Rename…* above the delete row, and
+    /// *Rename…* opens the field `F2` opens, over the row that was clicked
+    /// rather than the one the keyboard entered on.
+    #[test]
+    fn a_right_click_offers_rename_which_opens_the_field_on_that_row() {
+        let older = chat("Older");
+        let mut newer = chat("Newer");
+        newer.updated_at = Timestamp::from_millis(2);
+        let (mut surface, commands, _updates) = pane_on(vec![older.clone(), newer]);
+
+        assert!(right_click(&mut surface, older.id));
+        let lang = surface.lang;
+        assert_eq!(
+            menu_labels(&surface),
+            [
+                koru_i18n::t(lang, koru_i18n::Key::ScheduleRename),
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDelete),
+            ]
+        );
+        assert!(surface.confirm.is_none(), "a right-click deletes nothing");
+
+        let viewport = surface.menu_viewport();
+        let rename = surface
+            .chats_menu
+            .as_ref()
+            .expect("the menu is open")
+            .menu
+            .item_rect(viewport, 0);
+        assert!(surface.mouse_down(rename.x + 8.0, rename.y + rename.h * 0.5));
+        assert!(surface.chats_menu.is_none(), "choosing closes the menu");
+        assert_eq!(
+            surface.chats_rename.as_ref().map(|rename| rename.chat),
+            Some(older.id),
+            "the field is over the row that was clicked"
+        );
+        type_text(&mut surface, "Renamed");
+        assert!(press(&mut surface, NamedKey::Enter));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Rename(chat, request) => {
+                assert_eq!(chat, older.id);
+                assert_eq!(request.title, "Renamed");
+            }
+            _ => panic!("the menu's rename goes through the rename command"),
+        }
+        assert!(surface.history_open);
+    }
+
+    /// The menu answers the keyboard: Escape closes it and leaves the pane
+    /// open, and Down then Enter chooses the delete row, which asks through
+    /// the Delete key's confirmation. A pick of several has no *Rename…*.
+    #[test]
+    fn the_row_menu_steps_with_the_keyboard_and_deletes_through_the_confirmation() {
+        let one = chat("One");
+        let mut two = chat("Two");
+        two.updated_at = Timestamp::from_millis(2);
+        let (mut surface, _commands, _updates) = pane_on(vec![one.clone(), two.clone()]);
+
+        assert!(right_click(&mut surface, one.id));
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(surface.chats_menu.is_none());
+        assert!(surface.history_open, "Escape closed the menu, not the pane");
+
+        assert!(right_click(&mut surface, one.id));
+        assert!(press(&mut surface, NamedKey::ArrowDown));
+        assert!(press(&mut surface, NamedKey::Enter));
+        assert!(surface.chats_menu.is_none());
+        assert!(surface.chats_rename.is_none());
+        assert!(surface.confirm.is_some(), "the delete row asks first");
+        surface.confirm = None;
+
+        // Ctrl adds the other chat to the pick.
+        let (area, top) = surface.chats_area();
+        let other = surface
+            .chats_pane
+            .title_rect(area, top, two.id)
+            .expect("the row is showing");
+        surface.chats_pane.mouse_down_with(
+            area,
+            top,
+            other.x + 4.0,
+            other.y + other.h * 0.5,
+            true,
+            false,
+        );
+        assert!(right_click(&mut surface, one.id));
+        let lang = surface.lang;
+        assert_eq!(
+            menu_labels(&surface),
+            [koru_i18n::fill(
+                koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
+                &[&koru_i18n::number::decimal(lang, 2)],
+            )],
+            "one field cannot name two chats"
+        );
     }
 
     /// The command a host with its own Chats list renames through: trimmed,

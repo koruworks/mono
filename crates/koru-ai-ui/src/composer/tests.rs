@@ -313,3 +313,36 @@ fn a_stashed_message_comes_back_with_its_chip() {
         "the caret is where it was"
     );
 }
+
+/// **A sent message comes back with its chips** — a document's and a
+/// heading's, on any line — captioned by the title it is given, and leaves
+/// again spelled exactly as it was sent. A token that is not a document's
+/// stays text.
+#[test]
+fn a_sent_message_comes_back_with_its_chips() {
+    let mut composer = ChatComposer::new(None);
+    let budget = DocumentId::new();
+    let plan = DocumentId::new();
+    let heading = NodeId::new();
+    let sent = format!(
+        "Compare [[koru://doc/{budget}]] with\n[[koru://doc/{plan}#{heading}]] and [[koru://chat/{}]]",
+        uuid::Uuid::new_v4()
+    );
+    composer.set_message(&sent, |document| {
+        if document == budget { "Budget" } else { "Plan" }.to_owned()
+    });
+
+    let message = composer.message();
+    assert_eq!(message.markdown, sent, "it leaves as it was sent");
+    assert_eq!(
+        message.documents,
+        vec![(budget, "Budget".to_owned()), (plan, "Plan".to_owned())]
+    );
+    typed(&mut composer, "!");
+    assert_eq!(composer.text(), format!("{sent}!"), "edited at its end");
+
+    // Undo takes the whole recall back in one step.
+    assert!(ctrl(&mut composer, "z"));
+    assert!(ctrl(&mut composer, "z"));
+    assert!(composer.is_blank());
+}

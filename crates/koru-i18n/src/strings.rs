@@ -1210,6 +1210,9 @@ pub enum Key {
     DelegateScheduleNameNeeded,
     DelegateScheduleNameTooLong,
     DelegateScheduleNameControl,
+    /// *Rename…* — a schedule's row, and every other menu row that renames:
+    /// a file, a workspace or a chat in the workspace window, a chat in the
+    /// standalone window's Chats pane.
     ScheduleRename,
     ScheduleManageOnOwner,
     ScheduleManageOnDevice,

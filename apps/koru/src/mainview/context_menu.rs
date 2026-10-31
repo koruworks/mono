@@ -1158,8 +1158,9 @@ impl MenuAction {
             // short. "Tabs" is honest for one or many — each open is its own tab.
             MenuAction::OpenInNewTab => "Open in new tabs",
             MenuAction::OpenDocumentInNewWindow => "Open in a new window",
-            MenuAction::Rename => "Rename…",
-            MenuAction::ScheduleRename => {
+            // One word for every row that renames — a file, a workspace, a
+            // chat, a schedule — so it is one key in every language.
+            MenuAction::Rename | MenuAction::ScheduleRename => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::ScheduleRename,

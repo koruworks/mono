@@ -38,7 +38,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use koru_core::node::{AttrValue, Node};
+use koru_core::node::{Attr, AttrValue, Node};
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{NodeId, WorkspaceId};
 use koru_draw::ImageCache;
@@ -215,13 +215,78 @@ impl ChatComposer {
         self.editor = editor;
     }
 
-    /// Replace the message with `text`, line breaks becoming paragraphs, the
-    /// caret after the last character — where a recalled message is edited.
+    /// Replace the message with `text` as plain text, line breaks becoming
+    /// paragraphs, the caret after the last character. For tests; a recalled
+    /// message is [`set_message`](Self::set_message), which keeps its chips.
+    #[cfg(test)]
     pub(crate) fn set_text(&mut self, text: &str) {
         self.clear();
         if !text.is_empty() {
             koru_editor::clipboard::insert_lines(&mut self.editor, &mut self.ws, text);
         }
+    }
+
+    /// Replace the message with one already sent, **chips and all** — what a
+    /// recalled message is. `markdown` is the message as it went out, chips
+    /// in their `[[koru://doc/…]]` spelling; each comes back as the chip it
+    /// was, captioned by `title`, and every other token stays text. One undo
+    /// step, the caret after the last character.
+    pub(crate) fn set_message(
+        &mut self,
+        markdown: &str,
+        title: impl Fn(koru_ai_core::DocumentId) -> String,
+    ) {
+        self.clear();
+        let normalized = markdown.replace("\r\n", "\n").replace('\r', "\n");
+        let Some(mut row) = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied())
+        else {
+            return;
+        };
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        let mut at = 0;
+        for (i, line) in normalized.split('\n').enumerate() {
+            if i > 0 {
+                match self.ws.split(row, at) {
+                    Ok(tail) => {
+                        row = tail;
+                        at = 0;
+                    }
+                    Err(_) => break,
+                }
+            }
+            let mut from = 0;
+            for found in koru_link::wrapped(line) {
+                let koru_link::KoruLink::Document { document, node } = found.link else {
+                    continue;
+                };
+                at += insert_text(&mut self.ws, row, at, &line[from..found.range.start]);
+                let reference = koru_core::DocumentReference {
+                    document: koru_core::DocumentId::from_uuid(document),
+                    node: node.map(NodeId::from_uuid),
+                };
+                let attr = Attr::labelled(
+                    "document",
+                    AttrValue::Document(reference),
+                    title(koru_ai_core::DocumentId::from_uuid(document)),
+                );
+                if self.ws.insert_pill(row, at, &attr).is_ok() {
+                    at += koru_core::ANCHOR.len_utf8();
+                }
+                from = found.range.end;
+            }
+            at += insert_text(&mut self.ws, row, at, &line[from..]);
+        }
+        self.ws.checkpoint();
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(row);
+        self.editor.place_caret(at);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
     }
 
     /// Set the message being typed aside whole — its chips, its undo — and
@@ -701,6 +766,16 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     editor.body.focus = editor.body.first_body_row();
     editor.place_caret(0);
     (ws, root, editor)
+}
+
+/// Insert `text` into `row` at `at`: the bytes it added, none for an empty
+/// piece or a refusal.
+fn insert_text(ws: &mut WorkspaceDoc, row: NodeId, at: usize, text: &str) -> usize {
+    if !text.is_empty() && ws.insert_text(row, at, text).is_ok() {
+        text.len()
+    } else {
+        0
+    }
 }
 
 fn choices(workspaces: Vec<EntityWorkspace>) -> Vec<WorkspaceChoice> {
