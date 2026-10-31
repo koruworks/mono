@@ -392,6 +392,19 @@ impl ChatComposer {
 
     /// A chip was clicked, in the composer or in a sent message: the document
     /// the host should open.
+    /// A paste found no text: the surface reads the clipboard's picture or
+    /// files as attachments, off the window thread (chat-attachments D9).
+    pub(crate) fn take_wants_paste_attachment(&mut self) -> bool {
+        std::mem::take(&mut self.editor.view.wants_paste_attachment)
+    }
+
+    /// Arm the paste flag as a paste with no text would, for a test that
+    /// must not touch the desktop clipboard.
+    #[cfg(test)]
+    pub(crate) fn arm_paste_attachment(&mut self) {
+        self.editor.view.wants_paste_attachment = true;
+    }
+
     pub(crate) fn take_open_request(&mut self) -> Option<koru_link::KoruLink> {
         self.open_request.take()
     }

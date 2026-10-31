@@ -668,6 +668,30 @@ Deny a pending workspace-tool call
 
 Returns: The durable denied activity. The provider receives a structured permission-denied result and may continue.
 
+## PUT `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Store a picture or file for a local agent chat's next message
+
+Returns: The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.
+
+## DELETE `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Remove a staged attachment
+
+Returns: Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.
+
+## GET `/v1/ai/chats/{chat}/attachments/{attachment}`
+
+Read an attachment's stored original
+
+Returns: The original bytes, with the stored media type and the file name as an attachment disposition.
+
+## GET `/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail`
+
+Read a picture attachment's thumbnail
+
+Returns: A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.
+
 ## GET `/v1/artifacts/families`
 
 The artifact families of a workspace

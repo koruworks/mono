@@ -446,6 +446,9 @@ pub struct PendingTurn {
     pub user_message: Message,
     pub assistant_message: Message,
     pub attempt: InferenceAttempt,
+    /// Staged attachments bound to the user message, in order, in the same
+    /// transaction.
+    pub attachment_ids: Vec<crate::ChatAttachmentId>,
 }
 
 /// One retry creates a fresh assistant entry and attempt without rewriting the
@@ -466,6 +469,9 @@ pub struct BranchCopy {
     pub blocks: Vec<MessageBlock>,
     pub citations: Vec<(MessageId, SourceLink)>,
     pub pinned_documents: Vec<PinnedDocument>,
+    /// The copied user messages' attachments, already re-identified and
+    /// bound to the copies; their folders are linked before the commit.
+    pub attachments: Vec<crate::AttachmentRecord>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

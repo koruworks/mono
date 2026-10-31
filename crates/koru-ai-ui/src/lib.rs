@@ -58,6 +58,7 @@ pub(crate) fn chat_line_height() -> f32 {
 }
 
 mod agents;
+mod attachments;
 mod chats_pane;
 mod composer;
 mod doc_links;
@@ -319,6 +320,15 @@ struct ResponseTextHit {
     link: Option<String>,
 }
 
+/// A message sent and not yet accepted: everything the composer held —
+/// its text with its chips and undo, its quotes, its attachments.
+struct SentMessage {
+    chat: ChatId,
+    composer: composer::Draft,
+    quotes: Vec<PendingQuote>,
+    attachments: Vec<attachments::Draft>,
+}
+
 /// One AI conversation surface, usable as a window body or in Koru's context
 /// column. Constructing it in tests starts no service client.
 pub struct ChatSurface {
@@ -509,6 +519,23 @@ pub struct ChatSurface {
     /// was picked for, so it holds still while shown and a new chat gets a
     /// new one.
     greeting: Option<(Option<ChatId>, usize)>,
+    /// Each chat's draft attachments, kept per chat (chat-attachments D15).
+    strips: attachments::Strips,
+    /// The clipboard, upload and thumbnail threads behind them.
+    attachment_work: attachments::Work,
+    /// Thumbnails by attachment id: a draft's, then the same picture's on
+    /// its sent card; bounded, the least recently drawn going first.
+    thumbnails: attachments::ThumbCache,
+    /// The tiles of the message just sent, for its card before the
+    /// transcript carries it.
+    pending_user_tiles: Vec<attachments::Tile>,
+    /// The message just sent, whole, until the service accepts it: put
+    /// back in the composer if the send does not go.
+    sent_message: Option<SentMessage>,
+    /// A title lookup is with the reader; one at a time, so background
+    /// lookups never crowd a person's own command out of its queue.
+    titles_in_flight: bool,
+    clipboard_reading: bool,
     lang: koru_i18n::Lang,
 }
 
@@ -565,6 +592,7 @@ impl ChatSurface {
     pub fn new_at(mode: SurfaceMode, root: Option<PathBuf>) -> Self {
         let mut engine = TextEngine::new();
         let composer = ChatComposer::new(root.clone());
+        let attachment_work = attachments::Work::new(root.clone());
         let workspace_search = TextInput::new(&mut engine, role::ui());
         let openai_key = TextInput::new(&mut engine, role::row());
         let openai_model = TextInput::new(&mut engine, role::row());
@@ -704,6 +732,13 @@ impl ChatSurface {
             history_cursor: None,
             history_draft: None,
             greeting: None,
+            strips: attachments::Strips::default(),
+            attachment_work,
+            thumbnails: attachments::ThumbCache::default(),
+            pending_user_tiles: Vec::new(),
+            sent_message: None,
+            titles_in_flight: false,
+            clipboard_reading: false,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -978,6 +1013,7 @@ impl ChatSurface {
             self.web_search_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
+            self.attachment_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -1009,6 +1045,7 @@ impl ChatSurface {
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
         changed |= self.composer.maintain();
+        changed |= self.maintain_attachments();
         changed | self.pill_strip.maintain(_now)
     }
 
@@ -1033,7 +1070,10 @@ impl ChatSurface {
             .staged_embedded_send
             .take()
             .expect("a staged send was checked above");
-        self.send_command(Command::Send(request))
+        if !self.queue_command(Command::Send(request)) {
+            self.give_back_sent(None);
+        }
+        true
     }
 
     pub fn animating(&self) -> bool {
@@ -1194,7 +1234,7 @@ impl ChatSurface {
         // Enter, Tab and Escape choose or dismiss a document; Enter sends only
         // once it has closed.
         if self.composer.picker_open() {
-            return self.composer.key(key, text, mods);
+            return self.composer_key(key, text, mods);
         }
         if matches!(key, Key::Named(NamedKey::Escape))
             && let Some(attempt) = self.attempt
@@ -1236,7 +1276,18 @@ impl ChatSurface {
         {
             return self.composer.insert_break();
         }
-        self.composer.key(key, text, mods)
+        self.composer_key(key, text, mods)
+    }
+
+    /// A key for the composer. A paste that found no text is answered here,
+    /// at once, whichever path the key took: its picture is read off this
+    /// thread (D9), and nothing is left armed for a later key.
+    fn composer_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        let handled = self.composer.key(key, text, mods);
+        if self.composer.take_wants_paste_attachment() {
+            return self.begin_attachment_paste() || handled;
+        }
+        handled
     }
 
     /// This chord belongs to a visible chat surface even when another part of
@@ -1394,6 +1445,9 @@ impl ChatSurface {
         // The composer and every control on it are hit where they are now:
         // centred under an empty chat's greeting, or at the bottom.
         self.composer_rect();
+        if let Some(handled) = self.strip_mouse_down(x, y) {
+            return handled;
+        }
         // The `@` picker floats over the conversation, so a press on it is the
         // composer's before anything underneath can claim it.
         if self
@@ -2077,14 +2131,22 @@ impl ChatSurface {
     }
 
     fn send_command(&mut self, command: Command) -> bool {
+        self.queue_command(command);
+        true
+    }
+
+    /// Hand a command to the reader, and say truthfully whether it was
+    /// queued; a full or gone queue says so on the status line.
+    fn queue_command(&mut self, command: Command) -> bool {
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
-            return true;
+            return false;
         };
         match reader.send(command) {
             Ok(()) => {
                 self.waiting = true;
                 self.status = None;
+                return true;
             }
             Err(SendError::Full) => {
                 tracing::warn!(
@@ -2101,7 +2163,7 @@ impl ChatSurface {
                 self.status = Some("Koru AI service is not connected.".into());
             }
         }
-        true
+        false
     }
 
     fn validate_models_after_settings(&mut self, selected: Option<AiProviderId>) {
@@ -2323,6 +2385,7 @@ impl ChatSurface {
                 }
             }
             Update::ModelUpdated(chat, reasoning_control) => {
+                let chat_id = chat.id;
                 self.waiting = false;
                 self.chat_model_open = false;
                 self.remember_chat(&chat, true);
@@ -2334,6 +2397,7 @@ impl ChatSurface {
                 }
                 self.status =
                     Some("This chat will use the selected model on its next turn.".into());
+                self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
                 self.waiting = false;
@@ -2424,6 +2488,7 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
+                self.sent_message = None;
                 self.attempt = Some(accepted.attempt_id);
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
                 self.messages_dirty = true;
@@ -2449,6 +2514,10 @@ impl ChatSurface {
                         self.status = Some(match notice {
                             koru_ai_core::AttemptNotice::FreshStart => {
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiAgentStartedFresh)
+                                    .to_owned()
+                            }
+                            koru_ai_core::AttemptNotice::ImagesAsFiles => {
+                                koru_i18n::t(self.lang, koru_i18n::Key::AiAgentImagesAsFiles)
                                     .to_owned()
                             }
                         });
@@ -2720,6 +2789,7 @@ impl ChatSurface {
                 });
             }
             Update::DocumentTitles(titles) => {
+                self.titles_in_flight = false;
                 // Another command may still be streaming; keep polling for it.
                 self.waiting = self.attempt.is_some();
                 let mut changed = false;
@@ -2739,6 +2809,14 @@ impl ChatSurface {
                 self.waiting = false;
                 self.destination_open = None;
                 self.status = Some(format!("Stored “{title}” in Koru."));
+            }
+            Update::SendFailed(failure) => {
+                tracing::warn!(
+                    target: "koru_ai::ui",
+                    code = failure.code,
+                    "AI UI send was not accepted; the message is back in the composer"
+                );
+                self.give_back_sent(Some(&failure));
             }
             Update::Failure(message) => {
                 tracing::warn!(
@@ -3070,7 +3148,7 @@ impl ChatSurface {
         }
         let message = self.composer.message();
         let typed = message.markdown;
-        if typed.trim().is_empty() && self.pending_quotes.is_empty() {
+        if typed.trim().is_empty() && self.pending_quotes.is_empty() && !self.has_strip() {
             return false;
         }
         let Some(chat_id) = self.transcript.as_ref().map(|t| t.chat.id) else {
@@ -3085,9 +3163,14 @@ impl ChatSurface {
             return self.send_command(Command::Usage(chat_id));
         }
         let markdown = compose_markdown(&self.pending_quotes, &typed);
-        if markdown.is_empty() {
+        if markdown.is_empty() && !self.has_strip() {
             return false;
         }
+        // Not while an attachment is still being stored, or could not be.
+        let Some(sent_attachments) = self.take_attachments_for_send(chat_id) else {
+            return true;
+        };
+        let attachment_ids = sent_attachments.iter().map(|draft| draft.id).collect();
         // A chat still called *New chat* takes its name from this, its
         // first message (the CTO's note): the way ChatGPT names a chat,
         // without a model call — the first line, cut at a word.
@@ -3111,7 +3194,7 @@ impl ChatSurface {
             .collect();
         let (explicit_refs, overflowed) = self.turn_refs(&chips);
         self.pending_user = Some(markdown.clone());
-        self.pending_quotes.clear();
+        let quotes = std::mem::take(&mut self.pending_quotes);
         self.staged_chat = None;
         self.comment_editor = None;
         self.pill_strip.clear_tooltip();
@@ -3130,9 +3213,18 @@ impl ChatSurface {
         self.scroll_to_pending_question = true;
         self.pending_question_anchor = None;
         self.draft.clear();
-        self.composer.clear();
+        // Set aside whole rather than cleared: a send that does not go puts
+        // the message back as it was, chips and undo included.
+        self.sent_message = Some(SentMessage {
+            chat: chat_id,
+            composer: self.composer.stash(),
+            quotes,
+            attachments: sent_attachments,
+        });
         self.forget_input_walk();
-        self.sent_inputs.push((chat_id, markdown.clone()));
+        if !markdown.is_empty() {
+            self.sent_inputs.push((chat_id, markdown.clone()));
+        }
         self.messages_dirty = true;
         let request = SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -3149,6 +3241,7 @@ impl ChatSurface {
                 .then(|| self.system_prompt.value())
                 .filter(|prompt| !prompt.trim().is_empty()),
             replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
+            attachment_ids,
         };
         let sent = if self.mode == SurfaceMode::ContextPane && self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
@@ -3156,16 +3249,54 @@ impl ChatSurface {
             self.waiting = true;
             true
         } else {
-            self.send_command(Command::Send(request))
+            self.queue_command(Command::Send(request))
         };
-        if sent && let Some(title) = auto_title {
+        if !sent {
+            // The queue would not take it: the message comes back.
+            self.give_back_sent(None);
+            return true;
+        }
+        if let Some(title) = auto_title {
             self.send_command(Command::Rename(chat_id, RenameChatRequest { title }));
         }
         // After the send, which clears the status line on success.
         if overflowed {
             self.too_many_documents();
         }
-        sent
+        true
+    }
+
+    /// The send did not go: the message comes back to the composer as it
+    /// was — text, chips, quotes and attachments, the one the service named
+    /// red — and the reason is said. Something typed since is kept rather
+    /// than overwritten.
+    fn give_back_sent(&mut self, failure: Option<&koru_ai_wire::Failure>) {
+        self.waiting = false;
+        self.attempt = None;
+        self.pending_assistant_message_id = None;
+        self.pending_user = None;
+        self.pending_user_tiles.clear();
+        self.pulse = None;
+        self.messages_dirty = true;
+        if let Some(failure) = failure {
+            self.status = Some(if Self::refused_for_attachment(failure) {
+                attachments::failure_line(failure, self.lang).0
+            } else {
+                failure.message.clone()
+            });
+        }
+        let Some(sent) = self.sent_message.take() else {
+            return;
+        };
+        if self.current_chat_id() == Some(sent.chat) {
+            if self.composer.is_blank() {
+                self.composer.unstash(sent.composer);
+            }
+            if self.pending_quotes.is_empty() {
+                self.pending_quotes = sent.quotes;
+            }
+        }
+        self.restore_drafts(sent.chat, sent.attachments, failure);
     }
 
     /// The documents a turn carries, as `explicit_refs`.
@@ -3249,8 +3380,12 @@ impl ChatSurface {
         let Some(reader) = &self.reader else {
             return;
         };
+        if self.titles_in_flight {
+            return;
+        }
         if reader.send(Command::DocumentTitles(wanted.clone())).is_ok() {
             self.waiting = true;
+            self.titles_in_flight = true;
             self.titles_requested.extend(wanted);
         }
     }
@@ -3705,7 +3840,8 @@ impl ChatSurface {
                 COMPOSER_MAX_LINES,
             )
             .ceil();
-        let height = COMPOSER_PAD_TOP
+        let height = self.strip_band()
+            + COMPOSER_PAD_TOP
             + text_h
             + COMPOSER_TEXT_GAP
             + COMPOSER_TOOLBAR_H
@@ -3752,11 +3888,13 @@ impl ChatSurface {
     /// toolbar row. The editor insets its words by the same padding
     /// ([`composer`]).
     fn composer_text_rect(&self) -> Rect {
+        // Below the strip of attachments, when the message has any.
+        let band = self.strip_band();
         Rect::new(
             self.composer_hit_rect.x,
-            self.composer_hit_rect.y,
+            self.composer_hit_rect.y + band,
             self.composer_hit_rect.w,
-            (self.composer_hit_rect.h - COMPOSER_TOOLBAR_H - COMPOSER_PAD_BOTTOM).max(1.0),
+            (self.composer_hit_rect.h - band - COMPOSER_TOOLBAR_H - COMPOSER_PAD_BOTTOM).max(1.0),
         )
     }
 
@@ -4798,6 +4936,7 @@ impl ChatSurface {
                 &scene::rrect(composer.x, composer.y, composer.w, composer.h, 8.0),
             );
         }
+        self.draw_strip(canvas, root, composer);
         {
             let text = self.composer_text_rect();
             let _text = koru_draw::inspect::scope(
@@ -4834,7 +4973,8 @@ impl ChatSurface {
             let send = self.send_button();
             let send_enabled = self.attempt.is_some()
                 || !self.composer.is_blank()
-                || !self.pending_quotes.is_empty();
+                || !self.pending_quotes.is_empty()
+                || self.has_strip();
             draw_composer_action(
                 canvas,
                 root,
@@ -5201,6 +5341,12 @@ impl ChatSurface {
                             .rev()
                             .find(|event| event.message_id == Some(message.id))
                             .map(|event| event.value),
+                        attachments: transcript
+                            .attachments
+                            .iter()
+                            .filter(|attachment| attachment.message_id == Some(message.id))
+                            .map(attachments::Tile::of)
+                            .collect(),
                     });
                 }
             }
@@ -5302,6 +5448,7 @@ impl ChatSurface {
                 markdown,
                 blocks: Vec::new(),
                 rating: None,
+                attachments: Vec::new(),
             });
         }
         if let Some(markdown) = &self.pending_user {
@@ -5329,6 +5476,7 @@ impl ChatSurface {
                 sources: None,
                 blocks: Vec::new(),
                 rating: None,
+                attachments: self.pending_user_tiles.clone(),
             });
             let assistant_width = message_wrap_width(ChatRole::Assistant, width);
             let usage_text = (!self.draft.is_empty())
@@ -5369,6 +5517,7 @@ impl ChatSurface {
                 ),
                 blocks: Vec::new(),
                 rating: None,
+                attachments: Vec::new(),
             });
         }
         self.message_layouts = messages;
@@ -5568,6 +5717,7 @@ impl ChatSurface {
         canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
         let p = theme::p();
         let now = Instant::now();
+        let mut card_tiles: Vec<(Rect, attachments::Tile)> = Vec::new();
         for (message_index, message) in self.message_layouts.iter().enumerate() {
             let h = message_height(message);
             let y = area.y - self.conversation_scroll + message.top;
@@ -5580,6 +5730,22 @@ impl ChatSurface {
                         p.row_selected,
                         &scene::rrect(card.x, card.y, card.w, card.h, 8.0),
                     );
+                    // Its pictures under its words, drawn once the cards are.
+                    if !message.attachments.is_empty() {
+                        let top = if message.display.trim().is_empty() {
+                            card.y + PAD
+                        } else {
+                            card.y + PAD + message.layout.height() + attachments::TILE_GAP
+                        };
+                        let (rects, _) =
+                            attachments::card_tiles(&message.attachments, message.wrap_width);
+                        for (rect, tile) in rects.iter().zip(&message.attachments) {
+                            card_tiles.push((
+                                Rect::new(card.x + PAD + rect.x, top + rect.y, rect.w, rect.h),
+                                tile.clone(),
+                            ));
+                        }
+                    }
                 }
                 if message.blocks.is_empty() {
                     if message.state == MessageState::Pending && message.display.is_empty() {
@@ -5941,7 +6107,10 @@ impl ChatSurface {
                 }
             }
         }
+        card_tiles.retain(|(rect, _)| rect.y + rect.h >= area.y && rect.y <= area.y + area.h);
+        self.draw_card_tiles(canvas, root, &card_tiles);
         canvas.pop_layer();
+        self.request_thumbnails(&card_tiles);
         if let Some(scrollbar) = self.conversation_scrollbar() {
             let active = self.conversation_scroll_drag.is_some()
                 || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
@@ -7357,6 +7526,16 @@ fn message_wrap_width(role: ChatRole, width: f32) -> f32 {
 }
 
 fn message_content_width(message: &MessageLayout) -> f32 {
+    if !message.attachments.is_empty() {
+        let (rects, _) = attachments::card_tiles(&message.attachments, message.wrap_width);
+        let tiles = rects.iter().map(|rect| rect.x + rect.w).fold(0.0, f32::max);
+        let text = if message.display.trim().is_empty() {
+            0.0
+        } else {
+            message.layout.width()
+        };
+        return tiles.max(text);
+    }
     if message.blocks.is_empty() {
         message.layout.width()
     } else {
@@ -7924,6 +8103,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
         }
     }
 

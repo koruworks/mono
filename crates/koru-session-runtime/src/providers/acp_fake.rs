@@ -275,10 +275,16 @@ pub(super) fn late_update() -> Value {
 /// Exercise exactly the production JSONL framing without a socket or disk.
 fn roundtrip(value: &Value) -> Result<Value, ProviderFailure> {
     let mut bytes = Vec::new();
-    write_json_line(&mut bytes, value, super::DEFAULT_PROVIDER_FRAME_BYTES)?;
+    // Koru's prompt frames are bounded by the outbound limit; the fake is
+    // the agent reading them, so it reads at that bound too.
+    write_json_line(
+        &mut bytes,
+        value,
+        super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
+    )?;
     JsonLineReader::new(
         std::io::Cursor::new(bytes),
-        super::DEFAULT_PROVIDER_FRAME_BYTES,
+        super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
     )?
     .next_frame()?
     .map(|frame| frame.into_value())

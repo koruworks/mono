@@ -275,6 +275,7 @@ mod tests {
             messages: vec![AiRequestMessage {
                 role: ChatRole::User,
                 markdown: "What changed today?".into(),
+                attachments: Vec::new(),
             }],
             context: Vec::new(),
             tools: vec![AiToolDefinition {

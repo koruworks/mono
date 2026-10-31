@@ -153,6 +153,9 @@ pub(crate) enum Update {
     /// The titles `Command::DocumentTitles` could find. A document the Store
     /// cannot place is simply absent: its link keeps the fallback word.
     DocumentTitles(Vec<(koru_ai_core::DocumentId, String)>),
+    /// A send that did not go, for any reason: the surface gives the
+    /// message back whole — text, chips, quotes and attachments.
+    SendFailed(koru_ai_wire::Failure),
     Failure(String),
 }
 
@@ -247,7 +250,7 @@ impl Reader {
     }
 }
 
-fn connect_client(root: Option<&Path>) -> Result<koru_api_client::Client, String> {
+pub(crate) fn connect_client(root: Option<&Path>) -> Result<koru_api_client::Client, String> {
     match root {
         Some(root) => koru_api_client::Client::open_at_with_scopes(
             koru_channel::segment(),
@@ -477,8 +480,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
                 Ok(stream) => stream_attempt(client.clone(), request.chat_id, stream, &updates),
+                // The surface gives the message back (chat-attachments §10).
                 Err(failure) => {
-                    let _ = updates.send(Update::Failure(failure.message));
+                    let _ = updates.send(Update::SendFailed(failure));
                 }
             },
             Command::Cancel(attempt) => {

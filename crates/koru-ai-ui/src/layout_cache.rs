@@ -9,6 +9,7 @@ use parley::Layout;
 
 use super::{
     ImageSpec,
+    attachments::Tile,
     sources::{self, SourcesLayout},
 };
 
@@ -29,6 +30,9 @@ pub(crate) struct MessageLayout {
     pub sources: Option<SourcesLayout>,
     pub blocks: Vec<BlockLayout>,
     pub rating: Option<FeedbackValue>,
+    /// The pictures and files sent with a message the person wrote, drawn
+    /// as tiles under its text at sizes known before any thumbnail loads.
+    pub attachments: Vec<Tile>,
 }
 
 pub(crate) struct BlockLayout {
@@ -74,6 +78,7 @@ pub(crate) struct MessageInput {
     pub sources: Vec<SourceLink>,
     pub blocks: Vec<(MessageBlockId, String)>,
     pub rating: Option<FeedbackValue>,
+    pub attachments: Vec<Tile>,
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
@@ -151,6 +156,7 @@ pub(crate) fn reconcile(
             sources,
             blocks,
             rating: input.rating,
+            attachments: input.attachments,
         });
     }
     (output, stats)
@@ -202,6 +208,7 @@ fn reusable(message: &MessageLayout, input: &MessageInput) -> bool {
             .unwrap_or_default()
             == input.sources
         && message.rating == input.rating
+        && message.attachments == input.attachments
         && message.blocks.len() == input.blocks.len()
         && message
             .blocks

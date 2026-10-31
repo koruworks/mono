@@ -1165,11 +1165,23 @@
         "type": "integer"
       },
       "AttemptNotice": {
-        "description": "A fact about the attempt the surface shows as one line and nothing\nstores: the agent could not be reattached and a replacement was started\nwith the conversation so far.",
-        "enum": [
-          "fresh_start"
-        ],
-        "type": "string"
+        "description": "A fact about the attempt the surface shows as one line and nothing\nstores.",
+        "oneOf": [
+          {
+            "description": "The agent could not be reattached and a replacement was started with\nthe conversation so far.",
+            "enum": [
+              "fresh_start"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The agent takes no pictures: it was told where the files are instead\n(chat-attachments D4).",
+            "enum": [
+              "images_as_files"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "AttemptResponse": {
         "properties": {
@@ -2462,6 +2474,150 @@
         ],
         "type": "object"
       },
+      "ChatAttachment": {
+        "description": "The public metadata of one stored attachment. Never a path.",
+        "properties": {
+          "byte_count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "dimensions": {
+            "description": "Width and height, for a picture.",
+            "items": [
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "nullable": true,
+            "type": "array"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ChatAttachmentId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatAttachmentKind"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The user message it was sent with; `None` while it is staged."
+          },
+          "ordinal": {
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceFileOrigin"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChatAttachmentSource"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "file_name",
+          "media_type",
+          "byte_count",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ChatAttachmentId": {
+        "description": "ChatAttachmentId — a client-minted UUID v4, never derived from content or location.",
+        "format": "uuid",
+        "type": "string"
+      },
+      "ChatAttachmentKind": {
+        "oneOf": [
+          {
+            "description": "A picture with a thumbnail and known dimensions.",
+            "enum": [
+              "image"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Anything else, including a picture too large to preview.",
+            "enum": [
+              "file"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "ChatAttachmentResponse": {
+        "description": "One attachment stored, or found already stored under the same id with\nthe same content.",
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/ChatAttachment"
+          }
+        },
+        "required": [
+          "attachment"
+        ],
+        "type": "object"
+      },
+      "ChatAttachmentSource": {
+        "oneOf": [
+          {
+            "enum": [
+              "clipboard",
+              "drop",
+              "file_picker"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Linked with `@` from a workspace the chat may use, and copied.",
+            "enum": [
+              "workspace"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "ChatId": {
         "description": "ChatId — a client-minted UUID v4, never derived from content or location.",
         "format": "uuid",
@@ -2608,6 +2764,14 @@
       },
       "ChatTranscript": {
         "properties": {
+          "attachments": {
+            "default": [],
+            "description": "Every attachment of the chat: those sent with a message, in message\nand ordinal order, then the staged ones not yet sent.",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachment"
+            },
+            "type": "array"
+          },
           "blocks": {
             "items": {
               "$ref": "#/components/schemas/MessageBlock"
@@ -9140,6 +9304,18 @@
         ],
         "type": "object"
       },
+      "RemoveAttachmentResponse": {
+        "properties": {
+          "removed": {
+            "description": "Whether a staged attachment existed and was removed.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "type": "object"
+      },
       "RenameChatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -11515,6 +11691,13 @@
       "SendTurnRequest": {
         "additionalProperties": false,
         "properties": {
+          "attachment_ids": {
+            "description": "Attachments already stored for this chat and not yet sent, in the\norder they go with the message. Only an agent chat takes any.",
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachmentId"
+            },
+            "type": "array"
+          },
           "chat_id": {
             "$ref": "#/components/schemas/ChatId"
           },
@@ -15667,6 +15850,22 @@
         ],
         "type": "object"
       },
+      "WorkspaceFileOrigin": {
+        "description": "Where an `@`-linked file was copied from. Provenance, not a live link:\nthe workspace file may since have moved, changed or gone.",
+        "properties": {
+          "document_id": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "document_id"
+        ],
+        "type": "object"
+      },
       "WorkspaceId": {
         "format": "uuid",
         "type": "string"
@@ -16789,6 +16988,582 @@
           }
         ],
         "summary": "Rename an AI chat"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/{attachment}": {
+      "delete": {
+        "description": "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.",
+        "operationId": "ai_remove_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveAttachmentResponse"
+                }
+              }
+            },
+            "description": "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Remove a staged attachment"
+      },
+      "get": {
+        "description": "The original bytes, with the stored media type and the file name as an attachment disposition.",
+        "operationId": "ai_read_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The original bytes, with the stored media type and the file name as an attachment disposition."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Read an attachment's stored original"
+      },
+      "put": {
+        "description": "The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.",
+        "operationId": "ai_put_attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The file's name, percent-encoded. Checked against the content.",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "enum": [
+                "clipboard",
+                "drop",
+                "file_picker"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatAttachmentResponse"
+                }
+              }
+            },
+            "description": "The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Store a picture or file for a local agent chat's next message"
+      }
+    },
+    "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail": {
+      "get": {
+        "description": "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.",
+        "operationId": "ai_read_attachment_thumbnail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment, or the stored file, is not there"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment is larger than the limit"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment's type is not allowed, or its content is not what its name says"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The attachment could not be stored on this computer"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Read a picture attachment's thumbnail"
       }
     },
     "/v1/ai/chats/{chat}/branches": {

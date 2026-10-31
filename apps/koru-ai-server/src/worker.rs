@@ -21,14 +21,14 @@ use koru_ai_core::{
     AiError, AiErrorClass, AiEvent, AiIntent, AiPersistence, AiProviderId, AiRequest,
     AiRequestMessage, AiRequestOptions, AiSearchQuery, AiSettings, AiToolCall, AiToolDefinition,
     AiToolExecutionContext, AiToolExecutor, AiToolLoop, AiToolLoopLimits, AiToolResult, AiUsage,
-    AttemptStatus, BranchCopy, BranchOrigin, Cancellation, Chat, ChatAccessLens, ChatId, ChatRole,
-    ContextCommit, ContextItem, ContextRef, DocumentExport, DocumentExportId, DocumentId,
-    DocumentRelation, ExportStatus, FeedbackEvent, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlockContext, MessageBlockId, MessageBlockRef, MessageDocumentRef, MessageId,
-    MessageState, PendingRetry, PendingTurn, PinnedDocument, ReasoningChoice, ReasoningControl,
-    RecoveryCounts, RequestMeasurements, StoreContextPort, Timestamp, ToolActivity,
-    ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId, ToolMode, UsageSource,
-    WorkspaceId, finalize_markdown,
+    AttachmentRecord, AttemptStatus, BranchCopy, BranchOrigin, Cancellation, Chat, ChatAccessLens,
+    ChatAttachmentId, ChatId, ChatRole, ContextCommit, ContextItem, ContextRef, DocumentExport,
+    DocumentExportId, DocumentId, DocumentRelation, ExportStatus, FeedbackEvent, InferenceAttempt,
+    InferenceAttemptId, Message, MessageBlockContext, MessageBlockId, MessageBlockRef,
+    MessageDocumentRef, MessageId, MessageState, PendingRetry, PendingTurn, PinnedDocument,
+    ReasoningChoice, ReasoningControl, RecoveryCounts, RequestMeasurements, StoreContextPort,
+    Timestamp, ToolActivity, ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId,
+    ToolMode, UsageSource, WorkspaceId, finalize_markdown,
 };
 use koru_ai_provider::{
     CredentialStore, DeterministicMockProvider, KORU_MODEL, ProviderRegistry, ProviderRuntime,
@@ -60,8 +60,11 @@ pub const EXPORT_QUEUE_CAPACITY: usize = 8;
 pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
+mod attachments;
 
+use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
 use agents::{AttemptWork, Clearing, ClosingChat, agent_validation};
+use attachments::{BranchPlan, StageAnswer};
 use koru_ai_core::AgentToolKind;
 use koru_ai_provider_agent::{AgentSessions, EndOutcome, is_agent_provider};
 
@@ -259,6 +262,7 @@ impl AiWorker {
 
     pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
+        let attachments = AttachmentStore::new(&self.config.root);
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -299,6 +303,7 @@ impl AiWorker {
                 set_status(&status, WorkerStatus::Ready(info));
                 Ok(WorkerHandle {
                     sender,
+                    attachments,
                     shutdown,
                     status,
                     join: Some(join),
@@ -327,6 +332,7 @@ impl AiWorker {
 #[derive(Debug)]
 pub struct WorkerHandle {
     sender: SyncSender<Envelope>,
+    attachments: AttachmentStore,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<WorkerStatus>>,
     join: Option<JoinHandle<WorkerExit>>,
@@ -336,6 +342,7 @@ impl WorkerHandle {
     pub fn client(&self) -> AiWorkerClient {
         AiWorkerClient {
             sender: self.sender.clone(),
+            attachments: self.attachments.clone(),
         }
     }
 
@@ -388,6 +395,8 @@ impl Drop for WorkerHandle {
 #[derive(Clone)]
 pub struct AiWorkerClient {
     sender: SyncSender<Envelope>,
+    /// Where uploads are prepared and read, on the caller's own thread.
+    attachments: AttachmentStore,
 }
 
 impl AiWorkerClient {
@@ -746,6 +755,7 @@ impl AiServerPort for AiWorkerClient {
         context: RequestContext,
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
+        attachments::check_files_for_send(self, context.clone(), &request)?;
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::SendTurn {
             context,
@@ -860,6 +870,43 @@ impl AiServerPort for AiWorkerClient {
         })?;
         receive_api(response)
     }
+
+    fn put_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        upload: koru_ai_api::AttachmentUpload,
+    ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
+        attachments::put_attachment(self, context, chat, attachment, upload)
+    }
+
+    fn remove_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<koru_ai_wire::RemoveAttachmentResponse> {
+        attachments::remove_attachment(self, context, chat, attachment)
+    }
+
+    fn read_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<koru_ai_api::AttachmentContent> {
+        attachments::read_attachment(self, context, chat, attachment)
+    }
+
+    fn read_attachment_thumbnail(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> ApiResult<Vec<u8>> {
+        attachments::read_thumbnail(self, context, chat, attachment)
+    }
 }
 
 enum Envelope {
@@ -876,6 +923,14 @@ enum Envelope {
     ChatSessionsEnded {
         chat: ChatId,
         outcome: EndOutcome,
+    },
+    /// The cleanup thread linked (or could not link) a branch's attachment
+    /// folders; the branch is committed or dropped on this.
+    BranchLinked {
+        context: RequestContext,
+        copy: Box<BranchCopy>,
+        linked: bool,
+        reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
 }
 
@@ -1065,6 +1120,29 @@ enum WorkerCommand {
         export: DocumentExportId,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
+    AttachmentAdmission {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
+    },
+    StageAttachment {
+        context: RequestContext,
+        record: Box<AttachmentRecord>,
+        reply: SyncSender<ApiResult<StageAnswer>>,
+    },
+    RemoveStagedAttachment {
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        reply: SyncSender<ApiResult<koru_ai_sqlite::RemovedAttachment>>,
+    },
+    ResolveAttachments {
+        context: RequestContext,
+        chat: ChatId,
+        attachments: Vec<ChatAttachmentId>,
+        reply: SyncSender<ApiResult<Vec<AttachmentRecord>>>,
+    },
     #[cfg(test)]
     Hold {
         entered: SyncSender<()>,
@@ -1114,6 +1192,10 @@ impl WorkerCommand {
             Self::RetryTurn { .. } => "retry_turn",
             Self::ExportChat { .. } => "export_chat",
             Self::ReadExport { .. } => "read_export",
+            Self::AttachmentAdmission { .. } => "attachment_admission",
+            Self::StageAttachment { .. } => "stage_attachment",
+            Self::RemoveStagedAttachment { .. } => "remove_staged_attachment",
+            Self::ResolveAttachments { .. } => "resolve_attachments",
             #[cfg(test)]
             Self::Hold { .. } => "hold",
             #[cfg(test)]
@@ -1162,6 +1244,12 @@ struct WorkerState {
     /// Each Ollama model's reasoning control, as its last inspection told
     /// it; a model not inspected in this process shows the chip no slider.
     ollama_controls: HashMap<String, ReasoningControl>,
+    /// Where chat attachments live; the dispatcher only computes paths.
+    attachments: AttachmentStore,
+    /// The thread that removes attachment folders and links a branch's.
+    cleanup: Cleanup,
+    /// Branches whose attachment folders are being linked.
+    branching: HashSet<ChatId>,
 }
 
 fn run_worker(
@@ -1196,6 +1284,23 @@ fn run_worker(
     if config.panic_after_open {
         panic!("requested AI worker startup panic");
     }
+    let attachments = AttachmentStore::new(&config.root);
+    let staged_removed = repository
+        .remove_staged_attachments_before(Timestamp::from_millis(
+            Timestamp::now()
+                .millis()
+                .saturating_sub(koru_ai_core::attachments::STAGED_ATTACHMENT_TTL_MS),
+        ))
+        .map_err(|error| error.public_message)?;
+    let known_attachments = repository
+        .attachment_dirs_known()
+        .map_err(|error| error.public_message)?;
+    let cleanup = Cleanup::spawn(attachments.clone())?;
+    cleanup.submit(CleanupJob::Sweep {
+        known: known_attachments,
+        started: std::time::SystemTime::now(),
+        staged_removed,
+    });
 
     let mut registry = config.providers;
     let mut agent_views = Vec::new();
@@ -1323,6 +1428,9 @@ fn run_worker(
         output: provider_output.clone(),
         agent_views,
         ollama_controls: HashMap::new(),
+        attachments,
+        cleanup,
+        branching: HashSet::new(),
     };
     while !shutdown.load(Ordering::Acquire) {
         match receiver.recv_timeout(LOOP_INTERVAL) {
@@ -1351,6 +1459,12 @@ fn run_worker(
             Ok(Envelope::ChatSessionsEnded { chat, outcome }) => {
                 state.on_chat_sessions_ended(chat, outcome)
             }
+            Ok(Envelope::BranchLinked {
+                context,
+                copy,
+                linked,
+                reply,
+            }) => state.on_branch_linked(context, copy, linked, reply),
             Ok(Envelope::PullFinished(id)) => {
                 if state
                     .ollama_pull
@@ -1373,6 +1487,7 @@ fn run_worker(
     state.export_pool.stop();
     state.tool_pool.stop();
     state.provider_pool.stop();
+    state.cleanup.stop();
     tracing::info!("AI worker stopped");
     Ok(())
 }
@@ -1583,9 +1698,7 @@ impl WorkerState {
                 chat,
                 request,
                 reply,
-            } => {
-                let _ = reply.send(self.branch_chat(context, chat, request));
-            }
+            } => self.begin_branch_chat(context, chat, request, reply),
             WorkerCommand::SendTurn {
                 context,
                 request,
@@ -1645,6 +1758,37 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.read_export(context, export));
+            }
+            WorkerCommand::AttachmentAdmission {
+                context,
+                chat,
+                attachment,
+                reply,
+            } => {
+                let _ = reply.send(self.attachment_admission(context, chat, attachment));
+            }
+            WorkerCommand::StageAttachment {
+                context,
+                record,
+                reply,
+            } => {
+                let _ = reply.send(self.stage_attachment(context, *record));
+            }
+            WorkerCommand::RemoveStagedAttachment {
+                context,
+                chat,
+                attachment,
+                reply,
+            } => {
+                let _ = reply.send(self.remove_staged_attachment(context, chat, attachment));
+            }
+            WorkerCommand::ResolveAttachments {
+                context,
+                chat,
+                attachments,
+                reply,
+            } => {
+                let _ = reply.send(self.resolve_attachments(context, chat, &attachments));
             }
             #[cfg(test)]
             WorkerCommand::Hold { entered, release } => {
@@ -2006,6 +2150,10 @@ impl WorkerState {
             usage,
             sources,
             reasoning_control,
+            attachments: self
+                .repository
+                .attachments_for_chat(chat_id)
+                .map_err(ai_failure)?,
         })
     }
 
@@ -2469,7 +2617,7 @@ impl WorkerState {
         context: RequestContext,
         source_chat: ChatId,
         request: BranchChatRequest,
-    ) -> ApiResult<BranchChatResponse> {
+    ) -> ApiResult<BranchPlan> {
         authorize(&context, AiScope::Chat)?;
         if request.title.trim().is_empty() {
             return Err(failure(
@@ -2497,7 +2645,7 @@ impl WorkerState {
             }
             return self
                 .read_chat(context, existing.id)
-                .map(|transcript| BranchChatResponse { transcript });
+                .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }));
         }
         let source = self
             .repository
@@ -2587,18 +2735,22 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         tool_policy.chat_id = chat.id;
-        self.repository
-            .create_branch(&BranchCopy {
-                chat,
-                tool_policy,
-                messages,
-                blocks,
-                citations,
-                pinned_documents,
-            })
-            .map_err(ai_failure)?;
+        let (attachments, links) = self.branch_attachments(source_chat, chat.id, &message_ids)?;
+        let copy = BranchCopy {
+            chat,
+            tool_policy,
+            messages,
+            blocks,
+            citations,
+            pinned_documents,
+            attachments,
+        };
+        if !links.is_empty() {
+            return Ok(BranchPlan::Link(Box::new(copy), links));
+        }
+        self.repository.create_branch(&copy).map_err(ai_failure)?;
         self.read_chat(context, request.branch_chat_id)
-            .map(|transcript| BranchChatResponse { transcript })
+            .map(|transcript| BranchPlan::Done(BranchChatResponse { transcript }))
     }
 
     fn export_chat(
@@ -2752,7 +2904,8 @@ impl WorkerState {
         {
             return replay_stream(&self.repository, existing);
         }
-        if request.markdown.trim().is_empty() {
+        // A message may be attachments only (chat-attachments D3).
+        if request.markdown.trim().is_empty() && request.attachment_ids.is_empty() {
             return Err(failure("invalid_request", "A message is required.", false));
         }
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {
@@ -2796,6 +2949,7 @@ impl WorkerState {
             .chat(request.chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let attachments = self.attachments_for_send(&chat, &request.attachment_ids)?;
         let existing_messages = self
             .repository
             .messages(request.chat_id)
@@ -2851,17 +3005,25 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
+        // Only an agent chat ever has attachments to carry.
+        let mut history_attachments = if is_agent_provider(&chat.current_model.provider) {
+            self.attachment_inputs_by_message(chat.id)?
+        } else {
+            HashMap::new()
+        };
         let mut provider_messages: Vec<AiRequestMessage> = existing_messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
                 markdown: message.markdown.clone(),
+                attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
             markdown: request.markdown,
+            attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {
             id: attempt_id,
@@ -2900,6 +3062,7 @@ impl WorkerState {
                 user_message,
                 assistant_message,
                 attempt: attempt.clone(),
+                attachment_ids: request.attachment_ids,
             })
             .map_err(ai_failure)?;
 
@@ -3050,12 +3213,18 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
+        let mut retried_attachments = if is_agent_provider(&chat.current_model.provider) {
+            self.attachment_inputs_by_message(chat_id)?
+        } else {
+            HashMap::new()
+        };
         let provider_messages: Vec<_> = messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
                 role: message.role,
                 markdown: message.markdown.clone(),
+                attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
         let attempt = InferenceAttempt {
@@ -5279,11 +5448,20 @@ impl ProviderPool {
 
 fn run_provider_job(
     providers: &ProviderRegistry,
-    job: ProviderJob,
+    mut job: ProviderJob,
     output: &SyncSender<Envelope>,
     shutdown: &AtomicBool,
 ) {
     let attempt_id = job.request.attempt_id;
+    // Which copy of a picture goes natively is a look at its folder: done
+    // here, on the provider thread, and never on the dispatcher.
+    for message in &mut job.request.messages {
+        for attachment in &mut message.attachments {
+            if attachment.kind == koru_ai_core::AttachmentKind::Image {
+                attachment.native = Some(crate::attachments::native_copy(&attachment.path));
+            }
+        }
+    }
     let mut diagnostic = ProviderTrace::new(&job);
     let payload_debug = koru_env::switch(koru_env::name::KORU_AI_PAYLOAD_DEBUG);
     let mut debug_response = payload_debug.then(String::new);

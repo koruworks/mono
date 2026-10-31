@@ -189,9 +189,17 @@ impl WorkerState {
     }
 
     pub(super) fn delete_chat_now(&mut self, chat: ChatId) -> ApiResult<DeleteChatResponse> {
-        Ok(DeleteChatResponse {
-            deleted: self.repository.delete_chat(chat).map_err(ai_failure)?,
-        })
+        let deleted = self.repository.delete_chat(chat).map_err(ai_failure)?;
+        // Rows first, folders after the commit; a crash in between leaves
+        // an orphan the next start's sweep removes.
+        self.forget_chat_folders(&[chat]);
+        Ok(DeleteChatResponse { deleted })
+    }
+
+    fn delete_snapshot(&mut self, snapshot: &[ChatId]) -> ApiResult<ClearHistoryResponse> {
+        let chats_deleted = self.repository.delete_chats(snapshot).map_err(ai_failure)?;
+        self.forget_chat_folders(snapshot);
+        Ok(ClearHistoryResponse { chats_deleted })
     }
 
     /// The host reported on one chat's sessions: finish its delete, or count
@@ -269,12 +277,7 @@ impl WorkerState {
             .map(|chat| chat.id)
             .collect();
         let Some(agents) = self.agents.clone().filter(|_| !agent_chats.is_empty()) else {
-            let _ = reply.send(
-                self.repository
-                    .delete_chats(&snapshot)
-                    .map(|chats_deleted| ClearHistoryResponse { chats_deleted })
-                    .map_err(ai_failure),
-            );
+            let _ = reply.send(self.delete_snapshot(&snapshot));
             return;
         };
         let mut pending = HashSet::new();
@@ -334,11 +337,7 @@ impl WorkerState {
                         true,
                     ))
                 }
-                Ok(_) => self
-                    .repository
-                    .delete_chats(&clearing.snapshot)
-                    .map(|chats_deleted| ClearHistoryResponse { chats_deleted })
-                    .map_err(ai_failure),
+                Ok(_) => self.delete_snapshot(&clearing.snapshot),
                 Err(error) => Err(ai_failure(error)),
             }
         };

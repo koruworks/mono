@@ -297,4 +297,43 @@ impl Client {
     ) -> Result<ExportChatResponse> {
         self.server.read_export(context, export)
     }
+
+    pub fn put_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+        upload: koru_ai_api::AttachmentUpload,
+    ) -> Result<koru_ai_wire::ChatAttachmentResponse> {
+        self.server
+            .put_attachment(context, chat, attachment, upload)
+    }
+
+    pub fn remove_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<koru_ai_wire::RemoveAttachmentResponse> {
+        self.server.remove_attachment(context, chat, attachment)
+    }
+
+    pub fn read_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<koru_ai_api::AttachmentContent> {
+        self.server.read_attachment(context, chat, attachment)
+    }
+
+    pub fn read_attachment_thumbnail(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> Result<Vec<u8>> {
+        self.server
+            .read_attachment_thumbnail(context, chat, attachment)
+    }
 }

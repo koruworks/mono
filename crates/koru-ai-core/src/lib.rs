@@ -7,6 +7,7 @@
 //! no HTTP, SQLite, OS credential API, provider SDK, window, or worker host.
 
 pub mod agent;
+pub mod attachments;
 pub mod blocks;
 pub mod chat_tools;
 pub mod conversion;
@@ -17,12 +18,16 @@ pub mod ports;
 pub mod provider;
 
 pub use agent::*;
+pub use attachments::{
+    AttachmentInput, AttachmentKind, AttachmentRecord, AttachmentSource, ChatAttachment,
+    WorkspaceFileOrigin,
+};
 pub use blocks::finalize_markdown;
 pub use chat_tools::*;
 pub use conversion::{ConvertedChat, ConvertedMessage};
 pub use ids::{
-    ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId, MessageBlockId, MessageId,
-    ToolInvocationId,
+    ChatAttachmentId, ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId,
+    MessageBlockId, MessageId, ToolInvocationId,
 };
 pub use inference::{
     AiError, AiErrorClass, AiEvent, AiRequest, AiRequestMessage, AiRequestOptions, AiToolCall,

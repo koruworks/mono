@@ -40,6 +40,11 @@ pub struct AiRequest {
 pub struct AiRequestMessage {
     pub role: ChatRole,
     pub markdown: String,
+    /// The pictures and files sent with this message, in order. Only the
+    /// local agent provider reads them; every other provider is refused
+    /// attachments before a request is built.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::AttachmentInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

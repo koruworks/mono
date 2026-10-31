@@ -25,6 +25,10 @@ use uuid::Uuid;
 
 use crate::db::{self, OpenError};
 
+mod attachments;
+
+pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
+
 pub struct Repository {
     connection: Connection,
 }
@@ -919,6 +923,13 @@ impl AiPersistence for Repository {
         insert_message(&transaction, &turn.user_message)?;
         insert_message(&transaction, &turn.assistant_message)?;
         insert_attempt(&transaction, &turn.attempt)?;
+        attachments::bind_attachments(
+            &transaction,
+            turn.user_message.chat_id,
+            turn.user_message.id,
+            &turn.attachment_ids,
+            turn.user_message.created_at,
+        )?;
         transaction
             .execute(
                 "UPDATE chats
@@ -992,6 +1003,15 @@ impl AiPersistence for Repository {
                 .pinned_documents
                 .iter()
                 .any(|pin| pin.chat_id != branch.chat.id)
+            || branch.attachments.iter().any(|record| {
+                record.chat_id != branch.chat.id
+                    || !record.attachment.message_id.is_some_and(|message| {
+                        branch
+                            .messages
+                            .iter()
+                            .any(|candidate| candidate.id == message)
+                    })
+            })
         {
             return Err(invariant_failed());
         }
@@ -1055,6 +1075,9 @@ impl AiPersistence for Repository {
                     ],
                 )
                 .map_err(storage_failed)?;
+        }
+        for record in &branch.attachments {
+            attachments::insert_attachment(&transaction, record, Some(branch.chat.created_at))?;
         }
         transaction.commit().map_err(storage_failed)?;
         Ok(())

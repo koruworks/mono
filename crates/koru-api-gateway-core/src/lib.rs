@@ -507,6 +507,30 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Phase 1 ships desktop history management before a mobile chat host",
     },
     MobileUnavailableOperation {
+        id: "ai.put_attachment",
+        client: "client.ai().put_attachment",
+        http: "PUT /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.remove_attachment",
+        client: "client.ai().remove_attachment",
+        http: "DELETE /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.read_attachment",
+        client: "client.ai().attachment_bytes",
+        http: "GET /v1/ai/chats/{chat}/attachments/{attachment}",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
+        id: "ai.read_attachment_thumbnail",
+        client: "client.ai().attachment_thumbnail",
+        http: "GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail",
+        reason: "Attachments go to local agents, which run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
         id: "ai.usage",
         client: "client.ai().usage",
         http: "GET /v1/ai/usage",

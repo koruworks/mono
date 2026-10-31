@@ -151,7 +151,8 @@ impl AcpControl {
                 &self.config.route.arguments,
                 &environment,
                 &self.config.working_directory,
-                self.config.maximum_frame_bytes,
+                self.config.maximum_inbound_frame_bytes,
+                self.config.maximum_prompt_frame_bytes,
                 self.config.wake.clone(),
             );
             let mut transport = match spawned {

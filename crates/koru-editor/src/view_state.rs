@@ -898,6 +898,11 @@ pub struct ViewState {
     /// the only side with disk and an image-capable clipboard: it decodes the
     /// bytes, stores them in the blob tree, and calls `paste_images` on the view.
     pub wants_paste_image: Option<(NodeId, Vec<NodeId>)>,
+    /// A paste under the composer policy found no text: the host may offer
+    /// the clipboard's picture or files as attachments (chat-attachments D9).
+    /// Never set in a document, whose pictures go through
+    /// [`Self::wants_paste_image`]. Cleared by the host.
+    pub wants_paste_attachment: bool,
     /// Text pasted from **outside** that may carry images (a Word document with
     /// inline pictures). Holds the insertion anchor, selection roots, **and the
     /// text itself**: the editor defers the whole paste to the shell (so it
@@ -1173,6 +1178,7 @@ impl Default for ViewState {
             wants_remove_from_tasks: None,
             wants_copy_image: None,
             wants_paste_image: None,
+            wants_paste_attachment: false,
             wants_paste_rich: None,
             wants_copy_html: None,
             last_image_pastes: Vec::new(),

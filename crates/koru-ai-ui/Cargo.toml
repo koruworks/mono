@@ -26,6 +26,7 @@ koru-ai-wire = { path = "../koru-ai-wire" }
 # (AGENTUX I5). It names no host, so this is not a cycle.
 koru-chats-ui = { path = "../koru-chats-ui" }
 koru-api-client = { path = "../koru-api-client" }
+koru-clipboard = { path = "../koru-clipboard" }
 koru-channel = { path = "../koru-channel" }
 koru-link = { path = "../koru-link" }
 koru-i18n = { path = "../koru-i18n" }
@@ -46,6 +47,7 @@ koru-editor = { path = "../koru-editor" }
 koru-search-ui = { path = "../koru-search-ui" }
 koru-export-markdown = { path = "../koru-export-markdown" }
 parley.workspace = true
+bytes.workspace = true
 image = "0.25"
 reqwest.workspace = true
 serde_json.workspace = true

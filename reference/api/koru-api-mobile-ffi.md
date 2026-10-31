@@ -82,6 +82,10 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.deny_tool_call` | `client.ai().deny_tool_call` | POST /v1/ai/tool-calls/{tool}/deny | Workspace-tool approval is not yet exposed by a mobile chat host |
 | `ai.delete_chat` | `client.ai().delete_chat` | DELETE /v1/ai/chats/{chat} | Phase 1 ships desktop history management before a mobile chat host |
 | `ai.clear_history` | `client.ai().clear_history` | DELETE /v1/ai/chats | Phase 1 ships desktop history management before a mobile chat host |
+| `ai.put_attachment` | `client.ai().put_attachment` | PUT /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.remove_attachment` | `client.ai().remove_attachment` | DELETE /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.read_attachment` | `client.ai().attachment_bytes` | GET /v1/ai/chats/{chat}/attachments/{attachment} | Attachments go to local agents, which run on the desktop that installed them |
+| `ai.read_attachment_thumbnail` | `client.ai().attachment_thumbnail` | GET /v1/ai/chats/{chat}/attachments/{attachment}/thumbnail | Attachments go to local agents, which run on the desktop that installed them |
 | `ai.usage` | `client.ai().usage` | GET /v1/ai/usage | Private local AI usage is desktop-only in Phase 1 |
 | `ai.chat_usage` | `client.ai().usage(Some(chat))` | GET /v1/ai/chats/{chat}/usage | Private local AI usage is desktop-only in Phase 1 |
 | `ai.clear_usage` | `client.ai().clear_usage` | DELETE /v1/ai/usage | Private local AI usage is desktop-only in Phase 1 |

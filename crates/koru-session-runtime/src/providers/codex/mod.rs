@@ -178,6 +178,7 @@ impl CodexControl {
                 &env,
                 &self.config.working_directory,
                 self.config.maximum_frame_bytes,
+                self.config.maximum_frame_bytes,
                 self.config.wake.clone(),
             )?));
         }

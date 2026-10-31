@@ -86,7 +86,10 @@ pub struct AcpConfig {
     /// Stdio MCP servers the session asks the agent to start (`session/new`
     /// `mcpServers`), beside any delegated endpoint.
     pub(super) mcp_servers: Vec<crate::providers::McpServerLaunch>,
-    pub(super) maximum_frame_bytes: usize,
+    /// The bound on a frame read from the agent.
+    pub(super) maximum_inbound_frame_bytes: usize,
+    /// The bound on a frame written to it: a prompt carries its pictures.
+    pub(super) maximum_prompt_frame_bytes: usize,
     pub(super) maximum_input_bytes: usize,
     pub(super) event_capacity: usize,
     pub(super) request_timeout: Duration,
@@ -131,7 +134,8 @@ impl AcpConfig {
             delegation: None,
             selection: None,
             mcp_servers: Vec::new(),
-            maximum_frame_bytes: super::super::DEFAULT_PROVIDER_FRAME_BYTES,
+            maximum_inbound_frame_bytes: super::super::DEFAULT_PROVIDER_FRAME_BYTES,
+            maximum_prompt_frame_bytes: super::super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
             maximum_input_bytes: 1024 * 1024,
             event_capacity: 256,
             request_timeout,
@@ -178,7 +182,7 @@ impl AcpConfig {
             .timeout
             .max(self.route.dialect.request_timeout_floor());
         self.shutdown_timeout = limits.timeout;
-        self.maximum_frame_bytes = limits.maximum_output_bytes;
+        self.maximum_inbound_frame_bytes = limits.maximum_output_bytes;
         Ok(self)
     }
 }
