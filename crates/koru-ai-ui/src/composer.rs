@@ -56,10 +56,14 @@ use vello::kurbo::Affine;
 use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState};
 
-/// How far inside its box the composer's text sits — the field padding every
-/// chrome text box uses, so the composer's first line lands where the old
-/// field's did.
-const PAD: f32 = koru_ui::text_field::PAD;
+/// How far inside its box the composer's text sits: the chat's own padding
+/// ([`crate::COMPOSER_PAD_X`], [`crate::COMPOSER_PAD_TOP`]) and, below the
+/// last line, the gap to the toolbar row ([`crate::COMPOSER_TEXT_GAP`]).
+/// **Named here, defined there**, so the box the chat measures and the inset
+/// the editor is placed at cannot disagree.
+const PAD_X: f32 = crate::COMPOSER_PAD_X;
+const PAD_TOP: f32 = crate::COMPOSER_PAD_TOP;
+const PAD_BOTTOM: f32 = crate::COMPOSER_TEXT_GAP;
 
 /// How often an open picker waiting on the store is polled.
 const POLL: Duration = Duration::from_millis(16);
@@ -88,6 +92,14 @@ pub struct ComposedMessage {
     /// was chosen under. A heading chip names its whole document here: until
     /// UC15 a turn sends the whole document.
     pub documents: Vec<(koru_ai_core::DocumentId, String)>,
+}
+
+/// A message set aside by [`ChatComposer::stash`]: its private document and
+/// the editor over it, so it comes back exactly as it was left.
+pub(crate) struct Draft {
+    ws: WorkspaceDoc,
+    root: NodeId,
+    editor: Editor,
 }
 
 /// The composer: a private one-document workspace and the editor over it.
@@ -203,13 +215,62 @@ impl ChatComposer {
         self.editor = editor;
     }
 
-    /// Replace the message with `text`, line breaks becoming paragraphs.
-    #[cfg(test)]
+    /// Replace the message with `text`, line breaks becoming paragraphs, the
+    /// caret after the last character — where a recalled message is edited.
     pub(crate) fn set_text(&mut self, text: &str) {
         self.clear();
         if !text.is_empty() {
             koru_editor::clipboard::insert_lines(&mut self.editor, &mut self.ws, text);
         }
+    }
+
+    /// Set the message being typed aside whole — its chips, its undo — and
+    /// start an empty one: what walking back through earlier messages does,
+    /// so walking forward past the newest can give it back untouched.
+    pub(crate) fn stash(&mut self) -> Draft {
+        let active = self.editor.view.active;
+        let viewport = self.editor.view.viewport;
+        let (ws, root, mut editor) = fresh();
+        editor.view.active = active;
+        editor.set_viewport(viewport.0, viewport.1);
+        Draft {
+            ws: std::mem::replace(&mut self.ws, ws),
+            root: std::mem::replace(&mut self.root, root),
+            editor: std::mem::replace(&mut self.editor, editor),
+        }
+    }
+
+    /// Put a stashed message back, caret where it was left.
+    pub(crate) fn unstash(&mut self, draft: Draft) {
+        let active = self.editor.view.active;
+        let viewport = self.editor.view.viewport;
+        self.ws = draft.ws;
+        self.root = draft.root;
+        self.editor = draft.editor;
+        self.editor.view.active = active;
+        self.editor.set_viewport(viewport.0, viewport.1);
+    }
+
+    /// Whether the caret is on the message's first visual line — where Up
+    /// leaves the text instead of moving inside it.
+    pub(crate) fn caret_on_first_line(&self) -> bool {
+        let body = &self.editor.body;
+        body.focus <= body.first_body_row()
+            && body
+                .rows
+                .get(body.focus)
+                .is_none_or(|row| row.line_index() == 0)
+    }
+
+    /// Whether the caret is on the message's last visual line — where Down
+    /// leaves the text instead of moving inside it.
+    pub(crate) fn caret_on_last_line(&self) -> bool {
+        let body = &self.editor.body;
+        body.focus + 1 >= body.rows.len()
+            && body
+                .rows
+                .get(body.focus)
+                .is_none_or(|row| row.line_index() + 1 >= row.line_count())
     }
 
     /// Shift+Enter and Ctrl+J: a line break, which is a new plain paragraph.
@@ -304,10 +365,10 @@ impl ChatComposer {
     /// `panels` the room its picker may float in.
     pub(crate) fn place(&mut self, text: Rect, panels: Rect) {
         let inner = Rect::new(
-            text.x + PAD,
-            text.y + PAD,
-            (text.w - 2.0 * PAD).max(1.0),
-            (text.h - 2.0 * PAD).max(1.0),
+            text.x + PAD_X,
+            text.y + PAD_TOP,
+            (text.w - 2.0 * PAD_X).max(1.0),
+            (text.h - PAD_TOP - PAD_BOTTOM).max(1.0),
         );
         let origin = (inner.x - side(), inner.y - theme::MARGIN_TOP);
         let viewport = (inner.w + 2.0 * side(), inner.h + 2.0 * theme::MARGIN_TOP);

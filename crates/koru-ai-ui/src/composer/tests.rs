@@ -217,11 +217,14 @@ fn the_picker_floats_above_a_one_line_composer() {
     let mut composer = ChatComposer::new(None);
     let text = Rect::new(20.0, 600.0, 400.0, 38.0);
     let room = Rect::new(0.0, 46.0, 460.0, 592.0);
-    composer.text_height(text.w - 2.0 * PAD, 1, 8);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
     composer.place(text, room);
     typed(&mut composer, "@");
     let panel = composer.picker_rect().expect("the picker is open");
-    assert!(panel.y + panel.h <= text.y + PAD, "{panel:?} over {text:?}");
+    assert!(
+        panel.y + panel.h <= text.y + PAD_TOP,
+        "{panel:?} over {text:?}"
+    );
     assert!(
         panel.y >= room.y && panel.x >= room.x,
         "{panel:?} inside {room:?}"
@@ -266,4 +269,47 @@ fn the_composer_is_set_in_the_apps_face() {
         "the app font, not the document body font"
     );
     assert_eq!(line_height(), crate::chat_line_height());
+}
+
+/// **Up and Down leave the text only from its edge lines**: the chat walks
+/// back through earlier messages from the first line and forward from the
+/// last, and inside a longer message the arrows stay the editor's.
+#[test]
+fn the_caret_knows_when_it_is_on_the_first_or_the_last_line() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.caret_on_first_line() && composer.caret_on_last_line());
+    composer.set_text("one\ntwo\nthree");
+    assert_eq!(composer.text(), "one\ntwo\nthree");
+    assert!(
+        composer.caret_on_last_line(),
+        "a set text leaves the caret at its end"
+    );
+    assert!(!composer.caret_on_first_line());
+    assert!(press(&mut composer, NamedKey::ArrowUp));
+    assert!(!composer.caret_on_first_line() && !composer.caret_on_last_line());
+    assert!(press(&mut composer, NamedKey::ArrowUp));
+    assert!(composer.caret_on_first_line());
+    assert!(!composer.caret_on_last_line());
+}
+
+/// A stashed message comes back whole — chip, text and caret — after the
+/// composer has shown something else.
+#[test]
+fn a_stashed_message_comes_back_with_its_chip() {
+    let mut composer = ChatComposer::new(None);
+    typed(&mut composer, "about ");
+    let document = chip(&mut composer, "Roadmap");
+    let before = composer.text();
+    let draft = composer.stash();
+    assert!(composer.is_blank(), "the stash leaves an empty message");
+    composer.set_text("an earlier message");
+    composer.unstash(draft);
+    assert_eq!(composer.text(), before);
+    assert_eq!(composer.message().documents[0].0, document);
+    typed(&mut composer, "x");
+    assert_eq!(
+        composer.text(),
+        format!("{before}x"),
+        "the caret is where it was"
+    );
 }

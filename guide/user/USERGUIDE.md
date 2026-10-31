@@ -1299,17 +1299,19 @@ change for an explicit decision. **Automatic** allows both reads and changes
 within the selected workspaces. **Auto-approve this session** temporarily
 approves changes for the current chat until this app session ends without
 changing the durable Manual/Automatic policy. The composer footer keeps the
-globe and workspace controls against its left edge and approval plus model
-controls against its right edge. The send action is an arrow inside the
+incognito, globe and workspace controls against its left edge and approval plus
+model controls against its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
-during an active response.
+during an active response. Pressing `Esc` twice does the same as the stop
+control: the first press shows *Press Esc again to stop* above the composer,
+and a second press within about a second and a half stops the response.
 
-The incognito button immediately to the right of the chat title controls
+The incognito button at the left end of the composer footer controls
 **Private chat**. Turn it on to keep agents and connected assistants from
 listing, searching, or reading that conversation.
 You still see it everywhere in Koru, including ordinary search, and the chat's
 own agent can still read the conversation it is answering. An incognito marker
-in the history row and the active title button show that the chat is private.
+in the history row and the lit footer button show that the chat is private.
 New chats are public to tools until you turn this setting on; a branch starts
 with its source chat's current setting and can then be changed independently.
 A pending change offers the same session-only action beside **Approve** and
@@ -1345,7 +1347,11 @@ terminal. Those records include authored chat/document content and provider
 output, but never the provider credential; leave
 the switch off outside a trusted development session.
 
-The composer stays at the bottom. `Enter` sends and `Ctrl+Shift+Enter` (or
+A new chat opens on a short greeting with the composer in the middle; once the
+first message is sent the composer moves to the bottom and stays there. In the
+composer, `Up` on its first line brings back the messages you sent in this chat,
+newest first, and `Down` on its last line walks forward again, back to whatever
+you were typing. `Enter` sends and `Ctrl+Shift+Enter` (or
 `Cmd+Shift+Enter` on macOS) inserts a newline. It grows to eight lines and then
 scrolls inside itself, independently of the conversation. Embedded questions
 include the active document by stable identity only after Koru has received a
@@ -1354,8 +1360,10 @@ than an older snapshot. **Chats** shows the left column's Chats view with this
 chat selected (see *Finding a chat again*) and **New chat** starts another
 thread. Closing the pane stops its background
 polling. The same durable chats open in the standalone `koru-ai-chat`
-application. Double-click the title at the top of either surface to rename the
-chat in place; the new title is saved with the conversation.
+application. Neither surface shows the chat's title above the conversation —
+its tab and the Chats list name it. To rename a chat, send `/rename` followed
+by the new title; it is saved with the conversation and never reaches the
+model.
 
 To collect questions about an answer, select response text, right-click, and
 choose **Add comment**. Type an optional comment and press Enter; a quote pill

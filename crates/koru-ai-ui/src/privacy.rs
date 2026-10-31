@@ -47,7 +47,7 @@ impl ChatSurface {
     }
 
     pub(super) fn tool_access_visible_rows(&self) -> usize {
-        let available = (self.composer_hit_rect.y - self.viewport.y - HEADER_H - 8.0).max(0.0);
+        let available = (self.composer_hit_rect.y - self.chat_top() - 8.0).max(0.0);
         let by_height = ((available - self.tool_access_fixed_height())
             / TOOL_ACCESS_WORKSPACE_ROW_H)
             .floor()

@@ -102,22 +102,57 @@ const HIGHLIGHT_FOR: Duration = Duration::from_secs(2);
 const CONVERSATION_SCROLL_SPEED: f32 = 1.8;
 const CONTENT_MAX_W: f32 = 800.0;
 const USER_MESSAGE_MAX_FRACTION: f32 = 0.70;
-const COMPOSER_TOOLBAR_H: f32 = 32.0;
-/// How far the composer's own controls sit inside its rounded border.
+/// The composer's toolbar row — the private mark, the spaces, the mode, an
+/// agent's folder, the model chip and the send button: one control tall.
+const COMPOSER_TOOLBAR_H: f32 = BUTTON_H;
+/// **The composer's inner padding**, one constant per side, read by the
+/// layout ([`ChatSurface::composer_rect`]), by the editor's placement inside
+/// the box ([`composer`]), and by every control and hit-test that derives
+/// from the box, so none of them can disagree.
 ///
-/// One constant because the send button and the toolbar row are on
-/// opposite sides of the same box: the send button used to derive its
-/// bottom from the viewport, which put it *flush* with the border while
-/// everything beside it was inset, and the button read as falling out.
-const COMPOSER_INSET: f32 = 4.0;
+/// The text sits `COMPOSER_PAD_X` in from the left and right and
+/// `COMPOSER_PAD_TOP` below the top; the toolbar row is inset by the same
+/// `COMPOSER_PAD_X` and sits `COMPOSER_PAD_BOTTOM` above the bottom, with
+/// `COMPOSER_TEXT_GAP` between the last line and the row. It used to be the
+/// chrome field padding, 7 px, which left the words flush with the border.
+const COMPOSER_PAD_X: f32 = 16.0;
+const COMPOSER_PAD_TOP: f32 = 12.0;
+const COMPOSER_TEXT_GAP: f32 = 4.0;
+const COMPOSER_PAD_BOTTOM: f32 = 8.0;
+/// How long a first Escape during a turn waits for the second that stops
+/// it. Past it the hint goes away and the next Escape starts over.
+const STOP_ESCAPE_WINDOW: Duration = Duration::from_millis(1500);
+/// Between an empty chat's greeting and the composer under it.
+const GREETING_GAP: f32 = 20.0;
 /// Where the setup fields start: below four provider cards.
 const SETUP_FIELDS_Y: f32 = 330.0;
 /// The title a chat is made with, until its first message names it.
 const DEFAULT_CHAT_TITLE: &str = "New chat";
-/// The private mark's square at the title's left.
-const PRIVACY_ICON_W: f32 = 28.0;
-/// The rename field's width: a title's worth, not the row's.
-const RENAME_FIELD_W: f32 = 320.0;
+/// The composer command that renames the chat: `/rename A better title`.
+const RENAME_COMMAND: &str = "/rename";
+/// The greetings an empty chat opens on, one picked at random per chat.
+const GREETINGS: [koru_i18n::Key; 20] = [
+    koru_i18n::Key::AiGreeting01,
+    koru_i18n::Key::AiGreeting02,
+    koru_i18n::Key::AiGreeting03,
+    koru_i18n::Key::AiGreeting04,
+    koru_i18n::Key::AiGreeting05,
+    koru_i18n::Key::AiGreeting06,
+    koru_i18n::Key::AiGreeting07,
+    koru_i18n::Key::AiGreeting08,
+    koru_i18n::Key::AiGreeting09,
+    koru_i18n::Key::AiGreeting10,
+    koru_i18n::Key::AiGreeting11,
+    koru_i18n::Key::AiGreeting12,
+    koru_i18n::Key::AiGreeting13,
+    koru_i18n::Key::AiGreeting14,
+    koru_i18n::Key::AiGreeting15,
+    koru_i18n::Key::AiGreeting16,
+    koru_i18n::Key::AiGreeting17,
+    koru_i18n::Key::AiGreeting18,
+    koru_i18n::Key::AiGreeting19,
+    koru_i18n::Key::AiGreeting20,
+];
 /// How long a title made from a first message may be, in characters.
 const AUTO_TITLE_CHARS: usize = 48;
 const TOOL_ACTIVITY_ROW_H: f32 = 34.0;
@@ -176,7 +211,6 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
-    ChatTitle,
     WorkspaceSearch,
     OpenAiKey,
     OpenAiModel,
@@ -347,9 +381,7 @@ pub struct ChatSurface {
     /// A chip or a titled link was clicked: the document the host should open.
     open_document_request: Option<koru_link::KoruLink>,
     conversation_hit_rect: Rect,
-    chat_title: TextInput,
     workspace_search: TextInput,
-    renaming_chat: bool,
     /// Asked for a fresh chat before the service answered the boot (a new
     /// tab, the CTO's note): the boot's snapshot carries the service's
     /// current chat, and a tab that wanted a new one must not take it.
@@ -402,7 +434,6 @@ pub struct ChatSurface {
     chat_model_scroll_drag: Option<f32>,
     tool_access_open: bool,
     tool_mode_open: bool,
-    privacy_button_rect: Rect,
     session_auto_approve_chats: HashSet<ChatId>,
     session_approval_sent: HashSet<ToolInvocationId>,
     openai_models: Vec<String>,
@@ -445,6 +476,23 @@ pub struct ChatSurface {
     highlight: Option<(MessageBlockId, Instant)>,
     confirm: Option<Confirm>,
     destructive_action: Option<DestructiveAction>,
+    /// **The first Escape of a turn**, waiting [`STOP_ESCAPE_WINDOW`] for
+    /// the second that stops it; the hint above the composer shows while it
+    /// waits. A field rather than a clock read so a test can age it.
+    stop_armed_at: Option<Instant>,
+    /// What this surface sent, by chat, so Up can recall a message before
+    /// the transcript that carries it has been read back.
+    sent_inputs: Vec<(ChatId, String)>,
+    /// Where Up and Down stand in [`ChatSurface::input_history`]; `None`
+    /// is the message being typed.
+    history_cursor: Option<usize>,
+    /// The message being typed when Up first left it, whole, for Down to
+    /// give back past the newest.
+    history_draft: Option<composer::Draft>,
+    /// The empty chat's greeting: which of [`GREETINGS`], and the chat it
+    /// was picked for, so it holds still while shown and a new chat gets a
+    /// new one.
+    greeting: Option<(Option<ChatId>, usize)>,
     lang: koru_i18n::Lang,
 }
 
@@ -501,7 +549,6 @@ impl ChatSurface {
     pub fn new_at(mode: SurfaceMode, root: Option<PathBuf>) -> Self {
         let mut engine = TextEngine::new();
         let composer = ChatComposer::new(root.clone());
-        let chat_title = TextInput::new(&mut engine, role::ui());
         let workspace_search = TextInput::new(&mut engine, role::ui());
         let openai_key = TextInput::new(&mut engine, role::row());
         let openai_model = TextInput::new(&mut engine, role::row());
@@ -553,9 +600,7 @@ impl ChatSurface {
             titles_requested: HashSet::new(),
             open_document_request: None,
             conversation_hit_rect: Rect::new(14.0, HEADER_H, 432.0, 500.0),
-            chat_title,
             workspace_search,
-            renaming_chat: false,
             fresh_chat_wanted: false,
             openai_key,
             openai_model,
@@ -600,7 +645,6 @@ impl ChatSurface {
             chat_model_scroll_drag: None,
             tool_access_open: false,
             tool_mode_open: false,
-            privacy_button_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             session_auto_approve_chats: HashSet::new(),
             session_approval_sent: HashSet::new(),
             openai_models: Vec::new(),
@@ -635,6 +679,11 @@ impl ChatSurface {
             highlight: None,
             confirm: None,
             destructive_action: None,
+            stop_armed_at: None,
+            sent_inputs: Vec::new(),
+            history_cursor: None,
+            history_draft: None,
+            greeting: None,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -852,7 +901,6 @@ impl ChatSurface {
     }
 
     pub fn invalidate(&mut self) {
-        let chat_title = self.chat_title.value();
         let workspace_search = self.workspace_search.value();
         let openai_key = self.openai_key.value();
         let openai_model = self.openai_model.value();
@@ -861,7 +909,6 @@ impl ChatSurface {
         let system_prompt = self.system_prompt.value();
         self.engine = TextEngine::new();
         self.composer.invalidate();
-        self.chat_title = TextInput::with_text(&mut self.engine, role::ui(), &chat_title);
         self.workspace_search =
             TextInput::with_text(&mut self.engine, role::ui(), &workspace_search);
         self.openai_key = TextInput::with_text(&mut self.engine, role::row(), &openai_key);
@@ -897,11 +944,16 @@ impl ChatSurface {
                 .checked_add(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now)
         });
+        // The stop hint goes away when its window closes.
+        let stop_hint = self
+            .stop_armed_at
+            .and_then(|at| at.checked_add(STOP_ESCAPE_WINDOW));
         [
             poll,
             highlight,
             image,
             chats_pane,
+            stop_hint,
             self.copy_feedback.maintenance_deadline(),
             self.web_search_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
@@ -924,6 +976,10 @@ impl ChatSurface {
             .is_some_and(|(_, since)| _now.duration_since(since) >= HIGHLIGHT_FOR)
         {
             self.highlight = None;
+            changed = true;
+        }
+        if self.stop_armed_at.is_some() && !self.stop_armed(_now) {
+            self.stop_armed_at = None;
             changed = true;
         }
         changed |= self.maintain_remote_images();
@@ -1022,9 +1078,7 @@ impl ChatSurface {
         if self
             .tool_access_search_rect()
             .is_some_and(|rect| rect.contains(p.0, p.1))
-            || (!self.showing_setup()
-                && ((self.focus == Focus::ChatTitle && self.title_rect().contains(p.0, p.1))
-                    || self.composer_text_rect().contains(p.0, p.1)))
+            || (!self.showing_setup() && self.composer_text_rect().contains(p.0, p.1))
             || (self.showing_setup() && self.setup_text_field_at(p.0, p.1))
             || self
                 .system_prompt_rect()
@@ -1109,16 +1163,6 @@ impl ChatSurface {
             ));
             return self.navigate_questions(matches!(key, Key::Named(NamedKey::ArrowDown)));
         }
-        if self.focus == Focus::ChatTitle {
-            if matches!(key, Key::Named(NamedKey::Escape)) {
-                self.cancel_chat_rename();
-                return true;
-            }
-            if matches!(key, Key::Named(NamedKey::Enter)) {
-                return self.commit_chat_rename();
-            }
-            return self.chat_title.key(&mut self.engine, key, text, mods) == Typed::Handled;
-        }
         if self.focus != Focus::Composer {
             self.focus = Focus::Composer;
         }
@@ -1131,6 +1175,29 @@ impl ChatSurface {
         // once it has closed.
         if self.composer.picker_open() {
             return self.composer.key(key, text, mods);
+        }
+        if matches!(key, Key::Named(NamedKey::Escape))
+            && let Some(attempt) = self.attempt
+        {
+            return self.escape_during_turn(attempt, Instant::now());
+        }
+        // **Up and Down walk the messages this chat was sent**, from the
+        // composer's first and last lines; inside a longer message they move
+        // the caret as they always did. Alt and Shift with them were claimed
+        // above, by question navigation and the response selection.
+        if mods.is_empty()
+            && matches!(key, Key::Named(NamedKey::ArrowUp))
+            && self.composer.caret_on_first_line()
+            && self.recall_input(true)
+        {
+            return true;
+        }
+        if mods.is_empty()
+            && matches!(key, Key::Named(NamedKey::ArrowDown))
+            && self.composer.caret_on_last_line()
+            && self.recall_input(false)
+        {
+            return true;
         }
         if matches!(key, Key::Named(NamedKey::Enter)) {
             // The editor's key map reads Shift+Enter as *split above* and
@@ -1162,6 +1229,116 @@ impl ChatSurface {
             && matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown))
     }
 
+    /// **Escape twice stops the work in progress.** The first arms the stop
+    /// and says so above the composer; a second inside
+    /// [`STOP_ESCAPE_WINDOW`] cancels the attempt exactly as the stop button
+    /// does. One press alone never stops a turn — Escape is also how a
+    /// person leaves whatever they were doing. An open workspace or mode
+    /// popover takes the press first, so Escape closes it, not the turn.
+    fn escape_during_turn(&mut self, attempt: InferenceAttemptId, now: Instant) -> bool {
+        if self.tool_mode_open || self.tool_access_open || self.destination_open.is_some() {
+            self.tool_mode_open = false;
+            self.tool_access_open = false;
+            self.destination_open = None;
+            return true;
+        }
+        if self.stop_armed(now) {
+            self.stop_armed_at = None;
+            return self.send_command(Command::Cancel(attempt));
+        }
+        self.stop_armed_at = Some(now);
+        true
+    }
+
+    /// Whether a first Escape is still waiting for its second at `now`.
+    fn stop_armed(&self, now: Instant) -> bool {
+        self.attempt.is_some()
+            && self
+                .stop_armed_at
+                .is_some_and(|at| now.saturating_duration_since(at) < STOP_ESCAPE_WINDOW)
+    }
+
+    /// The line above the composer: the stop hint while it waits, else the
+    /// status.
+    fn footer_line(&self) -> Option<&str> {
+        if self.stop_armed(Instant::now()) {
+            return Some(koru_i18n::t(
+                self.lang,
+                koru_i18n::Key::AiPressEscAgainToStop,
+            ));
+        }
+        self.status.as_deref()
+    }
+
+    /// What Up walks back through, oldest first: this chat's messages from
+    /// the person, then what this surface sent that the transcript does not
+    /// carry yet. The same message twice in a row is one step.
+    fn input_history(&self) -> Vec<String> {
+        let Some(transcript) = &self.transcript else {
+            return Vec::new();
+        };
+        let mut asked: Vec<(u32, &str)> = transcript
+            .messages
+            .iter()
+            .filter(|message| message.role == ChatRole::User)
+            .map(|message| (message.ordinal, message.markdown.as_str()))
+            .collect();
+        asked.sort_by_key(|(ordinal, _)| *ordinal);
+        let mut entries: Vec<String> = asked
+            .iter()
+            .map(|(_, markdown)| (*markdown).to_owned())
+            .collect();
+        for (chat, sent) in &self.sent_inputs {
+            if *chat == transcript.chat.id && !asked.iter().any(|(_, known)| known == sent) {
+                entries.push(sent.clone());
+            }
+        }
+        entries.retain(|entry| !entry.trim().is_empty());
+        entries.dedup();
+        entries
+    }
+
+    /// Step through [`ChatSurface::input_history`]: `older` is Up. Leaving the
+    /// message being typed sets it aside whole, chips and all, and Down past
+    /// the newest gives it back. `false` when there is nowhere to go, so the
+    /// key falls through to the editor.
+    fn recall_input(&mut self, older: bool) -> bool {
+        let entries = self.input_history();
+        let next = match (self.history_cursor, older) {
+            (None, false) => return false,
+            (None, true) if entries.is_empty() => return false,
+            (None, true) => Some(entries.len() - 1),
+            // At the oldest already: the press is spent, the text stays.
+            (Some(0), true) if !entries.is_empty() => return true,
+            (Some(index), true) => Some(index.saturating_sub(1)),
+            (Some(index), false) => Some(index + 1),
+        }
+        .filter(|index| *index < entries.len());
+        match next {
+            Some(index) => {
+                if self.history_cursor.is_none() {
+                    self.history_draft = Some(self.composer.stash());
+                }
+                self.history_cursor = Some(index);
+                self.composer.set_text(&entries[index]);
+            }
+            None => {
+                self.history_cursor = None;
+                match self.history_draft.take() {
+                    Some(draft) => self.composer.unstash(draft),
+                    None => self.composer.clear(),
+                }
+            }
+        }
+        true
+    }
+
+    /// Forget where Up and Down stood — after a send, or on another chat.
+    fn forget_input_walk(&mut self) {
+        self.history_cursor = None;
+        self.history_draft = None;
+    }
+
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
         if let Some(handled) = self.quote_overlay_mouse_down(x, y) {
@@ -1182,6 +1359,9 @@ impl ChatSurface {
         if self.showing_setup() {
             return self.setup_mouse_down(x, y);
         }
+        // The composer and every control on it are hit where they are now:
+        // centred under an empty chat's greeting, or at the bottom.
+        self.composer_rect();
         // The `@` picker floats over the conversation, so a press on it is the
         // composer's before anything underneath can claim it.
         if self
@@ -1220,14 +1400,6 @@ impl ChatSurface {
             }
             return true;
         }
-        if self.renaming_chat {
-            let field = self.rename_rect();
-            if self.chat_title.click(&mut self.engine, field, x, y) {
-                self.focus = Focus::ChatTitle;
-                return true;
-            }
-            self.commit_chat_rename();
-        }
         if self.destination_open.is_some() {
             if let Some(index) = self.destination_at(x, y) {
                 self.selected_destination = index;
@@ -1237,7 +1409,10 @@ impl ChatSurface {
             self.destination_open = None;
             return true;
         }
-        if !self.renaming_chat && self.privacy_button_rect.contains(x, y) {
+        if self
+            .privacy_button()
+            .is_some_and(|button| button.contains(x, y))
+        {
             self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
@@ -1295,9 +1470,10 @@ impl ChatSurface {
             };
             return true;
         }
-        if self
-            .folder_button()
-            .is_some_and(|button| button.contains(x, y))
+        if self.folder_editable()
+            && self
+                .folder_button()
+                .is_some_and(|button| button.contains(x, y))
         {
             self.history_open = false;
             self.chat_model_open = false;
@@ -1485,7 +1661,6 @@ impl ChatSurface {
             return true;
         }
         self.response_selection = None;
-        self.composer_rect();
         if self.composer.contains(x, y) {
             self.focus = Focus::Composer;
             self.composer.set_focused(true);
@@ -1666,10 +1841,7 @@ impl ChatSurface {
         } else {
             self.tool_group_at(x, y)
         };
-        let dragged = if self.focus == Focus::ChatTitle {
-            let field = self.rename_rect();
-            self.chat_title.drag(&mut self.engine, field, x)
-        } else if self.focus == Focus::WorkspaceSearch {
+        let dragged = if self.focus == Focus::WorkspaceSearch {
             self.tool_access_search_rect()
                 .is_some_and(|rect| self.workspace_search.drag(&mut self.engine, rect, x))
         } else if self.showing_setup() {
@@ -1700,7 +1872,6 @@ impl ChatSurface {
             return true;
         }
         self.composer.mouse_up();
-        self.chat_title.release();
         self.workspace_search.release();
         self.openai_key.release();
         self.openai_model.release();
@@ -1750,18 +1921,7 @@ impl ChatSurface {
             });
             return true;
         }
-        if self.showing_setup()
-            || self.transcript.is_none()
-            || self.privacy_button_rect.contains(x, y)
-            || !self.title_rect().contains(x, y)
-        {
-            return false;
-        }
-        if self.renaming_chat {
-            let field = self.rename_rect();
-            return self.chat_title.double_click(&mut self.engine, field, x, y);
-        }
-        self.start_chat_rename()
+        false
     }
 
     pub fn scroll_by(&mut self, delta: MouseScrollDelta) -> bool {
@@ -2061,6 +2221,7 @@ impl ChatSurface {
             }
             Update::Created(transcript) => {
                 self.fresh_chat_wanted = false;
+                self.forget_input_walk();
                 self.retain_staged_quotes_for(transcript.chat.id);
                 self.waiting = false;
                 self.attempt = None;
@@ -2108,6 +2269,7 @@ impl ChatSurface {
                 self.remember_chat(&transcript.chat, false);
                 if changed_chat {
                     self.expanded_tool_activity = pending_tool_activity(&transcript);
+                    self.forget_input_walk();
                 }
                 self.transcript = Some(transcript);
                 if changed_chat {
@@ -2120,8 +2282,6 @@ impl ChatSurface {
             }
             Update::Renamed(chat) => {
                 self.waiting = false;
-                self.renaming_chat = false;
-                self.focus = Focus::Composer;
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2213,6 +2373,11 @@ impl ChatSurface {
                 self.live_sources.clear();
                 self.open_searches.clear();
                 self.draft.clear();
+                if self.transcript.as_ref().map(|t| t.chat.id)
+                    != transcript.as_ref().map(|t| t.chat.id)
+                {
+                    self.forget_input_walk();
+                }
                 self.chats = chats;
                 self.transcript = transcript;
                 self.usage_report = None;
@@ -2740,45 +2905,24 @@ impl ChatSurface {
         }))
     }
 
-    fn start_chat_rename(&mut self) -> bool {
-        let Some(title) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.chat.title.clone())
-        else {
-            return false;
-        };
-        self.chat_title.set_text(&mut self.engine, &title);
-        self.chat_title.select_all(&mut self.engine);
-        self.renaming_chat = true;
-        self.focus = Focus::ChatTitle;
-        true
-    }
-
-    fn cancel_chat_rename(&mut self) {
-        self.chat_title.blur(&mut self.engine);
-        self.renaming_chat = false;
-        self.focus = Focus::Composer;
-    }
-
-    fn commit_chat_rename(&mut self) -> bool {
-        let Some(chat) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.chat.id)
-        else {
-            self.cancel_chat_rename();
-            return false;
-        };
-        let title = self.chat_title.value();
+    /// **`/rename A better title` renames the chat.** The title row this
+    /// replaced was the only door to a rename, and the Chats list has none,
+    /// so the composer keeps it: like `/usage`, it is answered here and never
+    /// becomes a turn.
+    fn rename_from_composer(&mut self, chat: ChatId, title: &str) -> bool {
+        let title = title.trim();
         if title.is_empty() {
             self.status = Some("A chat title cannot be empty.".into());
             return true;
         }
-        self.chat_title.blur(&mut self.engine);
-        self.renaming_chat = false;
-        self.focus = Focus::Composer;
-        self.send_command(Command::Rename(chat, RenameChatRequest { title }))
+        self.composer.clear();
+        self.forget_input_walk();
+        self.send_command(Command::Rename(
+            chat,
+            RenameChatRequest {
+                title: title.to_owned(),
+            },
+        ))
     }
 
     fn current_selection(&self) -> Option<ModelSelection> {
@@ -2904,6 +3048,13 @@ impl ChatSurface {
             self.status = Some("Loading private local usage…".into());
             return self.send_command(Command::Usage(chat_id));
         }
+        if let Some(title) = typed
+            .trim()
+            .strip_prefix(RENAME_COMMAND)
+            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            return self.rename_from_composer(chat_id, title);
+        }
         let markdown = compose_markdown(&self.pending_quotes, &typed);
         if markdown.is_empty() {
             return false;
@@ -2951,6 +3102,8 @@ impl ChatSurface {
         self.pending_question_anchor = None;
         self.draft.clear();
         self.composer.clear();
+        self.forget_input_walk();
+        self.sent_inputs.push((chat_id, markdown.clone()));
         self.messages_dirty = true;
         let request = SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -3458,119 +3611,142 @@ impl ChatSurface {
         )
     }
 
+    /// Where the conversation may start: below the standalone window's
+    /// header buttons, or a margin's worth below the top in a workspace,
+    /// where the surface has no header row of its own.
+    fn chat_top(&self) -> f32 {
+        self.viewport.y
+            + if self.hosts_header_buttons() {
+                HEADER_H
+            } else {
+                PAD
+            }
+    }
+
+    /// **A chat with nothing in it yet** — no message, none on its way, no
+    /// answer streaming — opens on a greeting with the composer centred under
+    /// it. A chat still loading from a link is not empty: it has messages
+    /// the surface has not read yet.
+    fn chat_is_empty(&self) -> bool {
+        if self.pending_user.is_some()
+            || self.attempt.is_some()
+            || self.staged_embedded_send.is_some()
+            || self.usage_report.is_some()
+        {
+            return false;
+        }
+        match &self.transcript {
+            Some(transcript) => transcript.messages.is_empty(),
+            None => self.pending_link_chat.is_none(),
+        }
+    }
+
+    /// The empty chat's greeting, picked at random the first time this chat
+    /// shows it and held while it is shown. A chat made for a surface that
+    /// was waiting for one keeps the line it was already showing; another
+    /// chat gets a new one.
+    fn greeting(&mut self) -> Option<koru_i18n::Key> {
+        if !self.chat_is_empty() {
+            return None;
+        }
+        let chat = self.transcript.as_ref().map(|t| t.chat.id);
+        let index = match self.greeting {
+            Some((shown, index)) if shown == chat || shown.is_none() => index,
+            _ => (uuid::Uuid::new_v4().as_u128() % GREETINGS.len() as u128) as usize,
+        };
+        self.greeting = Some((chat, index));
+        Some(GREETINGS[index])
+    }
+
+    /// The composer's box: its text, one to eight lines, over the toolbar
+    /// row, inside the padding. At the bottom of a chat with messages;
+    /// centred, under the greeting, in an empty one. Everything on or around
+    /// the composer — the send button, the toolbar, the `@` picker's room,
+    /// the conversation above — derives from this.
     fn composer_rect(&mut self) -> Rect {
         let content = self.content_rect();
         let width = content.w.max(MIN_COMPOSER_W);
         // One to eight visual lines of the composer's own text, then it
         // scrolls — measured by the editor at this width.
-        let pad = koru_ui::text_field::PAD;
-        let height = self
+        let text_h = self
             .composer
             .text_height(
-                (width - pad * 2.0).max(1.0),
+                (width - COMPOSER_PAD_X * 2.0).max(1.0),
                 COMPOSER_MIN_LINES,
                 COMPOSER_MAX_LINES,
             )
-            .ceil()
-            + pad * 2.0;
-        let rect = Rect::new(
-            content.x,
-            self.viewport.y + self.viewport.h - PAD - height - COMPOSER_TOOLBAR_H,
-            width,
-            height + COMPOSER_TOOLBAR_H,
-        );
+            .ceil();
+        let height = COMPOSER_PAD_TOP
+            + text_h
+            + COMPOSER_TEXT_GAP
+            + COMPOSER_TOOLBAR_H
+            + COMPOSER_PAD_BOTTOM;
+        let bottom = self.viewport.y + self.viewport.h - PAD - height;
+        let y = if self.chat_is_empty() {
+            // The greeting and the composer as one block, centred; never
+            // lower than where the composer sits once the chat has begun.
+            let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
+            (self.viewport.y + (self.viewport.h - above - height) * 0.5 + above).min(bottom)
+        } else {
+            bottom
+        };
+        let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
-        // The picker may float anywhere above the composer's bottom edge,
-        // below the header: over the conversation, never over the toolbar.
+        // The picker may float anywhere above the composer's text, below
+        // the header: over the conversation, never over the toolbar.
+        let text = self.composer_text_rect();
+        let top = self.chat_top();
         let panels = Rect::new(
             self.viewport.x,
-            self.viewport.y + HEADER_H,
+            top,
             self.viewport.w,
-            (rect.y + rect.h - COMPOSER_TOOLBAR_H - self.viewport.y - HEADER_H).max(1.0),
+            (text.y + text.h - top).max(1.0),
         );
-        self.composer.place(self.composer_text_rect(), panels);
+        self.composer.place(text, panels);
         rect
     }
 
+    /// The composer's text box, padding included: everything above the
+    /// toolbar row. The editor insets its words by the same padding
+    /// ([`composer`]).
     fn composer_text_rect(&self) -> Rect {
         Rect::new(
             self.composer_hit_rect.x,
             self.composer_hit_rect.y,
             self.composer_hit_rect.w,
-            (self.composer_hit_rect.h - COMPOSER_TOOLBAR_H).max(1.0),
+            (self.composer_hit_rect.h - COMPOSER_TOOLBAR_H - COMPOSER_PAD_BOTTOM).max(1.0),
         )
     }
 
     /// Whether the header carries *Chats*, *New chat* and *Settings*: the
     /// standalone window's does; in a workspace those doors are the rail's,
     /// the Chats heading's and the rail's again (the CTO's note), and the
-    /// header is the title alone.
+    /// surface has no header row at all.
     fn hosts_header_buttons(&self) -> bool {
         self.mode == SurfaceMode::Standalone
-    }
-
-    /// The title's row: the private mark, the title, an agent's folder. In a
-    /// workspace it starts at the body's left margin (the CTO's note); in
-    /// the standalone window after its *Chats* button.
-    fn title_rect(&self) -> Rect {
-        if !self.hosts_header_buttons() {
-            let content = self.content_rect();
-            return Rect::new(content.x, self.viewport.y + 7.0, content.w, BUTTON_H);
-        }
-        Rect::new(
-            self.history_button().x + self.history_button().w + 8.0,
-            self.viewport.y + 7.0,
-            (self.new_chat_button().x - self.history_button().x - self.history_button().w - 16.0)
-                .max(1.0),
-            BUTTON_H,
-        )
-    }
-
-    /// Where the title's words start: after the private mark when there is
-    /// a chat to be private.
-    fn title_text_x(&self) -> f32 {
-        let title_rect = self.title_rect();
-        if self.transcript.is_some() {
-            title_rect.x + PRIVACY_ICON_W + 6.0
-        } else {
-            title_rect.x + 2.0
-        }
-    }
-
-    /// The rename field: over the title's words, capped at `RENAME_FIELD_W`
-    /// rather than the whole row (the CTO's note).
-    fn rename_rect(&self) -> Rect {
-        let title_rect = self.title_rect();
-        let x = self.title_text_x();
-        Rect::new(
-            x,
-            title_rect.y,
-            (title_rect.x + title_rect.w - x)
-                .min(RENAME_FIELD_W)
-                .max(1.0),
-            title_rect.h,
-        )
     }
 
     fn conversation_rect(&mut self) -> Rect {
         let composer = self.composer_rect();
         let content = self.content_rect();
-        let status_h = self.status.as_ref().map_or(0.0, |status| {
+        let footer = self.footer_line().map(str::to_owned);
+        let footer_h = footer.map_or(0.0, |line| {
             self.engine
-                .simple_layout_wrapped(status, role::meta(), content.w)
+                .simple_layout_wrapped(&line, role::meta(), content.w)
                 .height()
+                + 5.0
         });
-        let footer_h = if status_h > 0.0 { status_h + 5.0 } else { 0.0 };
         let context_document = self.context_document_pill();
+        let top = self.chat_top();
         let rect = Rect::new(
             content.x,
-            self.viewport.y + HEADER_H,
+            top,
             content.w,
             (composer.y
                 - COMPOSER_GAP
                 - pill_band_height(context_document.as_ref(), &self.pending_quotes)
                 - footer_h
-                - (self.viewport.y + HEADER_H))
+                - top)
                 .max(1.0),
         );
         self.conversation_hit_rect = rect;
@@ -3598,15 +3774,14 @@ impl ChatSurface {
         )
     }
 
+    /// The send (and stop) button, in the composer's bottom-right corner,
+    /// inset by the composer's own padding like the toolbar beside it.
     fn send_button(&self) -> Rect {
-        let content = self.content_rect();
+        let composer = self.composer_hit_rect;
         let side = BUTTON_H;
-        // `composer_rect`'s bottom edge, without depending on it having been
-        // laid out — hit-testing asks for this button before the first draw.
-        let composer_bottom = self.viewport.y + self.viewport.h - PAD;
         Rect::new(
-            content.x + content.w - side - COMPOSER_INSET,
-            composer_bottom - side - COMPOSER_INSET,
+            composer.x + composer.w - COMPOSER_PAD_X - side,
+            composer.y + composer.h - COMPOSER_PAD_BOTTOM - side,
             side,
             side,
         )
@@ -3766,13 +3941,16 @@ impl ChatSurface {
         Rect::new(toolbar.x + toolbar.w - width, toolbar.y, width, toolbar.h)
     }
 
-    /// The folder chooser of an agent chat that has no message yet: the
-    /// agent starts in the folder, so the choice closes with the first
-    /// message. Sits between the approval control and the chip.
+    /// An agent chat's folder, between the approval control and the chip.
+    /// Before the first message it chooses the folder; the agent starts in
+    /// it, so the choice closes with that message, and from then on a chosen
+    /// folder stays named here, unpressable — the title row that used to
+    /// name it is gone. A chat left in the home folder, the default, shows
+    /// nothing here once it has begun.
     fn folder_button(&self) -> Option<Rect> {
         let transcript = self.transcript.as_ref()?;
         if !agents::is_agent_provider(&transcript.chat.current_model.provider)
-            || !transcript.messages.is_empty()
+            || !(self.folder_editable() || transcript.chat.agent_working_folder.is_some())
         {
             return None;
         }
@@ -3785,6 +3963,14 @@ impl ChatSurface {
             width.min((model.x - toolbar.x - 6.0).max(1.0)),
             toolbar.h,
         ))
+    }
+
+    /// Whether the folder can still be chosen: an agent chat with no message.
+    fn folder_editable(&self) -> bool {
+        self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+                && transcript.messages.is_empty()
+        })
     }
 
     fn folder_label(&self) -> String {
@@ -3886,34 +4072,48 @@ impl ChatSurface {
         })
     }
 
+    /// **The private mark**, the toolbar's first control: whether agents
+    /// and connected assistants may read this chat. It sat left of the
+    /// title; with the title gone it is the only door to the setting, so it
+    /// moved here, where both hosts show it.
+    fn privacy_button(&self) -> Option<Rect> {
+        self.transcript.as_ref()?;
+        let toolbar = self.composer_toolbar_rect();
+        Some(Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h))
+    }
+
     fn web_search_button(&self) -> Option<Rect> {
         if !self.web_search_available() {
             return None;
         }
         let toolbar = self.composer_toolbar_rect();
-        Some(Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h))
+        let x = self
+            .privacy_button()
+            .map_or(toolbar.x, |privacy| privacy.x + privacy.w + 6.0);
+        Some(Rect::new(x, toolbar.y, toolbar.h, toolbar.h))
     }
 
+    /// The composer's toolbar row: inside its padding, left of the send
+    /// button.
     fn composer_toolbar_rect(&self) -> Rect {
         let composer = self.composer_hit_rect;
         let send = self.send_button();
-        let x = composer.x + COMPOSER_INSET;
+        let x = composer.x + COMPOSER_PAD_X;
         Rect::new(
             x,
-            composer.y + composer.h - COMPOSER_TOOLBAR_H + 2.0,
+            composer.y + composer.h - COMPOSER_PAD_BOTTOM - COMPOSER_TOOLBAR_H,
             (send.x - x - 6.0).max(1.0),
-            COMPOSER_TOOLBAR_H - 6.0,
+            COMPOSER_TOOLBAR_H,
         )
     }
 
     fn tool_access_button(&self) -> Rect {
         let toolbar = self.composer_toolbar_rect();
         let mode = self.tool_mode_button();
-        let x = if self.web_search_available() {
-            toolbar.x + toolbar.h + 6.0
-        } else {
-            toolbar.x
-        };
+        let x = self
+            .web_search_button()
+            .or_else(|| self.privacy_button())
+            .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
         let width = (toolbar.w * 0.28)
             .clamp(78.0, 140.0)
             .min((mode.x - x - 6.0).max(1.0));
@@ -4301,18 +4501,19 @@ impl ChatSurface {
             }
             None
         } else {
-            if self.privacy_button_rect.contains(x, y) {
+            if self
+                .privacy_button()
+                .is_some_and(|button| button.contains(x, y))
+            {
                 return Some((5, 8));
-            }
-            if self.transcript.is_some() && self.title_rect().contains(x, y) {
-                return Some((5, 0));
             }
             if self.chat_model_button().contains(x, y) {
                 return Some((5, 5));
             }
-            if self
-                .folder_button()
-                .is_some_and(|button| button.contains(x, y))
+            if self.folder_editable()
+                && self
+                    .folder_button()
+                    .is_some_and(|button| button.contains(x, y))
             {
                 return Some((5, 12));
             }
@@ -4392,103 +4593,9 @@ impl ChatSurface {
 
     fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
-        let title_rect = self.title_rect();
-        self.privacy_button_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
-        // The private mark left of the title (the CTO's note), on the row
-        // whether the title is read or being renamed.
-        if self.transcript.is_some() {
-            let private = self
-                .transcript
-                .as_ref()
-                .is_some_and(|transcript| transcript.chat.private);
-            let icon = Rect::new(
-                title_rect.x,
-                title_rect.y + (title_rect.h - PRIVACY_ICON_W) * 0.5,
-                PRIVACY_ICON_W,
-                PRIVACY_ICON_W,
-            );
-            self.privacy_button_rect = icon;
-            IconButton::new(icons::DETECTIVE, icon)
-                .with_state(IconButtonState {
-                    hovered: icon.contains(self.pointer.0, self.pointer.1),
-                    active: private,
-                    disabled: false,
-                })
-                .draw(canvas, root, &mut self.engine);
-        }
-        if self.renaming_chat {
-            let field = self.rename_rect();
-            self.chat_title.draw(
-                canvas,
-                root,
-                &mut self.engine,
-                field,
-                InputStyle::inline(),
-                None,
-                self.focus == Focus::ChatTitle,
-            );
-        } else {
-            if self.transcript.is_some() && title_rect.contains(self.pointer.0, self.pointer.1) {
-                scene::fill(
-                    canvas,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(
-                        title_rect.x,
-                        title_rect.y,
-                        title_rect.w,
-                        title_rect.h,
-                        ActionButton::RADIUS,
-                    ),
-                );
-            }
-            let title = self
-                .transcript
-                .as_ref()
-                .map(|t| t.chat.title.as_str())
-                .unwrap_or("Koru AI");
-            let title_x = self.title_text_x();
-            let title = self.engine.simple_layout_wrapped(
-                title,
-                role::section_heading(),
-                (title_rect.x + title_rect.w - title_x).max(1.0),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &title,
-                title_x,
-                title_rect.y + (title_rect.h - title.height()) * 0.5,
-                Some(p.text),
-            );
-            if self.transcript.is_some() {
-                // An agent chat names its folder in the header (UC8); the
-                // home folder is the default and is not named.
-                let folder = self
-                    .transcript
-                    .as_ref()
-                    .and_then(|transcript| transcript.chat.agent_working_folder.clone());
-                if let Some(folder) = folder {
-                    let x = title_x + title.width() + 10.0;
-                    let width = title_rect.x + title_rect.w - x;
-                    if width > 40.0 {
-                        let line = self.engine.simple_layout_wrapped(
-                            &folder,
-                            role::meta(),
-                            width.max(1.0),
-                        );
-                        scene::draw_layout_first_line(
-                            canvas,
-                            root,
-                            &line,
-                            x,
-                            title_rect.y + (title_rect.h - line.height()) * 0.5,
-                            Some(p.text_dim),
-                        );
-                    }
-                }
-            }
-        }
+        // **No title row.** A chat's name is its tab's in a workspace and
+        // its row's in the Chats list; the surface itself starts with the
+        // conversation. The standalone window keeps its header buttons.
         if self.hosts_header_buttons() {
             let history = self.history_button();
             draw_surface_button(
@@ -4519,6 +4626,7 @@ impl ChatSurface {
         }
         self.draw_messages(canvas, root);
         let composer = self.composer_rect();
+        self.draw_greeting(canvas, root);
         scene::fill(
             canvas,
             root,
@@ -4595,13 +4703,31 @@ impl ChatSurface {
         );
         if let Some(folder_button) = self.folder_button() {
             let label = self.folder_label();
-            ActionButton::new(&label, ActionStyle::Ghost, Some(icons::FOLDER)).draw(
-                canvas,
-                root,
-                &mut self.engine,
-                folder_button,
-                folder_button.contains(self.pointer.0, self.pointer.1),
-            );
+            let button = ActionButton::new(&label, ActionStyle::Ghost, Some(icons::FOLDER));
+            if self.folder_editable() {
+                button.draw(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    folder_button,
+                    folder_button.contains(self.pointer.0, self.pointer.1),
+                );
+            } else {
+                button.draw_disabled(canvas, root, &mut self.engine, folder_button);
+            }
+        }
+        if let Some(privacy) = self.privacy_button() {
+            let private = self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| transcript.chat.private);
+            IconButton::new(icons::DETECTIVE, privacy)
+                .with_state(IconButtonState {
+                    hovered: privacy.contains(self.pointer.0, self.pointer.1),
+                    active: private,
+                    disabled: false,
+                })
+                .draw(canvas, root, &mut self.engine);
         }
         if let Some(search) = self.web_search_button() {
             IconButton::new(icons::GLOBE, search)
@@ -4625,11 +4751,11 @@ impl ChatSurface {
             model_button,
             model_button.contains(self.pointer.0, self.pointer.1),
         );
-        if let Some(status) = &self.status {
+        if let Some(line) = self.footer_line().map(str::to_owned) {
             let content = self.content_rect();
             let layout = self
                 .engine
-                .simple_layout_wrapped(status, role::meta(), content.w);
+                .simple_layout_wrapped(&line, role::meta(), content.w);
             let context_document = self.context_document_pill();
             scene::draw_layout(
                 canvas,
@@ -4657,6 +4783,25 @@ impl ChatSurface {
             Instant::now(),
         );
         self.composer.draw_panels(canvas, root);
+    }
+
+    /// An empty chat's greeting: one line at the title size, centred over
+    /// the composer — at the foot of the (empty) conversation, so it sits
+    /// above the pills and the status line like the messages would.
+    fn draw_greeting(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some(key) = self.greeting() else {
+            return;
+        };
+        let area = self.conversation_rect();
+        let mut layout =
+            self.engine
+                .simple_layout_wrapped(koru_i18n::t(self.lang, key), role::title(), area.w);
+        layout.align(
+            parley::Alignment::Center,
+            parley::AlignmentOptions::default(),
+        );
+        let y = (area.y + area.h - GREETING_GAP - layout.height()).max(area.y);
+        scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
     }
 
     fn draw_chat_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
@@ -7977,6 +8122,7 @@ mod tests {
         chat.chat.current_model.requested_model = "gpt-5.4".into();
         surface.transcript = Some(chat);
         surface.validated_ready = true;
+        surface.composer_rect();
 
         let button = surface.web_search_button().expect("gpt-5.4 can search");
         assert!(surface.mouse_down(button.x + button.w / 2.0, button.y + button.h / 2.0));
@@ -8163,8 +8309,10 @@ mod tests {
             grown
                 <= line * COMPOSER_MAX_LINES as f32
                     + gaps
-                    + koru_ui::text_field::PAD * 2.0
+                    + COMPOSER_PAD_TOP
+                    + COMPOSER_TEXT_GAP
                     + COMPOSER_TOOLBAR_H
+                    + COMPOSER_PAD_BOTTOM
                     + 1.0
         );
         // Four lines are four lines: the composer grows until the eighth.
@@ -8449,11 +8597,13 @@ mod tests {
         let workspace = surface.tool_access_button();
         let approval = surface.tool_mode_button();
         let model = surface.chat_model_button();
+        let privacy = surface.privacy_button().expect("a chat can be private");
         let search = surface
             .web_search_button()
             .expect("gpt-5.5 supports search");
 
-        assert_eq!(search.x, toolbar.x);
+        assert_eq!(privacy.x, toolbar.x);
+        assert!(privacy.x + privacy.w < search.x);
         assert!((model.x + model.w - toolbar.x - toolbar.w).abs() < 0.01);
         assert!(search.x + search.w < workspace.x);
         assert!(workspace.x + workspace.w < approval.x);
@@ -9206,6 +9356,24 @@ mod tests {
             created_at: koru_ai_core::Timestamp::from_millis(2),
             completed_at: None,
         });
+        // With a message on the chat the choice is closed — the agent started
+        // there — but the chosen folder stays named, and a press asks nothing.
+        assert!(!surface.folder_editable());
+        // The composer is at the bottom now that the chat has begun.
+        surface.composer_rect();
+        let button = surface
+            .folder_button()
+            .expect("a chosen folder stays named after the first message");
+        assert_eq!(surface.folder_label(), "koru");
+        surface.mouse_down(button.x + 2.0, button.y + 2.0);
+        assert!(surface.take_working_folder_request().is_none());
+        // Left in the home folder, a begun chat names none.
+        surface
+            .transcript
+            .as_mut()
+            .unwrap()
+            .chat
+            .agent_working_folder = None;
         assert!(surface.folder_button().is_none());
     }
 
@@ -9565,8 +9733,10 @@ mod tests {
         assert_eq!(&models[..3], ["gpt-5.6", "gpt-5.5", "gpt-4.1"]);
     }
 
+    /// **`/rename` is the rename's door now** that the title row is gone:
+    /// it renames the chat and never becomes a turn.
     #[test]
-    fn double_clicking_the_chat_title_starts_and_commits_an_inline_rename() {
+    fn slash_rename_renames_the_chat_without_a_turn() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
@@ -9574,26 +9744,72 @@ mod tests {
         surface.reader = Some(reader);
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
-        let title = surface.title_rect();
 
-        // Past the private mark, which sits left of the title now.
-        assert!(surface.mouse_double_click(title.x + 40.0, title.y + title.h * 0.5));
-        assert!(surface.renaming_chat);
-        assert_eq!(surface.focus, Focus::ChatTitle);
-        assert!(surface.key(
-            &Key::Character("r".into()),
-            Some("Renamed chat"),
-            ModifiersState::empty(),
-        ));
-        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
-
+        surface.composer.set_text("/rename   Renamed chat ");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::Rename(actual, request) => {
                 assert_eq!(actual, chat);
                 assert_eq!(request.title, "Renamed chat");
             }
-            _ => panic!("title Enter must persist the rename"),
+            _ => panic!("/rename must persist the rename"),
         }
+        assert!(commands.try_recv().is_err(), "and send no turn");
+        assert!(surface.composer.is_blank());
+        assert!(surface.pending_user.is_none());
+
+        surface.composer.set_text("/rename");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+        assert!(
+            commands.try_recv().is_err(),
+            "an empty title renames nothing"
+        );
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("A chat title cannot be empty.")
+        );
+
+        // A word that only starts with it is a message.
+        surface.composer.set_text("/renamed files");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Send(_)
+        ));
+    }
+
+    /// **The title row is gone** in both hosts: nothing is drawn or hit at
+    /// the top of a workspace pane, whose conversation starts a margin below
+    /// the top, and the standalone window keeps only its header buttons.
+    #[test]
+    fn the_chat_title_is_neither_drawn_nor_hit() {
+        for mode in [SurfaceMode::ContextPane, SurfaceMode::Standalone] {
+            let mut surface = ChatSurface::new(mode);
+            let mut chat = transcript();
+            chat.messages.push(user_message(&chat, "hello"));
+            surface.transcript = Some(chat);
+            surface.validated_ready = true;
+            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+            let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
+            // Where the title's words were: the middle of the top row.
+            let x = surface.viewport.x + surface.viewport.w * 0.5;
+            assert!(!surface.mouse_double_click(x, top), "{mode:?}");
+            assert_eq!(surface.control_hover_at(x, top), None, "{mode:?}");
+            assert_eq!(surface.focus, Focus::Composer, "{mode:?}");
+        }
+        let mut pane = ChatSurface::new(SurfaceMode::ContextPane);
+        pane.transcript = Some(transcript());
+        assert_eq!(pane.conversation_rect().y, pane.viewport.y + PAD);
+        let mut window = ChatSurface::new(SurfaceMode::Standalone);
+        window.transcript = Some(transcript());
+        window.validated_ready = true;
+        assert_eq!(window.conversation_rect().y, window.viewport.y + HEADER_H);
+        let history = window.history_button();
+        assert_eq!(
+            window.control_hover_at(history.x + 4.0, history.y + 4.0),
+            Some((5, 1)),
+            "the standalone header keeps Chats"
+        );
     }
 
     #[test]
@@ -9607,8 +9823,10 @@ mod tests {
         surface.validated_ready = true;
 
         surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
-        let privacy = surface.privacy_button_rect;
-        assert!(privacy.w > 0.0);
+        let privacy = surface
+            .privacy_button()
+            .expect("the private mark is on the composer's toolbar");
+        assert!(surface.composer_hit_rect.contains(privacy.x, privacy.y));
         assert!(
             !surface.mouse_double_click(privacy.x + privacy.w * 0.5, privacy.y + privacy.h * 0.5,)
         );
@@ -9634,12 +9852,13 @@ mod tests {
         surface.transcript = Some(transcript());
         surface.validated_ready = true;
 
-        let title = surface.title_rect();
-        surface.mouse_move(title.x + 4.0, title.y + title.h * 0.5);
+        surface.composer_rect();
+        let send = surface.send_button();
+        surface.mouse_move(send.x + 4.0, send.y + send.h * 0.5);
         assert_eq!(surface.cursor_icon(), CursorIcon::Default);
 
-        let composer = surface.composer_rect();
-        surface.mouse_move(composer.x + 8.0, composer.y + composer.h * 0.5);
+        let text = surface.composer_text_rect();
+        surface.mouse_move(text.x + 8.0, text.y + text.h * 0.5);
         assert_eq!(surface.cursor_icon(), CursorIcon::Text);
 
         surface.setup_open = true;
@@ -9749,5 +9968,245 @@ mod tests {
         assert_eq!(composer.text(), "", "the partial is provisional");
         composer.commit_composition((), "Draft a response\nwith sources");
         assert_eq!(composer.text(), "Draft a response\nwith sources");
+    }
+
+    fn press(surface: &mut ChatSurface, key: NamedKey) -> bool {
+        surface.key(&Key::Named(key), None, ModifiersState::empty())
+    }
+
+    /// **Escape twice stops the work in progress**; once only says how. The
+    /// second press has to come inside the window, and a popover open over
+    /// the composer takes the press first.
+    #[test]
+    fn escape_twice_stops_the_turn_and_once_only_says_how() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript());
+        surface.validated_ready = true;
+        let attempt = InferenceAttemptId::new();
+        surface.attempt = Some(attempt);
+        let hint = koru_i18n::t(surface.lang, koru_i18n::Key::AiPressEscAgainToStop);
+
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(
+            commands.try_recv().is_err(),
+            "one Escape never stops a turn"
+        );
+        assert_eq!(surface.footer_line(), Some(hint), "the hint says how");
+        assert!(surface.maintenance_deadline().is_some(), "and will go away");
+        assert!(press(&mut surface, NamedKey::Escape));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Cancel(cancelled) => assert_eq!(cancelled, attempt),
+            _ => panic!("the second Escape cancels the attempt"),
+        }
+        assert_ne!(surface.footer_line(), Some(hint));
+
+        // Past the window the hint goes, and the next Escape starts over.
+        assert!(press(&mut surface, NamedKey::Escape));
+        surface.stop_armed_at =
+            Instant::now().checked_sub(STOP_ESCAPE_WINDOW + Duration::from_millis(10));
+        assert!(
+            surface.maintain(Instant::now()),
+            "the hint's going is a frame"
+        );
+        assert!(surface.stop_armed_at.is_none());
+        assert_ne!(surface.footer_line(), Some(hint));
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(
+            commands.try_recv().is_err(),
+            "a late second press only arms"
+        );
+        assert_eq!(surface.footer_line(), Some(hint));
+
+        // An open popover takes the press first.
+        surface.stop_armed_at = None;
+        surface.tool_mode_open = true;
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(!surface.tool_mode_open);
+        assert!(surface.stop_armed_at.is_none());
+
+        // With no turn running, Escape is not the stop's.
+        surface.attempt = None;
+        press(&mut surface, NamedKey::Escape);
+        press(&mut surface, NamedKey::Escape);
+        assert!(surface.stop_armed_at.is_none());
+        assert!(commands.try_recv().is_err());
+    }
+
+    /// **Up walks back through what was asked, Down walks forward**, and
+    /// past the newest gives back the message being typed. The source is the
+    /// chat's own messages and what this surface sent since; the same
+    /// message twice in a row is one step.
+    #[test]
+    fn up_and_down_walk_the_messages_asked_and_give_the_draft_back() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let mut chat = transcript();
+        for markdown in ["first", "second", "second"] {
+            let message = user_message(&chat, markdown);
+            chat.messages.push(message);
+        }
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        type_into(&mut surface, "third");
+        assert!(press(&mut surface, NamedKey::Enter));
+        assert!(surface.composer.is_blank(), "sent");
+        surface.pending_user = None;
+        type_into(&mut surface, "draft");
+
+        let walk = |surface: &mut ChatSurface, key: NamedKey| {
+            press(surface, key);
+            surface.composer.text()
+        };
+        assert_eq!(
+            walk(&mut surface, NamedKey::ArrowUp),
+            "third",
+            "sent, not read back yet"
+        );
+        assert_eq!(walk(&mut surface, NamedKey::ArrowUp), "second");
+        assert_eq!(
+            walk(&mut surface, NamedKey::ArrowUp),
+            "first",
+            "one step for a repeat"
+        );
+        assert_eq!(
+            walk(&mut surface, NamedKey::ArrowUp),
+            "first",
+            "the oldest holds"
+        );
+        assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "second");
+        assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "third");
+        assert_eq!(
+            walk(&mut surface, NamedKey::ArrowDown),
+            "draft",
+            "the draft comes back"
+        );
+        assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "draft");
+        assert!(surface.history_cursor.is_none());
+
+        // A recalled message is edited at its end.
+        walk(&mut surface, NamedKey::ArrowUp);
+        type_into(&mut surface, "!");
+        assert_eq!(surface.composer.text(), "third!");
+
+        // Inside a longer message the arrows move the caret.
+        surface.forget_input_walk();
+        surface.composer.set_text("line one\nline two");
+        assert_eq!(walk(&mut surface, NamedKey::ArrowUp), "line one\nline two");
+        assert!(
+            surface.history_cursor.is_none(),
+            "the caret moved up a line"
+        );
+        assert_eq!(
+            walk(&mut surface, NamedKey::ArrowUp),
+            "third",
+            "from the first line, Up recalls"
+        );
+
+        // The `@` picker's keys come first.
+        surface.forget_input_walk();
+        surface.composer.clear();
+        type_into(&mut surface, "@");
+        assert!(surface.composer.picker_open());
+        press(&mut surface, NamedKey::ArrowUp);
+        assert!(surface.history_cursor.is_none());
+        assert_eq!(surface.composer.text(), "@");
+    }
+
+    /// **An empty chat greets the person**, with one line picked when the
+    /// chat starts and held while it shows; a message ends it, and another
+    /// chat picks again.
+    #[test]
+    fn an_empty_chat_greets_once_and_holds_the_line() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        surface.validated_ready = true;
+        let line = surface.greeting().expect("a chat being made greets");
+        for _ in 0..4 {
+            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+            assert_eq!(surface.greeting(), Some(line), "the line holds still");
+        }
+        surface.transcript = Some(transcript());
+        assert_eq!(
+            surface.greeting(),
+            Some(line),
+            "the chat it waited for keeps it"
+        );
+
+        surface.pending_user = Some("hello".into());
+        assert_eq!(surface.greeting(), None, "a message on its way ends it");
+        surface.pending_user = None;
+        let message = user_message(surface.transcript.as_ref().unwrap(), "hello");
+        surface.transcript.as_mut().unwrap().messages.push(message);
+        assert_eq!(surface.greeting(), None);
+
+        let other = transcript();
+        let other_id = other.chat.id;
+        surface.transcript = Some(other);
+        assert!(surface.greeting().is_some());
+        assert_eq!(surface.greeting.map(|(chat, _)| chat), Some(Some(other_id)));
+
+        let mut loading = ChatSurface::new(SurfaceMode::ContextPane);
+        loading.open_link(ChatId::new(), None);
+        assert_eq!(
+            loading.greeting(),
+            None,
+            "a chat still loading is not empty"
+        );
+    }
+
+    /// **The composer starts in the middle, then moves to the bottom.** While
+    /// the chat is empty the greeting and the composer are one centred block;
+    /// once a message is on its way the composer sits at the bottom. The send
+    /// button, the toolbar, the text and the conversation follow it, inside
+    /// the composer's padding, in both places.
+    #[test]
+    fn the_composer_starts_centred_and_moves_to_the_bottom() {
+        for mode in [SurfaceMode::ContextPane, SurfaceMode::Standalone] {
+            let mut surface = ChatSurface::new(mode);
+            surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+            surface.transcript = Some(transcript());
+            surface.validated_ready = true;
+
+            let centred = surface.composer_rect();
+            let bottom = surface.viewport.h - PAD - centred.h;
+            let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
+            let middle = (centred.y - above + centred.y + centred.h) * 0.5;
+            assert!((middle - surface.viewport.h * 0.5).abs() < 1.0, "{mode:?}");
+            assert!(centred.y < bottom - 100.0, "{mode:?}");
+            for begun in [false, true] {
+                surface.pending_user = begun.then(|| "hello".to_owned());
+                let composer = surface.composer_rect();
+                let send = surface.send_button();
+                let toolbar = surface.composer_toolbar_rect();
+                let text = surface.composer_text_rect();
+                assert_eq!(text.y, composer.y);
+                assert_eq!(toolbar.x, composer.x + COMPOSER_PAD_X);
+                assert_eq!(send.x + send.w, composer.x + composer.w - COMPOSER_PAD_X);
+                assert_eq!(
+                    toolbar.y + toolbar.h,
+                    composer.y + composer.h - COMPOSER_PAD_BOTTOM
+                );
+                assert_eq!(
+                    send.y + send.h,
+                    composer.y + composer.h - COMPOSER_PAD_BOTTOM
+                );
+                assert!(text.y + text.h <= toolbar.y);
+                let conversation = surface.conversation_rect();
+                assert!(conversation.y + conversation.h < composer.y);
+            }
+            assert_eq!(surface.composer_rect().y, bottom, "{mode:?} at the bottom");
+
+            // Pressed where it is drawn: the text in the middle takes focus.
+            surface.pending_user = None;
+            let text = {
+                surface.composer_rect();
+                surface.composer_text_rect()
+            };
+            surface.focus = Focus::None;
+            assert!(surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5));
+            assert_eq!(surface.focus, Focus::Composer, "{mode:?}");
+        }
     }
 }
