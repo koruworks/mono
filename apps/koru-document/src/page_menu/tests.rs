@@ -9,9 +9,9 @@
 use super::*;
 
 /// The pre-language arity, shadowing the module's: these tests exercise the
-/// row set, which neither argument changes.
+/// row set, which none of the three arguments changes.
 fn rows(mode: ViewMode, canvas: usize) -> Vec<(Row, Option<Choice>)> {
-    super::rows(mode, canvas, None, koru_i18n::Lang::En)
+    super::rows(mode, canvas, None, koru_i18n::Lang::En, true)
 }
 
 fn labels(mode: ViewMode) -> Vec<String> {
@@ -155,5 +155,40 @@ fn there_is_one_swatch_color_per_preset() {
     assert_eq!(
         swatch_colors().len(),
         crate::docview::canvas_bg_presets().len()
+    );
+}
+
+/// **The heading carries *Global settings* at its right**, and choosing it is
+/// the one row that asks the host to leave the document: the Settings tab, on
+/// its Editor page. The keyboard can reach it, because it is selectable.
+#[test]
+fn the_heading_links_to_the_global_settings() {
+    for mode in [ViewMode::Page, ViewMode::Narrow, ViewMode::Full] {
+        let rows = rows(mode, 0);
+        let (row, choice) = &rows[0];
+        assert_eq!(
+            *row,
+            Row::HeadingLink {
+                heading: "PAGE SETTINGS",
+                link: "Global settings",
+            }
+        );
+        assert!(row.selectable(), "a click or Enter can land on the link");
+        assert_eq!(*choice, Some(Choice::OpenGlobalSettings));
+        assert_eq!(choice_at(mode, 0), Some(Choice::OpenGlobalSettings));
+    }
+}
+
+/// A document in a window of its own has no Settings tab to open, so its
+/// heading is plain and nothing on it can be chosen.
+#[test]
+fn a_document_without_a_settings_tab_gets_the_plain_heading() {
+    let rows = super::rows(ViewMode::Page, 0, None, koru_i18n::Lang::En, false);
+    assert_eq!(rows[0], (Row::Heading("PAGE SETTINGS"), None));
+    assert!(!rows[0].0.selectable());
+    assert_eq!(
+        rows.len(),
+        self::rows(ViewMode::Page, 0).len(),
+        "the link moves no other row"
     );
 }

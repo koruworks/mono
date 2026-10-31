@@ -305,8 +305,10 @@ pub struct SettingsSurface {
     personal_words: Option<usize>,
     /// *Apply to all* was pressed while this tab was open.
     layout_applied: bool,
-    /// The System page's Advanced card is unfolded.
-    advanced_open: bool,
+    /// The host can open a sample document beside this tab, so *Document
+    /// fonts* offers the link that asks it to. Off until a host says so: a
+    /// window with nowhere to put one draws no link that would do nothing.
+    sample_document: bool,
     /// *Share anonymous usage data*, as the host last read this device's
     /// record. `None` draws no row: there is no record to show a switch for
     /// (the events worker is not there, or has not answered yet).
@@ -314,6 +316,9 @@ pub struct SettingsSurface {
 
     voice: VoiceFacts,
     renderer: RendererRow,
+    /// The host's Koru AI slot. Held but **not drawn** while the card is off
+    /// Settings; kept so the hosts that fill it need not change.
+    #[cfg_attr(not(test), allow(dead_code))]
     ai: AiSlot,
 
     availability: Availability,
@@ -371,7 +376,7 @@ impl SettingsSurface {
             dictionary: None,
             personal_words: None,
             layout_applied: false,
-            advanced_open: false,
+            sample_document: false,
             telemetry: None,
             voice: VoiceFacts::default(),
             renderer: RendererRow::none(),
@@ -492,6 +497,13 @@ impl SettingsSurface {
 
     pub fn set_ai_slot(&mut self, slot: AiSlot) {
         self.ai = slot;
+    }
+
+    /// Say whether this host can open the sample document
+    /// ([`Request::OpenSampleDocument`]); only then does *Document fonts*
+    /// carry the link.
+    pub fn offer_sample_document(&mut self, offered: bool) {
+        self.sample_document = offered;
     }
 
     /// This device's telemetry answer, as the host last read it: `Some(on)`
@@ -808,7 +820,6 @@ impl SettingsSurface {
         self.relayout_nav();
         let rect = self.column_rect();
         let Self {
-            sections,
             lang,
             engine,
             page,
@@ -828,11 +839,10 @@ impl SettingsSurface {
             dictionary,
             personal_words,
             layout_applied,
-            advanced_open,
+            sample_document,
             telemetry,
             voice,
             renderer,
-            ai,
             availability,
             notice,
             laid,
@@ -866,9 +876,8 @@ impl SettingsSurface {
             dictionary: dictionary.as_ref(),
             personal_words: *personal_words,
             layout_applied: *layout_applied,
-            advanced_open: *advanced_open,
             telemetry: *telemetry,
-            ai: if sections.ai { ai } else { &EMPTY_AI },
+            sample_document: *sample_document,
         };
         match page {
             PageId::Appearance => global::appearance(&mut b, &rows),
@@ -1428,37 +1437,6 @@ impl SettingsSurface {
                     &dividers,
                     alpha,
                 );
-                if card.font_preview {
-                    let samples = [
-                        koru_ui::FontSample {
-                            text: "body",
-                            stack: theme::body_stack(),
-                            weight: theme::FontWeight::Medium,
-                        },
-                        koru_ui::FontSample {
-                            text: "Heading",
-                            stack: theme::headings_font().stack(),
-                            weight: theme::FontWeight::SemiBold,
-                        },
-                        koru_ui::FontSample {
-                            text: "code",
-                            stack: theme::code_stack(),
-                            weight: theme::FontWeight::Medium,
-                        },
-                    ];
-                    koru_ui::FontPreview {
-                        lead: koru_i18n::t(self.lang, Key::SettingsPreview),
-                        samples: &samples,
-                    }
-                    .draw(
-                        scene_out,
-                        root,
-                        &mut self.engine,
-                        card.rect.x + card.rect.w,
-                        card.rect.y,
-                        alpha,
-                    );
-                }
                 for row in &card.rows {
                     let _row = CardRow {
                         label: &row.label,
@@ -1706,8 +1684,6 @@ impl SettingsSurface {
     }
 }
 
-static EMPTY_AI: std::sync::LazyLock<AiSlot> = std::sync::LazyLock::new(AiSlot::default);
-
 /// What a theme tile shows: a sliver of that theme's page and ink, from the
 /// real palettes rather than a drawing of them.
 fn paint_theme_preview(canvas: &mut Scene, root: Affine, area: Rect, preview: TilePreview) {
@@ -1787,7 +1763,7 @@ impl SettingsSurface {
                 self.layout_applied = true;
                 self.requests.push(Request::ApplyLayoutToAllDocuments);
             }
-            Action::ShowAdvanced(open) => self.advanced_open = open,
+            Action::PreviewSampleDocument => self.requests.push(Request::OpenSampleDocument),
             Action::Density(choice) => theme::set_density(density(choice)),
             Action::IconPack(choice) => {
                 icons::set_icon_pack(icons::IconPack::parse(choice.token()))
@@ -1894,7 +1870,6 @@ impl SettingsSurface {
                     ..TerminalPatch::default()
                 })
             }
-            Action::OpenAiSetup => self.requests.push(Request::OpenAiSetup),
         }
     }
 
@@ -2034,7 +2009,7 @@ fn clone_action(action: &Action) -> Action {
         Action::CloseBehavior(v) => Action::CloseBehavior(*v),
         Action::StartOnLogin(v) => Action::StartOnLogin(*v),
         Action::TelemetryConsent(v) => Action::TelemetryConsent(*v),
-        Action::ShowAdvanced(v) => Action::ShowAdvanced(*v),
+        Action::PreviewSampleDocument => Action::PreviewSampleDocument,
         Action::TerminalTheme(v) => Action::TerminalTheme(*v),
         Action::TerminalFont(v) => Action::TerminalFont(*v),
         Action::TerminalZoom(v) => Action::TerminalZoom(*v),
@@ -2044,7 +2019,6 @@ fn clone_action(action: &Action) -> Action {
         Action::TerminalCursorBlink(v) => Action::TerminalCursorBlink(*v),
         Action::TerminalComposerDefault(v) => Action::TerminalComposerDefault(*v),
         Action::TerminalMatchCaret(v) => Action::TerminalMatchCaret(*v),
-        Action::OpenAiSetup => Action::OpenAiSetup,
     }
 }
 

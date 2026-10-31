@@ -2630,13 +2630,22 @@ pub enum Key {
     DiagramExampleStart,
     DiagramExampleNext,
     DiagramExampleDone,
+    SettingsPreviewInSampleDocument,
+    SampleDocumentTitle,
+    SampleDocumentBody,
+    VoiceConsentLead,
+    VoiceConsentItem,
+    VoiceConsentItemPlain,
+    VoiceConsentWithLicence,
+    VoiceConsentClosing,
+    PageMenuGlobalSettings,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1795] = [
+    pub const ALL: [Key; 1804] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4432,6 +4441,15 @@ impl Key {
         Key::DiagramExampleStart,
         Key::DiagramExampleNext,
         Key::DiagramExampleDone,
+        Key::SettingsPreviewInSampleDocument,
+        Key::SampleDocumentTitle,
+        Key::SampleDocumentBody,
+        Key::VoiceConsentLead,
+        Key::VoiceConsentItem,
+        Key::VoiceConsentItemPlain,
+        Key::VoiceConsentWithLicence,
+        Key::VoiceConsentClosing,
+        Key::PageMenuGlobalSettings,
     ];
 }
 
@@ -13387,4 +13405,113 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::DiagramExampleStart, en: "Start", es: "Inicio", pt_br: "Início", de: "Start", fr: "Début", ar: "البداية", zh_hans: "开始", ja: "開始" },
     Row { key: Key::DiagramExampleNext, en: "Next step", es: "Siguiente paso", pt_br: "Próximo passo", de: "Nächster Schritt", fr: "Étape suivante", ar: "الخطوة التالية", zh_hans: "下一步", ja: "次のステップ" },
     Row { key: Key::DiagramExampleDone, en: "Done", es: "Hecho", pt_br: "Concluído", de: "Fertig", fr: "Terminé", ar: "تم", zh_hans: "完成", ja: "完了" },
+    Row {
+        key: Key::SettingsPreviewInSampleDocument,
+        en: "Preview in sample document",
+        es: "Vista previa en un documento de ejemplo",
+        pt_br: "Pré-visualizar em um documento de exemplo",
+        de: "In einem Beispieldokument ansehen",
+        fr: "Aperçu dans un document d’exemple",
+        ar: "معاينة في مستند نموذجي",
+        zh_hans: "在示例文档中预览",
+        ja: "サンプル文書でプレビュー",
+    },
+    Row {
+        key: Key::SampleDocumentTitle,
+        en: "Sample document",
+        es: "Documento de ejemplo",
+        pt_br: "Documento de exemplo",
+        de: "Beispieldokument",
+        fr: "Document d’exemple",
+        ar: "مستند نموذجي",
+        zh_hans: "示例文档",
+        ja: "サンプル文書",
+    },
+    // The sample document's page, as Markdown: one of each thing the document
+    // fonts draw, short enough to fit one window. No `{}` anywhere — it is
+    // read whole, never filled.
+    Row {
+        key: Key::SampleDocumentBody,
+        en: "# Hello, world\n\n## A smaller heading\n\nThis is a short paragraph with **bold**, *italic* and `inline code`, and a [link](https://www.koru.do).\n\n- A bulleted item\n- Another one\n\n1. First step\n2. Second step\n\n- [x] A finished task\n- [ ] One still to do\n\n> A quote stands apart from the text around it.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        es: "# Hola, mundo\n\n## Un encabezado más pequeño\n\nEste es un párrafo breve con **negrita**, *cursiva* y `código en línea`, y un [enlace](https://www.koru.do).\n\n- Un elemento con viñeta\n- Otro más\n\n1. Primer paso\n2. Segundo paso\n\n- [x] Una tarea terminada\n- [ ] Otra por hacer\n\n> Una cita se distingue del texto que la rodea.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        pt_br: "# Olá, mundo\n\n## Um título menor\n\nEste é um parágrafo curto com **negrito**, *itálico* e `código embutido`, e um [link](https://www.koru.do).\n\n- Um item com marcador\n- Mais um\n\n1. Primeiro passo\n2. Segundo passo\n\n- [x] Uma tarefa concluída\n- [ ] Outra ainda por fazer\n\n> Uma citação se destaca do texto ao redor.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        de: "# Hallo, Welt\n\n## Eine kleinere Überschrift\n\nDies ist ein kurzer Absatz mit **fett**, *kursiv* und `Inline-Code` sowie einem [Link](https://www.koru.do).\n\n- Ein Aufzählungspunkt\n- Noch einer\n\n1. Erster Schritt\n2. Zweiter Schritt\n\n- [x] Eine erledigte Aufgabe\n- [ ] Eine, die noch offen ist\n\n> Ein Zitat hebt sich vom umgebenden Text ab.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        fr: "# Bonjour, le monde\n\n## Un titre plus petit\n\nVoici un court paragraphe avec **gras**, *italique* et `code en ligne`, et un [lien](https://www.koru.do).\n\n- Un élément à puce\n- Un autre\n\n1. Première étape\n2. Deuxième étape\n\n- [x] Une tâche terminée\n- [ ] Une autre à faire\n\n> Une citation se détache du texte qui l’entoure.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        ar: "# مرحبًا بالعالم\n\n## عنوان أصغر\n\nهذه فقرة قصيرة فيها **خط عريض** و*خط مائل* و`رمز ضمني` و[رابط](https://www.koru.do).\n\n- عنصر بنقطة\n- عنصر آخر\n\n1. الخطوة الأولى\n2. الخطوة الثانية\n\n- [x] مهمة منجزة\n- [ ] مهمة لم تُنجز بعد\n\n> يتميّز الاقتباس عن النص المحيط به.\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        zh_hans: "# 你好，世界\n\n## 一个较小的标题\n\n这是一段简短的文字，包含**粗体**、*斜体*和`行内代码`，以及一个[链接](https://www.koru.do)。\n\n- 一个项目符号\n- 另一个\n\n1. 第一步\n2. 第二步\n\n- [x] 一项已完成的任务\n- [ ] 一项尚未完成的任务\n\n> 引用与周围的文字区分开来。\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+        ja: "# こんにちは、世界\n\n## 小さめの見出し\n\nこれは**太字**、*斜体*、`インラインコード`、そして[リンク](https://www.koru.do)を含む短い段落です。\n\n- 箇条書きの項目\n- もう一つ\n\n1. 最初の手順\n2. 次の手順\n\n- [x] 完了したタスク\n- [ ] まだのタスク\n\n> 引用は周りの文章と区別されます。\n\n```rust\nfn main() {\n    println!(\"Hello, world!\");\n}\n```\n",
+    },
+    Row {
+        key: Key::VoiceConsentLead,
+        en: "To support dictation, Koru will download:",
+        es: "Para el dictado, Koru descargará:",
+        pt_br: "Para o ditado, o Koru vai baixar:",
+        de: "Für das Diktat lädt Koru Folgendes herunter:",
+        fr: "Pour la dictée, Koru téléchargera :",
+        ar: "لدعم الإملاء، سينزّل Koru ما يلي:",
+        zh_hans: "为支持听写，Koru 将下载：",
+        ja: "音声入力のために、Koru は次をダウンロードします：",
+    },
+    // One model on the consent step: its name, its size in MB, who publishes
+    // it and its licence, in that order.
+    Row {
+        key: Key::VoiceConsentItem,
+        en: "{}, {} MB, by {} ({})",
+        es: "{}, {} MB, de {} ({})",
+        pt_br: "{}, {} MB, de {} ({})",
+        de: "{}, {} MB, von {} ({})",
+        fr: "{}, {} Mo, par {} ({})",
+        ar: "{}، {} ميغابايت، من {} ({})",
+        zh_hans: "{}，{} MB，来自 {}（{}）",
+        ja: "{}（{} MB、提供：{}、{}）",
+    },
+    // The same line for an attribution that is not in the usual shape: the
+    // whole attribution, then the size in MB.
+    Row {
+        key: Key::VoiceConsentItemPlain,
+        en: "{}, {} MB",
+        es: "{}, {} MB",
+        pt_br: "{}, {} MB",
+        de: "{}, {} MB",
+        fr: "{}, {} Mo",
+        ar: "{}، {} ميغابايت",
+        zh_hans: "{}，{} MB",
+        ja: "{}（{} MB）",
+    },
+    // That line, followed by the licence it did not already name.
+    Row {
+        key: Key::VoiceConsentWithLicence,
+        en: "{} ({})",
+        es: "{} ({})",
+        pt_br: "{} ({})",
+        de: "{} ({})",
+        fr: "{} ({})",
+        ar: "{} ({})",
+        zh_hans: "{}（{}）",
+        ja: "{}（{}）",
+    },
+    Row {
+        key: Key::VoiceConsentClosing,
+        en: "Koru uses your microphone; all models run locally and nothing leaves your computer.",
+        es: "Koru usa tu micrófono; todos los modelos se ejecutan en local y nada sale de tu equipo.",
+        pt_br: "O Koru usa seu microfone; todos os modelos rodam localmente e nada sai do seu computador.",
+        de: "Koru verwendet dein Mikrofon; alle Modelle laufen lokal, und nichts verlässt deinen Computer.",
+        fr: "Koru utilise votre microphone ; tous les modèles s’exécutent localement et rien ne quitte votre ordinateur.",
+        ar: "يستخدم Koru الميكروفون؛ تعمل جميع النماذج محليًا ولا يغادر أي شيء حاسوبك.",
+        zh_hans: "Koru 会使用你的麦克风；所有模型都在本地运行，任何内容都不会离开你的电脑。",
+        ja: "Koru はマイクを使用します。すべてのモデルはこの端末上で動作し、何も外部に送信されません。",
+    },
+    // The link at the right of a document page menu's heading, which opens
+    // the Settings tab on its Editor page.
+    Row {
+        key: Key::PageMenuGlobalSettings,
+        en: "Global settings",
+        es: "Ajustes generales",
+        pt_br: "Configurações gerais",
+        de: "Allgemeine Einstellungen",
+        fr: "Réglages généraux",
+        ar: "الإعدادات العامة",
+        zh_hans: "全局设置",
+        ja: "全体の設定",
+    },
 ];

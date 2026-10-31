@@ -1512,6 +1512,14 @@ pub trait View {
     /// container knows which tab is over which document, so carrying the pair
     /// would be one of them stating the other's fact. Default `None`: only a
     /// document surface ever raises one.
+    /// The document's page menu asked for the global settings — its
+    /// *Global settings* link. The container opens its Settings tab on the
+    /// Editor page; a host without one never sees the link asked for (the
+    /// menu draws it only where there is somewhere to go). Default: no.
+    fn take_wants_global_settings(&mut self) -> bool {
+        false
+    }
+
     fn take_wants_task_view(&mut self) -> Option<koru_core::NodeId> {
         None
     }

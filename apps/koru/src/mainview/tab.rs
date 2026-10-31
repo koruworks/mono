@@ -859,6 +859,11 @@ pub enum PrivatePage {
     /// The who/where popover's sync control: a page that says only its name
     /// for now (QUESTIONS.md E31).
     SyncSettings,
+    /// The sample *Preview in sample document* opens beside Settings: one of
+    /// each thing the document fonts draw, so a font, size or theme change is
+    /// seen on a page as it is made. Never saved into the session — it is a
+    /// view of Settings, and Settings itself comes back as a Welcome tab.
+    SampleDocument,
 }
 
 /// One tab: what it shows, whether it can be closed, and whether it has been
@@ -1320,6 +1325,65 @@ impl Tab {
     pub fn sync_settings() -> Option<Self> {
         let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::SyncSettingsTab);
         Self::private_page(PrivatePage::SyncSettings, title, &[])
+    }
+
+    /// The sample document. See [`PrivatePage::SampleDocument`].
+    ///
+    /// **Built by the Markdown importer, not pasted.** The paste path spells a
+    /// task's tick as `[x] ` text, where the importer restores it as a ticked
+    /// box — and the sample has to show what a ticked task looks like. The
+    /// page is a localized constant a few hundred bytes long, so building it
+    /// here is no work the window would notice.
+    ///
+    /// `None` only if Loro will not make a document at all, the
+    /// [`private_page`](Self::private_page) answer.
+    pub fn sample_document() -> Option<Self> {
+        Self::sample_document_in(crate::format::lang())
+    }
+
+    /// [`Self::sample_document`] in a named language, so every language's
+    /// page can be checked without moving the process's.
+    pub(super) fn sample_document_in(lang: koru_i18n::Lang) -> Option<Self> {
+        let title = koru_i18n::t(lang, koru_i18n::Key::SampleDocumentTitle);
+        let markdown = koru_i18n::t(lang, koru_i18n::Key::SampleDocumentBody);
+        let snapshot =
+            koru_import_markdown::document_snapshot(WorkspaceId::new(), title, markdown).ok()?;
+        let doc = WorkspaceDoc::from_snapshot(&snapshot).ok()?;
+        let root = doc
+            .children(koru_core::schema::Parent::Root)
+            .ok()?
+            .into_iter()
+            .find(|&id| {
+                doc.read(id)
+                    .is_ok_and(|node| node.kind == koru_core::Kind::Document)
+            })?;
+        let mut leaf = Leaf::document(&doc, root);
+        leaf.set_read_only(true);
+        Some(Self {
+            id: mint_tab_id(),
+            view: TabView::Leaf(leaf),
+            // Not a document in the person's workspace: nothing in the
+            // explore column or the tab-reuse check may match it.
+            document: None,
+            label: title.to_owned(),
+            icon: None,
+            sized: None,
+            draft: None,
+            whats_new: Some(WhatsNewTab {
+                workspace: Workspace::new(doc),
+                page: PrivatePage::SampleDocument,
+            }),
+            home: None,
+            pinned: None,
+            show_title: false,
+        })
+    }
+
+    /// Whether this tab is the sample document.
+    pub fn is_sample_document(&self) -> bool {
+        self.whats_new
+            .as_ref()
+            .is_some_and(|page| page.page == PrivatePage::SampleDocument)
     }
 
     /// A read-only page over a workspace of its own, titled and filled.

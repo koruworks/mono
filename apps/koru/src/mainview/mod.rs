@@ -2944,6 +2944,7 @@ impl MainView {
         // be waiting, and a chip's *Go to task* pressed on its own did nothing
         // at all (finding 32).
         let mut acted = self.drain_task_view_request(ws);
+        acted |= self.drain_global_settings_request();
         acted |= self.finish_task_reveal();
         if self.pending_document_rename.is_none() && self.pending_document_attrs.is_none() {
             return acted;
@@ -6159,7 +6160,13 @@ impl MainView {
     /// forgets the notice once a window has been told — so this is about the day
     /// somebody adds a menu row that opens it by hand.
     pub(crate) fn open_whats_new(&mut self, version: &str) -> bool {
-        let existing = self.tabs().iter().position(|t| t.whats_new.is_some());
+        // The release notes only: the Sync settings page and the sample
+        // document are private pages too, and are not these.
+        let existing = self.tabs().iter().position(|t| {
+            t.whats_new
+                .as_ref()
+                .is_some_and(|n| n.page == tab::PrivatePage::WhatsNew)
+        });
         if let Some(i) = existing {
             self.select(i);
             return true;
@@ -6936,6 +6943,16 @@ impl MainView {
                 size,
             }));
         }
+    }
+
+    /// The one Settings tab, showing `page` from its top.
+    fn open_settings_page(&mut self, page: koru_settings_ui::PageId) -> bool {
+        let opened = self.open_settings_tab();
+        let moved = match &mut self.tabs_mut().active_mut().view {
+            TabView::Settings(view) => view.show_page(page),
+            _ => false,
+        };
+        opened || moved
     }
 
     fn open_voice_settings_tab(&mut self) -> bool {
@@ -7912,6 +7929,18 @@ impl MainView {
         }
     }
 
+    /// **The active document's page menu asked for *Global settings*.** The
+    /// Settings tab — opened, or the one already open — on its Editor page,
+    /// where the defaults that menu overrides per page live. From the active
+    /// tab only, for the reason above: the menu was open over it.
+    pub(crate) fn drain_global_settings_request(&mut self) -> bool {
+        let wanted = match &mut self.tabs_mut().active_mut().view {
+            TabView::Leaf(l) => View::take_wants_global_settings(l),
+            _ => false,
+        };
+        wanted && self.open_settings_page(koru_settings_ui::PageId::Editor)
+    }
+
     /// Take the task activity every open tab's editor owes, leaving none
     /// behind ([ADR-286]).
     ///
@@ -8609,7 +8638,11 @@ impl MainView {
         use crate::welcome::WelcomeWant;
         for want in wants {
             match want {
-                WelcomeWant::NewDocument => self.prompt_new_document(),
+                // Ctrl+T's own command: a page to type on at once, not the
+                // name prompt.
+                WelcomeWant::NewDocument => {
+                    self.new_tab();
+                }
                 WelcomeWant::VoiceSettings => {
                     self.open_voice_settings_tab();
                 }
@@ -8802,7 +8835,19 @@ impl MainView {
                     crate::settings_view::close_behavior_of(choice),
                 ));
             }
-            Request::SetRenderer(token) => crate::settings_view::set_renderer_backend(&token),
+            // The pick is a request, not the value: the row moves when the
+            // file says so. Every Settings tab reads it back, so a write that
+            // did not land is seen not to have switched rather than seeming to.
+            Request::SetRenderer(token) => {
+                crate::settings_view::set_renderer_backend(&token);
+                for (_, group) in self.panes.iter_groups_mut() {
+                    for tab in group.tabs_mut().iter_mut() {
+                        if let TabView::Settings(s) = &mut tab.view {
+                            s.refresh_renderer();
+                        }
+                    }
+                }
+            }
             Request::SetVoiceLanguage(language) => {
                 koru_workspace_host::voice_prefs::set_language(
                     crate::settings_view::language_from(&language),
@@ -8891,7 +8936,39 @@ impl MainView {
                 self.size_visible_groups();
                 self.ensure_tab_visible(self.tabs().active());
             }
+            Request::OpenSampleDocument => {
+                self.open_sample_document();
+            }
         }
+    }
+
+    /// **The sample document, beside Settings.** *Preview in sample
+    /// document* splits the pane Settings is in and puts the sample on the
+    /// right, so fonts are chosen on the left and seen on the right — the
+    /// shared `invalidate` already reaches a document in a group of its own.
+    ///
+    /// **One at a time.** A sample already open anywhere is brought to the
+    /// front of its pane and focused instead of a second being made.
+    fn open_sample_document(&mut self) -> bool {
+        let existing = self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .iter_tabs()
+                .position(Tab::is_sample_document)
+                .map(|i| (path, i))
+        });
+        if let Some((path, i)) = existing {
+            self.panes.set_focus(path);
+            return self.select(i);
+        }
+        let Some(tab) = Tab::sample_document() else {
+            return false;
+        };
+        let beside = self.panes.focused_path().clone();
+        self.panes.split(&beside, panes::SplitDir::Right, tab);
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.slides_mut().clear();
+        true
     }
 
     /// The voice globals moved; the Settings tabs' mirrors follow them rather
@@ -12551,7 +12628,7 @@ impl View for MainView {
     /// matters here: **Enter is Cancel**, so a modal appearing under somebody's
     /// hands cannot be agreed to by a keystroke they had already begun.
     ///
-    /// The sentence names the size, the licence and who to credit, and all
+    /// The list names each model's size, licence and who to credit, and all
     /// three come off the *signed* descriptor by way of
     /// `koru_voice_consent::Terms` — so what is on the screen is exactly what
     /// is written into the record afterwards.
@@ -12573,16 +12650,12 @@ impl View for MainView {
             return false;
         }
         let lang = crate::format::lang();
-        let megabytes = offer.megabytes().to_string();
-        let licences = offer.licences();
-        let attributions = offer.attributions();
         self.confirm = Some((
             koru_ui::Confirm::asking(
                 koru_i18n::t(lang, koru_i18n::Key::VoiceConsentTitle),
-                koru_i18n::fill(
-                    koru_i18n::t(lang, koru_i18n::Key::VoiceConsentBody),
-                    &[&megabytes, &licences, &attributions],
-                ),
+                // One line per model, not a paragraph of joined licences:
+                // with two models the sentence had stopped being readable.
+                offer.consent_body(lang),
                 koru_i18n::t(lang, koru_i18n::Key::VoiceConsentAccept),
                 koru_i18n::t(lang, koru_i18n::Key::VoiceConsentCancel),
             ),

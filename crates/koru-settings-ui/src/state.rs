@@ -176,8 +176,10 @@ impl RendererRow {
 /// compose and no way to give them a rect. Rather than reimplement them here
 /// (which would move where an AI provider is configured, and this packet
 /// changes no behavior beyond the re-homing), the section is a slot: the host
-/// supplies the sentence and the way in, and the surface raises
-/// [`Request::OpenAiSetup`](crate::Request::OpenAiSetup) when it is pressed.
+/// supplies the sentence and the way in.
+///
+/// **Not drawn for now.** The Koru AI card is off the System page; a host may
+/// still fill the slot, and the surface keeps it for when the card returns.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AiSlot {
     /// What the host wants to say about the configured provider.
@@ -187,6 +189,7 @@ pub struct AiSlot {
 }
 
 impl AiSlot {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_empty(&self) -> bool {
         self.note.is_empty() && self.action.is_none()
     }

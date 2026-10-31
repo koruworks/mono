@@ -24,7 +24,7 @@ use koru_ui::DropdownOption;
 
 use crate::action::{Action, FontRole};
 use crate::page::{Anchor, Builder, TilePreview};
-use crate::state::{AiSlot, DictionaryRow, RendererRow, VoiceFacts};
+use crate::state::{DictionaryRow, RendererRow, VoiceFacts};
 
 #[cfg(test)]
 mod tests;
@@ -51,11 +51,10 @@ pub(crate) struct Rows<'a> {
     pub(crate) personal_words: Option<usize>,
     /// *Apply to all* was pressed this session; the link says so.
     pub(crate) layout_applied: bool,
-    /// The Advanced card is unfolded.
-    pub(crate) advanced_open: bool,
     /// This device's telemetry answer; `None` draws no Privacy card.
     pub(crate) telemetry: Option<bool>,
-    pub(crate) ai: &'a AiSlot,
+    /// The host can open the sample document, so *Document fonts* links to it.
+    pub(crate) sample_document: bool,
 }
 
 // ------------------------------------------------------------- Appearance
@@ -98,24 +97,22 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
             .collect(),
     );
     let density_now = theme::density();
-    // Tightest to loosest, not the registry's order.
+    // Tightest to loosest, not the registry's order. *Comfortable* is not
+    // offered: it did not hold up. A stored Comfortable still parses and still
+    // draws; the row simply ticks neither until somebody picks one.
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsDensity),
         Some(koru_i18n::t(lang, Key::SettingsSpacingOfTextAndControls)),
-        [
-            DensityChoice::Compact,
-            DensityChoice::Normal,
-            DensityChoice::Comfortable,
-        ]
-        .into_iter()
-        .map(|choice| {
-            (
-                Action::Density(choice),
-                density_label(lang, choice).to_owned(),
-                crate::density(choice) == density_now,
-            )
-        })
-        .collect(),
+        [DensityChoice::Compact, DensityChoice::Normal]
+            .into_iter()
+            .map(|choice| {
+                (
+                    Action::Density(choice),
+                    density_label(lang, choice).to_owned(),
+                    crate::density(choice) == density_now,
+                )
+            })
+            .collect(),
     );
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsPinnedTabs),
@@ -142,7 +139,19 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     base_row(b, lang, false);
     base_row(b, lang, true);
 
-    b.card_with_font_preview(koru_i18n::t(lang, Key::SettingsDocumentFonts));
+    // The document fonts are seen on a page rather than named: the link opens
+    // a short sample document beside this tab, and it follows every choice
+    // made here. A host that cannot open one gets the plain title.
+    if rows.sample_document {
+        b.caption_with_link(
+            koru_i18n::t(lang, Key::SettingsDocumentFonts),
+            koru_i18n::t(lang, Key::SettingsPreviewInSampleDocument),
+            Action::PreviewSampleDocument,
+        );
+        b.card(None);
+    } else {
+        b.card(Some(koru_i18n::t(lang, Key::SettingsDocumentFonts)));
+    }
     font_row(b, lang, FontRole::Body, None);
     font_row(b, lang, FontRole::Headings, None);
     font_row(b, lang, FontRole::Code, None);
@@ -576,52 +585,15 @@ pub(crate) fn system(b: &mut Builder<'_>, rows: &Rows<'_>) {
         );
     }
 
-    if !rows.ai.is_empty() {
-        b.card(Some(koru_i18n::t(rows.lang, Key::SettingsKoruAi)));
-        let note = (!rows.ai.note.is_empty()).then_some(rows.ai.note.as_str());
-        match rows.ai.action.as_deref() {
-            Some(action) => b.row_button(
-                koru_i18n::t(lang, Key::SettingsProvidersAndModels),
-                note,
-                Action::OpenAiSetup,
-                action,
-            ),
-            None => b.row_text(koru_i18n::t(lang, Key::SettingsProvidersAndModels), note),
-        }
-    }
+    // No Koru AI card for now: its providers are set up in Koru AI itself.
+    // The host's slot (`set_ai_slot`) is still taken, and simply not drawn.
 
     // The renderer passthrough: the one control here that does not take
-    // effect as you press it, and the row says so.
+    // effect as you press it, and the row says so. Always shown — a fold
+    // with a summary line was one more thing to read to reach one row.
     if rows.renderer.is_offered() {
-        // Folded by default: nothing in it needs attention unless something
-        // looks wrong, and the folded line says what is in it and its value.
-        b.caption_with_link(
-            koru_i18n::t(lang, Key::SettingsAdvanced),
-            koru_i18n::t(
-                lang,
-                if rows.advanced_open {
-                    Key::SettingsHide
-                } else {
-                    Key::SettingsShow
-                },
-            ),
-            Action::ShowAdvanced(!rows.advanced_open),
-        );
+        b.card(Some(koru_i18n::t(lang, Key::SettingsAdvanced)));
         let current = rows.renderer.current.as_str();
-        if !rows.advanced_open {
-            let value = rows
-                .renderer
-                .options
-                .iter()
-                .find(|(token, _)| token == current)
-                .map_or(current, |(_, label)| label.as_str());
-            b.note(&koru_i18n::fill(
-                koru_i18n::t(lang, Key::SettingsAdvancedSummary),
-                &[value],
-            ));
-            return;
-        }
-        b.card(None);
         b.row_dropdown(
             &rows.renderer.label,
             Some(&rows.renderer.note),

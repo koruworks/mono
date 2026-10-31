@@ -65,6 +65,15 @@ pub use koru_keys::Hinted as Chord;
 pub enum Row {
     /// A small caps heading. Not selectable, and the keyboard steps over it.
     Heading(&'static str),
+    /// A heading with a small link at its right end, sized to the heading —
+    /// *Global settings* beside *PAGE SETTINGS*. Unlike a plain heading it can
+    /// be chosen: the arrow keys stop on it and Enter follows the link, and a
+    /// click anywhere on the heading's band does too, because the band is the
+    /// row's hit area like every other row's.
+    HeadingLink {
+        heading: &'static str,
+        link: &'static str,
+    },
     /// A hairline between groups. Not selectable.
     Divider,
     Item {
@@ -249,7 +258,10 @@ impl Row {
     /// are furniture: the keyboard steps straight over them, which is what
     /// `explore.rs`'s popover does for the same reason.
     pub fn selectable(&self) -> bool {
-        matches!(self, Self::Item { enabled: true, .. })
+        matches!(
+            self,
+            Self::Item { enabled: true, .. } | Self::HeadingLink { .. }
+        )
     }
 
     /// This row's own height. Not every row is `ROW_H`: a heading is a label
@@ -257,7 +269,7 @@ impl Row {
     /// groups read as further apart than they are.
     fn height(&self) -> f32 {
         match self {
-            Self::Heading(_) => HEADING_H,
+            Self::Heading(_) | Self::HeadingLink { .. } => HEADING_H,
             Self::Divider => DIVIDER_H,
             Self::Item { .. } => ITEM_H,
         }
@@ -502,6 +514,39 @@ impl Menu {
                         r.x + PAD + 4.0,
                         r.y + (r.h - line_h) * 0.5,
                         Some(pal.text_dim),
+                    );
+                }
+                Row::HeadingLink { heading, link } => {
+                    let laid = engine.simple_layout(
+                        heading,
+                        theme::role::hint().with_weight(theme::FontWeight::SemiBold),
+                    );
+                    let line_h = scene::first_line_height(&laid);
+                    scene::draw_layout_first_line(
+                        scene,
+                        root,
+                        &laid,
+                        r.x + PAD + 4.0,
+                        r.y + (r.h - line_h) * 0.5,
+                        Some(pal.text_dim),
+                    );
+                    // The heading's own size, in the accent a link wears, and
+                    // in the text color while it is the row under the pointer
+                    // or the keyboard — the hover a link has rather than a
+                    // row's tint.
+                    let laid = engine.simple_layout(link, theme::role::hint());
+                    let line_h = scene::first_line_height(&laid);
+                    scene::draw_layout_first_line(
+                        scene,
+                        root,
+                        &laid,
+                        r.x + r.w - PAD - 4.0 - laid.width(),
+                        r.y + (r.h - line_h) * 0.5,
+                        Some(if self.hover == Some(i) {
+                            pal.text
+                        } else {
+                            pal.accent
+                        }),
                     );
                 }
                 Row::Divider => {

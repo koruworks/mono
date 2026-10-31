@@ -204,6 +204,22 @@ fn the_panel_grows_with_a_longer_body() {
     );
 }
 
+/// **A `\n` in the body is a line break**, which is what lets a caller give
+/// the dialog a list (the voice consent step's one line per model): the same
+/// short words on three lines stand three lines tall, not one.
+#[test]
+fn a_line_break_in_the_body_starts_a_new_line() {
+    let mut e = engine();
+    let one = Confirm::new("Set up?", "one two three", "Download");
+    let three = Confirm::new("Set up?", "one\ntwo\nthree", "Download");
+    let line = BODY.metrics.line_height;
+    let grew = three.panel(&mut e, VIEWPORT).h - one.panel(&mut e, VIEWPORT).h;
+    assert!(
+        (grew - 2.0 * line).abs() < 1.0,
+        "two more lines, {grew} px taller"
+    );
+}
+
 #[test]
 fn the_panel_is_centred_and_fits_a_small_window() {
     let mut e = engine();

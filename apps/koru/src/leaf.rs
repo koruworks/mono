@@ -692,6 +692,12 @@ impl View for Leaf {
         }
     }
 
+    fn take_wants_global_settings(&mut self) -> bool {
+        match self {
+            Self::Document(d) => View::take_wants_global_settings(d),
+        }
+    }
+
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
         match self {
             Self::Document(d) => View::context_menu(d, ws, x, y),

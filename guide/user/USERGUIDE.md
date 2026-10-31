@@ -1631,29 +1631,33 @@ After the first Profile and Workspace are durable, Koru selects the Welcome tab
 even when creation began in the Manage tab. It offers:
 
 - **Customize…** — opens Settings: theme, fonts, caret color, page width.
-- **Your first five minutes** — *Make your first document* (or **set up your
+- **Your first five minutes** — *Make your first document* opens a new tab
+  with a page to type on straight away, as Ctrl+T does (or **set up your
   mic**, which opens Settings at Voice input); *Bring your documents in*, one
   button per import format; *Bring your files in* with **Choose files…**;
-  *Learn your way around*, which opens the handful of shortcuts right there;
   *Set up a reminder*, which opens All Reminders; and *Let us know how it
   went* — **feedback form** opens the Feedback tab and **email** writes to
   `support@koru.do`.
 - **Connect your devices** — *Another computer* opens **Link another device**,
-  and so does the square beside it; the real pairing code is in that window.
-- **When you're ready to go further** — *Set up your AI* opens Providers and
-  models. *Manage documents over MCP* shows the command an MCP client runs to
-  reach this installation — the `koru-mcp` program beside Koru, with
-  `serve --stdio` — and **Copy** (or clicking the command) puts the whole
-  command on the clipboard, ready to paste into the client's settings — for a
-  client outside Koru, or for Grok, Kimi and Antigravity; an agent tab Koru
-  opens for Claude Code, Codex, Copilot, Qwen Code or OpenCode is given the
-  server already. *Run an agent in a terminal* opens the list of agents from
-  the **+** menu; choosing one starts it in a new tab.
+  and so does the small QR square at the row's right; the real pairing code is
+  in that window.
+- **When you're ready to go further** — *Run an agent in a terminal* opens the
+  list of agents from the **+** menu; choosing one starts it in a new tab.
+  *Manage documents over MCP* asks which agent you use — one chip each,
+  Claude Code to Antigravity, and *Other* — on one line that scrolls sideways
+  when it is wider than the page (the mouse wheel over it, or Tab to a chip).
+  Under it is the command that registers this installation with that agent —
+  the `koru-mcp` program beside Koru, with `serve --stdio` — and **Copy** at
+  its right (or clicking the command) puts the whole command on the
+  clipboard, ready to run in a terminal or paste into the client's settings —
+  for a client outside Koru, or for Grok, Kimi and Antigravity; an agent tab
+  Koru opens for Claude Code, Codex, Copilot, Qwen Code or OpenCode is given
+  the server already.
 
 Each row you complete gets a check, and the checks are kept **for this
 computer**: every Profile on it sees the same ones. *n of m done* counts the
-checklist; when everything is done the list folds to one line, and **Show**
-opens it again. Tab and Shift+Tab move through the page, Enter presses.
+checklist, and a card stays open when everything in it is done. Tab and
+Shift+Tab move through the page, Enter presses.
 Reopening Welcome focuses the same tab.
 **How often Koru looks for an update depends on your channel**, because that is
 what a channel is: nightly checks hourly, beta every six hours, stable once a
@@ -3117,17 +3121,25 @@ Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
 **Fonts and density** are on the **Appearance** page: a density control
-(Compact / Normal / Comfortable) and four font dropdowns — the **app** font
+(Compact / Normal) and four font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), and three document roles, **body**,
 **headings** and **code**. Each dropdown lists every family set in that
 family's own face, so you see what you are choosing. While a font list is
 open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
 or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
-chosen font back. The theme is chosen from
+chosen font back. **Preview in sample document**, at the right of the
+*Document fonts* title, opens a short read-only sample page — headings, a
+paragraph with bold, italic, code and a link, three kinds of list, a quote
+and a code block — beside Settings, so you choose fonts on the left and see
+them on the right as you go; the sample also follows the size and the theme.
+It is not saved anywhere and is not in your library, and pressing the link
+again brings the open sample forward. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
-role's family for a quick in-document switch. Twelve families span sans, serif,
+role's family for a quick in-document switch, and its *Page settings*
+heading carries a **Global settings** link that opens this tab on its
+**Editor** page, where the defaults for new documents live. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
 **Base color** is two rows of swatches on the same **Appearance** page, one
@@ -3197,7 +3209,9 @@ another machine, because neither would be true there.
 
 **Renderer** picks the graphics backend Koru draws with — **Auto**,
 **DirectX 12**, **Vulkan** or **OpenGL** — and applies the next time Koru
-starts, which the row says. Auto is right for almost everyone; the others are
+starts, which the row says. The row shows what is recorded for that next
+start: if the choice could not be saved, it stays on the old one rather
+than pretending. Auto is right for almost everyone; the others are
 for a machine whose driver misbehaves. Nothing can be broken by choosing wrong:
 a backend that will not start is reported and Koru falls back to the one that
 works.
@@ -3256,8 +3270,9 @@ down.
 
 **Model** says whether both speech models are on this computer, and how big they
 are together. If either is missing, **Install…** offers the remaining bundle —
-about 532 MB for a first setup — and names the combined size, both licences and
-both attributions before downloading. Progress identifies model 1 of 2 and
+about 532 MB for a first setup — and lists both models before downloading,
+one line each with its size, publisher and licence, and any further credits
+under it. Progress identifies model 1 of 2 and
 model 2 of 2 and can be stopped; a model that already completed is retained, so
 retrying resumes with only the missing tier. If the download
 cannot be offered at all, the message says which of the reasons it was:

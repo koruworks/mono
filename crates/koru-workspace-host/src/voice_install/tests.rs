@@ -299,8 +299,128 @@ fn the_product_offer_combines_both_downloads_and_both_licences() {
         ],
     };
     assert_eq!(offer.megabytes(), 532);
-    assert_eq!(offer.licences(), "MIT + OpenMDW-1.1");
-    assert_eq!(offer.attributions(), "whisper.cpp; NVIDIA");
+}
+
+fn shipped_offer() -> VoiceOffer {
+    VoiceOffer {
+        terms: vec![
+            Terms {
+                model: "whisper-base".into(),
+                version: "q5_1".into(),
+                licence: "MIT".into(),
+                attribution: "OpenAI, Whisper base (MIT); GGML quantisation published by the \
+                              whisper.cpp project"
+                    .into(),
+                download_bytes: 57 * 1024 * 1024,
+            },
+            Terms {
+                model: "nemotron-3.5-streaming-0.6b-160ms".into(),
+                version: "int8".into(),
+                licence: "OpenMDW-1.1".into(),
+                attribution: "NVIDIA Corporation, Nemotron 3.5 ASR Streaming 0.6B (OpenMDW-1.1); \
+                              ONNX export by the k2-fsa sherpa-onnx project (Apache-2.0)"
+                    .into(),
+                download_bytes: 475 * 1024 * 1024,
+            },
+        ],
+    }
+}
+
+/// The catalog's own attributions read into publisher, model and the credits
+/// after the first `;` — the shape the release table writes.
+#[test]
+fn a_catalog_attribution_reads_as_publisher_model_and_further_credit() {
+    let offer = shipped_offer();
+    assert_eq!(
+        Credit::of(&offer.terms[0].attribution, "MIT"),
+        Some(Credit {
+            publisher: "OpenAI",
+            model: "Whisper base",
+            further: Some("GGML quantisation published by the whisper.cpp project"),
+        })
+    );
+    assert_eq!(
+        Credit::of(&offer.terms[1].attribution, "OpenMDW-1.1"),
+        Some(Credit {
+            publisher: "NVIDIA Corporation",
+            model: "Nemotron 3.5 ASR Streaming 0.6B",
+            further: Some("ONNX export by the k2-fsa sherpa-onnx project (Apache-2.0)"),
+        })
+    );
+    assert_eq!(
+        Credit::of("OpenAI, Whisper base (MIT)", "MIT"),
+        Some(Credit {
+            publisher: "OpenAI",
+            model: "Whisper base",
+            further: None,
+        })
+    );
+}
+
+/// **Anything off the shape is not guessed at**: the caller shows the whole
+/// attribution instead.
+#[test]
+fn an_attribution_off_the_shape_is_not_guessed_at() {
+    for (attribution, licence) in [
+        ("whisper.cpp", "MIT"),
+        ("NVIDIA", "OpenMDW-1.1"),
+        // The parenthesised licence is not the offer's.
+        ("OpenAI, Whisper base (Apache-2.0)", "MIT"),
+        // No licence in parentheses at all.
+        ("OpenAI, Whisper base", "MIT"),
+        // A comma too many: which half is the publisher?
+        ("Foo, Inc., Model (MIT)", "MIT"),
+        // An empty half.
+        (", Whisper base (MIT)", "MIT"),
+        ("OpenAI, (MIT)", "MIT"),
+    ] {
+        assert_eq!(Credit::of(attribution, licence), None, "{attribution}");
+    }
+}
+
+/// The consent step is a list: a lead line, one line per model with its name,
+/// size, publisher and licence, the further credits under it, and a closing
+/// line — never the old paragraph of joined licences and credits.
+#[test]
+fn the_consent_body_lists_one_line_per_model() {
+    let body = shipped_offer().consent_body(koru_i18n::Lang::En);
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "To support dictation, Koru will download:",
+            "",
+            "\u{2022} Whisper base, 57 MB, by OpenAI (MIT)",
+            "   GGML quantisation published by the whisper.cpp project",
+            "\u{2022} Nemotron 3.5 ASR Streaming 0.6B, 475 MB, by NVIDIA Corporation (OpenMDW-1.1)",
+            "   ONNX export by the k2-fsa sherpa-onnx project (Apache-2.0)",
+            "",
+            "Koru uses your microphone; all models run locally and nothing leaves your computer.",
+        ]
+    );
+    // Every language assembles the same shape from its own templates.
+    for lang in koru_i18n::Lang::ALL {
+        let body = shipped_offer().consent_body(lang);
+        assert_eq!(body.lines().count(), 8, "{}", lang.tag());
+        assert!(!body.contains("{}"), "{}", lang.tag());
+        assert!(body.contains("NVIDIA Corporation"), "{}", lang.tag());
+        assert!(body.contains("OpenMDW-1.1"), "{}", lang.tag());
+    }
+}
+
+/// An attribution off the shape is the whole line, with the size — and the
+/// licence, because the attribution did not name it.
+#[test]
+fn an_unparsed_attribution_is_shown_whole_with_size_and_licence() {
+    let mut offer = shipped_offer();
+    offer.terms.truncate(1);
+    offer.terms[0].attribution = "whisper.cpp".into();
+    let body = offer.consent_body(koru_i18n::Lang::En);
+    assert!(
+        body.lines()
+            .any(|line| line == "\u{2022} whisper.cpp, 57 MB (MIT)"),
+        "{body}"
+    );
 }
 
 #[test]

@@ -127,6 +127,8 @@ impl SettingsView {
         surface.set_lang(crate::format::lang());
         surface.set_renderer(renderer_row());
         surface.set_ai_slot(ai_slot());
+        // Koru has panes: *Document fonts* may open its sample beside this tab.
+        surface.offer_sample_document(true);
         surface.set_telemetry_consent(koru_workspace_host::telemetry_consent::current().toggle());
         // Read the record again as the page opens: another window may have
         // answered since this process last looked, or the Gateway may not have
@@ -172,6 +174,12 @@ impl SettingsView {
     /// Opened from the first-minutes guide's mic link.
     pub fn scroll_to_voice(&mut self) -> bool {
         self.surface.scroll_to_voice()
+    }
+
+    /// Show one page from its top — a document's *Global settings* link
+    /// lands on Editor.
+    pub fn show_page(&mut self, page: koru_settings_ui::PageId) -> bool {
+        self.surface.show_page(page)
     }
 
     /// The keyboard into the search box, its query selected — where `Ctrl+,`
@@ -388,6 +396,14 @@ impl SettingsView {
             self.refresh_voice();
         }
         true
+    }
+
+    /// **Read `renderer.conf` again** after the host wrote a pick, so the row
+    /// shows what is stored rather than what was pressed: a write that failed
+    /// leaves the old backend showing, which is the truth. One small file,
+    /// read once per pick — the same moment the write already happens.
+    pub(crate) fn refresh_renderer(&mut self) {
+        self.surface.set_renderer(renderer_row());
     }
 
     /// The host cycled the canvas colour and hands back what it landed on.

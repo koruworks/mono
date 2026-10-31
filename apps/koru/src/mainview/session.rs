@@ -236,7 +236,7 @@ impl MainView {
                     // rather than breaks (the entry is skipped and the strip
                     // silently shortens), which is exactly why the compiler
                     // will not tell you.
-                    _ if t.whats_new.is_some() => private_page_ref(t),
+                    _ if t.whats_new.is_some() => private_page_ref(t)?,
                     TabView::Welcome(_) => TabRef::Welcome,
                     TabView::Manage(_) => TabRef::Manage,
                     TabView::Trash(_) => TabRef::Trash,
@@ -765,7 +765,7 @@ impl MainView {
                 .filter_map(|t| {
                     let which = match &t.view {
                         _ if t.draft.is_some() => TabRef::Draft,
-                        _ if t.whats_new.is_some() => private_page_ref(t),
+                        _ if t.whats_new.is_some() => private_page_ref(t)?,
                         TabView::Welcome(_) => TabRef::Welcome,
                         TabView::Manage(_) => TabRef::Manage,
                         TabView::Trash(_) => TabRef::Trash,
@@ -910,10 +910,14 @@ fn tasks_tab_ref(target: RailTarget) -> koru_workspace_host::TasksTabRef {
 }
 
 /// Which token a tab over a private workspace writes: the release notes or
-/// the Sync settings page.
-fn private_page_ref(tab: &Tab) -> TabRef {
+/// the Sync settings page. **None for the sample document**, which is not
+/// saved: it is a view of the Settings tab, and that comes back as Welcome —
+/// a sample with no Settings beside it would be a page nobody asked for.
+fn private_page_ref(tab: &Tab) -> Option<TabRef> {
+    use super::tab::PrivatePage;
     match tab.whats_new.as_ref().map(|n| n.page) {
-        Some(super::tab::PrivatePage::SyncSettings) => TabRef::SyncSettings,
-        _ => TabRef::WhatsNew,
+        Some(PrivatePage::SyncSettings) => Some(TabRef::SyncSettings),
+        Some(PrivatePage::SampleDocument) => None,
+        _ => Some(TabRef::WhatsNew),
     }
 }

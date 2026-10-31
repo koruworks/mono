@@ -233,8 +233,10 @@ token_enum! {
 token_enum! {
     /// `view_mode=` — the default view mode for a newly opened document.
     ///
-    /// Unknown input becomes `Full`, matching `parse_view_mode`.
-    ViewModeChoice, default = Full, fold_case = false,
+    /// **Narrow until somebody chooses** (the user's call, 2026-10-31): a
+    /// readable column is what a new page should look like. Unknown input
+    /// becomes the default too.
+    ViewModeChoice, default = Narrow, fold_case = false,
     {
         Page => "page";
         Narrow => "narrow";

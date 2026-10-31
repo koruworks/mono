@@ -80,20 +80,95 @@ impl VoiceOffer {
         koru_voice_consent::megabytes(self.terms.iter().map(|terms| terms.download_bytes).sum())
     }
 
-    pub fn licences(&self) -> String {
-        self.terms
-            .iter()
-            .map(|terms| terms.licence.as_str())
-            .collect::<Vec<_>>()
-            .join(" + ")
+    /// **The consent step's body, as a list**: a lead line, one line per
+    /// model — its name, size, publisher and licence — and a closing line
+    /// about the microphone and where the models run, separated by `\n`.
+    ///
+    /// Every line is assembled from translated templates; the names and the
+    /// credits are the signed descriptor's own text and are not translated.
+    /// A model whose attribution carries further credits after its first `;`
+    /// gets them on an indented line under its own, so everything the
+    /// attribution says is still on the screen. Display only: what is
+    /// recorded is still exactly [`Self::terms`].
+    pub fn consent_body(&self, lang: koru_i18n::Lang) -> String {
+        use koru_i18n::{Key, fill, t};
+        let mut lines = vec![t(lang, Key::VoiceConsentLead).to_owned(), String::new()];
+        for terms in &self.terms {
+            let size = terms.megabytes().to_string();
+            match Credit::of(&terms.attribution, &terms.licence) {
+                Some(credit) => {
+                    lines.push(format!(
+                        "\u{2022} {}",
+                        fill(
+                            t(lang, Key::VoiceConsentItem),
+                            &[credit.model, &size, credit.publisher, &terms.licence],
+                        )
+                    ));
+                    if let Some(further) = credit.further {
+                        lines.push(format!("   {further}"));
+                    }
+                }
+                // Not the usual shape: the whole attribution is the line,
+                // with the size, and the licence when it does not name it.
+                None => {
+                    let mut line = fill(
+                        t(lang, Key::VoiceConsentItemPlain),
+                        &[&terms.attribution, &size],
+                    );
+                    if !terms.attribution.contains(terms.licence.as_str()) {
+                        line = fill(
+                            t(lang, Key::VoiceConsentWithLicence),
+                            &[&line, &terms.licence],
+                        );
+                    }
+                    lines.push(format!("\u{2022} {line}"));
+                }
+            }
+        }
+        lines.push(String::new());
+        lines.push(t(lang, Key::VoiceConsentClosing).to_owned());
+        lines.join("\n")
     }
+}
 
-    pub fn attributions(&self) -> String {
-        self.terms
-            .iter()
-            .map(|terms| terms.attribution.as_str())
-            .collect::<Vec<_>>()
-            .join("; ")
+/// **An attribution read the way the catalog writes it**:
+/// `"<Publisher>, <Model name> (<licence>)[; further credit]"`, for example
+/// `"OpenAI, Whisper base (MIT); GGML quantisation published by the
+/// whisper.cpp project"`.
+///
+/// Conservative on purpose, because a credit misread is a credit misstated:
+/// the first segment must end in the offer's own licence in parentheses, and
+/// what is before it must split at exactly one comma into a publisher and a
+/// model name, neither empty. Anything else is `None`, and the caller shows
+/// the whole attribution as it was signed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Credit<'a> {
+    pub publisher: &'a str,
+    pub model: &'a str,
+    /// What follows the first `;`, trimmed — `None` when there is nothing.
+    pub further: Option<&'a str>,
+}
+
+impl<'a> Credit<'a> {
+    pub fn of(attribution: &'a str, licence: &str) -> Option<Self> {
+        let (head, further) = match attribution.split_once(';') {
+            Some((head, rest)) => (head.trim(), Some(rest.trim()).filter(|r| !r.is_empty())),
+            None => (attribution.trim(), None),
+        };
+        let (named, stated) = head.strip_suffix(')')?.rsplit_once(" (")?;
+        if stated.trim() != licence.trim() {
+            return None;
+        }
+        let (publisher, model) = named.split_once(',')?;
+        let (publisher, model) = (publisher.trim(), model.trim());
+        if publisher.is_empty() || model.is_empty() || model.contains(',') {
+            return None;
+        }
+        Some(Self {
+            publisher,
+            model,
+            further,
+        })
     }
 }
 

@@ -72,7 +72,7 @@ impl PageId {
     pub(crate) fn keywords(self) -> &'static str {
         match self {
             Self::Appearance => {
-                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix"
+                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview"
             }
             Self::Editor => {
                 "page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"
@@ -82,7 +82,7 @@ impl PageId {
             }
             Self::Terminal => "shell cursor zoom font theme input blink composer",
             Self::System => {
-                "login startup start quit background close window renderer graphics vulkan directx opengl ai provider model privacy telemetry usage data analytics diagnostics"
+                "login startup start quit background close window renderer graphics vulkan directx opengl advanced privacy telemetry usage data analytics diagnostics"
             }
         }
     }
@@ -140,10 +140,8 @@ impl PageId {
             Self::System => &[
                 Key::SettingsStartupAndWindows,
                 Key::SettingsWhenTheLastWindowCloses,
-                Key::SettingsProvidersAndModels,
                 Key::SettingsAdvanced,
                 Key::SettingsStartOnLogin,
-                Key::SettingsKoruAi,
                 Key::SettingsPrivacy,
                 Key::SettingsShareUsageData,
             ],
@@ -280,9 +278,6 @@ pub(crate) struct CardLaid {
     pub(crate) rect: Rect,
     pub(crate) title: Option<String>,
     pub(crate) aside: Option<String>,
-    /// The caption line ends with the document fonts, shown rather than
-    /// named — *Preview: body · Heading · code*.
-    pub(crate) font_preview: bool,
     pub(crate) rows: Vec<RowLaid>,
 }
 
@@ -317,7 +312,7 @@ pub(crate) enum Block {
     },
     Card(CardLaid),
     /// A card's caption standing alone, with a link at its right end — the
-    /// *Show* / *Hide* of a card that can be folded away.
+    /// *Preview in sample document* above the document fonts.
     Caption {
         title: String,
         x: f32,
@@ -344,7 +339,6 @@ pub(crate) struct Laid {
 struct OpenCard {
     title: Option<String>,
     aside: Option<String>,
-    font_preview: bool,
     top: f32,
     rows: Vec<RowLaid>,
 }
@@ -505,25 +499,16 @@ impl<'a> Builder<'a> {
         self.card = Some(OpenCard {
             title: title.map(str::to_owned),
             aside: aside.map(str::to_owned),
-            font_preview: false,
             top: self.y,
             rows: Vec::new(),
         });
         self.y += header;
     }
 
-    /// A card whose caption line ends with the document fonts set in their
-    /// own faces.
-    pub(crate) fn card_with_font_preview(&mut self, title: &str) {
-        self.card(Some(title));
-        if let Some(card) = self.card.as_mut() {
-            card.font_preview = true;
-        }
-    }
-
     /// A caption with a link at its right end, and no card of its own: what
-    /// follows is either the card it folds (`b.card(None)` and its rows) or,
-    /// folded, the one line that says what is in it (`b.note`).
+    /// follows is the untitled card it heads (`b.card(None)` and its rows),
+    /// which then reads exactly like a titled card with a link beside its
+    /// title.
     pub(crate) fn caption_with_link(&mut self, title: &str, link: &str, action: Action) {
         self.end_card();
         let style = theme::role::meta();
@@ -553,7 +538,6 @@ impl<'a> Builder<'a> {
             rect,
             title: card.title,
             aside: card.aside,
-            font_preview: card.font_preview,
             rows: card.rows,
         }));
         self.y += Card::GAP;

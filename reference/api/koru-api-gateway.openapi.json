@@ -15676,7 +15676,7 @@
         "type": "object"
       },
       "ViewModeChoice": {
-        "description": "`view_mode=` — the default view mode for a newly opened document.\n\nUnknown input becomes `Full`, matching `parse_view_mode`.",
+        "description": "`view_mode=` — the default view mode for a newly opened document.\n\n**Narrow until somebody chooses** (the user's call, 2026-10-31): a\nreadable column is what a new page should look like. Unknown input\nbecomes the default too.",
         "enum": [
           "page",
           "narrow",

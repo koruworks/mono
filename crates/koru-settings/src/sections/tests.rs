@@ -75,7 +75,7 @@ fn every_global_default_is_the_one_the_current_reader_produces() {
     assert_eq!(settings.caret_height, CaretHeightChoice::Medium);
     assert_eq!(settings.density, DensityChoice::Normal);
     assert_eq!(settings.zoom.get(), 1.0);
-    assert_eq!(settings.default_view_mode, ViewModeChoice::Full);
+    assert_eq!(settings.default_view_mode, ViewModeChoice::Narrow);
     assert_eq!(settings.default_canvas_background, CanvasBackground::Auto);
     assert!(!settings.pinned_show_title);
     assert_eq!(settings.popout_close, PopoutCloseChoice::Ask);

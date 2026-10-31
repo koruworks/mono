@@ -1810,17 +1810,15 @@ fn f7_cycles_the_view_mode() {
     };
     assert_eq!(
         view.editor.view.view_mode,
-        ViewMode::Full,
-        "the default is Full"
+        ViewMode::Narrow,
+        "the default is Narrow"
     );
-    f7(&mut view, &mut ws);
-    assert_eq!(view.editor.view.view_mode, ViewMode::Page);
-    f7(&mut view, &mut ws);
-    assert_eq!(view.editor.view.view_mode, ViewMode::Narrow);
     f7(&mut view, &mut ws);
     assert_eq!(view.editor.view.view_mode, ViewMode::Full);
     f7(&mut view, &mut ws);
     assert_eq!(view.editor.view.view_mode, ViewMode::Page, "it wraps");
+    f7(&mut view, &mut ws);
+    assert_eq!(view.editor.view.view_mode, ViewMode::Narrow);
 }
 
 /// A mode and page colour set on one view reach a fresh view on the same
@@ -2978,8 +2976,9 @@ fn the_title_dots_open_the_page_menu_and_a_row_sets_the_width() {
     assert!(view.menu.is_some(), "the page menu is open");
 
     // Walk to Narrow and take it. In Full there is no page-color row, so the
-    // widths are rows 1, 2, 3.
-    for _ in 0..2 {
+    // widths are rows 1, 2, 3 — after the heading's *Global settings* link,
+    // which is the first stop.
+    for _ in 0..3 {
         view.key(&mut ws, &named(NamedKey::ArrowDown), None, NONE);
     }
     view.key(&mut ws, &named(NamedKey::Enter), None, NONE);
@@ -2990,6 +2989,22 @@ fn the_title_dots_open_the_page_menu_and_a_row_sets_the_width() {
     // Esc is what closes it.
     view.key(&mut ws, &named(NamedKey::Escape), None, NONE);
     assert!(view.menu.is_none());
+}
+
+/// *Global settings*, at the right of the heading, is the one page-menu row
+/// that leaves the document: chosen — here by the keyboard, its first stop —
+/// it closes the menu and asks the host for the Settings tab, once.
+#[test]
+fn the_page_menus_global_settings_link_asks_the_host_and_closes() {
+    let (mut ws, mut view) = laid_out();
+    let (x, y) = dots_at(&view);
+    assert!(view.mouse_down(&mut ws, x, y, false));
+    assert!(view.menu.is_some(), "the page menu is open");
+    view.key(&mut ws, &named(NamedKey::ArrowDown), None, NONE);
+    view.key(&mut ws, &named(NamedKey::Enter), None, NONE);
+    assert!(view.menu.is_none(), "leaving the document closes the menu");
+    assert!(View::take_wants_global_settings(&mut view));
+    assert!(!View::take_wants_global_settings(&mut view), "asked once");
 }
 
 /// The width chords name a mode outright, and work with the menu open so the

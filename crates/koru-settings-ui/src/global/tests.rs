@@ -142,10 +142,28 @@ fn the_density_row_moves_the_live_density() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let was = theme::density();
     let mut surface = koru();
-    assert!(press(&mut surface, "Comfortable"));
-    assert_eq!(theme::density(), theme::Density::Comfortable);
     assert!(press(&mut surface, "Compact"));
     assert_eq!(theme::density(), theme::Density::Compact);
+    assert!(press(&mut surface, "Normal"));
+    assert_eq!(theme::density(), theme::Density::Normal);
+    theme::set_density(was);
+}
+
+/// **Two densities on offer, and a stored third still reads.** *Comfortable*
+/// is not offered any more, but the setting's format did not change: a
+/// person whose saved value is Comfortable keeps it until they pick another,
+/// and the row ticks neither rather than pretending.
+#[test]
+fn comfortable_is_not_offered_and_a_stored_one_ticks_neither() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = theme::density();
+    theme::set_density(theme::Density::Comfortable);
+    let mut surface = koru();
+    assert!(goto(&mut surface, "Compact"));
+    assert!(!labels(&surface).iter().any(|l| l == "Comfortable"));
+    assert!(!is_active(&surface, "Compact"));
+    assert!(!is_active(&surface, "Normal"));
+    assert_eq!(theme::density(), theme::Density::Comfortable);
     theme::set_density(was);
 }
 
@@ -688,24 +706,62 @@ fn the_voice_shortcut_wears_its_chord_as_a_key_chip() {
     assert!(chip.is_some_and(|chord: String| !chord.is_empty()));
 }
 
-/// Advanced is folded to one line saying what is in it; *Show* unfolds it and
-/// *Hide* folds it again.
+/// Advanced is always unfolded: a plain card title, the renderer row under
+/// it, and no *Show* / *Hide* link or summary line.
 #[test]
-fn advanced_folds_to_a_summary_and_unfolds_on_show() {
+fn advanced_is_always_shown() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
     surface.relayout();
-    assert!(page_lines(&surface).iter().any(
-        |l| l.starts_with("Graphics renderer (") && l.contains("Nothing here needs attention")
-    ));
-    assert!(press(&mut surface, "Show"));
-    surface.relayout();
+    let drawn = page_lines(&surface);
+    assert!(drawn.iter().any(|l| l == "Advanced"), "{drawn:?}");
+    assert!(
+        !drawn
+            .iter()
+            .any(|l| l.contains("Nothing here needs attention"))
+    );
     assert!(labels(&surface).iter().any(|l| l == "Vulkan"));
-    assert!(press(&mut surface, "Hide"));
+    assert!(!labels(&surface).iter().any(|l| l == "Show" || l == "Hide"));
+}
+
+/// *Document fonts* ends its title line with *Preview in sample document*,
+/// and pressing it asks the host for the sample — a request, because only a
+/// host with panes can put a page beside this one.
+#[test]
+fn document_fonts_links_to_the_sample_document() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
     surface.relayout();
-    assert!(!labels(&surface).iter().any(|l| l == "Vulkan"));
-    assert!(surface.take_requests().is_empty(), "folding writes nothing");
+    let link = "Preview in sample document";
+    let caption = surface.laid.blocks.iter().find_map(|block| match block {
+        Block::Caption {
+            title,
+            link: Some((text, _, _)),
+            ..
+        } => Some((title.clone(), text.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        caption,
+        Some(("Document fonts".to_owned(), link.to_owned()))
+    );
+    assert!(press(&mut surface, link));
+    assert_eq!(surface.take_requests(), vec![Request::OpenSampleDocument]);
+}
+
+/// A host that cannot open a sample — the standalone Koru AI and Terminal
+/// windows — gets the plain title and no link that would do nothing.
+#[test]
+fn a_host_without_a_sample_document_draws_no_link() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.offer_sample_document(false);
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+    assert!(page_lines(&surface).iter().any(|l| l == "Document fonts"));
+    assert!(!goto(&mut surface, "Preview in sample document"));
 }
 
 // ---------------------------------------------------------------- privacy

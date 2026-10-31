@@ -1367,7 +1367,9 @@ impl Default for Settings {
             show_archived: false,
             sidebar_w: Vec::new(),
             opened: Vec::new(),
-            view_mode: ViewMode::default(),
+            // Narrow, the registry's default (`ViewModeChoice`), not the
+            // draw enum's Full, which is the outline's only mode.
+            view_mode: ViewMode::Narrow,
             canvas_bg: None,
             doc_view_prefs: Vec::new(),
             popout_close: PopoutClose::default(),

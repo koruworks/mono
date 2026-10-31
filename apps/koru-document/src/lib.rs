@@ -209,6 +209,9 @@ pub struct BuiltInDocument {
     /// only hands the drawing over — drained by `View::take_wants_copy_diagram`
     /// on the next maintenance pass, the way *Save as…* is.
     wants_copy_diagram: Option<std::sync::Arc<koru_draw::diagram::PreparedDiagram>>,
+    /// The page menu's *Global settings* was chosen: the host opens its
+    /// Settings tab. Drained by `View::take_wants_global_settings`.
+    wants_global_settings: bool,
     /// **Where a live dictation is going, decided once.**
     ///
     /// Recorded when the composition opened and never re-derived. Re-running
@@ -419,6 +422,7 @@ impl BuiltInDocument {
                     viewer: None,
                     viewer_lift: None,
                     wants_copy_diagram: None,
+                    wants_global_settings: false,
                     dictation: None,
                     spelling: spelling::SpellCheck::new(),
                     context_spelling: None,
@@ -496,6 +500,7 @@ impl BuiltInDocument {
             viewer: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_global_settings: false,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
@@ -542,6 +547,7 @@ impl BuiltInDocument {
             viewer: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_global_settings: false,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
@@ -2057,6 +2063,7 @@ impl BuiltInDocument {
                 canvas_index(self.editor.view.canvas_bg),
                 self.prose_language(ws),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
+                !self.window_chrome,
             ),
             Some(OpenMenu::Block(_) | OpenMenu::ContextBlock { .. }) => {
                 blockmenu::block_rows(&self.command_state(ws))
@@ -2182,6 +2189,7 @@ impl BuiltInDocument {
                 canvas_index(self.editor.view.canvas_bg),
                 None,
                 koru_i18n::Lang::En,
+                !self.window_chrome,
             ),
             Some(OpenMenu::Block(_) | OpenMenu::ContextBlock { .. }) => {
                 blockmenu::block_rows(&docview::State::default())
@@ -2294,6 +2302,12 @@ impl BuiltInDocument {
                             }
                             FontRole::Code => theme::set_code_font(theme::code_font().next()),
                         }
+                    }
+                    // The one row that leaves the document: the menu goes,
+                    // and the host opens Settings on its Editor page.
+                    Some(page_menu::Choice::OpenGlobalSettings) => {
+                        self.menu = None;
+                        self.wants_global_settings = true;
                     }
                     Some(page_menu::Choice::CycleProseLanguage) => {
                         // The one page-menu choice that writes to the document

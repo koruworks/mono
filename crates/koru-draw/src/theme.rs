@@ -1559,7 +1559,9 @@ pub fn set_density(d: Density) {
 // layout row sets them live. Persisted by the shell from `Settings` on the
 // click that chose them; loaded here at startup.
 
-static DEFAULT_VIEW_MODE: AtomicU8 = AtomicU8::new(0); // 0=Full, 1=Page, 2=Narrow
+// Narrow until the settings say otherwise, matching `ViewModeChoice`'s
+// default, so a document opened before they load is not set wide.
+static DEFAULT_VIEW_MODE: AtomicU8 = AtomicU8::new(2); // 0=Full, 1=Page, 2=Narrow
 /// Packed RGBA, or `0` for "Auto" (follow the theme canvas). Real colours are
 /// opaque, so the low byte is `0xFF` and `0` is unambiguous.
 static DEFAULT_CANVAS_BG: AtomicU32 = AtomicU32::new(0);

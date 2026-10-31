@@ -1155,7 +1155,9 @@ fn a_documents_view_mode_is_persisted_when_the_workspace_is_known() {
     v.set_viewport(1200.0, 700.0);
     let doc = a_document(&mut workspace.ws, "Notes");
     v.open_node(&workspace.ws, doc);
-    // Full is the default; cycle to Page so there is a real override to capture.
+    // Narrow is the default; F7 steps Page -> Narrow -> Full, so twice from
+    // Narrow lands on Page — a real override to capture.
+    v.key(&mut workspace.ws, &Key::Named(NamedKey::F7), None, NONE);
     v.key(&mut workspace.ws, &Key::Named(NamedKey::F7), None, NONE);
 
     let mut settings = Settings::default();
@@ -1173,7 +1175,7 @@ fn a_documents_view_mode_is_persisted_when_the_workspace_is_known() {
         "the document's Page override was captured per-document"
     );
 
-    // And it reopens in Page, not the Full default.
+    // And it reopens in Page, not the Narrow default.
     let back = reopened(&mut workspace, &settings);
     let i = back
         .tabs()

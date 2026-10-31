@@ -82,18 +82,20 @@ impl RowId {
     }
 
     /// Whether this build shows the row (`koru_features`,
-    /// guide/contributing/FEATURE-FLAGS.md): the task list with tasks, the
-    /// reminder with reminders, Koru AI with Koru AI, the agent row with
-    /// agents. *Phone*, *Watch* and
-    /// *Write your own apps* are hidden for now, whatever the build: there is
-    /// no phone or watch app to pair yet, and nothing to point at for apps.
+    /// guide/contributing/FEATURE-FLAGS.md): the reminder with reminders, the
+    /// agent row with agents. *Phone*, *Watch* and *Write your own apps* are
+    /// hidden for now, whatever the build: there is no phone or watch app to
+    /// pair yet, and nothing to point at for apps. *Learn your way around*,
+    /// *Turn one document into a task list* and *Set up your AI* are taken
+    /// off the page for now too; *Run an agent in a terminal* opens *Further*
+    /// in the AI row's place.
     pub fn shown_in_product(self) -> bool {
         match self {
-            Self::TaskList => koru_features::tasks(),
             Self::Reminder => koru_features::reminders(),
-            Self::Ai => koru_features::ai(),
             Self::TerminalAgent => koru_features::agents(),
-            Self::Phone | Self::Watch | Self::OwnApps => false,
+            Self::Learn | Self::TaskList | Self::Ai | Self::Phone | Self::Watch | Self::OwnApps => {
+                false
+            }
             _ => true,
         }
     }
@@ -154,13 +156,13 @@ impl Section {
                 RowId::Feedback,
             ],
             Self::Devices => &[RowId::Phone, RowId::Computer, RowId::Watch],
-            Self::Further => &[RowId::Ai, RowId::Mcp, RowId::TerminalAgent, RowId::OwnApps],
+            Self::Further => &[RowId::Ai, RowId::TerminalAgent, RowId::Mcp, RowId::OwnApps],
         }
     }
 
-    /// Whether the header shows *n of m done* and the card folds when done.
-    /// Not a section left with nothing to count — *Further* when this build
-    /// hides Koru AI — whose *0 of 0* would say nothing.
+    /// Whether the header shows *n of m done*. Not a section left with
+    /// nothing to count, whose *0 of 0* would say nothing. A section stays
+    /// open when it is done: there is no folding.
     pub fn counts(self) -> bool {
         !matches!(self, Self::Devices) && self.rows().iter().any(|row| row.counted())
     }
@@ -170,15 +172,6 @@ impl Section {
             Self::FirstMinutes => super::FIRST_MINUTES_LABEL,
             Self::Devices => super::DEVICES_LABEL,
             Self::Further => super::FURTHER_LABEL,
-        }
-    }
-
-    /// The one line a folded section shows.
-    pub const fn done_line(self) -> &'static str {
-        match self {
-            Self::FirstMinutes => super::FIRST_MINUTES_DONE,
-            Self::Devices => "",
-            Self::Further => super::FURTHER_DONE,
         }
     }
 }

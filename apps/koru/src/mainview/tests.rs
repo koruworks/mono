@@ -6682,6 +6682,8 @@ fn clear_recents_is_the_last_row_of_the_documents_flyout_and_clears_them() {
 fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
     let (mut v, mut workspace) = container();
     v.sync_welcome_lists();
+    let tabs = v.tabs().len();
+    let welcome_at = v.tabs().active();
     let TabView::Welcome(welcome) = &mut v.tabs_mut().active_mut().view else {
         panic!("a fresh container opens Welcome")
     };
@@ -6706,15 +6708,21 @@ fn a_welcome_tick_reaches_the_container_and_runs_the_existing_command() {
         ModifiersState::empty()
     ));
     v.drain_welcome();
+    // What Ctrl+T does: a new tab with a page to type on, and no name asked.
     assert!(
-        v.new_document.is_some(),
-        "Make your first document opened the name prompt"
+        v.new_document.is_none(),
+        "Make your first document asked for a name"
+    );
+    assert_eq!(v.tabs().len(), tabs + 1);
+    assert!(
+        v.tabs().active_tab().draft.is_some(),
+        "the new tab is Ctrl+T's draft page"
     );
     assert_eq!(
         v.welcome_progress.done().collect::<Vec<_>>(),
         ["first-document"]
     );
-    let TabView::Welcome(welcome) = &v.tabs().active_tab().view else {
+    let TabView::Welcome(welcome) = &v.tabs().get(welcome_at).expect("still open").view else {
         panic!("still Welcome")
     };
     assert!(welcome.is_done(crate::welcome::RowId::FirstDocument));
@@ -6845,6 +6853,12 @@ fn entering_a_title_refreshes_nothing() {
 /// profile switcher in a container, while a standalone document retains its
 /// direct Page-width chord. This drives the container's whole key path, which
 /// is where a chord claimed higher up would show.
+/// Put the active document at Full width with its own chord, Ctrl+Shift+G.
+fn full_width(v: &mut MainView, workspace: &mut Workspace) {
+    let ctrl_shift = koru_keys::PRIMARY.union(ModifiersState::SHIFT);
+    assert!(v.key(&mut workspace.ws, &ch("g"), Some("g"), ctrl_shift));
+}
+
 #[test]
 fn the_layout_chords_reach_the_document_through_the_container() {
     use koru_draw::theme::ViewMode;
@@ -9735,6 +9749,9 @@ fn a_checkbox_completion_reaches_the_task_wrapper_through_the_container() {
     use koru_draw::{geometry, theme};
 
     let (mut v, mut workspace) = on_document();
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
         .ws
@@ -9863,6 +9880,9 @@ fn a_task_changed_in_a_document_refreshes_the_tasks_page_at_once() {
         v.tabs_mut().select(leaf),
         "the document comes forward to be typed in"
     );
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
 
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
@@ -11972,6 +11992,84 @@ fn a_settings_tab_opened_later_starts_from_what_is_stored() {
     assert!(opened.pinned_show_title());
 }
 
+/// **Preview in sample document** puts the sample beside Settings: a split,
+/// the sample on the right, read-only and over a workspace of its own, titled
+/// in the person's language. Asking again brings that one forward rather than
+/// opening a second, and a session never saves it.
+#[test]
+fn the_sample_document_opens_beside_settings_once() {
+    let mut view = MainView::new();
+    assert!(view.open_settings_tab());
+    let settings_pane = view.panes.focused_path().clone();
+    view.perform_settings_request(koru_settings_ui::Request::OpenSampleDocument);
+
+    assert_eq!(
+        view.panes.iter_groups().count(),
+        2,
+        "two panes, side by side"
+    );
+    let sample = view.tabs().active_tab();
+    assert!(sample.is_sample_document());
+    assert_eq!(
+        sample.label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::SampleDocumentTitle)
+    );
+    assert_eq!(sample.document, None, "not a document in the workspace");
+    assert!(matches!(&sample.view, TabView::Leaf(l) if l.view().read_only));
+    let settings_still_there = view
+        .panes
+        .group(&settings_pane.child(0))
+        .is_some_and(|g| matches!(g.active_tab().view, TabView::Settings(_)));
+    assert!(settings_still_there, "Settings keeps the left");
+
+    // Again, from Settings: the same sample comes forward.
+    view.panes.set_focus(settings_pane.child(0));
+    view.perform_settings_request(koru_settings_ui::Request::OpenSampleDocument);
+    assert_eq!(view.panes.iter_groups().count(), 2, "no third pane");
+    let samples = view
+        .panes
+        .iter_groups()
+        .map(|(_, g)| g.iter_tabs().filter(|t| t.is_sample_document()).count())
+        .sum::<usize>();
+    assert_eq!(samples, 1, "and no second sample");
+    assert!(view.tabs().active_tab().is_sample_document());
+}
+
+/// The sample holds one of each thing the document fonts draw — headings,
+/// a bulleted, a numbered and a task list with one done item, a quote and a
+/// code block — in every language.
+#[test]
+fn the_sample_document_has_one_of_each_thing_in_every_language() {
+    use koru_core::{Heading, Kind, ListStyle};
+    for lang in koru_i18n::Lang::ALL {
+        let tab = Tab::sample_document_in(lang).expect("the sample builds");
+        let ws = &tab.whats_new.as_ref().expect("a private page").workspace.ws;
+        let nodes: Vec<_> = ws
+            .walk_all()
+            .expect("walk")
+            .into_iter()
+            .filter_map(|(id, _)| ws.read(id).ok())
+            .collect();
+        let has = |f: &dyn Fn(&koru_core::Node) -> bool| nodes.iter().any(f);
+        let tag = lang.tag();
+        assert!(has(&|n| n.meta.heading == Some(Heading::H1)), "{tag}: H1");
+        assert!(has(&|n| n.meta.heading == Some(Heading::H2)), "{tag}: H2");
+        for style in [ListStyle::Bullet, ListStyle::Numbered, ListStyle::Checkbox] {
+            assert!(
+                has(&|n| n.kind == Kind::ListBlock && n.meta.list_style == Some(style)),
+                "{tag}: {style:?} list"
+            );
+        }
+        assert_eq!(
+            nodes.iter().filter(|n| n.meta.done).count(),
+            1,
+            "{tag}: one done task"
+        );
+        assert!(has(&|n| n.kind == Kind::Quote), "{tag}: quote");
+        assert!(has(&|n| n.kind == Kind::Code), "{tag}: code block");
+    }
+}
+
 /// `Ctrl+,` is a keyboard's way into Settings, so it lands the keyboard in
 /// the search box: the next thing typed is what to find. Pressed again over
 /// an open Settings tab it returns there and focuses the box again, and
@@ -12254,6 +12352,9 @@ fn a_checkbox_in_a_document_becomes_a_requirement_at_least_the_write() {
         .position(|tab| matches!(tab.view, TabView::Leaf(_)))
         .expect("the document this window opened on");
     assert!(v.tabs_mut().select(leaf));
+    // These coordinates are read in the full-width layout; a new document
+    // opens Narrow, whose centred column would move the checkbox.
+    full_width(&mut v, &mut workspace);
     let doc = v.document_root().expect("a document tab is showing");
     let item = workspace
         .ws

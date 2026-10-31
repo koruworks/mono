@@ -16,10 +16,11 @@
 //! choice most documents never change; behind a `…` they cost nothing until
 //! they are wanted.
 //!
-//! **Nothing here closes the menu.** Every row is a setting whose result you
-//! are looking at — a width you might step through, a color you compare against
-//! the page — so choosing one leaves the menu up and you dismiss it when you
-//! are done. That is the opposite of the block menus, where a choice is an edit
+//! **Nothing here closes the menu** — but the one link. Every row is a setting
+//! whose result you are looking at — a width you might step through, a color
+//! you compare against the page — so choosing one leaves the menu up and you
+//! dismiss it when you are done. *Global settings*, beside the heading, leaves
+//! the document for the Settings tab, so it closes the menu on its way out. That is the opposite of the block menus, where a choice is an edit
 //! and the panel has done its job.
 //!
 //! [ADR-44-page]: ../../../docs/decisions/README.md
@@ -55,6 +56,10 @@ pub enum Choice {
     /// each dictionary language. The same quick-cycle shape as the rows
     /// above; the full chip picker for the *person's* default is in Settings.
     CycleProseLanguage,
+    /// *Global settings*, at the right of the heading: the Settings tab, on
+    /// its Editor page, where the defaults this menu overrides per page live.
+    /// The host opens it; this menu only asks.
+    OpenGlobalSettings,
 }
 
 /// The next prose language after `current` in the cycle Default → each
@@ -146,14 +151,30 @@ pub fn mode_for_key(letter: char) -> Option<ViewMode> {
 /// of consts: the page-color row exists only in Page mode, so every index after
 /// it moves with the mode — which is exactly the drift two parallel lists
 /// invite.
+///
+/// `settings_link` is whether the host has a Settings tab to open: a document
+/// in a window of its own has none, and gets the plain heading rather than a
+/// link that would do nothing. Either way the heading is row 0, so no other
+/// row's index moves with it.
 pub fn rows(
     mode: ViewMode,
     canvas: usize,
     prose_language: Option<koru_workspace_host::spelling::SpellLang>,
     lang: koru_i18n::Lang,
+    settings_link: bool,
 ) -> Vec<(Row, Option<Choice>)> {
     let page = mode == ViewMode::Page;
-    let mut out: Vec<(Row, Option<Choice>)> = vec![(Row::Heading("PAGE SETTINGS"), None)];
+    let heading = match settings_link {
+        true => (
+            Row::HeadingLink {
+                heading: "PAGE SETTINGS",
+                link: koru_i18n::t(lang, koru_i18n::Key::PageMenuGlobalSettings),
+            },
+            Some(Choice::OpenGlobalSettings),
+        ),
+        false => (Row::Heading("PAGE SETTINGS"), None),
+    };
+    let mut out: Vec<(Row, Option<Choice>)> = vec![heading];
     for (m, label, chord) in WIDTHS {
         out.push((
             Row::item(label)
@@ -227,17 +248,20 @@ pub fn shape(
     canvas: usize,
     prose_language: Option<koru_workspace_host::spelling::SpellLang>,
     lang: koru_i18n::Lang,
+    settings_link: bool,
 ) -> Vec<Row> {
-    rows(mode, canvas, prose_language, lang)
+    rows(mode, canvas, prose_language, lang, settings_link)
         .into_iter()
         .map(|(r, _)| r)
         .collect()
 }
 
 /// What row `i` does, or `None` for a row that is furniture. The language and
-/// UI-language arguments never change the row *set*, so any values answer.
+/// UI-language arguments never change the row *set*, so any values answer —
+/// and the link is asked for, because row 0 can only be chosen where it is
+/// drawn as one.
 pub fn choice_at(mode: ViewMode, i: usize) -> Option<Choice> {
-    rows(mode, 0, None, koru_i18n::Lang::En)
+    rows(mode, 0, None, koru_i18n::Lang::En, true)
         .get(i)
         .and_then(|(_, c)| *c)
 }
@@ -252,7 +276,7 @@ pub fn is_color_row(mode: ViewMode, i: usize) -> bool {
 /// fourth width.
 fn is_bare_row(i: usize) -> bool {
     matches!(
-        rows(ViewMode::Page, 0, None, koru_i18n::Lang::En).get(i),
+        rows(ViewMode::Page, 0, None, koru_i18n::Lang::En, true).get(i),
         Some((Row::Item { label, .. }, _)) if label == "Color"
     )
 }

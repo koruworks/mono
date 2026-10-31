@@ -239,6 +239,10 @@ impl View for BuiltInDocument {
         self.editor.view.wants_task_view.take()
     }
 
+    fn take_wants_global_settings(&mut self) -> bool {
+        std::mem::take(&mut self.wants_global_settings)
+    }
+
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
         if self.search.is_open() {
             self.search.close(ws, &mut self.editor, true);

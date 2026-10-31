@@ -18,7 +18,7 @@ use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::{Color, Fill};
 
-use super::layout::{self, HINT_CHORD_W, Layout, RowLayout, SectionLayout, TICK, Trailing};
+use super::layout::{self, HINT_CHORD_W, Layout, RowLayout, SectionLayout, Trailing};
 use super::rows::Section;
 use super::{Target, WelcomeView};
 
@@ -170,14 +170,7 @@ impl WelcomeView {
                 laid.card.w,
                 laid.card.y + laid.card.h - top,
             ),
-            |r| {
-                r.property("label", laid.section.label(), "welcome copy");
-                r.property(
-                    "folded",
-                    laid.folded.is_some(),
-                    "all counted rows done and not shown",
-                );
-            },
+            |r| r.property("label", laid.section.label(), "welcome copy"),
         );
         {
             let _header = inspect::scope(
@@ -211,11 +204,6 @@ impl WelcomeView {
                     p.placeholder,
                 );
             }
-            if let Some((text, rect)) = laid.toggle {
-                let target = Target::Toggle(laid.section);
-                self.draw_link(canvas, root, text, rect, ui, target);
-                drawn.push((target, rect));
-            }
         }
 
         let _card = Card::new(None).draw(
@@ -230,35 +218,6 @@ impl WelcomeView {
             },
             1.0,
         );
-        if let Some(folded) = laid.folded {
-            let _row = inspect::scope(
-                "Welcome row",
-                "part",
-                root,
-                scene::rect(folded.x, folded.y, folded.w, folded.h),
-                |r| r.property("row", "all done", "folded section"),
-            );
-            let tick = Rect::new(
-                folded.x + CardRow::PAD_X,
-                folded.y + (folded.h - TICK) * 0.5,
-                TICK,
-                TICK,
-            );
-            self.draw_tick(canvas, root, tick, true);
-            let style = layout::title_style();
-            draw_line(
-                canvas,
-                root,
-                &mut self.engine,
-                laid.section.done_line(),
-                tick.x + TICK + 12.0,
-                folded.y + (folded.h - style.metrics.line_height) * 0.5,
-                style,
-                "theme::role::ui()",
-                p.text_dim,
-            );
-            return;
-        }
         // The device card's rows share it with the pairing square, so their
         // hairlines stop at the rows' own width.
         if laid.section == Section::Devices {
@@ -286,23 +245,23 @@ impl WelcomeView {
         for row in &laid.rows {
             self.draw_row(canvas, root, row, &card_shape, ui, drawn);
         }
-        if let Some(qr) = &laid.qr {
+        if let Some(square) = laid.qr {
             let _qr = inspect::scope(
                 "Welcome pair QR",
                 "part",
                 root,
-                scene::rect(qr.hit.x, qr.hit.y, qr.hit.w, qr.hit.h),
+                scene::rect(square.x, square.y, square.w, square.h),
                 |r| {
                     r.property(
                         "behavior",
                         "decorative; opens Link another device",
                         "the real code lives in that window",
-                    )
+                    );
+                    r.property("size", square.w, "the row's height, at most layout::QR");
                 },
             );
             let hot = ui.hot(Target::PairQr);
-            let square = qr.square;
-            let shape = scene::rrect(square.x, square.y, square.w, square.h, 8.0);
+            let shape = scene::rrect(square.x, square.y, square.w, square.h, 6.0);
             scene::fill(canvas, root, p.bg, &shape);
             if hot {
                 scene::fill(canvas, root, p.hover_tint, &shape);
@@ -323,18 +282,7 @@ impl WelcomeView {
                 &shape,
             );
             draw_qr_motif(canvas, root, square, p.text);
-            draw_line(
-                canvas,
-                root,
-                &mut self.engine,
-                super::SCAN_TO_PAIR,
-                qr.caption.0,
-                qr.caption.1,
-                layout::sentence_style(),
-                "theme::role::meta()",
-                p.text_dim,
-            );
-            drawn.push((Target::PairQr, qr.hit));
+            drawn.push((Target::PairQr, square));
         }
     }
 
@@ -452,17 +400,44 @@ impl WelcomeView {
             );
             drawn.push((target, *rect));
         }
-        for (agent, rect, chosen) in &row.agents {
-            let target = Target::McpAgent(*agent);
-            Chip::new(agent.label(), *chosen).draw(
-                canvas,
+        if let Some(strip) = row.agents_strip {
+            let window = strip.window;
+            let _agents = inspect::scope(
+                "Welcome agents",
+                "part",
                 root,
-                &mut self.engine,
-                *rect,
-                ui.hot(target),
-                ui.focused(target),
+                scene::rect(window.x, window.y, window.w, window.h),
+                |r| {
+                    r.property("scroll", strip.scroll, "view state");
+                    r.property("overflow", strip.overflow, "one line, never wrapped");
+                },
             );
-            drawn.push((target, *rect));
+            // Clipped a little outside the window so a whole chip's focus
+            // ring still shows; what is pressed is the window's.
+            let clip = scene::rect(
+                window.x - 3.0,
+                window.y - 3.0,
+                window.w + 6.0,
+                window.h + 6.0,
+            );
+            canvas.push_clip_layer(Fill::NonZero, root, &clip);
+            let _clip = inspect::clip(root, clip);
+            for (agent, rect, chosen) in &row.agents {
+                let target = Target::McpAgent(*agent);
+                let shown = strip.visible(*rect);
+                if shown.w > 0.0 {
+                    Chip::new(agent.label(), *chosen).draw(
+                        canvas,
+                        root,
+                        &mut self.engine,
+                        *rect,
+                        ui.hot(target),
+                        ui.focused(target),
+                    );
+                }
+                drawn.push((target, shown));
+            }
+            canvas.pop_layer();
         }
         if let Some((text, rect)) = &row.code {
             self.draw_code(canvas, root, text, *rect, ui, Target::CopyMcp);
@@ -675,7 +650,9 @@ impl WelcomeView {
 }
 
 /// A placeholder QR: three finder squares and a fixed scatter of modules.
-/// Decorative — the real code is in the Link another device window.
+/// Decorative — the real code is in the Link another device window. The
+/// margin is a share of the square, so the glyph still reads as a QR code at
+/// a row's height.
 fn draw_qr_motif(canvas: &mut Scene, root: Affine, square: Rect, color: Color) {
     const N: usize = 9;
     const MODULES: [&str; N] = [
@@ -689,7 +666,7 @@ fn draw_qr_motif(canvas: &mut Scene, root: Affine, square: Rect, color: Color) {
         "x.x.xx..x",
         "xxx.x.xx.",
     ];
-    let pad = 12.0;
+    let pad = square.w * 0.12;
     let cell = (square.w - pad * 2.0) / N as f32;
     for (r, line) in MODULES.iter().enumerate() {
         for (c, bit) in line.bytes().enumerate() {

@@ -128,9 +128,8 @@ pub(crate) enum Action {
     StartOnLogin(bool),
     /// *Share anonymous usage data*: the value the switch moves to.
     TelemetryConsent(bool),
-    /// Unfold (`true`) or fold the System page's Advanced card. View state:
-    /// nothing is written.
-    ShowAdvanced(bool),
+    /// *Preview in sample document*, at the right of *Document fonts*.
+    PreviewSampleDocument,
 
     // ----------------------------------------------------------- Terminal
     TerminalTheme(ThemeChoice),
@@ -144,11 +143,6 @@ pub(crate) enum Action {
     /// *Match the editor caret*: `true` sets width and height to
     /// `Application`; `false` gives them the editor caret's current values.
     TerminalMatchCaret(bool),
-
-    // ----------------------------------------------------------------- AI
-    /// The AI section's one row: open the provider setup the AI surface owns.
-    /// See [`crate::ai`] for why the section is a slot rather than rows.
-    OpenAiSetup,
 }
 
 /// **What the surface cannot do for itself.**
@@ -195,8 +189,15 @@ pub enum Request {
     AskVoiceDevices,
     /// Act through `koru-voice-consent`, which is the record's only owner.
     RevokeVoiceConsent,
-    /// Open the AI provider setup the AI surface owns.
+    /// Open the AI provider setup the AI surface owns. No Settings row raises
+    /// it while the Koru AI card is off the System page; Welcome's *Set up
+    /// your AI* still does, through the same host path.
     OpenAiSetup,
+    /// Show the sample document — a short read-only page in the person's
+    /// document fonts — beside this Settings tab, or bring it forward if it
+    /// is already open. Only a host with tabs and panes can; see
+    /// [`offer_sample_document`](crate::SettingsSurface::offer_sample_document).
+    OpenSampleDocument,
     /// Record this device's telemetry answer. The record is the events
     /// journal's, behind the Gateway (the opt-in contract of 2026-10-11), and
     /// the write must leave the event loop — so it is the host's to perform.

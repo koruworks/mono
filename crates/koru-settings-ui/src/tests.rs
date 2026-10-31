@@ -88,6 +88,7 @@ pub(crate) fn koru() -> SettingsSurface {
         note: "OpenAI · a key is configured".to_owned(),
         action: Some("Open AI setup…".to_owned()),
     });
+    surface.offer_sample_document(true);
     surface.relayout();
     surface
 }
@@ -162,6 +163,7 @@ fn clone_surface(surface: &SettingsSurface) -> SettingsSurface {
     copy.renderer = surface.renderer.clone();
     copy.ai = surface.ai.clone();
     copy.telemetry = surface.telemetry;
+    copy.sample_document = surface.sample_document;
     copy.availability = surface.availability;
     copy.notice = surface.notice.clone();
     copy.host_section_height = surface.host_section_height;
@@ -653,7 +655,6 @@ fn a_press_outside_an_open_list_closes_it_and_presses_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
-    surface.advanced_open = true;
     surface.relayout();
     let field = rect_of(&surface, "Vulkan").expect("the renderer field");
     assert!(press_rect(&mut surface, field));
@@ -676,7 +677,6 @@ fn the_keyboard_steps_through_an_open_list() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.show_page(PageId::System);
-    surface.advanced_open = true;
     surface.relayout();
     let field = rect_of(&surface, "Vulkan").expect("the renderer field");
     assert!(press_rect(&mut surface, field));
@@ -730,7 +730,7 @@ fn a_read_only_surface_takes_the_press_and_changes_nothing() {
     surface.set_availability(Availability::Down);
     let before = theme::density();
     assert!(
-        press(&mut surface, "Comfortable"),
+        press(&mut surface, "Compact"),
         "the press is still ours — the pointer is over a control"
     );
     assert_eq!(theme::density(), before, "and it moved nothing");
@@ -843,15 +843,53 @@ fn a_request_is_drained_once() {
 fn the_renderer_row_hands_the_host_its_own_token() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    // Folded away until *Show* unfolds the Advanced card.
-    assert!(!goto(&mut surface, "Vulkan"));
-    assert!(press(&mut surface, "Show"));
     assert!(press(&mut surface, "Vulkan"));
     assert_eq!(
         surface.take_requests(),
         vec![Request::SetRenderer("vulkan".to_owned())],
         "the surface never learns what a RendererBackend is"
     );
+}
+
+/// **The row shows what is stored, not what was pressed.** A pick is only a
+/// request; the field and its tick move when the host hands back a fresh
+/// reading of `renderer.conf`, so a write that did not land visibly does not
+/// switch — and one that did, does.
+#[test]
+fn the_renderer_row_follows_the_hosts_fresh_reading() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let closed = |surface: &SettingsSurface| {
+        surface.laid.blocks.iter().find_map(|block| match block {
+            Block::Card(card) => card.rows.iter().find_map(|row| match &row.widget {
+                Widget::Dropdown { value, .. } if row.label == "Renderer" => Some(value.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+    };
+    assert!(press(&mut surface, "DirectX 12"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetRenderer("dx12".to_owned())]
+    );
+    surface.relayout();
+    assert_eq!(
+        closed(&surface).as_deref(),
+        Some("Auto"),
+        "nothing stored yet"
+    );
+    assert!(is_active(&surface, "Auto"));
+
+    // The host wrote it and read the file back.
+    surface.set_renderer(RendererRow {
+        current: "dx12".to_owned(),
+        ..renderer_row()
+    });
+    surface.relayout();
+    assert_eq!(closed(&surface).as_deref(), Some("DirectX 12"));
+    assert!(is_active(&surface, "DirectX 12"));
+    assert!(!is_active(&surface, "Auto"));
 }
 
 /// A host that offers no renderer choice — macOS has one backend — gets no row
@@ -865,19 +903,25 @@ fn a_host_with_no_renderer_choice_draws_no_renderer_row() {
     assert!(!goto(&mut surface, "Vulkan"));
 }
 
+/// **No Koru AI card, for now**, even with the slot filled: its providers are
+/// set up in Koru AI itself, and the System page no longer names them.
 #[test]
-fn the_ai_card_is_the_slot_the_host_filled() {
+fn a_filled_ai_slot_draws_no_card_for_now() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     let drawn = lines(&surface);
-    assert!(drawn.iter().any(|line| line == "Koru AI"));
+    assert!(!drawn.iter().any(|line| line == "Koru AI"));
     assert!(
-        drawn
+        !drawn
+            .iter()
+            .any(|line| line == "Providers, models and reasoning")
+    );
+    assert!(
+        !drawn
             .iter()
             .any(|line| line == "OpenAI · a key is configured")
     );
-    assert!(press(&mut surface, "Open AI setup…"));
-    assert_eq!(surface.take_requests(), vec![Request::OpenAiSetup]);
+    assert!(!goto(&mut surface, "Open AI setup…"));
 }
 
 /// A host that fills nothing draws no AI card either — an empty card is worse
