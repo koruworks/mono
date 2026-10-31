@@ -139,6 +139,7 @@ pub fn draw_document(
     vh: f32,
     active: bool,
     insert_button: bool,
+    drag_grip: bool,
     table_source: Option<NodeId>,
     table_scroll: &HashMap<NodeId, f32>,
     table_cell: Option<(NodeId, usize, usize)>,
@@ -181,7 +182,9 @@ pub fn draw_document(
             draw_image_row(scene, root, row, images, engine, vw, oy, selected, dragging);
             if selected || on_row {
                 let grip_active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-                draw_grip(scene, root, row, oy, grip_active);
+                if drag_grip {
+                    draw_grip(scene, root, row, oy, grip_active);
+                }
                 if insert_button {
                     let plus_hovered = matches!(hover, Some(Hover::Plus(h)) if h == i);
                     draw_plus(scene, root, row, oy, plus_hovered);
@@ -202,7 +205,9 @@ pub fn draw_document(
             draw_divider(scene, root, row, vw, oy);
             if selected || on_row {
                 let grip_active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-                draw_grip(scene, root, row, oy, grip_active);
+                if drag_grip {
+                    draw_grip(scene, root, row, oy, grip_active);
+                }
                 if insert_button {
                     let plus_hovered = matches!(hover, Some(Hover::Plus(h)) if h == i);
                     draw_plus(scene, root, row, oy, plus_hovered);
@@ -243,7 +248,7 @@ pub fn draw_document(
                 search_highlights,
                 spelling,
             );
-            if focused || on_row {
+            if drag_grip && (focused || on_row) {
                 draw_grip(
                     scene,
                     root,
@@ -287,7 +292,7 @@ pub fn draw_document(
                     },
                     copy_glyph: copy_icon.glyph(),
                     copy_active: copy_icon.confirming(),
-                    grip: (selected || on_row)
+                    grip: (drag_grip && (selected || on_row))
                         .then_some(matches!(hover, Some(Hover::Grip(h)) if h == i)),
                     plus: (insert_button && (selected || on_row))
                         .then_some(matches!(hover, Some(Hover::Plus(h)) if h == i)),
@@ -354,7 +359,9 @@ pub fn draw_document(
         let on_row = hover.and_then(Hover::row) == Some(i);
         if on_row && !row.is_title {
             let active = matches!(hover, Some(Hover::Grip(h)) if h == i);
-            draw_grip(scene, root, row, oy, active);
+            if drag_grip {
+                draw_grip(scene, root, row, oy, active);
+            }
             if insert_button {
                 draw_plus(
                     scene,
@@ -1940,6 +1947,7 @@ pub fn frame(
         vh,
         view.active,
         view.insert_button,
+        view.drag_grip,
         view.table_source,
         &view.table_scroll,
         view.table_cell,

@@ -936,6 +936,11 @@ pub struct ViewState {
     /// has entries: a button that leads almost nowhere is worse than no button.
     /// On in a document, off in a bare list.
     pub insert_button: bool,
+    /// Whether a hovered row shows its drag grip in the affordance lane.
+    ///
+    /// On everywhere but the chat composer: a message of a few lines is not
+    /// a document to reorder, and the grip there only crowded the text.
+    pub drag_grip: bool,
     /// Whether this document may be changed at all.
     ///
     /// **A capability of the view, like [`images_enabled`], not a condition like
@@ -1175,6 +1180,7 @@ impl Default for ViewState {
             paste_redo_exhausted: false,
             pending_cut_image: None,
             insert_button: false,
+            drag_grip: true,
             read_only: false,
             tags: crate::chips::TagLookup::default(),
             lists: crate::chips::ListLookup::default(),
@@ -1240,6 +1246,7 @@ impl ViewState {
         self.policy = policy;
         if policy == crate::policy::Policy::Composer {
             self.insert_button = false;
+            self.drag_grip = false;
             self.images_enabled = false;
             self.dividers_enabled = false;
             self.quotes_enabled = false;

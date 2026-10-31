@@ -9763,7 +9763,7 @@ pub trait Editing {
         // A page you cannot edit is a page you cannot reorder. Refused here
         // rather than in the drawing, so the *hit target* goes with the glyph —
         // an invisible grip that still drags would be worse than a visible one.
-        if self.view().read_only || self.body().is_title_row(i) {
+        if self.view().read_only || !self.view().drag_grip || self.body().is_title_row(i) {
             return None;
         }
         let row = self.body().rows.get(i)?;
@@ -11475,6 +11475,24 @@ mod tests {
             e.body.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
             [image, before, after]
         );
+    }
+
+    /// **The chat composer has no drag grip** (C16, the user: "Hide"): the
+    /// composer policy takes it away with the other block controls, so a
+    /// press in the lane cannot start a reorder either.
+    #[test]
+    fn the_composer_policy_hides_the_drag_grip() {
+        let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+        ws.insert(Parent::Root, Node::paragraph("first").unwrap())
+            .unwrap();
+        ws.insert(Parent::Root, Node::paragraph("second").unwrap())
+            .unwrap();
+        let mut e = Editor::over(&ws);
+        e.set_viewport(900.0, 560.0);
+        assert!(e.grip_rect(0).is_some(), "a document row has its grip");
+        e.view.apply_policy(crate::policy::Policy::Composer);
+        assert!(!e.view.drag_grip);
+        assert!(e.grip_rect(0).is_none(), "the composer's rows have none");
     }
 
     /// The left-hand grip is another handle on the same reorder operation.
