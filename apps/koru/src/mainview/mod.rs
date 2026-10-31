@@ -2685,6 +2685,22 @@ impl MainView {
         {
             return self.start_schedule_rename(schedule);
         }
+        // The Chats view: the chat under the pointer, else the one the
+        // keyboard is on while the view holds it.
+        if self.sidebar.is_open()
+            && self.explore.showing_chats()
+            && let Some(chat) = self
+                .explore
+                .chat_at(self.explore_area(), px, py)
+                .or_else(|| {
+                    self.explore
+                        .has_focus()
+                        .then(|| self.explore.chats_mut().focused_chat())
+                        .flatten()
+                })
+        {
+            return self.start_chat_rename(chat);
+        }
         if self.sidebar.is_open()
             && let Some(node) = self.explore.row_node_at(self.explore_area(), px, py)
         {
@@ -4214,7 +4230,11 @@ impl MainView {
                 MenuAction::DeleteRun => self.runs_still_working(runs).len() < runs.len(),
                 _ => false,
             },
-            MenuSubject::AiChat { .. } => matches!(action, MenuAction::DeleteAiChat),
+            MenuSubject::AiChat { chats } => match action {
+                MenuAction::DeleteAiChat => true,
+                MenuAction::Rename => chats.len() == 1,
+                _ => false,
+            },
             MenuSubject::AgentSchedules { schedules } => {
                 let subjects = schedules
                     .iter()
@@ -4574,6 +4594,10 @@ impl MainView {
             },
             MenuSubject::AiChat { chats } => match action {
                 MenuAction::DeleteAiChat => self.ask_delete_chats(chats.clone()),
+                MenuAction::Rename => match chats.as_slice() {
+                    [chat] => self.start_chat_rename(*chat),
+                    _ => false,
+                },
                 _ => false,
             },
             MenuSubject::AgentSchedules { schedules } => match action {
@@ -5836,20 +5860,64 @@ impl MainView {
         true
     }
 
-    /// A chat row's menu: one verb, *Delete chat*.
+    /// A chat row's menu: *Rename…* for one chat, and *Delete chat*.
     fn open_chat_menu(&mut self, chats: Vec<koru_ai_ui::ChatId>, at: (f32, f32)) -> bool {
         // The row counts the pick, the way *Delete run* does.
         context_menu::set_chat_delete_count(chats.len());
-        let mut menu = ContextMenu::new(
-            &mut self.engine,
-            MenuSubject::AiChat { chats },
-            at,
-            context_menu::ai_chat_items(),
-        );
+        let items = context_menu::ai_chat_items(chats.len());
+        let mut menu = ContextMenu::new(&mut self.engine, MenuSubject::AiChat { chats }, at, items);
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
         self.menu = Some(menu);
         true
+    }
+
+    /// **Rename a chat in its Chats row** — the menu's *Rename…* and `F2`.
+    /// The same inline field a file or a schedule is renamed in, over the
+    /// row's title (`workspace_rename_row`).
+    fn start_chat_rename(&mut self, chat: koru_ai_ui::ChatId) -> bool {
+        let Some(title) = self
+            .explore
+            .chats_mut()
+            .chats()
+            .iter()
+            .find(|candidate| candidate.id == chat)
+            .map(|candidate| candidate.title.clone())
+        else {
+            return false;
+        };
+        self.workspace_rename = Some(WorkspaceRename::for_chat(&mut self.engine, chat, &title));
+        true
+    }
+
+    /// Send a chat's new title through the chat surface's rename command —
+    /// the one the chat's title row used. **An AI chat tab on the chat
+    /// first**, so its tab takes the name; else the side pane's surface,
+    /// started if it has not been, the way the `+` menu starts it to list
+    /// chats. Either one tells the Chats view to refresh when it lands.
+    /// An empty or unchanged title renames nothing.
+    fn rename_ai_chat(&mut self, chat: koru_ai_ui::ChatId, title: &str) -> bool {
+        let title = title.trim();
+        let unchanged = self
+            .explore
+            .chats_mut()
+            .chats()
+            .iter()
+            .any(|candidate| candidate.id == chat && candidate.title == title);
+        if title.is_empty() || unchanged {
+            return true;
+        }
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view
+                    && view.chat_id() == Some(chat)
+                {
+                    return view.rename_chat(chat, title);
+                }
+            }
+        }
+        self.ai_chat.activate();
+        self.ai_chat.rename_chat(chat, title)
     }
 
     /// The workspace this window is showing.
@@ -5956,6 +6024,9 @@ impl MainView {
                     .explore
                     .row_label_rect(self.explore_area(), NodeId::from_uuid(id.as_uuid()));
             }
+            RenameTarget::Chat(chat) => {
+                return self.explore.chat_label_rect(self.explore_area(), chat);
+            }
             RenameTarget::Schedule(schedule) => {
                 if let Some(row) = self
                     .explore
@@ -6038,6 +6109,10 @@ impl MainView {
                     Some(RenameTarget::File(id)) => {
                         self.workspace_rename = None;
                         self.ask_pane(PaneRequest::RenameFile(id, name))
+                    }
+                    Some(RenameTarget::Chat(chat)) => {
+                        self.workspace_rename = None;
+                        self.rename_ai_chat(chat, &name)
                     }
                     Some(RenameTarget::Schedule(schedule)) => {
                         let expected = self
@@ -13860,7 +13935,8 @@ impl MainView {
                                 .collect::<Vec<_>>(),
                             RenameTarget::Profile(_)
                             | RenameTarget::File(_)
-                            | RenameTarget::Schedule(_) => Vec::new(),
+                            | RenameTarget::Schedule(_)
+                            | RenameTarget::Chat(_) => Vec::new(),
                         })
                         .unwrap_or_default();
                     let out = field.key(&mut self.engine, key, text, mods, &taken);

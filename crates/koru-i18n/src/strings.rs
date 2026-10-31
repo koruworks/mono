@@ -2538,6 +2538,9 @@ pub enum Key {
     /// the confirmation's sentence (the CTO's note).
     ChatsDeleteMany,
     ChatsDeleteManyBody,
+    /// Under a chat's rename field in the Chats list, when Enter is pressed
+    /// on an empty title: the field stays open with the text you can fix.
+    ChatsNameNeeded,
     /// The coding-agent CLI cards: "{} update available", with the CLI's
     /// brand name.
     AgentCliUpdateAvailable,
@@ -2615,7 +2618,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1779] = [
+    pub const ALL: [Key; 1780] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4355,6 +4358,7 @@ impl Key {
         Key::Download,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
+        Key::ChatsNameNeeded,
         Key::AgentCliUpdateAvailable,
         Key::AgentCliVersions,
         Key::AgentCliVersion,
@@ -13136,6 +13140,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         zh_hans: "{} 个聊天及其消息将被删除。如果有本地智能体在其中任一聊天中回答，Koru 会先停止该智能体。",
         ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
     },
+    Row { key: Key::ChatsNameNeeded, en: "A chat needs a name", es: "Un chat necesita un nombre", pt_br: "Uma conversa precisa de um nome", de: "Ein Chat braucht einen Namen", fr: "Une discussion a besoin d’un nom", ar: "تحتاج المحادثة إلى اسم", zh_hans: "对话需要一个名称", ja: "チャットには名前が必要です" },
     Row { key: Key::AgentCliUpdateAvailable, en: "{} update available", es: "Actualización de {} disponible", pt_br: "Atualização do {} disponível", de: "Update für {} verfügbar", fr: "Mise à jour de {} disponible", ar: "يتوفر تحديث لـ {}", zh_hans: "{} 有可用更新", ja: "{} のアップデートがあります" },
     Row { key: Key::AgentCliVersions, en: "v{} → v{}", es: "v{} → v{}", pt_br: "v{} → v{}", de: "v{} → v{}", fr: "v{} → v{}", ar: "v{} → v{}", zh_hans: "v{} → v{}", ja: "v{} → v{}" },
     Row { key: Key::AgentCliVersion, en: "v{}", es: "v{}", pt_br: "v{}", de: "v{}", fr: "v{}", ar: "v{}", zh_hans: "v{}", ja: "v{}" },

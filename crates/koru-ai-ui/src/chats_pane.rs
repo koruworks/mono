@@ -21,12 +21,23 @@
 //! Delete asks through this surface's own confirmation and deletes through
 //! its own `DeleteChat` path, which already clears a transcript that was
 //! deleted from under it and says why a delete was refused.
+//!
+//! **`F2` renames the keyboard's chat in its row** — a field over the title,
+//! as the workspace window's navigator renames a row: Enter renames, Escape
+//! leaves the name as it was, an empty title is refused in place, and a
+//! press anywhere else is *done*. It renames through
+//! [`ChatSurface::rename_chat`], the rename command the chat's title row used
+//! before the row was removed, so a chat open here takes its new name with
+//! the list.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use koru_ai_core::ChatId;
+use koru_ai_wire::RenameChatRequest;
 use koru_chats_ui::Press;
 use koru_draw::geometry::Rect;
-use koru_draw::scene;
+use koru_draw::{scene, theme};
+use koru_ui::text_input::{InputStyle, TextInput};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -40,6 +51,20 @@ const PANE_MAX_W: f32 = 380.0;
 const PANE_MAX_H: f32 = 460.0;
 /// Air inside the panel's border.
 const PANE_INSET: f32 = 4.0;
+/// The rename field's height, centred in the row: the workspace window's
+/// inline field's, so a row renamed in either window looks the same.
+const RENAME_H: f32 = 26.0;
+
+/// **A chat being renamed in its row.**
+pub(crate) struct ChatsRename {
+    chat: ChatId,
+    /// The title as it was, so an Enter that changed nothing renames nothing.
+    was: String,
+    input: TextInput,
+    /// Why the last Enter was refused. The next keystroke clears it: you are
+    /// already fixing it.
+    hint: Option<&'static str>,
+}
 
 fn epoch_ms() -> i64 {
     SystemTime::now()
@@ -101,6 +126,7 @@ impl ChatSurface {
         self.tool_access_open = false;
         self.tool_mode_open = false;
         self.history_open = true;
+        self.chats_rename = None;
         let current = self.current_chat_id();
         let (area, top) = self.chats_area();
         let pane = &mut self.chats_pane;
@@ -128,6 +154,7 @@ impl ChatSurface {
             return false;
         }
         self.history_open = false;
+        self.chats_rename = None;
         self.chats_pane.clear_focus();
         self.chats_pane.clear_hover();
         self.focus = Focus::Composer;
@@ -163,6 +190,11 @@ impl ChatSurface {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> Option<bool> {
+        // The rename field owns every key while it is open — Enter and
+        // Escape included, which the list and the pane would otherwise take.
+        if self.history_open && self.chats_rename.is_some() {
+            return Some(self.chats_rename_key(key, text, mods));
+        }
         if self.hosts_chats_pane() && Self::is_reveal_chord(key, text, mods) {
             return Some(self.open_chats_pane());
         }
@@ -171,6 +203,12 @@ impl ChatSurface {
         }
         if matches!(key, Key::Named(NamedKey::Escape)) {
             return Some(self.close_chats_pane());
+        }
+        if koru_keys::registry::get(koru_keys::ShortcutId::RenameDocument)
+            .chord
+            .matches(key, text, mods)
+        {
+            return Some(self.start_chats_rename());
         }
         let press = Press::of(key)?;
         let (area, top) = self.chats_area();
@@ -184,6 +222,21 @@ impl ChatSurface {
     pub(crate) fn chats_pane_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
         if !self.history_open {
             return None;
+        }
+        // The rename field is modal over the list: a press either moves its
+        // caret or finishes it, and never also chooses a row.
+        if self.chats_rename.is_some() {
+            match self.chats_rename_rect() {
+                Some(field) if field.contains(x, y) => {
+                    if let Some(rename) = self.chats_rename.as_mut() {
+                        rename.input.click(&mut self.engine, field, x, y);
+                    }
+                }
+                _ => {
+                    self.finish_chats_rename();
+                }
+            }
+            return Some(true);
         }
         if self.chats_panel().contains(x, y) {
             let (area, top) = self.chats_area();
@@ -202,6 +255,10 @@ impl ChatSurface {
     pub(crate) fn chats_pane_context_menu(&mut self, x: f32, y: f32) -> Option<bool> {
         if !self.history_open {
             return None;
+        }
+        if self.chats_rename.is_some() {
+            self.finish_chats_rename();
+            return Some(true);
         }
         if !self.chats_panel().contains(x, y) {
             self.close_chats_pane();
@@ -300,15 +357,149 @@ impl ChatSurface {
         self.chats_pane.set_now(epoch_ms());
         self.chats_pane
             .draw(canvas, root, &mut self.engine, area, top);
+        self.draw_chats_rename(canvas, root);
+    }
+
+    /// **Rename a chat** through the reader's rename command — the one the
+    /// chat's title row sent, and the one a host with a Chats list of its
+    /// own (the workspace window's navigator) renames through, so the chat
+    /// open in this surface takes the new name and the lists are told
+    /// ([`take_chat_list_changed`](Self::take_chat_list_changed)). Nothing is
+    /// sent for an empty title.
+    pub fn rename_chat(&mut self, chat: ChatId, title: &str) -> bool {
+        let title = title.trim();
+        if title.is_empty() {
+            return false;
+        }
+        self.send_command(Command::Rename(
+            chat,
+            RenameChatRequest {
+                title: title.to_owned(),
+            },
+        ))
+    }
+
+    /// `F2` on the pane: open the field over the keyboard's chat, its title
+    /// selected — renaming usually means replacing it.
+    pub(crate) fn start_chats_rename(&mut self) -> bool {
+        let Some(chat) = self.chats_pane.focused_chat() else {
+            return false;
+        };
+        let Some(was) = self
+            .chats_pane
+            .chats()
+            .iter()
+            .find(|candidate| candidate.id == chat)
+            .map(|candidate| candidate.title.clone())
+        else {
+            return false;
+        };
+        let mut input = TextInput::with_text(&mut self.engine, theme::role::row(), &was);
+        input.select_all(&mut self.engine);
+        self.chats_rename = Some(ChatsRename {
+            chat,
+            was,
+            input,
+            hint: None,
+        });
+        true
+    }
+
+    /// The field, centred over the row's title. `None` when the row is
+    /// scrolled out of the list — a press then reads as *elsewhere*.
+    fn chats_rename_rect(&self) -> Option<Rect> {
+        let rename = self.chats_rename.as_ref()?;
+        let (area, top) = self.chats_area();
+        let title = self.chats_pane.title_rect(area, top, rename.chat)?;
+        let h = RENAME_H.min(title.h);
+        Some(Rect::new(
+            title.x,
+            title.y + (title.h - h) * 0.5,
+            title.w,
+            h,
+        ))
+    }
+
+    fn chats_rename_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        let Some(rename) = self.chats_rename.as_mut() else {
+            return false;
+        };
+        match key {
+            Key::Named(NamedKey::Enter) => {
+                if rename.input.value().trim().is_empty() {
+                    rename.hint = Some(koru_i18n::t(self.lang, koru_i18n::Key::ChatsNameNeeded));
+                    return true;
+                }
+                self.finish_chats_rename()
+            }
+            // The name stays as it was, and the keyboard stays on its row.
+            Key::Named(NamedKey::Escape) => {
+                self.chats_rename = None;
+                true
+            }
+            _ => {
+                rename.hint = None;
+                rename.input.key(&mut self.engine, key, text, mods);
+                true
+            }
+        }
+    }
+
+    /// Close the field on what is typed: a new title renames, and an empty
+    /// or unchanged one leaves the name as it was — a press elsewhere must
+    /// not be a way round Enter's refusal.
+    fn finish_chats_rename(&mut self) -> bool {
+        let Some(rename) = self.chats_rename.take() else {
+            return false;
+        };
+        let title = rename.input.value();
+        let title = title.trim();
+        if title.is_empty() || title == rename.was {
+            return true;
+        }
+        self.rename_chat(rename.chat, title)
+    }
+
+    /// The field over the row, and the refusal under it in the red the
+    /// window already uses for *this is the bad one*.
+    fn draw_chats_rename(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some(field) = self.chats_rename_rect() else {
+            return;
+        };
+        let Some(rename) = self.chats_rename.as_mut() else {
+            return;
+        };
+        let style = if rename.hint.is_some() {
+            InputStyle::inline().invalid()
+        } else {
+            InputStyle::inline()
+        };
+        rename
+            .input
+            .draw(canvas, root, &mut self.engine, field, style, None, true);
+        if let Some(hint) = rename.hint {
+            let label = self.engine.simple_layout(hint, theme::role::hint());
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &label,
+                field.x + 2.0,
+                field.y + field.h + 2.0,
+                Some(theme::p().close_hover),
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::{Receiver, SyncSender};
+    use std::time::Duration;
+
     use koru_ai_core::{AiProviderId, Chat, ChatId, ModelSelection, ReasoningChoice, Timestamp};
     use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-    use crate::reader::Update;
+    use crate::reader::{Command, Reader, Update};
     use crate::{ChatSurface, Focus, SurfaceMode};
 
     fn chat(title: &str) -> Chat {
@@ -424,5 +615,169 @@ mod tests {
         assert!(surface.take_chat_list_changed());
         surface.apply_update(Update::Failure("nope".into()));
         assert!(!surface.take_chat_list_changed());
+    }
+
+    /// The standalone window's pane, open on `chats` with the keyboard on
+    /// the newest, and a reader whose commands the test reads.
+    fn pane_on(chats: Vec<Chat>) -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {
+        let mut surface = ready(SurfaceMode::Standalone);
+        let (reader, commands, updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.chats_pane.take_listing(Ok(koru_chats_ui::Listing {
+            chats,
+            agents: Vec::new(),
+        }));
+        assert!(press_chats(&mut surface));
+        assert!(surface.history_open);
+        (surface, commands, updates)
+    }
+
+    fn press(surface: &mut ChatSurface, key: NamedKey) -> bool {
+        surface.key(&Key::Named(key), None, ModifiersState::empty())
+    }
+
+    fn type_text(surface: &mut ChatSurface, text: &str) {
+        for ch in text.chars() {
+            let ch = ch.to_string();
+            surface.key(
+                &Key::Character(ch.as_str().into()),
+                Some(&ch),
+                ModifiersState::empty(),
+            );
+        }
+    }
+
+    /// **Rename lives in the Chats list now**, where the composer's
+    /// `/rename` was a stopgap: `F2` opens a field over the keyboard's row
+    /// with its title, and Enter renames through the reader's rename command
+    /// — the one the title row sent — with the pane still open.
+    #[test]
+    fn f2_renames_the_keyboards_chat_through_the_rename_command() {
+        let one = chat("One");
+        let (mut surface, commands, _updates) = pane_on(vec![one.clone()]);
+        assert!(press(&mut surface, NamedKey::F2));
+        assert!(surface.chats_rename.is_some(), "the field is offered");
+        assert!(
+            surface.chats_rename_rect().is_some(),
+            "over the row it renames"
+        );
+        // The title is selected, so typing replaces it.
+        type_text(&mut surface, " Two ");
+        assert!(press(&mut surface, NamedKey::Enter));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Rename(chat, request) => {
+                assert_eq!(chat, one.id);
+                assert_eq!(request.title, "Two");
+            }
+            _ => panic!("the rename goes through the rename command"),
+        }
+        assert!(commands.try_recv().is_err(), "and nothing else");
+        assert!(surface.chats_rename.is_none());
+        assert!(
+            surface.history_open,
+            "Enter renamed; it did not close the pane"
+        );
+        assert!(surface.composer.is_blank(), "and never became a turn");
+    }
+
+    /// Escape leaves the name as it was — and the pane open, the keyboard on
+    /// the row; an empty title is refused in place and an unchanged one
+    /// renames nothing.
+    #[test]
+    fn escape_an_empty_or_an_unchanged_title_renames_nothing() {
+        let (mut surface, commands, _updates) = pane_on(vec![chat("One")]);
+        press(&mut surface, NamedKey::F2);
+        type_text(&mut surface, "Typed");
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(surface.chats_rename.is_none());
+        assert!(
+            surface.history_open,
+            "Escape closed the field, not the pane"
+        );
+        assert!(surface.chats_pane.has_keyboard());
+
+        press(&mut surface, NamedKey::F2);
+        press(&mut surface, NamedKey::Backspace);
+        assert!(press(&mut surface, NamedKey::Enter));
+        assert!(
+            surface.chats_rename.is_some(),
+            "an empty title keeps the field"
+        );
+        assert_eq!(
+            surface.chats_rename.as_ref().and_then(|rename| rename.hint),
+            Some(koru_i18n::t(surface.lang, koru_i18n::Key::ChatsNameNeeded))
+        );
+        type_text(&mut surface, "x");
+        assert!(
+            surface
+                .chats_rename
+                .as_ref()
+                .is_some_and(|rename| rename.hint.is_none()),
+            "the next keystroke clears the complaint"
+        );
+        press(&mut surface, NamedKey::Escape);
+
+        press(&mut surface, NamedKey::F2);
+        assert!(press(&mut surface, NamedKey::Enter));
+        assert!(surface.chats_rename.is_none(), "an unchanged title is done");
+        assert!(
+            commands.try_recv().is_err(),
+            "and none of it renamed anything"
+        );
+    }
+
+    /// A press away from the field is *done*: it renames what was typed, and
+    /// does not also choose the row it landed on.
+    #[test]
+    fn a_press_elsewhere_finishes_the_rename() {
+        let older = chat("Older");
+        let mut newer = chat("Newer");
+        newer.updated_at = Timestamp::from_millis(2);
+        let (mut surface, commands, _updates) = pane_on(vec![older.clone(), newer]);
+        // The keyboard enters on the newest; step down to the older.
+        press(&mut surface, NamedKey::ArrowDown);
+        press(&mut surface, NamedKey::F2);
+        type_text(&mut surface, "Renamed");
+        let field = surface.chats_rename_rect().expect("the field is showing");
+        let panel = surface.chats_panel();
+        assert!(surface.mouse_down(panel.x + 20.0, field.y - field.h));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Rename(chat, request) => {
+                assert_eq!(chat, older.id);
+                assert_eq!(request.title, "Renamed");
+            }
+            _ => panic!("the press renames"),
+        }
+        assert!(commands.try_recv().is_err(), "and reads no other chat");
+        assert!(surface.chats_rename.is_none());
+        assert!(surface.history_open);
+    }
+
+    /// `F2` with the keyboard on no chat offers nothing.
+    #[test]
+    fn f2_on_an_empty_list_offers_no_field() {
+        let (mut surface, _commands, _updates) = pane_on(Vec::new());
+        assert!(!press(&mut surface, NamedKey::F2));
+        assert!(surface.chats_rename.is_none());
+    }
+
+    /// The command a host with its own Chats list renames through: trimmed,
+    /// and never sent for an empty title.
+    #[test]
+    fn rename_chat_sends_the_rename_command_for_a_title() {
+        let mut surface = ready(SurfaceMode::ContextPane);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let chat = ChatId::new();
+        assert!(!surface.rename_chat(chat, "   "));
+        assert!(commands.try_recv().is_err());
+        assert!(surface.rename_chat(chat, "  Hello "));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Rename(renamed, request) => {
+                assert_eq!(renamed, chat);
+                assert_eq!(request.title, "Hello");
+            }
+            _ => panic!("expected the rename"),
+        }
     }
 }

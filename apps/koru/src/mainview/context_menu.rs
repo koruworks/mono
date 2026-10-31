@@ -92,8 +92,9 @@ pub enum MenuSubject {
     AgentRuns {
         runs: Vec<koru_delegate_core::RunId>,
     },
-    /// A right-click on a chat row in the **Chats** navigator. One row, and
-    /// it deletes the chat — through the confirmation, like the Delete key.
+    /// A right-click on a chat row in the **Chats** navigator. *Rename…*
+    /// renames one chat in its row, like `F2`; the delete row deletes the
+    /// pick — through the confirmation, like the Delete key.
     /// The chat's id, never a row index: the list is a cache of an answer
     /// the AI service rewrites whenever a chat changes.
     AiChat {
@@ -2114,9 +2115,14 @@ pub fn agent_run_items() -> Vec<MenuAction> {
     vec![MenuAction::DeleteRun]
 }
 
-/// A chat row's menu in the Chats navigator: its one verb.
-pub fn ai_chat_items() -> Vec<MenuAction> {
-    vec![MenuAction::DeleteAiChat]
+/// A chat row's menu in the Chats navigator: rename, then delete. Rename is
+/// single-only, as a library row's is — one field cannot name several chats.
+pub fn ai_chat_items(count: usize) -> Vec<MenuAction> {
+    if count > 1 {
+        vec![MenuAction::DeleteAiChat]
+    } else {
+        vec![MenuAction::Rename, MenuAction::DeleteAiChat]
+    }
 }
 
 /// The first schedule-management increment adds rename. The following

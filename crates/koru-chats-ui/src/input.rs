@@ -81,6 +81,15 @@ impl ChatsSurface {
         Some(self.selected())
     }
 
+    /// The chat under a point, if the point is on a chat row — what `F2`
+    /// over the list renames. Nothing changes: pointing is not choosing.
+    pub fn chat_at(&mut self, area: Rect, top: f32, x: f32, y: f32) -> Option<crate::ChatId> {
+        let Some((Row::Chat(index), _)) = self.row_at(area, top, x, y) else {
+            return None;
+        };
+        self.chats.get(index).map(|chat| chat.id)
+    }
+
     /// A pointer move. `true` when the hover changed.
     pub fn mouse_move(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
         let hover = self

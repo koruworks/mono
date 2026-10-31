@@ -1131,6 +1131,25 @@ impl ExploreView {
         self.chats.reveal(chat, area, top)
     }
 
+    /// Where a chat's title sits in the Chats view, in window coordinates —
+    /// what the container draws its rename field over. `None` when the view
+    /// is not showing or the row is scrolled out of it.
+    pub fn chat_label_rect(&self, area: Rect, chat: koru_chats_ui::ChatId) -> Option<Rect> {
+        if self.mode != NavigatorMode::Chats {
+            return None;
+        }
+        self.chats.title_rect(area, self.rows_top(area), chat)
+    }
+
+    /// The chat under a point in the Chats view — what `F2` renames.
+    pub fn chat_at(&mut self, area: Rect, x: f32, y: f32) -> Option<koru_chats_ui::ChatId> {
+        if self.mode != NavigatorMode::Chats {
+            return None;
+        }
+        let top = self.rows_top(area);
+        self.chats.chat_at(area, top, x, y)
+    }
+
     /// What the Chats surface asked for on the press or key just handled,
     /// as the outcome the container answers.
     fn chats_outcome(&mut self) -> Outcome {

@@ -235,6 +235,24 @@ impl ChatsSurface {
             .find(|(_, r)| y >= r.y && y < r.y + r.h)
     }
 
+    /// Where a chat's title sits — what a host draws its rename field over,
+    /// so the field covers the words it replaces. Inside the band only, for
+    /// the hit test's reason: `None` when the list does not hold the chat or
+    /// its row is scrolled out of view.
+    pub fn title_rect(&self, area: Rect, top: f32, chat: crate::ChatId) -> Option<Rect> {
+        let index = self
+            .chats
+            .iter()
+            .position(|candidate| candidate.id == chat)?;
+        let band = self.band(area, top);
+        let (row, rect) = self
+            .layout(area, top)
+            .into_iter()
+            .find(|(row, _)| *row == Row::Chat(index))?;
+        (rect.y + rect.h > band.y && rect.y < band.y + band.h)
+            .then(|| self.row_parts(row, rect).title)
+    }
+
     /// Every chat and where its row sits, unculled and in order — what a
     /// screen reader is told, including the rows scrolled out of the band.
     pub fn chat_rects(&self, area: Rect, top: f32) -> Vec<(crate::ChatId, Rect)> {

@@ -234,3 +234,34 @@ fn the_accessibility_rects_are_the_drawn_rects_unculled() {
         }
     }
 }
+
+/// **A host's rename field covers the title it replaces.** The rect is the
+/// row's title part, the same one the draw puts the words in; a chat whose
+/// row is scrolled out of the band has none, and the chat under a point is
+/// the one whose row is there — without picking it.
+#[test]
+fn the_rename_field_sits_on_the_drawn_title_and_only_in_view() {
+    let many: Vec<_> = (1..=60)
+        .map(|n| chat(n, &format!("Chat {n}"), i64::from(n) * 1_000))
+        .collect();
+    let mut surface = showing(many);
+    let area = area();
+    let (row, rect) = surface.rows(area, TOP)[1];
+    let Row::Chat(index) = row else {
+        panic!("the second row is a chat");
+    };
+    let chat = surface.chats()[index].id;
+    assert_eq!(
+        surface.title_rect(area, TOP, chat),
+        Some(surface.row_parts(row, rect).title)
+    );
+    assert_eq!(
+        surface.chat_at(area, TOP, rect.x + 20.0, rect.y + 2.0),
+        Some(chat)
+    );
+    assert!(surface.selected().is_empty(), "pointing is not choosing");
+    // The last chat is far below the fold.
+    let last = surface.chats()[59].id;
+    assert_eq!(surface.title_rect(area, TOP, last), None);
+    assert_eq!(surface.title_rect(area, TOP, id(999)), None);
+}

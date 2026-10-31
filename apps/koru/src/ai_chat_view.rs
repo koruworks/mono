@@ -80,6 +80,12 @@ impl AiChatView {
         self.surface.take_chat_list_changed()
     }
 
+    /// Rename a chat through this tab's surface — the Chats view's rename,
+    /// sent here when this tab shows the chat so its label follows.
+    pub fn rename_chat(&mut self, chat: ChatId, title: &str) -> bool {
+        self.surface.rename_chat(chat, title)
+    }
+
     /// The *Chats* button in this tab was pressed: show the Chats view.
     pub fn take_wants_chats_view(&mut self) -> bool {
         self.surface.take_wants_chats_view()

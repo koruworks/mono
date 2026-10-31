@@ -48,6 +48,8 @@ pub(super) enum Target {
     Profile(ProfileId),
     File(DocumentId),
     Schedule(ScheduleId),
+    /// A chat in the Chats navigator, renamed in its row.
+    Chat(koru_ai_ui::ChatId),
 }
 
 pub(super) struct WorkspaceRename {
@@ -116,6 +118,20 @@ impl WorkspaceRename {
         }
     }
 
+    /// A chat's row in the Chats navigator. The title is the chat's own;
+    /// the rename it commits goes through the chat surface's rename command.
+    pub(super) fn for_chat(engine: &mut TextEngine, id: koru_ai_ui::ChatId, title: &str) -> Self {
+        let mut input = TextInput::with_text(engine, theme::role::row(), title);
+        input.select_all(engine);
+        Self {
+            target: Target::Chat(id),
+            input,
+            hint: None,
+            sending: false,
+            schedule_expected: None,
+        }
+    }
+
     pub(super) fn schedule_expected(&self) -> Option<&ScheduleName> {
         self.schedule_expected.as_ref()
     }
@@ -170,11 +186,21 @@ impl WorkspaceRename {
                         }
                     };
                 }
-                if name.is_empty() {
+                // A chat's title is trimmed when it is sent, so one that is
+                // only spaces is as empty as one that is nothing.
+                let empty = match self.target {
+                    Target::Chat(_) => name.trim().is_empty(),
+                    _ => name.is_empty(),
+                };
+                if empty {
                     self.hint = Some(match self.target {
                         Target::Workspace(_) => "A workspace needs a name".to_owned(),
                         Target::Profile(_) => "A profile needs a name".to_owned(),
                         Target::File(_) => "A file needs a name".to_owned(),
+                        Target::Chat(_) => {
+                            koru_i18n::t(crate::format::lang(), koru_i18n::Key::ChatsNameNeeded)
+                                .to_owned()
+                        }
                         Target::Schedule(_) => unreachable!(),
                     });
                     return Outcome::Keep;

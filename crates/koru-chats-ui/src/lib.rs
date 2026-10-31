@@ -48,6 +48,11 @@
 //! host's own confirmation. Deleting, once confirmed, is this crate's to do
 //! ([`delete`](ChatsSurface::delete)) so a refusal lands on the row it is about.
 //!
+//! **Renaming is the host's too.** Each host draws its own field over the
+//! row's title ([`title_rect`](ChatsSurface::title_rect)) and renames through
+//! the chat surface's rename command, the one the chat's title row used — so
+//! a chat open in a tab or in the window takes its new name with the list.
+//!
 //! [`refresh`]: ChatsSurface::refresh
 //! [`poll`]: ChatsSurface::poll
 

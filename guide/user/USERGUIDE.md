@@ -1361,9 +1361,8 @@ chat selected (see *Finding a chat again*) and **New chat** starts another
 thread. Closing the pane stops its background
 polling. The same durable chats open in the standalone `koru-ai-chat`
 application. Neither surface shows the chat's title above the conversation —
-its tab and the Chats list name it. To rename a chat, send `/rename` followed
-by the new title; it is saved with the conversation and never reaches the
-model.
+its tab and the Chats list name it. To rename a chat, rename it in the Chats
+list (see *Finding a chat again*).
 
 To collect questions about an answer, select response text, right-click, and
 choose **Add comment**. Type an optional comment and press Enter; a quote pill
@@ -5888,8 +5887,15 @@ Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
 keyboard too: Up and Down move, Home and End jump to either end, Enter opens,
 **Delete asks** before deleting, and Escape hands the keyboard back. Right-click
-a row for **Delete chat**. If the chat's agent could not be stopped, the chat
-stays and says so — delete it again.
+a row for **Rename…** and **Delete chat**. If the chat's agent could not be
+stopped, the chat stays and says so — delete it again.
+
+**Rename a chat in its row**: choose **Rename…**, or press **F2** with the
+pointer over the row (or the keyboard on it). A box replaces the title with
+the title selected; type the new one and press Enter, or press Escape to keep
+the old one. Clicking elsewhere keeps what you typed. An empty title is
+refused and the box stays open. A tab showing the chat takes the new name
+too, and the name never reaches the model.
 
 In a chat tab, **Ctrl+Shift+E** (or the chat's own **Chats** button) opens the
 list with that chat selected. A chat you start in a tab or in the Koru AI pane
@@ -5897,7 +5903,8 @@ appears in the list straight away.
 
 In the standalone Koru AI window, **Chats** — or Ctrl+Shift+E — opens the same
 list as a small floating pane. Choosing a row reads that chat in the window;
-Escape or a click outside closes the pane.
+Escape or a click outside closes the pane. **F2** renames the row the keyboard
+is on, in the same box.
 
 ### Mentioning a document with @
 

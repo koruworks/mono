@@ -135,8 +135,6 @@ const GREETING_GAP: f32 = 20.0;
 const SETUP_FIELDS_Y: f32 = 330.0;
 /// The title a chat is made with, until its first message names it.
 const DEFAULT_CHAT_TITLE: &str = "New chat";
-/// The composer command that renames the chat: `/rename A better title`.
-const RENAME_COMMAND: &str = "/rename";
 /// The greetings an empty chat opens on, one picked at random per chat.
 const GREETINGS: [koru_i18n::Key; 20] = [
     koru_i18n::Key::AiGreeting01,
@@ -341,6 +339,8 @@ pub struct ChatSurface {
     /// Whether the pane's reader has been started — on its first opening, so
     /// a window whose list was never opened dials nothing for it.
     chats_pane_started: bool,
+    /// A chat being renamed in the pane: the field over its row's title.
+    chats_rename: Option<chats_pane::ChatsRename>,
     /// A chat was created, renamed, deleted, re-pointed or answered since the
     /// host last asked ([`ChatSurface::take_chat_list_changed`]).
     chat_list_changed: bool,
@@ -578,6 +578,7 @@ impl ChatSurface {
             history_open: false,
             chats_pane: koru_chats_ui::ChatsSurface::without_reader(),
             chats_pane_started: false,
+            chats_rename: None,
             chat_list_changed: false,
             chat_list_changed_for_pane: false,
             wants_chats_view: false,
@@ -2916,26 +2917,6 @@ impl ChatSurface {
         }))
     }
 
-    /// **`/rename A better title` renames the chat.** The title row this
-    /// replaced was the only door to a rename, and the Chats list has none,
-    /// so the composer keeps it: like `/usage`, it is answered here and never
-    /// becomes a turn.
-    fn rename_from_composer(&mut self, chat: ChatId, title: &str) -> bool {
-        let title = title.trim();
-        if title.is_empty() {
-            self.status = Some("A chat title cannot be empty.".into());
-            return true;
-        }
-        self.composer.clear();
-        self.forget_input_walk();
-        self.send_command(Command::Rename(
-            chat,
-            RenameChatRequest {
-                title: title.to_owned(),
-            },
-        ))
-    }
-
     fn current_selection(&self) -> Option<ModelSelection> {
         let settings = self.settings.as_ref()?;
         let provider = settings.selected_provider.clone()?;
@@ -3058,13 +3039,6 @@ impl ChatSurface {
             self.messages_dirty = true;
             self.status = Some("Loading private local usage…".into());
             return self.send_command(Command::Usage(chat_id));
-        }
-        if let Some(title) = typed
-            .trim()
-            .strip_prefix(RENAME_COMMAND)
-            .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
-        {
-            return self.rename_from_composer(chat_id, title);
         }
         let markdown = compose_markdown(&self.pending_quotes, &typed);
         if markdown.is_empty() {
@@ -9956,51 +9930,6 @@ mod tests {
         ];
         sort_model_options(&mut models);
         assert_eq!(&models[..3], ["gpt-5.6", "gpt-5.5", "gpt-4.1"]);
-    }
-
-    /// **`/rename` is the rename's door now** that the title row is gone:
-    /// it renames the chat and never becomes a turn.
-    #[test]
-    fn slash_rename_renames_the_chat_without_a_turn() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
-        let (reader, commands, _updates) = Reader::test_pair();
-        let transcript = transcript();
-        let chat = transcript.chat.id;
-        surface.reader = Some(reader);
-        surface.transcript = Some(transcript);
-        surface.validated_ready = true;
-
-        surface.composer.set_text("/rename   Renamed chat ");
-        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
-        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::Rename(actual, request) => {
-                assert_eq!(actual, chat);
-                assert_eq!(request.title, "Renamed chat");
-            }
-            _ => panic!("/rename must persist the rename"),
-        }
-        assert!(commands.try_recv().is_err(), "and send no turn");
-        assert!(surface.composer.is_blank());
-        assert!(surface.pending_user.is_none());
-
-        surface.composer.set_text("/rename");
-        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
-        assert!(
-            commands.try_recv().is_err(),
-            "an empty title renames nothing"
-        );
-        assert_eq!(
-            surface.status.as_deref(),
-            Some("A chat title cannot be empty.")
-        );
-
-        // A word that only starts with it is a message.
-        surface.composer.set_text("/renamed files");
-        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
-        assert!(matches!(
-            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::Send(_)
-        ));
     }
 
     /// **The title row is gone** in both hosts: nothing is drawn or hit at
