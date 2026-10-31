@@ -685,6 +685,27 @@ pub(super) fn agent_validation(
     })
 }
 
+/// The code a client reads when an agent's models could not be answered.
+/// `Backpressure` from the host — or a host that did not answer in time — is
+/// a list still being built: `agent_models_listing`, which a client asks
+/// again for rather than calling a failure. Anything else is
+/// `agent_models_failed`.
+pub(super) fn agent_models_failure(code: koru_session_protocol::ErrorCode) -> Failure {
+    if code == koru_session_protocol::ErrorCode::Backpressure {
+        failure(
+            "agent_models_listing",
+            "The agent's models are still being listed.",
+            true,
+        )
+    } else {
+        failure(
+            "agent_models_failed",
+            "The agent could not list its models.",
+            true,
+        )
+    }
+}
+
 /// The models an agent lists, in the picker's shape. An agent that lists
 /// none answers with an empty list, which the picker shows as no level.
 /// With `refresh`, the list is rebuilt first (the manual refresh).
@@ -700,13 +721,9 @@ pub(super) fn agent_models(
             false,
         ));
     };
-    let models = agents.discover_models(&kind, refresh).map_err(|_| {
-        failure(
-            "agent_models_failed",
-            "The agent could not list its models.",
-            true,
-        )
-    })?;
+    let models = agents
+        .discover_models(&kind, refresh)
+        .map_err(agent_models_failure)?;
     Ok(AgentModelsResponse {
         provider,
         models: models

@@ -155,6 +155,18 @@ fn available(name: &str, version: &str) -> ProviderReadiness {
     )
 }
 
+/// Hand the catalog a row the way the readiness cache does, numbered after
+/// every row before it.
+fn observe(
+    cache: &ProviderCatalogCache,
+    readiness: &ProviderReadiness,
+    captured: Option<ProviderModels>,
+) {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    cache.observe(readiness, captured, sequence, None);
+}
+
 fn file(entries: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({"format": CATALOG_FORMAT, "providers": entries}))
         .unwrap()
@@ -185,7 +197,7 @@ fn a_persisted_list_is_served_while_checking_and_fresh_again_on_the_same_version
         ["opencode/old"],
         "dimmed during the first seconds"
     );
-    cache.observe(&available("opencode", "1.19.5"), None);
+    observe(&cache, &available("opencode", "1.19.5"), None);
     assert_eq!(
         ids(&cache.serve(&kind("opencode")).unwrap()),
         ["opencode/old"]
@@ -201,7 +213,7 @@ fn a_new_agent_version_drops_its_entry_and_lists_it_again() {
         "opencode": entry(KORU_VERSION, "1.18.0", &["opencode/old"]),
     }))));
     let cache = world.cache(store.clone(), true);
-    cache.observe(&available("opencode", "1.19.5"), None);
+    observe(&cache, &available("opencode", "1.19.5"), None);
     assert_eq!(
         ids(&cache.serve(&kind("opencode")).unwrap()),
         ["opencode/beam-free"],
@@ -233,11 +245,13 @@ fn the_probe_capture_is_fresh_and_written_once() {
     let world = World::new(true);
     let store = Arc::new(MemoryCatalogStore::default());
     let cache = world.cache(store.clone(), false);
-    cache.observe(
+    observe(
+        &cache,
         &available("claude", "0.76.0"),
         Some(catalog(&["default", "opus"])),
     );
-    cache.observe(
+    observe(
+        &cache,
         &available("claude", "0.76.0"),
         Some(catalog(&["default", "opus"])),
     );
@@ -286,12 +300,17 @@ fn an_unknown_format_or_an_oversized_file_is_an_empty_cache() {
 fn an_agent_that_is_not_available_is_answered_at_once_without_a_listing() {
     let world = World::new(true);
     let cache = world.cache(Arc::new(MemoryCatalogStore::default()), true);
-    cache.observe(&readiness("codex", ExecutableAvailability::Missing), None);
+    observe(
+        &cache,
+        &readiness("codex", ExecutableAvailability::Missing),
+        None,
+    );
     assert_eq!(
         cache.serve(&kind("codex")),
         Err(ErrorCode::ProviderUnavailable)
     );
-    cache.observe(
+    observe(
+        &cache,
         &readiness(
             "opencode",
             ExecutableAvailability::SignedOut {
@@ -315,7 +334,7 @@ fn an_agent_that_is_not_available_is_answered_at_once_without_a_listing() {
 fn an_on_demand_agent_is_listed_when_asked_and_then_served_from_memory() {
     let world = World::new(true);
     let cache = world.cache(Arc::new(MemoryCatalogStore::default()), false);
-    cache.observe(&available("codex", "0.153.4"), None);
+    observe(&cache, &available("codex", "0.153.4"), None);
     assert_eq!(ids(&cache.serve(&kind("codex")).unwrap()), ["gpt-5"]);
     assert_eq!(ids(&cache.serve(&kind("codex")).unwrap()), ["gpt-5"]);
     assert_eq!(world.calls(), 1);
@@ -328,7 +347,7 @@ fn a_refresh_drops_the_entry_and_a_listing_from_before_cannot_restore_it() {
     let world = World::new(false);
     let store = Arc::new(MemoryCatalogStore::default());
     let cache = world.cache(store.clone(), false);
-    cache.observe(&available("codex", "1"), None);
+    observe(&cache, &available("codex", "1"), None);
     let listing = {
         let cache = cache.clone();
         std::thread::spawn(move || cache.serve(&kind("codex")))
@@ -339,18 +358,27 @@ fn a_refresh_drops_the_entry_and_a_listing_from_before_cannot_restore_it() {
         std::thread::yield_now();
     }
     cache.drop_entry(&kind("codex"), CatalogDrop::Refresh);
-    world.open();
     assert_eq!(
-        ids(&listing.join().unwrap().unwrap()),
-        ["gpt-5"],
-        "the asker still gets its answer"
+        listing.join().unwrap(),
+        Err(ErrorCode::Backpressure),
+        "nobody waits on a listing a drop has made stale: ask again"
     );
+    world.open();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !cache.lock().runs.is_empty() {
+        assert!(Instant::now() < deadline, "the stale listing never ended");
+        std::thread::yield_now();
+    }
     assert!(
         !cache.lock().entries.contains_key(&kind("codex")),
-        "but the catalog does not keep a list from before the refresh"
+        "and the catalog does not keep its list from before the refresh"
     );
 
-    cache.observe(&available("claude", "0.76.0"), Some(catalog(&["opus"])));
+    observe(
+        &cache,
+        &available("claude", "0.76.0"),
+        Some(catalog(&["opus"])),
+    );
     let saves = store.saves();
     cache.drop_entry(&kind("claude"), CatalogDrop::Refresh);
     assert_eq!(store.saves(), saves + 1);
@@ -367,7 +395,7 @@ fn a_refresh_drops_the_entry_and_a_listing_from_before_cannot_restore_it() {
 fn the_worker_holds_one_slot_and_a_request_during_its_listing_waits_for_it() {
     let world = World::new(false);
     let cache = world.cache(Arc::new(MemoryCatalogStore::default()), true);
-    cache.observe(&available("opencode", "1.19.5"), None);
+    observe(&cache, &available("opencode", "1.19.5"), None);
     let deadline = Instant::now() + Duration::from_secs(10);
     while world.calls() == 0 {
         assert!(Instant::now() < deadline, "the worker never listed");
@@ -392,4 +420,97 @@ fn the_worker_holds_one_slot_and_a_request_during_its_listing_waits_for_it() {
         ["opencode/beam-free"]
     );
     assert_eq!(world.calls(), 1, "one listing served both");
+}
+
+/// Finding 1: a request answers within its budget whether or not the list
+/// is ready — `Backpressure`, ask again — and the listing it started goes
+/// on and is kept, so the next ask is answered from memory.
+#[test]
+fn a_request_answers_within_its_budget_and_its_listing_is_kept() {
+    let world = World::new(false);
+    let cache = world.cache(Arc::new(MemoryCatalogStore::default()), false);
+    observe(&cache, &available("codex", "1"), None);
+    let started = Instant::now();
+    assert_eq!(
+        cache.serve_within(&kind("codex"), Duration::from_millis(100)),
+        Err(ErrorCode::Backpressure)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "answered in time"
+    );
+    world.open();
+    assert_eq!(
+        ids(&cache
+            .serve_within(&kind("codex"), Duration::from_secs(10))
+            .unwrap()),
+        ["gpt-5"]
+    );
+    assert_eq!(
+        world.calls(),
+        1,
+        "the second ask waited on the first listing"
+    );
+}
+
+/// Finding 3a: a probe's capture handed over late — after the re-probe that
+/// dropped the list — cannot put the old list back; nor can one handed over
+/// just before the drop survive it.
+#[test]
+fn a_capture_from_before_a_refresh_cannot_come_back() {
+    let world = World::new(false);
+    let cache = world.cache(Arc::new(MemoryCatalogStore::default()), false);
+    let checking = readiness("claude", ExecutableAvailability::Checking);
+    cache.observe(
+        &available("claude", "0.76.0"),
+        Some(catalog(&["old"])),
+        10,
+        None,
+    );
+    cache.observe(&checking, None, 12, Some(CatalogDrop::Refresh));
+    cache.observe(
+        &available("claude", "0.76.0"),
+        Some(catalog(&["late"])),
+        11,
+        None,
+    );
+    assert!(!cache.lock().entries.contains_key(&kind("claude")));
+    assert_eq!(
+        cache.lock().readiness[&kind("claude")],
+        ExecutableAvailability::Checking,
+        "the late row changed nothing"
+    );
+
+    cache.observe(
+        &available("claude", "0.76.0"),
+        Some(catalog(&["early"])),
+        20,
+        None,
+    );
+    cache.observe(&checking, None, 21, Some(CatalogDrop::Refresh));
+    assert!(!cache.lock().entries.contains_key(&kind("claude")));
+}
+
+/// Finding 3b: a *Checking* row handed over after the *Available* row that
+/// followed it does not leave the agent looking unchecked, so an ask is
+/// listed at once instead of waiting out its budget.
+#[test]
+fn a_late_checking_row_does_not_hide_a_ready_agent() {
+    let world = World::new(true);
+    let cache = world.cache(Arc::new(MemoryCatalogStore::default()), false);
+    cache.observe(&available("codex", "1"), None, 5, None);
+    cache.observe(
+        &readiness("codex", ExecutableAvailability::Checking),
+        None,
+        4,
+        None,
+    );
+    let started = Instant::now();
+    assert_eq!(
+        ids(&cache
+            .serve_within(&kind("codex"), Duration::from_secs(10))
+            .unwrap()),
+        ["gpt-5"]
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
 }

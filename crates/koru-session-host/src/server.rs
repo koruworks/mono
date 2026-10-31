@@ -13,7 +13,7 @@ use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
 use koru_session_runtime::providers::{
-    AcpFactory, AcpRoute, CatalogDrop, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
+    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
 };
 use koru_session_runtime::{
     AgentEventUpdate, AttachmentPathResolver, EnvironmentPolicy, RawOutputUpdate, SessionCreate,
@@ -95,6 +95,11 @@ struct HostState {
     started: Instant,
     next_subscription: AtomicU64,
     control_slots: Arc<Semaphore>,
+    /// `DiscoverProviderModels` may wait on a probe or a listing for most of
+    /// its budget, so it has permits of its own: a burst of model asks — six
+    /// agents for every open chat surface — never holds attaching a terminal
+    /// or sending a turn behind it.
+    model_asks: Arc<Semaphore>,
     create_replays: Mutex<VecDeque<CreateReplay>>,
     stop: Notify,
     /// The desktop MCP bridge a chat's agent starts beside itself, when the
@@ -106,6 +111,9 @@ struct HostState {
 }
 
 const CREATE_REPLAY_CAPACITY: usize = 1_024;
+/// Model asks answered at once; more wait for one to finish. Each is cheap
+/// while it waits — a condition variable, not a process.
+const MODEL_ASKS: usize = 8;
 
 #[derive(Clone)]
 struct CreateReplay {
@@ -328,6 +336,7 @@ pub async fn serve(
         started: Instant::now(),
         next_subscription: AtomicU64::new(1),
         control_slots: Arc::new(Semaphore::new(16)),
+        model_asks: Arc::new(Semaphore::new(MODEL_ASKS)),
         create_replays: Mutex::new(VecDeque::with_capacity(CREATE_REPLAY_CAPACITY)),
         stop: Notify::new(),
         bridge,
@@ -592,7 +601,12 @@ async fn serve_connection(
         if version != FRAME_VERSION || frame.id == 0 {
             break;
         }
-        let permit = Arc::clone(&state.control_slots)
+        let pool = if matches!(frame.request, Request::DiscoverProviderModels { .. }) {
+            &state.model_asks
+        } else {
+            &state.control_slots
+        };
+        let permit = Arc::clone(pool)
             .acquire_owned()
             .await
             .map_err(|error| HostError::Runtime(error.to_string()))?;
@@ -992,10 +1006,9 @@ fn handle_request(
                 // changed — its CLI was updated, a model was refused, a
                 // person pressed refresh — so its model list goes with it,
                 // and the probe and listing that follow rebuild it.
-                state.catalog.drop_entry(&kind, CatalogDrop::Refresh);
                 state
                     .providers
-                    .refresh(kind)
+                    .refresh_and_rebuild_models(kind)
                     .map(|()| Response::Ok)
                     .map_err(failure)
             }

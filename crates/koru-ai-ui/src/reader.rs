@@ -146,6 +146,8 @@ pub(crate) enum Update {
     Validation(ProviderValidationResponse),
     AgentModels(koru_ai_wire::AgentModelsResponse),
     AgentModelsFailed(AiProviderId),
+    /// The host is still building the agent's list.
+    AgentModelsPending(AiProviderId),
     Pull(ModelPullEvent),
     Exported(String),
     /// The titles `Command::DocumentTitles` could find. A document the Store
@@ -912,9 +914,22 @@ fn decorate_tool_activity(
     activity
 }
 
+/// How many times one ask is made while the host says the list is still
+/// being built. Each answer comes within the host's budget, and the host
+/// keeps listing between them, so the later asks find the list it made.
+const LISTING_ASKS: usize = 3;
+
 fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -> Update {
     let started = Instant::now();
-    match client.ai().discover_agent_models(&provider) {
+    let mut asks = 0;
+    let answer = loop {
+        asks += 1;
+        match client.ai().discover_agent_models(&provider) {
+            Err(failure) if failure.code == AGENT_MODELS_LISTING && asks < LISTING_ASKS => {}
+            answer => break answer,
+        }
+    };
+    match answer {
         Ok(response) => {
             tracing::info!(
                 target: "koru_ai::ui",
@@ -924,6 +939,17 @@ fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -
                 "AI UI agent models listed"
             );
             Update::AgentModels(response)
+        }
+        // Still being built after every ask: the picker keeps saying so,
+        // and the next open asks again.
+        Err(failure) if failure.code == AGENT_MODELS_LISTING => {
+            tracing::info!(
+                target: "koru_ai::ui",
+                provider = %provider,
+                elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                "AI UI agent models still listing"
+            );
+            Update::AgentModelsPending(provider)
         }
         Err(failure) => {
             tracing::warn!(
@@ -937,6 +963,9 @@ fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -
         }
     }
 }
+
+/// The AI service's answer for a list the host is still building.
+const AGENT_MODELS_LISTING: &str = "agent_models_listing";
 
 /// Run `work` on a short-lived thread of its own, the way a pull's stream
 /// is read, so the client thread goes straight on to the next command. A

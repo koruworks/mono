@@ -8,8 +8,9 @@
 //! already receives an ACP agent's list; a background listing on this
 //! cache's one worker (OpenCode's catalog commands), run once per agent
 //! version; or a listing made when somebody asks (Codex, which the picker
-//! does not offer). Every listing holds one of the host's two model slots;
-//! the worker waits for one, a person's request takes one or is refused.
+//! does not offer). Every listing waits for one of the host's two model
+//! slots, and a person's runs on a thread of its own, so the request that
+//! started it answers within its budget whether or not the list is ready.
 //!
 //! The file beside `profiles.conf` is a cache, never an authority. One that
 //! is missing, unreadable, of another format or over 4 MiB is an empty
@@ -25,7 +26,7 @@
 use super::{CatalogSource, ManagedProviderRegistry};
 use koru_session_protocol::{ErrorCode, ExecutableAvailability, ProviderKind, ProviderModels};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak, mpsc};
@@ -37,9 +38,12 @@ pub const CATALOG_FORMAT: u32 = 1;
 pub const MAX_CATALOG_FILE_BYTES: usize = 4 * 1024 * 1024;
 /// Listings the host runs at once: the worker's one, and one for a person.
 const MODEL_SLOTS: usize = 2;
-/// How long a request waits for a probe or a listing already under way: the
-/// longest adapter budget (OpenCode's 25 s) and some.
-const WAIT_BUDGET: Duration = Duration::from_secs(30);
+/// The whole time a request may take, waiting for a probe or listing included.
+/// Every caller gives up at 30 s (the session client, the AI worker's reply,
+/// the UI's HTTP client), so the host answers well inside that. A list not
+/// ready by then is answered with `Backpressure` — still listing, ask again —
+/// and the listing goes on and is kept.
+const SERVE_BUDGET: Duration = Duration::from_secs(20);
 /// When a failed background listing is tried again; after the last, it
 /// waits for the next refresh or start.
 const RETRY_AFTER: [Duration; 3] = [
@@ -95,9 +99,9 @@ impl CatalogStore for MemoryCatalogStore {
     }
 }
 
-/// The host's listing slots, shared by the worker (which waits for one)
-/// and a person's request (which takes one or is refused with
-/// `Backpressure`), so one slot is always left for a person.
+/// The host's listing slots. The worker lists one agent at a time, so it
+/// holds at most one and a person's listing always has the other to wait
+/// for.
 pub struct ModelSlots {
     free: Mutex<usize>,
     released: Condvar,
@@ -170,10 +174,26 @@ struct Entry {
 struct State {
     entries: BTreeMap<ProviderKind, Entry>,
     readiness: BTreeMap<ProviderKind, ExecutableAvailability>,
-    listing: BTreeSet<ProviderKind>,
+    /// The readiness cache's sequence number of the last row seen per kind.
+    /// An older row arriving late is ignored: rows are handed over after the
+    /// readiness lock is released, so two can cross.
+    seen: BTreeMap<ProviderKind, u64>,
+    /// The listing under way per kind. One a drop has since made stale is
+    /// not under way as far as anyone waiting is concerned ([`current_run`]).
+    runs: BTreeMap<ProviderKind, Run>,
+    /// How the last listing per kind ended, by run, for whoever waited on it.
+    outcomes: BTreeMap<ProviderKind, (u64, Result<(), ErrorCode>)>,
+    next_run: u64,
     /// Bumped whenever an entry is dropped, so a listing that started
     /// before the drop cannot put back what the drop removed.
     generations: BTreeMap<ProviderKind, u64>,
+}
+
+/// One listing: its own number, and the generation of the kind it lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Run {
+    id: u64,
+    generation: u64,
 }
 
 /// Why an entry left the catalog, as the event says it.
@@ -300,11 +320,17 @@ impl ProviderCatalogCache {
     }
 
     /// A readiness change, and what the probe's session start captured. The
-    /// readiness cache calls this for every row it publishes.
+    /// readiness cache calls this for every row it publishes, numbered by
+    /// `sequence` in the order it published them; a row older than one
+    /// already seen is ignored, capture and all. `drop` rides the row of a
+    /// re-probe asked for because the list may be wrong, so the drop is
+    /// ordered with the rows around it.
     pub fn observe(
         &self,
         readiness: &koru_session_protocol::ProviderReadiness,
         captured: Option<ProviderModels>,
+        sequence: u64,
+        drop: Option<CatalogDrop>,
     ) {
         let kind = readiness.kind.clone();
         let source = self.registry.catalog_source(&kind);
@@ -312,6 +338,14 @@ impl ProviderCatalogCache {
         let mut list = false;
         {
             let mut state = self.lock();
+            if state.seen.get(&kind).is_some_and(|seen| *seen >= sequence) {
+                return;
+            }
+            state.seen.insert(kind.clone(), sequence);
+            if let Some(reason) = drop {
+                save = state.entries.contains_key(&kind);
+                drop_entry(&mut state, &kind, reason);
+            }
             state
                 .readiness
                 .insert(kind.clone(), readiness.availability.clone());
@@ -324,7 +358,7 @@ impl ProviderCatalogCache {
                             source: "probe".into(),
                             models,
                         };
-                        save = state
+                        save |= state
                             .entries
                             .get(&kind)
                             .is_none_or(|entry| entry.stored != stored);
@@ -348,7 +382,7 @@ impl ProviderCatalogCache {
                 }
                 list = source == Some(CatalogSource::Listing)
                     && !state.entries.contains_key(&kind)
-                    && !state.listing.contains(&kind);
+                    && current_run(&state, &kind).is_none();
             }
         }
         self.changed.notify_all();
@@ -376,13 +410,27 @@ impl ProviderCatalogCache {
     }
 
     /// `DiscoverProviderModels`: from memory when the entry is there; after
-    /// the probe or listing already under way, within its budget; listed on
-    /// demand when the agent is ready and nothing is; and the readiness
-    /// failure at once when it is not. The working directory is the host's:
+    /// the probe or listing already under way; with a listing started on a
+    /// thread of its own when the agent is ready and nothing is under way;
+    /// and the readiness failure at once when the agent is not ready. All of
+    /// it within [`SERVE_BUDGET`]: a list not ready by then is answered with
+    /// `Backpressure`, and the listing goes on and is kept for the next ask.
+    /// The asking thread never lists. The working directory is the host's:
     /// an agent's list is its user-level one.
-    pub fn serve(&self, kind: &ProviderKind) -> Result<ProviderModels, ErrorCode> {
+    pub fn serve(self: &Arc<Self>, kind: &ProviderKind) -> Result<ProviderModels, ErrorCode> {
+        self.serve_within(kind, SERVE_BUDGET)
+    }
+
+    fn serve_within(
+        self: &Arc<Self>,
+        kind: &ProviderKind,
+        budget: Duration,
+    ) -> Result<ProviderModels, ErrorCode> {
         let started = Instant::now();
-        let deadline = started + WAIT_BUDGET;
+        let deadline = started + budget;
+        // The listing this request waits on, and whether it started it.
+        let mut awaited: Option<u64> = None;
+        let mut started_one = false;
         let mut state = self.lock();
         loop {
             let Some(availability) = state.readiness.get(kind).cloned() else {
@@ -397,12 +445,32 @@ impl ProviderCatalogCache {
                     provider = %kind, state = served, elapsed_ms = started.elapsed().as_millis() as u64);
                 return Ok(entry.stored.models.clone());
             }
-            let listing = state.listing.contains(kind);
+            let run = current_run(&state, kind);
+            match run {
+                Some(run) => awaited = Some(run.id),
+                None => {
+                    if let Some(id) = awaited
+                        && let Some((ended, Err(code))) = state.outcomes.get(kind)
+                        && *ended == id
+                    {
+                        return Err(code.clone());
+                    }
+                }
+            }
             match availability {
-                ExecutableAvailability::Available { .. } if !listing => {
-                    let generation = claim(&mut state, kind);
-                    drop(state);
-                    return self.list(kind, generation, false);
+                ExecutableAvailability::Available { .. } if run.is_none() => {
+                    // A listing this request started ended without a list it
+                    // may serve — a drop made it stale. Ask again.
+                    if started_one {
+                        return Err(ErrorCode::Backpressure);
+                    }
+                    let run = claim(&mut state, kind);
+                    if !self.spawn_listing(kind.clone(), run) {
+                        state.runs.remove(kind);
+                        return Err(ErrorCode::ProviderFailed);
+                    }
+                    awaited = Some(run.id);
+                    started_one = true;
                 }
                 ExecutableAvailability::Available { .. } | ExecutableAvailability::Checking => {}
                 ExecutableAvailability::Missing => return Err(ErrorCode::ProviderUnavailable),
@@ -410,8 +478,13 @@ impl ProviderCatalogCache {
                 | ExecutableAvailability::Incompatible { code }
                 | ExecutableAvailability::Failed { code } => return Err(code),
             }
-            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-                return Err(ErrorCode::ProviderUnavailable);
+            let Some(left) = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())
+            else {
+                tracing::debug!(target: "koru::provider_models", event = "catalog.served",
+                    provider = %kind, state = "listing", elapsed_ms = started.elapsed().as_millis() as u64);
+                return Err(ErrorCode::Backpressure);
             };
             state = self
                 .changed
@@ -421,45 +494,56 @@ impl ProviderCatalogCache {
         }
     }
 
-    /// Run one listing the caller has [`claim`]ed, and keep what it found.
-    /// The worker waits for a slot; a person's request takes one or is
-    /// refused.
-    fn list(
-        &self,
-        kind: &ProviderKind,
-        generation: u64,
-        wait: bool,
-    ) -> Result<ProviderModels, ErrorCode> {
-        let slot = if wait {
-            Some(self.slots.acquire())
-        } else {
-            self.slots.try_acquire()
-        };
-        let result = match slot {
-            Some(_slot) => {
-                let started = Instant::now();
-                let result = self
-                    .registry
-                    .discover_models(kind, self.working_directory.clone())
-                    .map_err(|failure| failure.code);
-                tracing::info!(target: "koru::provider_models", event = "catalog.listing.finished",
-                    provider = %kind, success = result.is_ok(),
-                    count = result.as_ref().map_or(0, |models| models.models().len()),
-                    elapsed_ms = started.elapsed().as_millis() as u64);
-                result
-            }
-            None => Err(ErrorCode::Backpressure),
+    /// A person's listing, on a thread of its own so the request can answer
+    /// within its budget while the listing goes on. `false` when no thread
+    /// could be started.
+    fn spawn_listing(self: &Arc<Self>, kind: ProviderKind, run: Run) -> bool {
+        let cache = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("koru-provider-listing".into())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let _ = cache.list(&kind, run);
+            })
+            .is_ok()
+    }
+
+    /// Run one listing the caller has [`claim`]ed, holding one of the two
+    /// slots for it, and keep what it found unless a drop has made it
+    /// stale since. Whoever waited on it hears how it ended.
+    fn list(&self, kind: &ProviderKind, run: Run) -> Result<(), ErrorCode> {
+        let result = {
+            let _slot = self.slots.acquire();
+            let started = Instant::now();
+            let result = self
+                .registry
+                .discover_models(kind, self.working_directory.clone())
+                .map_err(|failure| failure.code);
+            tracing::info!(target: "koru::provider_models", event = "catalog.listing.finished",
+                provider = %kind, success = result.is_ok(),
+                count = result.as_ref().map_or(0, |models| models.models().len()),
+                elapsed_ms = started.elapsed().as_millis() as u64);
+            result
         };
         let save = {
             let mut state = self.lock();
-            state.listing.remove(kind);
+            if state.runs.get(kind) == Some(&run) {
+                state.runs.remove(kind);
+            }
+            state.outcomes.insert(
+                kind.clone(),
+                (
+                    run.id,
+                    result.as_ref().map(|_| ()).map_err(|code| code.clone()),
+                ),
+            );
             let current = state.generations.get(kind).copied().unwrap_or_default();
             let version = match state.readiness.get(kind) {
                 Some(ExecutableAvailability::Available { version }) => Some(version.clone()),
                 _ => None,
             };
             match (&result, version) {
-                (Ok(models), Some(version)) if current == generation => {
+                (Ok(models), Some(version)) if current == run.generation => {
                     let stored = Stored {
                         koru: KORU_VERSION.into(),
                         version,
@@ -487,20 +571,20 @@ impl ProviderCatalogCache {
         if save {
             self.persist();
         }
-        result
+        result.map(|_| ())
     }
 
     /// Claim `kind` for the worker when it should be listed now: a
     /// background-listed agent that is ready, with nothing fresh and nothing
     /// under way.
-    fn claim_for_worker(&self, kind: &ProviderKind) -> Option<u64> {
+    fn claim_for_worker(&self, kind: &ProviderKind) -> Option<Run> {
         let mut state = self.lock();
         let wanted = self.registry.catalog_source(kind) == Some(CatalogSource::Listing)
             && matches!(
                 state.readiness.get(kind),
                 Some(ExecutableAvailability::Available { .. })
             )
-            && !state.listing.contains(kind)
+            && current_run(&state, kind).is_none()
             && !state.entries.get(kind).is_some_and(|entry| entry.fresh);
         wanted.then(|| claim(&mut state, kind))
     }
@@ -551,11 +635,27 @@ impl ProviderCatalogCache {
     }
 }
 
-/// Mark `kind` as being listed, under the same lock that saw it was not,
-/// and say which generation the listing belongs to.
-fn claim(state: &mut State, kind: &ProviderKind) -> u64 {
-    state.listing.insert(kind.clone());
-    state.generations.get(kind).copied().unwrap_or_default()
+/// Mark `kind` as being listed, under the same lock that saw it was not, as
+/// a run of the kind's current generation.
+fn claim(state: &mut State, kind: &ProviderKind) -> Run {
+    state.next_run += 1;
+    let run = Run {
+        id: state.next_run,
+        generation: state.generations.get(kind).copied().unwrap_or_default(),
+    };
+    state.runs.insert(kind.clone(), run);
+    run
+}
+
+/// The listing under way for `kind`, unless a drop has made it stale: its
+/// list would be thrown away, so nobody waits on it.
+fn current_run(state: &State, kind: &ProviderKind) -> Option<Run> {
+    let generation = state.generations.get(kind).copied().unwrap_or_default();
+    state
+        .runs
+        .get(kind)
+        .copied()
+        .filter(|run| run.generation == generation)
 }
 
 fn drop_entry(state: &mut State, kind: &ProviderKind, reason: CatalogDrop) {
@@ -604,11 +704,11 @@ fn run_worker(cache: Weak<ProviderCatalogCache>, jobs: mpsc::Receiver<ProviderKi
         let Some(cache) = cache.upgrade() else {
             return;
         };
-        let Some(generation) = cache.claim_for_worker(&kind) else {
+        let Some(run) = cache.claim_for_worker(&kind) else {
             retries.remove(&kind);
             continue;
         };
-        match cache.list(&kind, generation, true) {
+        match cache.list(&kind, run) {
             Ok(_) => {
                 retries.remove(&kind);
             }

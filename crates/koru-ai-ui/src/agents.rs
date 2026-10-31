@@ -164,23 +164,45 @@ pub(crate) fn default_model_label(models: &[AgentModelView], lang: Lang) -> Stri
 /// A model id as a person would write it, when the agent sends no name. A
 /// formatting rule rather than a table, so it never goes stale: the group
 /// prefix (or else everything up to the last `/`) goes, `-`, `_` and spaces
-/// split words, runs of one- and two-digit numbers join with `.`, and each
-/// word that starts with a letter is capitalised. `claude-opus-4-1` reads
-/// `Claude Opus 4.1`; `deepseek/v4-pro` under `deepseek` reads `V4 Pro`.
+/// split words, a date (`2025-01-31`) stays whole, runs of one- and
+/// two-digit numbers join with `.`, and each word that starts with a letter
+/// is capitalised. `claude-opus-4-1` reads `Claude Opus 4.1`;
+/// `o3-mini-2025-01-31` reads `O3 Mini 2025-01-31`; `deepseek/v4-pro` under
+/// `deepseek` reads `V4 Pro`.
 pub(crate) fn fallback_label(id: &str, group: &str) -> String {
     let tail = id
         .strip_prefix(&format!("{group}/"))
         .filter(|_| !group.is_empty())
         .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id));
-    let short_number =
-        |token: &str| (1..=2).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit());
-    let mut words: Vec<String> = Vec::new();
-    let mut previous_short_number = false;
-    for token in tail
+    let digits = |token: &str, lengths: std::ops::RangeInclusive<usize>| {
+        lengths.contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit())
+    };
+    let raw: Vec<&str> = tail
         .split(['-', '_', ' '])
         .filter(|token| !token.is_empty())
-    {
-        let number = short_number(token);
+        .collect();
+    // A year, a month and a day in a row are one date, not a year and a
+    // version number.
+    let mut tokens: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < raw.len() {
+        if let [year, month, day, ..] = raw[index..]
+            && digits(year, 4..=4)
+            && digits(month, 2..=2)
+            && digits(day, 2..=2)
+        {
+            tokens.push(format!("{year}-{month}-{day}"));
+            index += 3;
+        } else {
+            tokens.push(raw[index].to_owned());
+            index += 1;
+        }
+    }
+    let mut words: Vec<String> = Vec::new();
+    let mut previous_short_number = false;
+    for token in &tokens {
+        let token = token.as_str();
+        let number = digits(token, 1..=2);
         match words.last_mut() {
             Some(last) if number && previous_short_number => {
                 last.push('.');
@@ -479,6 +501,9 @@ mod tests {
             ("deepseek/v4-pro", "deepseek", "V4 Pro"),
             ("gpt-5.1-codex-mini", "openai", "Gpt 5.1 Codex Mini"),
             ("kimi-k2-0905", "kimi", "Kimi K2 0905"),
+            ("o3-mini-2025-01-31", "openai", "O3 Mini 2025-01-31"),
+            ("gpt-4o-2024-08-06-1", "openai", "Gpt 4o 2024-08-06 1"),
+            ("model-2025-1-31", "g", "Model 2025 1.31"),
             (
                 "openrouter/deepseek/deepseek-chat",
                 "openrouter",

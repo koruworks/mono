@@ -2559,6 +2559,11 @@ impl ChatSurface {
                     agents::AgentModels::Listed(response.models),
                 );
             }
+            Update::AgentModelsPending(provider) => {
+                // Listing models… stays, as does a list already on screen;
+                // the next open of the picker asks again.
+                self.agent_models_asked.remove(&provider);
+            }
             Update::AgentModelsFailed(provider) => {
                 self.agent_models_asked.remove(&provider);
                 // A list already on screen stays: the next open asks again.
@@ -9723,6 +9728,15 @@ mod tests {
             Some(&agents::AgentModels::Listed(listed)),
             "a failed ask does not take a list off the screen"
         );
+        // A list the host is still building: what is on screen stays, and
+        // the next open asks again.
+        surface.prefetch_agent_models();
+        assert_eq!(discover(&commands), 1);
+        surface.apply_update(Update::AgentModelsPending(claude.clone()));
+        assert!(matches!(
+            surface.agent_models.get(&claude),
+            Some(agents::AgentModels::Listed(_))
+        ));
 
         surface.chat_model_open = true;
         surface

@@ -5,8 +5,8 @@
 //! the model list a probe's session start received, also go to the model
 //! catalog beside it.
 use super::{
-    DiscoveryRun, ManagedProviderRegistry, ProbeLimits, ProviderCatalogCache, ProviderDiagnostic,
-    ProviderDiscovery, ProviderFailure, ProviderStage,
+    CatalogDrop, DiscoveryRun, ManagedProviderRegistry, ProbeLimits, ProviderCatalogCache,
+    ProviderDiagnostic, ProviderDiscovery, ProviderFailure, ProviderStage,
 };
 use koru_session_protocol::{
     ErrorCode, ExecutableAvailability, ProviderKind, ProviderModels, ProviderReadiness,
@@ -27,6 +27,10 @@ struct Entry {
 struct State {
     entries: BTreeMap<ProviderKind, Entry>,
     subscribers: Vec<mpsc::SyncSender<ProviderReadiness>>,
+    /// Numbers every published row, under this lock. The catalog is handed
+    /// rows after the lock is released, so two can reach it out of order;
+    /// it keeps the newest by this number.
+    published: u64,
 }
 
 pub struct ProviderReadinessCache {
@@ -93,6 +97,7 @@ impl ProviderReadinessCache {
             state: Mutex::new(State {
                 entries,
                 subscribers: Vec::new(),
+                published: 0,
             }),
             catalog,
         })
@@ -131,7 +136,26 @@ impl ProviderReadinessCache {
     /// The answering thread only advances a generation and starts a worker.
     /// Construction, executable lookup and the complete handshake are off it.
     pub fn refresh(self: &Arc<Self>, kind: ProviderKind) -> Result<(), ErrorCode> {
-        let (generation, start, changed) = {
+        self.refresh_with(kind, None)
+    }
+
+    /// `RefreshProvider`: a re-probe asked for because something about the
+    /// agent changed, so its model list is dropped with it. The drop rides
+    /// the re-probe's own *Checking* row, so a capture from the probe before
+    /// it, arriving late, cannot put the old list back.
+    pub fn refresh_and_rebuild_models(
+        self: &Arc<Self>,
+        kind: ProviderKind,
+    ) -> Result<(), ErrorCode> {
+        self.refresh_with(kind, Some(CatalogDrop::Refresh))
+    }
+
+    fn refresh_with(
+        self: &Arc<Self>,
+        kind: ProviderKind,
+        drop: Option<CatalogDrop>,
+    ) -> Result<(), ErrorCode> {
+        let (generation, start, changed, sequence) = {
             let mut state = self.state.lock().unwrap_or_else(|held| held.into_inner());
             let entry = state
                 .entries
@@ -155,11 +179,11 @@ impl ProviderReadinessCache {
                 entry.readiness = failed(kind.clone(), ProviderDiagnostic::Backpressure);
             }
             let changed = entry.readiness.clone();
-            publish(&mut state, changed.clone());
-            (generation, start, changed)
+            let sequence = publish(&mut state, changed.clone());
+            (generation, start, changed, sequence)
         };
         if let Some(catalog) = &self.catalog {
-            catalog.observe(&changed, None);
+            catalog.observe(&changed, None, sequence, drop);
         }
         if !self.probes_enabled {
             self.complete(
@@ -241,7 +265,7 @@ impl ProviderReadinessCache {
         result: ProviderReadiness,
         models: Option<ProviderModels>,
     ) -> bool {
-        {
+        let sequence = {
             let mut state = self.state.lock().unwrap_or_else(|held| held.into_inner());
             let Some(entry) = state.entries.get_mut(&result.kind) else {
                 return false;
@@ -250,10 +274,10 @@ impl ProviderReadinessCache {
                 return false;
             }
             entry.readiness = result.clone();
-            publish(&mut state, result.clone());
-        }
+            publish(&mut state, result.clone())
+        };
         if let Some(catalog) = &self.catalog {
-            catalog.observe(&result, models);
+            catalog.observe(&result, models, sequence, None);
         }
         true
     }
@@ -325,12 +349,17 @@ fn discover(
     (readiness, models, owner)
 }
 
-fn publish(state: &mut State, result: ProviderReadiness) {
+/// Send a row to every subscriber and number it; the number orders the
+/// row's hand-over to the catalog.
+fn publish(state: &mut State, result: ProviderReadiness) -> u64 {
+    state.published += 1;
+    let sequence = state.published;
     // A slow reader loses its subscription; it cannot hold the host or retain
     // unbounded results. Reconnection obtains a new atomic snapshot.
     state
         .subscribers
         .retain(|send| send.try_send(result.clone()).is_ok());
+    sequence
 }
 
 #[cfg(test)]

@@ -1474,7 +1474,8 @@ fn status_for(failure: &Failure) -> StatusCode {
         "ai_worker_saturated"
         | "ai_unavailable"
         | "ai_context_unavailable"
-        | "ai_provider_management_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+        | "ai_provider_management_unavailable"
+        | "agent_models_listing" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
