@@ -490,9 +490,9 @@ fn a_long_command_is_shortened_in_the_middle_to_fit() {
         "{}koru-mcp.exe serve --stdio",
         r"C:\Users\someone\AppData\Local\Programs\Koru\".repeat(4)
     );
-    let max = layout::key_w(&mut engine, "koru-mcp.exe serve --stdio") + 120.0;
+    let max = layout::field_w(&mut engine, "koru-mcp.exe serve --stdio") + 120.0;
     let shown = layout::elide_middle(&mut engine, &long, max);
-    assert!(layout::key_w(&mut engine, &shown) <= max);
+    assert!(layout::field_w(&mut engine, &shown) <= max);
     assert!(
         shown.contains('\u{2026}') && shown.ends_with("--stdio"),
         "{shown}"

@@ -223,11 +223,20 @@ pub(super) fn key_w(engine: &mut TextEngine, text: &str) -> f32 {
     koru_ui::KeyChip::width(engine, text)
 }
 
-/// `text` cut in the middle, with an ellipsis, to fit a key chip no wider than
-/// `max_w`. A path's end says the most — the bridge's name and its flags — so
-/// the end keeps two thirds of what is kept.
+/// The command field's inset either side of its text.
+pub(super) const FIELD_PAD_X: f32 = 10.0;
+
+/// How wide the command field is around `text`: set like the *Copy* button
+/// beside it ([`theme::role::row`]), so the two read as one line.
+pub(super) fn field_w(engine: &mut TextEngine, text: &str) -> f32 {
+    engine.simple_layout(text, theme::role::row()).width() + FIELD_PAD_X * 2.0
+}
+
+/// `text` cut in the middle, with an ellipsis, to fit a command field no
+/// wider than `max_w`. A path's end says the most — the bridge's name and its
+/// flags — so the end keeps two thirds of what is kept.
 pub(super) fn elide_middle(engine: &mut TextEngine, text: &str, max_w: f32) -> String {
-    if key_w(engine, text) <= max_w {
+    if field_w(engine, text) <= max_w {
         return text.to_owned();
     }
     let chars: Vec<char> = text.chars().collect();
@@ -243,7 +252,7 @@ pub(super) fn elide_middle(engine: &mut TextEngine, text: &str, max_w: f32) -> S
     let (mut lo, mut hi) = (0, chars.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
-        if key_w(engine, &cut(mid)) <= max_w {
+        if field_w(engine, &cut(mid)) <= max_w {
             lo = mid;
         } else {
             hi = mid;
@@ -564,22 +573,15 @@ fn measure_row(
             })
             .collect();
 
-        // The command, as wide as the text less *Copy* at its right.
+        // The command, as wide as the text less *Copy* at its right, and as
+        // tall as *Copy*, in its text size: one line of two controls.
         let copy_w = koru_ui::button::button_width(engine, super::MCP_COPY);
-        let line_h = KEY_H.max(koru_ui::button::H);
+        let line_h = koru_ui::button::H;
         let y = bottom + CODE_GAP;
         let field_w = (text_w - copy_w - CODE_GAP).max(40.0);
         let shown = elide_middle(engine, mcp_command, field_w);
-        code = Some((
-            shown,
-            Rect::new(text_x, y + (line_h - KEY_H) * 0.5, field_w, KEY_H),
-        ));
-        copy_button = Some(Rect::new(
-            text_x + field_w + CODE_GAP,
-            y + (line_h - koru_ui::button::H) * 0.5,
-            copy_w,
-            koru_ui::button::H,
-        ));
+        code = Some((shown, Rect::new(text_x, y, field_w, line_h)));
+        copy_button = Some(Rect::new(text_x + field_w + CODE_GAP, y, copy_w, line_h));
         bottom = y + line_h;
     }
     let mut hints = Vec::new();

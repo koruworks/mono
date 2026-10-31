@@ -560,8 +560,9 @@ impl WelcomeView {
         koru_ui::KeyChip::draw(canvas, root, &mut self.engine, rect, text);
     }
 
-    /// A command to copy: a key chip that is pressed like a link, outlined
-    /// while hovered and ringed while focused.
+    /// A command to copy: a read-only field the height of the *Copy* button
+    /// beside it and set in its text, pressed like a link, outlined while
+    /// hovered and ringed while focused.
     fn draw_code(
         &mut self,
         canvas: &mut Scene,
@@ -579,15 +580,30 @@ impl WelcomeView {
             scene::rect(rect.x, rect.y, rect.w, rect.h),
             |r| r.property("copies", "welcome::mcp::command", "the whole command"),
         );
-        self.draw_key_chip(canvas, root, text, rect);
+        let radius = koru_ui::ActionButton::RADIUS;
+        let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, radius);
+        scene::fill(canvas, root, p.chip_bg, &shape);
+        scene::stroke(
+            canvas,
+            root,
+            p.control_border,
+            theme::CONTROL_BORDER_W,
+            &shape,
+        );
+        let style = theme::role::row();
+        koru_ui::text_paragraph::draw_line(
+            canvas,
+            root,
+            &mut self.engine,
+            text,
+            rect.x + layout::FIELD_PAD_X,
+            rect.y + (rect.h - style.metrics.line_height) * 0.5,
+            style,
+            "theme::role::row()",
+            p.text_dim,
+        );
         if ui.hot(target) {
-            scene::stroke(
-                canvas,
-                root,
-                p.link.fg,
-                theme::BORDER_W,
-                &scene::rrect(rect.x, rect.y, rect.w, rect.h, 5.0),
-            );
+            scene::stroke(canvas, root, p.link.fg, theme::BORDER_W, &shape);
         }
         if ui.focused(target) {
             scene::stroke(
@@ -595,7 +611,13 @@ impl WelcomeView {
                 root,
                 p.focus_ring,
                 theme::BORDER_W * 2.0,
-                &scene::rrect(rect.x - 2.0, rect.y - 2.0, rect.w + 4.0, rect.h + 4.0, 6.0),
+                &scene::rrect(
+                    rect.x - 2.0,
+                    rect.y - 2.0,
+                    rect.w + 4.0,
+                    rect.h + 4.0,
+                    radius + 2.0,
+                ),
             );
         }
     }
