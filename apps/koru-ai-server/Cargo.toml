@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 blake3.workspace = true
+bytes.workspace = true
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 koru-ai-api = { path = "../../crates/koru-ai-api" }
 koru-ai-client = { path = "../../crates/koru-ai-client" }
 koru-ai-core = { path = "../../crates/koru-ai-core" }
@@ -37,6 +39,7 @@ serde.workspace = true
 koru-core = { path = "../../crates/koru-core" }
 url.workspace = true
 uuid.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 koru-log = { path = "../../crates/koru-log" }

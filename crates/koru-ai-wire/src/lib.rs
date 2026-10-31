@@ -19,9 +19,39 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use koru_ai_core::{
-    ListChatsToolRequest, ListChatsToolResponse, ReadChatToolRequest, ReadChatToolResponse,
-    SearchChatsToolRequest, SearchChatsToolResponse,
+    AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ListChatsToolRequest,
+    ListChatsToolResponse, ReadChatToolRequest, ReadChatToolResponse, SearchChatsToolRequest,
+    SearchChatsToolResponse, WorkspaceFileOrigin,
 };
+
+/// The stable failure codes of the attachment routes and of a send that
+/// names attachments. Product UI renders localized copy by code.
+pub mod attachment_codes {
+    /// One file over `MAX_ATTACHMENT_BYTES`.
+    pub const TOO_LARGE: &str = "attachment_too_large";
+    /// More files, or more bytes, than one message may carry.
+    pub const LIMIT: &str = "attachment_limit";
+    /// A type off the allowlist, or content that is not what the name says.
+    pub const TYPE_NOT_ALLOWED: &str = "attachment_type_not_allowed";
+    /// No such attachment in this chat (never stored, removed or swept).
+    pub const NOT_FOUND: &str = "attachment_not_found";
+    /// The row is there but its stored file is gone from this computer.
+    pub const MISSING: &str = "attachment_missing";
+    /// It was sent with a message, which keeps it.
+    pub const SENT: &str = "attachment_sent";
+    /// The id was already used for different content.
+    pub const CONFLICT: &str = "attachment_conflict";
+    /// The chat's provider takes no attachments (only local agents do).
+    pub const UNSUPPORTED: &str = "attachments_unsupported";
+    /// The bytes could not be stored: the disk is full or not writable.
+    pub const STORAGE: &str = "attachment_storage";
+    /// The attachment has no preview (it is not a picture).
+    pub const NO_PREVIEW: &str = "attachment_no_preview";
+    /// An `@` file's workspace is not, or is no longer, one the chat may use.
+    pub const WORKSPACE_NOT_GRANTED: &str = "workspace_not_granted";
+    /// An `@` file is trashed, not a file, or its blob is offline.
+    pub const WORKSPACE_FILE_UNAVAILABLE: &str = "workspace_file_unavailable";
+}
 
 pub const AI_WIRE_VERSION: u32 = 1;
 pub const AI_STREAM_VERSION: u32 = 1;
@@ -126,6 +156,23 @@ pub struct ChatTranscript {
     /// chip can read and set it; `None` where the model advertises none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_control: Option<koru_ai_core::ReasoningControl>,
+    /// Every attachment of the chat: those sent with a message, in message
+    /// and ordinal order, then the staged ones not yet sent.
+    #[serde(default)]
+    pub attachments: Vec<ChatAttachment>,
+}
+
+/// One attachment stored, or found already stored under the same id with
+/// the same content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatAttachmentResponse {
+    pub attachment: ChatAttachment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RemoveAttachmentResponse {
+    /// Whether a staged attachment existed and was removed.
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -289,6 +336,10 @@ pub struct SendTurnRequest {
     /// where the current document should replace prior context.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replace_pinned_documents: bool,
+    /// Attachments already stored for this chat and not yet sent, in the
+    /// order they go with the message. Only an agent chat takes any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<ChatAttachmentId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -692,6 +743,67 @@ mod tests {
             usage: Vec::new(),
             sources: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn attachments_are_additive_on_the_send_and_the_transcript() {
+        let mut response = serde_json::to_value(transcript()).unwrap();
+        response.as_object_mut().unwrap().remove("attachments");
+        assert!(
+            serde_json::from_value::<ChatTranscript>(response)
+                .unwrap()
+                .attachments
+                .is_empty()
+        );
+
+        let base = serde_json::json!({
+            "operation_id": Uuid::new_v4(),
+            "chat_id": ChatId::new(),
+            "surface": "standalone",
+            "markdown": "Question"
+        });
+        let decoded = serde_json::from_value::<SendTurnRequest>(base.clone()).unwrap();
+        assert!(decoded.attachment_ids.is_empty());
+        assert!(
+            serde_json::to_value(&decoded)
+                .unwrap()
+                .get("attachment_ids")
+                .is_none(),
+            "a client that sends no attachment is byte-for-byte what it was"
+        );
+        let mut with_empty = base;
+        with_empty["attachment_ids"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<SendTurnRequest>(with_empty).is_ok());
+    }
+
+    #[test]
+    fn no_public_attachment_schema_carries_a_path() {
+        fn has_property(value: &serde_json::Value, name: &str) -> bool {
+            match value {
+                serde_json::Value::Object(object) => {
+                    object
+                        .get("properties")
+                        .and_then(serde_json::Value::as_object)
+                        .is_some_and(|properties| properties.contains_key(name))
+                        || object.values().any(|value| has_property(value, name))
+                }
+                serde_json::Value::Array(values) => {
+                    values.iter().any(|value| has_property(value, name))
+                }
+                _ => false,
+            }
+        }
+        for schema in [
+            serde_json::to_value(schemars::schema_for!(ChatTranscript)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(ChatAttachmentResponse)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(SendTurnRequest)).unwrap(),
+            serde_json::to_value(schemars::schema_for!(StreamEvent)).unwrap(),
+        ] {
+            for private in ["path", "native", "content_blake3"] {
+                assert!(!has_property(&schema, private), "{private}");
+            }
         }
     }
 

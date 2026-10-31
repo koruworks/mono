@@ -28,6 +28,8 @@ fn fresh_database_applies_all_numbered_ai_migrations() {
         "inference_attempt_durations",
         "usage_by_day",
         "response_quality_by_model",
+        "message_attachments",
+        "message_attachments_bound_are_immutable",
     ] {
         let exists: bool = connection
             .query_row(
@@ -291,6 +293,133 @@ fn a_v5_database_adds_minimal_tool_context_columns() {
     for column in ["target_workspace_id", "target_document_id", "error_message"] {
         assert!(columns.iter().any(|candidate| candidate == column));
     }
+}
+
+#[test]
+fn a_v8_database_with_chats_gains_attachments_and_reads_as_before() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    for migration in &MIGRATIONS[..8] {
+        connection.execute_batch(migration.sql).unwrap();
+    }
+    connection.pragma_update(None, "user_version", 8).unwrap();
+    connection
+        .execute(
+            "INSERT INTO chats (
+                id, title, current_provider, current_model, created_at_ms, updated_at_ms
+             ) VALUES ('chat', 'kept', 'agent-claude', 'default', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 9);
+    let title: String = connection
+        .query_row("SELECT title FROM chats WHERE id = 'chat'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(title, "kept");
+    let attachments: i64 = connection
+        .query_row("SELECT COUNT(*) FROM message_attachments", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(attachments, 0, "an existing chat has no attachment");
+
+    // Reopened, it is already current and nothing runs again.
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 9);
+}
+
+#[test]
+fn a_build_that_understands_only_schema_8_refuses_schema_9() {
+    let mut connection = open_in_memory().unwrap();
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 8,
+        migrations: &MIGRATIONS[..8],
+    };
+    assert_eq!(
+        koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
+        OpenError::SchemaTooNew {
+            database: crate::DATABASE_FILE,
+            discovered: 9,
+            supported: 8,
+        }
+    );
+}
+
+#[test]
+fn a_sent_attachment_row_cannot_change() {
+    let connection = open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO chats (id, title, current_provider, current_model, created_at_ms, updated_at_ms)
+                 VALUES ('chat', 't', 'agent-claude', 'default', 1, 1);
+             INSERT INTO messages (id, chat_id, ordinal, role, state, markdown, created_at_ms, completed_at_ms)
+                 VALUES ('message', 'chat', 0, 'user', 'complete', 'hi', 1, 1);",
+        )
+        .unwrap();
+    let hash = "0".repeat(64);
+    connection
+        .execute(
+            "INSERT INTO message_attachments (id, chat_id, kind, file_name, media_type,
+                byte_count, width, height, source, content_blake3, created_at_ms)
+             VALUES ('a', 'chat', 'image', 'shot.png', 'image/png', 10, 4, 3, 'clipboard', ?1, 1)",
+            [&hash],
+        )
+        .unwrap();
+    // Staged, it may be bound once.
+    connection
+        .execute(
+            "UPDATE message_attachments SET message_id = 'message', ordinal = 0, bound_at_ms = 2
+              WHERE id = 'a'",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "UPDATE message_attachments SET file_name = 'other.png' WHERE id = 'a'",
+                [],
+            )
+            .is_err()
+    );
+    // A picture without dimensions, or a workspace copy without its origin,
+    // is not a row.
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO message_attachments (id, chat_id, kind, file_name, media_type,
+                    byte_count, source, content_blake3, created_at_ms)
+                 VALUES ('b', 'chat', 'image', 'x.png', 'image/png', 1, 'clipboard', ?1, 1)",
+                [&hash],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO message_attachments (id, chat_id, kind, file_name, media_type,
+                    byte_count, source, content_blake3, created_at_ms)
+                 VALUES ('c', 'chat', 'file', 'x.pdf', 'application/pdf', 1, 'workspace', ?1, 1)",
+                [&hash],
+            )
+            .is_err()
+    );
+    // Deleting the chat removes its attachments.
+    connection
+        .execute("DELETE FROM chats WHERE id = 'chat'", [])
+        .unwrap();
+    let left: i64 = connection
+        .query_row("SELECT COUNT(*) FROM message_attachments", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
 }
 
 #[test]

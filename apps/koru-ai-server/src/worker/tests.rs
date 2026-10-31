@@ -97,6 +97,7 @@ fn send(client: &AiWorkerClient, chat_id: ChatId, operation_id: Uuid) -> AiRespo
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -648,6 +649,7 @@ fn armed_web_search_is_audited_and_citations_reach_transcript_and_usage() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -725,6 +727,7 @@ fn unsupported_web_search_is_rejected_before_an_attempt_or_provider_call() {
             reasoning_override: None,
             system_prompt_override: None,
             replace_pinned_documents: false,
+            attachment_ids: Vec::new(),
         },
     ) {
         Ok(_) => panic!("unsupported web search unexpectedly started"),
@@ -798,6 +801,7 @@ fn document_and_message_block_context_reach_provider_with_durable_provenance() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -891,6 +895,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -916,6 +921,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: true,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -975,6 +981,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -1005,6 +1012,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -1028,6 +1036,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -1074,6 +1083,7 @@ fn context_failure_is_durable_and_never_calls_the_provider() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -2161,6 +2171,7 @@ fn debug_lifecycle_logs_exclude_chat_content_titles_and_paths() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -2243,6 +2254,7 @@ fn payload_debug_logs_one_marked_request_and_terminal_response() {
                 reasoning_override: None,
                 system_prompt_override: None,
                 replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap();
@@ -2558,3 +2570,5 @@ fn a_working_folder_is_only_for_an_empty_agent_chat_and_rides_the_request() {
         Some(folder.as_str())
     );
 }
+
+mod attachments;

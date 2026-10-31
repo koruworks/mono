@@ -6,8 +6,8 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, State};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodRouter, get, patch, post};
@@ -16,22 +16,23 @@ use bytes::Bytes;
 use futures_util::stream;
 use koru_ai_api::{AiPrincipal, AiScope, RequestContext};
 use koru_ai_core::{
-    AiProviderId, ChatId, DocumentExportId, InferenceAttemptId, MessageId, ToolInvocationId,
+    AiProviderId, AttachmentSource, ChatAttachmentId, ChatId, DocumentExportId, InferenceAttemptId,
+    MessageId, ToolInvocationId,
 };
 use koru_ai_wire::{
     AiSearchRequest, AiSearchResponse, AttemptResponse, BranchChatRequest, BranchChatResponse,
-    CancelAttemptResponse, CancelModelPullResponse, ChatToolPolicyResponse, ChatTranscript,
-    ClearHistoryResponse, ClearUsageResponse, CreateChatRequest, CreateChatResponse,
-    DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure, FeedbackRequest,
-    FeedbackResponse, ListChatsResponse, ListChatsToolRequest, ListChatsToolResponse,
-    ModelPullEvent, OllamaSettingsView, OpenAiSettingsView, ProviderSettingsResponse,
-    ProviderValidationResponse, PullOllamaModelAccepted, PullOllamaModelRequest,
-    ReadChatToolRequest, ReadChatToolResponse, RenameChatRequest, RenameChatResponse,
-    RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse, SelectProviderRequest,
-    SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionRequest, ToolDecisionResponse,
-    UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
-    UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
-    UpdateOpenAiSettingsRequest, UsageResponse,
+    CancelAttemptResponse, CancelModelPullResponse, ChatAttachmentResponse, ChatToolPolicyResponse,
+    ChatTranscript, ClearHistoryResponse, ClearUsageResponse, CreateChatRequest,
+    CreateChatResponse, DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure,
+    FeedbackRequest, FeedbackResponse, ListChatsResponse, ListChatsToolRequest,
+    ListChatsToolResponse, ModelPullEvent, OllamaSettingsView, OpenAiSettingsView,
+    ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelAccepted,
+    PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse, RemoveAttachmentResponse,
+    RenameChatRequest, RenameChatResponse, RetryTurnRequest, SearchChatsToolRequest,
+    SearchChatsToolResponse, SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent,
+    ToolDecisionRequest, ToolDecisionResponse, UpdateChatModelRequest, UpdateChatModelResponse,
+    UpdateChatPrivacyRequest, UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest,
+    UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest, UsageResponse,
 };
 use schemars::{Schema, SchemaGenerator};
 
@@ -48,11 +49,25 @@ pub struct AiRoute {
     pub summary: &'static str,
     pub returns: &'static str,
     pub handler: fn() -> MethodRouter<Arc<GatewayState>>,
-    pub request: Option<SchemaFor>,
-    pub response: SchemaFor,
+    pub request: AiBody,
+    pub response: AiBody,
     pub stream: bool,
-    pub path_parameter: Option<&'static str>,
+    pub path_parameters: &'static [&'static str],
 }
+
+/// What a route's request or response body is: none, a JSON value with its
+/// schema, or raw bytes (an attachment's content) of the named media type.
+#[derive(Clone, Copy)]
+pub enum AiBody {
+    None,
+    Json(SchemaFor),
+    Bytes(&'static str),
+}
+
+/// The most an attachment upload may carry, with room for nothing else: the
+/// body is the file. The service checks the exact limit again.
+const ATTACHMENT_BODY_LIMIT: usize =
+    koru_ai_core::attachments::MAX_ATTACHMENT_BYTES as usize + 64 * 1024;
 
 pub const ROUTES: &[AiRoute] = &[
     AiRoute {
@@ -63,10 +78,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read non-secret AI provider settings",
         returns: "The selected provider, model, reasoning, endpoint, and credential-presence flag. Secrets and vault labels are never returned.",
         handler: || get(provider_settings),
-        request: None,
-        response: |generator| generator.subschema_for::<ProviderSettingsResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ProviderSettingsResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_select_provider",
@@ -76,10 +91,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Select the active AI provider",
         returns: "The complete persisted non-secret provider settings.",
         handler: || axum::routing::put(select_provider),
-        request: Some(|generator| generator.subschema_for::<SelectProviderRequest>()),
-        response: |generator| generator.subschema_for::<ProviderSettingsResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<SelectProviderRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ProviderSettingsResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_update_openai_settings",
@@ -89,10 +104,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Update non-secret OpenAI settings",
         returns: "The saved OpenAI model, reasoning choice, and credential-presence flag.",
         handler: || axum::routing::put(update_openai_settings),
-        request: Some(|generator| generator.subschema_for::<UpdateOpenAiSettingsRequest>()),
-        response: |generator| generator.subschema_for::<OpenAiSettingsView>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<UpdateOpenAiSettingsRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<OpenAiSettingsView>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_update_ollama_settings",
@@ -102,10 +117,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Update Ollama settings",
         returns: "The saved Ollama endpoint, model, and reasoning choice.",
         handler: || axum::routing::put(update_ollama_settings),
-        request: Some(|generator| generator.subschema_for::<UpdateOllamaSettingsRequest>()),
-        response: |generator| generator.subschema_for::<OllamaSettingsView>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<UpdateOllamaSettingsRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<OllamaSettingsView>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_validate_provider",
@@ -115,10 +130,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Validate an AI provider and selected model",
         returns: "A safe provider state, available model names, and selected-model capabilities when ready.",
         handler: || post(validate_provider),
-        request: None,
-        response: |generator| generator.subschema_for::<ProviderValidationResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ProviderValidationResponse>()),
         stream: false,
-        path_parameter: Some("provider"),
+        path_parameters: &["provider"],
     },
     AiRoute {
         operation_id: "ai_discover_agent_models",
@@ -128,10 +143,12 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "List the models a local agent offers",
         returns: "The agent's models in its own ids, each with the agent's grouping; empty when it lists none.",
         handler: || post(discover_agent_models),
-        request: None,
-        response: |generator| generator.subschema_for::<koru_ai_wire::AgentModelsResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::AgentModelsResponse>()
+        }),
         stream: false,
-        path_parameter: Some("provider"),
+        path_parameters: &["provider"],
     },
     AiRoute {
         operation_id: "ai_pull_ollama_model",
@@ -141,10 +158,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Pull an Ollama model with bounded progress streaming",
         returns: "An SSE stream beginning with the accepted model followed by normalized progress and one terminal event.",
         handler: || post(pull_ollama_model),
-        request: Some(|generator| generator.subschema_for::<PullOllamaModelRequest>()),
-        response: |generator| generator.subschema_for::<PullOllamaModelAccepted>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<PullOllamaModelRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<PullOllamaModelAccepted>()),
         stream: true,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_cancel_ollama_pull",
@@ -154,10 +171,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Cancel the active Ollama model pull",
         returns: "Whether an active pull was signalled for cancellation.",
         handler: || post(cancel_ollama_pull),
-        request: None,
-        response: |generator| generator.subschema_for::<CancelModelPullResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<CancelModelPullResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_create_chat",
@@ -167,10 +184,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Create an AI chat",
         returns: "The durable chat created with the client-minted identity.",
         handler: || post(create_chat),
-        request: Some(|generator| generator.subschema_for::<CreateChatRequest>()),
-        response: |generator| generator.subschema_for::<CreateChatResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<CreateChatRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<CreateChatResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_list_chats",
@@ -180,10 +197,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "List AI chats",
         returns: "Durable chats ordered by most recent activity.",
         handler: || get(list_chats),
-        request: None,
-        response: |generator| generator.subschema_for::<ListChatsResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ListChatsResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_read_chat",
@@ -193,10 +210,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read an authoritative AI chat transcript",
         returns: "The chat, ordered messages, finalized blocks, and pinned document references.",
         handler: || get(read_chat),
-        request: None,
-        response: |generator| generator.subschema_for::<ChatTranscript>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatTranscript>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_rename_chat",
@@ -206,10 +223,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Rename an AI chat",
         returns: "The durable chat with its updated title and activity timestamp.",
         handler: || patch(rename_chat),
-        request: Some(|generator| generator.subschema_for::<RenameChatRequest>()),
-        response: |generator| generator.subschema_for::<RenameChatResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<RenameChatRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<RenameChatResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_update_chat_model",
@@ -219,10 +236,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Change the model used by an AI chat",
         returns: "The durable chat with its updated provider, model, reasoning default, and activity timestamp.",
         handler: || patch(update_chat_model),
-        request: Some(|generator| generator.subschema_for::<UpdateChatModelRequest>()),
-        response: |generator| generator.subschema_for::<UpdateChatModelResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<UpdateChatModelRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<UpdateChatModelResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_update_chat_privacy",
@@ -232,10 +249,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Change whether agents and connected assistants can discover a chat",
         returns: "The durable chat with its updated privacy flag and activity timestamp.",
         handler: || patch(update_chat_privacy),
-        request: Some(|generator| generator.subschema_for::<UpdateChatPrivacyRequest>()),
-        response: |generator| generator.subschema_for::<UpdateChatPrivacyResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<UpdateChatPrivacyRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<UpdateChatPrivacyResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_update_chat_folder",
@@ -245,12 +262,14 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Choose the folder a chat's local agent works in",
         returns: "The durable chat with its working folder; accepted only on an agent chat with no message yet.",
         handler: || patch(update_chat_folder),
-        request: Some(|generator| {
+        request: AiBody::Json(|generator| {
             generator.subschema_for::<koru_ai_wire::UpdateChatFolderRequest>()
         }),
-        response: |generator| generator.subschema_for::<koru_ai_wire::UpdateChatFolderResponse>(),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::UpdateChatFolderResponse>()
+        }),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_tool_list_chats",
@@ -260,10 +279,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "List non-private AI chats for a trusted tool caller",
         returns: "A bounded newest-first page of non-private chat summaries.",
         handler: || post(tool_list_chats),
-        request: Some(|generator| generator.subschema_for::<ListChatsToolRequest>()),
-        response: |generator| generator.subschema_for::<ListChatsToolResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<ListChatsToolRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ListChatsToolResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_tool_search_chats",
@@ -273,10 +292,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Search non-private AI chats for a trusted tool caller",
         returns: "A bounded relevance-ranked page of finalized response matches from non-private chats.",
         handler: || post(tool_search_chats),
-        request: Some(|generator| generator.subschema_for::<SearchChatsToolRequest>()),
-        response: |generator| generator.subschema_for::<SearchChatsToolResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<SearchChatsToolRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<SearchChatsToolResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_tool_read_chat",
@@ -286,10 +305,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read a non-private AI chat for a trusted tool caller",
         returns: "A byte-bounded recent page of terminal chat messages; private and missing chats share chat_not_found.",
         handler: || post(tool_read_chat),
-        request: Some(|generator| generator.subschema_for::<ReadChatToolRequest>()),
-        response: |generator| generator.subschema_for::<ReadChatToolResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<ReadChatToolRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ReadChatToolResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_update_chat_tool_policy",
@@ -299,10 +318,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Replace a chat's workspace-tool policy",
         returns: "The durable Manual or Auto mode and complete selected-workspace grant set. An empty set grants no workspace access.",
         handler: || axum::routing::put(update_chat_tool_policy),
-        request: Some(|generator| generator.subschema_for::<UpdateChatToolPolicyRequest>()),
-        response: |generator| generator.subschema_for::<ChatToolPolicyResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<UpdateChatToolPolicyRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatToolPolicyResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_read_chat_tool_policy",
@@ -312,10 +331,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read a chat's workspace-tool policy",
         returns: "The durable Manual or Auto mode and complete selected-workspace grant set.",
         handler: || get(read_chat_tool_policy),
-        request: None,
-        response: |generator| generator.subschema_for::<ChatToolPolicyResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatToolPolicyResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_delete_chat",
@@ -325,10 +344,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Delete an AI chat while retaining anonymous usage",
         returns: "Whether the chat existed. Content, search rows, and chat/message identifiers are removed while text-free attempt and feedback metrics survive.",
         handler: || axum::routing::delete(delete_chat),
-        request: None,
-        response: |generator| generator.subschema_for::<DeleteChatResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<DeleteChatResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_clear_history",
@@ -338,10 +357,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Clear all AI chat history",
         returns: "The number of chats deleted. Anonymous text-free usage and feedback aggregates remain until cleared separately.",
         handler: || axum::routing::delete(clear_history),
-        request: None,
-        response: |generator| generator.subschema_for::<ClearHistoryResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ClearHistoryResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_usage",
@@ -351,10 +370,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read private local AI usage",
         returns: "Content-free local aggregates grouped by day, surface, provider, model, effort, status, and prompt version. Missing provider usage remains unavailable.",
         handler: || get(usage),
-        request: None,
-        response: |generator| generator.subschema_for::<UsageResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<UsageResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_chat_usage",
@@ -364,10 +383,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read current-chat and all private local AI usage",
         returns: "Current-chat totals followed by the same content-free all-usage aggregates as the local usage report.",
         handler: || get(chat_usage),
-        request: None,
-        response: |generator| generator.subschema_for::<UsageResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<UsageResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_clear_usage",
@@ -377,10 +396,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Clear private local AI usage and feedback",
         returns: "The number of text-free attempts and feedback events deleted. Chat history is unchanged.",
         handler: || axum::routing::delete(clear_usage),
-        request: None,
-        response: |generator| generator.subschema_for::<ClearUsageResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ClearUsageResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_search",
@@ -390,10 +409,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Search finalized AI chat responses",
         returns: "Best matching finalized block per response with exact chat, message, and block identity.",
         handler: || post(search),
-        request: Some(|generator| generator.subschema_for::<AiSearchRequest>()),
-        response: |generator| generator.subschema_for::<AiSearchResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<AiSearchRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<AiSearchResponse>()),
         stream: false,
-        path_parameter: None,
+        path_parameters: &[],
     },
     AiRoute {
         operation_id: "ai_rate_response",
@@ -403,10 +422,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Append response feedback",
         returns: "The retry-safe append-only feedback event.",
         handler: || axum::routing::put(rate_response),
-        request: Some(|generator| generator.subschema_for::<FeedbackRequest>()),
-        response: |generator| generator.subschema_for::<FeedbackResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<FeedbackRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<FeedbackResponse>()),
         stream: false,
-        path_parameter: Some("message"),
+        path_parameters: &["message"],
     },
     AiRoute {
         operation_id: "ai_branch_chat",
@@ -416,10 +435,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Branch an AI chat",
         returns: "A durable chat containing newly identified copies through the chosen response.",
         handler: || post(branch_chat),
-        request: Some(|generator| generator.subschema_for::<BranchChatRequest>()),
-        response: |generator| generator.subschema_for::<BranchChatResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<BranchChatRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<BranchChatResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_retry_turn",
@@ -429,10 +448,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Retry a failed AI response",
         returns: "A durable fresh assistant entry and attempt, streamed without replacing failed history.",
         handler: || post(retry_turn),
-        request: Some(|generator| generator.subschema_for::<RetryTurnRequest>()),
-        response: |generator| generator.subschema_for::<SendTurnAccepted>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<RetryTurnRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<SendTurnAccepted>()),
         stream: true,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_export_chat",
@@ -442,10 +461,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Store a chat prefix as a Koru document",
         returns: "The durable retry-safe export operation; poll it until terminal.",
         handler: || post(export_chat),
-        request: Some(|generator| generator.subschema_for::<ExportChatRequest>()),
-        response: |generator| generator.subschema_for::<ExportChatResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<ExportChatRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ExportChatResponse>()),
         stream: false,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_read_export",
@@ -455,10 +474,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read an AI document export",
         returns: "The authoritative pending, complete, or failed export operation.",
         handler: || get(read_export),
-        request: None,
-        response: |generator| generator.subschema_for::<ExportChatResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<ExportChatResponse>()),
         stream: false,
-        path_parameter: Some("export"),
+        path_parameters: &["export"],
     },
     AiRoute {
         operation_id: "ai_send_turn",
@@ -468,10 +487,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Commit and stream an AI turn",
         returns: "An ordered SSE stream beginning with durable acceptance, followed by normalized Koru AI events. Recover a lost stream by reading the attempt and chat.",
         handler: || post(send_turn),
-        request: Some(|generator| generator.subschema_for::<SendTurnRequest>()),
-        response: |generator| generator.subschema_for::<SendTurnAccepted>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<SendTurnRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<SendTurnAccepted>()),
         stream: true,
-        path_parameter: Some("chat"),
+        path_parameters: &["chat"],
     },
     AiRoute {
         operation_id: "ai_read_attempt",
@@ -481,10 +500,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Read authoritative AI attempt state",
         returns: "The durable attempt state used to recover after stream loss.",
         handler: || get(read_attempt),
-        request: None,
-        response: |generator| generator.subschema_for::<AttemptResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<AttemptResponse>()),
         stream: false,
-        path_parameter: Some("attempt"),
+        path_parameters: &["attempt"],
     },
     AiRoute {
         operation_id: "ai_cancel_attempt",
@@ -494,10 +513,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Cancel an AI attempt",
         returns: "The current terminal state; cancelling an already-terminal attempt is a successful no-op.",
         handler: || post(cancel_attempt),
-        request: None,
-        response: |generator| generator.subschema_for::<CancelAttemptResponse>(),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<CancelAttemptResponse>()),
         stream: false,
-        path_parameter: Some("attempt"),
+        path_parameters: &["attempt"],
     },
     AiRoute {
         operation_id: "ai_approve_tool_call",
@@ -507,10 +526,10 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Approve a pending workspace-tool call",
         returns: "The durable content-free tool activity. Repeating the same approval is an idempotent read of that state.",
         handler: || post(approve_tool_call),
-        request: Some(|generator| generator.subschema_for::<ToolDecisionRequest>()),
-        response: |generator| generator.subschema_for::<ToolDecisionResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<ToolDecisionRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ToolDecisionResponse>()),
         stream: false,
-        path_parameter: Some("tool"),
+        path_parameters: &["tool"],
     },
     AiRoute {
         operation_id: "ai_deny_tool_call",
@@ -520,10 +539,64 @@ pub const ROUTES: &[AiRoute] = &[
         summary: "Deny a pending workspace-tool call",
         returns: "The durable denied activity. The provider receives a structured permission-denied result and may continue.",
         handler: || post(deny_tool_call),
-        request: Some(|generator| generator.subschema_for::<ToolDecisionRequest>()),
-        response: |generator| generator.subschema_for::<ToolDecisionResponse>(),
+        request: AiBody::Json(|generator| generator.subschema_for::<ToolDecisionRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ToolDecisionResponse>()),
         stream: false,
-        path_parameter: Some("tool"),
+        path_parameters: &["tool"],
+    },
+    AiRoute {
+        operation_id: "ai_put_attachment",
+        method: "PUT",
+        path: "/v1/ai/chats/{chat}/attachments/{attachment}",
+        scope: AiScope::Chat,
+        summary: "Store a picture or file for a local agent chat's next message",
+        returns: "The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.",
+        handler: || {
+            axum::routing::put(put_attachment).layer(DefaultBodyLimit::max(ATTACHMENT_BODY_LIMIT))
+        },
+        request: AiBody::Bytes("application/octet-stream"),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "ai_remove_attachment",
+        method: "DELETE",
+        path: "/v1/ai/chats/{chat}/attachments/{attachment}",
+        scope: AiScope::Chat,
+        summary: "Remove a staged attachment",
+        returns: "Whether a staged attachment was removed. A sent attachment stays with its message and answers attachment_sent.",
+        handler: || axum::routing::delete(remove_attachment),
+        request: AiBody::None,
+        response: AiBody::Json(|generator| generator.subschema_for::<RemoveAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "ai_read_attachment",
+        method: "GET",
+        path: "/v1/ai/chats/{chat}/attachments/{attachment}",
+        scope: AiScope::Chat,
+        summary: "Read an attachment's stored original",
+        returns: "The original bytes, with the stored media type and the file name as an attachment disposition.",
+        handler: || get(read_attachment),
+        request: AiBody::None,
+        response: AiBody::Bytes("application/octet-stream"),
+        stream: false,
+        path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "ai_read_attachment_thumbnail",
+        method: "GET",
+        path: "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail",
+        scope: AiScope::Chat,
+        summary: "Read a picture attachment's thumbnail",
+        returns: "A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.",
+        handler: || get(read_attachment_thumbnail),
+        request: AiBody::None,
+        response: AiBody::Bytes("image/png"),
+        stream: false,
+        path_parameters: &["chat", "attachment"],
     },
 ];
 
@@ -558,35 +631,77 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                 "503": {"description": "The AI worker is unavailable or saturated", "content": {"application/json": {"schema": failure}}}
             }
         });
-        if let Some(request) = route.request {
-            operation["requestBody"] = json!({
-                "required": true,
-                "content": {"application/json": {"schema": request(&mut schemas)}}
-            });
+        match route.request {
+            AiBody::None => {}
+            AiBody::Json(request) => {
+                operation["requestBody"] = json!({
+                    "required": true,
+                    "content": {"application/json": {"schema": request(&mut schemas)}}
+                });
+            }
+            AiBody::Bytes(media_type) => {
+                operation["requestBody"] = json!({
+                    "required": true,
+                    "content": {media_type: {"schema": {"type": "string", "format": "binary"}}}
+                });
+            }
         }
-        if let Some(parameter) = route.path_parameter {
-            let schema = if parameter == "provider" {
-                json!({"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"})
-            } else {
-                json!({"type": "string", "format": "uuid"})
-            };
-            operation["parameters"] = json!([{
-                "name": parameter,
-                "in": "path",
-                "required": true,
-                "schema": schema
-            }]);
+        let mut parameters: Vec<Value> = route
+            .path_parameters
+            .iter()
+            .map(|parameter| {
+                let schema = if *parameter == "provider" {
+                    json!({"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"})
+                } else {
+                    json!({"type": "string", "format": "uuid"})
+                };
+                json!({"name": parameter, "in": "path", "required": true, "schema": schema})
+            })
+            .collect();
+        if route.operation_id == "ai_put_attachment" {
+            parameters.push(json!({
+                "name": "name", "in": "query", "required": true,
+                "description": "The file's name, percent-encoded. Checked against the content.",
+                "schema": {"type": "string", "minLength": 1}
+            }));
+            parameters.push(json!({
+                "name": "source", "in": "query", "required": true,
+                "schema": {"type": "string", "enum": ["clipboard", "drop", "file_picker"]}
+            }));
         }
-        let response = (route.response)(&mut schemas);
-        operation["responses"]["200"]["content"] = if route.stream {
-            let event = if route.operation_id == "ai_pull_ollama_model" {
-                pull_event.clone()
-            } else {
-                stream_event.clone()
-            };
-            json!({"text/event-stream": {"schema": {"oneOf": [response, event]}}})
-        } else {
-            json!({"application/json": {"schema": response}})
+        if !parameters.is_empty() {
+            operation["parameters"] = Value::Array(parameters);
+        }
+        if route.path.contains("/attachments/") {
+            for (status, description) in [
+                ("404", "The attachment, or the stored file, is not there"),
+                ("413", "The attachment is larger than the limit"),
+                (
+                    "415",
+                    "The attachment's type is not allowed, or its content is not what its name says",
+                ),
+                ("507", "The attachment could not be stored on this computer"),
+            ] {
+                operation["responses"][status] = json!({"description": description, "content": {"application/json": {"schema": failure}}});
+            }
+        }
+        operation["responses"]["200"]["content"] = match route.response {
+            AiBody::Json(response) if route.stream => {
+                let response = response(&mut schemas);
+                let event = if route.operation_id == "ai_pull_ollama_model" {
+                    pull_event.clone()
+                } else {
+                    stream_event.clone()
+                };
+                json!({"text/event-stream": {"schema": {"oneOf": [response, event]}}})
+            }
+            AiBody::Json(response) => {
+                json!({"application/json": {"schema": response(&mut schemas)}})
+            }
+            AiBody::Bytes(media_type) => {
+                json!({media_type: {"schema": {"type": "string", "format": "binary"}}})
+            }
+            AiBody::None => json!({}),
         };
         let entry = paths
             .entry(route.path.to_owned())
@@ -1234,6 +1349,154 @@ async fn deny_tool_call(
     answer(call(move || client.deny_tool_call(context, tool, choice)).await)
 }
 
+/// The query of an upload: the file's name and how it was added.
+#[derive(serde::Deserialize)]
+struct UploadQuery {
+    name: String,
+    source: String,
+}
+
+async fn put_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path((chat, attachment)): Path<(String, String)>,
+    query: Result<Query<UploadQuery>, QueryRejection>,
+    body: Bytes,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
+        return invalid_identity("attachment");
+    };
+    let Ok(Query(query)) = query else {
+        return invalid_request("The upload names no file name or source.");
+    };
+    let source = match AttachmentSource::parse(&query.source) {
+        Some(source) if source != AttachmentSource::Workspace => source,
+        _ => return invalid_request("The upload source is not one a person adds a file by."),
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    let upload = koru_ai_api::AttachmentUpload {
+        file_name: query.name,
+        source,
+        bytes: body,
+    };
+    answer(call(move || client.put_attachment(context, chat, attachment, upload)).await)
+}
+
+async fn remove_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path((chat, attachment)): Path<(String, String)>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
+        return invalid_identity("attachment");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.remove_attachment(context, chat, attachment)).await)
+}
+
+async fn read_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path((chat, attachment)): Path<(String, String)>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
+        return invalid_identity("attachment");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    match call(move || client.read_attachment(context, chat, attachment)).await {
+        Ok(content) => {
+            let disposition = format!(
+                "attachment; filename*=UTF-8''{}",
+                percent_encode_name(&content.file_name)
+            );
+            bytes_response(&content.media_type, Some(&disposition), content.bytes)
+        }
+        Err(failure) => ai_failure(status_for(&failure), failure),
+    }
+}
+
+async fn read_attachment_thumbnail(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path((chat, attachment)): Path<(String, String)>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
+        return invalid_identity("attachment");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    match call(move || client.read_attachment_thumbnail(context, chat, attachment)).await {
+        Ok(bytes) => bytes_response("image/png", None, bytes),
+        Err(failure) => ai_failure(status_for(&failure), failure),
+    }
+}
+
+fn bytes_response(media_type: &str, disposition: Option<&str>, bytes: Vec<u8>) -> Response {
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(media_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    if let Some(value) = disposition.and_then(|value| HeaderValue::from_str(value).ok()) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, value);
+    }
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// RFC 5987 `attr-char`: everything else in the name is percent-encoded.
+fn percent_encode_name(name: &str) -> String {
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn invalid_request(message: &str) -> Response {
+    ai_failure(
+        StatusCode::BAD_REQUEST,
+        Failure {
+            code: "invalid_request".into(),
+            message: message.into(),
+            retryable: false,
+            details: Default::default(),
+        },
+    )
+}
+
 fn admitted(
     state: &GatewayState,
     principal: GatewayPrincipal,
@@ -1439,10 +1702,22 @@ fn invalid_identity(kind: &str) -> Response {
 }
 
 fn status_for(failure: &Failure) -> StatusCode {
+    use koru_ai_wire::attachment_codes as attachment;
     match failure.code.as_str() {
-        "invalid_request" | "invalid_id" => StatusCode::BAD_REQUEST,
-        "forbidden" => StatusCode::FORBIDDEN,
-        "not_found" | "chat_not_found" => StatusCode::NOT_FOUND,
+        "invalid_request" | "invalid_id" | attachment::LIMIT => StatusCode::BAD_REQUEST,
+        "forbidden" | attachment::WORKSPACE_NOT_GRANTED => StatusCode::FORBIDDEN,
+        "not_found"
+        | "chat_not_found"
+        | attachment::NOT_FOUND
+        | attachment::MISSING
+        | attachment::NO_PREVIEW => StatusCode::NOT_FOUND,
+        attachment::TOO_LARGE => StatusCode::PAYLOAD_TOO_LARGE,
+        attachment::TYPE_NOT_ALLOWED => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        attachment::SENT
+        | attachment::CONFLICT
+        | attachment::UNSUPPORTED
+        | attachment::WORKSPACE_FILE_UNAVAILABLE => StatusCode::CONFLICT,
+        attachment::STORAGE => StatusCode::INSUFFICIENT_STORAGE,
         "chat_busy" | "idempotency_conflict" | "model_pull_active" => StatusCode::CONFLICT,
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,
         "ai_worker_saturated"

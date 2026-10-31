@@ -5111,6 +5111,7 @@ dependencies = [
 name = "koru-ai-api"
 version = "0.0.3"
 dependencies = [
+ "bytes",
  "koru-ai-core",
  "koru-ai-wire",
 ]
@@ -5252,6 +5253,8 @@ name = "koru-ai-server"
 version = "0.0.3"
 dependencies = [
  "blake3",
+ "bytes",
+ "image",
  "koru-ai-api",
  "koru-ai-client",
  "koru-ai-core",
@@ -5278,6 +5281,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]

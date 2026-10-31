@@ -671,6 +671,7 @@ mod tests {
                 .map(|(role, markdown)| AiRequestMessage {
                     role: *role,
                     markdown: (*markdown).to_owned(),
+                    attachments: Vec::new(),
                 })
                 .collect(),
             context: Vec::new(),

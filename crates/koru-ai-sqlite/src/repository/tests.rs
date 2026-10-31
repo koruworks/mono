@@ -261,6 +261,7 @@ fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
             error_class: None,
             provider_response_id: None,
         },
+        attachment_ids: Vec::new(),
     }
 }
 
@@ -606,6 +607,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
             blocks: Vec::new(),
             citations: Vec::new(),
             pinned_documents: Vec::new(),
+            attachments: Vec::new(),
         })
         .unwrap();
     assert_eq!(repository.messages(branch_id).unwrap().len(), 2);
@@ -1476,4 +1478,198 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
     assert_eq!(cleared.attempts, 1);
     assert_eq!(cleared.feedback_events, 1);
     assert!(repository.usage(None).unwrap().groups.is_empty());
+}
+
+fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentRecord {
+    koru_ai_core::AttachmentRecord {
+        chat_id,
+        attachment: koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: None,
+            ordinal: None,
+            kind: koru_ai_core::AttachmentKind::Image,
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            file_name: name.into(),
+            media_type: "image/png".into(),
+            byte_count: 1_024,
+            dimensions: Some((40, 30)),
+            origin: None,
+            created_at: at(offset),
+        },
+        has_sent_copy: false,
+        content_blake3: "a".repeat(64),
+    }
+}
+
+#[test]
+fn a_staged_attachment_is_bound_to_the_user_message_in_the_turn_transaction() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let first = staged(chat_id, "first.png", 1);
+    let second = staged(chat_id, "second.png", 2);
+    let kept = staged(chat_id, "kept.png", 3);
+    for record in [&first, &second, &kept] {
+        repository.stage_attachment(record).unwrap();
+    }
+    assert_eq!(
+        repository.attachment(first.attachment.id).unwrap(),
+        Some(first.clone())
+    );
+
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    // Bound in the order the send names them, not the order they were added.
+    pending.attachment_ids = vec![second.attachment.id, first.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    let listed = repository.attachments_for_chat(chat_id).unwrap();
+    let names: Vec<_> = listed.iter().map(|item| item.file_name.as_str()).collect();
+    assert_eq!(names, ["second.png", "first.png", "kept.png"]);
+    assert_eq!(listed[0].message_id, Some(pending.user_message.id));
+    assert_eq!(listed[0].ordinal, Some(0));
+    assert_eq!(listed[1].ordinal, Some(1));
+    assert_eq!(listed[2].message_id, None, "the one not named stays staged");
+}
+
+#[test]
+fn a_turn_naming_an_unknown_or_foreign_attachment_writes_nothing() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let other_chat = ChatId::new();
+    repository.create_chat(&chat(other_chat, 0)).unwrap();
+    let foreign = staged(other_chat, "foreign.png", 1);
+    repository.stage_attachment(&foreign).unwrap();
+
+    for ids in [
+        vec![koru_ai_core::ChatAttachmentId::new()],
+        vec![foreign.attachment.id],
+    ] {
+        let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+        pending.attachment_ids = ids;
+        assert!(repository.begin_turn(&pending).is_err());
+        assert!(repository.messages(chat_id).unwrap().is_empty());
+    }
+    assert_eq!(
+        repository
+            .attachment(foreign.attachment.id)
+            .unwrap()
+            .unwrap()
+            .attachment
+            .message_id,
+        None
+    );
+}
+
+#[test]
+fn only_a_staged_attachment_can_be_removed() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let sent = staged(chat_id, "sent.png", 1);
+    let draft = staged(chat_id, "draft.png", 2);
+    repository.stage_attachment(&sent).unwrap();
+    repository.stage_attachment(&draft).unwrap();
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, sent.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Sent
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(ChatId::new(), draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::NotFound,
+        "another chat cannot remove it"
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::Removed
+    );
+    assert_eq!(
+        repository
+            .remove_staged_attachment(chat_id, draft.attachment.id)
+            .unwrap(),
+        RemovedAttachment::NotFound
+    );
+}
+
+#[test]
+fn old_staged_rows_are_swept_and_the_known_folders_are_listed() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let old = staged(chat_id, "old.png", 1);
+    let fresh = staged(chat_id, "fresh.png", 100);
+    let sent = staged(chat_id, "sent.png", 2);
+    for record in [&old, &fresh, &sent] {
+        repository.stage_attachment(record).unwrap();
+    }
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    assert_eq!(
+        repository.remove_staged_attachments_before(at(50)).unwrap(),
+        1
+    );
+    let known = repository.attachment_dirs_known().unwrap();
+    assert!(known.chats.contains(&chat_id));
+    assert!(known.attachments.contains(&fresh.attachment.id));
+    assert!(known.attachments.contains(&sent.attachment.id));
+    assert!(!known.attachments.contains(&old.attachment.id));
+
+    // Deleting the chat takes every row with it.
+    repository.delete_chat(chat_id).unwrap();
+    assert!(
+        repository
+            .attachment_dirs_known()
+            .unwrap()
+            .attachments
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_branch_carries_its_copied_attachments_under_new_ids() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let sent = staged(chat_id, "sent.png", 1);
+    repository.stage_attachment(&sent).unwrap();
+    let mut pending = turn(chat_id, Uuid::new_v4(), 10);
+    pending.attachment_ids = vec![sent.attachment.id];
+    repository.begin_turn(&pending).unwrap();
+
+    let branch_id = ChatId::new();
+    let mut copied_user = pending.user_message.clone();
+    copied_user.id = MessageId::new();
+    copied_user.chat_id = branch_id;
+    copied_user.origin_message_id = Some(pending.user_message.id);
+    let mut copy = repository.attachment(sent.attachment.id).unwrap().unwrap();
+    copy.chat_id = branch_id;
+    copy.attachment.id = koru_ai_core::ChatAttachmentId::new();
+    copy.attachment.message_id = Some(copied_user.id);
+    let mut branch = chat(branch_id, 20);
+    branch.branched_from = Some(BranchOrigin {
+        chat_id,
+        through_message_id: pending.user_message.id,
+    });
+    repository
+        .create_branch(&BranchCopy {
+            chat: branch,
+            tool_policy: ChatToolPolicy {
+                chat_id: branch_id,
+                mode: ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+            messages: vec![copied_user.clone()],
+            blocks: Vec::new(),
+            citations: Vec::new(),
+            pinned_documents: Vec::new(),
+            attachments: vec![copy.clone()],
+        })
+        .unwrap();
+    let listed = repository.attachments_for_chat(branch_id).unwrap();
+    assert_eq!(listed, vec![copy.attachment]);
+    assert_eq!(listed[0].message_id, Some(copied_user.id));
+    // The source keeps its own row.
+    assert_eq!(repository.attachments_for_chat(chat_id).unwrap().len(), 1);
 }

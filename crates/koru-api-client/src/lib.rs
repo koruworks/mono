@@ -1025,6 +1025,85 @@ impl AiClient<'_> {
         )
     }
 
+    /// Store one picture or file for a local agent chat's next message
+    /// (chat-attachments). The name and size are checked here first, as the
+    /// service will check them again with the content; the bytes are the
+    /// body, so no path crosses. Blocking: call it off the UI thread.
+    pub fn put_attachment(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+        file_name: &str,
+        source: koru_ai_core::AttachmentSource,
+        bytes: Bytes,
+    ) -> AiResult<koru_ai_wire::ChatAttachmentResponse> {
+        if bytes.len() as u64 > koru_ai_core::attachments::MAX_ATTACHMENT_BYTES {
+            return Err(local_attachment_failure(
+                koru_ai_wire::attachment_codes::TOO_LARGE,
+                "The attachment is larger than the limit.",
+            ));
+        }
+        if koru_ai_core::attachments::allowed_type(file_name).is_none() {
+            return Err(local_attachment_failure(
+                koru_ai_wire::attachment_codes::TYPE_NOT_ALLOWED,
+                "This type of file can't be attached.",
+            ));
+        }
+        let path = format!(
+            "/v1/ai/chats/{chat}/attachments/{attachment}?name={}&source={}",
+            percent_encode_query(file_name),
+            source.as_token()
+        );
+        checked(self.execute_with(
+            reqwest::Method::PUT,
+            path,
+            Some((bytes, "application/octet-stream")),
+            false,
+        )?)?
+        .json()
+        .map_err(|_| protocol_failure("The AI response body was invalid."))
+    }
+
+    /// Remove a staged attachment. A sent one answers `attachment_sent`.
+    pub fn remove_attachment(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<koru_ai_wire::RemoveAttachmentResponse> {
+        self.json(
+            reqwest::Method::DELETE,
+            format!("/v1/ai/chats/{chat}/attachments/{attachment}"),
+            None,
+        )
+    }
+
+    /// An attachment's stored original.
+    pub fn attachment_bytes(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<Vec<u8>> {
+        self.bytes(format!("/v1/ai/chats/{chat}/attachments/{attachment}"))
+    }
+
+    /// A picture attachment's PNG thumbnail, at most 512 px on its long edge.
+    pub fn attachment_thumbnail(
+        &self,
+        chat: ChatId,
+        attachment: koru_ai_core::ChatAttachmentId,
+    ) -> AiResult<Vec<u8>> {
+        self.bytes(format!(
+            "/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail"
+        ))
+    }
+
+    fn bytes(&self, path: String) -> AiResult<Vec<u8>> {
+        checked(self.execute(reqwest::Method::GET, path, None, false)?)?
+            .bytes()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|_| transport_failure_message())
+    }
+
     fn json<T: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,
@@ -1041,6 +1120,21 @@ impl AiClient<'_> {
         method: reqwest::Method,
         path: String,
         body: Option<Bytes>,
+        streaming: bool,
+    ) -> AiResult<reqwest::blocking::Response> {
+        self.execute_with(
+            method,
+            path,
+            body.map(|body| (body, "application/json")),
+            streaming,
+        )
+    }
+
+    fn execute_with(
+        &self,
+        method: reqwest::Method,
+        path: String,
+        body: Option<(Bytes, &'static str)>,
         streaming: bool,
     ) -> AiResult<reqwest::blocking::Response> {
         let session = self.client.gateway.as_ref().ok_or_else(|| AiFailure {
@@ -1060,9 +1154,9 @@ impl AiClient<'_> {
             let mut request = http
                 .request(method.clone(), format!("{}{}", current.api_endpoint, path))
                 .bearer_auth(current.session.expose());
-            if let Some(body) = &body {
+            if let Some((body, content_type)) = &body {
                 request = request
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .header(reqwest::header::CONTENT_TYPE, *content_type)
                     .body(body.clone());
             }
             request.send()
@@ -1227,6 +1321,31 @@ fn tool_decision_body(choice: Option<String>) -> AiResult<Option<Bytes>> {
             })
         })
         .transpose()
+}
+
+/// A refusal the client makes before anything is sent, with the code the
+/// service would answer.
+fn local_attachment_failure(code: &str, message: &str) -> AiFailure {
+    AiFailure {
+        code: code.into(),
+        message: message.into(),
+        retryable: false,
+        details: Default::default(),
+    }
+}
+
+/// Percent-encode a query value: unreserved characters stay, every other
+/// byte of its UTF-8 is `%XX`.
+fn percent_encode_query(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn json_body<T: serde::Serialize>(value: &T) -> AiResult<Bytes> {

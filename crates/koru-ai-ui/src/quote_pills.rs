@@ -916,6 +916,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
         }
     }
 

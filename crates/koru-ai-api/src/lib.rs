@@ -7,20 +7,23 @@
 
 use std::sync::mpsc::Receiver;
 
-use koru_ai_core::{ChatId, DocumentExportId, InferenceAttemptId, MessageId, ToolInvocationId};
+use koru_ai_core::{
+    AttachmentSource, ChatAttachmentId, ChatId, DocumentExportId, InferenceAttemptId, MessageId,
+    ToolInvocationId,
+};
 use koru_ai_wire::{
     AiSearchRequest, AiSearchResponse, AttemptResponse, BranchChatRequest, BranchChatResponse,
-    CancelAttemptResponse, CancelModelPullResponse, ChatToolPolicyResponse, ChatTranscript,
-    ClearHistoryResponse, ClearUsageResponse, CreateChatRequest, CreateChatResponse,
-    DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure, FeedbackRequest,
-    FeedbackResponse, ListChatsToolRequest, ListChatsToolResponse, ModelPullEvent,
+    CancelAttemptResponse, CancelModelPullResponse, ChatAttachmentResponse, ChatToolPolicyResponse,
+    ChatTranscript, ClearHistoryResponse, ClearUsageResponse, CreateChatRequest,
+    CreateChatResponse, DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure,
+    FeedbackRequest, FeedbackResponse, ListChatsToolRequest, ListChatsToolResponse, ModelPullEvent,
     OllamaSettingsView, OpenAiSettingsView, ProviderSettingsResponse, ProviderValidationResponse,
     PullOllamaModelAccepted, PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse,
-    RenameChatRequest, RenameChatResponse, SearchChatsToolRequest, SearchChatsToolResponse,
-    SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionResponse,
-    UpdateChatModelRequest, UpdateChatModelResponse, UpdateChatPrivacyRequest,
-    UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest, UpdateOllamaSettingsRequest,
-    UpdateOpenAiSettingsRequest, UsageResponse,
+    RemoveAttachmentResponse, RenameChatRequest, RenameChatResponse, SearchChatsToolRequest,
+    SearchChatsToolResponse, SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent,
+    ToolDecisionResponse, UpdateChatModelRequest, UpdateChatModelResponse,
+    UpdateChatPrivacyRequest, UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest,
+    UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest, UsageResponse,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +76,21 @@ pub struct ModelPullResponseStream {
 }
 
 pub type Result<T> = std::result::Result<T, Failure>;
+
+/// One upload's bytes and what the caller says about them. The name is a
+/// claim the service checks against the content; no path ever crosses.
+pub struct AttachmentUpload {
+    pub file_name: String,
+    pub source: AttachmentSource,
+    pub bytes: bytes::Bytes,
+}
+
+/// A stored attachment's original, as it is served back.
+pub struct AttachmentContent {
+    pub file_name: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+}
 
 /// Host-independent AI server contract used by the gateway's internal client.
 pub trait AiServerPort: Send + Sync {
@@ -228,6 +246,35 @@ pub trait AiServerPort: Send + Sync {
         context: RequestContext,
         export: DocumentExportId,
     ) -> Result<ExportChatResponse>;
+    /// Store one attachment for a chat, staged until a send names it.
+    /// Idempotent by id: the same content answers the same attachment.
+    fn put_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+        upload: AttachmentUpload,
+    ) -> Result<ChatAttachmentResponse>;
+    /// Remove a staged attachment; a sent one answers `attachment_sent`.
+    fn remove_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> Result<RemoveAttachmentResponse>;
+    fn read_attachment(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> Result<AttachmentContent>;
+    /// The PNG thumbnail of a picture attachment.
+    fn read_attachment_thumbnail(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        attachment: ChatAttachmentId,
+    ) -> Result<Vec<u8>>;
 }
 
 #[cfg(test)]

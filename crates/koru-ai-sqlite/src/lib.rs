@@ -10,6 +10,6 @@ mod db;
 mod repository;
 
 pub use db::{OpenError, SCHEMA_VERSION};
-pub use repository::Repository;
+pub use repository::{KnownAttachmentDirs, RemovedAttachment, Repository};
 
 pub const DATABASE_FILE: &str = "ai.db";

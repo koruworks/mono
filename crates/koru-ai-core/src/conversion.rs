@@ -118,10 +118,12 @@ mod tests {
                 AiRequestMessage {
                     role: ChatRole::User,
                     markdown: "first".into(),
+                    attachments: Vec::new(),
                 },
                 AiRequestMessage {
                     role: ChatRole::Assistant,
                     markdown: "second".into(),
+                    attachments: Vec::new(),
                 },
             ],
             context: vec![

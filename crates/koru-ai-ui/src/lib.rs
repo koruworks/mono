@@ -3105,6 +3105,7 @@ impl ChatSurface {
                 .then(|| self.system_prompt.value())
                 .filter(|prompt| !prompt.trim().is_empty()),
             replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
+            attachment_ids: Vec::new(),
         };
         let sent = if self.mode == SurfaceMode::ContextPane && self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
@@ -7850,6 +7851,7 @@ mod tests {
             feedback: Vec::new(),
             usage: Vec::new(),
             reasoning_control: None,
+            attachments: Vec::new(),
         }
     }
 
