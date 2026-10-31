@@ -783,7 +783,7 @@ impl MainView {
         scene::fill(
             scene,
             root,
-            p.ground,
+            theme::rail_fill(),
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
         scene::fill(
@@ -834,7 +834,7 @@ impl MainView {
             draw_gap(
                 scene,
                 root,
-                p.ground,
+                theme::rail_fill(),
                 lane,
                 "window edge / document",
                 "left lane",
@@ -851,7 +851,7 @@ impl MainView {
                 scene::fill(
                     scene,
                     root,
-                    p.ground,
+                    theme::rail_fill(),
                     &scene::rect(verge.x, top, (x - verge.x).max(0.0), 1.0),
                 );
             }
@@ -860,7 +860,7 @@ impl MainView {
             draw_gap(
                 scene,
                 root,
-                p.ground,
+                theme::rail_fill(),
                 edge,
                 "document / window edge",
                 "right lane",
@@ -876,7 +876,7 @@ impl MainView {
             scene::fill(
                 scene,
                 root,
-                p.ground,
+                theme::rail_fill(),
                 &scene::rect(edge.x + 1.0, top, (edge.w - 1.0).max(0.0), 1.0),
             );
         }
@@ -884,7 +884,7 @@ impl MainView {
             draw_gap(
                 scene,
                 root,
-                p.ground,
+                theme::rail_fill(),
                 foot,
                 "cards / window foot",
                 "foot lane",
@@ -1040,7 +1040,7 @@ impl MainView {
         scene::fill(
             scene,
             root,
-            p.ground,
+            theme::rail_fill(),
             &scene::rect(lane.x, lane.y, lane.w, lane.h),
         );
         let rects = koru_shell_chrome::lane::solve(lane, leading);
@@ -1592,7 +1592,7 @@ fn draw_card_corner(
     p: &theme::Palette,
 ) {
     use vello::kurbo::{BezPath, Point};
-    let (ground, border) = (p.ground, p.panel_border);
+    let (ground, border) = (theme::rail_fill(), p.panel_border);
     if r <= 1.0 {
         return;
     }

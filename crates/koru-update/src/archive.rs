@@ -901,6 +901,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn dir(name: &str) -> Raw<'_> {
         Raw {
             name: name.as_bytes(),

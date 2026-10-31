@@ -737,7 +737,7 @@ static RAIL_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 /// The tints Settings offers for the rail, per theme: soft ones on light,
 /// deep ones on dark, so the rail's icons stay readable on every one.
 pub const RAIL_TINTS_LIGHT: [u32; 6] = [0xE4E9F0, 0xDDE7F6, 0xDCEFE4, 0xF2E9DA, 0xEAE2F4, 0xF6E0E3];
-pub const RAIL_TINTS_DARK: [u32; 6] = [0x0E1014, 0x18202E, 0x16241C, 0x261C30, 0x2A2A2A, 0x2B1D1F];
+pub const RAIL_TINTS_DARK: [u32; 6] = [0x232832, 0x293750, 0x294435, 0x3F2F50, 0x444444, 0x493235];
 
 /// Set the rail's colour for the light or the dark theme, or `None` for the
 /// theme's own.
@@ -761,8 +761,9 @@ pub fn rgb_hex(value: u32) -> Color {
     Color::from_rgb8((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }
 
-/// What the rail is filled with now: the colour chosen for the theme on
-/// screen, or the theme's own ground.
+/// The window's ground now — the rail, the header, the side lanes, the foot
+/// and the masks behind the cards' corners, one tint: the colour chosen for
+/// the theme on screen, or the theme's own ground.
 pub fn rail_fill() -> Color {
     rail_color(is_dark()).map_or(p().ground, rgb_hex)
 }
