@@ -452,6 +452,18 @@ impl WelcomeView {
             );
             drawn.push((target, *rect));
         }
+        for (agent, rect, chosen) in &row.agents {
+            let target = Target::McpAgent(*agent);
+            Chip::new(agent.label(), *chosen).draw(
+                canvas,
+                root,
+                &mut self.engine,
+                *rect,
+                ui.hot(target),
+                ui.focused(target),
+            );
+            drawn.push((target, *rect));
+        }
         if let Some((text, rect)) = &row.code {
             self.draw_code(canvas, root, text, *rect, ui, Target::CopyMcp);
             drawn.push((Target::CopyMcp, *rect));
@@ -590,7 +602,7 @@ impl WelcomeView {
             "part",
             root,
             scene::rect(rect.x, rect.y, rect.w, rect.h),
-            |r| r.property("copies", "welcome::mcp_command", "the whole command"),
+            |r| r.property("copies", "welcome::mcp::command", "the whole command"),
         );
         self.draw_key_chip(canvas, root, text, rect);
         if ui.hot(target) {

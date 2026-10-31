@@ -8558,8 +8558,8 @@ impl MainView {
                 WelcomeWant::Email => {
                     self.ask_pane(PaneRequest::OpenUri(koru_ui::welcome::SUPPORT_MAILTO));
                 }
-                WelcomeWant::CopyMcpCommand => {
-                    koru_editor::clipboard::put_system_text(&crate::welcome::mcp_command());
+                WelcomeWant::CopyMcpCommand(agent) => {
+                    koru_editor::clipboard::put_system_text(&crate::welcome::mcp::command(agent));
                 }
                 WelcomeWant::LinkDevice => {
                     self.open_link_device();

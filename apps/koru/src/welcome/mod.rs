@@ -54,7 +54,6 @@ pub(crate) mod mcp;
 mod rows;
 
 pub(crate) use build::{DOWNLOAD_URL, build_stamp, channel_label, channel_note};
-pub(crate) use mcp::command as mcp_command;
 pub(crate) use rows::RowId;
 use rows::Section;
 
@@ -115,7 +114,7 @@ const SCAN_TO_PAIR: &str = "Scan to pair";
 const AI_TITLE: &str = "Set up your AI";
 const AI_HINT: &str = "Pick a model and connect a key — Koru works fine without it.";
 const MCP_TITLE: &str = "Manage documents over MCP";
-const MCP_HINT: &str = "Let outside tools read and write your workspace through the MCP service.";
+const MCP_HINT: &str = "Let your coding agent read and write this workspace. Pick it, then run the command in a terminal.";
 const MCP_COPY: &str = "Copy";
 const AGENT_TITLE: &str = "Run an agent in a terminal";
 const AGENT_HINT: &str = "Point a coding agent at your workspace from the command line.";
@@ -164,8 +163,9 @@ pub enum WelcomeWant {
     Feedback,
     /// *email* — the support mailto.
     Email,
-    /// *Copy* — the MCP command, [`mcp_command`], on the clipboard.
-    CopyMcpCommand,
+    /// *Copy* — the registration command for this agent,
+    /// [`mcp::command`], on the clipboard.
+    CopyMcpCommand(mcp::Agent),
     /// *Phone*, *Another computer*, the pairing square — Link another device.
     LinkDevice,
     /// *Customize…* — the Settings tab.
@@ -202,6 +202,8 @@ pub(crate) enum Target {
     Email,
     /// The MCP row's *Copy* button and the command beside it.
     CopyMcp,
+    /// One agent's chip on the MCP row: the command becomes that agent's.
+    McpAgent(mcp::Agent),
     /// The *Show* / *Hide* link of a section whose counted rows are all done.
     Toggle(Section),
     /// The pairing square beside the device rows.
@@ -240,8 +242,11 @@ pub struct WelcomeView {
     /// Whether a pinned tab shows its title: a window preference the tab strip
     /// reads from any open Welcome tab.
     pinned_show_title: bool,
-    /// What the MCP row shows, read once: the executable's path does not move
-    /// while it runs.
+    /// The agent the MCP row registers the bridge with: Claude Code until
+    /// the person picks another.
+    mcp_agent: mcp::Agent,
+    /// What the MCP row shows: [`mcp_agent`](Self::mcp_agent)'s command.
+    /// The executable's path does not move while it runs.
     mcp_command: String,
 }
 
@@ -268,7 +273,8 @@ impl WelcomeView {
             laid: None,
             drawn: Vec::new(),
             pinned_show_title: false,
-            mcp_command: mcp::command(),
+            mcp_agent: mcp::Agent::ClaudeCode,
+            mcp_command: mcp::command(mcp::Agent::ClaudeCode),
         }
     }
 
@@ -374,8 +380,15 @@ impl WelcomeView {
                 self.tick(RowId::Feedback);
             }
             Target::CopyMcp => {
-                self.wants.push(WelcomeWant::CopyMcpCommand);
+                self.wants.push(WelcomeWant::CopyMcpCommand(self.mcp_agent));
                 self.tick(RowId::Mcp);
+            }
+            Target::McpAgent(agent) => {
+                if agent != self.mcp_agent {
+                    self.mcp_agent = agent;
+                    self.mcp_command = mcp::command(agent);
+                    self.laid = None;
+                }
             }
             Target::PairQr => self.wants.push(WelcomeWant::LinkDevice),
             Target::Toggle(section) => {

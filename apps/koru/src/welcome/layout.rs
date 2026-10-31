@@ -105,6 +105,8 @@ pub(super) struct RowLayout {
     /// A command to copy, in a code chip under the sentence: what is drawn,
     /// shortened in the middle when it does not fit.
     pub code: Option<(String, Rect)>,
+    /// The MCP row's agents, one chip each, and whether it is the one chosen.
+    pub agents: Vec<(super::mcp::Agent, Rect, bool)>,
 }
 
 /// A stretch of one sentence line in one style.
@@ -307,6 +309,7 @@ pub(super) fn measure(view: &mut WelcomeView) -> Layout {
     let identity = view.identity.clone();
     let learn_open = view.learn_open;
     let mcp_command = view.mcp_command.clone();
+    let mcp_agent = view.mcp_agent;
     let progress: Vec<(Section, (usize, usize), bool, bool)> = Section::ALL
         .into_iter()
         .map(|s| {
@@ -402,7 +405,7 @@ pub(super) fn measure(view: &mut WelcomeView) -> Layout {
                     &identity.workspace,
                     Rect::new(x, y, rows_w, 0.0),
                     learn_open,
-                    &mcp_command,
+                    (&mcp_command, mcp_agent),
                 );
                 if row_is_target(id) {
                     hits.push((Target::Row(id), laid.rect));
@@ -414,6 +417,9 @@ pub(super) fn measure(view: &mut WelcomeView) -> Layout {
                 }
                 for (format, _, rect) in &laid.chips {
                     hits.push((Target::Import(format), *rect));
+                }
+                for (agent, rect, _) in &laid.agents {
+                    hits.push((Target::McpAgent(*agent), *rect));
                 }
                 if let Some((_, rect)) = &laid.code {
                     hits.push((Target::CopyMcp, *rect));
@@ -483,7 +489,7 @@ fn measure_row(
     workspace: &str,
     at: Rect,
     learn_open: bool,
-    mcp_command: &str,
+    (mcp_command, mcp_agent): (&str, super::mcp::Agent),
 ) -> RowLayout {
     let RowCopy { title, sentence } = copy(id, workspace);
     let trailing_w = match id {
@@ -538,6 +544,22 @@ fn measure_row(
             .into_iter()
             .zip(rects)
             .map(|((format, label), rect)| (format, label, rect))
+            .collect();
+    }
+    let mut agents = Vec::new();
+    if id == RowId::Mcp {
+        let rects = koru_ui::chip::wrap(
+            engine,
+            text_x,
+            bottom + CHIPS_GAP,
+            text_x + text_w,
+            super::mcp::Agent::ALL.iter().map(|agent| agent.label()),
+        );
+        bottom = koru_ui::chip::bottom(&rects, bottom);
+        agents = super::mcp::Agent::ALL
+            .into_iter()
+            .zip(rects)
+            .map(|(agent, rect)| (agent, rect, agent == mcp_agent))
             .collect();
     }
     let mut code = None;
@@ -620,5 +642,6 @@ fn measure_row(
         chips,
         hints,
         code,
+        agents,
     }
 }

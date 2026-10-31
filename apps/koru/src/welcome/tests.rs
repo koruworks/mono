@@ -211,7 +211,7 @@ fn every_action_raises_its_existing_command_and_ticks_its_row() {
         ),
         (
             Target::CopyMcp,
-            Some(WelcomeWant::CopyMcpCommand),
+            Some(WelcomeWant::CopyMcpCommand(mcp::Agent::ClaudeCode)),
             Some(RowId::Mcp),
         ),
         (
@@ -334,7 +334,7 @@ fn the_mcp_row_shows_the_command_and_copies_it() {
         .and_then(|r| r.code.clone())
         .expect("the command is drawn");
     assert!(shown.ends_with("serve --stdio"), "{shown}");
-    assert_eq!(view.mcp_command, mcp::command());
+    assert_eq!(view.mcp_command, mcp::command(mcp::Agent::ClaudeCode));
     let copy_targets = laid(&mut view)
         .hits
         .iter()
@@ -356,6 +356,89 @@ fn the_mcp_command_quotes_paths_with_spaces_and_carries_the_root() {
             Some(Path::new(r"D:\dev data")),
         ),
         r#""C:\Program Files\Koru\koru-mcp.exe" serve --stdio --root "D:\dev data""#
+    );
+}
+
+/// **Each agent's own `mcp add`.** The bridge goes after `--` where the
+/// agent's parser wants it and without one where it refuses it, and the agents
+/// that default to the current folder are told `--scope user`.
+#[test]
+fn each_agent_gets_its_own_registration_command() {
+    use std::path::Path;
+    let bridge = Path::new(r"C:\Program Files\Koru\koru-mcp.exe");
+    let tail = r#""C:\Program Files\Koru\koru-mcp.exe" serve --stdio"#;
+    for (agent, prefix) in [
+        (
+            mcp::Agent::ClaudeCode,
+            "claude mcp add --scope user koru -- ",
+        ),
+        (mcp::Agent::Codex, "codex mcp add koru -- "),
+        (mcp::Agent::Gemini, "gemini mcp add --scope user koru "),
+        (mcp::Agent::Copilot, "copilot mcp add koru -- "),
+        (mcp::Agent::Qwen, "qwen mcp add --scope user koru "),
+        (mcp::Agent::Grok, "grok mcp add koru -- "),
+        (mcp::Agent::Antigravity, "agy mcp add koru -- "),
+        (mcp::Agent::Other, ""),
+    ] {
+        assert_eq!(
+            mcp::agent_line(agent, bridge, None),
+            format!("{prefix}{tail}"),
+            "{agent:?}"
+        );
+    }
+    assert!(
+        mcp::agent_line(mcp::Agent::Gemini, bridge, Some(Path::new(r"D:\data")))
+            .ends_with(r"serve --stdio --root D:\data")
+    );
+}
+
+/// **The row asks which agent.** One chip per agent, Claude Code chosen
+/// first; picking another changes the command shown and the one *Copy* puts
+/// on the clipboard.
+#[test]
+fn picking_an_agent_changes_the_command_the_row_copies() {
+    let mut view = page();
+    let row_agents = |view: &mut WelcomeView| {
+        laid(view)
+            .sections
+            .iter()
+            .flat_map(|s| s.rows.iter())
+            .find(|r| r.id == RowId::Mcp)
+            .map(|r| r.agents.clone())
+            .expect("the MCP row")
+    };
+    let agents = row_agents(&mut view);
+    assert_eq!(agents.len(), mcp::Agent::ALL.len());
+    assert_eq!(
+        agents
+            .iter()
+            .filter(|(_, _, chosen)| *chosen)
+            .map(|(a, _, _)| *a)
+            .collect::<Vec<_>>(),
+        vec![mcp::Agent::ClaudeCode]
+    );
+    assert!(
+        view.mcp_command.starts_with("claude mcp add"),
+        "{}",
+        view.mcp_command
+    );
+
+    view.activate(Target::McpAgent(mcp::Agent::Gemini));
+    assert!(
+        view.mcp_command.starts_with("gemini mcp add"),
+        "{}",
+        view.mcp_command
+    );
+    assert!(
+        row_agents(&mut view)
+            .iter()
+            .any(|(a, _, chosen)| *a == mcp::Agent::Gemini && *chosen)
+    );
+    view.take_wants();
+    view.activate(Target::CopyMcp);
+    assert_eq!(
+        view.take_wants(),
+        vec![WelcomeWant::CopyMcpCommand(mcp::Agent::Gemini)]
     );
 }
 
