@@ -781,6 +781,20 @@ fn main() {
         // that may register a machine-wide shortcut; asking any earlier would
     }
     span.stop();
+    // **Linux's app-menu entry follows the folder.** An entry naming a `koru`
+    // that is gone, because the folder moved, is pointed at this one; an
+    // entry that is fine, or none at all, is left alone. One small file read.
+    if run && koru_autostart::app_menu::SUPPORTED {
+        match std::env::current_exe().and_then(|exe| koru_autostart::app_menu::repair(&exe)) {
+            Ok(true) => {
+                tracing::info!(target: "koru::app_menu", "the app menu entry now names this executable")
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(target: "koru::app_menu", %error, "the app menu entry could not be checked")
+            }
+        }
+    }
     // ------------------------------------------------------------- the agent
     //
     // **Before the shell, because the store depends on it.** `koru_workspace_host::run`

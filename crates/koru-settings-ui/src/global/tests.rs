@@ -644,3 +644,46 @@ fn the_usage_data_switch_lives_on_the_system_page_and_is_found_by_search() {
         );
     }
 }
+
+// ---------------------------------------------------------------- app menu
+
+/// Linux's *Show Koru in the app menu*: drawn only when the host has a reading,
+/// moved at once, and written by the host, whose reading puts it back if the
+/// file did not change.
+#[test]
+fn the_app_menu_switch_shows_the_file_and_asks_the_host_to_change_it() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let label = "Show Koru in the app menu";
+    surface.show_page(PageId::System);
+    surface.relayout();
+    assert_eq!(
+        crate::tests::switch(&surface, label),
+        None,
+        "no app menu on this platform, no row"
+    );
+
+    assert!(surface.set_app_menu_entry(Some(false)));
+    assert!(!surface.set_app_menu_entry(Some(false)), "nothing moved");
+    surface.relayout();
+    assert!(!switch_on(&mut surface, label));
+    assert!(flip(&mut surface, label));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetAppMenuEntry(true)]
+    );
+    assert!(
+        switch_on(&mut surface, label),
+        "the switch moves under the hand"
+    );
+
+    // The file was not written: the host's reading puts it back.
+    surface.set_app_menu_entry(Some(false));
+    assert!(!switch_on(&mut surface, label));
+    for word in ["app menu", "launcher", "dock"] {
+        assert!(
+            PageId::System.matches(koru_i18n::Lang::En, word),
+            "a search for `{word}` keeps the System page"
+        );
+    }
+}

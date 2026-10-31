@@ -272,6 +272,9 @@ pub struct SettingsSurface {
     /// record. `None` draws no row: there is no record to show a switch for
     /// (the events worker is not there, or has not answered yet).
     telemetry: Option<bool>,
+    /// *Show Koru in the app menu*, as the host last read it. `None` draws no
+    /// row: the platform has no app menu Koru adds itself to.
+    app_menu: Option<bool>,
 
     voice: VoiceFacts,
     renderer: RendererRow,
@@ -334,6 +337,7 @@ impl SettingsSurface {
             layout_applied: false,
             advanced_open: false,
             telemetry: None,
+            app_menu: None,
             voice: VoiceFacts::default(),
             renderer: RendererRow::none(),
             ai: AiSlot::default(),
@@ -461,6 +465,14 @@ impl SettingsSurface {
     pub fn set_telemetry_consent(&mut self, granted: Option<bool>) -> bool {
         let changed = self.telemetry != granted;
         self.telemetry = granted;
+        changed
+    }
+
+    /// Whether Koru's app-menu entry is there, as the host last read it:
+    /// `None` draws no row. Answers whether anything moved.
+    pub fn set_app_menu_entry(&mut self, added: Option<bool>) -> bool {
+        let changed = self.app_menu != added;
+        self.app_menu = added;
         changed
     }
 
@@ -784,6 +796,7 @@ impl SettingsSurface {
             layout_applied,
             advanced_open,
             telemetry,
+            app_menu,
             voice,
             renderer,
             ai,
@@ -822,6 +835,7 @@ impl SettingsSurface {
             layout_applied: *layout_applied,
             advanced_open: *advanced_open,
             telemetry: *telemetry,
+            app_menu: *app_menu,
             ai: if sections.ai { ai } else { &EMPTY_AI },
         };
         match page {
@@ -1777,6 +1791,11 @@ impl SettingsSurface {
                 self.telemetry = Some(on);
                 self.requests.push(Request::SetTelemetryConsent(on));
             }
+            // As above: the host writes the file and pushes what it finds.
+            Action::AppMenuEntry(on) => {
+                self.app_menu = Some(on);
+                self.requests.push(Request::SetAppMenuEntry(on));
+            }
             Action::TerminalTheme(choice) => self.patch_terminal(TerminalPatch {
                 theme: Some(choice),
                 ..TerminalPatch::default()
@@ -1958,6 +1977,7 @@ fn clone_action(action: &Action) -> Action {
         Action::CloseBehavior(v) => Action::CloseBehavior(*v),
         Action::StartOnLogin(v) => Action::StartOnLogin(*v),
         Action::TelemetryConsent(v) => Action::TelemetryConsent(*v),
+        Action::AppMenuEntry(v) => Action::AppMenuEntry(*v),
         Action::ShowAdvanced(v) => Action::ShowAdvanced(*v),
         Action::TerminalTheme(v) => Action::TerminalTheme(*v),
         Action::TerminalFont(v) => Action::TerminalFont(*v),

@@ -12,7 +12,7 @@
 use super::*;
 
 /// A name nothing ships under, so a failed test cannot leave a real entry.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 const TEST_NAME: &str = "Koru autostart test — safe to delete";
 
 #[cfg(windows)]
@@ -89,7 +89,7 @@ fn two_names_do_not_disturb_each_other() {
     clear(b).expect("clear b");
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[test]
 fn every_call_is_unsupported_rather_than_a_silent_no_op() {
     // A caller offering the setting has to be able to say why it did not take.
@@ -185,24 +185,22 @@ fn the_running_build_agrees_with_the_rule() {
     );
 }
 
-/// The macOS pieces that are pure — the label mapping and the plist
-/// round-trip — pinned without touching the real `~/Library/LaunchAgents`,
-/// which no test may write ([AGENTS.md]: tests must not touch disk).
+#[test]
+fn the_label_is_deterministic_reverse_dns() {
+    // The plist's label on macOS and the autostart file's name on Linux.
+    assert_eq!(label("Koru (beta)"), "do.koru.autostart.koru-beta");
+    assert_eq!(label("Koru"), "do.koru.autostart.koru");
+    assert_eq!(
+        label("Koru Store (internal-debug)"),
+        "do.koru.autostart.koru-store-internal-debug"
+    );
+}
+
+/// The macOS pieces that are pure — the plist round-trip — pinned without
+/// touching the real `~/Library/LaunchAgents`, which no test may write
+/// ([AGENTS.md]: tests must not touch disk).
 #[cfg(target_os = "macos")]
 mod macos {
-    #[test]
-    fn the_label_is_deterministic_reverse_dns() {
-        assert_eq!(
-            crate::platform::label("Koru (beta)"),
-            "do.koru.autostart.koru-beta"
-        );
-        assert_eq!(crate::platform::label("Koru"), "do.koru.autostart.koru");
-        assert_eq!(
-            crate::platform::label("Koru Store (internal-debug)"),
-            "do.koru.autostart.koru-store-internal-debug"
-        );
-    }
-
     #[test]
     fn a_command_round_trips_through_the_plist_escaping_included() {
         let command = "\"/Applications/Koru.app/Contents/MacOS/koru\" --background <&>";
@@ -214,5 +212,117 @@ mod macos {
             crate::platform::extract_command(&plist).as_deref(),
             Some(command)
         );
+    }
+}
+
+// ------------------------------------------------------------- desktop entries
+//
+// The Linux files, as text: no test writes `~/.config` or `~/.local/share`,
+// and these run on every platform, because the escaping is what goes wrong.
+
+mod desktop_entries {
+    use crate::{app_menu, xdg};
+    use std::path::Path;
+
+    #[test]
+    fn an_exec_argument_survives_both_escape_layers() {
+        // The value as written: the quoting rule's backslash, doubled by the
+        // string rule. What a launcher hands `sh -c` is the original.
+        assert_eq!(
+            xdg::exec_argument(r#""/home/a/koru/koru" --background"#),
+            r#""\\"/home/a/koru/koru\\" --background""#
+        );
+        assert_eq!(
+            xdg::exec_argument("/home/a b/$x`y`/100%/koru"),
+            r#""/home/a b/\\$x\\`y\\`/100%%/koru""#
+        );
+    }
+
+    #[test]
+    fn a_command_round_trips_through_the_autostart_entry() {
+        let command = r#""/home/a b/koru/koru" --background \ & %"#;
+        let text = xdg::autostart_entry("Koru (nightly)", command);
+        assert!(text.starts_with("[Desktop Entry]\n"));
+        assert!(text.contains("\nName=Koru (nightly)\n"));
+        assert!(text.contains("\nExec=sh -c \""));
+        assert!(text.contains("\nNoDisplay=true\n"));
+        assert_eq!(
+            xdg::value_of(&text, xdg::COMMAND_KEY).as_deref(),
+            Some(command)
+        );
+    }
+
+    #[test]
+    fn a_key_is_read_from_the_desktop_entry_group_only() {
+        let text = "[Desktop Action new]\nX-Koru-Command=other\n\
+                    [Desktop Entry]\nName=Koru\nX-Koru-Command = this\n";
+        assert_eq!(
+            xdg::value_of(text, "X-Koru-Command").as_deref(),
+            Some("this")
+        );
+        assert_eq!(xdg::value_of(text, "Missing"), None);
+    }
+
+    #[test]
+    fn each_channel_has_its_own_entry_and_name() {
+        // Stable keeps the name the hand-copied entry had, so this one
+        // replaces it rather than appearing beside it.
+        assert_eq!(app_menu::file_id("stable"), "koru");
+        assert_eq!(app_menu::file_id("nightly"), "koru-nightly");
+        assert_eq!(app_menu::display_name("stable"), "Koru");
+        assert_eq!(app_menu::display_name("nightly"), "Koru Nightly");
+        assert_eq!(
+            app_menu::display_name("internal-debug"),
+            "Koru Internal Debug"
+        );
+        let ids: Vec<String> = koru_channel::SEGMENTS
+            .iter()
+            .map(|segment| app_menu::file_id(segment))
+            .collect();
+        for (i, one) in ids.iter().enumerate() {
+            assert!(!ids[i + 1..].contains(one), "{one}");
+        }
+    }
+
+    #[test]
+    fn the_entry_names_this_executable_and_its_icon_by_full_path() {
+        let text = app_menu::entry(
+            "nightly",
+            "/home/a b/koru-nightly/koru",
+            Some("/home/a b/koru-nightly/assets/logo.png"),
+        );
+        assert!(text.contains("\nName=Koru Nightly\n"));
+        assert!(text.contains("\nExec=\"/home/a b/koru-nightly/koru\"\n"));
+        assert!(text.contains("\nIcon=/home/a b/koru-nightly/assets/logo.png\n"));
+        assert!(text.contains("\nStartupWMClass=koru\n"));
+        assert!(!app_menu::entry("stable", "/k/koru", None).contains("Icon="));
+    }
+
+    #[test]
+    fn only_an_entry_naming_a_missing_executable_is_repaired() {
+        let text = app_menu::entry("stable", "/home/a/koru/koru", None);
+        assert!(!app_menu::needs_repair(&text, |_| true));
+        assert!(app_menu::needs_repair(&text, |_| false));
+        // The executable it checks is the one it names.
+        assert!(!app_menu::needs_repair(&text, |path| {
+            path == Path::new("/home/a/koru/koru")
+        }));
+        // The hand-copied entry, whose `$HOME` path cannot be checked.
+        let copied =
+            "[Desktop Entry]\nName=Koru\nExec=sh -c \"exec \\\\\"\\\\$HOME/koru/koru\\\\\"\"\n";
+        assert!(app_menu::needs_repair(copied, |_| true));
+    }
+
+    #[test]
+    fn the_app_menu_is_offered_on_linux_only() {
+        assert_eq!(app_menu::SUPPORTED, cfg!(target_os = "linux"));
+        if !app_menu::SUPPORTED {
+            assert!(!app_menu::is_added());
+            assert_eq!(
+                app_menu::add(Path::new("koru")).unwrap_err().kind(),
+                std::io::ErrorKind::Unsupported
+            );
+            assert!(!app_menu::repair(Path::new("koru")).unwrap());
+        }
     }
 }

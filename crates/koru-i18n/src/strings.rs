@@ -515,6 +515,9 @@ pub enum Key {
     SettingsGlobal,
     SettingsTerminal,
     SettingsStartOnLogin,
+    /// Linux only: the switch that adds Koru's entry to the desktop's app menu.
+    SettingsShowInAppMenu,
+    SettingsShowInAppMenuHint,
     SettingsZoom,
     /// Why the rows are dimmed and refusing edits: the authority is not
     /// answering, so what is on screen is the last thing it said.
@@ -2482,7 +2485,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1673] = [
+    pub const ALL: [Key; 1675] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2843,6 +2846,8 @@ impl Key {
         Key::SettingsGlobal,
         Key::SettingsTerminal,
         Key::SettingsStartOnLogin,
+        Key::SettingsShowInAppMenu,
+        Key::SettingsShowInAppMenuHint,
         Key::SettingsZoom,
         Key::SettingsUnavailableReadOnly,
         Key::SettingsNotSaved,
@@ -6864,6 +6869,8 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::SettingsGlobal, en: "Global", es: "General", pt_br: "Geral", de: "Allgemein", fr: "Général", ar: "عام", zh_hans: "通用", ja: "全般" },
     Row { key: Key::SettingsTerminal, en: "Terminal", es: "Terminal", pt_br: "Terminal", de: "Terminal", fr: "Terminal", ar: "الطرفية", zh_hans: "终端", ja: "ターミナル" },
     Row { key: Key::SettingsStartOnLogin, en: "Start Koru when you log in", es: "Iniciar Koru al iniciar sesión", pt_br: "Iniciar o Koru ao entrar", de: "Koru bei der Anmeldung starten", fr: "Lancer Koru à l'ouverture de session", ar: "تشغيل Koru عند تسجيل الدخول", zh_hans: "登录时启动 Koru", ja: "ログイン時に Koru を起動" },
+    Row { key: Key::SettingsShowInAppMenu, en: "Show Koru in the app menu", es: "Mostrar Koru en el menú de aplicaciones", pt_br: "Mostrar o Koru no menu de aplicativos", de: "Koru im Anwendungsmenü anzeigen", fr: "Afficher Koru dans le menu des applications", ar: "إظهار Koru في قائمة التطبيقات", zh_hans: "在应用菜单中显示 Koru", ja: "アプリメニューに Koru を表示" },
+    Row { key: Key::SettingsShowInAppMenuHint, en: "Adds Koru to your desktop's app list, with its own icon in the dock.", es: "Añade Koru a la lista de aplicaciones del escritorio, con su propio icono en el dock.", pt_br: "Adiciona o Koru à lista de aplicativos da área de trabalho, com seu próprio ícone no dock.", de: "Fügt Koru der App-Liste Ihres Desktops hinzu, mit eigenem Symbol im Dock.", fr: "Ajoute Koru à la liste des applications de votre bureau, avec sa propre icône dans le dock.", ar: "يضيف Koru إلى قائمة التطبيقات في سطح المكتب، مع أيقونته الخاصة في شريط التطبيقات.", zh_hans: "将 Koru 添加到桌面的应用列表，并在程序坞中显示其图标。", ja: "デスクトップのアプリ一覧に Koru を追加し、ドックに専用のアイコンを表示します。" },
     Row { key: Key::SettingsZoom, en: "Zoom", es: "Zoom", pt_br: "Zoom", de: "Zoom", fr: "Zoom", ar: "التكبير", zh_hans: "缩放", ja: "ズーム" },
     Row { key: Key::SettingsUnavailableReadOnly, en: "Settings are read-only: the Koru service is not answering. These are the last values it confirmed.", es: "Los ajustes son de solo lectura: el servicio de Koru no responde. Estos son los últimos valores confirmados.", pt_br: "As configurações estão somente para leitura: o serviço do Koru não está respondendo. Estes são os últimos valores confirmados.", de: "Einstellungen sind schreibgeschützt: Der Koru-Dienst antwortet nicht. Dies sind die zuletzt bestätigten Werte.", fr: "Les réglages sont en lecture seule : le service Koru ne répond pas. Voici les dernières valeurs confirmées.", ar: "الإعدادات للقراءة فقط: خدمة Koru لا تستجيب. هذه آخر القيم المؤكدة.", zh_hans: "设置为只读：Koru 服务未响应。以下是它最后确认的值。", ja: "設定は読み取り専用です。Koru サービスが応答していません。以下は最後に確認された値です。" },
     Row { key: Key::SettingsNotSaved, en: "That change was not saved. The setting has been put back to the stored value.", es: "Ese cambio no se guardó. El ajuste ha vuelto al valor almacenado.", pt_br: "Essa alteração não foi salva. A configuração voltou ao valor armazenado.", de: "Diese Änderung wurde nicht gespeichert. Die Einstellung steht wieder auf dem gespeicherten Wert.", fr: "Cette modification n'a pas été enregistrée. Le réglage a été rétabli à la valeur stockée.", ar: "لم يُحفَظ هذا التغيير. أُعيد الإعداد إلى القيمة المخزَّنة.", zh_hans: "该更改未保存。设置已恢复为已存储的值。", ja: "この変更は保存されませんでした。設定は保存済みの値に戻されました。" },

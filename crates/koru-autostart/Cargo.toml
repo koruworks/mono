@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Whether a program starts when the user signs in. One registry value, shared by both binaries."
+description = "Whether a program starts when the user signs in, and Linux's app-menu entry. A registry value, a LaunchAgent or a desktop entry."
 
 # `channel_entry` qualifies a value name with this build's segment, so a nightly
 # installed beside a stable does not overwrite its Run entry. `koru-channel` is
@@ -14,8 +14,8 @@ description = "Whether a program starts when the user signs in. One registry val
 [dependencies]
 koru-channel = { path = "../koru-channel" }
 
-# One dependency, on one platform. Everywhere else this crate is a stub that
-# answers `Unsupported`, so nothing that links it acquires anything at all.
+# One dependency, on one platform. macOS and Linux write a file with std, so
+# nothing that links this crate there acquires anything at all.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

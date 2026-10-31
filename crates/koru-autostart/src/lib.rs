@@ -52,10 +52,28 @@
 //! not called — bootstrapping would also *run* the program immediately, which
 //! `set` on Windows never did, and a second agent racing the live one is not a
 //! behaviour to add by side effect.
+//!
+//! ## Linux
+//!
+//! The same four verbs over an **XDG autostart entry**, a `.desktop` file in
+//! `~/.config/autostart/` named like the macOS plist. GNOME, KDE and every
+//! other desktop that follows freedesktop.org start what is there at sign-in,
+//! and, as on the other two, writing it starts nothing now. The command runs
+//! under `sh -c` and rides a second time under `X-Koru-Command`, for the
+//! macOS plist's reason.
+//!
+//! [`app_menu`] lives here too: it is the same file format, written under
+//! the same rules, for the same running build.
 
-#![cfg_attr(not(any(windows, target_os = "macos")), allow(unused_variables))]
+#![cfg_attr(
+    not(any(windows, target_os = "macos", target_os = "linux")),
+    allow(unused_variables)
+)]
 
 use std::io;
+
+pub mod app_menu;
+mod xdg;
 
 /// The key every entry lives under.
 #[cfg(windows)]
@@ -170,6 +188,26 @@ pub fn quoted(exe: &std::path::Path) -> String {
     format!("\"{}\"", exe.display())
 }
 
+/// `Koru (beta)` → `do.koru.autostart.koru-beta`: launchd wants a
+/// reverse-DNS label, XDG recommends a reverse-DNS file name, and the file has
+/// to be findable by the exe that wrote it, so the mapping is deterministic
+/// and total.
+#[cfg_attr(windows, allow(dead_code))]
+fn label(value_name: &str) -> String {
+    let slug: String = value_name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    format!(
+        "do.koru.autostart.{}",
+        slug.split('-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+    )
+}
+
 // --------------------------------------------------------------------- macOS
 
 #[cfg(target_os = "macos")]
@@ -204,32 +242,14 @@ mod platform {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no HOME"))?;
         Ok(PathBuf::from(home)
             .join("Library/LaunchAgents")
-            .join(format!("{}.plist", label(value_name))))
-    }
-
-    /// `Koru (beta)` → `do.koru.autostart.koru-beta`: launchd wants a
-    /// reverse-DNS label, and the file has to be findable by the exe that
-    /// wrote it, so the mapping is deterministic and total.
-    pub(super) fn label(value_name: &str) -> String {
-        let slug: String = value_name
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        format!(
-            "do.koru.autostart.{}",
-            slug.split('-')
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("-")
-        )
+            .join(format!("{}.plist", super::label(value_name))))
     }
 
     /// The command rides twice: as the `/bin/sh -c` argument launchd runs,
     /// and under `KoruCommand`, which is what [`read`] answers — so a full
     /// command line round-trips byte-for-byte without a plist parser.
     pub(super) fn plist(value_name: &str, command: &str) -> String {
-        let label = label(value_name);
+        let label = super::label(value_name);
         let escaped = escape(command);
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -446,19 +466,51 @@ mod platform {
     }
 }
 
+// --------------------------------------------------------------------- Linux
+
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::io;
+    use std::path::PathBuf;
+
+    pub fn write(value_name: &str, command: Option<&str>) -> io::Result<()> {
+        let path = entry_path(value_name)?;
+        match command {
+            Some(command) => {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(path, super::xdg::autostart_entry(value_name, command))
+            }
+            None => super::xdg::remove(&path),
+        }
+    }
+
+    pub fn read(value_name: &str) -> Option<String> {
+        let text = std::fs::read_to_string(entry_path(value_name).ok()?).ok()?;
+        super::xdg::value_of(&text, super::xdg::COMMAND_KEY)
+    }
+
+    fn entry_path(value_name: &str) -> io::Result<PathBuf> {
+        Ok(super::xdg::config_home()?
+            .join("autostart")
+            .join(format!("{}.desktop", super::label(value_name))))
+    }
+}
+
 // ---------------------------------------------------------------- everywhere else
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 mod platform {
     use std::io;
 
     /// Not an error worth hiding. A caller offering the setting has to be able
     /// to say why it did not take, and `Unsupported` is the one answer that is
-    /// true on every platform this is not Windows.
+    /// true on every platform this is none of the three.
     pub fn write(_value_name: &str, _command: Option<&str>) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "starting at login is currently supported on Windows",
+            "starting at login is supported on Windows, macOS and Linux",
         ))
     }
 

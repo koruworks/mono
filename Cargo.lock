@@ -4795,6 +4795,7 @@ dependencies = [
  "koru-app-shell",
  "koru-appearance-ui",
  "koru-artifacts-ui",
+ "koru-autostart",
  "koru-canvas-flow",
  "koru-canvas-ui",
  "koru-channel",

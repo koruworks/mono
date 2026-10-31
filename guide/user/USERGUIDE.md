@@ -5438,6 +5438,24 @@ Turning it off takes effect at once and deletes anything not yet sent. Nothing
 recorded while it was off is ever sent, even after you turn it on. The choice belongs to this device: another computer of yours has
 its own switch. The phone apps send no usage data.
 
+## Koru in the app menu on Linux
+
+The Linux download is a folder with nothing to install, so Koru adds itself to
+your desktop's app list when you ask. **Add Koru to your app menu** on Welcome,
+or **Settings → System → Show Koru in the app menu**, writes one launcher entry
+for your user (in `~/.local/share/applications`), naming the `koru` you are
+running and its icon. Koru appears in the app list at once, with its own icon
+in the dock. No administrator rights are needed, and updates keep it working.
+
+If you move Koru's folder, the entry points at the new place the next time you
+start Koru from there. Turning the switch off removes the entry. The nightly
+has its own entry, *Koru Nightly*, beside the stable one.
+
+**Start Koru when you log in** works on Linux too: it adds an entry to
+`~/.config/autostart`, which GNOME, KDE and most other desktops start at
+sign-in. Koru starts in the background, without opening a window, as it does
+on Windows and macOS.
+
 ## The tasks in this document
 
 Open the context column with `Ctrl+J` and choose the checklist icon. It lists the

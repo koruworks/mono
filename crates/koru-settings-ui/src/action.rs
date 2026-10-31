@@ -107,6 +107,8 @@ pub(crate) enum Action {
     StartOnLogin(bool),
     /// *Share anonymous usage data*: the value the switch moves to.
     TelemetryConsent(bool),
+    /// *Show Koru in the app menu*: the value the switch moves to.
+    AppMenuEntry(bool),
     /// Unfold (`true`) or fold the System page's Advanced card. View state:
     /// nothing is written.
     ShowAdvanced(bool),
@@ -177,4 +179,7 @@ pub enum Request {
     /// journal's, behind the Gateway (the opt-in contract of 2026-10-11), and
     /// the write must leave the event loop — so it is the host's to perform.
     SetTelemetryConsent(bool),
+    /// Add Koru's entry to the desktop's app menu, or take it out. A file the
+    /// host's executable path goes into, so the host writes it.
+    SetAppMenuEntry(bool),
 }

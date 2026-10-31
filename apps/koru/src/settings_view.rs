@@ -128,6 +128,7 @@ impl SettingsView {
         surface.set_renderer(renderer_row());
         surface.set_ai_slot(ai_slot());
         surface.set_telemetry_consent(koru_workspace_host::telemetry_consent::current().toggle());
+        surface.set_app_menu_entry(app_menu_reading());
         // Read the record again as the page opens: another window may have
         // answered since this process last looked, or the Gateway may not have
         // been answering then. Off the event loop; the maintenance pass pushes
@@ -251,6 +252,11 @@ impl SettingsView {
     /// the switch moved.
     pub fn set_telemetry_consent(&mut self, granted: Option<bool>) -> bool {
         self.surface.set_telemetry_consent(granted)
+    }
+
+    /// Whether Koru's app-menu entry is there, as the host just read it.
+    pub fn set_app_menu_entry(&mut self, added: Option<bool>) -> bool {
+        self.surface.set_app_menu_entry(added)
     }
 
     pub fn push_spelling_preferences(&mut self) {
@@ -864,4 +870,11 @@ fn sections() -> Sections {
         reminders: koru_features::reminders(),
         ..Sections::koru()
     }
+}
+
+/// *Show Koru in the app menu*'s reading: the file's answer on Linux, and no
+/// row anywhere else. Never under test, which must not read the person's
+/// `~/.local/share`.
+pub(crate) fn app_menu_reading() -> Option<bool> {
+    (koru_autostart::app_menu::SUPPORTED && !cfg!(test)).then(koru_autostart::app_menu::is_added)
 }

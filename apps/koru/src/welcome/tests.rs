@@ -68,10 +68,37 @@ fn key(view: &mut WelcomeView, named: NamedKey, mods: ModifiersState) -> bool {
 
 // --------------------------------------------------------- what is counted
 
+/// *Your first five minutes* counts six rows, and Linux's app-menu row too.
+fn first_minutes() -> usize {
+    6 + usize::from(koru_autostart::app_menu::SUPPORTED)
+}
+
+/// **Linux's app-menu row**: on the page only where there is an app menu to
+/// add Koru to, and ticked by the container once the entry is written, never
+/// by the press, so a write that failed leaves it open.
+#[test]
+fn the_app_menu_row_asks_the_container_and_does_not_tick_itself() {
+    assert_eq!(
+        Section::FirstMinutes.rows().contains(&RowId::AppMenu),
+        koru_autostart::app_menu::SUPPORTED
+    );
+    assert_eq!(RowId::from_key("app-menu"), Some(RowId::AppMenu));
+    let mut view = page();
+    view.activate(Target::Row(RowId::AppMenu));
+    assert_eq!(view.take_wants(), vec![WelcomeWant::AddToAppMenu]);
+    assert!(!view.is_done(RowId::AppMenu));
+    assert!(view.take_newly_done().is_empty());
+    view.set_done(["app-menu"]);
+    assert!(view.is_done(RowId::AppMenu));
+}
+
 #[test]
 fn only_rows_with_an_action_tick_and_only_checklist_rows_count() {
     let view = page();
-    assert_eq!(view.progress_of(Section::FirstMinutes), (0, 6));
+    assert_eq!(
+        view.progress_of(Section::FirstMinutes),
+        (0, first_minutes())
+    );
     assert_eq!(view.progress_of(Section::Further), (0, 3));
     assert_eq!(
         view.progress_of(Section::Devices),
@@ -92,6 +119,7 @@ fn only_rows_with_an_action_tick_and_only_checklist_rows_count() {
             "documents",
             "files",
             "learn",
+            "app-menu",
             "reminder",
             "feedback",
             "phone",
@@ -122,29 +150,28 @@ fn the_header_counts_and_a_finished_checklist_folds_until_shown() {
             section.folded.is_some(),
         )
     };
-    assert_eq!(first(&mut view), (Some("0 of 6 done".into()), None, false));
+    let of = first_minutes();
+    let done = |n: usize| Some(format!("{n} of {of} done"));
+    assert_eq!(first(&mut view), (done(0), None, false));
     assert!(
         laid(&mut view).sections[1].progress.is_none(),
         "Connect your devices has no count"
     );
 
     view.set_done(["first-document", "documents", "files", "learn"]);
-    assert_eq!(first(&mut view), (Some("4 of 6 done".into()), None, false));
+    assert_eq!(first(&mut view), (done(4), None, false));
 
-    view.set_done(["reminder", "feedback"]);
+    view.set_done(["reminder", "feedback", "app-menu"]);
     assert_eq!(
         first(&mut view),
-        (Some("6 of 6 done".into()), Some(SHOW), true),
+        (done(of), Some(SHOW), true),
         "all counted rows done: one line and a Show link"
     );
     assert_eq!(Section::FirstMinutes.done_line(), FIRST_MINUTES_DONE);
 
     let toggle = rect_of(&mut view, Target::Toggle(Section::FirstMinutes));
     assert!(press(&mut view, toggle));
-    assert_eq!(
-        first(&mut view),
-        (Some("6 of 6 done".into()), Some(HIDE), false)
-    );
+    assert_eq!(first(&mut view), (done(of), Some(HIDE), false));
     let toggle = rect_of(&mut view, Target::Toggle(Section::FirstMinutes));
     assert!(press(&mut view, toggle));
     assert!(first(&mut view).2, "Hide folds it again");

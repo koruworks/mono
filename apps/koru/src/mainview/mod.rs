@@ -8066,7 +8066,51 @@ impl MainView {
                 WelcomeWant::Agents => {
                     self.open_agents_menu();
                 }
+                WelcomeWant::AddToAppMenu => self.set_app_menu_entry(true),
             }
+        }
+    }
+
+    /// **Add Koru to the app menu, or take it out** — Linux's desktop entry,
+    /// naming this executable (`koru_autostart::app_menu`).
+    ///
+    /// A small file write, so on the event loop. Every Settings tab then shows
+    /// what the file says, which puts a switch back when the write failed, and
+    /// the failure is said once in a toast. An entry that is there ticks
+    /// Welcome's row, wherever it was added from.
+    fn set_app_menu_entry(&mut self, on: bool) {
+        use koru_autostart::app_menu;
+        let outcome = if on {
+            std::env::current_exe().and_then(|exe| app_menu::add(&exe))
+        } else {
+            app_menu::remove()
+        };
+        if let Err(error) = outcome {
+            tracing::warn!(target: "koru::app_menu", %error, on, "the app menu entry did not change");
+            let message = if on {
+                format!("Koru could not add itself to the app menu: {error}")
+            } else {
+                format!("Koru could not remove itself from the app menu: {error}")
+            };
+            self.toast = Some((
+                koru_ui::Toast::new(message, None, Instant::now()),
+                ToastPayload::None,
+            ));
+        }
+        let reading = crate::settings_view::app_menu_reading();
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::Settings(s) = &mut tab.view {
+                    s.set_app_menu_entry(reading);
+                }
+            }
+        }
+        if reading == Some(true)
+            && self
+                .welcome_progress
+                .mark(vec![crate::welcome::RowId::AppMenu.key()])
+        {
+            self.sync_welcome_lists();
         }
     }
 
@@ -8291,6 +8335,7 @@ impl MainView {
             Request::SetTelemetryConsent(on) => {
                 koru_workspace_host::telemetry_consent::set(on);
             }
+            Request::SetAppMenuEntry(on) => self.set_app_menu_entry(on),
             // **The way in, not a second copy of the rows.** The provider rows
             // are Koru AI's and stay there; Settings names the section and
             // opens the panel that owns them.

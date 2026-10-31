@@ -161,6 +161,7 @@ fn copy(row: RowId, workspace: &str) -> RowCopy {
         RowId::Documents => (DOCUMENTS_TITLE, plain(DOCUMENTS_HINT)),
         RowId::Files => (FILES_TITLE, plain(&files_hint(workspace))),
         RowId::Learn => (LEARN_TITLE, plain(LEARN_HINT)),
+        RowId::AppMenu => (APP_MENU_TITLE, plain(APP_MENU_HINT)),
         RowId::TaskList => (TASK_LIST_TITLE, Vec::new()),
         RowId::Reminder => (REMINDER_TITLE, plain(REMINDER_HINT)),
         RowId::Feedback => (
@@ -190,6 +191,7 @@ pub(super) fn row_is_target(row: RowId) -> bool {
         row,
         RowId::FirstDocument
             | RowId::Learn
+            | RowId::AppMenu
             | RowId::Reminder
             | RowId::Phone
             | RowId::Computer

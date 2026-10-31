@@ -92,6 +92,9 @@ const FILES_BUTTON: &str = "Choose files\u{2026}";
 const LEARN_TITLE: &str = "Learn your way around";
 const LEARN_HINT: &str = "The handful of shortcuts that make Koru feel fast.";
 
+const APP_MENU_TITLE: &str = "Add Koru to your app menu";
+const APP_MENU_HINT: &str = "Find Koru in your app list, with its own icon in the dock.";
+
 const TASK_LIST_TITLE: &str = "Turn one document into a task list";
 
 const REMINDER_TITLE: &str = "Set up a reminder";
@@ -175,6 +178,9 @@ pub enum WelcomeWant {
     /// *Run an agent in a terminal* — the `+` menu's list of agents, at the
     /// pointer.
     Agents,
+    /// *Add Koru to your app menu* — Linux's desktop entry, written by the
+    /// container, which ticks the row once it is there.
+    AddToAppMenu,
 }
 
 /// Who the page greets and whose page it is.
@@ -400,6 +406,8 @@ impl WelcomeView {
                     self.wants.push(WelcomeWant::Reminders);
                     self.tick(row);
                 }
+                // Not ticked here: a write that fails must leave it unticked.
+                RowId::AppMenu => self.wants.push(WelcomeWant::AddToAppMenu),
                 RowId::Phone | RowId::Computer => {
                     self.wants.push(WelcomeWant::LinkDevice);
                     self.tick(row);

@@ -713,14 +713,11 @@ pub fn build(
         )
         .map_err(|error| error.to_string())?;
     }
-    // **A launcher entry to copy, not one that installs itself.** A tarball has
-    // no install step, and a `.desktop` file names absolute paths, so the entry
-    // assumes the folder the release notes suggest and says how to change it.
-    // Desktop integration proper waits for an AppImage or a `.deb`.
-    if cfg!(target_os = "linux") {
-        let (file, text) = linux_desktop_entry(channel);
-        fs::write(beside.join(file), text).map_err(|error| error.to_string())?;
-    }
+    // **No launcher entry in the Linux package.** A `.desktop` file names
+    // absolute paths, which a tarball cannot know, so Koru writes its own from
+    // the path it runs at, when asked (`koru_autostart::app_menu`). The one this
+    // package used to carry is moved aside by the next update, like any file
+    // the incoming list no longer names.
 
     // **The notes travel with the build that they describe.**
     //
@@ -2043,52 +2040,6 @@ fn file_mode(path: &Path) -> Result<u32, String> {
     }
 }
 
-/// The `.desktop` file a Linux package carries beside `koru`, and its name:
-/// `koru-nightly.desktop` for the nightly, `koru.desktop` for stable.
-///
-/// **`Exec` goes through `sh -c` for `$HOME`**, which a desktop entry does not
-/// expand. The doubled backslashes are the file format's own escape over the
-/// `Exec` key's, so the shell receives `exec "$HOME/koru-nightly/koru"`.
-/// `Icon` cannot use a variable at all, hence the icon is copied by name.
-/// `StartupWMClass=koru` is winit's X11 default, the binary's name, so the
-/// dock groups Koru's windows under this entry.
-fn linux_desktop_entry(channel: &str) -> (String, String) {
-    let id = if channel == "stable" {
-        "koru".to_owned()
-    } else {
-        format!("koru-{channel}")
-    };
-    let name = match channel {
-        "stable" => "Koru".to_owned(),
-        other => {
-            let mut letters = other.chars();
-            let first = letters.next().map(|c| c.to_ascii_uppercase());
-            format!(
-                "Koru {}{}",
-                first.into_iter().collect::<String>(),
-                letters.as_str()
-            )
-        }
-    };
-    let text = format!(
-        "# Koru's launcher entry, for the app list and the dock.\n\
-         # It assumes Koru is extracted to ~/{id}; if not, change {id} in Exec.\n\
-         #\n\
-         #   mkdir -p ~/.local/share/applications ~/.local/share/icons\n\
-         #   cp ~/{id}/{id}.desktop ~/.local/share/applications/\n\
-         #   cp ~/{id}/assets/logo.png ~/.local/share/icons/{id}.png\n\
-         [Desktop Entry]\n\
-         Type=Application\n\
-         Name={name}\n\
-         Exec=sh -c \"exec \\\\\"\\\\$HOME/{id}/koru\\\\\"\"\n\
-         Icon={id}\n\
-         Terminal=false\n\
-         Categories=Office;\n\
-         StartupWMClass=koru\n"
-    );
-    (format!("{id}.desktop"), text)
-}
-
 /// The Linux package: **the zip's layout, in a gzipped tar.**
 ///
 /// The layout is the contract with the extractor in `koru-update`, which
@@ -2693,22 +2644,6 @@ mod tests {
             archive_path(Path::new("/r"), "0.1.4", "linux-x86_64"),
             Path::new("/r/dist/cloud/koru-0.1.4-linux-x86_64.tar.gz")
         );
-    }
-
-    /// The launcher entry names the channel's folder, and its `Exec` survives
-    /// both escape layers as one `sh -c` argument with `$HOME` intact.
-    #[test]
-    fn linux_desktop_entry_names_the_channel_and_escapes_exec() {
-        let (file, text) = linux_desktop_entry("nightly");
-        assert_eq!(file, "koru-nightly.desktop");
-        assert!(text.contains("\nName=Koru Nightly\n"));
-        assert!(text.contains("\nIcon=koru-nightly\n"));
-        assert!(text.contains(r#"Exec=sh -c "exec \\"\\$HOME/koru-nightly/koru\\"""#));
-        assert!(text.contains("\nStartupWMClass=koru\n"));
-        let (file, text) = linux_desktop_entry("stable");
-        assert_eq!(file, "koru.desktop");
-        assert!(text.contains("\nName=Koru\n"));
-        assert!(text.contains("$HOME/koru/koru"));
     }
 
     /// The Linux arm is the Windows/mac inventory minus the voice worker and

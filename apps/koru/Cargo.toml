@@ -71,6 +71,9 @@ koru-link = { path = "../../crates/koru-link" }
 # printing a version number linked reqwest, minisign-verify and zip; updating
 # belongs to `koru-agent` and this app no longer depends on that crate at all.
 koru-channel = { path = "../../crates/koru-channel" }
+# Linux's app-menu entry: written from Welcome and Settings, and pointed at
+# this executable again at start when its folder moved.
+koru-autostart = { path = "../../crates/koru-autostart" }
 koru-log = { path = "../../crates/koru-log" }
 koru-env = { path = "../../crates/koru-env" }
 # The support chat's web surface. The one product binary that links wry,

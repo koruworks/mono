@@ -82,7 +82,7 @@ impl PageId {
             }
             Self::Terminal => "shell cursor zoom font theme input blink composer",
             Self::System => {
-                "login startup start quit background close window renderer graphics vulkan directx opengl ai provider model privacy telemetry usage data analytics diagnostics"
+                "login startup start quit background close window app menu launcher dock desktop entry renderer graphics vulkan directx opengl ai provider model privacy telemetry usage data analytics diagnostics"
             }
         }
     }
