@@ -130,3 +130,18 @@ fn a_font_role_keeps_its_setting_apart_from_its_face() {
     assert_eq!(chosen_font(FontSlot::Headings), default_headings_font());
     set_font_setting(FontSlot::Headings, was);
 }
+
+/// Each theme keeps its own rail colour; neither is derived from the other,
+/// and no choice is the theme's own ground.
+#[test]
+fn each_theme_keeps_its_own_rail_colour() {
+    set_rail_color(true, Some(0x18202E));
+    assert_eq!(rail_color(true), Some(0x18202E));
+    assert_eq!(rail_color(false), None, "the light rail is untouched");
+    set_rail_color(false, Some(0xDDE7F6));
+    assert_eq!(rail_color(false), Some(0xDDE7F6));
+    assert_eq!(rail_color(true), Some(0x18202E));
+    set_rail_color(true, None);
+    set_rail_color(false, None);
+    assert_eq!(rail_fill(), p().ground);
+}

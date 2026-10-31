@@ -4242,7 +4242,8 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            p.ground,
+            // The theme's ground, or the colour chosen for this theme's rail.
+            theme::rail_fill(),
             &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
         );
         // Hairline between the rail and the pane.

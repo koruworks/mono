@@ -2331,6 +2331,8 @@ pub enum Key {
     SettingsDocumentTextSize,
     SettingsSizePx,
     SettingsSizeDefault,
+    SettingsRailColorLight,
+    SettingsRailColorDark,
     SettingsMoreFonts,
     SettingsFontNotInstalled,
     FontPickerTitle,
@@ -2591,7 +2593,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1756] = [
+    pub const ALL: [Key; 1758] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4155,6 +4157,8 @@ impl Key {
         Key::SettingsDocumentTextSize,
         Key::SettingsSizePx,
         Key::SettingsSizeDefault,
+        Key::SettingsRailColorLight,
+        Key::SettingsRailColorDark,
         Key::SettingsMoreFonts,
         Key::SettingsFontNotInstalled,
         Key::FontPickerTitle,
@@ -12690,6 +12694,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsDocumentTextSize, en: "Size", es: "Tamaño", pt_br: "Tamanho", de: "Größe", fr: "Taille", ar: "الحجم", zh_hans: "大小", ja: "サイズ" },
     Row { key: Key::SettingsSizePx, en: "{} px", es: "{} px", pt_br: "{} px", de: "{} px", fr: "{} px", ar: "{} px", zh_hans: "{} px", ja: "{} px" },
     Row { key: Key::SettingsSizeDefault, en: "{} (default)", es: "{} (predeterminado)", pt_br: "{} (padrão)", de: "{} (Standard)", fr: "{} (par défaut)", ar: "{} (افتراضي)", zh_hans: "{}（默认）", ja: "{}（既定）" },
+    Row { key: Key::SettingsRailColorLight, en: "Rail color (light theme)", es: "Color de la barra lateral (tema claro)", pt_br: "Cor da barra lateral (tema claro)", de: "Leistenfarbe (helles Design)", fr: "Couleur de la barre latérale (thème clair)", ar: "لون الشريط الجانبي (المظهر الفاتح)", zh_hans: "侧边栏颜色（浅色主题）", ja: "サイドバーの色（ライトテーマ）" },
+    Row { key: Key::SettingsRailColorDark, en: "Rail color (dark theme)", es: "Color de la barra lateral (tema oscuro)", pt_br: "Cor da barra lateral (tema escuro)", de: "Leistenfarbe (dunkles Design)", fr: "Couleur de la barre latérale (thème sombre)", ar: "لون الشريط الجانبي (المظهر الداكن)", zh_hans: "侧边栏颜色（深色主题）", ja: "サイドバーの色（ダークテーマ）" },
     Row { key: Key::SettingsMoreFonts, en: "More fonts…", es: "Más fuentes…", pt_br: "Mais fontes…", de: "Weitere Schriften…", fr: "Plus de polices…", ar: "مزيد من الخطوط…", zh_hans: "更多字体…", ja: "その他のフォント…" },
     Row { key: Key::SettingsFontNotInstalled, en: "{} (not installed)", es: "{} (no instalada)", pt_br: "{} (não instalada)", de: "{} (nicht installiert)", fr: "{} (non installée)", ar: "{} (غير مثبّت)", zh_hans: "{}（未安装）", ja: "{}（未インストール）" },
     Row { key: Key::FontPickerTitle, en: "Choose a font", es: "Elegir una fuente", pt_br: "Escolher uma fonte", de: "Schrift wählen", fr: "Choisir une police", ar: "اختر خطًا", zh_hans: "选择字体", ja: "フォントを選択" },

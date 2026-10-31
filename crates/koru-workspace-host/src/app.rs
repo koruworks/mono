@@ -20284,6 +20284,8 @@ struct AppearanceShown {
     doc_text_size: f32,
     density: theme::Density,
     icon_paint: koru_draw::icons::IconPack,
+    /// The rail's colour per theme: paint only, like the icons' artwork.
+    rail: [Option<u32>; 2],
     choices: (
         [koru_settings::FontSetting; 4],
         Option<u8>,
@@ -20304,6 +20306,7 @@ impl AppearanceShown {
             doc_text_size: theme::doc_text_size(),
             density: theme::density(),
             icon_paint: koru_draw::icons::rendered_pack(),
+            rail: [theme::rail_color(false), theme::rail_color(true)],
             choices: (
                 [
                     theme::font_setting(FontSlot::Ui),
@@ -20326,7 +20329,7 @@ impl AppearanceShown {
 
     /// Only the icons' artwork changed: a repaint, never a layout.
     fn icon_paint_moved(&self, before: &Self) -> bool {
-        self.icon_paint != before.icon_paint
+        self.icon_paint != before.icon_paint || self.rail != before.rail
     }
 
     /// A saved choice changed, whether or not anything drawn did.
