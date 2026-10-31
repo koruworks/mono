@@ -6,7 +6,10 @@ mock services, so demonstration data resets when the process ends.
 ## Requirements
 
 - macOS with Xcode 16 or newer selected by `xcode-select`.
-- An iOS 17+ simulator runtime or physical device.
+- An iOS 18 or newer simulator runtime or physical device. The deployment
+  target is iOS 18.0 because iroh's `netdev` strong-imports an iOS 18
+  Network.framework symbol, and on iOS 17 dyld refuses to launch the app. The
+  tests run on the iOS 26.5 runtime (an iPhone 17 simulator).
 - An Apple development team and device provisioning for physical deployment.
 
 The project resolves SwiftProtobuf through Swift Package Manager and compiles
@@ -22,7 +25,7 @@ chmod +x koru.sh                 # needed once if the executable bit was lost
 
 ./koru.sh doctor
 ./koru.sh simulators
-./koru.sh boot "iPhone 16"
+./koru.sh boot "iPhone 17"
 ./koru.sh run
 ```
 
@@ -122,7 +125,7 @@ then press Run. The equivalent test command is:
 
 ```sh
 xcodebuild test -project KoruMobile.xcodeproj -scheme KoruMobile \
-  -destination 'platform=iOS Simulator,name=iPhone 16'
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
 ```
 
 Do not hand-edit generated contract sources. Regenerate them with

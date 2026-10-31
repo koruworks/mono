@@ -22,17 +22,18 @@ that the existing maintainers approve.
 | Platform | Status |
 | --- | --- |
 | **Windows** (x64) | **Supported.** Official builds on every channel; CI builds and tests every change on Windows, and packages every merge |
-| **Android** | **Maintained.** Built with Gradle from `apps/android`. It uses Google Play services, which are proprietary |
-| **macOS** (Apple silicon and Intel) | **Held.** The source builds on a Mac, and it now links upstream's text-to-speech-free voice runtime, with no eSpeak NG (GPL-3.0), as Windows does. Official macOS releases wait for that to be verified on a Mac ([licensing](licensing/THIRD-PARTY.md#espeak-ng-gpl-30-in-three-shipped-binaries)) |
-| **iOS** | **Held.** The source is here, with its license notices; the first release waits for it to be built and verified on a Mac ([licensing](licensing/README.md#android)) |
-| Linux | **Not a Koru target.** CI runs only platform-independent checks there (the repository's own checks, formatting, licenses and advisories). Nothing claims the app builds or runs on Linux, and there are no packages |
+| **macOS** (Apple silicon) | **Supported.** Stable and nightly builds are published as signed and notarized disk images, built on GitHub from the version tag, and the source builds and runs on a Mac. It links upstream's text-to-speech-free voice runtime, with no eSpeak NG (GPL-3.0), as Windows does ([licensing](licensing/THIRD-PARTY.md#espeak-ng-gpl-30-in-three-shipped-binaries)) |
+| **Linux** (x86-64) | **Supported.** Koru 0.1.4 (October 31, 2026) is the first stable Linux release: an x86_64 tarball for glibc 2.35 or newer, with nightly builds beside it. Koru runs as an X11 app (XWayland on Wayland desktops). CI checks that the workspace compiles on Linux after every merge |
+| **Android** | **In active development, not released.** Built with Gradle from `apps/android`. It uses Google Play services, which are proprietary |
+| **iOS** | **Held, not released.** The source is here, with its license notices; the first release waits for it to be built and verified on a Mac ([licensing](licensing/README.md#android)) |
 
 **Apple platforms have limits we cannot remove.** Building for macOS or iOS
 needs a Mac with Xcode. Running a build on an iPhone needs an Apple developer
 account, and anything distributed needs Apple's signing and, for macOS,
 notarization; official builds are signed with Koru's identity, which is not
-part of this repository. Public CI has no macOS or iOS runner, so a change to
-Apple-only code is checked by a maintainer on a Mac before it is merged.
+part of this repository. Pull-request CI has no macOS or iOS runner (only the
+macOS release build runs on a hosted Mac), so a change to Apple-only code is
+checked by a maintainer on a Mac before it is merged.
 
 ## Issues and triage
 
