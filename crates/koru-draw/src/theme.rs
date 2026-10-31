@@ -725,32 +725,32 @@ pub fn terminal_dim(foreground: Color, background: Color) -> Color {
 /// Whether the host's root theme is a dark one: derived from the theme's
 /// appearance, never its identity (D3). Migrated code reads its frame
 /// context and never branches on this.
-// ------------------------------------------- the rail's colour (a trial)
+// ------------------------------------------- the base colour (a trial)
 //
 // One colour per theme, never derived from the other: a tint that sits well
 // on light is wrong on dark. Chosen from a list in Settings for now, and held
 // in memory only — it is a trial of how it looks, not yet a saved setting.
 
 /// `0` follows the theme; otherwise `0xFF00_0000 | rgb`. Light, then dark.
-static RAIL_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+static BASE_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
 
-/// The tints Settings offers for the rail, per theme: soft ones on light,
+/// The tints Settings offers for the base, per theme: soft ones on light,
 /// deep ones on dark, so the rail's icons stay readable on every one.
-pub const RAIL_TINTS_LIGHT: [u32; 6] = [0xE4E9F0, 0xDDE7F6, 0xDCEFE4, 0xF2E9DA, 0xEAE2F4, 0xF6E0E3];
-pub const RAIL_TINTS_DARK: [u32; 6] = [0x232832, 0x293750, 0x294435, 0x3F2F50, 0x444444, 0x493235];
+pub const BASE_TINTS_LIGHT: [u32; 6] = [0xE4E9F0, 0xDDE7F6, 0xDCEFE4, 0xF2E9DA, 0xEAE2F4, 0xF6E0E3];
+pub const BASE_TINTS_DARK: [u32; 6] = [0x232832, 0x293750, 0x294435, 0x3F2F50, 0x444444, 0x493235];
 
-/// Set the rail's colour for the light or the dark theme, or `None` for the
+/// Set the base colour for the light or the dark theme, or `None` for the
 /// theme's own.
-pub fn set_rail_color(dark: bool, rgb: Option<u32>) {
-    RAIL_COLOR[usize::from(dark)].store(
+pub fn set_base_color(dark: bool, rgb: Option<u32>) {
+    BASE_COLOR[usize::from(dark)].store(
         rgb.map_or(0, |rgb| 0xFF00_0000 | (rgb & 0xFF_FFFF)),
         Ordering::Relaxed,
     );
 }
 
-/// The rail's colour chosen for the light or the dark theme, if any.
-pub fn rail_color(dark: bool) -> Option<u32> {
-    match RAIL_COLOR[usize::from(dark)].load(Ordering::Relaxed) {
+/// The base colour chosen for the light or the dark theme, if any.
+pub fn base_color(dark: bool) -> Option<u32> {
+    match BASE_COLOR[usize::from(dark)].load(Ordering::Relaxed) {
         0 => None,
         value => Some(value & 0xFF_FFFF),
     }
@@ -764,8 +764,8 @@ pub fn rgb_hex(value: u32) -> Color {
 /// The window's ground now — the rail, the header, the side lanes, the foot
 /// and the masks behind the cards' corners, one tint: the colour chosen for
 /// the theme on screen, or the theme's own ground.
-pub fn rail_fill() -> Color {
-    rail_color(is_dark()).map_or(p().ground, rgb_hex)
+pub fn base_fill() -> Color {
+    base_color(is_dark()).map_or(p().ground, rgb_hex)
 }
 
 pub fn is_dark() -> bool {

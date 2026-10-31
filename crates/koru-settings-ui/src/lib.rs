@@ -1795,7 +1795,7 @@ impl SettingsSurface {
             Action::PinnedShowTitle(show) => self.pinned_show_title = show,
             Action::Font(role, family) => role.set(family),
             Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
-            Action::RailColor(dark, rgb) => theme::set_rail_color(dark, rgb),
+            Action::BaseColor(dark, rgb) => theme::set_base_color(dark, rgb),
             Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
             Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
             Action::VoiceLanguage(language) => {
@@ -2017,7 +2017,7 @@ fn clone_action(action: &Action) -> Action {
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
         Action::DocTextSize(px) => Action::DocTextSize(*px),
-        Action::RailColor(dark, rgb) => Action::RailColor(*dark, *rgb),
+        Action::BaseColor(dark, rgb) => Action::BaseColor(*dark, *rgb),
         Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
         Action::MoreFonts(role) => Action::MoreFonts(*role),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),

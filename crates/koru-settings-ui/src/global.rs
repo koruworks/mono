@@ -139,8 +139,8 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
         FontRole::App,
         Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
     );
-    rail_row(b, lang, false);
-    rail_row(b, lang, true);
+    base_row(b, lang, false);
+    base_row(b, lang, true);
 
     b.card_with_font_preview(koru_i18n::t(lang, Key::SettingsDocumentFonts));
     font_row(b, lang, FontRole::Body, None);
@@ -201,28 +201,28 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
 }
 
 /// One font role: a dropdown of every family, each set in its own face.
-/// The rail's colour for one theme: the theme's own first, then the tints
+/// The base colour for one theme: the theme's own first, then the tints
 /// offered for that theme. Each theme keeps its own; neither is derived from
 /// the other.
-fn rail_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
+fn base_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
     let (label, own, tints) = if dark {
         (
-            Key::SettingsRailColorDark,
+            Key::SettingsBaseColorDark,
             theme::DARK.ground,
-            theme::RAIL_TINTS_DARK,
+            theme::BASE_TINTS_DARK,
         )
     } else {
         (
-            Key::SettingsRailColorLight,
+            Key::SettingsBaseColorLight,
             theme::LIGHT.ground,
-            theme::RAIL_TINTS_LIGHT,
+            theme::BASE_TINTS_LIGHT,
         )
     };
-    let now = theme::rail_color(dark);
-    let mut swatches = vec![(Action::RailColor(dark, None), Some(own), now.is_none())];
+    let now = theme::base_color(dark);
+    let mut swatches = vec![(Action::BaseColor(dark, None), Some(own), now.is_none())];
     swatches.extend(tints.iter().map(|&rgb| {
         (
-            Action::RailColor(dark, Some(rgb)),
+            Action::BaseColor(dark, Some(rgb)),
             Some(theme::rgb_hex(rgb)),
             now == Some(rgb),
         )

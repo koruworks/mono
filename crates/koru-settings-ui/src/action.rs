@@ -100,9 +100,10 @@ pub(crate) enum Action {
     Font(FontRole, FontChoice),
     /// A document body size, in px, from `DocTextSize::ALL`.
     DocTextSize(u8),
-    /// The rail's colour for the light (`false`) or dark (`true`) theme:
+    /// The base colour — the window's frame — for the light (`false`) or
+    /// dark (`true`) theme:
     /// `0xRRGGBB`, or `None` for the theme's own.
-    RailColor(bool, Option<u32>),
+    BaseColor(bool, Option<u32>),
     /// A font role set to exactly this — the row for an installed family
     /// that is not installed here keeps it.
     FontSetting(FontRole, koru_settings::FontSetting),
