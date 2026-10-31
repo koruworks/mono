@@ -481,4 +481,13 @@
     <string name="open_source_license_notice">Koru 声明</string>
     <string name="open_source_license_third_party">第三方声明</string>
     <string name="open_source_licenses_missing">此版本未包含许可证文件。</string>
+    <string name="update_available">Koru Nightly %1$s 现已推出</string>
+    <string name="update_download">下载</string>
+    <string name="update_downloading">正在下载并校验 Koru Nightly %1$s…</string>
+    <string name="update_ready">Koru Nightly %1$s 已下载并通过校验。</string>
+    <string name="update_install">安装</string>
+    <string name="update_failed">无法下载或校验此更新。</string>
+    <string name="update_retry">重试</string>
+    <string name="update_not_now">以后再说</string>
+    <string name="update_whats_new">新功能</string>
 </resources>

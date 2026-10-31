@@ -59,6 +59,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val relayEnabled = container.deviceLink.relayEnabled
     val relayStatus = container.deviceLink.relayStatus
     val accountDiagnostics = container.deviceLink.accountDiagnostics
+    val updateNotice = container.updates.notice
+    fun downloadUpdate() = container.updates.download()
+    fun installUpdate(context: android.content.Context) = container.updates.install(context)
+    fun dismissUpdate() = container.updates.dismiss()
     val account = container.account.screen
     fun accountAction(intent: app.koru.mobile.services.AccountIntent, locale: String, ownerScope: Long, profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) =
         container.account.act(intent, ownerScope, locale, profile, accountId, profiles)

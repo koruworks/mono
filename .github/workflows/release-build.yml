@@ -808,13 +808,37 @@ jobs:
           dir="$RUNNER_TEMP/android-signing"
           (umask 077 && mkdir -p "$dir" && printf '%s' "$KEYSTORE" | base64 --decode > "$dir/release.jks")
           test -s "$dir/release.jks"
+      # **The key the app checks its next update against** (§5.5): the
+      # public half of the same Minisign key that signs this APK's feed entry,
+      # derived from it as dist-github derives the one a desktop bakes in, so
+      # the two cannot differ. Public; only the nightly app reads it.
+      - name: Derive the update public key
+        id: update-key
+        if: steps.signing.outputs.signed == 'true' && inputs.channel == 'nightly'
+        env:
+          MINISIGN_KEY: ${{ secrets.NIGHTLY_MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.NIGHTLY_MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077 && printf '%s\n' "$MINISIGN_KEY" > "$key")
+          trap 'rm -f "$key"' EXIT
+          public="$(printf '%s' "${MINISIGN_PASSWORD:-}" | cargo run --locked -q -p koru-release -- minisign-public-key --key "$key" --key-password-stdin | tail -n 1)"
+          case "$public" in
+            RW*) ;;
+            *) echo "::error::not a Minisign public key"; exit 1 ;;
+          esac
+          echo "key=$public" >> "$GITHUB_OUTPUT"
       # **The version is the release's, named by the caller** (the nightly's
       # plan job, or a stable tag), never the workspace's 0.x the build would
       # default to; the code is the build time in minutes since 2026
       # (mobile.rs). The signing properties reach Gradle as
       # ORG_GRADLE_PROJECT_* — empty, and Gradle treats them as absent and
       # builds the APK unsigned. No account settings: like the desktop
-      # nightly, the APK is built without Koru Cloud (NIGHTLY N5).
+      # nightly, the APK is built without Koru Cloud (NIGHTLY N5). A signed
+      # nightly also gets the feed it checks for its next build and the key
+      # that build must verify against; Gradle ignores both outside the
+      # nightly app, which is the only one that offers updates (D21).
       - name: Build the APK
         id: apk
         env:
@@ -826,6 +850,8 @@ jobs:
           ORG_GRADLE_PROJECT_koruSigningStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ORG_GRADLE_PROJECT_koruSigningKeyAlias: ${{ vars.ANDROID_KEY_ALIAS }}
           ORG_GRADLE_PROJECT_koruSigningKeyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ORG_GRADLE_PROJECT_koruUpdateBaseUrl: ${{ steps.update-key.outputs.key != '' && inputs.download-base || '' }}
+          ORG_GRADLE_PROJECT_koruUpdatePublicKey: ${{ steps.update-key.outputs.key }}
         run: |
           set -euo pipefail
           test -n "$VERSION" || { echo "::error::an APK names its release version: the caller passes it"; exit 1; }
@@ -869,8 +895,8 @@ jobs:
             fi
           fi
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
-      # (see linux) The APK under its release name, its .minisig and the
-      # release body; no feed manifest, which nothing on a phone reads yet.
+      # (see linux) The APK under its release name, its .minisig, its feed
+      # manifest `<channel>-android-aarch64.json` and the release body.
       - name: Sign and write the release files
         if: steps.signing.outputs.signed == 'true'
         env:

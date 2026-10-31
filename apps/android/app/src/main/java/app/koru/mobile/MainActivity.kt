@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         (application as KoruApplication).container.account.foreground(this)
+        (application as KoruApplication).container.updates.checkIfDue()
     }
 
     override fun onStop() {

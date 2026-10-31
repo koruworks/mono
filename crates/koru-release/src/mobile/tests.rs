@@ -121,3 +121,66 @@ fn the_apk_is_named_like_every_other_package() {
     );
     assert_eq!(package_asset_name("0.1.5", "linux-x86_64"), None);
 }
+
+fn notes() -> crate::Descriptor {
+    crate::Descriptor {
+        title: "Android, nightly".into(),
+        summary: vec!["The APK tells you when there is a newer one.".into()],
+        body: "## Android\n\nAn update notice.\n".into(),
+    }
+}
+
+fn android_build<'a>(notes: &'a crate::Descriptor) -> GithubBuild<'a> {
+    GithubBuild {
+        channel: ReleaseChannel::Nightly,
+        target: "android-aarch64",
+        version: "0.1.5-nightly.20261031+0123456",
+        build_number: 202_610_311_530,
+        released_at: "2026-10-31T15:30:00Z",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+        notes,
+        download_base: "https://github.com/koruworks/mono/releases/download/nightly/",
+        asset: "koru-0.1.5-nightly.20261031.0123456-android-aarch64.apk",
+        size: 149_000_000,
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        signature: "untrusted comment: signature\nRWQ...\n",
+    }
+}
+
+/// **The phone's feed is the desktop's schema with A6's two values**: the
+/// platform `android` and the format `apk`, under the name the client asks
+/// `FeedLayout` for, and a manifest the client's own `validate` accepts.
+#[test]
+fn the_android_feed_is_a_manifest_the_phone_accepts() {
+    let notes = notes();
+    let manifest = package_manifest(&android_build(&notes));
+    assert_eq!(manifest.platform, "android");
+    assert_eq!(manifest.architecture, "aarch64");
+    assert_eq!(manifest.package.format, PackageFormat::Apk);
+    assert_eq!(manifest.build_number, 202_610_311_530);
+    assert_eq!(
+        manifest.package.url,
+        "https://github.com/koruworks/mono/releases/download/nightly/\
+         koru-0.1.5-nightly.20261031.0123456-android-aarch64.apk"
+    );
+    assert_eq!(
+        manifest.release_notes.url.as_deref(),
+        Some("https://github.com/koruworks/mono/releases/tag/nightly")
+    );
+    nightly::client_accepts(&manifest).unwrap();
+    assert_eq!(
+        nightly::feed_name(ReleaseChannel::Nightly, "android-aarch64"),
+        "nightly-android-aarch64.json"
+    );
+    let json = serde_json::to_value(&manifest).unwrap();
+    assert_eq!(json["package"]["format"], "apk");
+}
+
+#[test]
+fn the_public_key_is_the_line_under_its_comment() {
+    assert_eq!(
+        public_key_line("untrusted comment: minisign public key ABC\nRWQabc123\n").unwrap(),
+        "RWQabc123"
+    );
+    assert!(public_key_line("untrusted comment: nothing\n").is_err());
+}

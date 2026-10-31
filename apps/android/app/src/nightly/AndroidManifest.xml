@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merged into the nightly app's manifest only (`-PkoruNightly=true`, see
+  app/build.gradle.kts). The update notice downloads the next nightly, checks
+  it, and hands it to the system installer, which asks the person before it
+  installs anything; this is the permission that handing-over needs.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+</manifest>

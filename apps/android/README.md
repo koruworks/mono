@@ -513,6 +513,7 @@ not install. Gradle project properties (`-P` on the command line, or
 | `koruVersionCode` | Android's `versionCode`, 1 to 2,100,000,000; 1 when absent. The nightly's is the build time in minutes since 2026-01-01 UTC (`koru-release android-version-code`). |
 | `koruVersionName` | The version the app shows, the release's full version; the workspace's when absent. |
 | `koruSigningStoreFile`, `koruSigningStorePassword`, `koruSigningKeyAlias`, `koruSigningKeyPassword` | Signs the release build with that key. All four or none: a partial set fails the build. |
+| `koruUpdateBaseUrl`, `koruUpdatePublicKey` | The nightly's update feed (an HTTPS base URL) and the Minisign public key its APKs are signed with (the bare `RW…` line). Only with `koruNightly=true`; both or neither. Without them the app never checks for updates. |
 
 The nightly workflow (`.github/workflows/release-build.yml`, job
 `android`) passes all of them, the key from the `nightly` environment's
@@ -521,6 +522,33 @@ The nightly workflow (`.github/workflows/release-build.yml`, job
 those exist it builds the APK unsigned and does not publish it. The release
 key is permanent (D12, D13): it lives in the vault and is never generated or
 replaced in this repository.
+
+### The nightly's update notice
+
+Koru Nightly is sideloaded, so nothing else tells it a newer nightly exists
+(TECHNICAL.final §5.5). A nightly built with `koruUpdateBaseUrl` and
+`koruUpdatePublicKey` — the workflow derives the key from the
+`NIGHTLY_MINISIGN_KEY` secret and points the feed at the release's download
+base — checks the release's `nightly-android-aarch64.json` when it comes to
+the foreground, at most every three hours (`services/AppUpdates.kt`). The
+feed is the desktop manifest format with platform `android` and package
+format `apk`; `koru-update` fetches and validates it through
+`koru-mobile-native` (`UpdateNative`), so the phone has no parser of its own.
+
+A newer build (by `versionCode`) shows a card at the foot of the profiles
+screen: *Download* fetches the APK into the app's cache and `koru-update`
+checks its size, SHA-256 and Minisign signature; *Install* hands it to the
+system package installer through the app's `FileProvider`, which asks before
+it installs, and refuses an APK not signed with the nightly's key. The first
+time, Android asks to allow Koru Nightly to install unknown apps. *Not now*
+hides that build until a newer one. The check sends nothing but an HTTP
+request with a `Koru-Android/<version>` user agent; offline or on any error it
+shows nothing and logs only on the device.
+
+Only the nightly asks for `REQUEST_INSTALL_PACKAGES`
+(`src/nightly/AndroidManifest.xml`, merged only with `koruNightly=true`). The
+stable app and any copy Play installed (D21) never check: Play updates what
+it installed.
 
 ## Inspect logs with adb logcat
 

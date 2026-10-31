@@ -12,8 +12,8 @@
 # but is published only when it is Developer ID signed and notarized
 # (NIGHTLY rev2 §6); until then its disk image is a workflow artifact. Android
 # is the same: its APK is published once the release key is in the
-# environment (TECHNICAL.final D12, D13), and has no update feed — a phone
-# installs the next nightly over it by hand.
+# environment (TECHNICAL.final D12, D13). Its feed, nightly-android-aarch64.json,
+# is what the installed Koru Nightly checks to offer the next APK (§5.5).
 #
 # The rules differ from ci.yml's on purpose, and only here: this workflow
 # signs and publishes, so its secrets live in the `nightly` environment, which
@@ -201,20 +201,11 @@ jobs:
           shopt -s nullglob
           # download-artifact unpacks a lone artifact straight into `path`,
           # not into a directory named after it, so a nightly where only one
-          # platform built lands flat: give it its directory back — a
-          # desktop's named by its feed, the APK's by its package.
-          builds=(*/)
-          if [ "${#builds[@]}" -eq 0 ]; then
-            flat=(nightly-*.json)
-            apk=(koru-*-android-aarch64.apk)
-            if [ "${#flat[@]}" -eq 1 ]; then
-              dir="${flat[0]%.json}"
-            elif [ "${#apk[@]}" -eq 1 ]; then
-              dir=nightly-android-aarch64
-            else
-              echo "::error::one platform's files, but neither a feed nor an APK"
-              exit 1
-            fi
+          # platform built lands flat: give it its directory back, named by
+          # its feed as the artifact is.
+          flat=(nightly-*.json)
+          if [ "${#flat[@]}" -eq 1 ]; then
+            dir="${flat[0]%.json}"
             mkdir "$dir"
             find . -maxdepth 1 -type f -exec mv -t "$dir" {} +
           fi
@@ -236,19 +227,15 @@ jobs:
           old="$(gh release view nightly --json assets --jq '.assets[].name')"
           packages=() feeds=() targets=()
           for build in "${builds[@]}"; do
-            # The directory is the artifact, `nightly-<target>`. A desktop
-            # has exactly one feed; the APK none, nothing reading one yet.
+            # The directory is the artifact, `nightly-<target>`, and holds
+            # exactly that target's feed — the APK's too.
             name="$(basename "$build")"
             target="${name#nightly-}"
             targets+=("$target")
             feed=("$build"nightly-*.json)
-            if [ "$target" = android-aarch64 ]; then
-              test "${#feed[@]}" -eq 0
-            else
-              test "${#feed[@]}" -eq 1
-              test "${feed[0]}" = "${build}nightly-$target.json"
-              feeds+=("${feed[0]}")
-            fi
+            test "${#feed[@]}" -eq 1
+            test "${feed[0]}" = "${build}nightly-$target.json"
+            feeds+=("${feed[0]}")
             for file in "$build"*; do
               case "$(basename "$file")" in
                 nightly-*.json | release-body.md) ;;
@@ -257,9 +244,7 @@ jobs:
             done
           done
           gh release upload nightly "${packages[@]}" --clobber
-          if [ "${#feeds[@]}" -gt 0 ]; then
-            gh release upload nightly "${feeds[@]}" --clobber
-          fi
+          gh release upload nightly "${feeds[@]}" --clobber
           keep=" "
           for file in "${packages[@]}" "${feeds[@]}"; do keep+="$(basename "$file") "; done
           for name in $old; do

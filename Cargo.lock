@@ -6441,7 +6441,9 @@ dependencies = [
  "koru-account-session",
  "koru-contract",
  "koru-mobile-host",
+ "koru-update",
  "prost",
+ "serde_json",
  "zeroize",
 ]
 
