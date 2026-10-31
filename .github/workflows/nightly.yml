@@ -10,7 +10,10 @@
 # One build per platform, each a call of release-build.yml (the builds
 # stable.yml makes too), all feeding one publish job. macOS builds every time
 # but is published only when it is Developer ID signed and notarized
-# (NIGHTLY rev2 §6); until then its disk image is a workflow artifact.
+# (NIGHTLY rev2 §6); until then its disk image is a workflow artifact. Android
+# is the same: its APK is published once the release key is in the
+# environment (TECHNICAL.final D12, D13), and has no update feed — a phone
+# installs the next nightly over it by hand.
 #
 # The rules differ from ci.yml's on purpose, and only here: this workflow
 # signs and publishes, so its secrets live in the `nightly` environment, which
@@ -42,16 +45,47 @@ concurrency:
 jobs:
   # **One reading of the clock for every platform** (N11): the build number is
   # the UTC minute, and two platforms of one nightly must carry the same one.
+  # **And one version**: `<next>-nightly.<date>+<commit>`, inferred once from
+  # what the release origin serves, so the desktop builds and the APK — which
+  # cannot infer it, Gradle stamping it before koru-release runs — name the
+  # same release. Building koru-release for it is the Linux job's build, on
+  # its runner, so sccache hands that job most of it back.
   plan:
     name: plan
     if: github.repository == 'koruworks/mono'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     outputs:
       build: ${{ steps.clock.outputs.build }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - id: clock
         run: echo "build=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig-dev libssl-dev
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      - id: version
+        env:
+          BUILD: ${{ steps.clock.outputs.build }}
+        run: |
+          set -euo pipefail
+          version="$(./koru.sh release-tool nightly-version --build "$BUILD" | tail -n 1)"
+          case "$version" in
+            *-nightly.*+*) ;;
+            *) echo "::error::not a nightly version: $version"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   # One call of the shared build per platform (STABLE S6), so each platform's
   # result is its own and the publish below can tell them apart.
@@ -68,6 +102,7 @@ jobs:
       platform: linux
       channel: nightly
       build: ${{ needs.plan.outputs.build }}
+      version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
 
   build-windows:
@@ -83,6 +118,7 @@ jobs:
       platform: windows
       channel: nightly
       build: ${{ needs.plan.outputs.build }}
+      version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
 
   # macOS builds every nightly; it is published once it is signed (rev2 §6,
@@ -100,19 +136,40 @@ jobs:
       platform: macos
       channel: nightly
       build: ${{ needs.plan.outputs.build }}
+      version: ${{ needs.plan.outputs.version }}
+      download-base: https://github.com/${{ github.repository }}/releases/download/nightly
+
+  # Android builds every nightly too, and is published once it is signed
+  # (D12): until the release key is in the environment its APK is the
+  # workflow artifact `unpublished-android`.
+  build-android:
+    name: build-android
+    needs: plan
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-build.yml
+    secrets: inherit
+    with:
+      platform: android
+      channel: nightly
+      build: ${{ needs.plan.outputs.build }}
+      version: ${{ needs.plan.outputs.version }}
       download-base: https://github.com/${{ github.repository }}/releases/download/nightly
 
   publish:
     name: publish
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos, build-android]
     # Whatever built is published (rev2 §3); only a nightly where nothing
     # built, or one that was cancelled, publishes nothing. An unsigned macOS
-    # build is not a published platform: it neither counts here nor is said
-    # to have failed on the page.
+    # or Android build is not a published platform: it neither counts here
+    # nor is said to have failed on the page.
     if: >-
       !cancelled() &&
       (needs.build-linux.result == 'success' || needs.build-windows.result == 'success' ||
-       (needs.build-macos.result == 'success' && needs.build-macos.outputs.signed == 'true'))
+       (needs.build-macos.result == 'success' && needs.build-macos.outputs.signed == 'true') ||
+       (needs.build-android.result == 'success' && needs.build-android.outputs.signed == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -124,6 +181,7 @@ jobs:
         linux-x86_64=${{ needs.build-linux.result }}
         windows-x86_64=${{ needs.build-windows.result }}
         ${{ needs.build-macos.outputs.signed == 'true' && format('macos-aarch64={0}', needs.build-macos.result) || '' }}
+        ${{ needs.build-android.outputs.signed == 'true' && format('android={0}', needs.build-android.result) || '' }}
     steps:
       # One directory per platform that built, named after its artifact.
       # actions/download-artifact v8.0.2
@@ -143,10 +201,20 @@ jobs:
           shopt -s nullglob
           # download-artifact unpacks a lone artifact straight into `path`,
           # not into a directory named after it, so a nightly where only one
-          # platform built lands flat: give it its directory back.
-          flat=(nightly-*.json)
-          if [ "${#flat[@]}" -eq 1 ]; then
-            dir="${flat[0]%.json}"
+          # platform built lands flat: give it its directory back — a
+          # desktop's named by its feed, the APK's by its package.
+          builds=(*/)
+          if [ "${#builds[@]}" -eq 0 ]; then
+            flat=(nightly-*.json)
+            apk=(koru-*-android.apk)
+            if [ "${#flat[@]}" -eq 1 ]; then
+              dir="${flat[0]%.json}"
+            elif [ "${#apk[@]}" -eq 1 ]; then
+              dir=nightly-android
+            else
+              echo "::error::one platform's files, but neither a feed nor an APK"
+              exit 1
+            fi
             mkdir "$dir"
             find . -maxdepth 1 -type f -exec mv -t "$dir" {} +
           fi
@@ -168,11 +236,19 @@ jobs:
           old="$(gh release view nightly --json assets --jq '.assets[].name')"
           packages=() feeds=() targets=()
           for build in "${builds[@]}"; do
+            # The directory is the artifact, `nightly-<target>`. A desktop
+            # has exactly one feed; the APK none, nothing reading one yet.
+            name="$(basename "$build")"
+            target="${name#nightly-}"
+            targets+=("$target")
             feed=("$build"nightly-*.json)
-            test "${#feed[@]}" -eq 1
-            feeds+=("${feed[0]}")
-            name="$(basename "${feed[0]}" .json)"
-            targets+=("${name#nightly-}")
+            if [ "$target" = android ]; then
+              test "${#feed[@]}" -eq 0
+            else
+              test "${#feed[@]}" -eq 1
+              test "${feed[0]}" = "${build}nightly-$target.json"
+              feeds+=("${feed[0]}")
+            fi
             for file in "$build"*; do
               case "$(basename "$file")" in
                 nightly-*.json | release-body.md) ;;
@@ -181,7 +257,9 @@ jobs:
             done
           done
           gh release upload nightly "${packages[@]}" --clobber
-          gh release upload nightly "${feeds[@]}" --clobber
+          if [ "${#feeds[@]}" -gt 0 ]; then
+            gh release upload nightly "${feeds[@]}" --clobber
+          fi
           keep=" "
           for file in "${packages[@]}" "${feeds[@]}"; do keep+="$(basename "$file") "; done
           for name in $old; do

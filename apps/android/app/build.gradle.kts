@@ -27,6 +27,53 @@ fun koruWorkspaceVersion(): String {
         ?: error("no [workspace.package] version in the root Cargo.toml")
 }
 
+// **What a published build is (TECHNICAL.final §5.4, D18).** Every one of
+// these is a Gradle `-P` property, the convention the account settings below
+// already use, so CI passes them and a contributor's build needs none of them:
+//
+// - `koruVersionCode` / `koruVersionName`: the release's own numbers. Absent,
+//   a local build keeps versionCode 1 and the workspace version.
+// - `koruNightly=true`: the nightly app, `do.koru.app.nightly`, labelled
+//   "Koru Nightly", which installs beside the stable app with its own data.
+//   It reuses the stable launcher icons: no nightly icon set exists yet.
+// - `koruSigningStoreFile`, `koruSigningStorePassword`, `koruSigningKeyAlias`,
+//   `koruSigningKeyPassword`: the release key. All four or none — absent, a
+//   release build is still built, unsigned, which `assembleRelease` reports
+//   by writing `app-release-unsigned.apk`; half of them is refused.
+fun koruProperty(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
+
+val koruNightly = when (val value = koruProperty("koruNightly")) {
+    null, "false" -> false
+    "true" -> true
+    else -> error("koruNightly must be true or false, not \"$value\"")
+}
+
+fun koruVersionCode(): Int? = koruProperty("koruVersionCode")?.let { value ->
+    // Play's ceiling, below Int.MAX_VALUE; CI derives the code from the build
+    // time as minutes since 2026-01-01 UTC, which stays under it for millennia.
+    value.toIntOrNull()?.takeIf { it in 1..2_100_000_000 }
+        ?: error("koruVersionCode must be a whole number from 1 to 2100000000, not \"$value\"")
+}
+
+val koruSigningNames = listOf(
+    "koruSigningStoreFile",
+    "koruSigningStorePassword",
+    "koruSigningKeyAlias",
+    "koruSigningKeyPassword",
+)
+val koruSigning: Map<String, String>? = koruSigningNames.mapNotNull { name -> koruProperty(name)?.let { name to it } }
+    .toMap()
+    .let { found ->
+        when (found.size) {
+            0 -> null
+            koruSigningNames.size -> found
+            else -> error(
+                "the release signing properties go together: ${koruSigningNames.joinToString()} " +
+                    "(missing ${(koruSigningNames - found.keys).joinToString()})",
+            )
+        }
+    }
+
 fun koruGitBranch(): String = koruGit("rev-parse", "--abbrev-ref", "HEAD").takeIf { it != "HEAD" } ?: ""
 fun koruGitCommit(): String = koruGit("rev-parse", "--short=12", "HEAD")
 
@@ -42,13 +89,25 @@ android {
     ndkVersion = "30.0.15729638"
 
     defaultConfig {
-        applicationId = "do.koru.app"
+        applicationId = if (koruNightly) "do.koru.app.nightly" else "do.koru.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
+        versionCode = koruVersionCode() ?: 1
         versionName = koruWorkspaceVersion()
+        // A published build names its full release version (a nightly's is
+        // `<x.y.z>-nightly.<date>+<commit>`); Android accepts any string here.
+        koruProperty("koruVersionName")?.let { versionName = it }
+        // The launcher's name. AndroidManifest.xml reads it as a placeholder,
+        // so the nightly is told apart on the home screen without a second
+        // copy of strings.xml.
+        manifestPlaceholders["koruAppLabel"] = if (koruNightly) "Koru Nightly" else "@string/app_name"
         testInstrumentationRunner = "app.koru.mobile.IsolatedUiTestRunner"
         vectorDrawables.useSupportLibrary = true
+        // Only the ABIs the Rust library is built for (koruNativeTargets
+        // below). Without the filter a dependency's 32-bit libraries make the
+        // APK claim armeabi-v7a and x86 too, and a 32-bit phone would install
+        // it and crash loading libkoru_mobile.so instead of refusing it.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         // The git branch and commit this app was built from, advertised to
         // linked devices beside versionName so a mixed-build mesh names itself
         // — the commit is what decides "same code" against a desktop whose
@@ -81,6 +140,23 @@ android {
         buildConfig = true
     }
 
+    koruSigning?.let { signing ->
+        signingConfigs.create("release") {
+            storeFile = file(signing.getValue("koruSigningStoreFile"))
+            storePassword = signing.getValue("koruSigningStorePassword")
+            keyAlias = signing.getValue("koruSigningKeyAlias")
+            keyPassword = signing.getValue("koruSigningKeyPassword")
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            // Null leaves the release APK unsigned, never signed with the
+            // debug key: a published APK is the release key's or nothing.
+            signingConfig = koruSigning?.let { signingConfigs.getByName("release") }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -93,10 +169,17 @@ android {
         // assets/fonts/ stays out of the APK. Fetched, not committed:
         // `koru.bat fonts` or `./koru.sh fonts` at the repository root.
         assets.srcDir("../../../assets/fonts/android")
-        // A File, not a Provider: AGP 9 refuses providers in the source set
-        // API. The native tasks below write here, and mergeDebugNativeLibs
-        // depends on them, so the provider's task wiring is not needed.
-        jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs").get().asFile)
+    }
+    // One native directory per build type, because the debug APK carries the
+    // debug library and the release APK the optimized one: a shared directory
+    // would hand whichever ran last to both. A File, not a Provider: AGP 9
+    // refuses providers in the source set API. The native tasks below write
+    // here, and the merge tasks depend on them, so the provider's task wiring
+    // is not needed.
+    for (buildType in listOf("debug", "release")) {
+        sourceSets.named(buildType) {
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/$buildType").get().asFile)
+        }
     }
     sourceSets.named("test") {
         resources.srcDir("../../../contracts/testdata")
@@ -131,47 +214,70 @@ val koruNativeTargets = listOf(
     KoruNativeTarget("X8664", "x86_64-linux-android", "x86_64", "x86_64-linux-android29"),
 )
 
-val koruNativeTasks = koruNativeTargets.map { target ->
-    tasks.register<Exec>("buildKoruNative${target.taskSuffix}") {
-        group = "build"
-        description = "Builds koru_mobile for Android ${target.abi}."
-        workingDir(koruRepoRoot)
+// The debug variant builds the debug library, as it always has; the release
+// variant builds `cargo build --release`, the library a published APK ships.
+data class KoruNativeProfile(val buildType: String, val cargoProfileDir: String, val cargoArgs: List<String>)
 
-        val sdk = koruAndroidSdk.orNull.orEmpty()
-        val toolchain = file("$sdk/ndk/$koruNdkVersion/toolchains/llvm/prebuilt/$koruHostTag/bin")
-        val clang = toolchain.resolve("${target.clangPrefix}-clang$koruCommandSuffix")
-        val clangxx = toolchain.resolve("${target.clangPrefix}-clang++$koruCommandSuffix")
-        val ar = toolchain.resolve("llvm-ar$koruExeSuffix")
-        val targetEnv = target.rustTarget.replace('-', '_')
-        val cargoTargetEnv = target.rustTarget.replace('-', '_').uppercase()
+val koruNativeProfiles = listOf(
+    KoruNativeProfile("debug", "debug", emptyList()),
+    KoruNativeProfile("release", "release", listOf("--release")),
+)
 
-        doFirst {
-            require(sdk.isNotBlank()) { "ANDROID_HOME or ANDROID_SDK_ROOT must name an Android SDK" }
-            require(clang.isFile) { "Android NDK compiler not found: $clang" }
-        }
-        environment("CARGO_TARGET_${cargoTargetEnv}_LINKER", clang.absolutePath)
-        environment("CARGO_TARGET_${cargoTargetEnv}_AR", ar.absolutePath)
-        environment("CC_$targetEnv", clang.absolutePath)
-        environment("CXX_$targetEnv", clangxx.absolutePath)
-        environment("AR_$targetEnv", ar.absolutePath)
-        commandLine("cargo", "build", "-p", "koru-mobile-native", "--target", target.rustTarget)
+val koruNativeTasks = koruNativeProfiles.associate { profile ->
+    val variant = profile.buildType.replaceFirstChar { it.uppercase() }
+    profile.buildType to koruNativeTargets.map { target ->
+        // The debug tasks keep their old names, which koru.bat and people's
+        // muscle memory use; the release ones are suffixed.
+        val taskName = "buildKoruNative${target.taskSuffix}" + if (profile.buildType == "debug") "" else variant
+        tasks.register<Exec>(taskName) {
+            group = "build"
+            description = "Builds koru_mobile (${profile.buildType}) for Android ${target.abi}."
+            workingDir(koruRepoRoot)
 
-        doLast {
-            // Cargo honours CARGO_TARGET_DIR, so the library is found there too.
-            val cargoTarget = System.getenv("CARGO_TARGET_DIR")?.takeIf { it.isNotBlank() }?.let(::File)
-                ?: koruRepoRoot.resolve("target")
-            val library = cargoTarget.resolve("${target.rustTarget}/debug/libkoru_mobile.so")
-            require(library.isFile) { "Cargo did not produce $library" }
-            copy {
-                from(library)
-                into(layout.buildDirectory.dir("generated/jniLibs/${target.abi}"))
+            val sdk = koruAndroidSdk.orNull.orEmpty()
+            val toolchain = file("$sdk/ndk/$koruNdkVersion/toolchains/llvm/prebuilt/$koruHostTag/bin")
+            val clang = toolchain.resolve("${target.clangPrefix}-clang$koruCommandSuffix")
+            val clangxx = toolchain.resolve("${target.clangPrefix}-clang++$koruCommandSuffix")
+            val ar = toolchain.resolve("llvm-ar$koruExeSuffix")
+            val targetEnv = target.rustTarget.replace('-', '_')
+            val cargoTargetEnv = target.rustTarget.replace('-', '_').uppercase()
+
+            doFirst {
+                require(sdk.isNotBlank()) { "ANDROID_HOME or ANDROID_SDK_ROOT must name an Android SDK" }
+                require(clang.isFile) { "Android NDK compiler not found: $clang" }
+            }
+            environment("CARGO_TARGET_${cargoTargetEnv}_LINKER", clang.absolutePath)
+            environment("CARGO_TARGET_${cargoTargetEnv}_AR", ar.absolutePath)
+            environment("CC_$targetEnv", clang.absolutePath)
+            environment("CXX_$targetEnv", clangxx.absolutePath)
+            environment("AR_$targetEnv", ar.absolutePath)
+            commandLine(
+                listOf("cargo", "build", "-p", "koru-mobile-native", "--target", target.rustTarget) + profile.cargoArgs,
+            )
+
+            doLast {
+                // Cargo honours CARGO_TARGET_DIR, so the library is found there too.
+                val cargoTarget = System.getenv("CARGO_TARGET_DIR")?.takeIf { it.isNotBlank() }?.let(::File)
+                    ?: koruRepoRoot.resolve("target")
+                val library = cargoTarget.resolve("${target.rustTarget}/${profile.cargoProfileDir}/libkoru_mobile.so")
+                require(library.isFile) { "Cargo did not produce $library" }
+                copy {
+                    from(library)
+                    into(layout.buildDirectory.dir("generated/jniLibs/${profile.buildType}/${target.abi}"))
+                }
             }
         }
     }
 }
 
+// The folder merge reads what the native tasks wrote, and the native-library
+// merge packages it, so both wait for them: an APK without its Rust library
+// starts and dies on the first call into it.
 tasks.configureEach {
-    if (name == "mergeDebugNativeLibs") dependsOn(koruNativeTasks)
+    for ((buildType, nativeTasks) in koruNativeTasks) {
+        val variant = buildType.replaceFirstChar { it.uppercase() }
+        if (name == "merge${variant}NativeLibs" || name == "merge${variant}JniLibFolders") dependsOn(nativeTasks)
+    }
 }
 
 // **An APK without its fonts must not build.** The asset source above once

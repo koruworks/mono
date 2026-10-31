@@ -491,6 +491,37 @@ To reinstall on or launch against one specific device, use its serial:
 & $adb -s emulator-5554 shell am start -n do.koru.app/app.koru.mobile.MainActivity
 ```
 
+## Release build and the nightly APK
+
+`assembleRelease` builds the Rust library release-optimized for both ABIs
+(`cargo build --release`, copied from `target/<triple>/release/`), then
+minifies and packages the app:
+
+```powershell
+.\gradlew.bat assembleRelease
+```
+
+Without signing properties the APK is unsigned,
+`app\build\outputs\apk\release\app-release-unsigned.apk`, which a phone will
+not install. Gradle project properties (`-P` on the command line, or
+`ORG_GRADLE_PROJECT_<name>` in the environment) shape a published build
+(TECHNICAL.final §5.4):
+
+| Property | Effect |
+| --- | --- |
+| `koruNightly=true` | The nightly app: `do.koru.app.nightly`, labelled *Koru Nightly*, installable beside Koru. It reuses Koru's icons. |
+| `koruVersionCode` | Android's `versionCode`, 1 to 2,100,000,000; 1 when absent. The nightly's is the build time in minutes since 2026-01-01 UTC (`koru-release android-version-code`). |
+| `koruVersionName` | The version the app shows, the release's full version; the workspace's when absent. |
+| `koruSigningStoreFile`, `koruSigningStorePassword`, `koruSigningKeyAlias`, `koruSigningKeyPassword` | Signs the release build with that key. All four or none: a partial set fails the build. |
+
+The nightly workflow (`.github/workflows/release-build.yml`, job
+`android`) passes all of them, the key from the `nightly` environment's
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and
+`ANDROID_KEY_PASSWORD` secrets and its `ANDROID_KEY_ALIAS` variable. Until
+those exist it builds the APK unsigned and does not publish it. The release
+key is permanent (D12, D13): it lives in the vault and is never generated or
+replaced in this repository.
+
 ## Inspect logs with adb logcat
 
 Koru's structured development logger uses the `KoruMobile` tag and deliberately
