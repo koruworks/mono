@@ -8,8 +8,6 @@
 //! list comes from the AI service's settings; readiness comes from the same
 //! validation answer every provider gives; the words come from `koru-i18n`.
 
-use std::collections::HashMap;
-
 use koru_ai_core::{
     AGENT_DEFAULT_MODEL, AgentToolKind, AiProviderId, ToolActivity, ToolActivityStatus,
     ToolApproval,
@@ -72,37 +70,6 @@ impl AgentStatus {
 
     pub(crate) fn selectable(self) -> bool {
         self == Self::Ready
-    }
-}
-
-/// One row of the composer's picker: a model of the chat's provider, the
-/// *Local agents* heading, or an agent.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PickerRow {
-    Model(String),
-    Header,
-    Agent(AiProviderId),
-    /// One of an agent's model groups, when it has more than one.
-    Group {
-        agent: AiProviderId,
-        group: String,
-    },
-    /// One model of an agent, by the agent's own id.
-    AgentModel {
-        agent: AiProviderId,
-        id: String,
-    },
-    /// A word under an expanded agent: listing, failed, or nothing listed.
-    Note(Key),
-}
-
-impl PickerRow {
-    pub(crate) fn selectable(&self, status: &HashMap<AiProviderId, AgentStatus>) -> bool {
-        match self {
-            Self::Model(_) | Self::Group { .. } | Self::AgentModel { .. } => true,
-            Self::Header | Self::Note(_) => false,
-            Self::Agent(id) => status.get(id).is_some_and(|status| status.selectable()),
-        }
     }
 }
 
@@ -225,21 +192,6 @@ pub(crate) fn fallback_label(id: &str, group: &str) -> String {
     } else {
         words.join(" ")
     }
-}
-
-/// How one picker row draws.
-pub(crate) struct PickerRowView {
-    pub(crate) label: String,
-    pub(crate) level: u8,
-    pub(crate) dim: bool,
-    pub(crate) current: bool,
-    pub(crate) trailing: Trailing,
-}
-
-pub(crate) enum Trailing {
-    None,
-    Word(String),
-    Caret { expanded: bool },
 }
 
 pub(crate) fn is_agent_provider(provider: &AiProviderId) -> bool {
@@ -447,6 +399,7 @@ mod tests {
             description: None,
             group_name: None,
             legacy: false,
+            reasoning: None,
         }
     }
 
@@ -786,79 +739,19 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The picker's rows. A chat that has begun offers its own provider's
-    /// models. One with no message yet, or no chat yet, offers **only the
-    /// local agents**, each with its readiness word: Koru AI, OpenAI and
-    /// Ollama are not offered to start on (the user's call, 2026-10-31).
-    pub(crate) fn chat_model_rows(&self) -> Vec<PickerRow> {
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.as_slice())
-            .unwrap_or_default();
-        let open = self.transcript.is_none() || chat_is_empty(self.transcript.as_ref());
-        let mut rows: Vec<PickerRow> = if open {
-            Vec::new()
-        } else {
-            self.chat_model_options()
-                .into_iter()
-                .map(PickerRow::Model)
-                .collect()
-        };
-        if !agents.is_empty() && open {
-            rows.push(PickerRow::Header);
-            for agent in agents {
-                rows.push(PickerRow::Agent(agent.id.clone()));
-                if self.expanded_agent.as_ref() == Some(&agent.id) {
-                    self.push_agent_model_rows(&agent.id, &mut rows);
-                }
-            }
+    /// An agent model's levels, as its agent's listing carries them; `None`
+    /// for any other provider, and for a model listed with none.
+    pub(crate) fn agent_model_control(
+        &self,
+        model: &koru_ai_core::ModelSelection,
+    ) -> Option<&koru_ai_core::ReasoningControl> {
+        if !is_agent_provider(&model.provider) {
+            return None;
         }
-        rows
-    }
-
-    /// Under an expanded agent: the *Default* row first — the agent's own
-    /// `default` entry when it lists one — then its models, by group when
-    /// there is more than one. A failed listing still offers the default.
-    fn push_agent_model_rows(&self, agent: &AiProviderId, rows: &mut Vec<PickerRow>) {
-        let default_row = PickerRow::AgentModel {
-            agent: agent.clone(),
-            id: AGENT_DEFAULT_MODEL.to_owned(),
-        };
-        match self.agent_models.get(agent) {
-            None | Some(AgentModels::Loading) => {
-                rows.push(PickerRow::Note(Key::AiAgentModelsLoading))
-            }
-            Some(AgentModels::Failed) => {
-                rows.push(PickerRow::Note(Key::AiAgentModelsFailed));
-                rows.push(default_row);
-            }
-            Some(AgentModels::Listed(models)) => {
-                rows.push(default_row);
-                let groups = model_groups(models);
-                let model_row = |model: &AgentModelView| PickerRow::AgentModel {
-                    agent: agent.clone(),
-                    id: model.id.clone(),
-                };
-                if groups.len() <= 1 {
-                    rows.extend(listed_models(models).map(model_row));
-                    return;
-                }
-                for group in groups {
-                    rows.push(PickerRow::Group {
-                        agent: agent.clone(),
-                        group: group.clone(),
-                    });
-                    if self.expanded_group.as_ref() == Some(&group) {
-                        rows.extend(
-                            listed_models(models)
-                                .filter(|model| model.group == group)
-                                .map(model_row),
-                        );
-                    }
-                }
-            }
-        }
+        self.listed_agent_models(&model.provider)
+            .iter()
+            .find(|listed| listed.id == model.requested_model)
+            .and_then(|listed| listed.reasoning.as_ref())
     }
 
     /// The models listed for `agent`, empty while none are known.
@@ -869,166 +762,11 @@ impl crate::ChatSurface {
         }
     }
 
-    pub(crate) fn picker_row_view(
-        &self,
-        row: &PickerRow,
-        agents: &[AgentProviderView],
-        current_provider: Option<&AiProviderId>,
-        current_model: &str,
-    ) -> PickerRowView {
-        let on_agent = |agent: &AiProviderId| current_provider == Some(agent);
-        match row {
-            PickerRow::Model(model) => PickerRowView {
-                label: model.clone(),
-                level: 0,
-                dim: false,
-                current: current_provider.is_some_and(|provider| !is_agent_provider(provider))
-                    && current_model == model,
-                trailing: Trailing::None,
-            },
-            PickerRow::Header => PickerRowView {
-                label: t(self.lang, Key::AiLocalAgents).to_owned(),
-                level: 0,
-                dim: true,
-                current: false,
-                trailing: Trailing::None,
-            },
-            PickerRow::Agent(agent) => {
-                let status = self
-                    .agent_status
-                    .get(agent)
-                    .copied()
-                    .unwrap_or(AgentStatus::Checking);
-                PickerRowView {
-                    label: agent_label(agents, agent),
-                    level: 0,
-                    dim: !status.selectable(),
-                    current: on_agent(agent) && current_model == AGENT_DEFAULT_MODEL,
-                    trailing: match status.word(self.lang) {
-                        Some(word) => Trailing::Word(word),
-                        None => Trailing::Caret {
-                            expanded: self.expanded_agent.as_ref() == Some(agent),
-                        },
-                    },
-                }
-            }
-            PickerRow::Group { agent, group } => {
-                let models = self.listed_agent_models(agent);
-                PickerRowView {
-                    label: group_label(models, group),
-                    level: 1,
-                    dim: false,
-                    current: on_agent(agent)
-                        && listed_models(models)
-                            .any(|model| &model.group == group && model.id == current_model)
-                        && self.expanded_group.as_ref() != Some(group),
-                    trailing: Trailing::Caret {
-                        expanded: self.expanded_group.as_ref() == Some(group),
-                    },
-                }
-            }
-            PickerRow::AgentModel { agent, id } => {
-                let models = self.listed_agent_models(agent);
-                let default = id == AGENT_DEFAULT_MODEL;
-                let single_group = default || model_groups(models).len() <= 1;
-                let label = if default {
-                    default_model_label(models, self.lang)
-                } else {
-                    models
-                        .iter()
-                        .find(|model| &model.id == id)
-                        .map(model_label)
-                        .unwrap_or_else(|| fallback_label(id, ""))
-                };
-                PickerRowView {
-                    label,
-                    level: if single_group { 1 } else { 2 },
-                    dim: false,
-                    current: on_agent(agent) && current_model == id,
-                    trailing: Trailing::None,
-                }
-            }
-            PickerRow::Note(key) => PickerRowView {
-                label: t(self.lang, *key).to_owned(),
-                level: 1,
-                dim: true,
-                current: false,
-                trailing: Trailing::None,
-            },
-        }
-    }
-
-    /// The picker row at `index`, as drawn.
-    fn chat_model_row_rect(&self, index: usize) -> Option<crate::Rect> {
-        let panel = self.chat_model_panel()?;
-        let visible = index.checked_sub(self.chat_model_offset)?;
-        Some(crate::Rect::new(
-            panel.x + 4.0,
-            panel.y + 4.0 + visible as f32 * 30.0,
-            panel.w - 8.0,
-            30.0,
-        ))
-    }
-
-    /// A click on picker row `index`. The caret end of an agent row expands
-    /// it and lists its models; anywhere else picks the agent with its own
-    /// default model.
-    pub(crate) fn click_picker_row(&mut self, index: usize, x: f32) -> bool {
-        let Some(row) = self.chat_model_rows().get(index).cloned() else {
-            return true;
-        };
-        if !row.selectable(&self.agent_status) {
-            return true;
-        }
-        match row {
-            PickerRow::Model(model) => {
-                self.close_picker();
-                self.change_chat_model(model)
-            }
-            PickerRow::Header | PickerRow::Note(_) => true,
-            PickerRow::Agent(agent) => {
-                let caret_end = self
-                    .chat_model_row_rect(index)
-                    .is_some_and(|rect| x >= rect.x + rect.w - 36.0);
-                if caret_end {
-                    self.toggle_agent_models(agent);
-                    return true;
-                }
-                self.close_picker();
-                self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
-            }
-            PickerRow::Group { group, .. } => {
-                self.expanded_group = if self.expanded_group.as_ref() == Some(&group) {
-                    None
-                } else {
-                    Some(group)
-                };
-                true
-            }
-            PickerRow::AgentModel { agent, id } => {
-                self.close_picker();
-                self.choose_agent_model(agent, id)
-            }
-        }
-    }
-
     pub(crate) fn close_picker(&mut self) {
         self.chat_model_open = false;
-        self.chat_model_scroll_drag = None;
-    }
-
-    /// Expand or collapse an agent's row. Its models are usually already
-    /// here; they are asked for when nothing is, or the last ask failed.
-    fn toggle_agent_models(&mut self, agent: AiProviderId) {
-        if self.expanded_agent.as_ref() == Some(&agent) {
-            self.expanded_agent = None;
-            return;
-        }
-        self.expanded_agent = Some(agent.clone());
-        self.expanded_group = None;
-        if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
-            self.ask_agent_models(agent);
-        }
+        self.picker.scroll_drag = None;
+        self.picker.legacy = None;
+        self.picker_tooltip.clear();
     }
 
     /// Ask for every agent's models, so the picker opens on lists already
@@ -1123,7 +861,8 @@ impl crate::ChatSurface {
     /// Make a local agent the one who answers this chat, on the model
     /// named or its own default — or, with no chat yet, the one a new chat
     /// is made with. Only offered on a chat with no message yet, and only
-    /// for an agent that is ready.
+    /// for an agent that is ready. The chat keeps its level when the new
+    /// model offers it, and is back on *Default* otherwise (D18).
     pub(crate) fn choose_agent_model(
         &mut self,
         agent: AiProviderId,
@@ -1136,11 +875,21 @@ impl crate::ChatSurface {
         {
             return true;
         }
-        self.start_chat_on(koru_ai_core::ModelSelection {
+        let mut model = koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,
             default_reasoning: koru_ai_core::ReasoningChoice::Default,
-        })
+        };
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.chat.current_model.default_reasoning);
+        if let (Some(current), Some(control)) = (current, self.agent_model_control(&model))
+            && crate::effort::stops(control).contains(&current)
+        {
+            model.default_reasoning = current;
+        }
+        self.start_chat_on(model)
     }
 
     /// Answer an agent's permission request by the choice clicked.

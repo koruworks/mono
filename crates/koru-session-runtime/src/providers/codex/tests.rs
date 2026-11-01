@@ -1970,9 +1970,13 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
                 "result": {
                     "data": [
                         { "isDefault": true, "model": "fixture-default", "inputModalities": ["text"],
-                          "displayName": "Fixture", "description": "fixture" },
+                          "displayName": "Fixture", "description": "fixture",
+                          "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "xhigh"},
+                                                        {"reasoningEffort": "none"}],
+                          "defaultReasoningEffort": "xhigh" },
                         { "isDefault": false, "model": "fixture-other", "inputModalities": ["text"],
-                          "displayName": "", "description": null },
+                          "displayName": "", "description": null,
+                          "upgrade": "fixture-default" },
                         { "isDefault": false, "model": "voice-only", "inputModalities": ["audio"] }
                     ],
                     "nextCursor": null
@@ -1998,6 +2002,25 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
     // is no name, and the picker formats the id instead.
     let first = &models.models()[0];
     assert_eq!(first.name.as_ref().unwrap().as_str(), "Fixture");
+    // Its efforts are captured in Koru's words, its default with them;
+    // they are never applied (a chosen effort has no Codex route yet).
+    let reasoning = first.reasoning.as_ref().unwrap();
+    assert_eq!(
+        reasoning.levels,
+        [
+            koru_session_protocol::LaunchReasoning::Low,
+            koru_session_protocol::LaunchReasoning::XHigh
+        ]
+    );
+    assert_eq!(
+        reasoning.default,
+        Some(koru_session_protocol::LaunchReasoning::XHigh)
+    );
+    assert!(reasoning.off);
+    assert!(models.models()[1].reasoning.is_none());
+    // Codex names a model to move to: its own mark for an older one (D11).
+    assert!(!models.models()[0].legacy);
+    assert!(models.models()[1].legacy);
     assert_eq!(first.description.as_ref().unwrap().as_str(), "fixture");
     assert!(models.models()[1].name.is_none());
     assert!(models.models()[1].description.is_none());

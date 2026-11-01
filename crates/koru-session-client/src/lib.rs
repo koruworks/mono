@@ -872,6 +872,16 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        // `xhigh` is a v18 token: an older host could not read the request.
+        if selection.as_ref().is_some_and(|selection| {
+            selection.reasoning == Some(koru_session_protocol::LaunchReasoning::XHigh)
+        }) && self.host.agreement.version
+            < koru_session_protocol::PROVIDER_MODEL_FACTS_PROTOCOL_VERSION
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         match self.request(Request::CreateProfileSession {
             create: CreateProfileSession {
                 idempotency_key,

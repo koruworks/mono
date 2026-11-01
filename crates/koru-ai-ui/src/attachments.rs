@@ -1107,6 +1107,16 @@ impl ChatSurface {
         if self.clipboard_reading {
             return false;
         }
+        // A picture is stored under its chat, so a new chat not made yet is
+        // made for it — a pasted picture is the chat's first content — and
+        // the paste is read once the service has it.
+        if self.chat_unmade() {
+            let chat = self.shown_chat_id();
+            if self.make_unmade_chat() {
+                self.paste_after_create = chat;
+            }
+            return true;
+        }
         self.clipboard_reading = self.attachment_work.read_clipboard();
         self.clipboard_reading
     }

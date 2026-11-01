@@ -44,7 +44,9 @@ pub(crate) fn stops(control: &ReasoningControl) -> Vec<ReasoningChoice> {
 }
 
 /// What the chat's setting means under the control: the stop the chip
-/// reads and the slider marks. `None` where the model has no control.
+/// reads and the slider marks. `None` where the model has no control. A
+/// model that states no default level reads *Default* while the chat
+/// chooses none, and the slider marks no stop: the agent decides.
 pub(crate) fn resolve(
     control: &ReasoningControl,
     choice: ReasoningChoice,
@@ -71,7 +73,7 @@ pub(crate) fn resolve(
             ReasoningChoice::Level(level) if values.contains(&level) => {
                 ReasoningChoice::Level(level)
             }
-            _ => ReasoningChoice::Level(*default),
+            _ => default.map_or(ReasoningChoice::Default, ReasoningChoice::Level),
         }),
     }
 }
@@ -140,8 +142,11 @@ pub(crate) fn nearest(slider: &Slider, x: f32) -> Option<ReasoningChoice> {
         .map(|(_, choice)| *choice)
 }
 
+/// The slider: its track, a stop per level with its word under it, the
+/// current one marked. The model picker's footer puts the level's word and
+/// ↺ above it (§9.3). `focused` rings the current stop for the keyboard.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw(
+pub(crate) fn draw_track(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
@@ -150,18 +155,9 @@ pub(crate) fn draw(
     control: &ReasoningControl,
     current: ReasoningChoice,
     pointer: (f32, f32),
+    focused: bool,
 ) {
     let p = theme::p();
-    let heading = format!("{} · {}", t(lang, Key::AiReasoning), word(lang, current));
-    let line = engine.simple_layout(&heading, role::meta());
-    scene::draw_layout_first_line(
-        canvas,
-        root,
-        &line,
-        section.x + 8.0,
-        section.y + 6.0,
-        Some(p.text_dim),
-    );
     let slider = slider(section, control);
     if let (Some((first, _)), Some((last, _))) = (slider.stops.first(), slider.stops.last()) {
         scene::fill(
@@ -193,6 +189,15 @@ pub(crate) fn draw(
             },
             &Circle::new((*x as f64, slider.track_y as f64), radius),
         );
+        if focused && is_current {
+            scene::stroke(
+                canvas,
+                root,
+                p.accent,
+                1.0,
+                &Circle::new((*x as f64, slider.track_y as f64), radius + 3.0),
+            );
+        }
         let label = engine.simple_layout(&word(lang, *choice), role::meta());
         scene::draw_layout_first_line(
             canvas,
@@ -216,7 +221,7 @@ mod tests {
                 ReasoningLevel::Medium,
                 ReasoningLevel::High,
             ],
-            default: ReasoningLevel::Medium,
+            default: Some(ReasoningLevel::Medium),
             supports_off: false,
         }
     }
@@ -287,7 +292,7 @@ mod tests {
                     ReasoningLevel::XHigh,
                     ReasoningLevel::Max,
                 ],
-                default: ReasoningLevel::Medium,
+                default: Some(ReasoningLevel::Medium),
                 supports_off: true,
             }) {
                 assert!(!word(lang, choice).is_empty());

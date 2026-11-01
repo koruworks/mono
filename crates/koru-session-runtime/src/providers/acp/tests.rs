@@ -5,7 +5,7 @@ use crate::NoopAttachmentPathResolver;
 use crate::providers::acp_fake::{
     FakeAcpConfig, FakeAcpPeer, FakeAcpState, PERMISSION_ID, SESSION, late_update,
 };
-use koru_session_protocol::ProviderKind;
+use koru_session_protocol::{LaunchSelection, ProviderKind};
 use std::sync::{Arc, Mutex};
 
 struct Script {
@@ -1189,4 +1189,129 @@ fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
         outputs[1].as_deref().map(str::len),
         Some(koru_session_protocol::TOOL_CONTENT_CHARS)
     );
+}
+
+/// A session that offers models and, on the one it starts on, levels.
+fn leveled_peer() -> FakeAcpConfig {
+    let effort = |current: &str, values: &[&str]| {
+        json!({"id":"effort","type":"select","category":"thought_level","currentValue":current,
+            "options":values.iter().map(|value| json!({"value":value,"name":value})).collect::<Vec<_>>()})
+    };
+    FakeAcpConfig {
+        config_options: vec![
+            json!({"id":"model","type":"select","category":"model","currentValue":"default",
+                "options":[{"value":"default","name":"Default"},{"value":"opus","name":"Opus"},
+                           {"value":"haiku","name":"Haiku"}]}),
+            effort("default", &["default", "low", "high"]),
+        ],
+        thought_by_model: vec![
+            (
+                "default".into(),
+                effort("default", &["default", "low", "high"]),
+            ),
+            (
+                "opus".into(),
+                effort("default", &["default", "low", "high", "max"]),
+            ),
+        ],
+        ..FakeAcpConfig::default()
+    }
+}
+
+fn select(
+    model: Option<&str>,
+    reasoning: Option<koru_session_protocol::LaunchReasoning>,
+) -> Option<LaunchSelection> {
+    Some(LaunchSelection {
+        model: model.map(|model| model.parse().unwrap()),
+        reasoning,
+    })
+}
+
+/// **D18: the level is set after the model, from the model's own answer,
+/// and checked applied.**
+#[test]
+fn a_chosen_level_is_set_after_the_model_and_checked() {
+    let mut h = harness(leveled_peer(), None, None);
+    h.control.config.selection = select(
+        Some("opus"),
+        Some(koru_session_protocol::LaunchReasoning::Max),
+    );
+    start(&mut h.control);
+    let state = h.state.lock().unwrap();
+    let sets: Vec<(String, String)> = state
+        .sent()
+        .iter()
+        .filter(|message| message["method"] == "session/set_config_option")
+        .map(|message| {
+            (
+                message["params"]["configId"].as_str().unwrap().to_owned(),
+                message["params"]["value"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sets,
+        [
+            ("model".into(), "opus".into()),
+            ("effort".into(), "max".into())
+        ],
+        "max is opus's, offered only once opus is set"
+    );
+}
+
+/// **D19: a level the session does not offer, or does not report applied,
+/// fails the start as a refused level** — never a run at another level.
+#[test]
+fn a_level_not_offered_or_not_applied_is_refused() {
+    let mut h = harness(leveled_peer(), None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::Max));
+    let refused = h
+        .control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::ProviderModelUnavailable);
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+
+    let mut ignoring = leveled_peer();
+    ignoring.ignore_level = true;
+    let mut h = harness(ignoring, None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::High));
+    let refused = h
+        .control
+        .start(AgentStart::fresh(SessionId::mint(), None))
+        .unwrap_err();
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+
+    // A session with no level option at all refuses any level.
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    h.control.config.selection = select(None, Some(koru_session_protocol::LaunchReasoning::Low));
+    assert_eq!(
+        h.control
+            .start(AgentStart::fresh(SessionId::mint(), None))
+            .unwrap_err()
+            .diagnostic,
+        ProviderDiagnostic::ReasoningRejected
+    );
+}
+
+/// **D16: the walk reads each model's own levels** by setting the session's
+/// model to it; a model with none reads none.
+#[test]
+fn the_walk_reads_each_models_levels() {
+    let mut h = harness(leveled_peer(), None, None);
+    start(&mut h.control);
+    let walked = h.control.walk_levels();
+    let levels = |id: &str| {
+        walked
+            .iter()
+            .find(|model| model.id.as_str() == id)
+            .unwrap()
+            .reasoning
+            .as_ref()
+            .map(|reasoning| reasoning.levels.len())
+    };
+    assert_eq!(levels("default"), Some(2));
+    assert_eq!(levels("opus"), Some(3));
+    assert_eq!(levels("haiku"), None);
 }

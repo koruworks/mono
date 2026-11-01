@@ -1247,15 +1247,28 @@ opens, goes straight to the chat: the greeting, and the composer with its
 chips, workspace access, approval mode, the model chip and send. Until a
 model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
-waits in the composer. The picker lists **Koru AI**, OpenAI (once a key has
-been saved), **Ollama** and the **Local agents**. A local agent starts the chat
-at once; Koru AI, OpenAI and Ollama are checked first — OpenAI and Ollama
-start on their saved model, or the first one they list — and one that cannot
-start says why in the line above the composer (*The hosted service is
-unreachable…*, Ollama not running, no models installed) and opens nothing
-else. Whatever you pick is remembered: the next new chat opens on it, as it
-did before. Until a chat has a message, the picker also offers the other
-providers, so a chat can still change provider before it starts.
+waits in the composer. The model picker shows your local agents down its
+left side, one icon each, with the selected agent's models beside them under
+their own names, and a **Search models…** box above the list (typing narrows
+it; every word must match). The ↻ at the end of the search box asks the agent
+for its list again — after you connect a new provider in OpenCode, say. A
+chat that has begun on Koru AI, OpenAI or Ollama lists that provider's
+models instead, at the top of the rail. Along the bottom is the model's
+reasoning level, for models that have levels: its name, ↺ to go back to the
+model's own default, and a slider with one stop per level. A local agent
+starts at the level you choose before the first message; after that the level
+is shown but cannot change for that chat. The picker works from the keyboard
+too: type to search, Up and Down to pick, Enter to choose, Tab to move between
+the search box, the agents, the list and the level, Left and Right to move the
+level, Esc to clear the search or close. Picking a model only sets it: the chip
+names it, and you can still choose the working folder or change your mind.
+The chat is made when you send its first message, which then goes into it —
+so a new chat you leave without writing anything never appears in **Chats**.
+Pasting a picture also makes the chat, because the picture is stored with it.
+If the chat cannot be made, your message comes back to the composer and the
+line above it says why. Whatever you pick is remembered: the next new chat
+opens on it, as it did before. Until a chat has a message, it can still
+change agent.
 
 The provider setup page — the **Koru AI**, OpenAI and **On this device —
 Ollama** cards with **Save & start chat** — is not shown for now: no menu,

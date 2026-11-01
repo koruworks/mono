@@ -91,6 +91,31 @@ impl ManagedProviderRegistry {
             .map(|entry| entry.factory.catalog_source())
     }
 
+    /// Whether `kind`'s levels are read by the catalog's walk (D16).
+    pub fn walks_model_levels(&self, kind: &ProviderKind) -> bool {
+        self.entries
+            .get(kind)
+            .is_some_and(|entry| entry.factory.walks_model_levels())
+    }
+
+    /// Walk `kind`'s models for their levels (D16).
+    pub fn walk_model_levels(
+        &self,
+        kind: &ProviderKind,
+        working_directory: std::path::PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        let entry = self.entries.get(kind).ok_or_else(|| {
+            ProviderFailure::new(
+                ErrorCode::CapabilityNotNegotiated,
+                ProviderStage::Discovery,
+                ProviderDiagnostic::HandshakeRejected,
+            )
+        })?;
+        entry
+            .factory
+            .walk_model_levels(entry.registration.executable.into(), working_directory)
+    }
+
     pub fn discover_models(
         &self,
         kind: &ProviderKind,

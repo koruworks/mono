@@ -2106,8 +2106,15 @@ fn log_provider_launch_failure(
     );
 }
 
+/// The failure a client is told. Its message is the code's token, except
+/// for a refused reasoning level, which says so (`reasoning_rejected`): the
+/// code is the refused model's, and the chat says which it was (D19).
 fn provider_failure(failure: crate::providers::ProviderFailure) -> SessionFailure {
-    self::failure(failure.code)
+    let mut told = self::failure(failure.code);
+    if failure.diagnostic == koru_session_protocol::ProviderDiagnostic::ReasoningRejected {
+        told.message = koru_session_protocol::REASONING_REJECTED.to_owned();
+    }
+    told
 }
 
 fn millis(duration: std::time::Duration) -> u64 {

@@ -175,6 +175,14 @@ impl AcpConfig {
             })
     }
 
+    /// The reasoning level this session was asked to start at; `None`
+    /// leaves the agent at its own default.
+    pub(super) fn requested_reasoning(&self) -> Option<koru_session_protocol::LaunchReasoning> {
+        self.selection
+            .as_ref()
+            .and_then(|selection| selection.reasoning)
+    }
+
     pub fn with_limits(mut self, limits: ProbeLimits) -> Result<Self, ProviderFailure> {
         limits.validate()?;
         // A caller's budget never undercuts what the route needs to start.

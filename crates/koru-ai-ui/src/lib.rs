@@ -64,6 +64,7 @@ mod composer;
 mod doc_links;
 mod effort;
 mod layout_cache;
+mod model_picker;
 mod privacy;
 mod quote_pills;
 mod reader;
@@ -74,9 +75,7 @@ mod usage;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 
-use agents::{
-    AgentStatus, PickerRow, agent_chip_label, agent_row_body, agent_row_title, is_agent_row,
-};
+use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
 use layout_cache::{BlockLayout, MessageInput, MessageLayout, RebuildStats};
 use quote_pills::{
@@ -410,6 +409,16 @@ pub struct ChatSurface {
     /// current chat, and a tab that wanted a new one must not take it.
     /// Cleared when the chat it asked for arrives.
     fresh_chat_wanted: bool,
+    /// **A new chat not made yet**: the id of the transcript on screen when
+    /// it is a stand-in this surface built ([`ChatSurface::begin_unmade_chat`])
+    /// rather than one the service holds. Its model, folder, privacy and
+    /// workspace access are kept here, on the stand-in, until the first
+    /// message is sent, which makes the chat ([`ChatSurface::make_unmade_chat`]);
+    /// so a chat nobody wrote in never reaches the Chats list.
+    unmade_chat: Option<ChatId>,
+    /// A picture pasted into a chat not made yet: the paste is read once the
+    /// chat it is stored under exists.
+    paste_after_create: Option<ChatId>,
     openai_key: TextInput,
     openai_model: TextInput,
     ollama_endpoint: TextInput,
@@ -453,8 +462,11 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
-    chat_model_offset: usize,
-    chat_model_scroll_drag: Option<f32>,
+    /// The model picker's rail, query, highlight and scroll
+    /// ([`model_picker`]), reset each time it opens.
+    picker: model_picker::PickerState,
+    /// The picker's tooltip: a rail mark, ↻, ↺, a row's full words.
+    picker_tooltip: Tooltip,
     tool_access_open: bool,
     tool_mode_open: bool,
     session_auto_approve_chats: HashSet<ChatId>,
@@ -472,9 +484,6 @@ pub struct ChatSurface {
     /// The agents whose list has been asked for and not answered yet, so a
     /// second ask waits for the first and a list on screen stays there.
     agent_models_asked: std::collections::HashSet<AiProviderId>,
-    /// The agent row expanded in the picker, and the group under it.
-    expanded_agent: Option<AiProviderId>,
-    expanded_group: Option<String>,
     /// The agent picked on the *Local agents* card.
     setup_agent: Option<AiProviderId>,
     /// A folder pick the host owes this surface (the native dialog is the
@@ -643,6 +652,7 @@ impl ChatSurface {
             TextInput::with_text(&mut engine, role::row(), "http://localhost:11434");
         let ollama_model = TextInput::new(&mut engine, role::row());
         let system_prompt = TextArea::new(&mut engine, role::ui());
+        let picker = model_picker::PickerState::new(&mut engine);
         Self {
             mode,
             viewport: Rect::new(0.0, 0.0, 460.0, 680.0),
@@ -692,6 +702,8 @@ impl ChatSurface {
             conversation_hit_rect: Rect::new(14.0, HEADER_H, 432.0, 500.0),
             workspace_search,
             fresh_chat_wanted: false,
+            unmade_chat: None,
+            paste_after_create: None,
             openai_key,
             openai_model,
             ollama_endpoint,
@@ -731,8 +743,8 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
-            chat_model_offset: 0,
-            chat_model_scroll_drag: None,
+            picker,
+            picker_tooltip: Tooltip::default(),
             tool_access_open: false,
             tool_mode_open: false,
             session_auto_approve_chats: HashSet::new(),
@@ -743,8 +755,6 @@ impl ChatSurface {
             agent_status_asked: None,
             agent_models: HashMap::new(),
             agent_models_asked: Default::default(),
-            expanded_agent: None,
-            expanded_group: None,
             setup_agent: None,
             working_folder_request: None,
             response_hover: None,
@@ -911,6 +921,13 @@ impl ChatSurface {
     /// uses this to focus that tab before the read has landed, so a second
     /// pick of the same row does not mint another.
     pub fn current_chat_id(&self) -> Option<ChatId> {
+        // A chat not made yet has no id the service, or a host, can use.
+        self.shown_chat_id().filter(|_| !self.chat_unmade())
+    }
+
+    /// The chat on screen, a stand-in not made yet included, or the one a
+    /// link is opening.
+    fn shown_chat_id(&self) -> Option<ChatId> {
         self.transcript
             .as_ref()
             .map(|t| t.chat.id)
@@ -1059,6 +1076,7 @@ impl ChatSurface {
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
             self.web_search_tooltip.maintenance_deadline(),
+            self.picker_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
@@ -1092,6 +1110,7 @@ impl ChatSurface {
         changed |= self.maintain_remote_images();
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
+        changed |= self.picker_tooltip.maintain(_now);
         // The `@` picker's search answers, delivered on this tick.
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
@@ -1133,6 +1152,7 @@ impl ChatSurface {
     pub fn animating(&self) -> bool {
         self.copy_feedback.animating(Instant::now())
             || self.web_search_tooltip.animating(Instant::now())
+            || self.picker_tooltip.animating(Instant::now())
             || self.pill_strip.animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
     }
@@ -1165,11 +1185,7 @@ impl ChatSurface {
         {
             return CursorIcon::NsResize;
         }
-        if self.chat_model_scroll_drag.is_some()
-            || self
-                .chat_model_scrollbar()
-                .is_some_and(|scrollbar| scrollbar.in_gutter(p.0, p.1))
-        {
+        if self.picker.scroll_drag.is_some() {
             return CursorIcon::NsResize;
         }
         if self.retry_link.is_some_and(|rect| rect.contains(p.0, p.1))
@@ -1222,10 +1238,10 @@ impl ChatSurface {
         if let Some(handled) = self.quote_key(key, text, mods) {
             return handled;
         }
-        if matches!(key, Key::Named(NamedKey::Escape)) && self.chat_model_open {
-            self.chat_model_open = false;
-            self.chat_model_scroll_drag = None;
-            return true;
+        // The open model picker takes the keyboard: its search, rail, list
+        // and footer (§9.5).
+        if let Some(handled) = self.picker_key(key, text, mods) {
+            return handled;
         }
         if self.tool_access_open && self.focus == Focus::WorkspaceSearch {
             if matches!(key, Key::Named(NamedKey::Escape)) {
@@ -1509,6 +1525,11 @@ impl ChatSurface {
         // The composer and every control on it are hit where they are now:
         // centred under an empty chat's greeting, or at the bottom.
         self.composer_rect();
+        // The model picker floats over the conversation and the composer:
+        // a press on it is its own, and one outside it closes it.
+        if let Some(handled) = self.picker_mouse_down(x, y) {
+            return handled;
+        }
         if let Some(handled) = self.strip_mouse_down(x, y) {
             return handled;
         }
@@ -1674,36 +1695,6 @@ impl ChatSurface {
             self.web_search_tooltip.clear();
             return true;
         }
-        if self.chat_model_open {
-            if let Some(scrollbar) = self.chat_model_scrollbar()
-                && scrollbar.in_gutter(x, y)
-            {
-                let grab = if scrollbar.on_thumb(x, y) {
-                    y - scrollbar.thumb_top
-                } else {
-                    scrollbar.thumb_h * 0.5
-                };
-                self.chat_model_scroll_drag = Some(grab);
-                let scroll = scrollbar.scroll_for_pointer(y, grab);
-                self.chat_model_offset = (scroll / 30.0).round() as usize;
-                return true;
-            }
-            if let (Some(section), Some(control)) =
-                (self.effort_section(), self.effort_control().cloned())
-                && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
-            {
-                self.effort_drag = Some(choice);
-                return true;
-            }
-            if let Some(index) = self.chat_model_option_at(x, y) {
-                return self.click_picker_row(index, x);
-            }
-            if !self.chat_model_button().contains(x, y) {
-                self.chat_model_open = false;
-                self.chat_model_scroll_drag = None;
-                return true;
-            }
-        }
         if self.chat_model_button().contains(x, y) {
             if self.chat_model_open {
                 self.history_open = false;
@@ -1714,7 +1705,7 @@ impl ChatSurface {
                 self.open_model_picker();
             }
             if self.chat_model_open
-                && self.chat_model_rows().is_empty()
+                && self.picker_rail().is_empty()
                 && self.effort_control().is_none()
             {
                 if let Some(provider) = self
@@ -1873,8 +1864,7 @@ impl ChatSurface {
     pub fn dismiss_popovers(&mut self) -> bool {
         let mut changed = self.close_chats_pane();
         if self.chat_model_open {
-            self.chat_model_open = false;
-            self.chat_model_scroll_drag = None;
+            self.close_picker();
             changed = true;
         }
         if self.tool_access_open {
@@ -1949,15 +1939,8 @@ impl ChatSurface {
             self.effort_drag = next;
             return changed;
         }
-        if let Some(grab) = self.chat_model_scroll_drag {
-            if let Some(scrollbar) = self.chat_model_scrollbar() {
-                let scroll = scrollbar.scroll_for_pointer(y, grab);
-                let next = (scroll / 30.0).round() as usize;
-                let changed = next != self.chat_model_offset;
-                self.chat_model_offset = next;
-                return changed || old != self.cursor_icon();
-            }
-            return true;
+        if let Some(changed) = self.picker_mouse_move(x, y) {
+            return changed || old != self.cursor_icon();
         }
         if let Some(confirm) = &mut self.confirm {
             let changed = confirm.mouse_move(
@@ -2024,7 +2007,7 @@ impl ChatSurface {
             return handled;
         }
         self.conversation_scroll_drag = None;
-        self.chat_model_scroll_drag = None;
+        self.picker.scroll_drag = None;
         if let Some(choice) = self.effort_drag.take() {
             self.choose_effort(choice);
             return true;
@@ -2141,20 +2124,9 @@ impl ChatSurface {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => (p.y as f32 / 30.0).clamp(-4.0, 4.0),
             };
-            // Every row the picker shows — agents, their models, the
-            // headings — not only the chat's own provider's models, which
-            // are none before a chat exists.
-            let previous = self.chat_model_offset;
-            let max = self
-                .chat_model_rows()
-                .len()
-                .saturating_sub(MODEL_VISIBLE_ROWS);
-            if dy > 0.0 {
-                self.chat_model_offset = self.chat_model_offset.saturating_sub(dy.ceil() as usize);
-            } else if dy < 0.0 {
-                self.chat_model_offset = (self.chat_model_offset + (-dy).ceil() as usize).min(max);
-            }
-            return previous != self.chat_model_offset;
+            // Every row the list shows, whoever's: never only the chat's own
+            // provider's models, which are none before a chat exists.
+            return self.picker_scroll(dy);
         }
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * 38.0,
@@ -2223,6 +2195,9 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        let Some(command) = self.apply_to_unmade_chat(command) else {
+            return true;
+        };
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
             return false;
@@ -2401,31 +2376,73 @@ impl ChatSurface {
                 // Settings first opens instead of after a provider toggle.
                 self.validate_models_after_settings(selected);
             }
-            Update::Created(transcript) => {
+            Update::Created(mut transcript) => {
                 self.fresh_chat_wanted = false;
-                self.forget_input_walk();
+                // **The new chat on screen, made for its first message**: the
+                // message is already on its way behind the create, so its card,
+                // the dots and the wait stay. What was chosen on the stand-in
+                // shows until its own update, queued behind the create, lands.
+                let made = self
+                    .transcript
+                    .as_ref()
+                    .filter(|shown| shown.chat.id == transcript.chat.id)
+                    .cloned();
+                if let Some(stand_in) = &made {
+                    transcript.chat.private = stand_in.chat.private;
+                    transcript.chat.agent_working_folder =
+                        stand_in.chat.agent_working_folder.clone();
+                    transcript.tool_policy = stand_in.tool_policy.clone();
+                    if transcript.reasoning_control.is_none() {
+                        transcript.reasoning_control = stand_in.reasoning_control.clone();
+                    }
+                }
                 self.retain_staged_quotes_for(transcript.chat.id);
-                self.waiting = false;
-                self.attempt = None;
-                self.pending_assistant_message_id = None;
-                self.pending_user = None;
-                self.pulse = None;
-                self.live_usage = None;
-                self.live_sources.clear();
-                self.open_searches.clear();
-                self.draft.clear();
+                if made.is_none() {
+                    self.forget_input_walk();
+                    self.waiting = false;
+                    self.attempt = None;
+                    self.pending_assistant_message_id = None;
+                    self.pending_user = None;
+                    self.pulse = None;
+                    self.live_usage = None;
+                    self.live_sources.clear();
+                    self.open_searches.clear();
+                    self.draft.clear();
+                    self.pending_question_anchor = None;
+                    self.scroll_to_pending_question = false;
+                }
+                let chat = transcript.chat.id;
                 self.remember_chat(&transcript.chat, true);
                 self.transcript = Some(transcript);
-                self.select_context_workspace_if_needed();
+                if made.is_none() {
+                    self.select_context_workspace_if_needed();
+                }
                 self.usage_report = None;
                 self.history_open = false;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
-                self.pending_question_anchor = None;
-                self.scroll_to_pending_question = false;
                 self.expanded_tool_activity = None;
                 self.scroll_loaded_chat_to_bottom = false;
                 self.messages_dirty = true;
+                if made.is_some() {
+                    self.waiting = self.message_on_its_way();
+                }
+                if self.paste_after_create.take() == Some(chat) {
+                    self.begin_attachment_paste();
+                }
+            }
+            Update::CreateFailed(chat, failure) => {
+                // The chat on screen is a stand-in again, so the next send
+                // asks for it again; the message queued behind the create
+                // comes back to the composer with this reason.
+                if self.shown_chat_id() == Some(chat) {
+                    self.unmade_chat = Some(chat);
+                }
+                if self.paste_after_create == Some(chat) {
+                    self.paste_after_create = None;
+                }
+                self.waiting = false;
+                self.status = Some(failure_text(&failure, self.lang));
             }
             Update::Transcript(transcript) => {
                 self.retain_staged_quotes_for(transcript.chat.id);
@@ -2476,7 +2493,8 @@ impl ChatSurface {
             Update::ModelUpdated(chat, reasoning_control) => {
                 let chat_id = chat.id;
                 self.waiting = false;
-                self.chat_model_open = false;
+                // A row chosen in the picker has closed it already; a level
+                // set from its footer leaves it open, on the next step.
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2489,21 +2507,25 @@ impl ChatSurface {
                 self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {
                     transcript.chat = chat.clone();
                 }
-                self.status = Some(if chat.private {
-                    "This chat is private to you.".into()
-                } else {
-                    "Agents and connected assistants can read this chat.".into()
-                });
+                // Behind a new chat's create, it only repeats the stand-in's
+                // choice; the message is what the person is watching.
+                if !self.message_on_its_way() {
+                    self.status = Some(if chat.private {
+                        "This chat is private to you.".into()
+                    } else {
+                        "Agents and connected assistants can read this chat.".into()
+                    });
+                }
             }
             Update::FolderUpdated(chat) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2513,13 +2535,15 @@ impl ChatSurface {
                 self.status = None;
             }
             Update::ToolPolicy(policy) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == policy.chat_id
                 {
                     transcript.tool_policy = policy;
                 }
-                self.status = Some("Workspace access updated for this chat.".into());
+                if !self.message_on_its_way() {
+                    self.status = Some("Workspace access updated for this chat.".into());
+                }
             }
             Update::ToolActivity(activity) => {
                 // A decision response is not the end of the provider turn;
@@ -2537,7 +2561,11 @@ impl ChatSurface {
                 // A tab that asked for a new chat does not take the
                 // service's current one (the CTO's note): the snapshot's
                 // chat is dropped and a chat is created below.
-                let transcript = if self.fresh_chat_wanted {
+                let transcript = if self.chat_unmade() {
+                    // A new chat not made yet stays on screen: deleting or
+                    // clearing others does not take it away.
+                    self.transcript.clone()
+                } else if self.fresh_chat_wanted {
                     None
                 } else {
                     transcript
@@ -2629,7 +2657,15 @@ impl ChatSurface {
                         }
                     }
                     PublicAiEvent::Failed { error, .. } => {
-                        self.status = Some(error.public_message.clone());
+                        // A refused level is said in the person's language.
+                        self.status = Some(
+                            if error.public_message == koru_ai_core::AGENT_REASONING_REJECTED {
+                                koru_i18n::t(self.lang, koru_i18n::Key::AiAgentReasoningRejected)
+                                    .to_owned()
+                            } else {
+                                error.public_message.clone()
+                            },
+                        );
                     }
                     _ => {}
                 }
@@ -2726,6 +2762,7 @@ impl ChatSurface {
             }
             Update::AgentModels(response) => {
                 self.agent_models_asked.remove(&response.provider);
+                self.agent_models_answered(&response.provider);
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
@@ -2735,9 +2772,11 @@ impl ChatSurface {
                 // Listing models… stays, as does a list already on screen;
                 // the next open of the picker asks again.
                 self.agent_models_asked.remove(&provider);
+                self.agent_models_answered(&provider);
             }
             Update::AgentModelsFailed(provider) => {
                 self.agent_models_asked.remove(&provider);
+                self.agent_models_answered(&provider);
                 // A list already on screen stays: the next open asks again.
                 if !matches!(
                     self.agent_models.get(&provider),
@@ -2901,8 +2940,16 @@ impl ChatSurface {
                     code = failure.code,
                     "AI UI send was not accepted; the message is back in the composer"
                 );
-                self.give_back_sent(Some(&failure));
+                if self.chat_unmade() {
+                    // The create failed and said why; the send only follows.
+                    self.give_back_sent(None);
+                } else {
+                    self.give_back_sent(Some(&failure));
+                }
             }
+            // A command queued behind a create that failed: the create
+            // has said why.
+            Update::Failure(_) if self.chat_unmade() => {}
             Update::Failure(message) => {
                 tracing::warn!(
                     target: "koru_ai::ui",
@@ -3128,11 +3175,133 @@ impl ChatSurface {
             }
             return true;
         };
-        self.send_command(Command::Create(CreateChatRequest {
-            chat_id: ChatId::new(),
-            title: DEFAULT_CHAT_TITLE.into(),
-            model: selection,
-        }))
+        self.begin_unmade_chat(selection);
+        true
+    }
+
+    /// **Show a new chat on `model` without making it**: a stand-in
+    /// transcript that only this surface knows. Choosing its model, folder,
+    /// privacy or workspace access changes the stand-in
+    /// ([`Self::apply_to_unmade_chat`]); its first message makes the chat
+    /// ([`Self::make_unmade_chat`]). Leaving it unsent leaves nothing behind.
+    fn begin_unmade_chat(&mut self, model: ModelSelection) {
+        let chat = unmade_transcript(model);
+        let id = chat.chat.id;
+        self.fresh_chat_wanted = false;
+        self.forget_input_walk();
+        self.retain_staged_quotes_for(id);
+        self.usage_report = None;
+        self.expanded_tool_activity = None;
+        self.question_navigation = None;
+        self.question_navigation_anchor = None;
+        self.pending_question_anchor = None;
+        self.scroll_to_pending_question = false;
+        self.scroll_loaded_chat_to_bottom = false;
+        self.transcript = Some(chat);
+        self.unmade_chat = Some(id);
+        self.select_context_workspace_if_needed();
+        self.messages_dirty = true;
+    }
+
+    /// A message sent and not yet accepted: the surface keeps polling for
+    /// its answer whatever else lands first.
+    fn message_on_its_way(&self) -> bool {
+        self.sent_message.is_some() || self.staged_embedded_send.is_some()
+    }
+
+    /// Whether the chat on screen is a stand-in not made yet.
+    fn chat_unmade(&self) -> bool {
+        self.unmade_chat.is_some() && self.unmade_chat == self.shown_chat_id()
+    }
+
+    /// A command about the chat not made yet changes the stand-in instead of
+    /// reaching the service, which has no such chat; `None` when it was
+    /// applied here. Anything else is handed back to be queued.
+    fn apply_to_unmade_chat(&mut self, command: Command) -> Option<Command> {
+        if !self.chat_unmade() {
+            return Some(command);
+        }
+        let unmade = self.unmade_chat?;
+        let transcript = self.transcript.as_mut()?;
+        match command {
+            Command::UpdateModel(chat, request) if chat == unmade => {
+                let provider_changed =
+                    transcript.chat.current_model.provider != request.model.provider;
+                transcript.chat.current_model = request.model;
+                if provider_changed {
+                    transcript.reasoning_control = None;
+                }
+            }
+            Command::UpdatePrivacy(chat, request) if chat == unmade => {
+                transcript.chat.private = request.private;
+            }
+            Command::UpdateFolder(chat, request) if chat == unmade => {
+                transcript.chat.agent_working_folder = request.folder;
+            }
+            Command::UpdateToolPolicy(chat, request) if chat == unmade => {
+                transcript.tool_policy.mode = request.mode;
+                transcript.tool_policy.workspace_ids = request.workspace_ids;
+            }
+            Command::Rename(chat, request) if chat == unmade => {
+                transcript.chat.title = request.title;
+            }
+            // Nothing to read back: the stand-in is all there is.
+            Command::Read(chat) if chat == unmade => {}
+            command => return Some(command),
+        }
+        self.messages_dirty = true;
+        None
+    }
+
+    /// **Make the chat on screen if it is a stand-in**, for the first message
+    /// about to be sent: the create, then what was chosen on the stand-in
+    /// that the create does not carry. The reader answers them in order, so
+    /// everything queued after — the message, its title — finds the chat
+    /// made. `false` when the create could not be queued; the message stays
+    /// in the composer.
+    fn make_unmade_chat(&mut self) -> bool {
+        if !self.chat_unmade() {
+            return true;
+        }
+        let Some(stand_in) = self.transcript.clone() else {
+            return true;
+        };
+        let chat = stand_in.chat.id;
+        // Cleared first, so what follows is queued rather than kept here.
+        self.unmade_chat = None;
+        if !self.queue_command(Command::Create(CreateChatRequest {
+            chat_id: chat,
+            title: stand_in.chat.title.clone(),
+            model: stand_in.chat.current_model.clone(),
+        })) {
+            self.unmade_chat = Some(chat);
+            return false;
+        }
+        if let Some(folder) = stand_in.chat.agent_working_folder.clone() {
+            self.queue_command(Command::UpdateFolder(
+                chat,
+                koru_ai_wire::UpdateChatFolderRequest {
+                    folder: Some(folder),
+                },
+            ));
+        }
+        if stand_in.chat.private {
+            self.queue_command(Command::UpdatePrivacy(
+                chat,
+                koru_ai_wire::UpdateChatPrivacyRequest { private: true },
+            ));
+        }
+        let policy = &stand_in.tool_policy;
+        if policy.mode != ToolMode::Manual || !policy.workspace_ids.is_empty() {
+            self.queue_command(Command::UpdateToolPolicy(
+                chat,
+                UpdateChatToolPolicyRequest {
+                    mode: policy.mode,
+                    workspace_ids: policy.workspace_ids.clone(),
+                },
+            ));
+        }
+        true
     }
 
     fn current_selection(&self) -> Option<ModelSelection> {
@@ -3168,21 +3337,24 @@ impl ChatSurface {
         self.history_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
-        self.chat_model_offset = 0;
-        self.chat_model_scroll_drag = None;
         self.chat_model_open = true;
         self.refresh_agent_status();
         self.prefetch_agent_models();
+        self.reset_picker();
         true
     }
 
     /// **Start this surface's chat on `model`**, picked in the composer: a
-    /// chat with no message yet takes it, and a surface with no chat yet makes
-    /// one with it. The pick is remembered as what new chats start on — the
-    /// choice the setup used to save — so the next chat opens on it.
+    /// chat with no message yet takes it, and a surface with no chat yet
+    /// shows a new one on it, made only when its first message is sent
+    /// ([`Self::begin_unmade_chat`]). The pick is remembered as what new
+    /// chats start on — the choice the setup used to save — so the next chat
+    /// opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
         self.web_search_armed = false;
         let sent = match &self.transcript {
+            // A chat with no message yet takes it: the service's, or the
+            // stand-in of one not made yet, which keeps it here.
             Some(transcript) if transcript.messages.is_empty() => {
                 let chat = transcript.chat.id;
                 self.send_command(Command::UpdateModel(
@@ -3195,11 +3367,10 @@ impl ChatSurface {
             // A chat that has begun keeps its provider; only its models are
             // offered.
             Some(_) => return true,
-            None => self.send_command(Command::Create(CreateChatRequest {
-                chat_id: ChatId::new(),
-                title: DEFAULT_CHAT_TITLE.into(),
-                model: model.clone(),
-            })),
+            None => {
+                self.begin_unmade_chat(model.clone());
+                true
+            }
         };
         self.remember_choice(&model);
         sent
@@ -3373,6 +3544,11 @@ impl ChatSurface {
         if markdown.is_empty() && !self.has_strip() {
             return false;
         }
+        // A new chat is made by its first message, never before: the
+        // create is queued ahead of the message.
+        if !self.make_unmade_chat() {
+            return true;
+        }
         // Not while an attachment is still being stored, or could not be.
         let Some(sent_attachments) = self.take_attachments_for_send(chat_id) else {
             return true;
@@ -3501,7 +3677,7 @@ impl ChatSurface {
         let Some(sent) = self.sent_message.take() else {
             return;
         };
-        if self.current_chat_id() == Some(sent.chat) {
+        if self.shown_chat_id() == Some(sent.chat) {
             if self.composer.is_blank() {
                 self.composer.unstash(sent.composer);
             }
@@ -4557,31 +4733,40 @@ impl ChatSurface {
         Rect::new(x, toolbar.y, width, toolbar.h)
     }
 
-    /// The effort section at the top of the chip's popover, when the model
-    /// advertises a control.
+    /// The picker footer's slider section, when the model advertises a
+    /// control (§9.3).
     fn effort_section(&self) -> Option<Rect> {
         self.effort_control()?;
-        let panel = self.chat_model_panel()?;
-        Some(Rect::new(
-            panel.x + 4.0,
-            panel.y + 4.0,
-            panel.w - 8.0,
-            effort::SECTION_H,
-        ))
+        self.picker_geometry()?.slider_section()
     }
 
+    /// The chat's model's effort control: the one the service sent with
+    /// the transcript, or — for an agent model, and a new chat not made yet
+    /// — the levels its agent's listing carries (agent-models D14).
     fn effort_control(&self) -> Option<&ReasoningControl> {
-        self.transcript
+        let transcript = self.transcript.as_ref()?;
+        transcript
+            .reasoning_control
             .as_ref()
-            .and_then(|transcript| transcript.reasoning_control.as_ref())
+            .or_else(|| self.agent_model_control(&transcript.chat.current_model))
             .filter(|control| !effort::stops(control).is_empty())
     }
 
     /// What the chat's effort setting means under its model's control.
     fn effective_reasoning(&self) -> Option<ReasoningChoice> {
         let transcript = self.transcript.as_ref()?;
-        let control = transcript.reasoning_control.as_ref()?;
+        let control = self.effort_control()?;
         effort::resolve(control, transcript.chat.current_model.default_reasoning)
+    }
+
+    /// **An agent chat's level is chosen before its first message** (S5):
+    /// the agent starts at it, and a live session is not reconfigured, so
+    /// afterwards the slider only shows it.
+    fn effort_locked(&self) -> bool {
+        self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+                && !transcript.messages.is_empty()
+        })
     }
 
     /// Which slider stop the pointer is on, for hover redraws.
@@ -4596,20 +4781,6 @@ impl ChatSurface {
     /// The stop the slider shows: the press in flight, else the setting.
     fn effort_shown(&self) -> Option<ReasoningChoice> {
         self.effort_drag.or_else(|| self.effective_reasoning())
-    }
-
-    fn effort_section_h(&self) -> f32 {
-        if self.effort_control().is_some() {
-            effort::SECTION_H + 4.0
-        } else {
-            0.0
-        }
-    }
-
-    /// Where the picker's rows start inside the panel: under the effort
-    /// section when there is one.
-    fn chat_model_rows_top(&self, panel: Rect) -> f32 {
-        panel.y + 4.0 + self.effort_section_h()
     }
 
     /// Set the chat's effort: the persisted default the next turn uses.
@@ -4629,6 +4800,8 @@ impl ChatSurface {
     }
 
     /// The chip's text: the model, then its effort when the model has one.
+    /// An agent chat names its level only when one was chosen (S2): on
+    /// *Default* the agent decides, and the chip says nothing for it.
     pub(crate) fn chip_label(&self) -> String {
         let Some(transcript) = &self.transcript else {
             // No chat yet: the chip asks for the model that will make one.
@@ -4652,67 +4825,12 @@ impl ChatSurface {
         } else {
             model.requested_model.clone()
         };
+        let chosen = !agents::is_agent_provider(&model.provider)
+            || model.default_reasoning != ReasoningChoice::Default;
         match self.effective_reasoning() {
-            Some(choice) => format!("{name} · {}", effort::word(self.lang, choice)),
-            None => name,
+            Some(choice) if chosen => format!("{name} · {}", effort::word(self.lang, choice)),
+            _ => name,
         }
-    }
-
-    fn chat_model_panel(&self) -> Option<Rect> {
-        let count = self.chat_model_rows().len().min(MODEL_VISIBLE_ROWS);
-        let effort = self.effort_control().is_some();
-        if !self.chat_model_open || (count == 0 && !effort) {
-            return None;
-        }
-        let button = self.chat_model_button();
-        let height = count as f32 * 30.0 + 8.0 + self.effort_section_h();
-        let width = self.composer_hit_rect.w.min(320.0).max(button.w);
-        let x = (button.x + button.w - width)
-            .max(self.viewport.x + 4.0)
-            .min(self.viewport.x + self.viewport.w - width - 4.0);
-        Some(Rect::new(
-            x,
-            self.composer_hit_rect.y - height - 4.0,
-            width,
-            height,
-        ))
-    }
-
-    fn chat_model_scrollbar(&self) -> Option<koru_ui::scrollbar::ScrollbarGeom> {
-        let panel = self.chat_model_panel()?;
-        let shown = self.chat_model_rows().len().min(MODEL_VISIBLE_ROWS);
-        let area = Rect::new(
-            panel.x + 4.0,
-            self.chat_model_rows_top(panel),
-            panel.w - 8.0,
-            shown as f32 * 30.0,
-        );
-        koru_ui::scrollbar::ScrollbarGeom::for_content(
-            area,
-            self.chat_model_rows().len() as f32 * 30.0,
-            self.chat_model_offset as f32 * 30.0,
-        )
-    }
-
-    fn chat_model_option_at(&self, x: f32, y: f32) -> Option<usize> {
-        let panel = self.chat_model_panel()?;
-        if !panel.contains(x, y) {
-            return None;
-        }
-        let top = self.chat_model_rows_top(panel);
-        if y < top {
-            return None;
-        }
-        let visible = ((y - top) / 30.0).floor().max(0.0) as usize;
-        let index = self.chat_model_offset + visible;
-        let row = Rect::new(
-            panel.x + 4.0,
-            top + visible as f32 * 30.0,
-            panel.w - 8.0,
-            30.0,
-        );
-        (visible < MODEL_VISIBLE_ROWS && index < self.chat_model_rows().len() && row.contains(x, y))
-            .then_some(index)
     }
 
     fn tool_access_label(&self) -> String {
@@ -5005,11 +5123,6 @@ impl ChatSurface {
                 {
                     return Some((14, index));
                 }
-            }
-            if self.chat_model_open
-                && let Some(index) = self.chat_model_option_at(x, y)
-            {
-                return Some((9, index));
             }
             let header = self.hosts_header_buttons();
             // No *Settings* among them: it is not drawn while the setup is
@@ -5309,10 +5422,18 @@ impl ChatSurface {
         if self.history_open {
             self.draw_chats_pane(canvas, root);
         }
-        self.draw_chat_model_picker(canvas, root);
+        self.draw_model_picker(canvas, root);
+        self.draw_legacy_menu(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
         self.web_search_tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            Instant::now(),
+        );
+        self.picker_tooltip.draw(
             canvas,
             root,
             &mut self.engine,
@@ -5339,155 +5460,6 @@ impl ChatSurface {
         );
         let y = (area.y + area.h - GREETING_GAP - layout.height()).max(area.y);
         scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
-    }
-
-    fn draw_chat_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(panel) = self.chat_model_panel() else {
-            return;
-        };
-        scene::floating_panel(
-            canvas,
-            root,
-            panel.x,
-            panel.y,
-            panel.w,
-            panel.h,
-            &scene::Panel::popover(6.0),
-        );
-        let p = theme::p();
-        let rows_top = self.chat_model_rows_top(panel);
-        if let (Some(section), Some(control), Some(shown)) = (
-            self.effort_section(),
-            self.effort_control().cloned(),
-            self.effort_shown(),
-        ) {
-            effort::draw(
-                canvas,
-                root,
-                &mut self.engine,
-                self.lang,
-                section,
-                &control,
-                shown,
-                self.pointer,
-            );
-        }
-        let (current_provider, current_model) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| {
-                (
-                    Some(transcript.chat.current_model.provider.clone()),
-                    transcript.chat.current_model.requested_model.clone(),
-                )
-            })
-            .unwrap_or((None, String::new()));
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.clone())
-            .unwrap_or_default();
-        for (index, picker_row) in self
-            .chat_model_rows()
-            .into_iter()
-            .enumerate()
-            .skip(self.chat_model_offset)
-            .take(MODEL_VISIBLE_ROWS)
-        {
-            let visible = index.saturating_sub(self.chat_model_offset);
-            let row = Rect::new(
-                panel.x + 4.0,
-                rows_top + visible as f32 * 30.0,
-                panel.w - 8.0,
-                30.0,
-            );
-            let view = self.picker_row_view(
-                &picker_row,
-                &agents,
-                current_provider.as_ref(),
-                &current_model,
-            );
-            let is_current = view.current;
-            let selectable = picker_row.selectable(&self.agent_status);
-            if (selectable && row.contains(self.pointer.0, self.pointer.1)) || is_current {
-                scene::fill(
-                    canvas,
-                    root,
-                    if is_current {
-                        p.row_selected
-                    } else {
-                        p.hover_tint
-                    },
-                    &scene::rrect(row.x, row.y, row.w, row.h, 4.0),
-                );
-            }
-            let line = self.engine.simple_layout(
-                &view.label,
-                if matches!(picker_row, PickerRow::Header) {
-                    role::meta()
-                } else {
-                    role::row()
-                },
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &line,
-                row.x + 8.0 + view.level as f32 * 14.0,
-                row.y + (row.h - line.height()) * 0.5,
-                Some(if view.dim { p.text_dim } else { p.text }),
-            );
-            let mut right = row.x + row.w - 8.0;
-            match view.trailing {
-                agents::Trailing::None => {}
-                agents::Trailing::Word(word) => {
-                    let word = self.engine.simple_layout(&word, role::meta());
-                    scene::draw_layout_first_line(
-                        canvas,
-                        root,
-                        &word,
-                        right - word.width(),
-                        row.y + (row.h - word.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                }
-                agents::Trailing::Caret { expanded } => {
-                    let caret = self.engine.icon_layout(
-                        if expanded {
-                            icons::CARET_DOWN
-                        } else {
-                            icons::CARET_RIGHT
-                        },
-                        12.0,
-                    );
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &caret,
-                        right - caret.width(),
-                        row.y + (row.h - caret.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                    right -= caret.width() + 8.0;
-                }
-            }
-            if is_current {
-                let check = self.engine.icon_layout(icons::CHECK, 13.0);
-                scene::draw_layout(
-                    canvas,
-                    root,
-                    &check,
-                    right - check.width(),
-                    row.y + (row.h - check.height()) * 0.5,
-                    Some(p.text_dim),
-                );
-            }
-        }
-        if let Some(scrollbar) = self.chat_model_scrollbar() {
-            let active = self.chat_model_scroll_drag.is_some()
-                || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
-            koru_ui::scrollbar::draw(canvas, root, scrollbar, active);
-        }
     }
 
     fn rebuild_messages(&mut self, width: f32) {
@@ -8115,6 +8087,40 @@ fn failure_label(class: Option<AiErrorClass>, lang: koru_i18n::Lang) -> String {
     koru_i18n::t(lang, key).to_owned()
 }
 
+/// The stand-in a new chat is shown as until its first message makes it:
+/// what the service answers a create with — its title, no message, no
+/// workspace and manual approval — under a fresh id the create will use.
+fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
+    let id = ChatId::new();
+    let now = koru_ai_core::Timestamp::now();
+    ChatTranscript {
+        chat: Chat {
+            id,
+            title: DEFAULT_CHAT_TITLE.into(),
+            private: false,
+            current_model: model,
+            branched_from: None,
+            agent_working_folder: None,
+            created_at: now,
+            updated_at: now,
+        },
+        tool_policy: koru_ai_core::ChatToolPolicy {
+            chat_id: id,
+            mode: ToolMode::Manual,
+            workspace_ids: Vec::new(),
+        },
+        tool_activities: Vec::new(),
+        messages: Vec::new(),
+        blocks: Vec::new(),
+        pinned_documents: Vec::new(),
+        feedback: Vec::new(),
+        usage: Vec::new(),
+        sources: Vec::new(),
+        reasoning_control: None,
+        attachments: Vec::new(),
+    }
+}
+
 /// A service failure as the status line reads it: the sentence its code
 /// names, in the person's language, and — when the service said something
 /// more specific (*the agent refused that model*) — its own words after
@@ -8764,7 +8770,8 @@ mod tests {
     }
 
     /// The picker of a chat with no model offers only the local agents:
-    /// Koru AI, OpenAI and Ollama are not offered, a saved OpenAI key or not.
+    /// Koru AI, OpenAI and Ollama are not on its rail, a saved OpenAI key or
+    /// not. A chat that has begun on one leads the rail with it (S1).
     #[test]
     fn the_picker_of_a_chat_with_no_model_offers_only_the_agents() {
         let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
@@ -8777,10 +8784,10 @@ mod tests {
             .credential_configured = true;
         let claude = AiProviderId::parse("agent-claude").unwrap();
         assert_eq!(
-            surface.chat_model_rows(),
-            vec![PickerRow::Header, PickerRow::Agent(claude)]
+            surface.picker_rail(),
+            vec![model_picker::RailEntry::Agent(claude.clone())]
         );
-        // A chat that has begun offers only its own provider's models.
+        // A chat that has begun on OpenAI lists its own provider's models.
         let mut begun = transcript();
         begun.messages.push(koru_ai_core::Message {
             id: MessageId::new(),
@@ -8798,56 +8805,228 @@ mod tests {
             completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
         });
         surface.transcript = Some(begun);
-        assert!(
-            !surface
-                .chat_model_rows()
-                .iter()
-                .any(|row| matches!(row, PickerRow::Agent(_)))
+        surface.openai_models = vec!["gpt-test".into()];
+        let openai = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
+        assert_eq!(
+            surface.picker_rail(),
+            vec![
+                model_picker::RailEntry::Provider(openai.clone()),
+                model_picker::RailEntry::Agent(claude),
+            ]
+        );
+        assert_eq!(
+            surface.picker_initial_entry(),
+            Some(model_picker::RailEntry::Provider(openai))
+        );
+        assert_eq!(
+            surface.picker_rows(),
+            vec![model_picker::Row::Model("gpt-test".into())]
         );
     }
 
-    /// **Picking a model makes the chat**, and remembers the choice so the
-    /// next chat opens on it: an agent at once, since its readiness is
-    /// already known.
-    #[test]
-    fn picking_an_agent_with_no_chat_makes_the_chat_on_it() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
-        let (reader, commands, _updates) = Reader::test_pair();
+    /// The surface of a chat not made yet, on Claude: a reader, settings with
+    /// the agent ready, and the pick made in the composer.
+    fn unmade_claude_chat(
+        mode: SurfaceMode,
+    ) -> (
+        ChatSurface,
+        std::sync::mpsc::Receiver<Command>,
+        std::sync::mpsc::SyncSender<Update>,
+    ) {
+        let mut surface = ChatSurface::new(mode);
+        let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.settings = Some(unchosen_settings(&["agent-claude"]));
         let claude = AiProviderId::parse("agent-claude").unwrap();
         surface
             .agent_status
             .insert(claude.clone(), AgentStatus::Ready);
-        assert!(surface.choose_agent_model(claude.clone(), AGENT_DEFAULT_MODEL.into()));
-        let Command::Create(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
-        else {
-            panic!("the chat is made");
-        };
-        assert_eq!(request.model.provider, claude);
-        assert_eq!(request.model.requested_model, AGENT_DEFAULT_MODEL);
+        assert!(surface.choose_agent_model(claude, AGENT_DEFAULT_MODEL.into()));
+        (surface, commands, updates)
+    }
+
+    /// **Picking a model makes no chat**: the pick is kept on the chat on
+    /// screen, the chip names it, and it is remembered so the next chat opens
+    /// on it. Nothing reaches the Chats list until the first message.
+    #[test]
+    fn picking_an_agent_with_no_chat_waits_for_the_first_message() {
+        let (surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
         let Command::SelectProvider(selected) =
             commands.recv_timeout(Duration::from_millis(50)).unwrap()
         else {
-            panic!("and the choice is remembered");
+            panic!("the choice is remembered, and nothing is made");
         };
         assert_eq!(selected.provider, claude);
+        assert!(commands.try_recv().is_err(), "no chat is made by a pick");
+        assert!(surface.chat_unmade());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .map(|t| t.chat.current_model.provider.clone()),
+            Some(claude)
+        );
+        assert_eq!(surface.chip_label(), "Claude", "the chip names the pick");
+        assert!(!surface.awaiting_model(), "send is on");
+        assert_eq!(surface.current_chat_id(), None, "no chat a host can name");
+        assert!(surface.chats.is_empty(), "nothing in the Chats list");
         assert!(!surface.showing_setup());
     }
 
-    /// **A chat chosen before opens as it did**: the remembered provider
-    /// validates and the chat is made on it — once, not twice (a tab that
-    /// owed a fresh chat asked for two).
+    /// **The first message makes the chat**, then goes into it: the create is
+    /// queued ahead of the message, under the id the message names, and the
+    /// message's card stays through the chat's arrival.
+    #[test]
+    fn the_first_message_makes_the_chat_and_is_sent_into_it() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let stand_in = surface.transcript.clone().unwrap();
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        let Command::Create(create) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the chat is made first");
+        };
+        assert_eq!(create.chat_id, stand_in.chat.id);
+        assert_eq!(create.model, stand_in.chat.current_model);
+        assert_eq!(create.title, DEFAULT_CHAT_TITLE);
+        let Command::Send(send) = commands.recv_timeout(Duration::from_millis(50)).unwrap() else {
+            panic!("then the message goes into it");
+        };
+        assert_eq!(send.chat_id, stand_in.chat.id);
+        assert_eq!(send.markdown, "Plan the launch");
+        assert!(surface.composer.is_blank());
+        assert!(!surface.chat_unmade());
+        assert_eq!(surface.current_chat_id(), Some(stand_in.chat.id));
+
+        let mut made = stand_in.clone();
+        made.chat.created_at = koru_ai_core::Timestamp::from_millis(7);
+        surface.apply_update(Update::Created(made));
+        assert_eq!(
+            surface.pending_user.as_deref(),
+            Some("Plan the launch"),
+            "the message's card stays while it is on its way"
+        );
+        assert!(surface.waiting, "and the surface keeps listening for it");
+        assert_eq!(surface.chats.len(), 1, "the chat is listed once it is made");
+    }
+
+    /// **A failed create gives the message back**, with the create's reason:
+    /// the chat on screen is a stand-in again, and the next send asks for it
+    /// again.
+    #[test]
+    fn a_failed_create_gives_the_first_message_back() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        while commands.try_recv().is_ok() {}
+        assert!(surface.composer.is_blank());
+        let failure = koru_ai_wire::Failure {
+            code: "ai_storage".into(),
+            message: "The chat could not be saved.".into(),
+            retryable: true,
+            details: Default::default(),
+        };
+        surface.apply_update(Update::CreateFailed(chat, failure.clone()));
+        assert!(surface.chat_unmade(), "a stand-in again");
+        let reason = surface.status.clone();
+        assert!(reason.is_some());
+        surface.apply_update(Update::Failure("Chat not found.".into()));
+        surface.apply_update(Update::SendFailed(failure));
+        assert_eq!(surface.composer.text(), "Plan the launch", "it is back");
+        assert!(surface.pending_user.is_none());
+        assert_eq!(surface.status, reason, "with the create's reason");
+
+        assert!(surface.send_composer());
+        assert!(
+            matches!(
+                commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+                Command::Create(request) if request.chat_id == chat
+            ),
+            "the next send asks for the chat again"
+        );
+    }
+
+    /// **What is chosen on a chat not made yet stays with it**: the folder
+    /// is kept on the stand-in, and follows the create when the first
+    /// message makes the chat, ahead of the message.
+    #[test]
+    fn a_new_chats_folder_is_kept_until_its_first_message() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        assert!(surface.shows_composer_footer(), "the folder can be chosen");
+        assert!(surface.working_folder_chosen(chat, "D:/work/koru".into()));
+        assert!(commands.try_recv().is_err(), "kept here, not sent");
+        assert_eq!(surface.folder_label(), "koru");
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        let order: Vec<&'static str> = std::iter::from_fn(|| commands.try_recv().ok())
+            .map(|command| match command {
+                Command::Create(_) => "create",
+                Command::UpdateFolder(about, request) => {
+                    assert_eq!(about, chat);
+                    assert_eq!(request.folder.as_deref(), Some("D:/work/koru"));
+                    "folder"
+                }
+                Command::Send(_) => "send",
+                Command::Rename(..) => "rename",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(order, ["create", "folder", "send", "rename"]);
+    }
+
+    /// **A chat not made yet stays on screen** when the list changes under
+    /// it: deleting another chat does not swap in the service's current one.
+    #[test]
+    fn a_chat_not_made_yet_survives_a_history_change() {
+        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        let other = transcript();
+        surface.apply_update(Update::HistoryChanged {
+            chats: vec![other.chat.clone()],
+            transcript: Some(other),
+        });
+        assert_eq!(surface.transcript.as_ref().map(|t| t.chat.id), Some(chat));
+        assert!(surface.chat_unmade());
+    }
+
+    /// **A picture pasted into a chat not made yet makes it** — a picture is
+    /// stored under its chat — and the paste is read once the chat exists.
+    #[test]
+    fn a_paste_into_a_chat_not_made_yet_makes_it_first() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        assert!(surface.begin_attachment_paste());
+        assert!(
+            !surface.clipboard_reading,
+            "not read before the chat exists"
+        );
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Create(request) if request.chat_id == chat
+        ));
+        assert_eq!(surface.paste_after_create, Some(chat));
+    }
+
+    /// **A chat chosen before opens as it did, without being made**: the
+    /// remembered provider validates and the chat view shows a new chat on
+    /// it; the first message makes it — once, not twice (a tab that owed a
+    /// fresh chat asked for two).
     #[test]
     fn a_remembered_provider_makes_one_chat_for_a_fresh_tab() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
         let mut settings = unchosen_settings(&[]);
         settings.selected_provider = Some(AiProviderId::parse(AiProviderId::KORU).unwrap());
         boot(&mut surface, settings);
-        while commands.try_recv().is_ok() {}
         surface.apply_update(Update::Validation(ProviderValidationResponse {
             provider: AiProviderId::parse(AiProviderId::KORU).unwrap(),
             status: ProviderValidationStatus::Ready,
@@ -8855,13 +9034,24 @@ mod tests {
             selected_model: None,
             failure: None,
         }));
-        let mut creates = 0;
-        while let Ok(command) = commands.try_recv() {
-            if let Command::Create(request) = command {
-                assert_eq!(request.model.provider.as_str(), AiProviderId::KORU);
-                creates += 1;
-            }
-        }
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::Create(_))),
+            "nothing is made before a message"
+        );
+        assert!(surface.chat_unmade());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .map(|t| t.chat.current_model.provider.as_str()),
+            Some(AiProviderId::KORU)
+        );
+        surface.composer.set_text("hello");
+        assert!(surface.send_composer());
+        let creates = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter(|command| matches!(command, Command::Create(_)))
+            .count();
         assert_eq!(creates, 1);
         assert!(!surface.showing_setup());
     }
@@ -8992,21 +9182,38 @@ mod tests {
     }
 
     /// **The wheel scrolls the picker before a chat exists**: its rows are
-    /// the agents, not the chat's own models, of which there are none yet.
+    /// the selected agent's models, not the chat's own, of which there are
+    /// none yet.
     #[test]
     fn the_wheel_scrolls_a_long_picker_with_no_chat() {
         let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
-        let names: Vec<String> = (0..MODEL_VISIBLE_ROWS + 3)
-            .map(|n| format!("agent-a{n}"))
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        surface
+            .agent_status
+            .insert(claude.clone(), AgentStatus::Ready);
+        let models = (0..model_picker::VISIBLE_ROWS + 3)
+            .map(|n| koru_ai_wire::AgentModelView {
+                id: format!("model-{n}"),
+                group: "claude".into(),
+                name: None,
+                description: None,
+                group_name: None,
+                legacy: false,
+                reasoning: None,
+            })
             .collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        surface.settings = Some(unchosen_settings(&names));
-        surface.chat_model_open = true;
-        assert!(surface.chat_model_rows().len() > MODEL_VISIBLE_ROWS);
+        surface
+            .agent_models
+            .insert(claude, agents::AgentModels::Listed(models));
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
+        assert!(surface.picker_rows().len() > model_picker::VISIBLE_ROWS);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, -1.0)));
-        assert_eq!(surface.chat_model_offset, 1);
+        assert_eq!(surface.picker.offset, 1);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, 1.0)));
-        assert_eq!(surface.chat_model_offset, 0);
+        assert_eq!(surface.picker.offset, 0);
     }
 
     #[test]
@@ -9550,12 +9757,13 @@ mod tests {
         });
         surface.transcript = Some(begun);
         surface.openai_models = (0..12).map(|index| format!("gpt-5.{index}")).collect();
-        surface.chat_model_open = true;
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
 
-        let panel = surface.chat_model_panel().expect("model panel");
+        let geometry = surface.picker_geometry().expect("model panel");
         let button = surface.chat_model_button();
-        assert!(panel.w > button.w);
-        assert!(surface.chat_model_scrollbar().is_some());
+        assert!(geometry.panel.w > button.w);
+        assert!(surface.picker_scrollbar(&geometry).is_some());
     }
 
     #[test]
@@ -10163,7 +10371,7 @@ mod tests {
         assert_eq!(
             choices_for_reasoning(&ReasoningControl::Levels {
                 values: vec![ReasoningLevel::Low, ReasoningLevel::High],
-                default: ReasoningLevel::Low,
+                default: Some(ReasoningLevel::Low),
                 supports_off: true,
             }),
             vec![
@@ -10456,6 +10664,7 @@ mod tests {
             description: None,
             group_name: None,
             legacy: false,
+            reasoning: None,
         }];
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: claude.clone(),
@@ -10541,6 +10750,199 @@ mod tests {
         assert_eq!(selection.requested_model, AiProviderId::KORU_HOSTED_MODEL);
     }
 
+    /// Claude's models as its listing carries them: `opus` with levels and
+    /// no stated default, `sonnet` with fewer, `haiku` with none.
+    fn claude_listing(surface: &mut ChatSurface) {
+        let levels = |values: Vec<ReasoningLevel>| {
+            Some(ReasoningControl::Levels {
+                values,
+                default: None,
+                supports_off: false,
+            })
+        };
+        let model = |id: &str, reasoning| koru_ai_wire::AgentModelView {
+            id: id.into(),
+            group: "claude".into(),
+            name: None,
+            description: None,
+            group_name: None,
+            legacy: false,
+            reasoning,
+        };
+        surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            models: vec![
+                model(
+                    "opus",
+                    levels(vec![
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                        ReasoningLevel::Max,
+                    ]),
+                ),
+                model(
+                    "sonnet",
+                    levels(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+                ),
+                model("haiku", None),
+            ],
+        }));
+    }
+
+    /// **Rung 4: an agent model's levels in today's effort section.** A new
+    /// chat on Claude's Opus shows the levels its listing carries; on
+    /// *Default* the chip names no level (the agent decides) and the label
+    /// reads *Default*; a chosen level is kept on the chat and named.
+    #[test]
+    fn an_agent_models_levels_show_and_the_chip_names_a_chosen_one() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        surface.lang = koru_i18n::Lang::En;
+        claude_listing(&mut surface);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        assert!(surface.choose_agent_model(claude.clone(), "opus".into()));
+        while commands.try_recv().is_ok() {}
+        assert_eq!(
+            effort::stops(surface.effort_control().unwrap()).len(),
+            3,
+            "opus's own levels"
+        );
+        assert_eq!(
+            surface.effective_reasoning(),
+            Some(ReasoningChoice::Default)
+        );
+        assert_eq!(surface.chip_label(), "Claude · Opus");
+        assert!(surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::Max)));
+        assert!(
+            commands.try_recv().is_err(),
+            "kept on the chat not made yet"
+        );
+        assert_eq!(surface.chip_label(), "Claude · Opus · Max");
+
+        // Haiku offers none: no slider, and the level goes back to Default.
+        assert!(surface.choose_agent_model(claude.clone(), "haiku".into()));
+        assert!(surface.effort_control().is_none());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .current_model
+                .default_reasoning,
+            ReasoningChoice::Default
+        );
+    }
+
+    /// **D18: a new model keeps the chat's level when it offers it.**
+    #[test]
+    fn picking_another_model_keeps_a_level_it_offers() {
+        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        claude_listing(&mut surface);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        surface.choose_agent_model(claude.clone(), "opus".into());
+        surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::High));
+        surface.choose_agent_model(claude.clone(), "sonnet".into());
+        let level = |surface: &ChatSurface| {
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .current_model
+                .default_reasoning
+        };
+        assert_eq!(
+            level(&surface),
+            ReasoningChoice::Level(ReasoningLevel::High)
+        );
+        surface.choose_agent_model(claude.clone(), "opus".into());
+        surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::Max));
+        surface.choose_agent_model(claude, "sonnet".into());
+        assert_eq!(
+            level(&surface),
+            ReasoningChoice::Default,
+            "sonnet has no max"
+        );
+    }
+
+    /// **S5: after an agent chat's first message its level only shows**: the
+    /// agent started at it. A press on the slider says why instead.
+    #[test]
+    fn an_agent_chats_level_is_read_only_after_its_first_message() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        claude_listing(&mut surface);
+        let mut chat = transcript();
+        chat.chat.current_model = ModelSelection {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            requested_model: "opus".into(),
+            default_reasoning: ReasoningChoice::Level(ReasoningLevel::High),
+        };
+        chat.messages.push(koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: chat.chat.id,
+            ordinal: 0,
+            role: ChatRole::User,
+            state: MessageState::Complete,
+            markdown: "hi".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
+        });
+        surface.transcript = Some(chat);
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
+        while commands.try_recv().is_ok() {}
+        let section = surface.effort_section().expect("the level still shows");
+        let control = surface.effort_control().cloned().unwrap();
+        let (x, _) = effort::slider(section, &control).stops[0];
+        let y = effort::slider(section, &control).track_y;
+        assert!(surface.mouse_down(x, y));
+        assert!(surface.effort_drag.is_none(), "no stop is taken");
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::AiEffortLockedAfterStart
+            ))
+        );
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::UpdateModel(..)))
+        );
+    }
+
+    /// **D19: a refused level is said in the person's language.**
+    #[test]
+    fn a_refused_level_reads_in_the_persons_language() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        surface.lang = koru_i18n::Lang::De;
+        surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+            version: 1,
+            sequence: 1,
+            event: PublicAiEvent::Failed {
+                attempt_id: InferenceAttemptId::new(),
+                error: koru_ai_core::AiError::new(
+                    AiErrorClass::ModelUnavailable,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                    false,
+                ),
+                at: koru_ai_core::Timestamp::from_millis(1),
+            },
+        }));
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("Der Agent hat diese Denkstufe nicht übernommen")
+        );
+    }
+
     #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
@@ -10556,7 +10958,7 @@ mod tests {
                 ReasoningLevel::Medium,
                 ReasoningLevel::High,
             ],
-            default: ReasoningLevel::Medium,
+            default: Some(ReasoningLevel::Medium),
             supports_off: false,
         });
         let chat_id = chat.chat.id;
@@ -10594,7 +10996,10 @@ mod tests {
         updated.current_model.default_reasoning = ReasoningChoice::Level(ReasoningLevel::High);
         surface.apply_update(Update::ModelUpdated(updated, Some(control)));
         assert_eq!(surface.chip_label(), "gpt-5.5 · High");
-        assert!(!surface.chat_model_open);
+        assert!(
+            surface.chat_model_open,
+            "the footer stays for the next step"
+        );
 
         // Sending carries no per-turn override: the chat's setting is the effort.
         surface.composer.set_text("hello");

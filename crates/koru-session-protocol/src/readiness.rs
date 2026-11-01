@@ -35,6 +35,11 @@ pub enum ProviderStage {
     Shutdown,
 }
 
+/// The message a session failure carries when the refused thing was the
+/// reasoning level rather than the model: the code alone is the refused
+/// model's (`provider_model_unavailable`), so a chat could not say which.
+pub const REASONING_REJECTED: &str = "reasoning_rejected";
+
 /// Closed, content-free diagnostic detail suitable for developer support logs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -54,4 +59,8 @@ pub enum ProviderDiagnostic {
     UnexpectedExit,
     InvalidState,
     InvalidInput,
+    /// The agent did not offer, or did not apply, the reasoning level a
+    /// session was started with (agent-models D19). The failure's code is
+    /// `ProviderModelUnavailable`; this says it was the level, not the model.
+    ReasoningRejected,
 }

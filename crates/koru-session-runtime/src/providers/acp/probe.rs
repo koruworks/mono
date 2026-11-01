@@ -9,6 +9,10 @@ use koru_session_protocol::{ErrorCode, ProviderKind, SessionId};
 use super::*;
 use crate::AttachmentPathResolver;
 
+/// Each request of the levels walk (D16) may take what a discovery
+/// session's start does: setting Claude's model rebuilds its options.
+const WALK_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[derive(Clone)]
 pub struct AcpCompatibilityProbe {
     route: AcpRoute,
@@ -117,6 +121,37 @@ impl ManagedProviderFactory for AcpFactory {
         self.route.dialect.catalog_source()
     }
 
+    /// Claude's levels belong to each model, and its session describes only
+    /// the one it is on (D16).
+    fn walks_model_levels(&self) -> bool {
+        self.route.is_claude()
+    }
+
+    fn walk_model_levels(
+        &self,
+        executable: OsString,
+        working_directory: PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        let executable = crate::providers::resolve_probe_executable(&executable)?;
+        let probe = AcpCompatibilityProbe::new(
+            self.route.clone(),
+            executable,
+            working_directory,
+            Arc::clone(&self.attachment_paths),
+        );
+        let models = probe.walk_levels(ProbeLimits {
+            timeout: WALK_TIMEOUT,
+            ..ProbeLimits::default()
+        })?;
+        koru_session_protocol::ProviderModels::try_from(models).map_err(|_| {
+            failure(
+                ErrorCode::ProviderIncompatible,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::HandshakeRejected,
+            )
+        })
+    }
+
     fn compatibility_probe(
         &self,
         executable: OsString,
@@ -140,13 +175,10 @@ impl ManagedProviderFactory for AcpFactory {
                 .selection
                 .as_ref()
                 .is_some_and(|selection| selection.model.is_some());
-        // An explicit effort has no ACP route yet: refuse it here rather
-        // than run the default under a choice the person did not make.
-        let explicit_effort = request
-            .selection
-            .as_ref()
-            .is_some_and(|selection| selection.reasoning.is_some());
-        if (explicit_model && !self.supports_model_selection()) || explicit_effort {
+        // An explicit effort is applied at start through the session's
+        // `thought_level` option, and a route that offers none refuses it
+        // there (agent-models D18, D19).
+        if explicit_model && !self.supports_model_selection() {
             return Err(failure(
                 ErrorCode::CapabilityNotNegotiated,
                 ProviderStage::Initialize,
@@ -186,6 +218,30 @@ impl ManagedProviderFactory for AcpFactory {
 }
 
 impl AcpCompatibilityProbe {
+    /// **The levels walk** (D16): a discovery session that sets its own model
+    /// to each listed one and keeps the levels each answer carries, then
+    /// shuts down. No prompt is sent. A walk cut short keeps what it read.
+    pub(super) fn walk_levels(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<Vec<koru_session_protocol::ProviderModel>, ProviderFailure> {
+        let version = self.version(limits)?;
+        let config = AcpConfig::new(
+            self.route.clone(),
+            self.executable.clone(),
+            self.working_directory.clone(),
+            version,
+            self.attachment_paths.clone(),
+        )?
+        .with_limits(limits)?;
+        let mut control = AcpControl::new(config);
+        let result = control.start(AgentStart::fresh(SessionId::mint(), None));
+        let models = result.as_ref().ok().map(|_| control.walk_levels());
+        let _ = control.shutdown();
+        result?;
+        Ok(models.unwrap_or_default())
+    }
+
     /// A discovery session: the same start as a chat's, kept only for what
     /// it advertised under `model`, then shut down. No prompt is sent.
     pub(super) fn session_models(

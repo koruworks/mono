@@ -2572,3 +2572,55 @@ fn a_working_folder_is_only_for_an_empty_agent_chat_and_rides_the_request() {
 }
 
 mod attachments;
+
+/// D14: an agent model's levels become the chat's effort control — Koru's
+/// order, the stated default when there is one, *off* when offered — and a
+/// listing's answer fills the index the transcript's control is read from.
+#[test]
+fn an_agent_models_levels_become_its_effort_control() {
+    use koru_session_protocol::{LaunchReasoning, ModelReasoning};
+    let control = super::agents::reasoning_control(&ModelReasoning {
+        levels: vec![LaunchReasoning::Low, LaunchReasoning::XHigh],
+        default: Some(LaunchReasoning::XHigh),
+        off: true,
+    })
+    .unwrap();
+    assert_eq!(
+        control,
+        koru_ai_core::ReasoningControl::Levels {
+            values: vec![
+                koru_ai_core::ReasoningLevel::Low,
+                koru_ai_core::ReasoningLevel::XHigh
+            ],
+            default: Some(koru_ai_core::ReasoningLevel::XHigh),
+            supports_off: true,
+        }
+    );
+    let response = koru_ai_wire::AgentModelsResponse {
+        provider: AiProviderId::parse("agent-claude").unwrap(),
+        models: vec![
+            koru_ai_wire::AgentModelView {
+                id: "opus".into(),
+                group: "claude".into(),
+                name: None,
+                description: None,
+                group_name: None,
+                legacy: false,
+                reasoning: Some(control.clone()),
+            },
+            koru_ai_wire::AgentModelView {
+                id: "haiku".into(),
+                group: "claude".into(),
+                name: None,
+                description: None,
+                group_name: None,
+                legacy: false,
+                reasoning: None,
+            },
+        ],
+    };
+    assert_eq!(
+        super::agents::agent_controls(&response),
+        vec![("opus".to_owned(), control)]
+    );
+}

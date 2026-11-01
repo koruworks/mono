@@ -58,6 +58,8 @@ pub(crate) enum Command {
     Validate(AiProviderId),
     /// List a local agent's models for the picker's level under it.
     DiscoverModels(AiProviderId),
+    /// ↻: the agent's list rebuilt first, then listed (D13).
+    RefreshModels(AiProviderId),
     Pull(PullOllamaModelRequest),
     CancelPull,
     /// Titles for documents a sent chip names, for drawing it as a titled
@@ -94,6 +96,7 @@ impl Command {
             Self::SelectProvider(_) => "select_provider",
             Self::Validate(_) => "validate",
             Self::DiscoverModels(_) => "discover_models",
+            Self::RefreshModels(_) => "refresh_models",
             Self::Pull(_) => "pull",
             Self::CancelPull => "cancel_pull",
             Self::DocumentTitles(_) => "document_titles",
@@ -156,6 +159,10 @@ pub(crate) enum Update {
     /// A send that did not go, for any reason: the surface gives the
     /// message back whole — text, chips, quotes and attachments.
     SendFailed(koru_ai_wire::Failure),
+    /// The service would not make the chat a first message was waiting on.
+    /// What was queued behind it for that chat is answered with the same
+    /// failure, so the message comes back to the composer with the reason.
+    CreateFailed(ChatId, koru_ai_wire::Failure),
     Failure(String),
 }
 
@@ -275,7 +282,17 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
         tracing::info!(target: "koru_ai::ui", "AI UI connected to the local Koru service");
     }
 
+    // A chat whose create failed, and why: the commands queued behind the
+    // create for it (its folder, the first message) are answered with that
+    // failure instead of reaching a service that has no such chat.
+    let mut refused: Option<(ChatId, koru_ai_wire::Failure)> = None;
     while let Ok(command) = commands.recv() {
+        if let Some(update) = refused_answer(refused.as_ref(), &command) {
+            if updates.send(update).is_err() {
+                return;
+            }
+            continue;
+        }
         let client = match &client {
             Ok(client) => client,
             Err(_) => {
@@ -289,7 +306,16 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         client
                     }
                     Err(message) => {
-                        let _ = updates.send(Update::Failure(message.clone()));
+                        let failure = unreachable_failure(message.clone());
+                        let update = match &command {
+                            Command::Create(request) => {
+                                refused = Some((request.chat_id, failure.clone()));
+                                Update::CreateFailed(request.chat_id, failure)
+                            }
+                            Command::Send(_) => Update::SendFailed(failure),
+                            _ => Update::Failure(message.clone()),
+                        };
+                        let _ = updates.send(update);
                         continue;
                     }
                 }
@@ -348,15 +374,19 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 })();
                 send_result(&updates, result);
             }
-            Command::Create(request) => {
-                let result = client.ai().create_chat(&request).and_then(|created| {
-                    client
-                        .ai()
-                        .read_chat(created.chat.id)
-                        .map(|transcript| Update::Created(decorate_transcript(&client, transcript)))
-                });
-                send_result(&updates, result);
-            }
+            Command::Create(request) => match client.ai().create_chat(&request) {
+                Ok(created) => {
+                    refused = None;
+                    let result = client.ai().read_chat(created.chat.id).map(|transcript| {
+                        Update::Created(decorate_transcript(&client, transcript))
+                    });
+                    send_result(&updates, result);
+                }
+                Err(failure) => {
+                    refused = Some((request.chat_id, failure.clone()));
+                    let _ = updates.send(Update::CreateFailed(request.chat_id, failure));
+                }
+            },
             Command::Read(chat) => {
                 send_result(
                     &updates,
@@ -589,7 +619,15 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 let client = client.clone();
                 let listing_updates = updates.clone();
                 off_thread("koru-ai-ui-agent-models", move || {
-                    let update = list_agent_models(&client, provider);
+                    let update = list_agent_models(&client, provider, false);
+                    let _ = listing_updates.send(update);
+                });
+            }
+            Command::RefreshModels(provider) => {
+                let client = client.clone();
+                let listing_updates = updates.clone();
+                off_thread("koru-ai-ui-agent-models", move || {
+                    let update = list_agent_models(&client, provider, true);
                     let _ = listing_updates.send(update);
                 });
             }
@@ -923,12 +961,24 @@ fn decorate_tool_activity(
 /// keeps listing between them, so the later asks find the list it made.
 const LISTING_ASKS: usize = 3;
 
-fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -> Update {
+/// An agent's list, asked again while the host is still building it.
+/// `refresh` rebuilds it first (↻); the asks after the first only wait for
+/// that rebuild.
+fn list_agent_models(
+    client: &koru_api_client::Client,
+    provider: AiProviderId,
+    refresh: bool,
+) -> Update {
     let started = Instant::now();
     let mut asks = 0;
     let answer = loop {
         asks += 1;
-        match client.ai().discover_agent_models(&provider) {
+        let answer = if refresh && asks == 1 {
+            client.ai().refresh_agent_models(&provider)
+        } else {
+            client.ai().discover_agent_models(&provider)
+        };
+        match answer {
             Err(failure) if failure.code == AGENT_MODELS_LISTING && asks < LISTING_ASKS => {}
             answer => break answer,
         }
@@ -994,6 +1044,39 @@ fn off_thread(name: &str, work: impl FnOnce() + Send + 'static) {
     }
 }
 
+/// The answer for a command about a chat whose create failed, without
+/// asking the service: a send comes back to be given back, anything else is
+/// the create's reason. `None` for every other command.
+fn refused_answer(
+    refused: Option<&(ChatId, koru_ai_wire::Failure)>,
+    command: &Command,
+) -> Option<Update> {
+    let (chat, failure) = refused?;
+    let about = match command {
+        Command::Send(request) => {
+            return (request.chat_id == *chat).then(|| Update::SendFailed(failure.clone()));
+        }
+        Command::Read(about)
+        | Command::Rename(about, _)
+        | Command::UpdateModel(about, _)
+        | Command::UpdatePrivacy(about, _)
+        | Command::UpdateFolder(about, _)
+        | Command::UpdateToolPolicy(about, _) => about,
+        _ => return None,
+    };
+    (about == chat).then(|| Update::Failure(failure.message.clone()))
+}
+
+/// The local service could not be reached, as a failure a send can carry.
+fn unreachable_failure(message: String) -> koru_ai_wire::Failure {
+    koru_ai_wire::Failure {
+        code: "ai_unavailable".into(),
+        message,
+        retryable: true,
+        details: Default::default(),
+    }
+}
+
 fn send_result<T>(updates: &SyncSender<Update>, result: Result<Update, T>)
 where
     T: IntoFailure,
@@ -1017,8 +1100,55 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(16);
 #[cfg(test)]
 mod tests {
     use super::{
-        CLIENT_SCOPES, authoritative_attempt_missing, off_thread, workspace_catalog_failure,
+        CLIENT_SCOPES, Command, Update, authoritative_attempt_missing, off_thread, refused_answer,
+        workspace_catalog_failure,
     };
+
+    /// **What waits behind a failed create is answered with its failure**: a
+    /// first message comes back to be given back, the folder that followed
+    /// says the same reason, and another chat's commands go to the service.
+    #[test]
+    fn commands_behind_a_failed_create_are_answered_with_its_failure() {
+        let chat = koru_ai_core::ChatId::new();
+        let failure = Failure {
+            code: "ai_storage".into(),
+            message: "The chat could not be saved.".into(),
+            retryable: true,
+            details: Default::default(),
+        };
+        let refused = (chat, failure.clone());
+        let send = |chat_id| {
+            Command::Send(koru_ai_wire::SendTurnRequest {
+                operation_id: uuid::Uuid::new_v4(),
+                chat_id,
+                surface: koru_ai_core::AiSurface::Standalone,
+                markdown: "hi".into(),
+                explicit_refs: Vec::new(),
+                web_search: false,
+                reasoning_override: None,
+                system_prompt_override: None,
+                replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
+            })
+        };
+        assert!(matches!(
+            refused_answer(Some(&refused), &send(chat)),
+            Some(Update::SendFailed(answered)) if answered == failure
+        ));
+        let folder = Command::UpdateFolder(
+            chat,
+            koru_ai_wire::UpdateChatFolderRequest {
+                folder: Some("D:/work".into()),
+            },
+        );
+        assert!(matches!(
+            refused_answer(Some(&refused), &folder),
+            Some(Update::Failure(message)) if message == failure.message
+        ));
+        assert!(refused_answer(Some(&refused), &send(koru_ai_core::ChatId::new())).is_none());
+        assert!(refused_answer(None, &send(chat)).is_none());
+        assert!(refused_answer(Some(&refused), &Command::ClearHistory).is_none());
+    }
     use koru_ai_wire::Failure;
 
     /// A listing that is still waiting on its agent does not hold the next

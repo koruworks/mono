@@ -279,6 +279,15 @@ pub enum Key {
     AiAgentModelsLoading,
     AiAgentModelsFailed,
     AiModelAgentDefault,
+    AiAgentReasoningRejected,
+    AiEffortLockedAfterStart,
+    AiModelSearch,
+    AiModelsNoMatch,
+    AiModelsRefresh,
+    AiEffortReset,
+    AiEffortIsDefault,
+    AiModelsLegacy,
+    AiModelsLegacyTag,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2658,7 +2667,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1815] = [
+    pub const ALL: [Key; 1824] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2833,6 +2842,15 @@ impl Key {
         Key::AiAgentModelsLoading,
         Key::AiAgentModelsFailed,
         Key::AiModelAgentDefault,
+        Key::AiAgentReasoningRejected,
+        Key::AiEffortLockedAfterStart,
+        Key::AiModelSearch,
+        Key::AiModelsNoMatch,
+        Key::AiModelsRefresh,
+        Key::AiEffortReset,
+        Key::AiEffortIsDefault,
+        Key::AiModelsLegacy,
+        Key::AiModelsLegacyTag,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -6434,6 +6452,114 @@ pub const ROWS: &[Row] = &[
         ar: "الافتراضي",
         zh_hans: "默认",
         ja: "既定",
+    },
+    // A failed agent turn whose chosen reasoning level the agent did not take.
+    Row {
+        key: Key::AiAgentReasoningRejected,
+        en: "The agent did not accept that reasoning level",
+        es: "El agente no aceptó ese nivel de razonamiento",
+        pt_br: "O agente não aceitou esse nível de raciocínio",
+        de: "Der Agent hat diese Denkstufe nicht übernommen",
+        fr: "L’agent n’a pas accepté ce niveau de raisonnement",
+        ar: "لم يقبل الوكيل مستوى التفكير هذا",
+        zh_hans: "代理未接受该推理级别",
+        ja: "エージェントはこの推論レベルを受け付けませんでした",
+    },
+    // An agent chat's level after its first message: the agent started at it.
+    Row {
+        key: Key::AiEffortLockedAfterStart,
+        en: "The agent started at this level; it can be changed in a new chat",
+        es: "El agente empezó con este nivel; puedes cambiarlo en un chat nuevo",
+        pt_br: "O agente começou neste nível; você pode mudá-lo em um novo chat",
+        de: "Der Agent hat mit dieser Stufe begonnen; ändern lässt sie sich in einem neuen Chat",
+        fr: "L’agent a démarré à ce niveau ; vous pouvez le changer dans une nouvelle discussion",
+        ar: "بدأ الوكيل بهذا المستوى؛ يمكن تغييره في محادثة جديدة",
+        zh_hans: "代理已按此级别启动；可在新对话中更改",
+        ja: "エージェントはこのレベルで開始しました。新しいチャットで変更できます",
+    },
+    // The model picker's search field, empty.
+    Row {
+        key: Key::AiModelSearch,
+        en: "Search models…",
+        es: "Buscar modelos…",
+        pt_br: "Pesquisar modelos…",
+        de: "Modelle suchen…",
+        fr: "Rechercher des modèles…",
+        ar: "ابحث عن النماذج…",
+        zh_hans: "搜索模型…",
+        ja: "モデルを検索…",
+    },
+    // The model picker's list when the search finds nothing.
+    Row {
+        key: Key::AiModelsNoMatch,
+        en: "No matching models",
+        es: "Ningún modelo coincide",
+        pt_br: "Nenhum modelo corresponde",
+        de: "Keine passenden Modelle",
+        fr: "Aucun modèle correspondant",
+        ar: "لا توجد نماذج مطابقة",
+        zh_hans: "没有匹配的模型",
+        ja: "一致するモデルはありません",
+    },
+    // The ↻ beside the model picker's search: the agent's list rebuilt now.
+    Row {
+        key: Key::AiModelsRefresh,
+        en: "Refresh models",
+        es: "Actualizar modelos",
+        pt_br: "Atualizar modelos",
+        de: "Modelle aktualisieren",
+        fr: "Actualiser les modèles",
+        ar: "تحديث النماذج",
+        zh_hans: "刷新模型",
+        ja: "モデルを更新",
+    },
+    // The ↺ in the model picker's footer: the chat's level back to the model's own.
+    Row {
+        key: Key::AiEffortReset,
+        en: "Reset to the model’s default",
+        es: "Restablecer al valor predeterminado del modelo",
+        pt_br: "Redefinir para o padrão do modelo",
+        de: "Auf die Standardstufe des Modells zurücksetzen",
+        fr: "Rétablir la valeur par défaut du modèle",
+        ar: "إعادة التعيين إلى الإعداد الافتراضي للنموذج",
+        zh_hans: "重置为模型默认值",
+        ja: "モデルの既定に戻す",
+    },
+    // After the level's word in the picker's footer, when it is the model's own default.
+    Row {
+        key: Key::AiEffortIsDefault,
+        en: "(default)",
+        es: "(predeterminado)",
+        pt_br: "(padrão)",
+        de: "(Standard)",
+        fr: "(par défaut)",
+        ar: "(افتراضي)",
+        zh_hans: "（默认）",
+        ja: "（既定）",
+    },
+    // The row at the foot of an agent's models that opens the ones it marks as older.
+    Row {
+        key: Key::AiModelsLegacy,
+        en: "Legacy models",
+        es: "Modelos heredados",
+        pt_br: "Modelos legados",
+        de: "Ältere Modelle",
+        fr: "Anciens modèles",
+        ar: "النماذج القديمة",
+        zh_hans: "旧版模型",
+        ja: "レガシーモデル",
+    },
+    // Beside an older model found by a search.
+    Row {
+        key: Key::AiModelsLegacyTag,
+        en: "Legacy",
+        es: "Heredado",
+        pt_br: "Legado",
+        de: "Älter",
+        fr: "Ancien",
+        ar: "قديم",
+        zh_hans: "旧版",
+        ja: "レガシー",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

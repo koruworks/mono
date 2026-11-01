@@ -18,6 +18,12 @@
 //! or that does not validate, is dropped alone. It is written only when an
 //! entry changes, never on a timer, and nothing in it is synced.
 //!
+//! An agent whose session offers levels only for the model it is on
+//! (Claude) has its models walked once per version on the same worker
+//! (D16): the probe's capture is served meanwhile, with levels for its start
+//! model alone, and the walk's levels are kept, and served, while the
+//! version holds.
+//!
 //! An entry is keyed by the agent's kind, the version the readiness probe
 //! read, and the Koru version. A persisted entry is served while its agent
 //! still reads *Checking* — a dimmed list during the first seconds — and
@@ -52,6 +58,12 @@ const RETRY_AFTER: [Duration; 3] = [
     Duration::from_secs(600),
 ];
 const KORU_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// An entry's `source`: the probe's capture, a listing of its own, or a
+/// probe capture whose models have been walked for their levels (D16). Only
+/// the last is read back: it says the walk is done for that version.
+const SOURCE_PROBE: &str = "probe";
+const SOURCE_LISTING: &str = "listing";
+const SOURCE_WALKED: &str = "probe+walk";
 
 /// Where the catalog's bytes live: a file beside `profiles.conf` in the
 /// host, memory in a test. Replacement is whole and atomic; the store never
@@ -150,7 +162,8 @@ impl Drop for ModelSlot {
 struct Stored {
     koru: String,
     version: Option<String>,
-    /// For diagnosis only: `probe` or `listing`.
+    /// `probe`, `listing` or `probe+walk`; the last means the levels walk
+    /// is done for this version.
     source: String,
     models: ProviderModels,
 }
@@ -334,8 +347,10 @@ impl ProviderCatalogCache {
     ) {
         let kind = readiness.kind.clone();
         let source = self.registry.catalog_source(&kind);
+        let walks = self.registry.walks_model_levels(&kind);
         let mut save = false;
         let mut list = false;
+        let mut walk = false;
         {
             let mut state = self.lock();
             if state.seen.get(&kind).is_some_and(|seen| *seen >= sequence) {
@@ -352,10 +367,26 @@ impl ProviderCatalogCache {
             if let ExecutableAvailability::Available { version } = &readiness.availability {
                 match (source, captured) {
                     (Some(CatalogSource::Probe), Some(models)) => {
+                        // A walk already done for this version keeps its
+                        // levels under the fresh capture.
+                        let walked = state.entries.get(&kind).filter(|entry| {
+                            walks
+                                && version.is_some()
+                                && entry.stored.version == *version
+                                && entry.stored.source == SOURCE_WALKED
+                        });
+                        let (models, source) = match walked {
+                            Some(entry) => (
+                                keep_walked_levels(models, &entry.stored.models),
+                                SOURCE_WALKED,
+                            ),
+                            None => (models, SOURCE_PROBE),
+                        };
+                        walk = walks && source == SOURCE_PROBE;
                         let stored = Stored {
                             koru: KORU_VERSION.into(),
                             version: version.clone(),
-                            source: "probe".into(),
+                            source: source.into(),
                             models,
                         };
                         save |= state
@@ -383,13 +414,14 @@ impl ProviderCatalogCache {
                 list = source == Some(CatalogSource::Listing)
                     && !state.entries.contains_key(&kind)
                     && current_run(&state, &kind).is_none();
+                walk &= current_run(&state, &kind).is_none();
             }
         }
         self.changed.notify_all();
         if save {
             self.persist();
         }
-        if list {
+        if list || walk {
             self.queue(kind);
         }
     }
@@ -547,7 +579,7 @@ impl ProviderCatalogCache {
                     let stored = Stored {
                         koru: KORU_VERSION.into(),
                         version,
-                        source: "listing".into(),
+                        source: SOURCE_LISTING.into(),
                         models: models.clone(),
                     };
                     let save = state
@@ -574,19 +606,68 @@ impl ProviderCatalogCache {
         result.map(|_| ())
     }
 
-    /// Claim `kind` for the worker when it should be listed now: a
-    /// background-listed agent that is ready, with nothing fresh and nothing
-    /// under way.
+    /// Claim `kind` for the worker when it should be listed or walked now:
+    /// a ready agent with nothing under way, and either background-listed
+    /// with nothing fresh, or walked for its levels with a fresh capture the
+    /// walk has not been through yet.
     fn claim_for_worker(&self, kind: &ProviderKind) -> Option<Run> {
         let mut state = self.lock();
-        let wanted = self.registry.catalog_source(kind) == Some(CatalogSource::Listing)
-            && matches!(
-                state.readiness.get(kind),
-                Some(ExecutableAvailability::Available { .. })
-            )
-            && current_run(&state, kind).is_none()
-            && !state.entries.get(kind).is_some_and(|entry| entry.fresh);
-        wanted.then(|| claim(&mut state, kind))
+        let ready = matches!(
+            state.readiness.get(kind),
+            Some(ExecutableAvailability::Available { .. })
+        ) && current_run(&state, kind).is_none();
+        let entry = state.entries.get(kind);
+        let wanted = if self.registry.walks_model_levels(kind) {
+            entry.is_some_and(|entry| entry.fresh && entry.stored.source == SOURCE_PROBE)
+        } else {
+            self.registry.catalog_source(kind) == Some(CatalogSource::Listing)
+                && !entry.is_some_and(|entry| entry.fresh)
+        };
+        (ready && wanted).then(|| claim(&mut state, kind))
+    }
+
+    /// **The levels walk** (D16), on the worker, holding one slot: the
+    /// agent's models, each with the levels it offers, laid over the fresh
+    /// capture it was claimed for — unless a drop has made it stale since.
+    /// A walk that fails keeps the capture as it is, and is tried again at
+    /// the next refresh or start.
+    fn walk(&self, kind: &ProviderKind, run: Run) {
+        let started = Instant::now();
+        let result = {
+            let _slot = self.slots.acquire();
+            self.registry
+                .walk_model_levels(kind, self.working_directory.clone())
+        };
+        let save = {
+            let mut state = self.lock();
+            if state.runs.get(kind) == Some(&run) {
+                state.runs.remove(kind);
+            }
+            state.outcomes.insert(kind.clone(), (run.id, Ok(())));
+            let current = state.generations.get(kind).copied().unwrap_or_default();
+            match (&result, state.entries.get_mut(kind)) {
+                (Ok(walked), Some(entry))
+                    if current == run.generation && entry.stored.source == SOURCE_PROBE =>
+                {
+                    entry.stored.models = walked_levels(&entry.stored.models, walked);
+                    entry.stored.source = SOURCE_WALKED.into();
+                    true
+                }
+                _ => false,
+            }
+        };
+        let walked = result
+            .as_ref()
+            .map(|models| models.models())
+            .unwrap_or_default();
+        tracing::info!(target: "koru::provider_models", event = "catalog.walk.finished",
+            provider = %kind, success = result.is_ok(), models = walked.len(),
+            with_levels = walked.iter().filter(|model| model.reasoning.is_some()).count(),
+            elapsed_ms = started.elapsed().as_millis() as u64);
+        self.changed.notify_all();
+        if save {
+            self.persist();
+        }
     }
 
     fn queue(&self, kind: ProviderKind) {
@@ -666,6 +747,45 @@ fn drop_entry(state: &mut State, kind: &ProviderKind, reason: CatalogDrop) {
     }
 }
 
+/// A fresh probe capture with the walk's levels kept: the capture's own
+/// list, and for each model the capture has no levels for, those the walk
+/// read. The capture's start model is the fresher fact and keeps its own.
+fn keep_walked_levels(captured: ProviderModels, walked: &ProviderModels) -> ProviderModels {
+    let models: Vec<_> = captured
+        .models()
+        .iter()
+        .map(|model| {
+            let mut model = model.clone();
+            if model.reasoning.is_none() {
+                model.reasoning = walked
+                    .models()
+                    .iter()
+                    .find(|walked| walked.id == model.id)
+                    .and_then(|walked| walked.reasoning.clone());
+            }
+            model
+        })
+        .collect();
+    ProviderModels::try_from(models).unwrap_or(captured)
+}
+
+/// The capture's list with each model's levels as the walk read them; a
+/// model the walk did not reach keeps what it had.
+fn walked_levels(captured: &ProviderModels, walked: &ProviderModels) -> ProviderModels {
+    let models: Vec<_> = captured
+        .models()
+        .iter()
+        .map(|model| {
+            let mut model = model.clone();
+            if let Some(walked) = walked.models().iter().find(|walked| walked.id == model.id) {
+                model.reasoning = walked.reasoning.clone();
+            }
+            model
+        })
+        .collect();
+    ProviderModels::try_from(models).unwrap_or_else(|_| captured.clone())
+}
+
 fn captured_event(kind: &ProviderKind, stored: &Stored) {
     let models = stored.models.models();
     tracing::info!(target: "koru::provider_models", event = "catalog.captured",
@@ -708,6 +828,10 @@ fn run_worker(cache: Weak<ProviderCatalogCache>, jobs: mpsc::Receiver<ProviderKi
             retries.remove(&kind);
             continue;
         };
+        if cache.registry.walks_model_levels(&kind) {
+            cache.walk(&kind, run);
+            continue;
+        }
         match cache.list(&kind, run) {
             Ok(_) => {
                 retries.remove(&kind);

@@ -339,6 +339,15 @@ pub(crate) fn session_error(operation: &'static str, error: ClientError) -> AiEr
                 true,
                 "The agent could not be started.",
             ),
+            ErrorCode::ProviderModelUnavailable
+                if failure.message == koru_session_protocol::REASONING_REJECTED =>
+            {
+                (
+                    AiErrorClass::ModelUnavailable,
+                    false,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                )
+            }
             ErrorCode::ProviderModelUnavailable => (
                 AiErrorClass::ModelUnavailable,
                 false,
@@ -372,6 +381,19 @@ pub(crate) fn session_error(operation: &'static str, error: ClientError) -> AiEr
         "agent session call failed"
     );
     AiError::new(class, message, retryable)
+}
+
+/// What a refused start refused, as the refresh event says it: the level
+/// (D19) or the model (D7).
+fn refusal_reason(error: &ClientError) -> &'static str {
+    match error {
+        ClientError::Session(failure)
+            if failure.message == koru_session_protocol::REASONING_REJECTED =>
+        {
+            "reasoning"
+        }
+        _ => "model",
+    }
 }
 
 fn is_code(error: &ClientError, code: ErrorCode) -> bool {
@@ -563,7 +585,7 @@ impl Control {
                 }
                 Err(error) => {
                     if is_code(&error, ErrorCode::ProviderModelUnavailable) {
-                        self.refresh_after_refusal(&kind.kind);
+                        self.refresh_after_refusal(&kind.kind, refusal_reason(&error));
                     }
                     return Err(session_error("create", error));
                 }
@@ -704,7 +726,7 @@ impl Control {
     /// — so the host is asked to re-probe the agent, which rebuilds its
     /// list, at most once per window (agent-models D7). The turn still
     /// fails visibly; the next open of the picker shows the list as it is.
-    fn refresh_after_refusal(&mut self, kind: &ProviderKind) {
+    fn refresh_after_refusal(&mut self, kind: &ProviderKind, reason: &'static str) {
         if !refresh_due(&self.refreshed, kind, Instant::now()) {
             return;
         }
@@ -715,7 +737,7 @@ impl Control {
             Ok(()) => {
                 self.refreshed.insert(kind.clone(), Instant::now());
                 tracing::info!(target: "koru_ai::agent", event = "agent.model_refused.refresh",
-                    provider = %kind, reason = "model", "agent refused a model; its list is being rebuilt");
+                    provider = %kind, reason, "agent refused a model or level; its list is being rebuilt");
             }
             Err(error) => {
                 tracing::warn!(target: "koru_ai::agent", provider = %kind, error = %error,
