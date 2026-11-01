@@ -75,6 +75,7 @@ pub(crate) mod document;
 mod menus;
 pub(crate) mod persistence;
 pub(crate) mod reminders;
+mod viewer;
 
 #[cfg(test)]
 mod tests;
@@ -441,6 +442,12 @@ impl MainView {
         // keyword rather than `Debug`, because this runs on the loop and a
         // formatted string per pass is an allocation nothing needs.
         rev.str(menus::blocker_keyword(self.blockers()));
+        // The media viewer's zoom is spoken, so a zoom is news; its toolbar
+        // moves with the window, which is folded in below.
+        if let Some(viewer) = self.lifted_viewer_semantics(koru_i18n::Lang::En) {
+            rev.str(viewer.zoom.value.as_deref().unwrap_or_default());
+            rev.u64(viewer.buttons.len() as u64);
+        }
         for menu in [self.menu.as_ref()]
             .into_iter()
             .chain([self.submenu.as_ref().map(|(_, m)| m)])
@@ -490,6 +497,9 @@ impl MainView {
         let blocking = self.blockers().is_blocking();
         if blocking && !menus::is_blocker_target(self, target) {
             return false;
+        }
+        if self.media_viewer_action(target, action) {
+            return true;
         }
         if menus::action(self, target, action) {
             return true;

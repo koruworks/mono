@@ -345,6 +345,24 @@ impl Leaf {
         }
     }
 
+    /// The document's viewer as a screen reader hears it, in the window's
+    /// coordinates (a lifted viewer is laid out in them).
+    pub fn viewer_semantics(
+        &self,
+        lang: koru_i18n::Lang,
+    ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
+        match self {
+            Self::Document(d) => d.diagram_viewer().map(|viewer| viewer.semantics(lang)),
+        }
+    }
+
+    /// A screen reader pressed one of the viewer's controls.
+    pub fn viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        match self {
+            Self::Document(d) => d.viewer_act(action),
+        }
+    }
+
     /// Paint the lifted viewer at the window's root, after the chrome.
     pub fn draw_lifted_viewer(&mut self, scene: &mut Scene, root: Affine) {
         match self {

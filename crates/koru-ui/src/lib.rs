@@ -54,6 +54,7 @@ pub mod key_chip;
 pub mod keys;
 pub mod logo;
 pub mod measurement_badge;
+pub mod media_viewer;
 pub mod menu;
 pub mod modal;
 pub mod nav_list;

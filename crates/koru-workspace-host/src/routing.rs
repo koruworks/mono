@@ -90,11 +90,12 @@ pub enum ModalKind {
     /// Exact-object reminder management has no editable field and blocks the
     /// document beneath it while open.
     ReminderManagement,
-    /// A drawn diagram shown in its own view over the document: the page is
-    /// dimmed, the drawing zooms and drags, and every key and press is the
-    /// viewer's until `Esc` or its close control takes it down. Nothing to
-    /// type into, so a modal and never a prompt.
-    DiagramViewer,
+    /// The shared media viewer (`koru_ui::media_viewer`, ADR-482): a
+    /// document's drawn diagram or a chat's picture in its own view over the
+    /// window. The window is dimmed, the picture zooms and drags, and every
+    /// key and press is the viewer's until `Esc` or its close control takes
+    /// it down. Nothing to type into, so a modal and never a prompt.
+    MediaViewer,
     /// A right-click menu, a caption menu, or a submenu of one.
     ///
     /// Grouped with the modals rather than given a kind of its own because

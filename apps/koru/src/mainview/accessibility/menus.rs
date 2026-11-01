@@ -85,6 +85,17 @@ impl MainView {
         {
             return node;
         }
+        // The media viewer is projected in full too: its name, a picture's
+        // size, the zoom and its buttons, rather than an empty dialog.
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::MediaViewer)
+            && let Some(semantics) = self.media_viewer_semantics(cx)
+        {
+            return super::viewer::project(
+                cx,
+                cx.surface(SHELL, blocker_part(blockers)),
+                semantics,
+            );
+        }
         // **The part says which kind it is**, in the code's own keyword:
         // `koru:w1/v1/s:shell#confirm`. That is an identity a client and an
         // acceptance check can match on and it is the same in every language,
@@ -311,7 +322,7 @@ fn modal_keyword(kind: koru_workspace_host::routing::ModalKind) -> &'static str 
         K::ReminderManagement => "reminder-management",
         K::Recording => "recording",
         K::ContextMenu => "menu",
-        K::DiagramViewer => "diagram-viewer",
+        K::MediaViewer => "media-viewer",
     }
 }
 
@@ -348,6 +359,11 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
     //
     // The hollow blocker node performs nothing, so naming it is not a reason to
     // reach past it either.
+    if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::MediaViewer)
+        && super::viewer::action_of(target).is_some()
+    {
+        return true;
+    }
     is_reminder_popover(view.blockers()) && super::reminders::is_popover_target(view, target)
 }
 

@@ -34,3 +34,15 @@ koru-keys = { path = "../koru-keys" }
 # same reason: a `NaiveDate` is plain data.
 koru-when = { path = "../koru-when" }
 chrono.workspace = true
+# The shared media viewer (`media_viewer`, ADR-482) names its buttons and
+# speaks its zoom in the reader's language; `koru-draw` already pulls the
+# crate in, so this adds nothing to the build. `image` decodes a picture and
+# builds its mips on the host's worker, as `koru-draw`'s image cache does;
+# `tracing` carries the viewer's timings.
+koru-i18n = { path = "../koru-i18n" }
+image = "0.25"
+tracing.workspace = true
+
+[dev-dependencies]
+# The viewer's tests build an empty drawing of a known size.
+koru-diagram = { path = "../koru-diagram" }

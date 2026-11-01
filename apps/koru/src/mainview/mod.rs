@@ -6942,6 +6942,31 @@ impl MainView {
         open.then(|| self.focused_pane_rect()).flatten()
     }
 
+    /// The standing media viewer's semantics, in window coordinates: the
+    /// focused document's lifted diagram viewer.
+    pub(super) fn lifted_viewer_semantics(
+        &self,
+        lang: koru_i18n::Lang,
+    ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
+        self.diagram_viewer_pane()?;
+        match &self.panes.focused().active_tab().view {
+            TabView::Leaf(leaf) => leaf.viewer_semantics(lang),
+            _ => None,
+        }
+    }
+
+    /// Perform a viewer action a screen reader asked for on the standing
+    /// viewer.
+    pub(super) fn lifted_viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        if self.diagram_viewer_pane().is_none() {
+            return false;
+        }
+        match self.tabs_mut().active_view() {
+            TabView::Leaf(leaf) => leaf.viewer_act(action),
+            _ => false,
+        }
+    }
+
     /// The focused pane's view rect, in window coordinates.
     fn focused_pane_rect(&self) -> Option<Rect> {
         let content = self.content();
@@ -14087,7 +14112,7 @@ impl MainView {
             // A document's own modal, never a layer of this container's: the
             // leaf answers it inside its own `key`, which the fall-through
             // below reaches. Named so adding a kind stays a compile error.
-            Blockers::Modal(ModalKind::DiagramViewer) => {}
+            Blockers::Modal(ModalKind::MediaViewer) => {}
             Blockers::None => {}
         }
         // **Escape during the countdown aborts.** Every other key keeps

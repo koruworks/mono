@@ -327,7 +327,7 @@ impl View for BuiltInDocument {
     /// `Ctrl`+wheel's, through `zoom_wheel`.
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
         if let Some(viewer) = &mut self.viewer {
-            let axis = crate::diagram_viewer::WheelAxis::from_mods(self.editor.view.mods);
+            let axis = koru_ui::media_viewer::WheelAxis::from_mods(self.editor.view.mods);
             viewer.pan_wheel(delta, axis);
             return;
         }
@@ -350,7 +350,13 @@ impl View for BuiltInDocument {
         let Some(viewer) = &mut self.viewer else {
             return false;
         };
-        viewer.zoom_key(intent);
+        viewer.zoom_key(match intent {
+            koru_workspace_host::ZoomIntent::In => koru_ui::media_viewer::ZoomKey::In,
+            koru_workspace_host::ZoomIntent::Out => koru_ui::media_viewer::ZoomKey::Out,
+            koru_workspace_host::ZoomIntent::ActualSize => {
+                koru_ui::media_viewer::ZoomKey::ActualSize
+            }
+        });
         true
     }
 

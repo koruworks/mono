@@ -986,3 +986,61 @@ fn every_published_control_has_a_distinct_node_id() {
     assert!(!projection.unresolved_focus);
     assert!(projection.nodes > 10, "the tree is suspiciously small");
 }
+
+/// The media viewer is published in full, not as an empty dialog: its name,
+/// its zoom readout and every toolbar button, labelled, at the rects they
+/// are drawn at — and a client's press on a button does what a click does.
+#[test]
+fn the_media_viewer_publishes_its_buttons_and_answers_a_press() {
+    use crate::leaf::Leaf;
+    use crate::mainview::tab::{Tab, TabView};
+    let (mut v, mut w) = seated();
+    let (leaf, node) = crate::leaf::tests::leaf_with_a_drawing(&mut w.ws, (400.0, 300.0));
+    v.tabs_mut().push(Tab::document(leaf, "Diagrams"));
+    let TabView::Leaf(Leaf::Document(document)) = &mut v.tabs_mut().active_mut().view else {
+        panic!("the document is active");
+    };
+    assert!(document.open_diagram_viewer(node));
+    v.sync_viewer_lift();
+    let dialog = by_role(&v, Role::Dialog);
+    assert_eq!(dialog.len(), 1);
+    let dialog = &dialog[0];
+    assert!(dialog.modal);
+    assert_eq!(dialog.label.as_deref(), Some("Diagram"));
+    assert!(
+        dialog
+            .occurrence
+            .locator()
+            .ends_with("s:shell#media-viewer")
+    );
+    let labels: Vec<_> = dialog
+        .children
+        .iter()
+        .map(|child| child.label.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Actual size",
+            "Zoom out",
+            "Zoom in",
+            "Fit to window",
+            "Copy",
+            "Save as…",
+            "Close"
+        ]
+    );
+    assert_eq!(dialog.children[0].value.as_deref(), Some("Zoom 100%"));
+    let zoom_in = dialog.children[2].occurrence;
+    assert!(v.accessibility_action(&mut w.ws, zoom_in, Action::Click, None));
+    let TabView::Leaf(Leaf::Document(document)) = &v.tabs().active_tab().view else {
+        panic!("the document is active");
+    };
+    assert_eq!(
+        document.diagram_viewer().unwrap().zoom(),
+        koru_ui::media_viewer::ZOOM_STEP
+    );
+    let close = by_role(&v, Role::Dialog)[0].children[6].occurrence;
+    assert!(v.accessibility_action(&mut w.ws, close, Action::Click, None));
+    assert!(v.diagram_viewer_pane().is_none(), "the viewer closed");
+}
