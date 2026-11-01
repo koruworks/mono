@@ -71,6 +71,7 @@ mod sources;
 mod tool_groups;
 mod usage;
 
+pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 
 use agents::{
@@ -536,6 +537,15 @@ pub struct ChatSurface {
     /// lookups never crowd a person's own command out of its queue.
     titles_in_flight: bool,
     clipboard_reading: bool,
+    /// A picture open in the shared viewer (chat-attachments R3).
+    viewer: Option<attachments::ChatViewer>,
+    /// A picture tile clicked whose bytes are being fetched and decoded:
+    /// the chat, the attachment and its name.
+    viewer_opening: Option<(ChatId, koru_ai_core::ChatAttachmentId, String)>,
+    /// Where the viewer lives when a host lifts it over the window.
+    viewer_lift: Option<attachments::ViewerLift>,
+    /// The sent pictures' tiles as last drawn, for a click to open one.
+    card_tile_hits: Vec<(Rect, attachments::Tile)>,
     lang: koru_i18n::Lang,
 }
 
@@ -772,6 +782,10 @@ impl ChatSurface {
             sent_message: None,
             titles_in_flight: false,
             clipboard_reading: false,
+            viewer: None,
+            viewer_opening: None,
+            viewer_lift: None,
+            card_tile_hits: Vec::new(),
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -985,6 +999,7 @@ impl ChatSurface {
             self.messages_dirty = true;
         }
         self.viewport = area;
+        self.viewer_resized();
         true
     }
 
@@ -1047,6 +1062,9 @@ impl ChatSurface {
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
+            self.viewer
+                .as_ref()
+                .and_then(|open| open.viewer.maintenance_deadline()),
         ]
         .into_iter()
         .flatten()
@@ -1079,6 +1097,9 @@ impl ChatSurface {
             .set_context(self.context_workspace, self.context_document.clone());
         changed |= self.composer.maintain();
         changed |= self.maintain_attachments();
+        if let Some(open) = &mut self.viewer {
+            changed |= open.viewer.maintain(_now);
+        }
         changed | self.pill_strip.maintain(_now)
     }
 
@@ -1117,6 +1138,9 @@ impl ChatSurface {
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
+        if let Some(cursor) = self.viewer_cursor() {
+            return cursor;
+        }
         if self.confirm.is_some() || self.response_menu.is_some() || self.chats_menu.is_some() {
             return CursorIcon::Default;
         }
@@ -1184,6 +1208,10 @@ impl ChatSurface {
     }
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        // The viewer is modal: every key is its own while it is up.
+        if let Some(handled) = self.viewer_key(key, text, mods) {
+            return handled;
+        }
         if let Some(confirm) = &mut self.confirm {
             let outcome = confirm.key(key);
             return self.finish_confirmation(outcome);
@@ -1457,6 +1485,9 @@ impl ChatSurface {
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
+        if let Some(handled) = self.viewer_mouse_down(x, y) {
+            return handled;
+        }
         if let Some(handled) = self.quote_overlay_mouse_down(x, y) {
             return handled;
         }
@@ -1527,6 +1558,12 @@ impl ChatSurface {
             }
             self.destination_open = None;
             return true;
+        }
+        // A sent picture opens in the viewer (R3).
+        if let Some(tile) = self.card_tile_at(x, y)
+            && let Some(chat) = self.current_chat_id()
+        {
+            return self.open_picture(chat, &tile, None);
         }
         if self
             .privacy_button()
@@ -1865,6 +1902,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if let Some(changed) = self.viewer_mouse_move(x, y) {
+            return changed;
+        }
         // Over the open Chats pane the pane is all there is: nothing under it
         // hovers. While its row menu is up, the menu is all there is.
         if self.history_open && (self.chats_menu.is_some() || self.chats_panel().contains(x, y)) {
@@ -1979,6 +2019,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_up(&mut self) -> bool {
+        if let Some(handled) = self.viewer_mouse_up() {
+            return handled;
+        }
         self.conversation_scroll_drag = None;
         self.chat_model_scroll_drag = None;
         if let Some(choice) = self.effort_drag.take() {
@@ -2008,6 +2051,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
+        if let Some(handled) = self.viewer_double_click(x, y) {
+            return handled;
+        }
         if !self.showing_setup() && self.composer.contains(x, y) {
             return self.composer.mouse_double_click(x, y);
         }
@@ -2039,6 +2085,9 @@ impl ChatSurface {
     }
 
     pub fn scroll_by(&mut self, delta: MouseScrollDelta) -> bool {
+        if let Some(changed) = self.viewer_scroll(delta) {
+            return changed;
+        }
         self.question_navigation = None;
         self.question_navigation_anchor = None;
         // Over the composer's open picker, or over its own lines once they
@@ -2154,6 +2203,7 @@ impl ChatSurface {
         if let Some(menu) = &self.response_menu {
             menu.draw(canvas, root, &mut self.engine, menu_viewport, &[true, true]);
         }
+        self.draw_unlifted_viewer(canvas, root);
     }
 
     /// Whether the provider setup is drawn instead of the chat. Only when
@@ -6269,6 +6319,7 @@ impl ChatSurface {
         }
         card_tiles.retain(|(rect, _)| rect.y + rect.h >= area.y && rect.y <= area.y + area.h);
         self.draw_card_tiles(canvas, root, &card_tiles);
+        self.card_tile_hits.clone_from(&card_tiles);
         canvas.pop_layer();
         self.request_thumbnails(&card_tiles);
         if let Some(scrollbar) = self.conversation_scrollbar() {

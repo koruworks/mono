@@ -136,6 +136,41 @@ impl AiChatView {
     }
 }
 
+impl AiChatView {
+    /// Whether a picture is open in the chat's viewer, which the container
+    /// lifts to the whole window like a document's diagram viewer.
+    pub fn viewer_open(&self) -> bool {
+        self.surface.viewer_open()
+    }
+
+    pub fn set_viewer_lift(&mut self, lift: Option<koru_ai_ui::ViewerLift>) {
+        self.surface.set_viewer_lift(lift);
+    }
+
+    pub fn draw_lifted_viewer(&mut self, scene: &mut Scene, root: Affine) {
+        self.surface.draw_lifted_viewer(scene, root);
+    }
+
+    pub fn viewer_semantics(
+        &self,
+        lang: koru_i18n::Lang,
+    ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
+        self.surface.viewer_semantics(lang)
+    }
+
+    pub fn viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        self.surface.viewer_act(action)
+    }
+
+    pub fn viewer_zoom_key(&mut self, key: koru_ui::media_viewer::ZoomKey) -> bool {
+        self.surface.viewer_zoom_key(key)
+    }
+
+    pub fn viewer_zoom_wheel(&mut self, delta: MouseScrollDelta, x: f32, y: f32) -> bool {
+        self.surface.viewer_zoom_wheel(delta, x, y)
+    }
+}
+
 impl View for AiChatView {
     fn key(
         &mut self,

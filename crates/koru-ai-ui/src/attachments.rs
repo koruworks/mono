@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Pictures in the chat (chat-attachments R1, R2): the composer's strip, the
-//! tiles on a sent message, and the threads that read, store and decode them.
+//! Pictures in the chat (chat-attachments R1–R3): the composer's strip, the
+//! tiles on a sent message, the threads that read, store and decode them, and
+//! the shared viewer a picture opens in (`koru_ui::media_viewer`, ADR-482).
 //!
 //! **Nothing here runs on the window thread but bookkeeping and drawing.**
 //! The clipboard is read on `koru-clipboard`'s worker, an upload goes out on
@@ -9,7 +10,9 @@
 //! never delays the reader), and a thumbnail is decoded on `koru-ai-thumbs`.
 //! Their answers come back as [`Event`]s the surface drains on its
 //! maintenance tick; the window thread lays tiles out from sizes it already
-//! knows and draws brushes it already has.
+//! knows and draws brushes it already has. A picture opened in the viewer is
+//! fetched and decoded, with its mips, on `koru-ai-thumbs` too, and opened in
+//! an external app from a copy written on a helper thread.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,8 +28,15 @@ use koru_draw::scene;
 use koru_draw::theme::{self, role};
 use koru_i18n::{Key, Lang};
 use koru_ui::icon_button::{IconButton, State as IconButtonState, Tone};
+use koru_ui::media_viewer::{
+    Action as ViewerAction, ActionSet, MediaViewer, Outcome as ViewerOutcome, Stage, ViewerImage,
+    ViewerOptions, ViewerSemantics, WheelAxis, ZoomKey,
+};
 use vello::Scene;
 use vello::kurbo::Affine;
+use winit::event::MouseScrollDelta;
+use winit::keyboard::{Key as KeyPress, ModifiersState};
+use winit::window::CursorIcon;
 
 use super::{COMPOSER_PAD_TOP, COMPOSER_PAD_X, ChatSurface, LoadedImage, agents};
 
@@ -336,6 +346,18 @@ pub(crate) enum Event {
         id: ChatAttachmentId,
         image: Option<LoadedImage>,
     },
+    /// A picture for the viewer, decoded with its mips, and the original's
+    /// bytes for *Open in external app*; `None` when it could not be read or
+    /// decoded.
+    ViewerReady {
+        chat: ChatId,
+        id: ChatAttachmentId,
+        picture: Option<(Arc<ViewerImage>, bytes::Bytes)>,
+    },
+    /// A copy was handed to the system's app, or could not be.
+    Opened {
+        ok: bool,
+    },
 }
 
 enum Upload {
@@ -357,6 +379,9 @@ enum ThumbJob {
     Decode(ChatAttachmentId, bytes::Bytes),
     /// A sent picture's thumbnail, from the service.
     Fetch(ChatId, ChatAttachmentId),
+    /// A picture for the viewer: its own bytes when they are here (a draft
+    /// still being stored), else the original from the service.
+    Viewer(ChatId, ChatAttachmentId, Option<bytes::Bytes>),
 }
 
 /// The threads behind the strip and the tiles, started on first use. None
@@ -374,6 +399,12 @@ pub(crate) struct Work {
     /// The thumbnails a test asked for, which it answers itself.
     #[cfg(test)]
     pub(crate) fetched: Vec<ChatAttachmentId>,
+    /// The pictures a test asked the viewer for, and the copies it asked to
+    /// open, which it answers itself.
+    #[cfg(test)]
+    pub(crate) viewer_fetched: Vec<ChatAttachmentId>,
+    #[cfg(test)]
+    pub(crate) opened: Vec<(ChatAttachmentId, String)>,
 }
 
 impl Work {
@@ -388,6 +419,10 @@ impl Work {
             in_flight: 0,
             #[cfg(test)]
             fetched: Vec::new(),
+            #[cfg(test)]
+            viewer_fetched: Vec::new(),
+            #[cfg(test)]
+            opened: Vec::new(),
         }
     }
 
@@ -483,6 +518,71 @@ impl Work {
         }
         #[cfg(not(test))]
         self.thumb(job);
+    }
+
+    /// Fetch, decode and build the mips of a picture for the viewer, on
+    /// `koru-ai-thumbs`; a draft's own bytes are shared, never copied.
+    pub(crate) fn open_viewer(
+        &mut self,
+        chat: ChatId,
+        id: ChatAttachmentId,
+        bytes: Option<bytes::Bytes>,
+    ) {
+        let job = ThumbJob::Viewer(chat, id, bytes);
+        // A test answers its own; nothing is dialed or decoded.
+        #[cfg(test)]
+        if let ThumbJob::Viewer(_, id, _) = job {
+            self.viewer_fetched.push(id);
+        }
+        // A host built without a client dials nothing for the original.
+        #[cfg(not(test))]
+        if !(cfg!(feature = "no-client") && matches!(job, ThumbJob::Viewer(_, _, None))) {
+            self.thumb(job);
+        }
+    }
+
+    /// Open a picture's bytes in the system's app, from a temporary copy
+    /// written on a helper thread (`koru_window::open_bytes_as_file`).
+    pub(crate) fn open_externally(
+        &mut self,
+        id: ChatAttachmentId,
+        file_name: &str,
+        bytes: bytes::Bytes,
+    ) {
+        #[cfg(test)]
+        {
+            let _ = bytes;
+            self.opened.push((id, file_name.to_owned()));
+        }
+        #[cfg(not(test))]
+        {
+            if cfg!(feature = "no-client") {
+                return;
+            }
+            let events = self.events_tx.clone();
+            let name = file_name.to_owned();
+            let spawned = std::thread::Builder::new()
+                .name("koru-ai-open".into())
+                .spawn(move || {
+                    let result = koru_window::open_bytes_as_file(
+                        &id.to_string(),
+                        &name,
+                        &bytes,
+                        koru_window::OpenAs::AsIs,
+                    );
+                    if let Err(error) = &result {
+                        tracing::debug!(
+                            target: "koru_ai_ui::attachments",
+                            kind = ?error.kind(),
+                            "an attachment could not be opened in another app"
+                        );
+                    }
+                    let _ = events.send(Event::Opened { ok: result.is_ok() });
+                });
+            if spawned.is_ok() {
+                self.in_flight += 1;
+            }
+        }
     }
 
     fn thumb(&mut self, job: ThumbJob) {
@@ -592,6 +692,35 @@ fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Thu
             while let Ok(job) = jobs.recv() {
                 let started = std::time::Instant::now();
                 let (id, bytes) = match job {
+                    ThumbJob::Viewer(chat, id, bytes) => {
+                        let bytes = bytes.or_else(|| {
+                            if client.is_none() {
+                                client = super::reader::connect_client(root.as_deref()).ok();
+                            }
+                            client
+                                .as_ref()
+                                .and_then(|client| client.ai().attachment_bytes(chat, id).ok())
+                                .map(bytes::Bytes::from)
+                        });
+                        let picture = bytes.and_then(|bytes| {
+                            ViewerImage::decode(&bytes, viewer_limits())
+                                .map(|image| (Arc::new(image), bytes))
+                        });
+                        tracing::debug!(
+                            target: "koru_ai_ui::attachments",
+                            attachment_id = %id,
+                            decoded = picture.is_some(),
+                            viewer_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                            "attachment ready for the viewer"
+                        );
+                        if events
+                            .send(Event::ViewerReady { chat, id, picture })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     ThumbJob::Decode(id, bytes) => (id, Some(bytes)),
                     ThumbJob::Fetch(chat, id) => {
                         if client.is_none() {
@@ -621,6 +750,16 @@ fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Thu
         tracing::warn!(target: "koru_ai_ui::attachments", "the thumbnail thread did not start");
     }
     sender
+}
+
+/// The bounds a picture is decoded within for the viewer: the service's own
+/// preview limits (D7), so a decode bomb is refused here as it was there.
+fn viewer_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(koru_ai_core::attachments::MAX_PREVIEW_EDGE);
+    limits.max_image_height = Some(koru_ai_core::attachments::MAX_PREVIEW_EDGE);
+    limits.max_alloc = Some(koru_ai_core::attachments::MAX_PREVIEW_PIXELS * 4 + 64 * 1024 * 1024);
+    limits
 }
 
 pub(crate) fn decode_thumbnail(bytes: &[u8]) -> Option<LoadedImage> {
@@ -656,6 +795,26 @@ pub(crate) fn decode_thumbnail(bytes: &[u8]) -> Option<LoadedImage> {
         width,
         height,
     })
+}
+
+/// Where a host lifts the chat's viewer to: the window. `origin` is where the
+/// surface's own coordinates put the window's top-left — `(0, 0)` for a
+/// surface laid out in window coordinates, the pane's top-left for one laid
+/// out in its pane's — and `size` the window's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewerLift {
+    pub origin: (f32, f32),
+    pub size: (f32, f32),
+}
+
+/// A picture open in the shared viewer (R3, F3).
+pub(crate) struct ChatViewer {
+    pub id: ChatAttachmentId,
+    pub file_name: String,
+    pub viewer: MediaViewer,
+    /// The original's bytes, kept while the viewer is up for *Open in
+    /// external app*; released when it closes.
+    pub bytes: bytes::Bytes,
 }
 
 /// The drafts of every chat, kept per chat so a draft survives a switch to
@@ -767,6 +926,12 @@ impl ChatSurface {
                     Some(image) => self.thumbnails.ready(id, image),
                     None => self.thumbnails.failed(id, Instant::now()),
                 },
+                Event::ViewerReady { chat, id, picture } => self.on_viewer_ready(chat, id, picture),
+                Event::Opened { ok } => {
+                    if !ok {
+                        self.status = Some(koru_i18n::t(self.lang, Key::AiOpenNoApp).to_owned());
+                    }
+                }
             }
         }
         changed
@@ -889,7 +1054,256 @@ impl ChatSurface {
             self.attachment_work.put(chat, &draft);
             return Some(true);
         }
+        // A picture opens in the viewer, from its own bytes while it is
+        // still being stored, from the service once it is.
+        if !matches!(draft.state, DraftState::Failed { .. }) {
+            let (tile, bytes) = (draft.tile(), draft.bytes.clone());
+            self.open_picture(chat, &tile, bytes);
+        }
         Some(true)
+    }
+
+    // ----- the viewer (R3) ------------------------------------------------
+
+    /// Open a picture tile in the viewer. The bytes are fetched and decoded
+    /// off this thread; the viewer opens when they are ready, if the person
+    /// is still on the chat they clicked in. A file has no viewer.
+    pub(super) fn open_picture(
+        &mut self,
+        chat: ChatId,
+        tile: &Tile,
+        bytes: Option<bytes::Bytes>,
+    ) -> bool {
+        if tile.kind != AttachmentKind::Image {
+            return false;
+        }
+        if self.viewer_opening.as_ref().map(|(_, id, _)| *id) == Some(tile.id) {
+            return true;
+        }
+        self.viewer_opening = Some((chat, tile.id, tile.name.clone()));
+        self.attachment_work.open_viewer(chat, tile.id, bytes);
+        true
+    }
+
+    fn on_viewer_ready(
+        &mut self,
+        chat: ChatId,
+        id: ChatAttachmentId,
+        picture: Option<(Arc<ViewerImage>, bytes::Bytes)>,
+    ) {
+        let Some((asked_chat, asked_id, file_name)) = self.viewer_opening.take() else {
+            return;
+        };
+        if asked_chat != chat || asked_id != id || self.current_chat_id() != Some(chat) {
+            // Superseded by another click, or the person moved on.
+            self.viewer_opening = (asked_id != id).then_some((asked_chat, asked_id, file_name));
+            return;
+        }
+        let Some((image, bytes)) = picture else {
+            self.status = Some(koru_i18n::t(self.lang, Key::AiViewerDecodeFailed).to_owned());
+            return;
+        };
+        let viewport = self.viewer_viewport();
+        self.viewer = Some(ChatViewer {
+            id,
+            file_name: file_name.clone(),
+            viewer: MediaViewer::open(
+                Stage::Bitmap { image },
+                ViewerOptions {
+                    actions: ActionSet::PICTURE,
+                    title: file_name,
+                },
+                viewport,
+            ),
+            bytes,
+        });
+    }
+
+    /// Whether a picture is open in the viewer.
+    pub fn viewer_open(&self) -> bool {
+        self.viewer.is_some()
+    }
+
+    /// **Lift the viewer to the window.** A host that lays this surface out
+    /// in a pane or a column says where the window is and how big; the
+    /// viewer then covers the window — its scrim over everything, the
+    /// picture free to grow past the column — and draws through
+    /// [`draw_lifted_viewer`](Self::draw_lifted_viewer) rather than in this
+    /// surface's own `draw`. Input still arrives in the surface's
+    /// coordinates and is translated here. `None` keeps the viewer inside
+    /// the surface. Cheap to call every frame.
+    pub fn set_viewer_lift(&mut self, lift: Option<ViewerLift>) {
+        if self.viewer_lift == lift {
+            return;
+        }
+        self.viewer_lift = lift;
+        let (w, h) = self.viewer_viewport();
+        if let Some(open) = &mut self.viewer {
+            open.viewer.set_viewport(w, h);
+        }
+    }
+
+    /// The viewer's window: the one it is lifted to, or this surface's.
+    pub(super) fn viewer_viewport(&self) -> (f32, f32) {
+        self.viewer_lift
+            .map_or((self.viewport.w, self.viewport.h), |lift| lift.size)
+    }
+
+    /// A point in this surface's coordinates, in the viewer's.
+    fn viewer_point(&self, x: f32, y: f32) -> (f32, f32) {
+        match self.viewer_lift {
+            Some(lift) => (x + lift.origin.0, y + lift.origin.1),
+            None => (x - self.viewport.x, y - self.viewport.y),
+        }
+    }
+
+    /// Paint the lifted viewer at the window's root. Nothing unless a
+    /// picture is open and lifted.
+    pub fn draw_lifted_viewer(&mut self, canvas: &mut Scene, root: Affine) {
+        if let (Some(open), Some(_)) = (&self.viewer, &self.viewer_lift) {
+            open.viewer.draw(canvas, root, &mut self.engine);
+        }
+    }
+
+    /// Paint a viewer that is not lifted, over this surface, last.
+    pub(super) fn draw_unlifted_viewer(&mut self, canvas: &mut Scene, root: Affine) {
+        if let (Some(open), None) = (&self.viewer, &self.viewer_lift) {
+            let root =
+                root * Affine::translate((f64::from(self.viewport.x), f64::from(self.viewport.y)));
+            open.viewer.draw(canvas, root, &mut self.engine);
+        }
+    }
+
+    /// The viewer as a screen reader hears it, in the coordinates this
+    /// surface is laid out in — the window's, when it is lifted.
+    pub fn viewer_semantics(&self, lang: Lang) -> Option<ViewerSemantics> {
+        let open = self.viewer.as_ref()?;
+        let mut semantics = open.viewer.semantics(lang);
+        if self.viewer_lift.is_none() {
+            let (dx, dy) = (self.viewport.x, self.viewport.y);
+            let shift = |rect: &mut Rect| {
+                rect.x += dx;
+                rect.y += dy;
+            };
+            shift(&mut semantics.bounds);
+            shift(&mut semantics.zoom.rect);
+            for button in &mut semantics.buttons {
+                shift(&mut button.rect);
+            }
+        }
+        Some(semantics)
+    }
+
+    /// A screen reader pressed one of the viewer's controls.
+    pub fn viewer_act(&mut self, action: ViewerAction) -> bool {
+        let Some(out) = self.viewer.as_mut().map(|open| open.viewer.act(action)) else {
+            return false;
+        };
+        self.settle_viewer(out)
+    }
+
+    /// The display-zoom chords, claimed for the picture while it is up.
+    pub fn viewer_zoom_key(&mut self, key: ZoomKey) -> bool {
+        let Some(open) = &mut self.viewer else {
+            return false;
+        };
+        open.viewer.zoom_key(key);
+        true
+    }
+
+    /// `Ctrl`+wheel and a pinch, claimed for the picture while it is up.
+    pub fn viewer_zoom_wheel(&mut self, delta: MouseScrollDelta, x: f32, y: f32) -> bool {
+        let (x, y) = self.viewer_point(x, y);
+        let Some(open) = &mut self.viewer else {
+            return false;
+        };
+        open.viewer.zoom_wheel(delta, x, y);
+        true
+    }
+
+    /// Act on what the viewer left behind. `true` always: the viewer is
+    /// modal and the input was its own.
+    fn settle_viewer(&mut self, outcome: ViewerOutcome) -> bool {
+        match outcome {
+            // Not offered for a chat's picture.
+            ViewerOutcome::Handled | ViewerOutcome::Copy | ViewerOutcome::SaveAs => {}
+            ViewerOutcome::OpenExternally => {
+                if let Some(open) = &self.viewer {
+                    let (id, name, bytes) = (open.id, open.file_name.clone(), open.bytes.clone());
+                    self.attachment_work.open_externally(id, &name, bytes);
+                }
+            }
+            ViewerOutcome::Close => {
+                self.viewer = None;
+            }
+        }
+        true
+    }
+
+    /// The viewer's share of each input, while it is up: `None` when it is
+    /// down and the input is the surface's.
+    pub(super) fn viewer_key(
+        &mut self,
+        key: &KeyPress,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<bool> {
+        let out = self.viewer.as_mut()?.viewer.key(key, text, mods);
+        Some(self.settle_viewer(out))
+    }
+
+    pub(super) fn viewer_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (x, y) = self.viewer_point(x, y);
+        let out = self.viewer.as_mut()?.viewer.mouse_down(x, y);
+        Some(self.settle_viewer(out))
+    }
+
+    pub(super) fn viewer_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (vx, vy) = self.viewer_point(x, y);
+        let open = self.viewer.as_mut()?;
+        self.pointer = (x, y);
+        Some(open.viewer.mouse_move(vx, vy))
+    }
+
+    pub(super) fn viewer_mouse_up(&mut self) -> Option<bool> {
+        let out = self.viewer.as_mut()?.viewer.mouse_up();
+        Some(self.settle_viewer(out))
+    }
+
+    pub(super) fn viewer_double_click(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (x, y) = self.viewer_point(x, y);
+        let out = self.viewer.as_mut()?.viewer.double_click(x, y);
+        Some(self.settle_viewer(out))
+    }
+
+    pub(super) fn viewer_scroll(&mut self, delta: MouseScrollDelta) -> Option<bool> {
+        let open = self.viewer.as_mut()?;
+        open.viewer.pan_wheel(delta, WheelAxis::AsTurned);
+        Some(true)
+    }
+
+    pub(super) fn viewer_cursor(&self) -> Option<CursorIcon> {
+        self.viewer.as_ref().map(|open| open.viewer.cursor())
+    }
+
+    pub(super) fn viewer_resized(&mut self) {
+        let (w, h) = self.viewer_viewport();
+        if self.viewer_lift.is_none()
+            && let Some(open) = &mut self.viewer
+        {
+            open.viewer.set_viewport(w, h);
+        }
+    }
+
+    /// A sent picture's tile under `(x, y)`, from the tiles last drawn.
+    pub(super) fn card_tile_at(&self, x: f32, y: f32) -> Option<Tile> {
+        if !self.conversation_hit_rect.contains(x, y) {
+            return None;
+        }
+        self.card_tile_hits
+            .iter()
+            .find(|(rect, tile)| tile.kind == AttachmentKind::Image && rect.contains(x, y))
+            .map(|(_, tile)| tile.clone())
     }
 
     /// What a send carries, or `None` when it must wait: while a draft is

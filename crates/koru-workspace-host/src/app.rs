@@ -1693,35 +1693,6 @@ fn snapshot_blob_hash(snapshot: &[u8]) -> Option<String> {
     }
 }
 
-/// One stable cache slot per file id. Prefixing the cleaned leaf avoids Windows
-/// device names while retaining the extension the OS uses to choose an app.
-fn temporary_open_path(id: koru_store_core::ids::DocumentId, name: &str) -> PathBuf {
-    let leaf = name
-        .rsplit(['/', '\\'])
-        .find(|part| !part.is_empty())
-        .unwrap_or("file");
-    let cleaned: String = leaf
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .take(180)
-        .collect();
-    let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
-        "file"
-    } else {
-        cleaned.trim_end_matches(['.', ' '])
-    };
-    std::env::temp_dir()
-        .join("koru-open")
-        .join(id.to_storage())
-        .join(format!("koru-{cleaned}"))
-}
-
 /// Open a workspace file's bytes: a shared link goes to the desktop URL
 /// handler; anything else is written to the temp cache and opened by type.
 fn open_file_bytes(
@@ -1737,15 +1708,16 @@ fn open_file_bytes(
         crate::url_file::OpenTarget::InvalidLink => {
             Err("This link has no URL to open.".to_string())
         }
-        crate::url_file::OpenTarget::File => {
-            let destination = temporary_open_path(id, name);
-            let parent = destination
-                .parent()
-                .ok_or_else(|| "the temporary file has no parent".to_string())?;
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            std::fs::write(&destination, bytes).map_err(|e| e.to_string())?;
-            koru_window::open_uri(destination.to_string_lossy().as_ref()).map_err(|e| e.to_string())
-        }
+        // The temporary copy, shared with the chat's attachments
+        // (`koru_window::open_bytes`).
+        crate::url_file::OpenTarget::File => koru_window::open_bytes_as_file(
+            &id.to_storage(),
+            name,
+            bytes,
+            koru_window::OpenAs::AsIs,
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string()),
     }
 }
 
@@ -19525,17 +19497,6 @@ mod tests {
             source.contains("event.repeat && is_modifier_key"),
             "Ctrl auto-repeat after a Ctrl+click must not keep the bit held"
         );
-    }
-
-    #[test]
-    fn temporary_open_paths_are_leaf_only_and_keep_the_extension() {
-        let id = koru_store_core::ids::DocumentId::new();
-        let path = temporary_open_path(id, "..\\..\\CON:<report>?.pdf");
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("koru-CON__report__.pdf")
-        );
-        assert!(path.ends_with(format!("{}/koru-CON__report__.pdf", id.to_storage())));
     }
 
     #[test]

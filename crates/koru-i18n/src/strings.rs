@@ -269,6 +269,8 @@ pub enum Key {
     ViewerDiagram,
     ViewerPicture,
     ViewerPictureSize,
+    AiViewerDecodeFailed,
+    AiOpenNoApp,
     AiAgentAllow,
     AiAgentReject,
     AiAgentModelsLoading,
@@ -2661,7 +2663,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1818] = [
+    pub const ALL: [Key; 1820] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2826,6 +2828,8 @@ impl Key {
         Key::ViewerDiagram,
         Key::ViewerPicture,
         Key::ViewerPictureSize,
+        Key::AiViewerDecodeFailed,
+        Key::AiOpenNoApp,
         Key::AiAgentAllow,
         Key::AiAgentReject,
         Key::AiAgentModelsLoading,
@@ -6329,6 +6333,28 @@ pub const ROWS: &[Row] = &[
         ar: "{} × {} بكسل",
         zh_hans: "{} × {} 像素",
         ja: "{} × {} ピクセル",
+    },
+    Row {
+        key: Key::AiViewerDecodeFailed,
+        en: "Couldn’t show this picture.",
+        es: "No se pudo mostrar esta imagen.",
+        pt_br: "Não foi possível mostrar esta imagem.",
+        de: "Dieses Bild konnte nicht angezeigt werden.",
+        fr: "Impossible d’afficher cette image.",
+        ar: "تعذّر عرض هذه الصورة.",
+        zh_hans: "无法显示此图片。",
+        ja: "この画像を表示できませんでした。",
+    },
+    Row {
+        key: Key::AiOpenNoApp,
+        en: "No app is set to open this kind of file.",
+        es: "No hay ninguna aplicación configurada para abrir este tipo de archivo.",
+        pt_br: "Nenhum app está definido para abrir este tipo de arquivo.",
+        de: "Für diese Art von Datei ist keine App festgelegt.",
+        fr: "Aucune app n’est définie pour ouvrir ce type de fichier.",
+        ar: "لا يوجد تطبيق معيّن لفتح هذا النوع من الملفات.",
+        zh_hans: "没有设置用于打开此类文件的应用。",
+        ja: "この種類のファイルを開くアプリが設定されていません。",
     },
     Row {
         key: Key::AiAgentAllow,

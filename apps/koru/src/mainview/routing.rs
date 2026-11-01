@@ -215,7 +215,7 @@ impl MainView {
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
-            Layer::MediaViewer => self.diagram_viewer_pane().is_some(),
+            Layer::MediaViewer => self.lifted_viewer().is_some(),
         }
     }
 

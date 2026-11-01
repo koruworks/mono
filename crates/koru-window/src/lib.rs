@@ -82,6 +82,7 @@ mod non_activating;
 /// A scene rendered to pixels with no window: the read-back recipe the
 /// tests carried in four copies, as the one the product saves a PNG with.
 pub mod offscreen;
+pub mod open_bytes;
 pub mod open_uri;
 pub mod renderer;
 pub mod request;
@@ -114,6 +115,7 @@ pub use input::{ImeEvent, KeyState, RichKeyEvent, RichMouseEvent};
 pub use key_quarantine::KeyQuarantine;
 pub use multi::{MultiWindowApp, WindowKey, run_windows};
 pub use non_activating::WindowActivation;
+pub use open_bytes::{OpenAs, open_bytes_as_file};
 pub use open_uri::{FEEDBACK_ADDRESS, FEEDBACK_MAILTO, open_uri};
 pub use renderer::{
     RendererBackend, build_renderer, configured_backends, context_with, default_backends,
