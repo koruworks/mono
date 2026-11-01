@@ -24,3 +24,30 @@ fn a_refused_model_re_probes_its_agent_at_most_once_per_window() {
         "another agent's own window"
     );
 }
+
+/// D19: a start refused for its level reads as the level, not the model,
+/// and its refresh says so.
+#[test]
+fn a_refused_level_reads_as_the_level_and_refreshes_for_it() {
+    let refused = |message: &str| {
+        ClientError::Session(koru_session_protocol::SessionFailure {
+            code: ErrorCode::ProviderModelUnavailable,
+            message: message.into(),
+        })
+    };
+    let level = refused(koru_session_protocol::REASONING_REJECTED);
+    assert_eq!(
+        session_error("create", level).public_message,
+        koru_ai_core::AGENT_REASONING_REJECTED
+    );
+    assert_eq!(
+        refusal_reason(&refused(koru_session_protocol::REASONING_REJECTED)),
+        "reasoning"
+    );
+    let model = refused("provider_model_unavailable");
+    assert_eq!(refusal_reason(&model), "model");
+    assert_eq!(
+        session_error("create", model).public_message,
+        "The agent refused that model."
+    );
+}

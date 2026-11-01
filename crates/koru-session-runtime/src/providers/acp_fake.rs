@@ -28,6 +28,15 @@ pub(super) struct FakeAcpConfig {
     pub flood_after_cancel: bool,
     pub exit_after_prompt: bool,
     pub stop_reason: Option<acp::StopReason>,
+    /// The session's `configOptions`, answered by `session/new` and kept:
+    /// `session/set_config_option` sets an option's `currentValue` and
+    /// answers with them all.
+    pub config_options: Vec<Value>,
+    /// A model's own `thought_level` option, put in place when the model is
+    /// set; a model not named here has none.
+    pub thought_by_model: Vec<(String, Value)>,
+    /// The level is taken but not applied: `currentValue` stays as it was.
+    pub ignore_level: bool,
 }
 
 #[derive(Default)]
@@ -158,10 +167,42 @@ impl JsonRpcTransport for FakeAcpPeer {
                 decode::<acp::AuthenticateResponse>(&result)?;
                 self.reply(id, result)?;
             }
+            Some("session/set_config_option") => {
+                let config = params["configId"].as_str().unwrap_or_default().to_owned();
+                let value = params["value"].clone();
+                let options = &mut self.config.config_options;
+                let Some(option) = options.iter_mut().find(|option| option["id"] == config) else {
+                    return Err(failure(
+                        ProviderStage::Write,
+                        ProviderDiagnostic::InvalidInput,
+                    ));
+                };
+                let thought = option["category"] == "thought_level";
+                if !(thought && self.config.ignore_level) {
+                    option["currentValue"] = value.clone();
+                }
+                if config == "model" {
+                    options.retain(|option| option["category"] != "thought_level");
+                    if let Some((_, level)) = self
+                        .config
+                        .thought_by_model
+                        .iter()
+                        .find(|(model, _)| value.as_str() == Some(model.as_str()))
+                    {
+                        options.push(level.clone());
+                    }
+                }
+                let result = json!({"configOptions": options.clone()});
+                self.reply(id, result)?;
+            }
             Some("session/new") => {
                 self.check_stage(ProviderStage::Initialize)?;
                 decode::<acp::NewSessionRequest>(params)?;
-                let result = json!({"sessionId":SESSION});
+                let result = if self.config.config_options.is_empty() {
+                    json!({"sessionId":SESSION})
+                } else {
+                    json!({"sessionId":SESSION, "configOptions": self.config.config_options.clone()})
+                };
                 decode::<acp::NewSessionResponse>(&result)?;
                 self.reply(id, result)?;
             }

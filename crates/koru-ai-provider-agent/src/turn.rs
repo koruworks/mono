@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use koru_ai_core::{
     AgentActivityEvent, AgentToolFailure, AgentToolKind, AiError, AiErrorClass, AiEvent, AiRequest,
     AiUsage, AttachmentInput, AttachmentKind, AttemptNotice, Cancellation, ChatRole, ChoiceIntent,
-    ContextItem, InferenceAttemptId, OfferedChoice, ProviderStream, Timestamp, ToolInvocationId,
-    UsageSource, bound_agent_content, bound_live_text,
+    ContextItem, InferenceAttemptId, OfferedChoice, ProviderStream, ReasoningChoice,
+    ReasoningLevel, Timestamp, ToolInvocationId, UsageSource, bound_agent_content, bound_live_text,
 };
 use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
@@ -65,9 +65,11 @@ pub(crate) fn start(
         )
     })?;
     let origin = chat_origin(chat)?;
-    // Effort for an agent lands with the effort chip (phase B); until then the
-    // chat sends none and the agent runs at its own default.
-    let selection = selection_for(&request.model, None)?;
+    // The chat's level rides the session's start with its model, and the
+    // host checks the agent applied it (agent-models D18). *Default* sends
+    // none: the agent decides.
+    let reasoning = launch_reasoning(request.reasoning);
+    let selection = selection_for(&request.model, reasoning)?;
     let ensured = provider.sessions.ensure(
         origin,
         &provider.kind,
@@ -197,7 +199,9 @@ pub(crate) fn start(
             .as_ref()
             .and_then(|model| model.reported.as_ref().or(model.requested.as_ref()))
             .map(|model| model.as_str().to_owned()),
-        effective_reasoning: None,
+        // The level the session started at: the host refuses a start whose
+        // level the agent did not report applied, so the chat's is the one.
+        effective_reasoning: reasoning.and_then(applied_choice),
         at: Timestamp::now(),
     });
     Ok(Box::new(TurnStream {
@@ -296,6 +300,38 @@ fn remove_session_copy(
 
 /// The explicit selection a chat's model column asks for: none for the
 /// agent's own default, otherwise the agent's model id as it spelled it.
+/// A chat's reasoning choice as the session's launch spells it; *Default*
+/// is none, which leaves the agent at its own default.
+fn launch_reasoning(choice: ReasoningChoice) -> Option<LaunchReasoning> {
+    Some(match choice {
+        ReasoningChoice::Default => return None,
+        ReasoningChoice::Off => LaunchReasoning::Off,
+        ReasoningChoice::On => LaunchReasoning::On,
+        ReasoningChoice::Level(level) => match level {
+            ReasoningLevel::Minimal => LaunchReasoning::Minimal,
+            ReasoningLevel::Low => LaunchReasoning::Low,
+            ReasoningLevel::Medium => LaunchReasoning::Medium,
+            ReasoningLevel::High => LaunchReasoning::High,
+            ReasoningLevel::XHigh => LaunchReasoning::XHigh,
+            ReasoningLevel::Max => LaunchReasoning::Max,
+        },
+    })
+}
+
+/// The level a session started at, as the attempt records it.
+fn applied_choice(level: LaunchReasoning) -> Option<ReasoningChoice> {
+    Some(match level {
+        LaunchReasoning::Off => ReasoningChoice::Off,
+        LaunchReasoning::On => ReasoningChoice::On,
+        LaunchReasoning::Minimal => ReasoningChoice::Level(ReasoningLevel::Minimal),
+        LaunchReasoning::Low => ReasoningChoice::Level(ReasoningLevel::Low),
+        LaunchReasoning::Medium => ReasoningChoice::Level(ReasoningLevel::Medium),
+        LaunchReasoning::High => ReasoningChoice::Level(ReasoningLevel::High),
+        LaunchReasoning::XHigh => ReasoningChoice::Level(ReasoningLevel::XHigh),
+        LaunchReasoning::Max => ReasoningChoice::Level(ReasoningLevel::Max),
+    })
+}
+
 fn selection_for(
     model: &str,
     reasoning: Option<LaunchReasoning>,
@@ -919,6 +955,27 @@ mod tests {
         let selection = selection_for("deepseek/v4-pro", None).unwrap().unwrap();
         assert_eq!(selection.model.unwrap().as_str(), "deepseek/v4-pro");
         assert!(selection.reasoning.is_none());
+    }
+
+    /// **A chat's level rides the launch** (D18): *Default* is none, so the
+    /// agent decides; a level alone, on the agent's own default model, is
+    /// still a selection; and the attempt records the level it started at.
+    #[test]
+    fn a_chats_level_rides_the_launch_and_default_sends_none() {
+        assert_eq!(launch_reasoning(ReasoningChoice::Default), None);
+        let high = launch_reasoning(ReasoningChoice::Level(ReasoningLevel::High));
+        assert_eq!(high, Some(LaunchReasoning::High));
+        assert_eq!(
+            launch_reasoning(ReasoningChoice::Level(ReasoningLevel::XHigh)),
+            Some(LaunchReasoning::XHigh)
+        );
+        let selection = selection_for(AGENT_DEFAULT_MODEL, high).unwrap().unwrap();
+        assert!(selection.model.is_none());
+        assert_eq!(selection.reasoning, Some(LaunchReasoning::High));
+        assert_eq!(
+            high.and_then(applied_choice),
+            Some(ReasoningChoice::Level(ReasoningLevel::High))
+        );
     }
 
     #[test]

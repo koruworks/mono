@@ -13,6 +13,10 @@ pub(super) struct CodexModel {
     /// `description`, within `ModelLabel`'s bounds.
     pub display_name: Option<koru_session_protocol::ModelLabel>,
     pub description: Option<koru_session_protocol::ModelLabel>,
+    /// Its `supportedReasoningEfforts` and `defaultReasoningEffort`, in
+    /// Koru's vocabulary. Captured for the catalog, never applied: a chosen
+    /// effort has no Codex route yet.
+    pub reasoning: Option<koru_session_protocol::ModelReasoning>,
 }
 
 pub(super) struct ModelPage {
@@ -56,11 +60,26 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
     let label = |key: &str| model.get(key).and_then(Value::as_str);
     let display_name = label("displayName").and_then(koru_session_protocol::ModelLabel::name);
     let description = label("description").and_then(koru_session_protocol::ModelLabel::description);
+    let efforts = model
+        .get("supportedReasoningEfforts")
+        .and_then(Value::as_array)
+        .map(|efforts| {
+            efforts
+                .iter()
+                .filter_map(|effort| effort.get("reasoningEffort").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let (reasoning, _) = koru_session_protocol::ModelReasoning::from_agent_tokens(
+        efforts,
+        label("defaultReasoningEffort"),
+    );
     let model = model.get("model")?.as_str()?;
     if !valid_token(model, 128) {
         return None;
     }
     Some(CodexModel {
+        reasoning,
         model: model.to_owned(),
         image: modalities
             .iter()

@@ -314,3 +314,71 @@ fn a_stdio_bridge_rides_session_new_as_acps_untagged_server() {
         "stdio is the untagged shape"
     );
 }
+
+/// The shape claude-agent-acp 0.76.0 answers with (`session-effort.js`):
+/// an `effort` select in the `thought_level` category, its values the
+/// current model's levels plus `default`.
+fn claude_options(current_model: &str, effort: Option<(&str, &[&str])>) -> Value {
+    let mut options = vec![json!({"id":"model","type":"select","category":"model",
+        "currentValue":current_model,
+        "options":[{"value":"default","name":"Default (recommended)"},
+                   {"value":"opus","name":"Opus"},{"value":"haiku","name":"Haiku"}]})];
+    if let Some((current, values)) = effort {
+        options.push(json!({"id":"effort","type":"select","category":"thought_level",
+            "currentValue":current,
+            "options":values.iter().map(|value| json!({"value":value,"name":value})).collect::<Vec<_>>()}));
+    }
+    json!({"configOptions":options})
+}
+
+/// **D15: the session's `thought_level` option is its current model's
+/// levels**, in Koru's words, with the agent's own spelling kept for
+/// applying one; the other models carry none until they are walked.
+#[test]
+fn the_thought_level_option_gives_the_current_models_levels() {
+    let session = claude_options(
+        "default",
+        Some((
+            "high",
+            &["default", "low", "medium", "high", "xhigh", "max", "ultra"],
+        )),
+    );
+    let level = thought_level(&session).unwrap();
+    assert_eq!(level.id, "effort");
+    assert_eq!(level.current.as_deref(), Some("high"));
+    assert_eq!(level.dropped, 1);
+    assert_eq!(level.value_for(LaunchReasoning::XHigh), Some("xhigh"));
+    assert_eq!(level.value_for(LaunchReasoning::Minimal), None);
+    let reasoning = level.reasoning.unwrap();
+    assert_eq!(reasoning.levels.len(), 5);
+    assert_eq!(reasoning.default, Some(LaunchReasoning::High));
+
+    let models = config_models(&session, "claude");
+    assert!(models[0].reasoning.is_some(), "the model the session is on");
+    assert!(models[1].reasoning.is_none() && models[2].reasoning.is_none());
+    // A model with no levels, and an answer with no option, give none.
+    assert!(thought_level(&claude_options("haiku", None)).is_none());
+    assert!(
+        config_models(&claude_options("haiku", None), "claude")
+            .iter()
+            .all(|model| model.reasoning.is_none())
+    );
+}
+
+/// OpenCode's `variants` are its levels; it states no default.
+#[test]
+fn the_verbose_catalog_reads_opencodes_variants_as_levels() {
+    let output = "opencode/beam-free\n{\"name\":\"Beam Free\",\"variants\":{\"low\":{},\"high\":{},\"max\":{},\"turbo\":{}}}\nopencode/plain\n{\"name\":\"Plain\"}\n";
+    let catalog = parse_verbose_catalog(output.as_bytes()).unwrap();
+    let reasoning = catalog.models()[0].reasoning.as_ref().unwrap();
+    assert_eq!(
+        reasoning.levels,
+        [
+            LaunchReasoning::Low,
+            LaunchReasoning::High,
+            LaunchReasoning::Max
+        ]
+    );
+    assert_eq!(reasoning.default, None);
+    assert!(catalog.models()[1].reasoning.is_none());
+}

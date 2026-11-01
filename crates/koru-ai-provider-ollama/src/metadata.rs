@@ -52,7 +52,7 @@ fn levels(
 ) -> ReasoningControl {
     ReasoningControl::Levels {
         values: values.to_vec(),
-        default,
+        default: Some(default),
         supports_off,
     }
 }

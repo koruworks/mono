@@ -514,3 +514,152 @@ fn a_late_checking_row_does_not_hide_a_ready_agent() {
     );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+/// A probe-captured agent whose levels are walked (Claude's shape): its
+/// capture has levels for the start model only, and the walk for every
+/// model; each walk is counted.
+struct Walker {
+    walks: Arc<AtomicUsize>,
+}
+
+fn leveled(ids: &[&str]) -> ProviderModels {
+    catalog(ids)
+        .models()
+        .iter()
+        .map(|model| {
+            let mut model = model.clone();
+            model.reasoning = Some(koru_session_protocol::ModelReasoning {
+                levels: vec![koru_session_protocol::LaunchReasoning::High],
+                default: None,
+                off: false,
+            });
+            model
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap()
+}
+
+/// The capture: levels on `default`, the model the session starts on.
+fn captured() -> ProviderModels {
+    let mut models = catalog(&["default", "opus"]).models().to_vec();
+    models[0].reasoning = leveled(&["default"]).models()[0].reasoning.clone();
+    models.try_into().unwrap()
+}
+
+impl ManagedProviderFactory for Walker {
+    fn create(&self, _: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
+        Err(ProviderFailure::new(
+            ErrorCode::ProviderFailed,
+            ProviderStage::Initialize,
+            ProviderDiagnostic::HandshakeRejected,
+        ))
+    }
+    fn catalog_source(&self) -> CatalogSource {
+        CatalogSource::Probe
+    }
+    fn walks_model_levels(&self) -> bool {
+        true
+    }
+    fn walk_model_levels(
+        &self,
+        _: std::ffi::OsString,
+        _: PathBuf,
+    ) -> Result<ProviderModels, ProviderFailure> {
+        self.walks.fetch_add(1, Ordering::SeqCst);
+        Ok(leveled(&["default", "opus"]))
+    }
+}
+
+fn walker() -> (Arc<ManagedProviderRegistry>, Arc<AtomicUsize>) {
+    let walks = Arc::new(AtomicUsize::new(0));
+    let mut registry = ManagedProviderRegistry::default();
+    registry
+        .register(
+            ManagedProviderRegistration {
+                kind: "claude",
+                ..CODEX_REGISTRATION
+            },
+            Arc::new(Walker {
+                walks: walks.clone(),
+            }),
+        )
+        .unwrap();
+    (Arc::new(registry), walks)
+}
+
+fn walking_cache(
+    registry: &Arc<ManagedProviderRegistry>,
+    store: Arc<MemoryCatalogStore>,
+) -> Arc<ProviderCatalogCache> {
+    ProviderCatalogCache::new(
+        registry.clone(),
+        PathBuf::from("fixture-sessions"),
+        Box::new(SharedStore(store)),
+        true,
+    )
+}
+
+fn opus_has_levels(cache: &Arc<ProviderCatalogCache>) -> bool {
+    cache.serve(&kind("claude")).unwrap().models()[1]
+        .reasoning
+        .is_some()
+}
+
+fn await_walked(cache: &Arc<ProviderCatalogCache>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !cache
+        .lock()
+        .entries
+        .get(&kind("claude"))
+        .is_some_and(|entry| entry.stored.source == SOURCE_WALKED)
+    {
+        assert!(Instant::now() < deadline, "the walk never landed");
+        std::thread::yield_now();
+    }
+}
+
+/// **D16: a walking agent is walked once per version.** Its capture is
+/// served at once, with levels for the start model; the walk's levels land
+/// after, are written, survive a fresh capture and a restart on the same
+/// version, and a new version walks again.
+#[test]
+fn a_walking_agent_is_walked_once_per_version_and_keeps_its_levels() {
+    let (registry, walks) = walker();
+    let store = Arc::new(MemoryCatalogStore::default());
+    let cache = walking_cache(&registry, store.clone());
+    observe(&cache, &available("claude", "0.76.0"), Some(captured()));
+    await_walked(&cache);
+    assert_eq!(walks.load(Ordering::SeqCst), 1);
+    assert!(opus_has_levels(&cache), "the walk's levels are served");
+
+    observe(&cache, &available("claude", "0.76.0"), Some(captured()));
+    assert!(opus_has_levels(&cache), "a fresh capture keeps them");
+    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    assert_eq!(written["providers"]["claude"]["source"], "probe+walk");
+
+    let reopened = walking_cache(
+        &registry,
+        Arc::new(MemoryCatalogStore::with_bytes(store.bytes().unwrap())),
+    );
+    observe(&reopened, &available("claude", "0.76.0"), Some(captured()));
+    assert!(opus_has_levels(&reopened), "a restart keeps them too");
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(walks.load(Ordering::SeqCst), 1, "and walks nothing again");
+
+    observe(&cache, &available("claude", "0.77.0"), Some(captured()));
+    await_walked(&cache);
+    assert_eq!(walks.load(Ordering::SeqCst), 2, "a new version is walked");
+}
+
+#[test]
+fn walked_levels_lay_over_the_capture_and_a_model_not_reached_keeps_its_own() {
+    let mut walked = leveled(&["default"]).models().to_vec();
+    walked[0].reasoning = None;
+    let walked: ProviderModels = walked.try_into().unwrap();
+    let laid = walked_levels(&captured(), &walked);
+    assert!(laid.models()[0].reasoning.is_none(), "the walk read none");
+    assert!(laid.models()[1].reasoning.is_none(), "opus was not reached");
+    let kept = keep_walked_levels(captured(), &leveled(&["default", "opus"]));
+    assert!(kept.models().iter().all(|model| model.reasoning.is_some()));
+}

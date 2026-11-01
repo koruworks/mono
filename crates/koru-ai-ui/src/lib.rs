@@ -1673,6 +1673,12 @@ impl ChatSurface {
                 (self.effort_section(), self.effort_control().cloned())
                 && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
             {
+                if self.effort_locked() {
+                    self.status = Some(
+                        koru_i18n::t(self.lang, koru_i18n::Key::AiEffortLockedAfterStart).into(),
+                    );
+                    return true;
+                }
                 self.effort_drag = Some(choice);
                 return true;
             }
@@ -2650,7 +2656,15 @@ impl ChatSurface {
                         }
                     }
                     PublicAiEvent::Failed { error, .. } => {
-                        self.status = Some(error.public_message.clone());
+                        // A refused level is said in the person's language.
+                        self.status = Some(
+                            if error.public_message == koru_ai_core::AGENT_REASONING_REJECTED {
+                                koru_i18n::t(self.lang, koru_i18n::Key::AiAgentReasoningRejected)
+                                    .to_owned()
+                            } else {
+                                error.public_message.clone()
+                            },
+                        );
                     }
                     _ => {}
                 }
@@ -4728,18 +4742,33 @@ impl ChatSurface {
         ))
     }
 
+    /// The chat's model's effort control: the one the service sent with
+    /// the transcript, or — for an agent model, and a new chat not made yet
+    /// — the levels its agent's listing carries (agent-models D14).
     fn effort_control(&self) -> Option<&ReasoningControl> {
-        self.transcript
+        let transcript = self.transcript.as_ref()?;
+        transcript
+            .reasoning_control
             .as_ref()
-            .and_then(|transcript| transcript.reasoning_control.as_ref())
+            .or_else(|| self.agent_model_control(&transcript.chat.current_model))
             .filter(|control| !effort::stops(control).is_empty())
     }
 
     /// What the chat's effort setting means under its model's control.
     fn effective_reasoning(&self) -> Option<ReasoningChoice> {
         let transcript = self.transcript.as_ref()?;
-        let control = transcript.reasoning_control.as_ref()?;
+        let control = self.effort_control()?;
         effort::resolve(control, transcript.chat.current_model.default_reasoning)
+    }
+
+    /// **An agent chat's level is chosen before its first message** (S5):
+    /// the agent starts at it, and a live session is not reconfigured, so
+    /// afterwards the slider only shows it.
+    fn effort_locked(&self) -> bool {
+        self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+                && !transcript.messages.is_empty()
+        })
     }
 
     /// Which slider stop the pointer is on, for hover redraws.
@@ -4787,6 +4816,8 @@ impl ChatSurface {
     }
 
     /// The chip's text: the model, then its effort when the model has one.
+    /// An agent chat names its level only when one was chosen (S2): on
+    /// *Default* the agent decides, and the chip says nothing for it.
     pub(crate) fn chip_label(&self) -> String {
         let Some(transcript) = &self.transcript else {
             // No chat yet: the chip asks for the model that will make one.
@@ -4810,9 +4841,11 @@ impl ChatSurface {
         } else {
             model.requested_model.clone()
         };
+        let chosen = !agents::is_agent_provider(&model.provider)
+            || model.default_reasoning != ReasoningChoice::Default;
         match self.effective_reasoning() {
-            Some(choice) => format!("{name} · {}", effort::word(self.lang, choice)),
-            None => name,
+            Some(choice) if chosen => format!("{name} · {}", effort::word(self.lang, choice)),
+            _ => name,
         }
     }
 
@@ -10526,7 +10559,7 @@ mod tests {
         assert_eq!(
             choices_for_reasoning(&ReasoningControl::Levels {
                 values: vec![ReasoningLevel::Low, ReasoningLevel::High],
-                default: ReasoningLevel::Low,
+                default: Some(ReasoningLevel::Low),
                 supports_off: true,
             }),
             vec![
@@ -10819,6 +10852,7 @@ mod tests {
             description: None,
             group_name: None,
             legacy: false,
+            reasoning: None,
         }];
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: claude.clone(),
@@ -10904,6 +10938,199 @@ mod tests {
         assert_eq!(selection.requested_model, AiProviderId::KORU_HOSTED_MODEL);
     }
 
+    /// Claude's models as its listing carries them: `opus` with levels and
+    /// no stated default, `sonnet` with fewer, `haiku` with none.
+    fn claude_listing(surface: &mut ChatSurface) {
+        let levels = |values: Vec<ReasoningLevel>| {
+            Some(ReasoningControl::Levels {
+                values,
+                default: None,
+                supports_off: false,
+            })
+        };
+        let model = |id: &str, reasoning| koru_ai_wire::AgentModelView {
+            id: id.into(),
+            group: "claude".into(),
+            name: None,
+            description: None,
+            group_name: None,
+            legacy: false,
+            reasoning,
+        };
+        surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            models: vec![
+                model(
+                    "opus",
+                    levels(vec![
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                        ReasoningLevel::Max,
+                    ]),
+                ),
+                model(
+                    "sonnet",
+                    levels(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+                ),
+                model("haiku", None),
+            ],
+        }));
+    }
+
+    /// **Rung 4: an agent model's levels in today's effort section.** A new
+    /// chat on Claude's Opus shows the levels its listing carries; on
+    /// *Default* the chip names no level (the agent decides) and the label
+    /// reads *Default*; a chosen level is kept on the chat and named.
+    #[test]
+    fn an_agent_models_levels_show_and_the_chip_names_a_chosen_one() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        surface.lang = koru_i18n::Lang::En;
+        claude_listing(&mut surface);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        assert!(surface.choose_agent_model(claude.clone(), "opus".into()));
+        while commands.try_recv().is_ok() {}
+        assert_eq!(
+            effort::stops(surface.effort_control().unwrap()).len(),
+            3,
+            "opus's own levels"
+        );
+        assert_eq!(
+            surface.effective_reasoning(),
+            Some(ReasoningChoice::Default)
+        );
+        assert_eq!(surface.chip_label(), "Claude · Opus");
+        assert!(surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::Max)));
+        assert!(
+            commands.try_recv().is_err(),
+            "kept on the chat not made yet"
+        );
+        assert_eq!(surface.chip_label(), "Claude · Opus · Max");
+
+        // Haiku offers none: no slider, and the level goes back to Default.
+        assert!(surface.choose_agent_model(claude.clone(), "haiku".into()));
+        assert!(surface.effort_control().is_none());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .current_model
+                .default_reasoning,
+            ReasoningChoice::Default
+        );
+    }
+
+    /// **D18: a new model keeps the chat's level when it offers it.**
+    #[test]
+    fn picking_another_model_keeps_a_level_it_offers() {
+        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        claude_listing(&mut surface);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        surface.choose_agent_model(claude.clone(), "opus".into());
+        surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::High));
+        surface.choose_agent_model(claude.clone(), "sonnet".into());
+        let level = |surface: &ChatSurface| {
+            surface
+                .transcript
+                .as_ref()
+                .unwrap()
+                .chat
+                .current_model
+                .default_reasoning
+        };
+        assert_eq!(
+            level(&surface),
+            ReasoningChoice::Level(ReasoningLevel::High)
+        );
+        surface.choose_agent_model(claude.clone(), "opus".into());
+        surface.choose_effort(ReasoningChoice::Level(ReasoningLevel::Max));
+        surface.choose_agent_model(claude, "sonnet".into());
+        assert_eq!(
+            level(&surface),
+            ReasoningChoice::Default,
+            "sonnet has no max"
+        );
+    }
+
+    /// **S5: after an agent chat's first message its level only shows**: the
+    /// agent started at it. A press on the slider says why instead.
+    #[test]
+    fn an_agent_chats_level_is_read_only_after_its_first_message() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        claude_listing(&mut surface);
+        let mut chat = transcript();
+        chat.chat.current_model = ModelSelection {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            requested_model: "opus".into(),
+            default_reasoning: ReasoningChoice::Level(ReasoningLevel::High),
+        };
+        chat.messages.push(koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: chat.chat.id,
+            ordinal: 0,
+            role: ChatRole::User,
+            state: MessageState::Complete,
+            markdown: "hi".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
+        });
+        surface.transcript = Some(chat);
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
+        while commands.try_recv().is_ok() {}
+        let section = surface.effort_section().expect("the level still shows");
+        let control = surface.effort_control().cloned().unwrap();
+        let (x, _) = effort::slider(section, &control).stops[0];
+        let y = effort::slider(section, &control).track_y;
+        assert!(surface.mouse_down(x, y));
+        assert!(surface.effort_drag.is_none(), "no stop is taken");
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::AiEffortLockedAfterStart
+            ))
+        );
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::UpdateModel(..)))
+        );
+    }
+
+    /// **D19: a refused level is said in the person's language.**
+    #[test]
+    fn a_refused_level_reads_in_the_persons_language() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        surface.lang = koru_i18n::Lang::De;
+        surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+            version: 1,
+            sequence: 1,
+            event: PublicAiEvent::Failed {
+                attempt_id: InferenceAttemptId::new(),
+                error: koru_ai_core::AiError::new(
+                    AiErrorClass::ModelUnavailable,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                    false,
+                ),
+                at: koru_ai_core::Timestamp::from_millis(1),
+            },
+        }));
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("Der Agent hat diese Denkstufe nicht übernommen")
+        );
+    }
+
     #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
@@ -10919,7 +11146,7 @@ mod tests {
                 ReasoningLevel::Medium,
                 ReasoningLevel::High,
             ],
-            default: ReasoningLevel::Medium,
+            default: Some(ReasoningLevel::Medium),
             supports_off: false,
         });
         let chat_id = chat.chat.id;

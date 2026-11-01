@@ -641,6 +641,11 @@ pub struct AgentModelView {
     /// The agent marks the model as older. Koru never infers it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub legacy: bool,
+    /// The reasoning levels the model offers, in Koru's words, and the
+    /// agent's stated default when it states one. Absent for a model with
+    /// none: a client shows it no level control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<koru_ai_core::ReasoningControl>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

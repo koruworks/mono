@@ -391,6 +391,73 @@ impl AcpControl {
         Ok(())
     }
 
+    /// **Start the session at the chosen reasoning level** (agent-models
+    /// D18): the `thought_level` option of the latest answer must offer it,
+    /// `session/set_config_option` sets it, and the answer must report it
+    /// applied — the same validate, set and verify the model gets. Anything
+    /// short of that fails the start as a refused level (D19), never runs
+    /// the agent at a level the person did not choose.
+    fn apply_reasoning(
+        &mut self,
+        native_session: &str,
+        options: &Value,
+        level: koru_session_protocol::LaunchReasoning,
+        session_id: SessionId,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.reasoning.rejected", session_id = %session_id);
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::ReasoningRejected,
+            )
+        };
+        let Some(option) = models::thought_level(options) else {
+            return Err(rejected());
+        };
+        let Some(value) = option.value_for(level).map(str::to_owned) else {
+            return Err(rejected());
+        };
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":option.id, "value":value}),
+            )
+            .map_err(|_| rejected())?;
+        let reported = models::thought_level(&applied).and_then(|option| option.current);
+        if reported.as_deref() != Some(value.as_str()) {
+            return Err(rejected());
+        }
+        tracing::info!(target: "koru::acp", event = "acp.reasoning.selected", session_id = %session_id, applied = true);
+        Ok(())
+    }
+
+    /// **Each model's levels, read by walking the models once** (D16): the
+    /// discovery session's own model is set to each listed one in turn, and
+    /// the `thought_level` option its answer carries is that model's. No
+    /// prompt is sent, and only this session's model changes; a set that
+    /// fails ends the walk, and the models already read keep their levels.
+    pub(super) fn walk_levels(&mut self) -> Vec<koru_session_protocol::ProviderModel> {
+        let mut models = self.model_options.clone();
+        let Some(session) = self.native_session.clone() else {
+            return models;
+        };
+        let mut dropped = 0;
+        for model in &mut models {
+            let Ok(answer) = self.call(
+                "session/set_config_option",
+                json!({"sessionId":session, "configId":"model", "value":model.id.as_str()}),
+            ) else {
+                break;
+            };
+            let level = models::thought_level(&answer);
+            dropped += level.as_ref().map_or(0, |level| level.dropped);
+            model.reasoning = level.and_then(|level| level.reasoning);
+        }
+        models::levels_dropped(self.config.route.provider.as_str(), dropped);
+        models
+    }
+
     fn start_session(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
         self.ensure_usable(ProviderStage::Initialize)?;
         if let Some(capabilities) = &self.capabilities {
@@ -526,6 +593,9 @@ impl AcpControl {
             .to_owned();
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
         let requested_model = self.config.requested_model();
+        // The latest answer's options: the model's levels arrive with the
+        // answer that set the model (D18).
+        let mut latest = None;
         if let Some(model) = &requested_model {
             // A model the session did not advertise fails the start, on any
             // route: ACP's `session/set_config_option` is the same verb for
@@ -541,6 +611,11 @@ impl AcpControl {
                 .map_err(|_| models::selection_unavailable())?;
             models::validate_applied(&selected, model)?;
             tracing::info!(target: "koru::acp", event = "acp.model.selected", session_id = %start.session_id, selected = true);
+            latest = Some(selected);
+        }
+        if let Some(level) = self.config.requested_reasoning() {
+            let options = latest.as_ref().unwrap_or(&session);
+            self.apply_reasoning(&native_session, options, level, start.session_id)?;
         }
         if self.config.route.is_claude() {
             self.await_wrapper_auth()?;

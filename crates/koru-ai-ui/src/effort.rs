@@ -44,7 +44,9 @@ pub(crate) fn stops(control: &ReasoningControl) -> Vec<ReasoningChoice> {
 }
 
 /// What the chat's setting means under the control: the stop the chip
-/// reads and the slider marks. `None` where the model has no control.
+/// reads and the slider marks. `None` where the model has no control. A
+/// model that states no default level reads *Default* while the chat
+/// chooses none, and the slider marks no stop: the agent decides.
 pub(crate) fn resolve(
     control: &ReasoningControl,
     choice: ReasoningChoice,
@@ -71,7 +73,7 @@ pub(crate) fn resolve(
             ReasoningChoice::Level(level) if values.contains(&level) => {
                 ReasoningChoice::Level(level)
             }
-            _ => ReasoningChoice::Level(*default),
+            _ => default.map_or(ReasoningChoice::Default, ReasoningChoice::Level),
         }),
     }
 }
@@ -216,7 +218,7 @@ mod tests {
                 ReasoningLevel::Medium,
                 ReasoningLevel::High,
             ],
-            default: ReasoningLevel::Medium,
+            default: Some(ReasoningLevel::Medium),
             supports_off: false,
         }
     }
@@ -287,7 +289,7 @@ mod tests {
                     ReasoningLevel::XHigh,
                     ReasoningLevel::Max,
                 ],
-                default: ReasoningLevel::Medium,
+                default: Some(ReasoningLevel::Medium),
                 supports_off: true,
             }) {
                 assert!(!word(lang, choice).is_empty());

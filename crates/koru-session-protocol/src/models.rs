@@ -84,6 +84,49 @@ pub struct ModelReasoning {
 }
 
 impl ModelReasoning {
+    /// **An agent's level tokens in Koru's vocabulary** (agent-models D15):
+    /// `minimal` … `max` and `xhigh` are levels, compared without case;
+    /// `off` and `none` mean the model can be turned off; `default` is no
+    /// stop — the agent decides. Anything else is dropped and counted, never
+    /// shown. `stated` becomes the default only when it is one of the levels.
+    /// `None` when no token is a level.
+    pub fn from_agent_tokens<'a>(
+        tokens: impl IntoIterator<Item = &'a str>,
+        stated: Option<&str>,
+    ) -> (Option<Self>, usize) {
+        let mut levels = Vec::new();
+        let mut off = false;
+        let mut dropped = 0;
+        for token in tokens {
+            match agent_level(token) {
+                AgentLevel::Level(level) => {
+                    if !levels.contains(&level) {
+                        levels.push(level);
+                    }
+                }
+                AgentLevel::Off => off = true,
+                AgentLevel::Default => {}
+                AgentLevel::Unknown => dropped += 1,
+            }
+        }
+        if levels.is_empty() {
+            return (None, dropped);
+        }
+        levels.sort_by_key(|level| level_rank(*level));
+        let default = stated.and_then(|token| match agent_level(token) {
+            AgentLevel::Level(level) if levels.contains(&level) => Some(level),
+            _ => None,
+        });
+        (
+            Some(Self {
+                levels,
+                default,
+                off,
+            }),
+            dropped,
+        )
+    }
+
     /// At least one level, none repeated, none of them `off` or `on`, and a
     /// default that is one of them.
     pub fn valid(&self) -> bool {
@@ -96,6 +139,38 @@ impl ModelReasoning {
             && self
                 .default
                 .is_none_or(|default| self.levels.contains(&default))
+    }
+}
+
+/// What one agent token means in Koru's vocabulary.
+enum AgentLevel {
+    Level(LaunchReasoning),
+    Off,
+    Default,
+    Unknown,
+}
+
+fn agent_level(token: &str) -> AgentLevel {
+    match token.trim().to_ascii_lowercase().as_str() {
+        "off" | "none" => AgentLevel::Off,
+        "default" => AgentLevel::Default,
+        other => match other.parse::<LaunchReasoning>() {
+            Ok(LaunchReasoning::Off | LaunchReasoning::On) | Err(_) => AgentLevel::Unknown,
+            Ok(level) => AgentLevel::Level(level),
+        },
+    }
+}
+
+/// Koru's order: minimal < low < medium < high < xhigh < max.
+fn level_rank(level: LaunchReasoning) -> u8 {
+    match level {
+        LaunchReasoning::Off | LaunchReasoning::On => 0,
+        LaunchReasoning::Minimal => 1,
+        LaunchReasoning::Low => 2,
+        LaunchReasoning::Medium => 3,
+        LaunchReasoning::High => 4,
+        LaunchReasoning::XHigh => 5,
+        LaunchReasoning::Max => 6,
     }
 }
 

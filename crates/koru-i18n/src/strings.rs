@@ -263,6 +263,8 @@ pub enum Key {
     AiAgentModelsFailed,
     AiAgentNoModels,
     AiModelAgentDefault,
+    AiAgentReasoningRejected,
+    AiEffortLockedAfterStart,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2649,7 +2651,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1806] = [
+    pub const ALL: [Key; 1808] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2808,6 +2810,8 @@ impl Key {
         Key::AiAgentModelsFailed,
         Key::AiAgentNoModels,
         Key::AiModelAgentDefault,
+        Key::AiAgentReasoningRejected,
+        Key::AiEffortLockedAfterStart,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -6240,6 +6244,30 @@ pub const ROWS: &[Row] = &[
         ar: "الافتراضي",
         zh_hans: "默认",
         ja: "既定",
+    },
+    // A failed agent turn whose chosen reasoning level the agent did not take.
+    Row {
+        key: Key::AiAgentReasoningRejected,
+        en: "The agent did not accept that reasoning level",
+        es: "El agente no aceptó ese nivel de razonamiento",
+        pt_br: "O agente não aceitou esse nível de raciocínio",
+        de: "Der Agent hat diese Denkstufe nicht übernommen",
+        fr: "L’agent n’a pas accepté ce niveau de raisonnement",
+        ar: "لم يقبل الوكيل مستوى التفكير هذا",
+        zh_hans: "代理未接受该推理级别",
+        ja: "エージェントはこの推論レベルを受け付けませんでした",
+    },
+    // An agent chat's level after its first message: the agent started at it.
+    Row {
+        key: Key::AiEffortLockedAfterStart,
+        en: "The agent started at this level; it can be changed in a new chat",
+        es: "El agente empezó con este nivel; puedes cambiarlo en un chat nuevo",
+        pt_br: "O agente começou neste nível; você pode mudá-lo em um novo chat",
+        de: "Der Agent hat mit dieser Stufe begonnen; ändern lässt sie sich in einem neuen Chat",
+        fr: "L’agent a démarré à ce niveau ; vous pouvez le changer dans une nouvelle discussion",
+        ar: "بدأ الوكيل بهذا المستوى؛ يمكن تغييره في محادثة جديدة",
+        zh_hans: "代理已按此级别启动；可在新对话中更改",
+        ja: "エージェントはこのレベルで開始しました。新しいチャットで変更できます",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

@@ -297,6 +297,20 @@
             "description": "The agent's own name for the model, e.g. `Claude Opus 4.7`. Absent\nwhen the agent sends none; a client then formats the id.",
             "nullable": true,
             "type": "string"
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningControl"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The reasoning levels the model offers, in Koru's words, and the\nagent's stated default when it states one. Absent for a model with\nnone: a client shows it no level control."
           }
         },
         "required": [
@@ -8705,7 +8719,19 @@
           {
             "properties": {
               "default": {
-                "$ref": "#/components/schemas/ReasoningLevel"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReasoningLevel"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "default": null,
+                "description": "The level the model runs at when the chat chooses none. OpenAI,\nKoru AI and Ollama always state it; a local agent that does not\nleaves it `None`, and *Default* then sends nothing — the agent\ndecides (agent-models §6.2)."
               },
               "kind": {
                 "enum": [
@@ -8726,7 +8752,6 @@
             "required": [
               "kind",
               "values",
-              "default",
               "supports_off"
             ],
             "type": "object"

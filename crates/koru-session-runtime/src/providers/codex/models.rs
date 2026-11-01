@@ -81,6 +81,7 @@ impl CodexControl {
                 let mut listed = ProviderModel::new(model.model.parse().ok()?, group.clone());
                 listed.name = model.display_name;
                 listed.description = model.description;
+                listed.reasoning = model.reasoning;
                 Some(listed)
             })
             .collect();

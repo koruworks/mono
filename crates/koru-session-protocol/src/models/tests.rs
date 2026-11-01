@@ -98,3 +98,37 @@ fn reasoning_needs_a_level_no_repeats_no_toggle_and_a_default_among_its_levels()
     model.reasoning = Some(reasoning(vec![Low], Some(Max)));
     assert!(ProviderModels::try_from(vec![model]).is_err());
 }
+
+/// **D15: an agent's level tokens in Koru's vocabulary.** The six words map
+/// whatever their case, `off` and `none` say the model can be off,
+/// `default` is no stop, anything else is dropped and counted, the order is
+/// Koru's, and the stated value is the default only when it is a level.
+#[test]
+fn agent_level_tokens_map_onto_koru_words_and_the_rest_is_dropped() {
+    let (reasoning, dropped) = ModelReasoning::from_agent_tokens(
+        [
+            "default", "MAX", "low", "High", "xhigh", "none", "turbo", "low",
+        ],
+        Some("high"),
+    );
+    let reasoning = reasoning.unwrap();
+    assert_eq!(
+        reasoning.levels,
+        [
+            LaunchReasoning::Low,
+            LaunchReasoning::High,
+            LaunchReasoning::XHigh,
+            LaunchReasoning::Max
+        ]
+    );
+    assert_eq!(reasoning.default, Some(LaunchReasoning::High));
+    assert!(reasoning.off);
+    assert_eq!(dropped, 1, "turbo has no word here");
+    assert!(reasoning.valid());
+
+    let (stated_default, _) = ModelReasoning::from_agent_tokens(["low", "high"], Some("default"));
+    assert_eq!(stated_default.unwrap().default, None, "the agent decides");
+    let (none, dropped) = ModelReasoning::from_agent_tokens(["default", "off", "on"], None);
+    assert!(none.is_none(), "no level, no slider");
+    assert_eq!(dropped, 1, "on is no level an agent sends");
+}

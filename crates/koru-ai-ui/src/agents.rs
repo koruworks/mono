@@ -447,6 +447,7 @@ mod tests {
             description: None,
             group_name: None,
             legacy: false,
+            reasoning: None,
         }
     }
 
@@ -861,6 +862,21 @@ impl crate::ChatSurface {
         }
     }
 
+    /// An agent model's levels, as its agent's listing carries them; `None`
+    /// for any other provider, and for a model listed with none.
+    pub(crate) fn agent_model_control(
+        &self,
+        model: &koru_ai_core::ModelSelection,
+    ) -> Option<&koru_ai_core::ReasoningControl> {
+        if !is_agent_provider(&model.provider) {
+            return None;
+        }
+        self.listed_agent_models(&model.provider)
+            .iter()
+            .find(|listed| listed.id == model.requested_model)
+            .and_then(|listed| listed.reasoning.as_ref())
+    }
+
     /// The models listed for `agent`, empty while none are known.
     pub(crate) fn listed_agent_models(&self, agent: &AiProviderId) -> &[AgentModelView] {
         match self.agent_models.get(agent) {
@@ -1123,7 +1139,8 @@ impl crate::ChatSurface {
     /// Make a local agent the one who answers this chat, on the model
     /// named or its own default — or, with no chat yet, the one a new chat
     /// is made with. Only offered on a chat with no message yet, and only
-    /// for an agent that is ready.
+    /// for an agent that is ready. The chat keeps its level when the new
+    /// model offers it, and is back on *Default* otherwise (D18).
     pub(crate) fn choose_agent_model(
         &mut self,
         agent: AiProviderId,
@@ -1136,11 +1153,21 @@ impl crate::ChatSurface {
         {
             return true;
         }
-        self.start_chat_on(koru_ai_core::ModelSelection {
+        let mut model = koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,
             default_reasoning: koru_ai_core::ReasoningChoice::Default,
-        })
+        };
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.chat.current_model.default_reasoning);
+        if let (Some(current), Some(control)) = (current, self.agent_model_control(&model))
+            && crate::effort::stops(control).contains(&current)
+        {
+            model.default_reasoning = current;
+        }
+        self.start_chat_on(model)
     }
 
     /// Answer an agent's permission request by the choice clicked.

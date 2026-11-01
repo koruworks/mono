@@ -3,7 +3,9 @@
 //! OpenCode owns configuration, credentials and catalog resolution. No prompt is sent.
 use super::*;
 use crate::AttachmentPathResolver;
-use koru_session_protocol::{ModelLabel, ModelName, ProviderModel, ProviderModels};
+use koru_session_protocol::{
+    LaunchReasoning, ModelLabel, ModelName, ModelReasoning, ProviderModel, ProviderModels,
+};
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 mod accounts;
@@ -131,12 +133,117 @@ fn discover_session_options(
 /// has been seen to cut short under load.
 const SESSION_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// **The session's reasoning levels** (agent-models D15): the one `select`
+/// config option whose `category` is `thought_level`, ACP's own *Thought /
+/// reasoning level selector*, read in Koru's vocabulary. It describes the
+/// session's current model.
+pub(super) struct ThoughtLevel {
+    /// The option's id, which `session/set_config_option` names.
+    pub id: String,
+    /// The levels it offers; `None` when no value is one of Koru's.
+    pub reasoning: Option<ModelReasoning>,
+    /// The agent's own value for each Koru level, and for *off*.
+    pub values: Vec<(LaunchReasoning, String)>,
+    /// The option's `currentValue`, as the agent spells it.
+    pub current: Option<String>,
+    /// Values outside Koru's vocabulary, dropped (D17).
+    pub dropped: usize,
+}
+
+impl ThoughtLevel {
+    /// The agent's own value for `level`, when the option offers it.
+    pub fn value_for(&self, level: LaunchReasoning) -> Option<&str> {
+        self.values
+            .iter()
+            .find(|(offered, _)| *offered == level)
+            .map(|(_, value)| value.as_str())
+    }
+}
+
+/// The `thought_level` option of a `session/new` or `set_config_option`
+/// answer, or `None` when it carries none — or more than one, which is no
+/// single answer.
+pub(super) fn thought_level(response: &Value) -> Option<ThoughtLevel> {
+    let options = response.get("configOptions")?.as_array()?;
+    let mut matching = options
+        .iter()
+        .filter(|option| option["category"] == "thought_level" && option["type"] == "select");
+    let option = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    let id = option["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())?
+        .to_owned();
+    let mut tokens = Vec::new();
+    for entry in option["options"].as_array()? {
+        match entry["options"].as_array() {
+            Some(members) => tokens.extend(members.iter().filter_map(|m| m["value"].as_str())),
+            None => tokens.extend(entry["value"].as_str()),
+        }
+    }
+    let current = option["currentValue"].as_str().map(str::to_owned);
+    let (reasoning, dropped) =
+        ModelReasoning::from_agent_tokens(tokens.iter().copied(), current.as_deref());
+    let values = tokens
+        .iter()
+        .filter_map(|token| {
+            let lowered = token.trim().to_ascii_lowercase();
+            let level = match lowered.as_str() {
+                "off" | "none" => LaunchReasoning::Off,
+                other => other
+                    .parse::<LaunchReasoning>()
+                    .ok()
+                    .filter(|level| *level != LaunchReasoning::On)?,
+            };
+            Some((level, (*token).to_owned()))
+        })
+        .collect();
+    Some(ThoughtLevel {
+        id,
+        reasoning,
+        values,
+        current,
+        dropped,
+    })
+}
+
+/// A count of agent level values Koru has no word for, as the catalog's
+/// event says it; none is ever shown.
+pub(super) fn levels_dropped(provider: &str, count: usize) {
+    if count > 0 {
+        tracing::info!(target: "koru::provider_models", event = "catalog.levels.dropped",
+            provider, count);
+    }
+}
+
 /// The `model` option's values as a catalog: a flat list under the route's
 /// own kind, or ACP's groups under each group's id. A value that is not a
 /// model name, or a repeat, is left out. Each option's `name` and
 /// `description`, and each group's `name`, are kept as the agent sent them,
-/// within `ModelLabel`'s bounds; one past them is dropped, not refused.
+/// within `ModelLabel`'s bounds; one past them is dropped, not refused. The
+/// session's `thought_level` option describes its current model, so that
+/// model alone carries levels here (D15); the others' are read by walking
+/// them (D16).
 pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
+    let mut models = config_model_list(session, fallback_group);
+    if let Some(level) = thought_level(session) {
+        levels_dropped(fallback_group, level.dropped);
+        let current = option(session)
+            .ok()
+            .and_then(|option| option["currentValue"].as_str());
+        if let Some(model) = models
+            .iter_mut()
+            .find(|model| Some(model.id.as_str()) == current)
+        {
+            model.reasoning = level.reasoning;
+        }
+    }
+    models
+}
+
+fn config_model_list(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
     let Ok(option) = option(session) else {
         return Vec::new();
     };
@@ -266,7 +373,10 @@ fn parse_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
 
 /// `opencode models --verbose`: each `provider/model` id on a line of its
 /// own, then a JSON object about that model. The id line is held to the
-/// plain listing's rules, and the object's `name` is kept. Anything else in
+/// plain listing's rules, and the object's `name` is kept, and its
+/// `variants`' names as the model's levels (D15's vocabulary; OpenCode
+/// states no default). OpenCode applies them over ACP through the same
+/// `thought_level` option as any agent, seen on 1.19.5. Anything else in
 /// the output refuses the whole listing, and the plain one is used instead.
 fn parse_verbose_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid_catalog())?;
@@ -284,6 +394,12 @@ fn parse_verbose_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure
         }
         rest = after[facts.byte_offset()..].trim_start();
         model.name = facts_value["name"].as_str().and_then(ModelLabel::name);
+        if let Some(variants) = facts_value["variants"].as_object() {
+            let (reasoning, dropped) =
+                ModelReasoning::from_agent_tokens(variants.keys().map(String::as_str), None);
+            model.reasoning = reasoning;
+            levels_dropped("opencode", dropped);
+        }
         models.insert(model.id.clone(), model);
         if models.len() > koru_session_protocol::MAX_PROVIDER_MODELS {
             return Err(invalid_catalog());

@@ -739,10 +739,38 @@ pub(super) fn agent_models(
                     description: label(&model.description),
                     group_name: label(&model.group_name),
                     legacy: model.legacy,
+                    reasoning: model.reasoning.as_ref().and_then(reasoning_control),
                 }
             })
             .collect(),
     })
+}
+
+/// A model's levels as the chat's effort control (agent-models D14): the
+/// levels in Koru's order, the agent's stated default when it states one,
+/// and *off* when it offers that. `None` when no level is one a chat can
+/// choose.
+pub(super) fn reasoning_control(
+    reasoning: &koru_session_protocol::ModelReasoning,
+) -> Option<ReasoningControl> {
+    let level = |level: koru_session_protocol::LaunchReasoning| {
+        koru_ai_core::ReasoningLevel::parse(level.as_str())
+    };
+    let values: Vec<_> = reasoning.levels.iter().filter_map(|l| level(*l)).collect();
+    (!values.is_empty()).then(|| ReasoningControl::Levels {
+        values,
+        default: reasoning.default.and_then(level),
+        supports_off: reasoning.off,
+    })
+}
+
+/// Each listed model's control, as the dispatcher's index keeps it.
+pub(super) fn agent_controls(response: &AgentModelsResponse) -> Vec<(String, ReasoningControl)> {
+    response
+        .models
+        .iter()
+        .filter_map(|model| Some((model.id.clone(), model.reasoning.clone()?)))
+        .collect()
 }
 
 fn history_clearing() -> Failure {

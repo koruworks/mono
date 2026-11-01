@@ -983,3 +983,22 @@ fn the_handover_walks_its_cycle_through_the_verbs() {
     );
     harness.owner.shutdown();
 }
+
+/// D19: a refused level carries its own token, so the chat can say it was
+/// the level; any other failure's message stays the code's.
+#[test]
+fn a_refused_level_tells_the_client_it_was_the_level() {
+    let told = super::provider_failure(crate::providers::ProviderFailure::new(
+        ErrorCode::ProviderModelUnavailable,
+        koru_session_protocol::ProviderStage::Initialize,
+        koru_session_protocol::ProviderDiagnostic::ReasoningRejected,
+    ));
+    assert_eq!(told.code, ErrorCode::ProviderModelUnavailable);
+    assert_eq!(told.message, koru_session_protocol::REASONING_REJECTED);
+    let model = super::provider_failure(crate::providers::ProviderFailure::new(
+        ErrorCode::ProviderModelUnavailable,
+        koru_session_protocol::ProviderStage::Initialize,
+        koru_session_protocol::ProviderDiagnostic::HandshakeRejected,
+    ));
+    assert_eq!(model.message, ErrorCode::ProviderModelUnavailable.as_str());
+}

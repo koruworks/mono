@@ -919,6 +919,12 @@ enum Envelope {
     Tools(ToolResolution),
     PullFinished(Uuid),
     Export(ExportResolution),
+    /// An agent's models were listed: each one's effort control, for the
+    /// index the dispatcher answers `reasoning_control` from.
+    AgentControls {
+        provider: AiProviderId,
+        controls: Vec<(String, ReasoningControl)>,
+    },
     /// The session-control thread reported on a chat's sessions.
     ChatSessionsEnded {
         chat: ChatId,
@@ -1244,6 +1250,10 @@ struct WorkerState {
     /// Each Ollama model's reasoning control, as its last inspection told
     /// it; a model not inspected in this process shows the chip no slider.
     ollama_controls: HashMap<String, ReasoningControl>,
+    /// Each agent model's levels, from the last listing of its agent
+    /// (agent-models D14). Not a second list: nothing is listed from it,
+    /// and a model not listed in this process shows the chip no slider.
+    agent_controls: HashMap<(AiProviderId, String), ReasoningControl>,
     /// Where chat attachments live; the dispatcher only computes paths.
     attachments: AttachmentStore,
     /// The thread that removes attachment folders and links a branch's.
@@ -1428,6 +1438,7 @@ fn run_worker(
         output: provider_output.clone(),
         agent_views,
         ollama_controls: HashMap::new(),
+        agent_controls: HashMap::new(),
         attachments,
         cleanup,
         branching: HashSet::new(),
@@ -1456,6 +1467,9 @@ fn run_worker(
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
             Ok(Envelope::Tools(resolution)) => state.handle_tool_resolution(resolution),
+            Ok(Envelope::AgentControls { provider, controls }) => {
+                state.keep_agent_controls(provider, controls)
+            }
             Ok(Envelope::ChatSessionsEnded { chat, outcome }) => {
                 state.on_chat_sessions_ended(chat, outcome)
             }
@@ -1947,10 +1961,20 @@ impl WorkerState {
             )));
             return;
         };
+        // The answer's levels come back to the dispatcher as well, for
+        // the chat's effort control; the listing never waits on it.
+        let output = self.output.clone();
         let spawned = std::thread::Builder::new()
             .name("koru-ai-agent-models".into())
             .spawn(move || {
-                let _ = reply.send(agents::agent_models(&agents, provider, refresh));
+                let answer = agents::agent_models(&agents, provider.clone(), refresh);
+                if let Ok(response) = &answer {
+                    let _ = output.try_send(Envelope::AgentControls {
+                        provider,
+                        controls: agents::agent_controls(response),
+                    });
+                }
+                let _ = reply.send(answer);
             });
         if spawned.is_err() {
             tracing::warn!("could not start the agent model listing thread");
@@ -2321,9 +2345,9 @@ impl WorkerState {
     }
 
     /// What a chat's model offers as an effort control, from what the
-    /// service already holds: the static OpenAI and Koru tables, and the
-    /// Ollama control kept from the model's last inspection. A local agent
-    /// advertises none (I4: a launch-only route gets no slider).
+    /// service already holds: the static OpenAI and Koru tables, the Ollama
+    /// control kept from the model's last inspection, and an agent model's
+    /// levels kept from its agent's last listing (agent-models D14).
     fn reasoning_control(&self, model: &koru_ai_core::ModelSelection) -> Option<ReasoningControl> {
         match model.provider.as_str() {
             AiProviderId::OPENAI => {
@@ -2331,7 +2355,24 @@ impl WorkerState {
             }
             AiProviderId::KORU => Some(koru_model().capabilities.reasoning),
             AiProviderId::OLLAMA => self.ollama_controls.get(&model.requested_model).cloned(),
-            _ => None,
+            _ => self
+                .agent_controls
+                .get(&(model.provider.clone(), model.requested_model.clone()))
+                .cloned(),
+        }
+    }
+
+    /// An agent's listing landed: its models' controls replace the ones
+    /// kept from the last, so a model that lost its levels loses its slider.
+    fn keep_agent_controls(
+        &mut self,
+        provider: AiProviderId,
+        controls: Vec<(String, ReasoningControl)>,
+    ) {
+        self.agent_controls.retain(|(kept, _), _| kept != &provider);
+        for (model, control) in controls {
+            self.agent_controls
+                .insert((provider.clone(), model), control);
         }
     }
 

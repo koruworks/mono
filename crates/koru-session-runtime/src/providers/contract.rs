@@ -197,6 +197,27 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
     fn catalog_source(&self) -> CatalogSource {
         CatalogSource::OnDemand
     }
+
+    /// Whether this provider's levels are read by walking its models once
+    /// per version (agent-models D16), because its session offers levels for
+    /// the model it is on and no other.
+    fn walks_model_levels(&self) -> bool {
+        false
+    }
+
+    /// The walk itself: every listed model, each with the levels it offers.
+    /// Runs on the catalog's worker, holding a model slot.
+    fn walk_model_levels(
+        &self,
+        _executable: OsString,
+        _working_directory: PathBuf,
+    ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        Err(ProviderFailure::new(
+            ErrorCode::CapabilityNotNegotiated,
+            ProviderStage::Discovery,
+            ProviderDiagnostic::HandshakeRejected,
+        ))
+    }
 }
 
 /// Where the host's model catalog gets a provider's list.
