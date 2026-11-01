@@ -293,20 +293,28 @@ pub fn measure_width<T: MenuItem>(engine: &mut TextEngine, items: &[T]) -> f32 {
             } else if item.swatch().is_some() {
                 w += SWATCH + 8.0;
             }
-            if item.has_submenu() {
-                w += SHORTCUT_GAP
-                    + engine
-                        .icon_layout(koru_draw::icons::CARET_RIGHT, theme::CAPTION_ICON)
-                        .width();
-            } else if let Some(chord) = item.shortcut() {
-                w += SHORTCUT_GAP + engine.simple_layout(&chord, theme::role::hint()).width();
-            } else if let Some(glyph) = item.trailing_icon() {
-                w += SHORTCUT_GAP + engine.icon_layout(glyph, theme::CAPTION_ICON).width();
-            }
+            w += trailing_width(engine, item);
         }
         widest = widest.max(w);
     }
     widest.clamp(MIN_W, MAX_W)
+}
+
+/// What a row draws at its right edge — the submenu's `›`, a chord or a
+/// trailing glyph — with the gap before it: the room its label leaves.
+fn trailing_width<T: MenuItem>(engine: &mut TextEngine, item: &T) -> f32 {
+    if item.has_submenu() {
+        SHORTCUT_GAP
+            + engine
+                .icon_layout(koru_draw::icons::CARET_RIGHT, theme::CAPTION_ICON)
+                .width()
+    } else if let Some(chord) = item.shortcut() {
+        SHORTCUT_GAP + engine.simple_layout(&chord, theme::role::hint()).width()
+    } else if let Some(glyph) = item.trailing_icon() {
+        SHORTCUT_GAP + engine.icon_layout(glyph, theme::CAPTION_ICON).width()
+    } else {
+        0.0
+    }
 }
 
 /// A row's label, in its own face when it names one.
@@ -1180,6 +1188,20 @@ impl<T: MenuItem> Menu<T> {
                 }
                 text_x += icon.width() + 8.0;
             }
+            // **A label past the menu's ceiling ends in an ellipsis inside
+            // its row** — a chat named after its first message, a document's
+            // long title — rather than running out of the panel.
+            let mut room = p.x + p.w - ROW_PAD_X - trailing_width(engine, item) - text_x;
+            if item.unread() {
+                room -= SHORTCUT_GAP + UNREAD_DOT;
+            }
+            let label = if label.width() > room {
+                let stack = item.font_stack().unwrap_or_else(theme::ui_stack);
+                let cut = engine.elided_in(item.label().as_ref(), theme::role::row(), stack, room);
+                engine.simple_layout_in(&cut, theme::role::row(), stack)
+            } else {
+                label
+            };
             crate::typography::line(
                 "Menu label",
                 scene,
