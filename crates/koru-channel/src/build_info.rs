@@ -87,6 +87,10 @@ const fn platform() -> &'static str {
         "windows"
     } else if cfg!(target_os = "macos") {
         "macos"
+    } else if cfg!(target_os = "android") {
+        // A phone's `target_os` is `android`, never `linux`, so it was
+        // `unknown` here; it is the update feed's platform value (A6).
+        "android"
     } else if cfg!(target_os = "linux") {
         "linux"
     } else {

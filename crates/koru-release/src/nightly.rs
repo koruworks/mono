@@ -53,7 +53,7 @@ pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github <nig
      [--with-cloud] --out <dir> [--version <version>, required for stable]";
 
 pub(crate) const DIST_GITHUB_PACKAGE_USAGE: &str = "usage: koru-release dist-github-package \
-     <nightly|stable> --target android --package <file> --version <version> \
+     <nightly|stable> --target android-aarch64 --package <file> --version <version> \
      --build <yyyymmddHHMM> --notes <releases/...toml> --key <minisign secret key> \
      [--key-password-stdin] --download-base <https url> --out <dir>";
 
@@ -75,7 +75,8 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
      reminders show no notifications.",
     "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
-     app, *Koru Nightly*, beside Koru, and do not update themselves: install the next one over it.",
+     app, *Koru Nightly*, beside Koru, and offer the next nightly in the app; installing it is your \
+     choice, on the system's own screen.",
     "No Koru Cloud in the nightly yet.",
 ];
 
@@ -521,7 +522,7 @@ const PLACEHOLDER_SHA256: &str = "0000000000000000000000000000000000000000000000
 
 /// The installed app's own check of a manifest: one it would refuse must not
 /// reach the release.
-fn client_accepts(manifest: &UpdateManifest) -> Result<(), String> {
+pub(crate) fn client_accepts(manifest: &UpdateManifest) -> Result<(), String> {
     manifest
         .validate(&UpdateTarget {
             channel: manifest.channel,

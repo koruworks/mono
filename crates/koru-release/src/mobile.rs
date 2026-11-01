@@ -4,18 +4,22 @@
 //! TECHNICAL.final.md §5.4, rung 2): the Android APK beside the desktop
 //! packages on the same page, built by Gradle rather than by `package::build`.
 //!
-//! Two verbs, and neither builds anything nor talks to GitHub:
+//! Three verbs, and none builds anything or talks to GitHub:
 //!
 //! - `android-version-code --build <yyyymmddHHMM>` prints the APK's
 //!   `versionCode` for a build number. The build number itself does not fit:
 //!   Android holds the code in a signed 32-bit integer, and Play refuses
 //!   anything above 2100000000.
-//! - `dist-github-package <nightly|stable> --target android --package <apk> …`
+//! - `dist-github-package <nightly|stable> --target android-aarch64 --package <apk> …`
 //!   takes the APK Gradle built and signed and writes what the publish job
-//!   uploads: the package under its release name, its `.minisig`, and the
-//!   release body every build writes. **No feed manifest**: nothing on a
-//!   phone reads one yet (the update notice is rung 3), and the publish job
-//!   knows a build without one is a phone's.
+//!   uploads: the package under its release name, its `.minisig`, the feed
+//!   manifest the nightly app's update check reads
+//!   (`nightly-android-aarch64.json`, §5.5, A6), and the release body every
+//!   build writes.
+//! - `minisign-public-key --key <file> [--key-password-stdin]` prints the
+//!   public half of the channel's Minisign key, the one line Gradle bakes
+//!   into the APK so the app verifies the next one against it. Derived, never
+//!   supplied, as `dist-github` derives the key it bakes into a desktop.
 
 use crate::nightly::{
     self, DIST_GITHUB_PACKAGE_USAGE, GithubBuild, download_base_url, github_asset_name,
@@ -23,7 +27,7 @@ use crate::nightly::{
 };
 use crate::{require_clean_tree, sign_archive, source, validate_release_version};
 use chrono::{DateTime, TimeZone, Utc};
-use koru_update::ReleaseChannel;
+use koru_update::{PackageFormat, ReleaseChannel, UpdateManifest};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -237,13 +241,21 @@ pub(crate) fn dist_github_package(
         signature: &signature,
     };
 
+    let manifest = package_manifest(&build);
+    nightly::client_accepts(&manifest)?;
+
     fs::create_dir_all(&options.out)
         .map_err(|error| format!("{}: {error}", options.out.display()))?;
     let signature_name = format!("{asset}.minisig");
+    let feed = nightly::feed_name(channel, &options.target);
     let body_name = "release-body.md";
     fs::write(options.out.join(&asset), &bytes)
         .map_err(|error| format!("{}: {error}", options.out.join(&asset).display()))?;
     nightly::write(&options.out.join(&signature_name), signature.as_bytes())?;
+    nightly::write(
+        &options.out.join(&feed),
+        &serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+    )?;
     nightly::write(
         &options.out.join(body_name),
         release_body(&build).as_bytes(),
@@ -256,10 +268,58 @@ pub(crate) fn dist_github_package(
     );
     println!("[Koru] sha256: {sha256}");
     println!("[Koru] wrote into {}:", options.out.display());
-    for name in [asset.as_str(), signature_name.as_str(), body_name] {
+    for name in [
+        asset.as_str(),
+        signature_name.as_str(),
+        feed.as_str(),
+        body_name,
+    ] {
         println!("{name}");
     }
     Ok(())
+}
+
+/// **The phone's feed manifest**: the desktop's schema, unchanged
+/// (`nightly::github_manifest`), with the one Android value A6 adds — the
+/// package is an `apk`. `android-aarch64` gives the platform and the
+/// architecture the client asks for whatever its ABI.
+pub(crate) fn package_manifest(build: &GithubBuild<'_>) -> UpdateManifest {
+    let mut manifest = nightly::github_manifest(build);
+    manifest.package.format = PackageFormat::Apk;
+    manifest
+}
+
+pub(crate) const MINISIGN_PUBLIC_KEY_USAGE: &str =
+    "usage: koru-release minisign-public-key --key <file> [--key-password-stdin]";
+
+/// `minisign-public-key`: the key's public half, as the one base64 line of
+/// its box (the comment line is not part of the key, and a Gradle property
+/// holds one line).
+pub(crate) fn public_key_command(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let mut key = None;
+    let mut password_stdin = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--key" if key.is_none() => {
+                key = Some(args.next().ok_or(MINISIGN_PUBLIC_KEY_USAGE)?);
+            }
+            "--key-password-stdin" if !password_stdin => password_stdin = true,
+            _ => return Err(MINISIGN_PUBLIC_KEY_USAGE.into()),
+        }
+    }
+    let key = key.ok_or(MINISIGN_PUBLIC_KEY_USAGE)?;
+    let (_, public_key) = nightly::open_key_file(Path::new(&key), password_stdin)?;
+    println!("{}", public_key_line(&public_key)?);
+    Ok(())
+}
+
+/// The base64 line of a Minisign public key box.
+pub(crate) fn public_key_line(boxed: &str) -> Result<&str, String> {
+    boxed
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("untrusted comment:"))
+        .ok_or_else(|| "the public key box holds no key".to_string())
 }
 
 fn hex(bytes: &[u8]) -> String {

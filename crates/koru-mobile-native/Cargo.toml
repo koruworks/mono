@@ -21,3 +21,7 @@ jni = "0.22.4"
 koru-contract = { path = "../koru-contract" }
 koru-mobile-host = { path = "../koru-mobile-host" }
 prost.workspace = true
+# The nightly app's update notice (TECHNICAL.final §5.5): the desktop's feed
+# client, manifest validation and Minisign verification, not a second copy.
+koru-update = { path = "../koru-update" }
+serde_json.workspace = true

@@ -40,6 +40,10 @@ fun koruWorkspaceVersion(): String {
 //   `koruSigningKeyPassword`: the release key. All four or none — absent, a
 //   release build is still built, unsigned, which `assembleRelease` reports
 //   by writing `app-release-unsigned.apk`; half of them is refused.
+// - `koruUpdateBaseUrl`, `koruUpdatePublicKey`: where the nightly app finds
+//   the feed for its next build and the Minisign key that build must verify
+//   against (TECHNICAL.final §5.5). Read only with `koruNightly=true`, and
+//   both or neither: a stable or Play build never offers an update (D21).
 fun koruProperty(name: String): String? = providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
 
 val koruNightly = when (val value = koruProperty("koruNightly")) {
@@ -73,6 +77,20 @@ val koruSigning: Map<String, String>? = koruSigningNames.mapNotNull { name -> ko
             )
         }
     }
+
+val koruUpdate: Pair<String, String>? = run {
+    val base = koruProperty("koruUpdateBaseUrl")
+    val key = koruProperty("koruUpdatePublicKey")
+    when {
+        !koruNightly || (base == null && key == null) -> null
+        base == null || key == null ->
+            error("koruUpdateBaseUrl and koruUpdatePublicKey go together")
+        !base.startsWith("https://") -> error("koruUpdateBaseUrl must be HTTPS, not \"$base\"")
+        !Regex("^RW[A-Za-z0-9+/=]{40,}$").matches(key) ->
+            error("koruUpdatePublicKey must be a Minisign public key's base64 line")
+        else -> base to key
+    }
+}
 
 fun koruGitBranch(): String = koruGit("rev-parse", "--abbrev-ref", "HEAD").takeIf { it != "HEAD" } ?: ""
 fun koruGitCommit(): String = koruGit("rev-parse", "--short=12", "HEAD")
@@ -133,6 +151,10 @@ android {
         // the allowlist admits only a loopback, private-range or link-local
         // address, and refuses the value with the production set standing.
         buildConfigField("String", "BLOB_BYTE_ORIGINS", accountBuildValue("koruBlobByteOrigins"))
+        // The nightly's update notice (§5.5): empty on every other build, and
+        // an empty pair is what switches the check off.
+        buildConfigField("String", "UPDATE_BASE_URL", "\"${koruUpdate?.first.orEmpty()}\"")
+        buildConfigField("String", "UPDATE_PUBLIC_KEY", "\"${koruUpdate?.second.orEmpty()}\"")
     }
 
     buildFeatures {
@@ -179,6 +201,12 @@ android {
     for (buildType in listOf("debug", "release")) {
         sourceSets.named(buildType) {
             jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/$buildType").get().asFile)
+            // **Only the nightly app may ask to install packages**: the
+            // permission that lets it hand a downloaded APK to the system
+            // installer is merged from src/nightly/ into the nightly's
+            // manifest alone, so the stable app, and a Play build of it,
+            // never declares it.
+            if (koruNightly) manifest.srcFile("src/nightly/AndroidManifest.xml")
         }
     }
     sourceSets.named("test") {

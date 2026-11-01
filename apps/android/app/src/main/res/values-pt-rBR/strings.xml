@@ -491,4 +491,13 @@
     <string name="open_source_license_notice">Aviso do Koru</string>
     <string name="open_source_license_third_party">Avisos de terceiros</string>
     <string name="open_source_licenses_missing">Esta versão não inclui arquivos de licença.</string>
+    <string name="update_available">O Koru Nightly %1$s está disponível</string>
+    <string name="update_download">Baixar</string>
+    <string name="update_downloading">Baixando e verificando o Koru Nightly %1$s…</string>
+    <string name="update_ready">O Koru Nightly %1$s foi baixado e verificado.</string>
+    <string name="update_install">Instalar</string>
+    <string name="update_failed">Não foi possível baixar ou verificar a atualização.</string>
+    <string name="update_retry">Tentar de novo</string>
+    <string name="update_not_now">Agora não</string>
+    <string name="update_whats_new">Novidades</string>
 </resources>
