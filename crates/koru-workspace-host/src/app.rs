@@ -4833,23 +4833,14 @@ impl<H: Host> App<H> {
         let explicit_store_profile = cli::store_profile_from_args();
         let remembered_store_profile =
             explicit_store_profile.or_else(startup::selected_store_profile);
+        // No document is opened here: the remembered tabs are, below, and the
+        // workspace's first document only if none of them resolves.
         let open_store = |selected: Option<koru_core::ProfileId>| {
-            selected.map_or_else(
-                || {
-                    koru_workspace::fromstore::open_from_store_preferring_empty(
-                        koru_workspace::fromstore::segment(),
-                        gateway_root.as_deref(),
-                        wanted,
-                    )
-                },
-                |selected| {
-                    koru_workspace::fromstore::open_from_store_profile_preferring_empty(
-                        koru_workspace::fromstore::segment(),
-                        gateway_root.as_deref(),
-                        selected,
-                        wanted,
-                    )
-                },
+            koru_workspace::fromstore::open_for_launch(
+                koru_workspace::fromstore::segment(),
+                gateway_root.as_deref(),
+                selected,
+                wanted,
             )
         };
         // An explicit profile is strict. A remembered profile is a preference:
@@ -4921,13 +4912,26 @@ impl<H: Host> App<H> {
             // `NeedsProfile`; skipping that state would preserve stale windows,
             // tabs, and the last-selected Profile forever.
             let live_profiles = live_profile_ids_for_settings(launch);
-            let live_workspaces = match client_at(gateway_root.as_deref())
-                .and_then(|client| client.workspaces_including_deleted())
-            {
-                Ok(workspaces) => workspaces
-                    .into_iter()
-                    .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
-                    .collect::<HashSet<_>>(),
+            // An open already read the whole catalog; only an empty Store
+            // (onboarding) has to ask. This was a second, identical round trip
+            // on a new connection before every first frame.
+            let read = match launch {
+                koru_workspace::fromstore::StoreLaunch::Open(opened) => {
+                    Ok(opened.all_workspaces.clone())
+                }
+                koru_workspace::fromstore::StoreLaunch::NeedsProfile => {
+                    client_at(gateway_root.as_deref())
+                        .and_then(|client| client.workspaces_including_deleted())
+                        .map(|workspaces| {
+                            workspaces
+                                .into_iter()
+                                .map(|workspace| WorkspaceId::from_uuid(workspace.id.as_uuid()))
+                                .collect::<HashSet<_>>()
+                        })
+                }
+            };
+            let live_workspaces = match read {
+                Ok(workspaces) => workspaces,
                 Err(error) => {
                     startup::fatal(&format!(
                         "Koru could not reconcile Profile settings safely:\n\n{error}"
@@ -5130,6 +5134,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The `&mut` borrow above has ended, so the document is available — and
         // it has to be: reopening a tab means building a view of a node.
         reopen_remembered_documents(&mut workspace, &settings);
+        // The launch's open fetched no document (`open_for_launch`), so the
+        // window has one only if a remembered tab resolved. Otherwise it gets
+        // what every other open gives it: the workspace's first document.
+        if workspace.on_store()
+            && workspace.active().is_none()
+            && let Err(error) = workspace.open_first_document()
+        {
+            startup::fatal(&format!("Koru could not open a document:\n\n{error}"));
+            return None;
+        }
         let span = timing::Span::start("restore tabs");
         view.restore(&workspace, &settings);
         span.stop();
@@ -7069,6 +7083,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // Everything a new window inherits from the app is applied here.
         self.sync_pinned(id);
         self.sync_viewport(id);
+        // **Including which workspace it is showing, before its first frame.**
+        // Left to the maintenance poll, a cold launch drew its first frames
+        // with no context — a placeholder "Workspace" in the switcher — and a
+        // taskbar *New document* had nothing to decide its prompt from.
+        // In-memory caches only; the poll's Store refresh is not asked for here.
+        self.sync_pane_context();
         id
     }
 
@@ -12895,6 +12915,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             mut workspace,
             current,
             has_workspace,
+            all_workspaces: _,
         } = opened;
         let Some(incoming_profile) = profile.id() else {
             self.report(ErrorReport::new(
@@ -14734,6 +14755,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // window has been on screen, which is the boundary a later plan's
         // "was this ever visible" questions are asked against.
         pane.access.revealed();
+        // Showing a window activates it, and the first activation on a thread
+        // starts its text input services — work no other watch covered, in the
+        // gap between a launch's window appearing and it reading a keystroke.
+        let _reveal = timing::Watch::start("reveal_pane");
         if pane.maximize_on_reveal.replace(false) {
             // `set_maximized` shows the window on Windows; the explicit
             // `set_visible` after it keeps winit's visibility flag in step —
@@ -16317,7 +16342,17 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
-                    if let Some(pane) = self.panes.get_mut(&id) {
+                    // **Only when the size actually changed.** Reconfiguring
+                    // waits for the GPU to go idle and rebuilds the swapchain
+                    // and the target texture. A launch delivers resizes that
+                    // were buffered while the window was being built, after
+                    // it is already on screen and at that size, and each one
+                    // paid all of that on the UI thread before the first
+                    // keystroke could be read.
+                    if let Some(pane) = self.panes.get_mut(&id)
+                        && (pane.surface.config.width, pane.surface.config.height)
+                            != (size.width, size.height)
+                    {
                         self.context
                             .resize_surface(&mut pane.surface, size.width, size.height);
                     }

@@ -775,10 +775,8 @@ fn main() {
         return;
     }
     if run {
+        // Hands the work to a thread and returns; see `install_jump_list`.
         taskbar::install_jump_list();
-        // **After `prepare`, because that is what decides.** Winning the
-        // activation pipe is what makes this the one process on the machine
-        // that may register a machine-wide shortcut; asking any earlier would
     }
     span.stop();
     // **Linux's app-menu entry follows the folder.** An entry naming a `koru`

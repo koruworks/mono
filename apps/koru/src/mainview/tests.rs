@@ -1433,6 +1433,79 @@ fn document_creation_asks_for_a_workspace_when_none_is_open() {
     ));
 }
 
+/// A cold taskbar *New document* asks from `Manager::initial`, before the shell
+/// has said which workspace the window holds. That is "not known yet", not
+/// "none": the prompt waits for the context and then asks for a **document**.
+/// Deciding on the spot opened *New workspace* on every cold launch.
+#[test]
+fn a_cold_new_document_waits_for_the_workspace_and_asks_for_a_document() {
+    let ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("create");
+    let workspace_id = ws.id().expect("workspace id");
+    let mut workspace = koru_workspace::Workspace::new(ws);
+    let mut v = MainView::new();
+    v.set_viewport(1200.0, 700.0);
+
+    v.prompt_new_document();
+    assert!(
+        v.new_document.is_none(),
+        "no prompt is chosen before the window knows its workspace"
+    );
+
+    View::set_pane_context(
+        &mut v,
+        Vec::new(),
+        koru_core::ProfileId::new(),
+        Vec::new(),
+        Some(workspace_id),
+    );
+    assert!(v.new_document.is_some(), "the context answers the request");
+
+    assert!(v.key(&mut workspace.ws, &ch("Roadmap"), Some("Roadmap"), NONE,));
+    assert!(v.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    ));
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::CreateDocument(title)) if title == "Roadmap"
+    ));
+}
+
+/// …and when the context says there is no Store workspace, the same request
+/// asks for one first, as it always has.
+#[test]
+fn a_cold_new_document_with_no_workspace_asks_for_one() {
+    let ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("create");
+    let mut workspace = koru_workspace::Workspace::new(ws);
+    let mut v = MainView::new();
+    v.set_viewport(1200.0, 700.0);
+
+    v.prompt_new_document();
+    View::set_pane_context(
+        &mut v,
+        Vec::new(),
+        koru_core::ProfileId::new(),
+        Vec::new(),
+        None,
+    );
+
+    assert!(v.key(&mut workspace.ws, &ch("Research"), Some("Research"), NONE,));
+    assert!(v.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    ));
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::NewWorkspace(name)) if name == "Research"
+    ));
+}
+
 // --------------------------------------------------------------------- tabs
 
 /// Every tab closes now, including the last one — and what `TabSet` is left

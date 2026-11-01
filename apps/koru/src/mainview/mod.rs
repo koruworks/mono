@@ -740,6 +740,9 @@ pub struct MainView {
     /// container level so completing it can create a document and open its tab
     /// in one workspace edit.
     new_document: Option<NewDocument>,
+    /// A *New document* was asked for before the shell said which workspace
+    /// this window holds. Answered by the first `set_pane_context`.
+    new_document_on_context: bool,
     /// The Profile a *New workspace* prompt makes its workspace in, when it is
     /// not the open one — the switcher can list another Profile's workspaces.
     new_workspace_owner: Option<ProfileId>,
@@ -1762,6 +1765,7 @@ impl MainView {
             hover: None,
             menu: None,
             new_document: None,
+            new_document_on_context: false,
             new_workspace_owner: None,
             snapshot_prompt: None,
             deferred_search_target: None,
@@ -2804,7 +2808,18 @@ impl MainView {
 
     /// Ask for a title before creating a document. Used both for a cold taskbar
     /// launch and for an activation handed over by a second short-lived exe.
+    ///
+    /// **Which prompt waits until the window knows its workspace.** With no
+    /// Store workspace the same entry point asks for a workspace first, and
+    /// "no workspace" is only an answer once the shell has said so. A cold
+    /// launch asks from `Manager::initial`, before the shell has handed this
+    /// view any context at all, so deciding there read "nothing yet" as "none"
+    /// and every cold *New document* opened *New workspace* instead.
     pub fn prompt_new_document(&mut self) {
+        if self.pane_context.is_none() {
+            self.new_document_on_context = true;
+            return;
+        }
         self.menu = None;
         if self.new_document.is_none() {
             // A cancelled *New workspace in…* prompt leaves its owner behind;
@@ -11593,6 +11608,9 @@ impl View for MainView {
             // hands one over when this says there is a new one to hand.
             self.context_stale = true;
             self.push_manage_profiles_context();
+        }
+        if std::mem::take(&mut self.new_document_on_context) {
+            self.prompt_new_document();
         }
         changed
     }

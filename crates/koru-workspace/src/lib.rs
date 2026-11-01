@@ -1253,6 +1253,28 @@ impl Workspace {
         self.open_document_in(workspace, id)
     }
 
+    /// Open the first document in the manifest that still resolves, so a
+    /// window has something to show. Nothing to open is not an error.
+    ///
+    /// A manifest entry can outlive its lifecycle row after an interrupted or
+    /// historically broken import. That is damaged content, not an unreachable
+    /// Store: keep the workspace manager usable and try the next entry. Every
+    /// other failure is returned, because storage or corrupt CRDT bytes cannot
+    /// be made safe by silently opening an empty placeholder.
+    pub fn open_first_document(&mut self) -> Result<(), koru_store_core::errors::Error> {
+        let ids: Vec<_> = self.entries().iter().map(|entry| entry.id).collect();
+        for id in ids {
+            match self.open_document(id) {
+                Ok(()) => break,
+                Err(error) if error.code() == koru_store_core::errors::Code::DocumentNotFound => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     pub fn open_document_in(
         &mut self,
         workspace: koru_core::WorkspaceId,

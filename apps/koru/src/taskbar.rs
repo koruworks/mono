@@ -46,7 +46,7 @@ mod windows_impl {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use windows::Win32::Foundation::{
         CloseHandle, ERROR_PIPE_CONNECTED, ERROR_UNABLE_TO_REMOVE_REPLACED, HANDLE, PROPERTYKEY,
@@ -105,6 +105,11 @@ mod windows_impl {
     /// The shortcut is part of the key: a chord arriving is itself a change the
     /// list has to be rebuilt for.
     static INSTALLED: Mutex<Option<JumpList>> = Mutex::new(None);
+    /// How many lists have been asked for; each rebuild carries its number.
+    static ASKED: AtomicU64 = AtomicU64::new(0);
+    /// The number of the list Explorer holds now. Held across a registration,
+    /// which is what makes them one at a time. See [`install`].
+    static REGISTERED: Mutex<u64> = Mutex::new(0);
     /// A proxy into the winit loop, so the listener thread can *wake* it after
     /// setting a flag — `SetForegroundWindow`'s focus side effect is not a
     /// wake, and a loop asleep would leave the flag sitting until the next
@@ -303,13 +308,14 @@ mod windows_impl {
     }
 
     /// Rebuild the Jump List on its own thread, if the shape changed. The one
-    /// path both `set_recents` and `set_shortcut` meet in.
+    /// path the initial list, `set_recents`, `set_pinned` and `set_shortcut`
+    /// all meet in.
     fn install(
         recents: Vec<(String, koru_core::DocumentId)>,
         pinned: Vec<(String, koru_core::DocumentId)>,
         shortcut: Option<String>,
     ) {
-        {
+        let generation = {
             let mut installed = match INSTALLED.lock() {
                 Ok(i) => i,
                 Err(_) => return,
@@ -323,7 +329,10 @@ mod windows_impl {
                 return;
             }
             *installed = Some(now);
-        }
+            // Numbered under the same lock that decided the shape, so the
+            // numbers are in the order the shapes were decided.
+            ASKED.fetch_add(1, Ordering::Relaxed) + 1
+        };
         tracing::info!(
             target: "koru::taskbar",
             recents = recents.len(),
@@ -334,6 +343,19 @@ mod windows_impl {
         let _ = std::thread::Builder::new()
             .name("koru-jump-list".into())
             .spawn(move || {
+                // **One registration at a time, and never an older list over a
+                // newer one.** Each rebuild is its own thread, and two are
+                // routinely in flight together — the startup list and the
+                // shortcut's, or `set_recents` and `set_pinned`, which are
+                // called back to back. Unordered, whichever thread finished last
+                // won, and the list Explorer kept could be the stale one, with
+                // the dedup above then refusing to correct it.
+                let Ok(mut registered) = REGISTERED.lock() else {
+                    return;
+                };
+                if *registered > generation {
+                    return;
+                }
                 match unsafe { register_jump_list(&recents, &pinned, shortcut.as_deref()) } {
                     Ok(()) => tracing::info!(target: "koru::taskbar", "Jump List registered"),
                     Err(error) => tracing::error!(
@@ -341,18 +363,17 @@ mod windows_impl {
                         "could not update the taskbar list: {error}"
                     ),
                 }
+                *registered = generation;
             });
     }
 
+    /// The tasks, before anything else is known. **On its own thread like
+    /// every other rebuild**: this is about 90 ms of COM and shell links, and it
+    /// used to be paid on the main thread before the window or the GPU had
+    /// started, a quarter of a cold launch. Nothing on the way to the first
+    /// frame reads the list.
     pub(super) fn install_jump_list() {
-        tracing::info!(target: "koru::taskbar", "installing the initial Jump List");
-        match unsafe { register_jump_list(&[], &[], None) } {
-            Ok(()) => tracing::info!(target: "koru::taskbar", "initial Jump List registered"),
-            Err(error) => tracing::error!(
-                target: "koru::taskbar",
-                "could not register the taskbar action: {error}"
-            ),
-        }
+        install(Vec::new(), Vec::new(), None);
     }
 
     fn first_pipe() -> Result<HANDLE> {

@@ -144,6 +144,7 @@ if /i "%SUB%"=="run"     goto do_run
 if /i "%SUB%"=="run-all" goto do_run_all
 if /i "%SUB%"=="stop-all" goto do_stop_all
 if /i "%SUB%"=="jank"    goto do_jank
+if /i "%SUB%"=="bench"   goto do_bench
 if /i "%SUB%"=="root"    goto do_root
 if /i "%SUB%"=="root-open" goto do_root_open
 if /i "%SUB%"=="root-stop" goto do_root_stop
@@ -375,6 +376,30 @@ if not defined KORU_JANK_LOG set "KORU_JANK_LOG=%CD%\koru-jank.log"
 call :announce_environment
 echo [Koru] stalls -^> %KORU_JANK_LOG%
 cargo run%ROOTSEP%!PASS!
+exit /b %ERRORLEVEL%
+
+REM Launch time, measured from outside the process: build this checkout's
+REM release koru.exe and its Agent, then start it, close it and end it fifteen
+REM times. Arguments go to the script, so -Channel stable or nightly times an
+REM installed build instead and skips the build, and -MaxP50Ms makes it a gate.
+REM The previous run's release Agent is stopped first, because a running image
+REM cannot be replaced; the script's warm-up launch absorbs the fresh Agent.
+REM See scripts\dev\launch-bench.ps1 for what each number means.
+:do_bench
+rem Substitution rather than `echo | findstr`: each side of a pipe is a child
+rem cmd without delayed expansion, so !ARGS! there is the literal text. The
+rem replacement is case-insensitive, which is what an argument name wants.
+set "BENCH_BUILD=1"
+if not "!ARGS:-Channel=!"=="!ARGS!" set "BENCH_BUILD="
+if not "!ARGS:-Exe=!"=="!ARGS!" set "BENCH_BUILD="
+if not "!ARGS:-Aumid=!"=="!ARGS!" set "BENCH_BUILD="
+if defined BENCH_BUILD (
+  call :ensure_fonts || exit /b 1
+  call :stop_exact_exe "%CD%\target\release\koru.exe" || exit /b 1
+  call :stop_exact_exe "%CD%\target\release\koru-agent.exe" || exit /b 1
+  cargo build --release -p koru -p koru-agent || exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\launch-bench.ps1"!ARGS!
 exit /b %ERRORLEVEL%
 
 REM One isolated development stack. PowerShell owns the process orchestration
@@ -865,6 +890,10 @@ echo              KORU_JANK) and logs Koru's output for a stall summary on exit
 echo              run, run-all and root with no .env.production start with Koru Cloud not configured
 echo   stop-all   stop this worktree's Koru, AI Chat, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
+echo   bench      time launch-to-typeable for this checkout's release build;
+echo              -Channel stable^|nightly times an installed one, -Runs N,
+echo              -NewDocument times the taskbar's New document, -MaxP50Ms N fails
+echo              above that median
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
 echo              its interactive Agent registers real global shortcuts
 echo   root-open  open another window through an already-running isolated Agent
