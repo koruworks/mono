@@ -64,6 +64,7 @@ mod composer;
 mod doc_links;
 mod effort;
 mod layout_cache;
+mod model_picker;
 mod privacy;
 mod quote_pills;
 mod reader;
@@ -73,9 +74,7 @@ mod usage;
 
 pub use composer::{ChatComposer, ComposedMessage};
 
-use agents::{
-    AgentStatus, PickerRow, agent_chip_label, agent_row_body, agent_row_title, is_agent_row,
-};
+use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
 use layout_cache::{BlockLayout, MessageInput, MessageLayout, RebuildStats};
 use quote_pills::{
@@ -462,8 +461,11 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
-    chat_model_offset: usize,
-    chat_model_scroll_drag: Option<f32>,
+    /// The model picker's rail, query, highlight and scroll
+    /// ([`model_picker`]), reset each time it opens.
+    picker: model_picker::PickerState,
+    /// The picker's tooltip: a rail mark, ↻, ↺, a row's full words.
+    picker_tooltip: Tooltip,
     tool_access_open: bool,
     tool_mode_open: bool,
     session_auto_approve_chats: HashSet<ChatId>,
@@ -481,9 +483,6 @@ pub struct ChatSurface {
     /// The agents whose list has been asked for and not answered yet, so a
     /// second ask waits for the first and a list on screen stays there.
     agent_models_asked: std::collections::HashSet<AiProviderId>,
-    /// The agent row expanded in the picker, and the group under it.
-    expanded_agent: Option<AiProviderId>,
-    expanded_group: Option<String>,
     /// The agent picked on the *Local agents* card.
     setup_agent: Option<AiProviderId>,
     /// A folder pick the host owes this surface (the native dialog is the
@@ -643,6 +642,7 @@ impl ChatSurface {
             TextInput::with_text(&mut engine, role::row(), "http://localhost:11434");
         let ollama_model = TextInput::new(&mut engine, role::row());
         let system_prompt = TextArea::new(&mut engine, role::ui());
+        let picker = model_picker::PickerState::new(&mut engine);
         Self {
             mode,
             viewport: Rect::new(0.0, 0.0, 460.0, 680.0),
@@ -733,8 +733,8 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
-            chat_model_offset: 0,
-            chat_model_scroll_drag: None,
+            picker,
+            picker_tooltip: Tooltip::default(),
             tool_access_open: false,
             tool_mode_open: false,
             session_auto_approve_chats: HashSet::new(),
@@ -745,8 +745,6 @@ impl ChatSurface {
             agent_status_asked: None,
             agent_models: HashMap::new(),
             agent_models_asked: Default::default(),
-            expanded_agent: None,
-            expanded_group: None,
             setup_agent: None,
             working_folder_request: None,
             response_hover: None,
@@ -1063,6 +1061,7 @@ impl ChatSurface {
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
             self.web_search_tooltip.maintenance_deadline(),
+            self.picker_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
@@ -1093,6 +1092,7 @@ impl ChatSurface {
         changed |= self.maintain_remote_images();
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
+        changed |= self.picker_tooltip.maintain(_now);
         // The `@` picker's search answers, delivered on this tick.
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
@@ -1131,6 +1131,7 @@ impl ChatSurface {
     pub fn animating(&self) -> bool {
         self.copy_feedback.animating(Instant::now())
             || self.web_search_tooltip.animating(Instant::now())
+            || self.picker_tooltip.animating(Instant::now())
             || self.pill_strip.animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
     }
@@ -1160,11 +1161,7 @@ impl ChatSurface {
         {
             return CursorIcon::NsResize;
         }
-        if self.chat_model_scroll_drag.is_some()
-            || self
-                .chat_model_scrollbar()
-                .is_some_and(|scrollbar| scrollbar.in_gutter(p.0, p.1))
-        {
+        if self.picker.scroll_drag.is_some() {
             return CursorIcon::NsResize;
         }
         if self.retry_link.is_some_and(|rect| rect.contains(p.0, p.1))
@@ -1213,10 +1210,10 @@ impl ChatSurface {
         if let Some(handled) = self.quote_key(key, text, mods) {
             return handled;
         }
-        if matches!(key, Key::Named(NamedKey::Escape)) && self.chat_model_open {
-            self.chat_model_open = false;
-            self.chat_model_scroll_drag = None;
-            return true;
+        // The open model picker takes the keyboard: its search, rail, list
+        // and footer (§9.5).
+        if let Some(handled) = self.picker_key(key, text, mods) {
+            return handled;
         }
         if self.tool_access_open && self.focus == Focus::WorkspaceSearch {
             if matches!(key, Key::Named(NamedKey::Escape)) {
@@ -1497,6 +1494,11 @@ impl ChatSurface {
         // The composer and every control on it are hit where they are now:
         // centred under an empty chat's greeting, or at the bottom.
         self.composer_rect();
+        // The model picker floats over the conversation and the composer:
+        // a press on it is its own, and one outside it closes it.
+        if let Some(handled) = self.picker_mouse_down(x, y) {
+            return handled;
+        }
         if let Some(handled) = self.strip_mouse_down(x, y) {
             return handled;
         }
@@ -1655,42 +1657,6 @@ impl ChatSurface {
             self.web_search_tooltip.clear();
             return true;
         }
-        if self.chat_model_open {
-            if let Some(scrollbar) = self.chat_model_scrollbar()
-                && scrollbar.in_gutter(x, y)
-            {
-                let grab = if scrollbar.on_thumb(x, y) {
-                    y - scrollbar.thumb_top
-                } else {
-                    scrollbar.thumb_h * 0.5
-                };
-                self.chat_model_scroll_drag = Some(grab);
-                let scroll = scrollbar.scroll_for_pointer(y, grab);
-                self.chat_model_offset = (scroll / 30.0).round() as usize;
-                return true;
-            }
-            if let (Some(section), Some(control)) =
-                (self.effort_section(), self.effort_control().cloned())
-                && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
-            {
-                if self.effort_locked() {
-                    self.status = Some(
-                        koru_i18n::t(self.lang, koru_i18n::Key::AiEffortLockedAfterStart).into(),
-                    );
-                    return true;
-                }
-                self.effort_drag = Some(choice);
-                return true;
-            }
-            if let Some(index) = self.chat_model_option_at(x, y) {
-                return self.click_picker_row(index, x);
-            }
-            if !self.chat_model_button().contains(x, y) {
-                self.chat_model_open = false;
-                self.chat_model_scroll_drag = None;
-                return true;
-            }
-        }
         if self.chat_model_button().contains(x, y) {
             if self.chat_model_open {
                 self.history_open = false;
@@ -1701,7 +1667,7 @@ impl ChatSurface {
                 self.open_model_picker();
             }
             if self.chat_model_open
-                && self.chat_model_rows().is_empty()
+                && self.picker_rail().is_empty()
                 && self.effort_control().is_none()
             {
                 if let Some(provider) = self
@@ -1860,8 +1826,7 @@ impl ChatSurface {
     pub fn dismiss_popovers(&mut self) -> bool {
         let mut changed = self.close_chats_pane();
         if self.chat_model_open {
-            self.chat_model_open = false;
-            self.chat_model_scroll_drag = None;
+            self.close_picker();
             changed = true;
         }
         if self.tool_access_open {
@@ -1933,15 +1898,8 @@ impl ChatSurface {
             self.effort_drag = next;
             return changed;
         }
-        if let Some(grab) = self.chat_model_scroll_drag {
-            if let Some(scrollbar) = self.chat_model_scrollbar() {
-                let scroll = scrollbar.scroll_for_pointer(y, grab);
-                let next = (scroll / 30.0).round() as usize;
-                let changed = next != self.chat_model_offset;
-                self.chat_model_offset = next;
-                return changed || old != self.cursor_icon();
-            }
-            return true;
+        if let Some(changed) = self.picker_mouse_move(x, y) {
+            return changed || old != self.cursor_icon();
         }
         if let Some(confirm) = &mut self.confirm {
             let changed = confirm.mouse_move(
@@ -2005,7 +1963,7 @@ impl ChatSurface {
 
     pub fn mouse_up(&mut self) -> bool {
         self.conversation_scroll_drag = None;
-        self.chat_model_scroll_drag = None;
+        self.picker.scroll_drag = None;
         if let Some(choice) = self.effort_drag.take() {
             self.choose_effort(choice);
             return true;
@@ -2116,20 +2074,9 @@ impl ChatSurface {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => (p.y as f32 / 30.0).clamp(-4.0, 4.0),
             };
-            // Every row the picker shows — agents, their models, the
-            // headings — not only the chat's own provider's models, which
-            // are none before a chat exists.
-            let previous = self.chat_model_offset;
-            let max = self
-                .chat_model_rows()
-                .len()
-                .saturating_sub(MODEL_VISIBLE_ROWS);
-            if dy > 0.0 {
-                self.chat_model_offset = self.chat_model_offset.saturating_sub(dy.ceil() as usize);
-            } else if dy < 0.0 {
-                self.chat_model_offset = (self.chat_model_offset + (-dy).ceil() as usize).min(max);
-            }
-            return previous != self.chat_model_offset;
+            // Every row the list shows, whoever's: never only the chat's own
+            // provider's models, which are none before a chat exists.
+            return self.picker_scroll(dy);
         }
         let dy = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * 38.0,
@@ -2493,7 +2440,8 @@ impl ChatSurface {
             Update::ModelUpdated(chat, reasoning_control) => {
                 let chat_id = chat.id;
                 self.waiting = false;
-                self.chat_model_open = false;
+                // A row chosen in the picker has closed it already; a level
+                // set from its footer leaves it open, on the next step.
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2761,6 +2709,7 @@ impl ChatSurface {
             }
             Update::AgentModels(response) => {
                 self.agent_models_asked.remove(&response.provider);
+                self.agent_models_answered(&response.provider);
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
@@ -2770,9 +2719,11 @@ impl ChatSurface {
                 // Listing models… stays, as does a list already on screen;
                 // the next open of the picker asks again.
                 self.agent_models_asked.remove(&provider);
+                self.agent_models_answered(&provider);
             }
             Update::AgentModelsFailed(provider) => {
                 self.agent_models_asked.remove(&provider);
+                self.agent_models_answered(&provider);
                 // A list already on screen stays: the next open asks again.
                 if !matches!(
                     self.agent_models.get(&provider),
@@ -3227,7 +3178,6 @@ impl ChatSurface {
                 if provider_changed {
                     transcript.reasoning_control = None;
                 }
-                self.chat_model_open = false;
             }
             Command::UpdatePrivacy(chat, request) if chat == unmade => {
                 transcript.chat.private = request.private;
@@ -3334,11 +3284,10 @@ impl ChatSurface {
         self.history_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
-        self.chat_model_offset = 0;
-        self.chat_model_scroll_drag = None;
         self.chat_model_open = true;
         self.refresh_agent_status();
         self.prefetch_agent_models();
+        self.reset_picker();
         true
     }
 
@@ -4729,17 +4678,11 @@ impl ChatSurface {
         Rect::new(x, toolbar.y, width, toolbar.h)
     }
 
-    /// The effort section at the top of the chip's popover, when the model
-    /// advertises a control.
+    /// The picker footer's slider section, when the model advertises a
+    /// control (§9.3).
     fn effort_section(&self) -> Option<Rect> {
         self.effort_control()?;
-        let panel = self.chat_model_panel()?;
-        Some(Rect::new(
-            panel.x + 4.0,
-            panel.y + 4.0,
-            panel.w - 8.0,
-            effort::SECTION_H,
-        ))
+        self.picker_geometry()?.slider_section()
     }
 
     /// The chat's model's effort control: the one the service sent with
@@ -4783,20 +4726,6 @@ impl ChatSurface {
     /// The stop the slider shows: the press in flight, else the setting.
     fn effort_shown(&self) -> Option<ReasoningChoice> {
         self.effort_drag.or_else(|| self.effective_reasoning())
-    }
-
-    fn effort_section_h(&self) -> f32 {
-        if self.effort_control().is_some() {
-            effort::SECTION_H + 4.0
-        } else {
-            0.0
-        }
-    }
-
-    /// Where the picker's rows start inside the panel: under the effort
-    /// section when there is one.
-    fn chat_model_rows_top(&self, panel: Rect) -> f32 {
-        panel.y + 4.0 + self.effort_section_h()
     }
 
     /// Set the chat's effort: the persisted default the next turn uses.
@@ -4847,63 +4776,6 @@ impl ChatSurface {
             Some(choice) if chosen => format!("{name} · {}", effort::word(self.lang, choice)),
             _ => name,
         }
-    }
-
-    fn chat_model_panel(&self) -> Option<Rect> {
-        let count = self.chat_model_rows().len().min(MODEL_VISIBLE_ROWS);
-        let effort = self.effort_control().is_some();
-        if !self.chat_model_open || (count == 0 && !effort) {
-            return None;
-        }
-        let button = self.chat_model_button();
-        let height = count as f32 * 30.0 + 8.0 + self.effort_section_h();
-        let width = self.composer_hit_rect.w.min(320.0).max(button.w);
-        let x = (button.x + button.w - width)
-            .max(self.viewport.x + 4.0)
-            .min(self.viewport.x + self.viewport.w - width - 4.0);
-        Some(Rect::new(
-            x,
-            self.composer_hit_rect.y - height - 4.0,
-            width,
-            height,
-        ))
-    }
-
-    fn chat_model_scrollbar(&self) -> Option<koru_ui::scrollbar::ScrollbarGeom> {
-        let panel = self.chat_model_panel()?;
-        let shown = self.chat_model_rows().len().min(MODEL_VISIBLE_ROWS);
-        let area = Rect::new(
-            panel.x + 4.0,
-            self.chat_model_rows_top(panel),
-            panel.w - 8.0,
-            shown as f32 * 30.0,
-        );
-        koru_ui::scrollbar::ScrollbarGeom::for_content(
-            area,
-            self.chat_model_rows().len() as f32 * 30.0,
-            self.chat_model_offset as f32 * 30.0,
-        )
-    }
-
-    fn chat_model_option_at(&self, x: f32, y: f32) -> Option<usize> {
-        let panel = self.chat_model_panel()?;
-        if !panel.contains(x, y) {
-            return None;
-        }
-        let top = self.chat_model_rows_top(panel);
-        if y < top {
-            return None;
-        }
-        let visible = ((y - top) / 30.0).floor().max(0.0) as usize;
-        let index = self.chat_model_offset + visible;
-        let row = Rect::new(
-            panel.x + 4.0,
-            top + visible as f32 * 30.0,
-            panel.w - 8.0,
-            30.0,
-        );
-        (visible < MODEL_VISIBLE_ROWS && index < self.chat_model_rows().len() && row.contains(x, y))
-            .then_some(index)
     }
 
     fn tool_access_label(&self) -> String {
@@ -5196,11 +5068,6 @@ impl ChatSurface {
                 {
                     return Some((14, index));
                 }
-            }
-            if self.chat_model_open
-                && let Some(index) = self.chat_model_option_at(x, y)
-            {
-                return Some((9, index));
             }
             let header = self.hosts_header_buttons();
             // No *Settings* among them: it is not drawn while the setup is
@@ -5500,10 +5367,17 @@ impl ChatSurface {
         if self.history_open {
             self.draw_chats_pane(canvas, root);
         }
-        self.draw_chat_model_picker(canvas, root);
+        self.draw_model_picker(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
         self.web_search_tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            Instant::now(),
+        );
+        self.picker_tooltip.draw(
             canvas,
             root,
             &mut self.engine,
@@ -5530,155 +5404,6 @@ impl ChatSurface {
         );
         let y = (area.y + area.h - GREETING_GAP - layout.height()).max(area.y);
         scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
-    }
-
-    fn draw_chat_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(panel) = self.chat_model_panel() else {
-            return;
-        };
-        scene::floating_panel(
-            canvas,
-            root,
-            panel.x,
-            panel.y,
-            panel.w,
-            panel.h,
-            &scene::Panel::popover(6.0),
-        );
-        let p = theme::p();
-        let rows_top = self.chat_model_rows_top(panel);
-        if let (Some(section), Some(control), Some(shown)) = (
-            self.effort_section(),
-            self.effort_control().cloned(),
-            self.effort_shown(),
-        ) {
-            effort::draw(
-                canvas,
-                root,
-                &mut self.engine,
-                self.lang,
-                section,
-                &control,
-                shown,
-                self.pointer,
-            );
-        }
-        let (current_provider, current_model) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| {
-                (
-                    Some(transcript.chat.current_model.provider.clone()),
-                    transcript.chat.current_model.requested_model.clone(),
-                )
-            })
-            .unwrap_or((None, String::new()));
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.clone())
-            .unwrap_or_default();
-        for (index, picker_row) in self
-            .chat_model_rows()
-            .into_iter()
-            .enumerate()
-            .skip(self.chat_model_offset)
-            .take(MODEL_VISIBLE_ROWS)
-        {
-            let visible = index.saturating_sub(self.chat_model_offset);
-            let row = Rect::new(
-                panel.x + 4.0,
-                rows_top + visible as f32 * 30.0,
-                panel.w - 8.0,
-                30.0,
-            );
-            let view = self.picker_row_view(
-                &picker_row,
-                &agents,
-                current_provider.as_ref(),
-                &current_model,
-            );
-            let is_current = view.current;
-            let selectable = picker_row.selectable(&self.agent_status);
-            if (selectable && row.contains(self.pointer.0, self.pointer.1)) || is_current {
-                scene::fill(
-                    canvas,
-                    root,
-                    if is_current {
-                        p.row_selected
-                    } else {
-                        p.hover_tint
-                    },
-                    &scene::rrect(row.x, row.y, row.w, row.h, 4.0),
-                );
-            }
-            let line = self.engine.simple_layout(
-                &view.label,
-                if matches!(picker_row, PickerRow::Header) {
-                    role::meta()
-                } else {
-                    role::row()
-                },
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &line,
-                row.x + 8.0 + view.level as f32 * 14.0,
-                row.y + (row.h - line.height()) * 0.5,
-                Some(if view.dim { p.text_dim } else { p.text }),
-            );
-            let mut right = row.x + row.w - 8.0;
-            match view.trailing {
-                agents::Trailing::None => {}
-                agents::Trailing::Word(word) => {
-                    let word = self.engine.simple_layout(&word, role::meta());
-                    scene::draw_layout_first_line(
-                        canvas,
-                        root,
-                        &word,
-                        right - word.width(),
-                        row.y + (row.h - word.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                }
-                agents::Trailing::Caret { expanded } => {
-                    let caret = self.engine.icon_layout(
-                        if expanded {
-                            icons::CARET_DOWN
-                        } else {
-                            icons::CARET_RIGHT
-                        },
-                        12.0,
-                    );
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &caret,
-                        right - caret.width(),
-                        row.y + (row.h - caret.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                    right -= caret.width() + 8.0;
-                }
-            }
-            if is_current {
-                let check = self.engine.icon_layout(icons::CHECK, 13.0);
-                scene::draw_layout(
-                    canvas,
-                    root,
-                    &check,
-                    right - check.width(),
-                    row.y + (row.h - check.height()) * 0.5,
-                    Some(p.text_dim),
-                );
-            }
-        }
-        if let Some(scrollbar) = self.chat_model_scrollbar() {
-            let active = self.chat_model_scroll_drag.is_some()
-                || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
-            koru_ui::scrollbar::draw(canvas, root, scrollbar, active);
-        }
     }
 
     fn rebuild_messages(&mut self, width: f32) {
@@ -8988,7 +8713,8 @@ mod tests {
     }
 
     /// The picker of a chat with no model offers only the local agents:
-    /// Koru AI, OpenAI and Ollama are not offered, a saved OpenAI key or not.
+    /// Koru AI, OpenAI and Ollama are not on its rail, a saved OpenAI key or
+    /// not. A chat that has begun on one leads the rail with it (S1).
     #[test]
     fn the_picker_of_a_chat_with_no_model_offers_only_the_agents() {
         let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
@@ -9001,10 +8727,10 @@ mod tests {
             .credential_configured = true;
         let claude = AiProviderId::parse("agent-claude").unwrap();
         assert_eq!(
-            surface.chat_model_rows(),
-            vec![PickerRow::Header, PickerRow::Agent(claude)]
+            surface.picker_rail(),
+            vec![model_picker::RailEntry::Agent(claude.clone())]
         );
-        // A chat that has begun offers only its own provider's models.
+        // A chat that has begun on OpenAI lists its own provider's models.
         let mut begun = transcript();
         begun.messages.push(koru_ai_core::Message {
             id: MessageId::new(),
@@ -9022,11 +8748,22 @@ mod tests {
             completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
         });
         surface.transcript = Some(begun);
-        assert!(
-            !surface
-                .chat_model_rows()
-                .iter()
-                .any(|row| matches!(row, PickerRow::Agent(_)))
+        surface.openai_models = vec!["gpt-test".into()];
+        let openai = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
+        assert_eq!(
+            surface.picker_rail(),
+            vec![
+                model_picker::RailEntry::Provider(openai.clone()),
+                model_picker::RailEntry::Agent(claude),
+            ]
+        );
+        assert_eq!(
+            surface.picker_initial_entry(),
+            Some(model_picker::RailEntry::Provider(openai))
+        );
+        assert_eq!(
+            surface.picker_rows(),
+            vec![model_picker::Row::Model("gpt-test".into())]
         );
     }
 
@@ -9388,21 +9125,38 @@ mod tests {
     }
 
     /// **The wheel scrolls the picker before a chat exists**: its rows are
-    /// the agents, not the chat's own models, of which there are none yet.
+    /// the selected agent's models, not the chat's own, of which there are
+    /// none yet.
     #[test]
     fn the_wheel_scrolls_a_long_picker_with_no_chat() {
         let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
-        let names: Vec<String> = (0..MODEL_VISIBLE_ROWS + 3)
-            .map(|n| format!("agent-a{n}"))
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        surface
+            .agent_status
+            .insert(claude.clone(), AgentStatus::Ready);
+        let models = (0..model_picker::VISIBLE_ROWS + 3)
+            .map(|n| koru_ai_wire::AgentModelView {
+                id: format!("model-{n}"),
+                group: "claude".into(),
+                name: None,
+                description: None,
+                group_name: None,
+                legacy: false,
+                reasoning: None,
+            })
             .collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        surface.settings = Some(unchosen_settings(&names));
-        surface.chat_model_open = true;
-        assert!(surface.chat_model_rows().len() > MODEL_VISIBLE_ROWS);
+        surface
+            .agent_models
+            .insert(claude, agents::AgentModels::Listed(models));
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
+        assert!(surface.picker_rows().len() > model_picker::VISIBLE_ROWS);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, -1.0)));
-        assert_eq!(surface.chat_model_offset, 1);
+        assert_eq!(surface.picker.offset, 1);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, 1.0)));
-        assert_eq!(surface.chat_model_offset, 0);
+        assert_eq!(surface.picker.offset, 0);
     }
 
     #[test]
@@ -9946,12 +9700,13 @@ mod tests {
         });
         surface.transcript = Some(begun);
         surface.openai_models = (0..12).map(|index| format!("gpt-5.{index}")).collect();
-        surface.chat_model_open = true;
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
 
-        let panel = surface.chat_model_panel().expect("model panel");
+        let geometry = surface.picker_geometry().expect("model panel");
         let button = surface.chat_model_button();
-        assert!(panel.w > button.w);
-        assert!(surface.chat_model_scrollbar().is_some());
+        assert!(geometry.panel.w > button.w);
+        assert!(surface.picker_scrollbar(&geometry).is_some());
     }
 
     #[test]
@@ -11184,7 +10939,10 @@ mod tests {
         updated.current_model.default_reasoning = ReasoningChoice::Level(ReasoningLevel::High);
         surface.apply_update(Update::ModelUpdated(updated, Some(control)));
         assert_eq!(surface.chip_label(), "gpt-5.5 · High");
-        assert!(!surface.chat_model_open);
+        assert!(
+            surface.chat_model_open,
+            "the footer stays for the next step"
+        );
 
         // Sending carries no per-turn override: the chat's setting is the effort.
         surface.composer.set_text("hello");

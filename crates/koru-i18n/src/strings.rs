@@ -265,6 +265,11 @@ pub enum Key {
     AiModelAgentDefault,
     AiAgentReasoningRejected,
     AiEffortLockedAfterStart,
+    AiModelSearch,
+    AiModelsNoMatch,
+    AiModelsRefresh,
+    AiEffortReset,
+    AiEffortIsDefault,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2651,7 +2656,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1808] = [
+    pub const ALL: [Key; 1813] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2812,6 +2817,11 @@ impl Key {
         Key::AiModelAgentDefault,
         Key::AiAgentReasoningRejected,
         Key::AiEffortLockedAfterStart,
+        Key::AiModelSearch,
+        Key::AiModelsNoMatch,
+        Key::AiModelsRefresh,
+        Key::AiEffortReset,
+        Key::AiEffortIsDefault,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -6268,6 +6278,66 @@ pub const ROWS: &[Row] = &[
         ar: "بدأ الوكيل بهذا المستوى؛ يمكن تغييره في محادثة جديدة",
         zh_hans: "代理已按此级别启动；可在新对话中更改",
         ja: "エージェントはこのレベルで開始しました。新しいチャットで変更できます",
+    },
+    // The model picker's search field, empty.
+    Row {
+        key: Key::AiModelSearch,
+        en: "Search models…",
+        es: "Buscar modelos…",
+        pt_br: "Pesquisar modelos…",
+        de: "Modelle suchen…",
+        fr: "Rechercher des modèles…",
+        ar: "ابحث عن النماذج…",
+        zh_hans: "搜索模型…",
+        ja: "モデルを検索…",
+    },
+    // The model picker's list when the search finds nothing.
+    Row {
+        key: Key::AiModelsNoMatch,
+        en: "No matching models",
+        es: "Ningún modelo coincide",
+        pt_br: "Nenhum modelo corresponde",
+        de: "Keine passenden Modelle",
+        fr: "Aucun modèle correspondant",
+        ar: "لا توجد نماذج مطابقة",
+        zh_hans: "没有匹配的模型",
+        ja: "一致するモデルはありません",
+    },
+    // The ↻ beside the model picker's search: the agent's list rebuilt now.
+    Row {
+        key: Key::AiModelsRefresh,
+        en: "Refresh models",
+        es: "Actualizar modelos",
+        pt_br: "Atualizar modelos",
+        de: "Modelle aktualisieren",
+        fr: "Actualiser les modèles",
+        ar: "تحديث النماذج",
+        zh_hans: "刷新模型",
+        ja: "モデルを更新",
+    },
+    // The ↺ in the model picker's footer: the chat's level back to the model's own.
+    Row {
+        key: Key::AiEffortReset,
+        en: "Reset to the model’s default",
+        es: "Restablecer al valor predeterminado del modelo",
+        pt_br: "Redefinir para o padrão do modelo",
+        de: "Auf die Standardstufe des Modells zurücksetzen",
+        fr: "Rétablir la valeur par défaut du modèle",
+        ar: "إعادة التعيين إلى الإعداد الافتراضي للنموذج",
+        zh_hans: "重置为模型默认值",
+        ja: "モデルの既定に戻す",
+    },
+    // After the level's word in the picker's footer, when it is the model's own default.
+    Row {
+        key: Key::AiEffortIsDefault,
+        en: "(default)",
+        es: "(predeterminado)",
+        pt_br: "(padrão)",
+        de: "(Standard)",
+        fr: "(par défaut)",
+        ar: "(افتراضي)",
+        zh_hans: "（默认）",
+        ja: "（既定）",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

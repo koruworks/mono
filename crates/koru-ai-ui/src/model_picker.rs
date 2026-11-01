@@ -1,0 +1,1380 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! **The composer's model picker** (agent-models §9, rung 5): the agents run
+//! down a rail, one mark each; above the selected agent's models sits a
+//! *Search models…* field with ↻; the footer shows the chat's reasoning
+//! level as a word, ↺ back to the model's default, and the stepped slider.
+//! It anchors to the chip, so it opens below a centred composer and above a
+//! bottom one, and it is driven fully from the keyboard.
+//!
+//! The geometry, the rows, the search and the footer's words are pure
+//! functions, tested beside this file. The surface keeps the state
+//! ([`PickerState`]) and draws.
+
+use std::collections::HashSet;
+
+use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice, ReasoningControl};
+use koru_draw::geometry::Rect;
+use koru_draw::text::TextEngine;
+use koru_draw::{brand, icons, scene, theme};
+use koru_i18n::{Key, Lang, t};
+use koru_ui::icon_button::{IconButton, State as IconButtonState};
+use koru_ui::popover::{PopoverAlign, PopoverShell};
+use koru_ui::text_input::{InputStyle, TextInput};
+use koru_ui::tooltip::TooltipContent;
+use koru_ui::{Typed, scrollbar};
+use vello::Scene;
+use vello::kurbo::Affine;
+use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
+
+use crate::agents::{
+    AgentModels, AgentStatus, default_model_label, fallback_label, group_label, is_agent_provider,
+    listed_models, model_groups, model_label,
+};
+use crate::effort;
+
+/// The rail's width, and the square of each of its marks.
+pub(crate) const RAIL_W: f32 = 44.0;
+const RAIL_BUTTON: f32 = 32.0;
+const RAIL_GAP: f32 = 6.0;
+/// The room a divider takes after the chat's own built-in provider (S1).
+const RAIL_DIVIDER: f32 = 9.0;
+/// The search row, with ↻ at its end.
+pub(crate) const SEARCH_H: f32 = 40.0;
+pub(crate) const ROW_H: f32 = 30.0;
+/// The most rows the list shows before it scrolls (raised from 8).
+pub(crate) const VISIBLE_ROWS: usize = 9;
+/// The footer: the level's word and ↺ on one line, the slider under it.
+pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
+const PAD: f32 = 4.0;
+/// The picker is as wide as the composer, up to this.
+pub(crate) const MAX_W: f32 = 360.0;
+/// The tooltips' keys, so moving from one mark or row to the next is a new
+/// tooltip: the rail's first mark, ↻, ↺, the read-only footer, the first row.
+const TOOLTIP_RAIL: u64 = 0x5049_0000;
+const TOOLTIP_REFRESH: u64 = 0x5049_1000;
+const TOOLTIP_RESET: u64 = 0x5049_1001;
+const TOOLTIP_LOCKED: u64 = 0x5049_1002;
+const TOOLTIP_ROW: u64 = 0x5049_2000;
+
+/// One mark on the rail: a local agent, or — first, and only on a chat that
+/// has begun on one — Koru AI, OpenAI or Ollama (S1).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum RailEntry {
+    Provider(AiProviderId),
+    Agent(AiProviderId),
+}
+
+impl RailEntry {
+    pub(crate) fn provider(&self) -> &AiProviderId {
+        match self {
+            Self::Provider(provider) | Self::Agent(provider) => provider,
+        }
+    }
+}
+
+/// Where the keyboard is inside the picker; Tab and Shift+Tab move through
+/// them in this order, the footer's two only when there is a footer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PickerFocus {
+    Search,
+    Rail,
+    List,
+    Reset,
+    Slider,
+}
+
+/// The picker's own state on the surface. It lives only while the picker
+/// is open; opening resets it.
+pub(crate) struct PickerState {
+    /// The rail's selected entry: whose models the list shows.
+    pub(crate) rail: Option<RailEntry>,
+    pub(crate) query: TextInput,
+    /// The row the keyboard is on, by index into the rows.
+    pub(crate) highlight: Option<usize>,
+    /// The first row shown.
+    pub(crate) offset: usize,
+    pub(crate) scroll_drag: Option<f32>,
+    pub(crate) focus: PickerFocus,
+    /// Agents whose ↻ is under way: the list reads *Checking…* meanwhile.
+    pub(crate) refreshing: HashSet<AiProviderId>,
+}
+
+impl PickerState {
+    pub(crate) fn new(engine: &mut TextEngine) -> Self {
+        Self {
+            rail: None,
+            query: TextInput::new(engine, theme::role::row()),
+            highlight: None,
+            offset: 0,
+            scroll_drag: None,
+            focus: PickerFocus::Search,
+            refreshing: HashSet::new(),
+        }
+    }
+}
+
+/// One row of the list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Row {
+    /// A group's heading, shown only when the agent has more than one.
+    Heading(String),
+    /// The agent's own default: its `default` entry when it lists one.
+    Default,
+    /// A model, by the id the agent (or provider) takes.
+    Model(String),
+    /// A word in place of models: listing, checking, failed, no match.
+    Note(String),
+}
+
+impl Row {
+    fn choosable(&self) -> bool {
+        matches!(self, Self::Default | Self::Model(_))
+    }
+}
+
+/// The picker's parts, laid out from its panel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Geometry {
+    pub(crate) panel: Rect,
+    pub(crate) rail: Rect,
+    pub(crate) search: Rect,
+    pub(crate) refresh: Rect,
+    pub(crate) list: Rect,
+    pub(crate) footer: Option<Rect>,
+}
+
+impl Geometry {
+    /// Row `visible` of the list, counted from the first one shown.
+    pub(crate) fn row(&self, visible: usize) -> Rect {
+        Rect::new(
+            self.list.x,
+            self.list.y + visible as f32 * ROW_H,
+            self.list.w,
+            ROW_H,
+        )
+    }
+
+    /// How many rows the list has room for.
+    pub(crate) fn visible_rows(&self) -> usize {
+        (self.list.h / ROW_H).floor().max(0.0) as usize
+    }
+
+    /// ↺, at the footer line's end.
+    pub(crate) fn reset(&self) -> Option<Rect> {
+        let footer = self.footer?;
+        Some(Rect::new(
+            footer.x + footer.w - 28.0,
+            footer.y + 2.0,
+            24.0,
+            24.0,
+        ))
+    }
+
+    /// The slider's section, which [`effort::slider`] lays its stops on.
+    pub(crate) fn slider_section(&self) -> Option<Rect> {
+        self.footer
+    }
+}
+
+/// The picker's width and height: as wide as the composer up to
+/// [`MAX_W`]; as tall as the search row, the rows up to
+/// [`VISIBLE_ROWS`] (never shorter than the rail needs), and the footer.
+pub(crate) fn size(composer_w: f32, rows: usize, rail_h: f32, footer: bool) -> (f32, f32) {
+    let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
+    let list = rows.clamp(1, VISIBLE_ROWS) as f32 * ROW_H;
+    let body = (SEARCH_H + list).max(rail_h);
+    let footer = if footer { FOOTER_H } else { 0.0 };
+    (width, body + footer + PAD * 2.0)
+}
+
+/// The picker's parts inside `panel`.
+pub(crate) fn geometry(panel: Rect, footer: bool) -> Geometry {
+    let inner_x = panel.x + RAIL_W;
+    let inner_w = (panel.w - RAIL_W - PAD).max(1.0);
+    let footer_rect = footer.then(|| {
+        Rect::new(
+            inner_x,
+            panel.y + panel.h - PAD - FOOTER_H,
+            inner_w,
+            FOOTER_H,
+        )
+    });
+    let bottom = footer_rect.map_or(panel.y + panel.h - PAD, |footer| footer.y);
+    let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
+    let refresh = Rect::new(
+        search.x + search.w - 28.0,
+        search.y + 2.0,
+        26.0,
+        search.h - 4.0,
+    );
+    let list_top = panel.y + PAD + SEARCH_H;
+    let rows = ((bottom - list_top) / ROW_H).floor().max(0.0);
+    Geometry {
+        panel,
+        rail: Rect::new(panel.x, panel.y, RAIL_W, panel.h),
+        search,
+        refresh,
+        list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
+        footer: footer_rect,
+    }
+}
+
+/// The rail's marks, top to bottom; a divider follows the first when the
+/// chat's own built-in provider leads (S1).
+pub(crate) fn rail_rects(rail: Rect, count: usize, divider: bool) -> Vec<Rect> {
+    let x = rail.x + (rail.w - RAIL_BUTTON) * 0.5;
+    let mut y = rail.y + PAD + 4.0;
+    (0..count)
+        .map(|index| {
+            let rect = Rect::new(x, y, RAIL_BUTTON, RAIL_BUTTON);
+            y += RAIL_BUTTON + RAIL_GAP;
+            if divider && index == 0 {
+                y += RAIL_DIVIDER;
+            }
+            rect
+        })
+        .collect()
+}
+
+/// The height the rail's marks need.
+pub(crate) fn rail_height(count: usize, divider: bool) -> f32 {
+    PAD * 2.0
+        + 8.0
+        + count as f32 * (RAIL_BUTTON + RAIL_GAP)
+        + if divider { RAIL_DIVIDER } else { 0.0 }
+}
+
+/// **Search** (§9.4): case-insensitive, and every whitespace-separated term
+/// must be found in one of the fields — a model's label, its id, its
+/// group's label and its description. An empty query matches everything.
+pub(crate) fn matches(query: &str, fields: &[&str]) -> bool {
+    let fields: Vec<String> = fields.iter().map(|field| field.to_lowercase()).collect();
+    query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .all(|term| fields.iter().any(|field| field.contains(&term)))
+}
+
+/// **The footer's words** (§9.3): the chat's level in Koru's words, and the
+/// dimmed *(default)* after it when the chat is on *Default* and the model
+/// states the level that means. A model that states none reads *Default*.
+pub(crate) fn footer_words(
+    control: &ReasoningControl,
+    choice: ReasoningChoice,
+    lang: Lang,
+) -> (String, Option<String>) {
+    let shown = effort::resolve(control, choice).unwrap_or(ReasoningChoice::Default);
+    let suffix = (choice == ReasoningChoice::Default && shown != ReasoningChoice::Default)
+        .then(|| t(lang, Key::AiEffortIsDefault).to_owned());
+    (effort::word(lang, shown), suffix)
+}
+
+/// The next choosable row from `from` in `step`'s direction, wrapping at
+/// neither end; `None` when there is none that way.
+pub(crate) fn step_highlight(
+    choosable: &[bool],
+    from: Option<usize>,
+    step: isize,
+) -> Option<usize> {
+    let len = choosable.len() as isize;
+    let mut index = match from {
+        Some(index) => index as isize + step,
+        None if step >= 0 => 0,
+        None => len - 1,
+    };
+    let direction = if step < 0 { -1 } else { 1 };
+    while (0..len).contains(&index) {
+        if choosable[index as usize] {
+            return Some(index as usize);
+        }
+        index += direction;
+    }
+    None
+}
+
+/// The first row shown so that `index` is in view, starting from `offset`.
+pub(crate) fn scroll_into_view(index: usize, offset: usize, visible: usize) -> usize {
+    if index < offset {
+        index
+    } else if visible > 0 && index >= offset + visible {
+        index + 1 - visible
+    } else {
+        offset
+    }
+}
+
+impl crate::ChatSurface {
+    /// The rail's entries: every offered agent in registration order, led —
+    /// on a chat that has begun on Koru AI, OpenAI or Ollama — by that
+    /// provider (S1). A chat with no message yet is offered only agents
+    /// (the user's call, 2026-10-31).
+    pub(crate) fn picker_rail(&self) -> Vec<RailEntry> {
+        let mut rail = Vec::new();
+        if let Some(transcript) = &self.transcript
+            && !transcript.messages.is_empty()
+            && !is_agent_provider(&transcript.chat.current_model.provider)
+        {
+            rail.push(RailEntry::Provider(
+                transcript.chat.current_model.provider.clone(),
+            ));
+        }
+        if let Some(settings) = &self.settings {
+            rail.extend(
+                settings
+                    .agents
+                    .iter()
+                    .map(|agent| RailEntry::Agent(agent.id.clone())),
+            );
+        }
+        rail
+    }
+
+    fn rail_has_divider(&self, rail: &[RailEntry]) -> bool {
+        matches!(rail.first(), Some(RailEntry::Provider(_))) && rail.len() > 1
+    }
+
+    /// **The rail's entry on open** (§9.1): the chat's own provider; else
+    /// the default agent from settings; else the first agent that is ready;
+    /// else the first.
+    pub(crate) fn picker_initial_entry(&self) -> Option<RailEntry> {
+        let rail = self.picker_rail();
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.chat.current_model.provider.clone());
+        let selected = self
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.selected_provider.clone());
+        let ready = |entry: &&RailEntry| {
+            self.agent_status.get(entry.provider()).copied() == Some(AgentStatus::Ready)
+        };
+        rail.iter()
+            .find(|entry| Some(entry.provider()) == current.as_ref())
+            .or_else(|| {
+                rail.iter().find(|entry| {
+                    matches!(entry, RailEntry::Agent(_))
+                        && Some(entry.provider()) == selected.as_ref()
+                })
+            })
+            .or_else(|| rail.iter().find(ready))
+            .or_else(|| rail.first())
+            .cloned()
+    }
+
+    /// The entry whose models the list shows.
+    pub(crate) fn picker_entry(&self) -> Option<RailEntry> {
+        let rail = self.picker_rail();
+        self.picker
+            .rail
+            .clone()
+            .filter(|entry| rail.contains(entry))
+            .or_else(|| self.picker_initial_entry())
+    }
+
+    fn picker_query(&self) -> String {
+        self.picker.query.raw_text().trim().to_owned()
+    }
+
+    /// Whether a row of `entry` can be chosen now: an agent while the chat
+    /// has no message and the agent is ready; the chat's own built-in
+    /// provider's models always, as today.
+    fn entry_choosable(&self, entry: &RailEntry) -> bool {
+        match entry {
+            RailEntry::Provider(_) => true,
+            RailEntry::Agent(agent) => {
+                self.agent_status.get(agent).copied() == Some(AgentStatus::Ready)
+                    && self
+                        .transcript
+                        .as_ref()
+                        .is_none_or(|transcript| transcript.messages.is_empty())
+            }
+        }
+    }
+
+    /// Whether `agent` has a model the query finds, for the rail's dimming
+    /// while typing (S3).
+    fn agent_matches_query(&self, agent: &AiProviderId, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let models = self.listed_agent_models(agent);
+        let default = default_model_label(models, self.lang);
+        matches(query, &[&default])
+            || listed_models(models).any(|model| {
+                let group = group_label(models, &model.group);
+                matches(
+                    query,
+                    &[
+                        &model_label(model),
+                        &model.id,
+                        &group,
+                        model.description.as_deref().unwrap_or_default(),
+                    ],
+                )
+            })
+    }
+
+    /// **The list for the selected entry** (§9.2): the agent's *Default*,
+    /// then its models — by group with a heading when it has more than one
+    /// — the query applied; or the one word its state calls for.
+    pub(crate) fn picker_rows(&self) -> Vec<Row> {
+        let Some(entry) = self.picker_entry() else {
+            return Vec::new();
+        };
+        let query = self.picker_query();
+        let note = |key: Key| Row::Note(t(self.lang, key).to_owned());
+        match &entry {
+            RailEntry::Provider(provider) => {
+                let models = if provider.as_str() == AiProviderId::KORU {
+                    vec![AiProviderId::KORU_HOSTED_MODEL.to_owned()]
+                } else {
+                    self.chat_model_options()
+                };
+                let rows: Vec<Row> = models
+                    .into_iter()
+                    .filter(|model| matches(&query, &[model, &self.provider_model_label(model)]))
+                    .map(Row::Model)
+                    .collect();
+                if rows.is_empty() && !query.is_empty() {
+                    vec![note(Key::AiModelsNoMatch)]
+                } else {
+                    rows
+                }
+            }
+            RailEntry::Agent(agent) => {
+                let status = self
+                    .agent_status
+                    .get(agent)
+                    .copied()
+                    .unwrap_or(AgentStatus::Checking);
+                let known = matches!(self.agent_models.get(agent), Some(AgentModels::Listed(_)));
+                match status {
+                    AgentStatus::Ready if self.picker.refreshing.contains(agent) => {
+                        vec![note(Key::TerminalChecking)]
+                    }
+                    AgentStatus::Ready => match self.agent_models.get(agent) {
+                        None | Some(AgentModels::Loading) => vec![note(Key::AiAgentModelsLoading)],
+                        Some(AgentModels::Failed) => {
+                            let mut rows = vec![note(Key::AiAgentModelsFailed)];
+                            if matches(&query, &[&default_model_label(&[], self.lang)]) {
+                                rows.push(Row::Default);
+                            }
+                            rows
+                        }
+                        Some(AgentModels::Listed(_)) => self.agent_model_rows(agent, &query),
+                    },
+                    // A list kept from the last run, dimmed, under *Checking…*.
+                    AgentStatus::Checking if known => {
+                        let mut rows = vec![note(Key::TerminalChecking)];
+                        rows.extend(
+                            self.agent_model_rows(agent, &query)
+                                .into_iter()
+                                .filter(|row| !matches!(row, Row::Note(_))),
+                        );
+                        rows
+                    }
+                    other => {
+                        vec![Row::Note(other.word(self.lang).unwrap_or_else(|| {
+                            t(self.lang, Key::TerminalChecking).to_owned()
+                        }))]
+                    }
+                }
+            }
+        }
+    }
+
+    /// An agent's listed models as rows, the query applied.
+    fn agent_model_rows(&self, agent: &AiProviderId, query: &str) -> Vec<Row> {
+        let models = self.listed_agent_models(agent);
+        let mut rows = Vec::new();
+        let default = models.iter().find(|model| model.id == AGENT_DEFAULT_MODEL);
+        if matches(
+            query,
+            &[
+                &default_model_label(models, self.lang),
+                default
+                    .and_then(|model| model.description.as_deref())
+                    .unwrap_or_default(),
+            ],
+        ) {
+            rows.push(Row::Default);
+        }
+        let groups = model_groups(models);
+        for group in &groups {
+            let heading = group_label(models, group);
+            let found: Vec<Row> = listed_models(models)
+                .filter(|model| &model.group == group)
+                .filter(|model| {
+                    matches(
+                        query,
+                        &[
+                            &model_label(model),
+                            &model.id,
+                            &heading,
+                            model.description.as_deref().unwrap_or_default(),
+                        ],
+                    )
+                })
+                .map(|model| Row::Model(model.id.clone()))
+                .collect();
+            if found.is_empty() {
+                continue;
+            }
+            if groups.len() > 1 {
+                rows.push(Row::Heading(heading));
+            }
+            rows.extend(found);
+        }
+        if rows.is_empty() {
+            rows.push(Row::Note(t(self.lang, Key::AiModelsNoMatch).to_owned()));
+        }
+        rows
+    }
+
+    /// A built-in provider's model as its row reads.
+    fn provider_model_label(&self, model: &str) -> String {
+        if model == AiProviderId::KORU_HOSTED_MODEL {
+            AiProviderId::KORU_HOSTED_MODEL_LABEL.to_owned()
+        } else {
+            model.to_owned()
+        }
+    }
+
+    /// Which rows can be chosen now.
+    fn picker_choosable(&self, rows: &[Row]) -> Vec<bool> {
+        let entry_choosable = self
+            .picker_entry()
+            .is_some_and(|entry| self.entry_choosable(&entry));
+        rows.iter()
+            .map(|row| entry_choosable && row.choosable())
+            .collect()
+    }
+
+    /// A row's label, and its tooltip's words: the full label, and the
+    /// model's description beside its id (§8).
+    fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> (String, Option<String>) {
+        match (entry, row) {
+            (_, Row::Heading(text) | Row::Note(text)) => (text.clone(), None),
+            (RailEntry::Provider(_), Row::Model(id)) => (self.provider_model_label(id), None),
+            (RailEntry::Provider(_), Row::Default) => (String::new(), None),
+            (RailEntry::Agent(agent), Row::Default) => {
+                let models = self.listed_agent_models(agent);
+                let description = models
+                    .iter()
+                    .find(|model| model.id == AGENT_DEFAULT_MODEL)
+                    .and_then(|model| model.description.clone());
+                (default_model_label(models, self.lang), description)
+            }
+            (RailEntry::Agent(agent), Row::Model(id)) => {
+                let models = self.listed_agent_models(agent);
+                match models.iter().find(|model| &model.id == id) {
+                    Some(model) => (
+                        model_label(model),
+                        Some(match &model.description {
+                            Some(description) => format!("{description} — {id}"),
+                            None => id.clone(),
+                        }),
+                    ),
+                    None => (fallback_label(id, ""), Some(id.clone())),
+                }
+            }
+        }
+    }
+
+    /// Whether a row is the chat's current model.
+    fn picker_row_current(&self, entry: &RailEntry, row: &Row) -> bool {
+        let Some(model) = self
+            .transcript
+            .as_ref()
+            .map(|transcript| &transcript.chat.current_model)
+        else {
+            return false;
+        };
+        if &model.provider != entry.provider() {
+            return false;
+        }
+        match row {
+            Row::Default => model.requested_model == AGENT_DEFAULT_MODEL,
+            Row::Model(id) => &model.requested_model == id,
+            _ => false,
+        }
+    }
+
+    /// The picker's parts, while it is open: anchored to the chip, end
+    /// aligned, below it when there is room and above it otherwise.
+    pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
+        if !self.chat_model_open {
+            return None;
+        }
+        let rail = self.picker_rail();
+        let rail_h = rail_height(rail.len(), self.rail_has_divider(&rail));
+        let footer = self.effort_control().is_some();
+        let (w, h) = size(
+            self.composer_hit_rect.w,
+            self.picker_rows().len(),
+            rail_h,
+            footer,
+        );
+        let shell = PopoverShell::anchored(
+            self.chat_model_button(),
+            self.viewport,
+            w,
+            h,
+            PopoverAlign::End,
+        );
+        Some(geometry(shell.rect, footer))
+    }
+
+    pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {
+        scrollbar::ScrollbarGeom::for_content(
+            geometry.list,
+            self.picker_rows().len() as f32 * ROW_H,
+            self.picker.offset as f32 * ROW_H,
+        )
+    }
+
+    /// **Open the picker** on the chat's own entry, the query empty, the
+    /// search field focused and the current model in view.
+    pub(crate) fn reset_picker(&mut self) {
+        self.picker.rail = self.picker_initial_entry();
+        self.picker.query.set_text(&mut self.engine, "");
+        self.picker.focus = PickerFocus::Search;
+        self.picker.scroll_drag = None;
+        self.picker.offset = 0;
+        self.highlight_current_row();
+    }
+
+    /// Put the keyboard on the current model's row, or the first choosable
+    /// one, and scroll it into view.
+    fn highlight_current_row(&mut self) {
+        let rows = self.picker_rows();
+        let choosable = self.picker_choosable(&rows);
+        let entry = self.picker_entry();
+        let current = entry.as_ref().and_then(|entry| {
+            rows.iter()
+                .position(|row| self.picker_row_current(entry, row))
+        });
+        self.picker.highlight = current.or_else(|| step_highlight(&choosable, None, 1));
+        self.scroll_highlight_into_view();
+    }
+
+    fn scroll_highlight_into_view(&mut self) {
+        let Some(index) = self.picker.highlight else {
+            self.picker.offset = 0;
+            return;
+        };
+        let visible = self
+            .picker_geometry()
+            .map_or(VISIBLE_ROWS, |geometry| geometry.visible_rows());
+        self.picker.offset = scroll_into_view(index, self.picker.offset, visible);
+    }
+
+    fn select_rail_entry(&mut self, entry: RailEntry) {
+        if let RailEntry::Agent(agent) = &entry
+            && !matches!(self.agent_models.get(agent), Some(AgentModels::Listed(_)))
+        {
+            self.ask_agent_models(agent.clone());
+        }
+        self.picker.rail = Some(entry);
+        self.picker.offset = 0;
+        self.highlight_current_row();
+    }
+
+    /// **Choose row `index`**: an agent's model makes the agent and model
+    /// the chat's (the level kept when it is offered, D18); a built-in
+    /// provider's model is the chat's next model. The picker closes.
+    pub(crate) fn choose_picker_row(&mut self, index: usize) -> bool {
+        let rows = self.picker_rows();
+        let choosable = self.picker_choosable(&rows);
+        let (Some(entry), Some(row)) = (self.picker_entry(), rows.get(index)) else {
+            return true;
+        };
+        if !choosable.get(index).copied().unwrap_or(false) {
+            return true;
+        }
+        let row = row.clone();
+        self.close_picker();
+        match (entry, row) {
+            (RailEntry::Agent(agent), Row::Default) => {
+                self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
+            }
+            (RailEntry::Agent(agent), Row::Model(id)) => self.choose_agent_model(agent, id),
+            (RailEntry::Provider(_), Row::Model(id)) => self.change_chat_model(id),
+            _ => true,
+        }
+    }
+
+    /// **↻** (D13): the selected agent's list rebuilt now. *Checking…*
+    /// stands in the list until it lands; a second press waits for the
+    /// first. Not for an agent that is not installed.
+    pub(crate) fn refresh_picker_agent(&mut self) -> bool {
+        let Some(RailEntry::Agent(agent)) = self.picker_entry() else {
+            return false;
+        };
+        if !self.refresh_enabled(&agent) {
+            return true;
+        }
+        let sent = self.reader.as_ref().is_some_and(|reader| {
+            reader
+                .send(crate::reader::Command::RefreshModels(agent.clone()))
+                .is_ok()
+        });
+        if sent {
+            self.picker.refreshing.insert(agent.clone());
+            self.agent_models_asked.insert(agent);
+        }
+        true
+    }
+
+    fn refresh_enabled(&self, agent: &AiProviderId) -> bool {
+        !self.picker.refreshing.contains(agent)
+            && self.agent_status.get(agent).copied() != Some(AgentStatus::NotInstalled)
+    }
+
+    /// An answer about `agent`'s models landed: its ↻ is over.
+    pub(crate) fn agent_models_answered(&mut self, agent: &AiProviderId) {
+        self.picker.refreshing.remove(agent);
+    }
+
+    /// A press while the picker is open. `None` when the press is not the
+    /// picker's — on the chip, which toggles it — and `Some` when the picker
+    /// took it, closing it for a press outside.
+    pub(crate) fn picker_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        let geometry = self.picker_geometry()?;
+        if !geometry.panel.contains(x, y) {
+            if self.chat_model_button().contains(x, y) {
+                return None;
+            }
+            self.close_picker();
+            return Some(true);
+        }
+        if let Some(scrollbar) = self.picker_scrollbar(&geometry)
+            && scrollbar.in_gutter(x, y)
+        {
+            let grab = if scrollbar.on_thumb(x, y) {
+                y - scrollbar.thumb_top
+            } else {
+                scrollbar.thumb_h * 0.5
+            };
+            self.picker.scroll_drag = Some(grab);
+            let scroll = scrollbar.scroll_for_pointer(y, grab);
+            self.picker.offset = (scroll / ROW_H).round() as usize;
+            return Some(true);
+        }
+        let rail = self.picker_rail();
+        let divider = self.rail_has_divider(&rail);
+        if let Some(index) = rail_rects(geometry.rail, rail.len(), divider)
+            .iter()
+            .position(|rect| rect.contains(x, y))
+        {
+            self.picker.focus = PickerFocus::Rail;
+            self.select_rail_entry(rail[index].clone());
+            return Some(true);
+        }
+        if geometry.refresh.contains(x, y) {
+            return Some(self.refresh_picker_agent());
+        }
+        if geometry.search.contains(x, y) {
+            self.picker.focus = PickerFocus::Search;
+            self.picker
+                .query
+                .click(&mut self.engine, geometry.search, x, y);
+            return Some(true);
+        }
+        if let Some(reset) = geometry.reset()
+            && reset.contains(x, y)
+        {
+            self.picker.focus = PickerFocus::Reset;
+            return Some(self.reset_level());
+        }
+        if let (Some(section), Some(control)) =
+            (geometry.slider_section(), self.effort_control().cloned())
+            && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
+        {
+            self.picker.focus = PickerFocus::Slider;
+            if self.effort_locked() {
+                self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
+                return Some(true);
+            }
+            self.effort_drag = Some(choice);
+            return Some(true);
+        }
+        if geometry.list.contains(x, y) {
+            let visible = ((y - geometry.list.y) / ROW_H).floor().max(0.0) as usize;
+            let index = self.picker.offset + visible;
+            self.picker.focus = PickerFocus::List;
+            if index < self.picker_rows().len() {
+                return Some(self.choose_picker_row(index));
+            }
+        }
+        Some(true)
+    }
+
+    /// ↺: back to the model's own default (*Default*, which sends nothing).
+    fn reset_level(&mut self) -> bool {
+        if self.effort_locked() {
+            self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
+            return true;
+        }
+        let at_default = self.transcript.as_ref().is_none_or(|transcript| {
+            transcript.chat.current_model.default_reasoning == ReasoningChoice::Default
+        });
+        if at_default {
+            return true;
+        }
+        self.choose_effort(ReasoningChoice::Default)
+    }
+
+    /// The pointer moved with the picker open: a scrollbar drag, and the
+    /// tooltip under it. `Some` when the picker claimed the move.
+    pub(crate) fn picker_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
+        let geometry = self.picker_geometry()?;
+        if let Some(grab) = self.picker.scroll_drag {
+            if let Some(scrollbar) = self.picker_scrollbar(&geometry) {
+                let next = (scrollbar.scroll_for_pointer(y, grab) / ROW_H).round() as usize;
+                let changed = next != self.picker.offset;
+                self.picker.offset = next;
+                return Some(changed);
+            }
+            return Some(true);
+        }
+        let tip = self.picker_tooltip_at(&geometry, x, y);
+        let changed = self
+            .picker_tooltip
+            .set_hover(tip, std::time::Instant::now());
+        // Over the panel the picker is all there is; outside it, only a
+        // tooltip that went away is news.
+        (geometry.panel.contains(x, y) || changed).then_some(true)
+    }
+
+    fn picker_tooltip_at(&self, geometry: &Geometry, x: f32, y: f32) -> Option<TooltipContent> {
+        if !geometry.panel.contains(x, y) {
+            return None;
+        }
+        let rail = self.picker_rail();
+        let divider = self.rail_has_divider(&rail);
+        let agents = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.agents.as_slice())
+            .unwrap_or_default();
+        for (index, rect) in rail_rects(geometry.rail, rail.len(), divider)
+            .into_iter()
+            .enumerate()
+        {
+            if rect.contains(x, y) {
+                let entry = &rail[index];
+                let name = match entry {
+                    RailEntry::Agent(agent) => crate::agents::agent_label(agents, agent),
+                    RailEntry::Provider(provider) => provider_name(provider),
+                };
+                let word = self
+                    .agent_status
+                    .get(entry.provider())
+                    .and_then(|status| status.word(self.lang))
+                    .filter(|_| matches!(entry, RailEntry::Agent(_)));
+                let label = match word {
+                    Some(word) => format!("{name} — {word}"),
+                    None => name,
+                };
+                return Some(TooltipContent::new(
+                    TOOLTIP_RAIL + index as u64,
+                    rect,
+                    label,
+                ));
+            }
+        }
+        if geometry.refresh.contains(x, y)
+            && matches!(self.picker_entry(), Some(RailEntry::Agent(_)))
+        {
+            return Some(TooltipContent::new(
+                TOOLTIP_REFRESH,
+                geometry.refresh,
+                t(self.lang, Key::AiModelsRefresh),
+            ));
+        }
+        if let Some(reset) = geometry.reset()
+            && reset.contains(x, y)
+        {
+            return Some(TooltipContent::new(
+                TOOLTIP_RESET,
+                reset,
+                t(self.lang, Key::AiEffortReset),
+            ));
+        }
+        if let Some(footer) = geometry.footer
+            && footer.contains(x, y)
+            && self.effort_locked()
+        {
+            return Some(TooltipContent::new(
+                TOOLTIP_LOCKED,
+                footer,
+                t(self.lang, Key::AiEffortLockedAfterStart),
+            ));
+        }
+        if geometry.list.contains(x, y) {
+            let visible = ((y - geometry.list.y) / ROW_H).floor().max(0.0) as usize;
+            let index = self.picker.offset + visible;
+            let entry = self.picker_entry()?;
+            let row = self.picker_rows().into_iter().nth(index)?;
+            let (label, more) = self.picker_row_label(&entry, &row);
+            let text = match more {
+                Some(more) => format!("{label}\n{more}"),
+                None if !label.is_empty() => label,
+                None => return None,
+            };
+            return Some(TooltipContent::new(
+                TOOLTIP_ROW + index as u64,
+                geometry.row(visible),
+                text,
+            ));
+        }
+        None
+    }
+
+    /// The wheel over the open picker scrolls its list, a row a notch.
+    pub(crate) fn picker_scroll(&mut self, dy: f32) -> bool {
+        let previous = self.picker.offset;
+        let visible = self
+            .picker_geometry()
+            .map_or(VISIBLE_ROWS, |geometry| geometry.visible_rows());
+        let max = self.picker_rows().len().saturating_sub(visible);
+        if dy > 0.0 {
+            self.picker.offset = self.picker.offset.saturating_sub(dy.ceil() as usize);
+        } else if dy < 0.0 {
+            self.picker.offset = (self.picker.offset + (-dy).ceil() as usize).min(max);
+        }
+        previous != self.picker.offset
+    }
+
+    /// **The keyboard inside the picker** (§9.5; widget navigation, D12):
+    /// typing edits the query wherever the focus is; Up and Down move the
+    /// highlighted row, or the rail's entry from the rail; Enter chooses;
+    /// Left and Right move the slider a stop; Tab and Shift+Tab move between
+    /// search, rail, list, ↺ and the slider; Esc clears the query, else
+    /// closes. `None` when the picker is closed.
+    pub(crate) fn picker_key(
+        &mut self,
+        key: &WinitKey,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<bool> {
+        if !self.chat_model_open {
+            return None;
+        }
+        let footer = self.effort_control().is_some();
+        match key {
+            WinitKey::Named(NamedKey::Escape) => {
+                if !self.picker.query.raw_text().is_empty() {
+                    self.picker.query.set_text(&mut self.engine, "");
+                    self.highlight_current_row();
+                } else {
+                    self.close_picker();
+                }
+                return Some(true);
+            }
+            WinitKey::Named(NamedKey::Tab) => {
+                let order: &[PickerFocus] = if footer {
+                    &[
+                        PickerFocus::Search,
+                        PickerFocus::Rail,
+                        PickerFocus::List,
+                        PickerFocus::Reset,
+                        PickerFocus::Slider,
+                    ]
+                } else {
+                    &[PickerFocus::Search, PickerFocus::Rail, PickerFocus::List]
+                };
+                let at = order
+                    .iter()
+                    .position(|focus| *focus == self.picker.focus)
+                    .unwrap_or(0);
+                let next = if mods.shift_key() {
+                    (at + order.len() - 1) % order.len()
+                } else {
+                    (at + 1) % order.len()
+                };
+                self.picker.focus = order[next];
+                return Some(true);
+            }
+            _ => {}
+        }
+        match self.picker.focus {
+            PickerFocus::Rail => match key {
+                WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
+                    let rail = self.picker_rail();
+                    let at = self
+                        .picker_entry()
+                        .and_then(|entry| rail.iter().position(|candidate| *candidate == entry));
+                    let next = match (at, key) {
+                        (Some(at), WinitKey::Named(NamedKey::ArrowUp)) => at.saturating_sub(1),
+                        (Some(at), _) => (at + 1).min(rail.len().saturating_sub(1)),
+                        (None, _) => 0,
+                    };
+                    if let Some(entry) = rail.get(next).cloned() {
+                        self.select_rail_entry(entry);
+                    }
+                    return Some(true);
+                }
+                WinitKey::Named(NamedKey::Enter | NamedKey::ArrowRight) => {
+                    self.picker.focus = PickerFocus::List;
+                    return Some(true);
+                }
+                _ => {}
+            },
+            PickerFocus::Reset => {
+                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
+                    return Some(self.reset_level());
+                }
+            }
+            PickerFocus::Slider => {
+                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
+                    key
+                {
+                    return Some(self.step_level(*direction == NamedKey::ArrowRight));
+                }
+            }
+            PickerFocus::Search | PickerFocus::List => {}
+        }
+        match key {
+            WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
+                let rows = self.picker_rows();
+                let choosable = self.picker_choosable(&rows);
+                let step = if matches!(key, WinitKey::Named(NamedKey::ArrowUp)) {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(next) = step_highlight(&choosable, self.picker.highlight, step) {
+                    self.picker.highlight = Some(next);
+                    self.scroll_highlight_into_view();
+                }
+                Some(true)
+            }
+            WinitKey::Named(NamedKey::Enter) => {
+                let index = self.picker.highlight?;
+                Some(self.choose_picker_row(index))
+            }
+            _ => {
+                // Typing is the query's, wherever the focus was.
+                let before = self.picker.query.raw_text().to_owned();
+                let typed =
+                    self.picker.query.key(&mut self.engine, key, text, mods) == Typed::Handled;
+                if self.picker.query.raw_text() != before {
+                    self.picker.focus = PickerFocus::Search;
+                    self.picker.offset = 0;
+                    let rows = self.picker_rows();
+                    let choosable = self.picker_choosable(&rows);
+                    self.picker.highlight = step_highlight(&choosable, None, 1);
+                }
+                Some(typed || self.picker.focus == PickerFocus::Search)
+            }
+        }
+    }
+
+    /// Left or Right on the slider: the chat's level one stop over.
+    fn step_level(&mut self, up: bool) -> bool {
+        if self.effort_locked() {
+            self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
+            return true;
+        }
+        let Some(control) = self.effort_control().cloned() else {
+            return false;
+        };
+        let stops = effort::stops(&control);
+        let at = self
+            .effective_reasoning()
+            .and_then(|choice| stops.iter().position(|stop| *stop == choice));
+        let next = match (at, up) {
+            (Some(at), true) => (at + 1).min(stops.len().saturating_sub(1)),
+            (Some(at), false) => at.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => stops.len().saturating_sub(1),
+        };
+        match stops.get(next) {
+            Some(choice) => self.choose_effort(*choice),
+            None => false,
+        }
+    }
+
+    /// Draw the open picker: the panel, the rail, the search with ↻, the
+    /// list, and the footer.
+    pub(crate) fn draw_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some(geometry) = self.picker_geometry() else {
+            return;
+        };
+        let p = theme::p();
+        PopoverShell {
+            rect: geometry.panel,
+            radius: theme::overlay::popover().radius,
+        }
+        .draw(canvas, root);
+
+        // The rail.
+        let rail = self.picker_rail();
+        let divider = self.rail_has_divider(&rail);
+        let selected = self.picker_entry();
+        let query = self.picker_query();
+        let rects = rail_rects(geometry.rail, rail.len(), divider);
+        for (entry, rect) in rail.iter().zip(&rects) {
+            let chosen = selected.as_ref() == Some(entry);
+            let hovered = rect.contains(self.pointer.0, self.pointer.1);
+            let keyboard = chosen && self.picker.focus == PickerFocus::Rail;
+            if chosen || hovered {
+                scene::fill(
+                    canvas,
+                    root,
+                    if chosen { p.row_selected } else { p.hover_tint },
+                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
+                );
+            }
+            if keyboard {
+                scene::stroke(
+                    canvas,
+                    root,
+                    p.accent,
+                    1.0,
+                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
+                );
+            }
+            let dim = match entry {
+                RailEntry::Agent(agent) => {
+                    self.agent_status.get(agent).copied() != Some(AgentStatus::Ready)
+                        || !self.agent_matches_query(agent, &query)
+                }
+                RailEntry::Provider(_) => false,
+            };
+            let colour = if dim { p.text_dim } else { p.text };
+            draw_mark(canvas, root, &mut self.engine, entry, *rect, colour);
+        }
+        if divider && let Some(first) = rects.first() {
+            let y = first.y + first.h + RAIL_GAP + RAIL_DIVIDER * 0.5 - 0.5;
+            scene::fill(
+                canvas,
+                root,
+                p.panel_border,
+                &scene::rrect(first.x + 4.0, y, first.w - 8.0, 1.0, 0.5),
+            );
+        }
+
+        // The search field and ↻.
+        let search = Rect::new(
+            geometry.search.x,
+            geometry.search.y,
+            (geometry.search.w - geometry.refresh.w - 4.0).max(1.0),
+            geometry.search.h,
+        );
+        let placeholder = t(self.lang, Key::AiModelSearch).to_owned();
+        self.picker.query.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            search,
+            InputStyle::search(),
+            Some(&placeholder),
+            self.picker.focus == PickerFocus::Search,
+        );
+        if let Some(RailEntry::Agent(agent)) = &selected {
+            let disabled = !self.refresh_enabled(agent);
+            IconButton::new(icons::ARROWS_CLOCKWISE, geometry.refresh)
+                .with_state(IconButtonState {
+                    hovered: geometry.refresh.contains(self.pointer.0, self.pointer.1),
+                    active: false,
+                    disabled,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+
+        // The list.
+        let rows = self.picker_rows();
+        let choosable = self.picker_choosable(&rows);
+        let visible = geometry.visible_rows();
+        if let Some(entry) = &selected {
+            for (index, row) in rows
+                .iter()
+                .enumerate()
+                .skip(self.picker.offset)
+                .take(visible)
+            {
+                let rect = geometry.row(index - self.picker.offset);
+                let current = self.picker_row_current(entry, row);
+                let can = choosable[index];
+                let highlighted = self.picker.highlight == Some(index)
+                    && matches!(self.picker.focus, PickerFocus::Search | PickerFocus::List);
+                let hovered = can && rect.contains(self.pointer.0, self.pointer.1);
+                if current || highlighted || hovered {
+                    scene::fill(
+                        canvas,
+                        root,
+                        if current {
+                            p.row_selected
+                        } else {
+                            p.hover_tint
+                        },
+                        &scene::rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
+                    );
+                }
+                let (label, _) = self.picker_row_label(entry, row);
+                let (style, colour, indent) = match row {
+                    Row::Heading(_) => (theme::role::meta(), p.text_dim, 8.0),
+                    Row::Note(_) => (theme::role::meta(), p.text_dim, 8.0),
+                    _ => (
+                        theme::role::row(),
+                        if can || current { p.text } else { p.text_dim },
+                        8.0,
+                    ),
+                };
+                let check_w = if current { 22.0 } else { 0.0 };
+                let room = (rect.w - indent - 8.0 - check_w).max(1.0);
+                let shown = self.engine.elided(&label, style, room);
+                let line = self.engine.simple_layout(&shown, style);
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &line,
+                    rect.x + indent,
+                    rect.y + (rect.h - line.height()) * 0.5,
+                    Some(colour),
+                );
+                if current {
+                    let check = self.engine.icon_layout(icons::CHECK, 13.0);
+                    scene::draw_layout(
+                        canvas,
+                        root,
+                        &check,
+                        rect.x + rect.w - 8.0 - check.width(),
+                        rect.y + (rect.h - check.height()) * 0.5,
+                        Some(p.text_dim),
+                    );
+                }
+            }
+        }
+        if let Some(scrollbar) = self.picker_scrollbar(&geometry) {
+            let active = self.picker.scroll_drag.is_some()
+                || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
+            scrollbar::draw(canvas, root, scrollbar, active);
+        }
+
+        // The footer: the level's word, ↺, and the slider.
+        let (Some(footer), Some(control), Some(shown)) = (
+            geometry.footer,
+            self.effort_control().cloned(),
+            self.effort_shown(),
+        ) else {
+            return;
+        };
+        let choice = self
+            .transcript
+            .as_ref()
+            .map_or(ReasoningChoice::Default, |transcript| {
+                transcript.chat.current_model.default_reasoning
+            });
+        let locked = self.effort_locked();
+        scene::fill(
+            canvas,
+            root,
+            p.panel_border,
+            &scene::rrect(footer.x, footer.y, footer.w, 1.0, 0.5),
+        );
+        let (word, suffix) = footer_words(&control, choice, self.lang);
+        let line = self.engine.simple_layout(&word, theme::role::row());
+        let label_y = footer.y + 6.0;
+        scene::draw_layout_first_line(
+            canvas,
+            root,
+            &line,
+            footer.x + 8.0,
+            label_y,
+            Some(if locked { p.text_dim } else { p.text }),
+        );
+        if let Some(suffix) = suffix {
+            let dim = self.engine.simple_layout(&suffix, theme::role::meta());
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &dim,
+                footer.x + 8.0 + line.width() + 6.0,
+                label_y + (line.height() - dim.height()) * 0.5,
+                Some(p.text_dim),
+            );
+        }
+        if let Some(reset) = geometry.reset() {
+            IconButton::new(icons::RESET, reset)
+                .with_state(IconButtonState {
+                    hovered: reset.contains(self.pointer.0, self.pointer.1),
+                    active: self.picker.focus == PickerFocus::Reset,
+                    disabled: locked || choice == ReasoningChoice::Default,
+                })
+                .draw(canvas, root, &mut self.engine);
+        }
+        effort::draw_track(
+            canvas,
+            root,
+            &mut self.engine,
+            self.lang,
+            footer,
+            &control,
+            shown,
+            if locked { (-1.0, -1.0) } else { self.pointer },
+            self.picker.focus == PickerFocus::Slider,
+        );
+    }
+}
+
+/// Koru AI, OpenAI and Ollama by name, for the rail's tooltip.
+fn provider_name(provider: &AiProviderId) -> String {
+    match provider.as_str() {
+        AiProviderId::KORU => "Koru AI".to_owned(),
+        AiProviderId::OPENAI => "OpenAI".to_owned(),
+        AiProviderId::OLLAMA => "Ollama".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+/// An entry's mark: the agent's brand by its kind (`agent-claude` wears
+/// Claude's), OpenAI's for OpenAI, a glyph where there is no brand.
+fn draw_mark(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    entry: &RailEntry,
+    rect: Rect,
+    colour: vello::peniko::Color,
+) {
+    let key = match entry {
+        RailEntry::Agent(agent) => agent.as_str().strip_prefix("agent-").unwrap_or_default(),
+        RailEntry::Provider(provider) => match provider.as_str() {
+            AiProviderId::OPENAI => "codex",
+            _ => "",
+        },
+    };
+    let mark = brand::for_profile(key).unwrap_or(brand::ProfileMark::Glyph(match entry {
+        RailEntry::Provider(provider) if provider.as_str() == AiProviderId::OLLAMA => {
+            icons::DESKTOP
+        }
+        RailEntry::Provider(_) => icons::SPARKLE,
+        RailEntry::Agent(_) => icons::ROBOT,
+    }));
+    let inner = Rect::new(rect.x + 7.0, rect.y + 7.0, rect.w - 14.0, rect.h - 14.0);
+    match mark {
+        brand::ProfileMark::Brand(icon) => {
+            scene::draw_brand_icon(canvas, root, inner, colour, icon)
+        }
+        brand::ProfileMark::Glyph(glyph) => {
+            let layout = engine.icon_layout(glyph, 18.0);
+            scene::draw_layout(
+                canvas,
+                root,
+                &layout,
+                rect.x + (rect.w - layout.width()) * 0.5,
+                rect.y + (rect.h - layout.height()) * 0.5,
+                Some(colour),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

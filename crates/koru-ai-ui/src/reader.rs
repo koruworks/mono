@@ -58,6 +58,8 @@ pub(crate) enum Command {
     Validate(AiProviderId),
     /// List a local agent's models for the picker's level under it.
     DiscoverModels(AiProviderId),
+    /// ↻: the agent's list rebuilt first, then listed (D13).
+    RefreshModels(AiProviderId),
     Pull(PullOllamaModelRequest),
     CancelPull,
     /// Titles for documents a sent chip names, for drawing it as a titled
@@ -94,6 +96,7 @@ impl Command {
             Self::SelectProvider(_) => "select_provider",
             Self::Validate(_) => "validate",
             Self::DiscoverModels(_) => "discover_models",
+            Self::RefreshModels(_) => "refresh_models",
             Self::Pull(_) => "pull",
             Self::CancelPull => "cancel_pull",
             Self::DocumentTitles(_) => "document_titles",
@@ -616,7 +619,15 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 let client = client.clone();
                 let listing_updates = updates.clone();
                 off_thread("koru-ai-ui-agent-models", move || {
-                    let update = list_agent_models(&client, provider);
+                    let update = list_agent_models(&client, provider, false);
+                    let _ = listing_updates.send(update);
+                });
+            }
+            Command::RefreshModels(provider) => {
+                let client = client.clone();
+                let listing_updates = updates.clone();
+                off_thread("koru-ai-ui-agent-models", move || {
+                    let update = list_agent_models(&client, provider, true);
                     let _ = listing_updates.send(update);
                 });
             }
@@ -950,12 +961,24 @@ fn decorate_tool_activity(
 /// keeps listing between them, so the later asks find the list it made.
 const LISTING_ASKS: usize = 3;
 
-fn list_agent_models(client: &koru_api_client::Client, provider: AiProviderId) -> Update {
+/// An agent's list, asked again while the host is still building it.
+/// `refresh` rebuilds it first (↻); the asks after the first only wait for
+/// that rebuild.
+fn list_agent_models(
+    client: &koru_api_client::Client,
+    provider: AiProviderId,
+    refresh: bool,
+) -> Update {
     let started = Instant::now();
     let mut asks = 0;
     let answer = loop {
         asks += 1;
-        match client.ai().discover_agent_models(&provider) {
+        let answer = if refresh && asks == 1 {
+            client.ai().refresh_agent_models(&provider)
+        } else {
+            client.ai().discover_agent_models(&provider)
+        };
+        match answer {
             Err(failure) if failure.code == AGENT_MODELS_LISTING && asks < LISTING_ASKS => {}
             answer => break answer,
         }
