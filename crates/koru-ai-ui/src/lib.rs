@@ -8272,11 +8272,6 @@ fn failure_label(class: Option<AiErrorClass>, lang: koru_i18n::Lang) -> String {
     koru_i18n::t(lang, key).to_owned()
 }
 
-/// A service failure as the status line reads it: the sentence its code
-/// names, in the person's language, and — when the service said something
-/// more specific (*the agent refused that model*) — its own words after
-/// it. A code the surface does not know reads as the service's words alone,
-/// so nothing a service can say goes unshown.
 /// The stand-in a new chat is shown as until its first message makes it:
 /// what the service answers a create with — its title, no message, no
 /// workspace and manual approval — under a fresh id the create will use.
@@ -8311,6 +8306,11 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
     }
 }
 
+/// A service failure as the status line reads it: the sentence its code
+/// names, in the person's language, and — when the service said something
+/// more specific (*the agent refused that model*) — its own words after
+/// it. A code the surface does not know reads as the service's words alone,
+/// so nothing a service can say goes unshown.
 pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lang) -> String {
     let key = match failure.code.as_str() {
         "ai_configuration" => Some(koru_i18n::Key::AiFailureConfiguration),
