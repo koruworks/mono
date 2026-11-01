@@ -794,6 +794,20 @@ mod tests {
         assert!(!surface.take_chat_list_changed());
     }
 
+    /// **A renamed chat keeps its place** in the list: a rename is not
+    /// activity.
+    #[test]
+    fn a_renamed_chat_keeps_its_place() {
+        let mut surface = ready(SurfaceMode::ContextPane);
+        let (one, two) = (chat("One"), chat("Two"));
+        surface.chats = vec![one.clone(), two.clone()];
+        let mut renamed = two.clone();
+        renamed.title = "Second".into();
+        surface.apply_update(Update::Renamed(renamed));
+        let titles: Vec<&str> = surface.chats.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, ["One", "Second"]);
+    }
+
     /// The standalone window's pane, open on `chats` with the keyboard on
     /// the newest, and a reader whose commands the test reads.
     fn pane_on(chats: Vec<Chat>) -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {

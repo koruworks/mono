@@ -175,18 +175,13 @@ impl AiPersistence for Repository {
         Ok(())
     }
 
-    fn rename_chat(
-        &mut self,
-        chat: ChatId,
-        title: &str,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError> {
+    fn rename_chat(&mut self, chat: ChatId, title: &str) -> Result<bool, AiError> {
+        // **Not `updated_at_ms`** (the user's call, 2026-10-31): the Chats
+        // list is ordered by it, and a renamed chat stays where it was.
         self.connection
             .execute(
-                "UPDATE chats
-                    SET title = ?2, updated_at_ms = max(updated_at_ms, ?3)
-                  WHERE id = ?1",
-                params![chat.to_storage(), title, updated_at.millis()],
+                "UPDATE chats SET title = ?2 WHERE id = ?1",
+                params![chat.to_storage(), title],
             )
             .map(|updated| updated != 0)
             .map_err(storage_failed)

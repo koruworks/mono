@@ -2179,7 +2179,7 @@ impl WorkerState {
         }
         if !self
             .repository
-            .rename_chat(chat_id, title, Timestamp::now())
+            .rename_chat(chat_id, title)
             .map_err(ai_failure)?
         {
             return Err(not_found());

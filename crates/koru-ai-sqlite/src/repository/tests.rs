@@ -391,22 +391,17 @@ fn attempts_for_chat_returns_only_message_backed_attempts_for_that_chat() {
     );
 }
 
+/// A rename changes the title and nothing else: not the recency the Chats
+/// list is ordered by, so the chat keeps its place.
 #[test]
-fn chat_rename_updates_the_title_and_recency_atomically() {
+fn chat_rename_changes_the_title_and_keeps_the_place() {
     let (mut repository, chat_id) = repository_with_chat();
-    assert!(
-        repository
-            .rename_chat(chat_id, "Renamed chat", at(10))
-            .unwrap()
-    );
+    let before = repository.chat(chat_id).unwrap().unwrap().updated_at;
+    assert!(repository.rename_chat(chat_id, "Renamed chat").unwrap());
     let renamed = repository.chat(chat_id).unwrap().unwrap();
     assert_eq!(renamed.title, "Renamed chat");
-    assert_eq!(renamed.updated_at, at(10));
-    assert!(
-        !repository
-            .rename_chat(ChatId::new(), "Missing", at(11))
-            .unwrap()
-    );
+    assert_eq!(renamed.updated_at, before);
+    assert!(!repository.rename_chat(ChatId::new(), "Missing").unwrap());
 }
 
 #[test]

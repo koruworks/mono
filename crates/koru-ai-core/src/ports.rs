@@ -19,12 +19,9 @@ pub trait AiPersistence: Send {
     fn settings(&self) -> Result<Option<AiSettings>, AiError>;
     fn save_settings(&mut self, settings: &AiSettings) -> Result<(), AiError>;
     fn create_chat(&mut self, chat: &Chat) -> Result<(), AiError>;
-    fn rename_chat(
-        &mut self,
-        chat: ChatId,
-        title: &str,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError>;
+    /// The title only: a rename is not activity, so the chat keeps its place
+    /// in a list ordered by recency.
+    fn rename_chat(&mut self, chat: ChatId, title: &str) -> Result<bool, AiError>;
     fn update_chat_model(
         &mut self,
         chat: ChatId,

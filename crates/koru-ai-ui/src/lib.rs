@@ -2413,7 +2413,9 @@ impl ChatSurface {
             }
             Update::Renamed(chat) => {
                 self.waiting = false;
-                self.remember_chat(&chat, true);
+                // In place: a rename is not activity, and the list stays as
+                // it was ordered (the user's call, 2026-10-31).
+                self.remember_chat(&chat, false);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {
