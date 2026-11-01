@@ -26,6 +26,7 @@ pub mod tasks;
 pub mod text;
 pub mod time;
 pub mod timing;
+pub mod toggle;
 
 pub use attributes::{
     AccentColor, AttributeDefinition, AttributeScope, Cardinality, Lifecycle, Priority, TaskReason,

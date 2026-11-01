@@ -34,17 +34,17 @@ use koru_store_core::ProfileAccountBinding;
 use koru_store_core::personal_attributes::EntityRef;
 use koru_store_wire::internal::{CloudChangeOrigin, CloudLocalChange, CloudSyncStatus};
 use koru_store_wire::{
-    AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount, Created,
-    DeleteWorkspaceQuery, DocumentLocation, DocumentOutline, EnsuredFileNote,
+    ApplyPrivateChanges, AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount,
+    Created, DeleteWorkspaceQuery, DocumentLocation, DocumentOutline, EnsuredFileNote,
     HistoryEntry as WireHistoryEntry, HistoryPage, HistoryQuery, LocalProfileRemoval,
     LocalProfileRestoration, ManifestRef, MoveWorkspace, NewDocument, NewProfile, NewWorkspace,
     OutlineHeading, PauseBlobTransfer, PersonalAttributesQuery, PersonalAttributesResponse,
-    PersonalDictionaryResponse, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
-    ProfileAppearance, ProfileLifecycleInventory, ProfileLifecycleInventoryItem,
-    ProfileTransportModeOutcome, RelabelHistory, RenameProfile, RenameWorkspace,
-    SeedDocumentRequest, SeedDocumentWithCandidateRequest, SetDictionaryWord, SetPersonalAttribute,
-    SetProfileTransportMode, TransferDocuments, Transferred, WorkspaceAppearance,
-    WorkspaceListQuery, WorkspaceOrder, WorkspaceUsage,
+    PersonalDictionaryResponse, PrivateState, ProfileAccountBindingOutcome,
+    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
+    ProfileLifecycleInventoryItem, ProfileTransportModeOutcome, RelabelHistory, RenameProfile,
+    RenameWorkspace, SeedDocumentRequest, SeedDocumentWithCandidateRequest, SetDictionaryWord,
+    SetPersonalAttribute, SetProfileTransportMode, TransferDocuments, Transferred,
+    WorkspaceAppearance, WorkspaceListQuery, WorkspaceOrder, WorkspaceUsage,
 };
 
 use crate::auth::Caller;
@@ -317,6 +317,70 @@ pub async fn set_personal_attribute(
         entity: entity.to_storage(),
         attributes,
     }))
+}
+
+// ------------------------------------------------- document-private state
+
+/// The workspace that holds `document`, for a route that names only the
+/// document: ids are global, so the client never has to know it.
+fn private_target(
+    state: &Arc<AppState>,
+    profile: &str,
+    document: &str,
+) -> ApiResult<(ProfileId, WorkspaceId, DocumentId)> {
+    let profile = ProfileId::parse(profile).ok_or_else(invalid_id)?;
+    let document = DocumentId::parse(document).ok_or_else(invalid_id)?;
+    let workspace = lock(state)?
+        .locate(document)?
+        .ok_or_else(|| Error::bare(Code::DocumentNotFound))?;
+    Ok((profile, workspace, document))
+}
+
+pub async fn document_private_state(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path((profile, document)): Path<(String, String)>,
+) -> ApiResult<Json<PrivateState>> {
+    caller.require(Scope::ReadDocuments)?;
+    let (profile, workspace, document) = private_target(&state, &profile, &document)?;
+    Ok(Json(
+        lock(&state)?.document_private_state(workspace, document, profile)?,
+    ))
+}
+
+/// Folding needs only read access: a reader changes their own view of a
+/// document, never its content. **No replication wake** — this state is
+/// device-local — and the change event goes out only after the commit.
+pub async fn apply_document_private_changes(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path((profile, document)): Path<(String, String)>,
+    Json(body): Json<ApplyPrivateChanges>,
+) -> ApiResult<Json<PrivateState>> {
+    caller.require(Scope::ReadDocuments)?;
+    let (profile, workspace, document) = private_target(&state, &profile, &document)?;
+    let (before, after) = {
+        let mut store = lock(&state)?;
+        let before = store
+            .document_private_state(workspace, document, profile)?
+            .revision;
+        let after = store.apply_document_private_changes(
+            workspace,
+            document,
+            profile,
+            &body.changes,
+            now(),
+        )?;
+        (before, after)
+    };
+    if after.revision != before {
+        state.publish_catalog_event(koru_events::DocumentPrivateChanged {
+            profile_id: profile.as_uuid(),
+            workspace_id: workspace.as_uuid(),
+            document_id: document.as_uuid(),
+        });
+    }
+    Ok(Json(after))
 }
 
 // ------------------------------------------------------- personal dictionary

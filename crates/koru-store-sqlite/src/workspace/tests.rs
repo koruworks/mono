@@ -357,6 +357,55 @@ fn dropping_a_document_takes_its_journal_with_it() {
     assert!(w.checkpoints(d).unwrap().is_empty());
 }
 
+// ------------------------------------------------- document-private state
+
+#[test]
+fn private_rows_cascade_with_the_document_and_survive_a_reindex() {
+    use koru_store_core::DocumentIndex;
+    let (mut w, d) = with_document();
+    let reader = ProfileId::new();
+    assert_eq!(w.private_snapshot(d, reader).unwrap(), None);
+    w.put_private_snapshot(d, reader, &[1, 2], at()).unwrap();
+    w.put_private_snapshot(d, reader, &[3], at()).unwrap();
+    assert_eq!(w.private_snapshot(d, reader).unwrap(), Some(vec![3]));
+
+    // The listing is rebuilt wholesale; private state is not part of it.
+    w.reindex(&[]).unwrap();
+    assert_eq!(w.private_snapshot(d, reader).unwrap(), Some(vec![3]));
+
+    // An empty snapshot is refused by the table itself.
+    assert!(w.put_private_snapshot(d, reader, &[], at()).is_err());
+    // A private row for a document with no storage row is refused too.
+    assert!(
+        w.put_private_snapshot(DocumentId::new(), reader, &[1], at())
+            .is_err()
+    );
+
+    w.drop_document(d).unwrap();
+    assert_eq!(w.private_snapshot(d, reader).unwrap(), None);
+}
+
+#[test]
+fn pruning_keeps_listed_documents_and_removes_the_rest() {
+    let (mut w, kept) = with_document();
+    let gone = DocumentId::new();
+    w.create_document(gone, DocumentKind::Document, at())
+        .unwrap();
+    let (a, b) = (ProfileId::new(), ProfileId::new());
+    for document in [kept, gone] {
+        for reader in [a, b] {
+            w.put_private_snapshot(document, reader, &[1], at())
+                .unwrap();
+        }
+    }
+    assert_eq!(w.prune_private_snapshots(&[kept]).unwrap(), 2);
+    assert_eq!(w.private_snapshots(kept).unwrap().len(), 2);
+    assert!(w.private_snapshots(gone).unwrap().is_empty());
+    // The shared bytes are not the cleanup's to delete.
+    assert!(w.document(gone).unwrap().is_some());
+    assert_eq!(w.prune_private_snapshots(&[kept]).unwrap(), 0, "idempotent");
+}
+
 // ------------------------------------------------------------------ updates
 
 #[test]

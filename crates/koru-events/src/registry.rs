@@ -1750,6 +1750,22 @@ pub const REGISTRY: &[EventSpec] = &[
               signal and not a second copy of the catalog.",
     },
     EventSpec {
+        name: "document.private.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[reference_attr(
+            "profile",
+            "The reader whose private view state changed.",
+        )],
+        doc: "One reader's device-local private view state for one document — \
+              which toggles they closed — committed a change through \
+              `PATCH /v1/profiles/{id}/documents/{document}/private-state`. \
+              Workspace-scoped with the document as subject; no node ids and \
+              no values. Other windows of the same reader re-read the state. \
+              Never replicated and never wakes sync.",
+    },
+    EventSpec {
         name: "workspace.catalog.created",
         version: 1,
         class: EventClass::Domain,

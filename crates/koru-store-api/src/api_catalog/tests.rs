@@ -213,6 +213,14 @@ fn a_mutation_never_requires_only_a_read_scope() {
             // Reminder category queries carry explicit device time context in
             // the body; they are reads despite using POST.
             _ if route.path == "/v1/profiles/{id}/reminders/query" => {}
+            // **A reader's own private view of a document is a write that
+            // needs only read access.** Folding a toggle changes nothing in
+            // the document and nothing anyone else sees; requiring
+            // `EditDocuments` would stop a reader of a document they cannot
+            // edit from closing a toggle in it. Logged as a principal-model
+            // gap in the collapse/expand plan: there is no reader-own-state
+            // scope yet.
+            _ if route.path == "/v1/profiles/{id}/documents/{document}/private-state" => {}
             other => panic!(
                 "{} {} writes but requires {other:?}",
                 route.method, route.path
@@ -333,9 +341,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // pause, the blob release, the Profile transport mode, the documents
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
-    // installation-local progress (a query path and a per-row path).
-    assert_eq!(ROUTES.len(), 96, "a row was added or removed");
-    assert_eq!(paths.len(), 76, "a path was added or removed");
+    // installation-local progress (a query path and a per-row path). A
+    // reader's private document state is one method-paired path.
+    assert_eq!(ROUTES.len(), 98, "a row was added or removed");
+    assert_eq!(paths.len(), 77, "a path was added or removed");
 }
 
 #[test]

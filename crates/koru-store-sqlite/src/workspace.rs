@@ -56,7 +56,7 @@
 //! [`commit_checkpoint`]: SqliteWorkspace::commit_checkpoint
 
 use koru_store_core::errors::{Code, Error, Result};
-use koru_store_core::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntryId};
+use koru_store_core::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntryId, ProfileId};
 use koru_store_core::model::{Blob, BlobHash, DocumentKind, Timestamp};
 use koru_store_core::ports::{
     Checkpoint, CheckpointHeader, DocumentState, DocumentVersion, HistoryCapture, HistoryEntry,
@@ -276,6 +276,14 @@ const MIGRATIONS: &[Migration] = &[
         // Loro bytes change; this is the older-writer compatibility fence.
         sql: "",
         columns: &[],
+    },
+    Migration {
+        to: 13,
+        name: "document_private_crdts",
+        // A reader's private, device-local view state per document (toggle
+        // folds). Cascades with the `loro_documents` row.
+        columns: &[],
+        sql: include_str!("../migrations/013_workspace_document_private_crdts_migration.sql"),
     },
 ];
 
@@ -1132,6 +1140,93 @@ impl WorkspaceRepo for SqliteWorkspace {
             .map_err(sql_failed)?;
         let rows = stmt.query_map([], read_blob).map_err(sql_failed)?;
         collect(rows)
+    }
+
+    fn private_snapshot(&self, document: DocumentId, owner: ProfileId) -> Result<Option<Vec<u8>>> {
+        self.connection
+            .query_row(
+                "SELECT snapshot FROM document_private_crdts
+                 WHERE document_id = ?1 AND owner_profile_id = ?2",
+                params![document.to_storage(), owner.to_storage()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_failed)
+    }
+
+    fn put_private_snapshot(
+        &mut self,
+        document: DocumentId,
+        owner: ProfileId,
+        snapshot: &[u8],
+        at: Timestamp,
+    ) -> Result<()> {
+        // One statement is one transaction: the row is either the old
+        // snapshot or the new one, never a mix.
+        self.connection
+            .execute(
+                "INSERT INTO document_private_crdts
+                   (document_id, owner_profile_id, snapshot, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (document_id, owner_profile_id)
+                 DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+                params![
+                    document.to_storage(),
+                    owner.to_storage(),
+                    snapshot,
+                    at.millis()
+                ],
+            )
+            .map_err(sql_failed)?;
+        Ok(())
+    }
+
+    fn private_snapshots(&self, document: DocumentId) -> Result<Vec<(ProfileId, Vec<u8>)>> {
+        let mut stmt = self
+            .connection
+            .prepare(
+                "SELECT owner_profile_id, snapshot FROM document_private_crdts
+                 WHERE document_id = ?1 ORDER BY owner_profile_id",
+            )
+            .map_err(sql_failed)?;
+        let rows = stmt
+            .query_map(params![document.to_storage()], |row| {
+                Ok(Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
+            })
+            .map_err(sql_failed)?;
+        Ok(collect(rows)?
+            .into_iter()
+            .filter_map(|(owner, bytes)| Some((ProfileId::parse(&owner)?, bytes)))
+            .collect())
+    }
+
+    fn prune_private_snapshots(&mut self, listed: &[DocumentId]) -> Result<usize> {
+        // Bounded by the private rows, which exist only for documents a
+        // reader on this device folded something in — not by the workspace.
+        let listed: std::collections::HashSet<String> =
+            listed.iter().map(|id| id.to_storage()).collect();
+        let held: Vec<String> = {
+            let mut stmt = self
+                .connection
+                .prepare("SELECT DISTINCT document_id FROM document_private_crdts")
+                .map_err(sql_failed)?;
+            let rows = stmt
+                .query_map([], |row| Ok(Ok(row.get::<_, String>(0)?)))
+                .map_err(sql_failed)?;
+            collect(rows)?
+        };
+        let tx = self.connection.transaction().map_err(sql_failed)?;
+        let mut pruned = 0;
+        for document in held.iter().filter(|id| !listed.contains(*id)) {
+            pruned += tx
+                .execute(
+                    "DELETE FROM document_private_crdts WHERE document_id = ?1",
+                    params![document],
+                )
+                .map_err(sql_failed)?;
+        }
+        tx.commit().map_err(sql_failed)?;
+        Ok(pruned)
     }
 
     fn size_bytes(&self) -> Result<u64> {

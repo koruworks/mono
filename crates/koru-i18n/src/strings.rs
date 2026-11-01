@@ -2476,13 +2476,29 @@ pub enum Key {
     DiagramExampleStart,
     DiagramExampleNext,
     DiagramExampleDone,
+    /// The slash menu's row that makes a toggle: a line whose body the reader can hide.
+    ToggleCommand,
+    /// Shown in an empty toggle title. A placeholder, never stored as the title.
+    TogglePlaceholder,
+    /// A toggle's accessible action and the arrow's name when its body is hidden.
+    ToggleExpand,
+    /// A toggle's accessible action and the arrow's name when its body is shown.
+    ToggleCollapse,
+    /// Opens every toggle in the document, hidden ones included, for this reader.
+    ToggleOpenAll,
+    /// Closes every toggle in the document, hidden ones included, for this reader.
+    ToggleCloseAll,
+    /// Shown when selected lines cannot go into one toggle because they are not next to each other.
+    ToggleWrapNotContiguous,
+    /// Nonmodal notice when this reader's open/closed toggles could not be saved on this device.
+    ToggleSaveFailed,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1673] = [
+    pub const ALL: [Key; 1681] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4156,6 +4172,14 @@ impl Key {
         Key::DiagramExampleStart,
         Key::DiagramExampleNext,
         Key::DiagramExampleDone,
+        Key::ToggleCommand,
+        Key::TogglePlaceholder,
+        Key::ToggleExpand,
+        Key::ToggleCollapse,
+        Key::ToggleOpenAll,
+        Key::ToggleCloseAll,
+        Key::ToggleWrapNotContiguous,
+        Key::ToggleSaveFailed,
     ];
 }
 
@@ -12616,4 +12640,12 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::DiagramExampleStart, en: "Start", es: "Inicio", pt_br: "Início", de: "Start", fr: "Début", ar: "البداية", zh_hans: "开始", ja: "開始" },
     Row { key: Key::DiagramExampleNext, en: "Next step", es: "Siguiente paso", pt_br: "Próximo passo", de: "Nächster Schritt", fr: "Étape suivante", ar: "الخطوة التالية", zh_hans: "下一步", ja: "次のステップ" },
     Row { key: Key::DiagramExampleDone, en: "Done", es: "Hecho", pt_br: "Concluído", de: "Fertig", fr: "Terminé", ar: "تم", zh_hans: "完成", ja: "完了" },
+    Row { key: Key::ToggleCommand, en: "Toggle", es: "Desplegable", pt_br: "Recolhível", de: "Aufklappbereich", fr: "Bloc dépliant", ar: "قسم قابل للطي", zh_hans: "折叠块", ja: "トグル" },
+    Row { key: Key::TogglePlaceholder, en: "Toggle", es: "Desplegable", pt_br: "Recolhível", de: "Aufklappbereich", fr: "Bloc dépliant", ar: "قسم قابل للطي", zh_hans: "折叠块", ja: "トグル" },
+    Row { key: Key::ToggleExpand, en: "Expand", es: "Expandir", pt_br: "Expandir", de: "Aufklappen", fr: "Déplier", ar: "توسيع", zh_hans: "展开", ja: "展開" },
+    Row { key: Key::ToggleCollapse, en: "Collapse", es: "Contraer", pt_br: "Recolher", de: "Zuklappen", fr: "Replier", ar: "طي", zh_hans: "折叠", ja: "折りたたむ" },
+    Row { key: Key::ToggleOpenAll, en: "Open all toggles", es: "Abrir todos los desplegables", pt_br: "Abrir todos os recolhíveis", de: "Alle Aufklappbereiche öffnen", fr: "Ouvrir tous les blocs dépliants", ar: "فتح كل الأقسام القابلة للطي", zh_hans: "展开所有折叠块", ja: "すべてのトグルを開く" },
+    Row { key: Key::ToggleCloseAll, en: "Close all toggles", es: "Cerrar todos los desplegables", pt_br: "Fechar todos os recolhíveis", de: "Alle Aufklappbereiche schließen", fr: "Fermer tous les blocs dépliants", ar: "إغلاق كل الأقسام القابلة للطي", zh_hans: "折叠所有折叠块", ja: "すべてのトグルを閉じる" },
+    Row { key: Key::ToggleWrapNotContiguous, en: "Only lines next to each other can go in one toggle", es: "Solo las líneas contiguas pueden ir en un desplegable", pt_br: "Só linhas vizinhas podem ir em um recolhível", de: "Nur benachbarte Zeilen passen in einen Aufklappbereich", fr: "Seules des lignes voisines peuvent aller dans un bloc dépliant", ar: "لا يمكن وضع إلا الأسطر المتجاورة في قسم قابل للطي", zh_hans: "只有相邻的行才能放进一个折叠块", ja: "隣り合う行だけを1つのトグルに入れられます" },
+    Row { key: Key::ToggleSaveFailed, en: "Couldn't save which toggles are open. They stay as they are until you close this window.", es: "No se pudo guardar qué desplegables están abiertos. Se quedan así hasta que cierres esta ventana.", pt_br: "Não foi possível salvar quais recolhíveis estão abertos. Eles ficam assim até você fechar esta janela.", de: "Welche Aufklappbereiche offen sind, konnte nicht gespeichert werden. Sie bleiben so, bis Sie dieses Fenster schließen.", fr: "Impossible d'enregistrer quels blocs dépliants sont ouverts. Ils restent ainsi jusqu'à la fermeture de cette fenêtre.", ar: "تعذّر حفظ الأقسام المفتوحة. ستبقى كما هي حتى تغلق هذه النافذة.", zh_hans: "无法保存哪些折叠块已展开。在关闭此窗口前它们会保持现状。", ja: "開いているトグルを保存できませんでした。このウィンドウを閉じるまでは今のままです。" },
 ];

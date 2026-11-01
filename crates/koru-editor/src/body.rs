@@ -174,6 +174,12 @@ pub struct Body {
     /// container's meta anyway; a box is never a row of its own, so nothing
     /// on a row could hold this without copying it onto every line inside.
     callout_boxes: HashMap<NodeId, CalloutBox>,
+    /// The toggles this reader has closed, by node id. **A view preference,
+    /// never document content**: it comes from the reader's private state
+    /// ([`koru_core::toggle`]) and the rebuild hides each one's descendants.
+    /// Hidden rows are not deleted or edited — the walk simply does not yield
+    /// them as rows, the way hide-completed works.
+    folds: crate::folds::Folds,
 }
 
 /// A callout box as the rows see it: a [`Kind::Callout`] container whose
@@ -360,6 +366,14 @@ impl Body {
         // `Paragraph::callout` records.
         let mut callout_stack: Vec<(usize, NodeId)> = Vec::new();
 
+        // The toggle stack: the walk depth of each enclosing toggle's direct
+        // children. A toggle is a row whose children are its body, so in a
+        // flat document the body still indents one step per toggle around it.
+        let mut toggle_stack: Vec<usize> = Vec::new();
+        // Set while the walk is inside a closed toggle's body: the toggle's
+        // own walk depth. Everything deeper is hidden, whatever its own fold.
+        let mut folded_depth: Option<usize> = None;
+
         // **A view rooted *at* a list block never walks the block**, because
         // `walk_under` starts below it — so the style would be lost and its
         // items would draw as prose, which is the whole thing `open_list`
@@ -382,6 +396,15 @@ impl Body {
                     continue;
                 }
                 skipped_document_depth = None;
+            }
+            if let Some(boundary) = folded_depth {
+                if walk_depth > boundary {
+                    continue;
+                }
+                folded_depth = None;
+            }
+            while toggle_stack.last().is_some_and(|depth| walk_depth < *depth) {
+                toggle_stack.pop();
             }
             let Ok(node) = ws.read(id) else { continue };
             if stops_at_child_documents && node.kind == Kind::Document {
@@ -472,7 +495,7 @@ impl Body {
             // tree depth so items indent and sub-items nest. The list stack
             // being non-empty is the ADR-23 exception.
             let depth = if self.flat && list_stack.is_empty() {
-                0
+                toggle_stack.len() as u16
             } else {
                 // A nested source list is represented by a nested ListBlock so
                 // each level can keep its own marker style. Those containers
@@ -488,17 +511,26 @@ impl Body {
             // The whole point: an untouched row at an unmoved depth with the
             // same list context is already correct, so it is moved across
             // without re-reading its content from the document.
+            let fold_closed = node.kind == Kind::Toggle && self.folds.is_closed(id);
+            if node.kind == Kind::Toggle {
+                toggle_stack.push(walk_depth + 1);
+                if fold_closed {
+                    folded_depth = Some(walk_depth);
+                }
+            }
             let mut row = previous.remove(&id);
             // Box membership is part of "unmoved": a row that left or joined a
             // callout box changes its inset and its backdrop without a byte
-            // of its own text changing.
-            if let Some(row) = row.take_if(|row| {
+            // of its own text changing. A fold is the same: the arrow turns
+            // without the title changing.
+            if let Some(mut row) = row.take_if(|row| {
                 changed.is_some_and(|c| !c.contains(&id))
                     && row.depth == depth
                     && row.list_style == list_style
                     && row.list_index == list_index
                     && row.callout == callout
             }) {
+                row.fold_closed = fold_closed;
                 self.rows.push(row);
                 continue;
             }
@@ -511,6 +543,7 @@ impl Body {
                 None => Paragraph::from_node(&node, depth, runs, pills, list_style, list_index),
             };
             row.callout = callout;
+            row.fold_closed = fold_closed;
             note_unfinished_children(ws, &mut row);
             self.rows.push(row);
         }
@@ -520,9 +553,16 @@ impl Body {
         }
 
         // Keep the caret on the same node where possible; the row it lives on
-        // may have moved, been indented, or been hidden.
+        // may have moved, been indented, or been hidden. A row a fold hid
+        // hands the caret to the nearest ancestor still shown — the closed
+        // toggle's title — rather than to whatever row took its index.
         self.focus = focused
-            .and_then(|id| self.rows.iter().position(|r| r.id == id))
+            .and_then(|id| {
+                self.rows
+                    .iter()
+                    .position(|r| r.id == id)
+                    .or_else(|| self.visible_ancestor(ws, id))
+            })
             .unwrap_or_else(|| self.focus.min(self.rows.len().saturating_sub(1)));
         // The flags went with the old rows; stable selection ids survive.
         self.mark_selection();
@@ -1164,6 +1204,38 @@ impl Body {
             }
             return true;
         }
+        // Enter in a toggle's title starts its body: the text after the caret
+        // becomes the body's first line. A closed toggle's body is out of
+        // sight, so Enter there starts the line after the toggle instead.
+        if row.is_toggle() {
+            let closed = row.fold_closed;
+            return self.split_toggle_title(ws, id, at, closed);
+        }
+        // Enter on the empty last line of a toggle's body steps out below the
+        // toggle — the rule lists and callouts already have.
+        if at == 0
+            && row.kind == Kind::Paragraph
+            && row.list_style.is_none()
+            && row.callout.is_none()
+            && row.text.is_empty()
+            && let Ok(Parent::Node(toggle)) = ws.parent(id)
+            && ws.kind_of(toggle) == Some(Kind::Toggle)
+            && let Ok(children) = ws.children(Parent::Node(toggle))
+            && children.last() == Some(&id)
+            && let Ok(parent) = ws.parent(toggle)
+            && let Ok(index) = ws.sibling_index(toggle)
+        {
+            if ws.move_node(id, parent, index + 1).is_err() {
+                return false;
+            }
+            self.rebuild(ws);
+            self.focus_on(id);
+            if let Some(row) = self.focused_mut() {
+                row.place_caret(0);
+                row.disarm();
+            }
+            return true;
+        }
         // Enter on the empty last line of a callout box steps out of it — the
         // rule lists have for their empty last item. Only a *direct* child
         // paragraph of the box leaves; an empty list item inside the box
@@ -1220,6 +1292,60 @@ impl Body {
             row.disarm();
         }
         true
+    }
+
+    /// Enter in a toggle's title at byte `at`: the text after the caret goes
+    /// to a new paragraph — the body's first line when the toggle is open,
+    /// the line after the toggle when it is closed. The title keeps the rest,
+    /// and the caret lands at the start of the new line.
+    fn split_toggle_title(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        toggle: NodeId,
+        at: usize,
+        closed: bool,
+    ) -> bool {
+        let Ok(tail) = ws.split(toggle, at) else {
+            return false;
+        };
+        let (parent, index) = if closed {
+            match (ws.parent(toggle), ws.sibling_index(toggle)) {
+                (Ok(parent), Ok(index)) => (parent, index + 1),
+                _ => return false,
+            }
+        } else {
+            (Parent::Node(toggle), 0)
+        };
+        if ws.move_node(tail, parent, index).is_err()
+            || ws.set_kind(tail, Kind::Paragraph).is_err()
+        {
+            return false;
+        }
+        self.note_text_edit(ws, toggle);
+        self.rebuild(ws);
+        self.focus_on(tail);
+        if let Some(row) = self.focused_mut() {
+            row.place_caret(0);
+            row.disarm();
+        }
+        true
+    }
+
+    /// Take a toggle away without losing anything ([`WorkspaceDoc::unwrap_toggle`]):
+    /// a titled toggle becomes an ordinary line with its body after it, and the
+    /// caret stays at the start of what was the title. The fold preference it
+    /// leaves behind is the host's to clean up.
+    pub fn unwrap_toggle(&mut self, ws: &mut WorkspaceDoc, toggle: NodeId) -> Option<usize> {
+        let rows = ws.unwrap_toggle(toggle).ok()?;
+        self.folds.set(toggle, false);
+        self.rebuild(ws);
+        if let Some(&first) = rows.first() {
+            self.focus_on(first);
+            if let Some(row) = self.focused_mut() {
+                row.place_caret(0);
+            }
+        }
+        Some(0)
     }
 
     /// Move the caret out of the title and into the first line of the body,
@@ -1384,6 +1510,15 @@ impl Body {
             && self.callout_span(callout).map(|span| *span.start()) == Some(index)
         {
             return self.dissolve_callout(ws, callout);
+        }
+        // Backspace at the start of a toggle's title takes the toggle away
+        // and keeps the title and body as ordinary lines, in order.
+        if backwards
+            && let Some(row) = self.rows.get(index)
+            && row.caret() == 0
+            && row.is_toggle()
+        {
+            return self.unwrap_toggle(ws, id);
         }
         // Neither direction across the title seam. Backspace *in* the title has
         // nothing above it to join; Delete at its end would pull the first
@@ -1585,6 +1720,67 @@ impl Body {
             row.place_caret(0);
         }
         Some(0)
+    }
+
+    /// Whether this reader has closed the toggle `id`.
+    pub fn is_fold_closed(&self, id: NodeId) -> bool {
+        self.folds.is_closed(id)
+    }
+
+    /// Open or close one toggle **in this view**, and owe the host the
+    /// intent to save it privately. Never a document edit. Ignores a node
+    /// that is not a toggle. Returns whether anything changed.
+    pub fn set_fold(&mut self, ws: &WorkspaceDoc, id: NodeId, closed: bool) -> bool {
+        self.set_folds(ws, &[id], closed)
+    }
+
+    /// [`set_fold`](Self::set_fold) for several toggles at once: one rebuild,
+    /// and one intent per toggle whose value actually moved.
+    pub fn set_folds(&mut self, ws: &WorkspaceDoc, ids: &[NodeId], closed: bool) -> bool {
+        let mut changed = false;
+        for &id in ids {
+            if ws.kind_of(id) == Some(Kind::Toggle) {
+                changed |= self.folds.set(id, closed);
+            }
+        }
+        if changed {
+            self.refold(ws);
+        }
+        changed
+    }
+
+    /// Take the host's answer for the whole set — the reader's saved state
+    /// with the host's own pending intents laid over it.
+    pub fn adopt_folds(&mut self, ws: &WorkspaceDoc, closed: HashSet<NodeId>) -> bool {
+        let changed = self.folds.adopt(closed);
+        if changed {
+            self.refold(ws);
+        }
+        changed
+    }
+
+    /// The fold intents this view made since the host last asked, in order.
+    pub fn take_fold_intents(&mut self) -> Vec<crate::folds::FoldIntent> {
+        self.folds.take_intents()
+    }
+
+    /// Re-project the rows after a fold moved. Nothing's content changed, so
+    /// every row still shown is reused as it is; only the sequence moves.
+    fn refold(&mut self, ws: &WorkspaceDoc) {
+        self.rebuild_reusing(ws, Some(&HashSet::new()));
+    }
+
+    /// The row of `id`'s nearest ancestor that is shown, for a node a fold
+    /// has hidden. Bounded by the node's depth.
+    fn visible_ancestor(&self, ws: &WorkspaceDoc, id: NodeId) -> Option<usize> {
+        let mut at = ws.parent(id).ok()?;
+        while let Parent::Node(parent) = at {
+            if let Some(i) = self.rows.iter().position(|r| r.id == parent) {
+                return Some(i);
+            }
+            at = ws.parent(parent).ok()?;
+        }
+        None
     }
 
     pub fn index_of(&self, id: NodeId) -> Option<usize> {
@@ -1875,7 +2071,9 @@ impl Body {
         // contact) start a fresh paragraph. Clicking past the end of a code block
         // is "continue writing prose", not "start another code block".
         let kind = match after.and_then(|prev| ws.read(prev).ok()).map(|n| n.kind) {
-            Some(k) if k.accepts_children() => k,
+            // A toggle accepts children, but the line after one is prose,
+            // not a second toggle.
+            Some(k) if k.accepts_children() && k != Kind::Toggle => k,
             _ => Kind::Paragraph,
         };
         let node = Node::new(kind, koru_core::Content::text("")).ok()?;
@@ -1922,6 +2120,9 @@ impl Body {
         });
     }
 }
+
+#[cfg(test)]
+mod fold_tests;
 
 #[cfg(test)]
 mod tests {

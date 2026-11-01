@@ -1284,6 +1284,25 @@ pub fn checkbox_band(row: &Paragraph, oy: f32) -> Option<Rect> {
     ))
 }
 
+/// **Where a toggle row's arrow answers a press**, in document coordinates:
+/// the checkbox's column and band, because a toggle's marker sits where a
+/// task's box does. `None` on every other row. One function for the press,
+/// the hover, the drawing and the accessibility bounds, like
+/// [`checkbox_band`].
+pub fn fold_band(row: &Paragraph, oy: f32) -> Option<Rect> {
+    if !row.is_toggle() {
+        return None;
+    }
+    const PAD: f32 = 3.0;
+    let size = theme::CHECKBOX_SIZE;
+    Some(Rect::new(
+        checkbox_x(row.depth) - PAD,
+        center_on_first_line(row, oy, size) - PAD,
+        size + PAD * 2.0,
+        size + PAD * 2.0,
+    ))
+}
+
 /// Both boxes are centred on the row's **first line ink**, so the title's `…`
 /// and body `+`/grip sit level with the letters. It is the *first* line rather
 /// than the whole row so a paragraph that wraps keeps its affordances beside

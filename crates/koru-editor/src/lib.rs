@@ -48,6 +48,7 @@ pub mod diagram;
 pub mod dictation;
 pub mod draw;
 pub mod editor;
+pub mod folds;
 pub mod input;
 /// The words of a row, as an objective — shared by the two delegation gestures
 /// a document raises.

@@ -149,6 +149,10 @@ pub struct Paragraph {
     /// *are* its box, and the innermost box wins when callouts nest. The box
     /// itself is no row; its look and extent are `Body::callout_box`'s.
     pub callout: Option<NodeId>,
+    /// A [`Kind::Toggle`] row whose body this reader has closed. Derived by
+    /// `Body::rebuild` from the reader's private fold state, never stored on
+    /// the node: the shared document knows nothing about it.
+    pub fold_closed: bool,
 
     /// The image this row renders instead of text. `None` for every text row;
     /// the one content shape a `Paragraph` may carry besides text.
@@ -306,6 +310,7 @@ impl Paragraph {
             icon: node.meta.icon.clone(),
             level_name: node.meta.level_name.clone(),
             callout: None,
+            fold_closed: false,
             image: image_of(&node.content, &node.meta),
             layout: Layout::new(),
             selection: Selection::default(),
@@ -332,6 +337,12 @@ impl Paragraph {
         self.kind.is_task_like() || self.list_style == Some(ListStyle::Checkbox)
     }
 
+    /// A toggle's title row: it draws the open/close arrow in the marker
+    /// column, where a task draws its checkbox.
+    pub fn is_toggle(&self) -> bool {
+        self.kind == Kind::Toggle && !self.is_title
+    }
+
     /// This row is a diagram showing its picture — the drawing, or the
     /// placeholder waiting for one — rather than its text. Selected like an
     /// image, opened with Enter, no caret, no chips.
@@ -351,7 +362,10 @@ impl Paragraph {
     /// Every row of a callout box takes the box's inset, so the text inside
     /// a box is one column and the icon has its room beside the first row.
     pub fn text_x(&self) -> f32 {
-        text_x(self.depth, self.is_task() || self.list_style.is_some())
+        text_x(
+            self.depth,
+            self.is_task() || self.list_style.is_some() || self.is_toggle(),
+        )
             + if self.kind == Kind::Quote {
                 QUOTE_INSET_X
             } else {

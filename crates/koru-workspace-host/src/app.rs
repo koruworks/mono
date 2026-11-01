@@ -929,6 +929,9 @@ pub enum Wake {
     /// The spell worker finished a batch of checks. The results are already on
     /// each asking view's own reply channel; `maintain` drains them.
     Spelling,
+    /// The fold worker read or saved a reader's private toggle state; views
+    /// pick it up from `folds::version` on the next pass. Carries nothing.
+    Folds,
     /// The diagram worker laid a `mermaid` block out. The drawing is already
     /// on the asking view's reply channel; `maintain` lands it and asks for
     /// the redraw. Carries nothing, like `Spelling`.
@@ -17728,6 +17731,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         {
             let root = cli::root_from_args();
             crate::spelling::connect_dictionary(
+                &self.wake_proxy,
+                koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid()),
+                move || client_at(root.as_deref()),
+            );
+        }
+        // The fold thread follows the active Profile the same way.
+        if let Some(profile) = self.runtime.profile.id()
+            && !crate::folds::connected_to(koru_store_core::ids::ProfileId::from_uuid(
+                profile.as_uuid(),
+            ))
+        {
+            let root = cli::root_from_args();
+            crate::folds::connect(
                 &self.wake_proxy,
                 koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid()),
                 move || client_at(root.as_deref()),

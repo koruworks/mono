@@ -7944,6 +7944,7 @@ fn icon_for(kind: Kind) -> char {
         Kind::Divider => icons::DIVIDER,
         Kind::Quote => icons::QUOTES,
         Kind::Callout => icons::LIGHTBULB,
+        Kind::Toggle => icons::CARET_RIGHT,
         // The trash root never earns a row — `children(Parent::Root)` omits
         // it, so `push` never sees one. The arm exists because this match has no
         // `_`, and it names the right glyph anyway: the pinned row at the foot of
