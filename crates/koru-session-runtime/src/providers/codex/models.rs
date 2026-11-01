@@ -82,6 +82,7 @@ impl CodexControl {
                 listed.name = model.display_name;
                 listed.description = model.description;
                 listed.reasoning = model.reasoning;
+                listed.legacy = model.legacy;
                 Some(listed)
             })
             .collect();

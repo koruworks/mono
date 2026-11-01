@@ -382,3 +382,40 @@ fn the_verbose_catalog_reads_opencodes_variants_as_levels() {
     assert_eq!(reasoning.default, None);
     assert!(catalog.models()[1].reasoning.is_none());
 }
+
+/// **D11: legacy is the agent's own group**: an id of `legacy`, or a name
+/// starting with *Legacy*, without case. Nothing else marks a model.
+#[test]
+fn an_acp_legacy_group_marks_its_models_and_nothing_else_does() {
+    let session = json!({"configOptions":[{"id":"model","type":"select","currentValue":"new",
+    "options":[
+        {"group":"current","name":"Current","options":[{"value":"new","name":"New"}]},
+        {"group":"legacy","name":"Older","options":[{"value":"old-a","name":"Old A"}]},
+        {"group":"archive","name":"legacy models","options":[{"value":"old-b"}]},
+        {"group":"claude-3","name":"Claude 3 (2024)","options":[{"value":"dated"}]}
+    ]}]});
+    let models = config_models(&session, "fixture");
+    let legacy: Vec<(&str, bool)> = models
+        .iter()
+        .map(|model| (model.id.as_str(), model.legacy))
+        .collect();
+    assert_eq!(
+        legacy,
+        [
+            ("new", false),
+            ("old-a", true),
+            ("old-b", true),
+            ("dated", false)
+        ],
+        "a date in a name is never a mark"
+    );
+}
+
+/// OpenCode's own `deprecated` status marks a model; `active` does not.
+#[test]
+fn an_opencode_deprecated_model_is_legacy() {
+    let output = "opencode/old\n{\"name\":\"Old\",\"status\":\"deprecated\"}\nopencode/new\n{\"name\":\"New\",\"status\":\"active\"}\n";
+    let catalog = parse_verbose_catalog(output.as_bytes()).unwrap();
+    let marks: Vec<bool> = catalog.models().iter().map(|model| model.legacy).collect();
+    assert_eq!(marks, [false, true], "sorted by id: new, then old");
+}

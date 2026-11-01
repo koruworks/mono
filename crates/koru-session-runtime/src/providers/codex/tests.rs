@@ -1975,7 +1975,8 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
                                                         {"reasoningEffort": "none"}],
                           "defaultReasoningEffort": "xhigh" },
                         { "isDefault": false, "model": "fixture-other", "inputModalities": ["text"],
-                          "displayName": "", "description": null },
+                          "displayName": "", "description": null,
+                          "upgrade": "fixture-default" },
                         { "isDefault": false, "model": "voice-only", "inputModalities": ["audio"] }
                     ],
                     "nextCursor": null
@@ -2017,6 +2018,9 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
     );
     assert!(reasoning.off);
     assert!(models.models()[1].reasoning.is_none());
+    // Codex names a model to move to: its own mark for an older one (D11).
+    assert!(!models.models()[0].legacy);
+    assert!(models.models()[1].legacy);
     assert_eq!(first.description.as_ref().unwrap().as_str(), "fixture");
     assert!(models.models()[1].name.is_none());
     assert!(models.models()[1].description.is_none());

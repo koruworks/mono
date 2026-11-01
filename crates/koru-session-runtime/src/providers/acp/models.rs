@@ -252,7 +252,7 @@ fn config_model_list(session: &Value, fallback_group: &str) -> Vec<ProviderModel
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut models = Vec::new();
-    let mut keep = |value: &Value, group: &str, group_name: Option<ModelLabel>| {
+    let mut keep = |value: &Value, group: &str, group_name: Option<ModelLabel>, legacy: bool| {
         let Some(id) = value["value"]
             .as_str()
             .and_then(|value| value.parse::<ModelName>().ok())
@@ -273,6 +273,7 @@ fn config_model_list(session: &Value, fallback_group: &str) -> Vec<ProviderModel
                 .as_str()
                 .and_then(ModelLabel::description);
             model.group_name = group_name;
+            model.legacy = legacy;
             models.push(model);
         }
     };
@@ -284,14 +285,27 @@ fn config_model_list(session: &Value, fallback_group: &str) -> Vec<ProviderModel
                     .or_else(|| entry["name"].as_str())
                     .unwrap_or(fallback_group);
                 let group_name = entry["name"].as_str().and_then(ModelLabel::name);
+                let legacy = legacy_group(entry["group"].as_str(), entry["name"].as_str());
                 for member in members {
-                    keep(member, group, group_name.clone());
+                    keep(member, group, group_name.clone(), legacy);
                 }
             }
-            None => keep(entry, fallback_group, None),
+            None => keep(entry, fallback_group, None, false),
         }
     }
     models
+}
+
+/// **Legacy is the agent's own word** (D11, S4): a group whose id is
+/// `legacy`, or whose name starts with *Legacy*, without case. Nothing is
+/// inferred from dates, versions or names, and `_meta` is never read.
+fn legacy_group(id: Option<&str>, name: Option<&str>) -> bool {
+    id.is_some_and(|id| id.trim().eq_ignore_ascii_case("legacy"))
+        || name.is_some_and(|name| {
+            name.trim()
+                .get(..6)
+                .is_some_and(|start| start.eq_ignore_ascii_case("legacy"))
+        })
 }
 
 fn remaining(deadline: Instant) -> Result<Duration, ProviderFailure> {
@@ -394,6 +408,8 @@ fn parse_verbose_catalog(bytes: &[u8]) -> Result<ProviderModels, ProviderFailure
         }
         rest = after[facts.byte_offset()..].trim_start();
         model.name = facts_value["name"].as_str().and_then(ModelLabel::name);
+        // OpenCode's own mark for an older model (D11).
+        model.legacy = facts_value["status"].as_str() == Some("deprecated");
         if let Some(variants) = facts_value["variants"].as_object() {
             let (reasoning, dropped) =
                 ModelReasoning::from_agent_tokens(variants.keys().map(String::as_str), None);

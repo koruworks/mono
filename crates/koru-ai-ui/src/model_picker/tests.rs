@@ -500,3 +500,106 @@ fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
     assert_eq!(surface.picker_mouse_down(1.0, 1.0), Some(true));
     assert!(!surface.chat_model_open);
 }
+
+/// Claude with two older models it marks as such.
+fn with_legacy(surface: &mut ChatSurface) {
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        let mut old = model("claude-2", "claude", Some("Claude 2"), None);
+        old.legacy = true;
+        models.push(old);
+        let mut older = model("claude-1", "claude", Some("Claude 1"), Some("The first"));
+        older.legacy = true;
+        models.push(older);
+    }
+}
+
+/// **Rung 6: older models live behind *Legacy models ›***, at the foot of
+/// the list; a search shows them inline after the others, tagged.
+#[test]
+fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
+    let mut surface = surface();
+    with_legacy(&mut surface);
+    open(&mut surface);
+    let claude = RailEntry::Agent(agent("agent-claude"));
+    surface.picker.rail = Some(claude.clone());
+    assert_eq!(
+        surface.picker_rows(),
+        [
+            Row::Default,
+            Row::Model("opus".into()),
+            Row::Model("sonnet".into()),
+            Row::LegacyMore,
+        ]
+    );
+    assert_eq!(
+        surface.picker_row_label(&claude, &Row::LegacyMore).0,
+        "Legacy models"
+    );
+    type_query(&mut surface, "claude-");
+    let rows = surface.picker_rows();
+    assert_eq!(
+        rows,
+        [Row::Model("claude-2".into()), Row::Model("claude-1".into())],
+        "inline while searching"
+    );
+    assert!(surface.row_is_legacy(&claude, &rows[0]));
+    // Today's agents mark nothing: no Legacy row.
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-opencode")));
+    surface.picker.query.set_text(&mut surface.engine, "");
+    assert!(!surface.picker_rows().contains(&Row::LegacyMore));
+}
+
+/// Enter or Right on the row opens the flyout beside it; Up and Down walk
+/// it, Left closes it, Enter chooses — the older model is the chat's.
+#[test]
+fn the_legacy_flyout_opens_walks_closes_and_chooses() {
+    let mut surface = surface();
+    with_legacy(&mut surface);
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    surface.picker.focus = PickerFocus::List;
+    surface.picker.highlight = Some(3);
+    press(&mut surface, NamedKey::ArrowRight);
+    let menu = surface.picker.legacy.as_ref().expect("Right opens it");
+    assert_eq!(menu.items().len(), 2);
+    let parent = surface.picker_geometry().unwrap().row(3);
+    let panel = menu.panel(surface.menu_viewport());
+    assert!(
+        panel.x >= parent.x + parent.w - 0.5 || panel.x + panel.w <= parent.x + 0.5,
+        "beside the row, never over it"
+    );
+    press(&mut surface, NamedKey::ArrowLeft);
+    assert!(surface.picker.legacy.is_none(), "Left closes it");
+    press(&mut surface, NamedKey::Enter);
+    assert!(surface.picker.legacy.is_some(), "Enter on the row opens it");
+    press(&mut surface, NamedKey::ArrowDown);
+    press(&mut surface, NamedKey::Enter);
+    assert!(!surface.chat_model_open);
+    assert_eq!(
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .current_model
+            .requested_model,
+        "claude-1"
+    );
+}
+
+/// At the viewport's right edge the flyout opens to the row's left.
+#[test]
+fn the_legacy_flyout_flips_left_at_the_viewport_edge() {
+    let mut engine = TextEngine::new();
+    let items = vec![LegacyItem {
+        id: "claude-2".into(),
+        label: "Claude 2".into(),
+        current: false,
+    }];
+    let parent = Rect::new(500.0, 100.0, 280.0, ROW_H);
+    let flipped = Menu::as_submenu(&mut engine, parent, items.clone(), (800.0, 600.0));
+    assert!(flipped.panel((800.0, 600.0)).x + flipped.panel((800.0, 600.0)).w <= parent.x + 0.5);
+    let roomy = Menu::as_submenu(&mut engine, parent, items, (1600.0, 600.0));
+    assert!(roomy.panel((1600.0, 600.0)).x >= parent.x + parent.w - 0.5);
+}

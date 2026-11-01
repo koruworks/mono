@@ -270,6 +270,8 @@ pub enum Key {
     AiModelsRefresh,
     AiEffortReset,
     AiEffortIsDefault,
+    AiModelsLegacy,
+    AiModelsLegacyTag,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2656,7 +2658,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1813] = [
+    pub const ALL: [Key; 1815] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2822,6 +2824,8 @@ impl Key {
         Key::AiModelsRefresh,
         Key::AiEffortReset,
         Key::AiEffortIsDefault,
+        Key::AiModelsLegacy,
+        Key::AiModelsLegacyTag,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -6338,6 +6342,30 @@ pub const ROWS: &[Row] = &[
         ar: "(افتراضي)",
         zh_hans: "（默认）",
         ja: "（既定）",
+    },
+    // The row at the foot of an agent's models that opens the ones it marks as older.
+    Row {
+        key: Key::AiModelsLegacy,
+        en: "Legacy models",
+        es: "Modelos heredados",
+        pt_br: "Modelos legados",
+        de: "Ältere Modelle",
+        fr: "Anciens modèles",
+        ar: "النماذج القديمة",
+        zh_hans: "旧版模型",
+        ja: "レガシーモデル",
+    },
+    // Beside an older model found by a search.
+    Row {
+        key: Key::AiModelsLegacyTag,
+        en: "Legacy",
+        es: "Heredado",
+        pt_br: "Legado",
+        de: "Älter",
+        fr: "Ancien",
+        ar: "قديم",
+        zh_hans: "旧版",
+        ja: "レガシー",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

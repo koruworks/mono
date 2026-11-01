@@ -17,6 +17,9 @@ pub(super) struct CodexModel {
     /// Koru's vocabulary. Captured for the catalog, never applied: a chosen
     /// effort has no Codex route yet.
     pub reasoning: Option<koru_session_protocol::ModelReasoning>,
+    /// Codex names a newer model to move to (`upgrade` is set): its own mark
+    /// for an older one (D11).
+    pub legacy: bool,
 }
 
 pub(super) struct ModelPage {
@@ -74,12 +77,16 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
         efforts,
         label("defaultReasoningEffort"),
     );
+    let legacy = model
+        .get("upgrade")
+        .is_some_and(|upgrade| !upgrade.is_null());
     let model = model.get("model")?.as_str()?;
     if !valid_token(model, 128) {
         return None;
     }
     Some(CodexModel {
         reasoning,
+        legacy,
         model: model.to_owned(),
         image: modalities
             .iter()
