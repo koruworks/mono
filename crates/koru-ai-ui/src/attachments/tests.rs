@@ -104,6 +104,7 @@ fn card_tiles_keep_the_pictures_shape_and_wrap() {
         kind: AttachmentKind::Image,
         size: Some((400, 200)),
         name: "wide.png".into(),
+        byte_count: 0,
     };
     let tall = Tile {
         size: Some((100, 400)),
@@ -503,6 +504,7 @@ fn surface_with_a_sent_picture() -> (ChatSurface, ChatId, Tile) {
         kind: AttachmentKind::Image,
         size: Some((300, 150)),
         name: "shot.png".into(),
+        byte_count: 4_000,
     };
     surface.card_tile_hits = vec![(Rect::new(100.0, 100.0, 224.0, 112.0), tile.clone())];
     (surface, chat, tile)
@@ -565,13 +567,15 @@ fn open_in_external_app_hands_over_the_original() {
     assert!(surface.viewer_act(ViewerAction::OpenExternally));
     assert_eq!(
         surface.attachment_work.opened,
-        vec![(tile.id, "shot.png".to_string())]
+        vec![(tile.id, "shot.png".to_string(), koru_window::OpenAs::AsIs)]
     );
     assert!(
         surface.viewer_open(),
         "opening elsewhere keeps the viewer up"
     );
-    surface.attachment_work.inject(Event::Opened { ok: false });
+    surface.attachment_work.inject(Event::Opened {
+        failed: Some(Key::AiOpenNoApp),
+    });
     surface.maintain_attachments();
     assert_eq!(
         surface.status.as_deref(),
@@ -658,4 +662,203 @@ fn a_draft_picture_opens_from_its_own_bytes() {
     surface.strip_mouse_down(cross.x + 2.0, cross.y + 2.0);
     assert!(!surface.has_strip());
     assert_eq!(surface.attachment_work.viewer_fetched.len(), 1);
+}
+
+// ----- allowed files (R4) ---------------------------------------------------
+
+fn path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from("C:/Users/someone/Desktop").join(name)
+}
+
+/// The allowlist sorts a paste of files by name: allowed types become
+/// drafts, refused ones are named on one line — by extension, or by name
+/// when they have none.
+#[test]
+fn a_paste_of_files_attaches_the_allowed_ones_and_names_the_rest() {
+    let (allowed, refused) = sort_by_allowlist(vec![
+        path("report.pdf"),
+        path("setup.exe"),
+        path("main.rs"),
+        path("archive.zip"),
+        path("Makefile"),
+        path("notes"),
+    ]);
+    assert_eq!(
+        allowed,
+        vec![path("report.pdf"), path("main.rs"), path("Makefile")]
+    );
+    assert_eq!(refused, vec![".exe", ".zip", "notes"]);
+    assert_eq!(
+        refused_line(&refused[..1], Lang::En).as_deref(),
+        Some(".exe files can\u{2019}t be attached.")
+    );
+    assert_eq!(
+        refused_line(&refused, Lang::En).as_deref(),
+        Some("3 files weren\u{2019}t attached: .exe, .zip, notes.")
+    );
+    assert_eq!(refused_line(&[], Lang::En), None);
+
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    surface.on_clipboard(Ok(koru_clipboard::AttachmentPayload::Files(vec![
+        path("report.pdf"),
+        path("shot.PNG"),
+        path("evil.exe"),
+    ])));
+    let strip = surface.strips.get(chat);
+    assert_eq!(strip.len(), 2);
+    assert_eq!(strip[0].kind, AttachmentKind::File);
+    assert_eq!(strip[0].path, Some(path("report.pdf")));
+    assert_eq!(
+        strip[1].kind,
+        AttachmentKind::Image,
+        "a picture by its name"
+    );
+    assert_eq!(strip[1].state, DraftState::Storing);
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(".exe files can\u{2019}t be attached.")
+    );
+}
+
+/// A copied file's size is learned when it is stored: the chip shows it,
+/// and a copied picture asks for the thumbnail the service made.
+#[test]
+fn a_stored_file_learns_its_size_and_a_copied_picture_its_thumbnail() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    let pdf = Draft::from_path(path("report.pdf"), AttachmentSource::Clipboard);
+    let shot = Draft::from_path(path("shot.png"), AttachmentSource::Clipboard);
+    surface.add_draft(chat, pdf.clone());
+    surface.add_draft(chat, shot.clone());
+    let attachment = |draft: &Draft, kind, bytes| ChatAttachment {
+        id: draft.id,
+        message_id: None,
+        ordinal: None,
+        kind,
+        source: AttachmentSource::Clipboard,
+        file_name: draft.file_name.clone(),
+        media_type: "application/octet-stream".into(),
+        byte_count: bytes,
+        dimensions: (kind == AttachmentKind::Image).then_some((40, 20)),
+        origin: None,
+        created_at: Timestamp::from_millis(1),
+    };
+    surface.attachment_work.inject(Event::Stored {
+        chat,
+        id: pdf.id,
+        result: Ok(attachment(&pdf, AttachmentKind::File, 2_400_000)),
+    });
+    surface.attachment_work.inject(Event::Stored {
+        chat,
+        id: shot.id,
+        result: Ok(attachment(&shot, AttachmentKind::Image, 9_000)),
+    });
+    surface.maintain_attachments();
+    let strip = surface.strips.get(chat);
+    assert_eq!(strip[0].byte_count, 2_400_000);
+    assert_eq!(strip[0].tile().byte_count, 2_400_000);
+    assert_eq!(strip[0].path, None, "the file is not read again");
+    assert_eq!(surface.attachment_work.fetched, vec![shot.id]);
+}
+
+/// A file that could not be read is red with its own line and can be tried
+/// again from its path; one over 20 MB is red and cannot.
+#[test]
+fn an_unreadable_file_is_red_and_retried_from_its_path() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    let draft = Draft::from_path(path("gone.pdf"), AttachmentSource::Clipboard);
+    surface.add_draft(chat, draft.clone());
+    surface.attachment_work.inject(Event::Stored {
+        chat,
+        id: draft.id,
+        result: Err(Failure {
+            code: UNREADABLE.into(),
+            message: String::new(),
+            retryable: true,
+            details: Default::default(),
+        }),
+    });
+    surface.maintain_attachments();
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(koru_i18n::t(Lang::En, Key::AiAttachmentUnreadable))
+    );
+    assert_eq!(
+        surface.strips.get(chat)[0].state,
+        DraftState::Failed { retryable: true }
+    );
+    assert!(surface.strips.get(chat)[0].can_retry());
+    let (line, retryable) = failure_line(
+        &Failure {
+            code: attachment_codes::TOO_LARGE.into(),
+            message: String::new(),
+            retryable: false,
+            details: Default::default(),
+        },
+        Lang::En,
+    );
+    assert_eq!(line, koru_i18n::t(Lang::En, Key::AiAttachmentTooLarge));
+    assert!(!retryable);
+}
+
+/// Copied files' sizes are known only once stored, so the send checks the
+/// message's total again.
+#[test]
+fn a_send_over_the_messages_total_is_held() {
+    let (mut surface, chat, _commands) = surface_with_agent_chat();
+    for name in ["a.pdf", "b.pdf", "c.pdf"] {
+        let mut draft = Draft::from_path(path(name), AttachmentSource::Clipboard);
+        draft.state = DraftState::Stored;
+        draft.byte_count = 18 * 1024 * 1024;
+        surface.strips.push(chat, draft);
+    }
+    assert!(surface.take_attachments_for_send(chat).is_none());
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(koru_i18n::t(Lang::En, Key::AiAttachmentLimit))
+    );
+    assert_eq!(surface.strips.get(chat).len(), 3, "nothing was taken");
+}
+
+/// A click on a file chip opens it in the system's app from a copy — text
+/// and source code as `.txt`, anything else under its own name; a file still
+/// being stored opens nothing yet.
+#[test]
+fn a_file_chip_opens_in_the_systems_app_text_as_text() {
+    let (mut surface, chat, _tile) = surface_with_a_sent_picture();
+    let chip = |name: &str| Tile {
+        id: ChatAttachmentId::new(),
+        kind: AttachmentKind::File,
+        size: None,
+        name: name.into(),
+        byte_count: 10,
+    };
+    let (pdf, source) = (chip("report.pdf"), chip("main.rs"));
+    surface.card_tile_hits = vec![
+        (Rect::new(100.0, 100.0, 168.0, 112.0), pdf.clone()),
+        (Rect::new(300.0, 100.0, 168.0, 112.0), source.clone()),
+    ];
+    assert!(surface.mouse_down(150.0, 150.0));
+    assert!(surface.mouse_down(350.0, 150.0));
+    assert_eq!(
+        surface.attachment_work.opened,
+        vec![
+            (pdf.id, "report.pdf".to_string(), koru_window::OpenAs::AsIs),
+            (source.id, "main.rs".to_string(), koru_window::OpenAs::Text),
+        ]
+    );
+    assert!(!surface.viewer_open(), "a file has no viewer");
+    assert!(surface.attachment_work.viewer_fetched.is_empty());
+
+    let mut storing = Draft::from_path(path("late.pdf"), AttachmentSource::Clipboard);
+    storing.state = DraftState::Storing;
+    surface.strips.push(chat, storing);
+    surface.composer_rect();
+    let composer = surface.composer_hit_rect;
+    let rect = strip_tiles(
+        surface.strips.get(chat),
+        composer.x + COMPOSER_PAD_X,
+        composer.y + COMPOSER_PAD_TOP,
+    )[0];
+    surface.strip_mouse_down(rect.x + 4.0, rect.y + rect.h - 4.0);
+    assert_eq!(surface.attachment_work.opened.len(), 2);
 }

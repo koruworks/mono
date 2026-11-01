@@ -1559,11 +1559,12 @@ impl ChatSurface {
             self.destination_open = None;
             return true;
         }
-        // A sent picture opens in the viewer (R3).
+        // A sent picture opens in the viewer (R3), a sent file in the
+        // system's app (R4).
         if let Some(tile) = self.card_tile_at(x, y)
             && let Some(chat) = self.current_chat_id()
         {
-            return self.open_picture(chat, &tile, None);
+            return self.open_tile(chat, &tile);
         }
         if self
             .privacy_button()

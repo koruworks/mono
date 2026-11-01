@@ -1289,6 +1289,16 @@ reload or a restart: it is kept with the chat on this computer, never in Koru
 Cloud, and deleting the chat deletes it. An OpenAI, Ollama or Koru AI chat says
 that pictures go to local agents only.
 
+**Send a file.** Copy files in Explorer or Finder and paste them into the
+chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
+an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
+shows as a chip with its icon, name and size, and the agent is told where it
+is. Click a chip to open the file in the app your system uses for it; text and
+source code always open in your text editor, so a script never runs from the
+chat. Any other type — an `.exe`, a `.zip` — is refused, with one line naming
+it, and a file that only claims an allowed type is refused when Koru stores
+it. Pasting files is not available on Linux yet.
+
 **Look at a picture closely.** Click a picture on a message, or in the strip
 above the text, and it opens over the whole window — at its own size when it
 fits, fitted when it does not — in the same view a diagram opens in: zoom with

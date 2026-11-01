@@ -271,6 +271,9 @@ pub enum Key {
     ViewerPictureSize,
     AiViewerDecodeFailed,
     AiOpenNoApp,
+    AiAttachmentTypeRefused,
+    AiAttachmentsTypeRefused,
+    AiAttachmentUnreadable,
     AiAgentAllow,
     AiAgentReject,
     AiAgentModelsLoading,
@@ -2663,7 +2666,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1820] = [
+    pub const ALL: [Key; 1823] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2830,6 +2833,9 @@ impl Key {
         Key::ViewerPictureSize,
         Key::AiViewerDecodeFailed,
         Key::AiOpenNoApp,
+        Key::AiAttachmentTypeRefused,
+        Key::AiAttachmentsTypeRefused,
+        Key::AiAttachmentUnreadable,
         Key::AiAgentAllow,
         Key::AiAgentReject,
         Key::AiAgentModelsLoading,
@@ -6355,6 +6361,39 @@ pub const ROWS: &[Row] = &[
         ar: "لا يوجد تطبيق معيّن لفتح هذا النوع من الملفات.",
         zh_hans: "没有设置用于打开此类文件的应用。",
         ja: "この種類のファイルを開くアプリが設定されていません。",
+    },
+    Row {
+        key: Key::AiAttachmentTypeRefused,
+        en: "{} files can’t be attached.",
+        es: "No se pueden adjuntar archivos {}.",
+        pt_br: "Arquivos {} não podem ser anexados.",
+        de: "{}-Dateien können nicht angehängt werden.",
+        fr: "Les fichiers {} ne peuvent pas être joints.",
+        ar: "لا يمكن إرفاق ملفات {}.",
+        zh_hans: "无法附加 {} 文件。",
+        ja: "{} ファイルは添付できません。",
+    },
+    Row {
+        key: Key::AiAttachmentsTypeRefused,
+        en: "{} files weren’t attached: {}.",
+        es: "{} archivos no se adjuntaron: {}.",
+        pt_br: "{} arquivos não foram anexados: {}.",
+        de: "{} Dateien wurden nicht angehängt: {}.",
+        fr: "{} fichiers n’ont pas été joints : {}.",
+        ar: "لم يُرفَق {} ملفات: {}.",
+        zh_hans: "{} 个文件未附加：{}。",
+        ja: "{} 件のファイルを添付できませんでした: {}。",
+    },
+    Row {
+        key: Key::AiAttachmentUnreadable,
+        en: "Couldn’t read this file.",
+        es: "No se pudo leer este archivo.",
+        pt_br: "Não foi possível ler este arquivo.",
+        de: "Diese Datei konnte nicht gelesen werden.",
+        fr: "Impossible de lire ce fichier.",
+        ar: "تعذّرت قراءة هذا الملف.",
+        zh_hans: "无法读取此文件。",
+        ja: "このファイルを読み取れませんでした。",
     },
     Row {
         key: Key::AiAgentAllow,
