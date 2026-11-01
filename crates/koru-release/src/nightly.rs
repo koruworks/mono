@@ -52,6 +52,14 @@ pub(crate) const DIST_GITHUB_USAGE: &str = "usage: koru-release dist-github <nig
      [--key-password-stdin] --download-base <https url> [--update-base <https url>] \
      [--with-cloud] --out <dir> [--version <version>, required for stable]";
 
+pub(crate) const DIST_GITHUB_PACKAGE_USAGE: &str = "usage: koru-release dist-github-package \
+     <nightly|stable> --target android --package <file> --version <version> \
+     --build <yyyymmddHHMM> --notes <releases/...toml> --key <minisign secret key> \
+     [--key-password-stdin] --download-base <https url> --out <dir>";
+
+pub(crate) const NIGHTLY_VERSION_USAGE: &str =
+    "usage: koru-release nightly-version --build <yyyymmddHHMM>";
+
 pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\n       \
      koru-release nightly-notes --select <before-sha> <after-sha>";
 
@@ -66,6 +74,8 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Linux** is a preview — X11 only (XWayland on Wayland desktops), no dictation yet.",
     "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
      reminders show no notifications.",
+    "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
+     app, *Koru Nightly*, beside Koru, and do not update themselves: install the next one over it.",
     "No Koru Cloud in the nightly yet.",
 ];
 
@@ -521,8 +531,36 @@ fn client_accepts(manifest: &UpdateManifest) -> Result<(), String> {
         .map_err(|error| format!("the feed manifest would be refused: {error}"))
 }
 
-fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `nightly-version --build <yyyymmddHHMM>`: the version a nightly of `HEAD`
+/// built at that time is published under, printed alone on one line.
+///
+/// **One reading for the whole release.** The workflow's plan job runs this
+/// once and hands the answer to every platform's build, so a desktop package
+/// and the APK beside it carry the same version — the date in it comes from
+/// the shared build number, not from each runner's clock, and the base from
+/// the public manifests read once rather than once per platform.
+pub(crate) fn version_command(
+    root: &Path,
+    mut args: impl Iterator<Item = String>,
+) -> Result<(), String> {
+    let build = match (args.next().as_deref(), args.next(), args.next()) {
+        (Some("--build"), Some(build), None) => build,
+        _ => return Err(NIGHTLY_VERSION_USAGE.into()),
+    };
+    let (_, released) = parse_build_time(&build)?;
+    let commit = git(root, &["rev-parse", "HEAD"])?;
+    if source::url(&commit).is_none() {
+        return Err(format!("HEAD is not a full commit id: {commit:?}"));
+    }
+    let short_commit: String = commit.chars().take(7).collect();
+    let version = infer_version(ReleaseChannel::Nightly, &released, &short_commit)?;
+    validate_release_version(ReleaseChannel::Nightly, &version)?;
+    println!("{version}");
+    Ok(())
 }
 
 /// The version the release design's nightly rule gives this commit:
@@ -560,7 +598,7 @@ fn infer_version(
 /// different keys. An encrypted key — which is how `ensure_keypair` writes
 /// one — needs its password, and this verb never prompts; it reads one line
 /// from standard input under `--key-password-stdin`.
-fn open_key_file(
+pub(crate) fn open_key_file(
     path: &Path,
     password_on_stdin: bool,
 ) -> Result<(minisign::SecretKey, String), String> {
@@ -607,7 +645,11 @@ fn open_key_file(
 
 /// The signature checked against the public key the build baked in, before
 /// it is written anywhere: the same check every installed Koru will make.
-fn verify_signature(archive: &Path, signature: &str, public_key: &str) -> Result<(), String> {
+pub(crate) fn verify_signature(
+    archive: &Path,
+    signature: &str,
+    public_key: &str,
+) -> Result<(), String> {
     let public = minisign::PublicKeyBox::from_string(public_key)
         .and_then(|boxed| boxed.into_public_key())
         .map_err(|error| error.to_string())?;

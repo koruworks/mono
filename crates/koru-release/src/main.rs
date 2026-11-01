@@ -6,6 +6,7 @@ mod cloud;
 mod docs_crates;
 mod index;
 mod installer;
+mod mobile;
 mod native;
 mod nightly;
 mod notes;
@@ -113,6 +114,19 @@ fn run() -> Result<(), String> {
             nightly::dist_github(&root, channel, options)
         }
         Some("nightly-notes") => nightly::notes_command(&root, args),
+        Some("nightly-version") => nightly::version_command(&root, args),
+        // The phones' half of a GitHub release: Gradle builds and signs the
+        // APK, and this signs it with the channel's Minisign key and writes it
+        // beside the release body for the publish job (`mobile.rs`).
+        Some("dist-github-package") => {
+            let channel: ReleaseChannel = args
+                .next()
+                .ok_or(nightly::DIST_GITHUB_PACKAGE_USAGE)?
+                .parse()?;
+            let options = mobile::PackageOptions::parse(args)?;
+            mobile::dist_github_package(&root, channel, options)
+        }
+        Some("android-version-code") => mobile::version_code_command(args),
         // **Not a `dist-*` verb, because it builds nothing.** It reads what is
         // already published and rewrites one page from it.
         Some("release-index") => {
@@ -147,7 +161,10 @@ fn run() -> Result<(), String> {
              koru-release dist-cloud <stable|beta|nightly> [version] [--yes]\n  \
              koru-release dist-local <stable|beta|nightly|internal> [version] [--build <n>] [--sign-update]\n  \
              koru-release dist-github <nightly|stable> --build <yyyymmddHHMM> --notes <file> --key <file> [--key-password-stdin] --download-base <url> [--update-base <url>] [--with-cloud] --out <dir> [--version <v>]\n  \
+             koru-release dist-github-package <nightly|stable> --target android --package <file> --version <v> --build <yyyymmddHHMM> --notes <file> --key <file> [--key-password-stdin] --download-base <url> --out <dir>\n  \
              koru-release nightly-notes [--select <before-sha> <after-sha>]\n  \
+             koru-release nightly-version --build <yyyymmddHHMM>\n  \
+             koru-release android-version-code --build <yyyymmddHHMM>\n  \
              koru-release release-index [--keep-latest] [--dry-run <page.html>]\n  \
              koru-release voice-models plan|pin|fetch|publish|local [--only <id>] [--work <dir>] [--upload]\n  \
              koru-release notices android --out <file> [--maven <libraries.json>] [--source <url>] [--debug]\n  \
