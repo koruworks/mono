@@ -679,9 +679,24 @@ testflight() {
     echo "[koru] checked: $IPA"
     [ "$TF_MODE" = upload ] || return 0
 
-    # The same archive again, now to App Store Connect. TestFlight refuses a
+    # The checked .ipa goes to App Store Connect. TestFlight refuses a
     # CFBundleVersion it already has, so a re-run of one nightly fails here.
-    export_archive upload "$TF_OUT/upload" "$@"
+    # With the API key it goes through altool: xcodebuild's own upload first
+    # asks App Store Connect for the app's store configuration, and with an
+    # API key Xcode 26.5 gets "Cannot verify client's JWT headers" there,
+    # though the same key signs the export.
+    if [ "$TF_AUTH" = yes ]; then
+        KEYS="$TF_OUT/private_keys"
+        mkdir -p "$KEYS" && cp "$TF_KEY" "$KEYS/AuthKey_$TF_KEY_ID.p8" || exit $?
+        echo "[koru] xcrun altool --upload-app..."
+        API_PRIVATE_KEYS_DIR="$KEYS" xcrun altool --upload-app --type ios --file "$IPA" \
+            --apiKey "$TF_KEY_ID" --apiIssuer "$TF_ISSUER"
+        STATUS=$?
+        rm -rf "$KEYS"
+        [ "$STATUS" -eq 0 ] || fail "altool could not upload $IPA."
+    else
+        export_archive upload "$TF_OUT/upload"
+    fi
     echo "[koru] Koru Nightly $TF_SHORT ($TF_BUNDLE) is uploaded; TestFlight processes it, then gives it to the internal group."
 }
 
