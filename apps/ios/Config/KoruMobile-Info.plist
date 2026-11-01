@@ -12,5 +12,10 @@
 	     the entitlements. -->
 	<key>KoruAppGroup</key>
 	<string>$(KORU_APP_GROUP)</string>
+	<!-- Koru uses only standard encryption (TLS, and QUIC for P2P sync),
+	     which is exempt, so App Store Connect and TestFlight do not hold each
+	     build for the export compliance question. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
