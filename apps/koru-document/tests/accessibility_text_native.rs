@@ -431,7 +431,13 @@ impl Harness {
                 .iter()
                 .map(|object| {
                     let mut pill = SemanticNode::new(
-                        Occurrence::model(window_slot, view, object.attr.as_uuid(), PILL),
+                        Occurrence::within(
+                            window_slot,
+                            view,
+                            row.id.as_uuid(),
+                            object.attr.as_uuid(),
+                            PILL,
+                        ),
                         object.role(),
                     )
                     .with_label(object.label.clone());
@@ -728,8 +734,15 @@ impl ApplicationHandler<Wake> for Harness {
             other_first: self
                 .paragraph_occurrence(self.other, self.rows[0])
                 .locator(),
-            pill: Occurrence::model(self.window_slot, self.main, self.pill.as_uuid(), PILL)
-                .locator(),
+            // The pill sits in the fifth row; see where the fixture inserts it.
+            pill: Occurrence::within(
+                self.window_slot,
+                self.main,
+                self.rows[4].as_uuid(),
+                self.pill.as_uuid(),
+                PILL,
+            )
+            .locator(),
         };
         if let Some(tx) = self.hwnd_tx.take() {
             let _ = tx.send(ready);

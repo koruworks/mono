@@ -34,7 +34,7 @@
 //!     ├── MultilineTextInput  a paragraph koru:wN/vV/n:<node uuid>#text
 //!     │   ├── TextRun  …                  (not a control; addressed only inside a text position)
 //!     │   ├── CheckBox  the drawn box     koru:wN/vV/n:<node uuid>#check   (a checklist row)
-//!     │   ├── Link | Label  a pill        koru:wN/vV/n:<attr uuid>#pill
+//!     │   ├── Link | Label  a pill        koru:wN/vV/n:<node uuid>.<attr uuid>#pill
 //!     │   └── Label   the task lifecycle  koru:wN/vV/n:<node uuid>#state   (a task)
 //!     ├── Image     a diagram's picture      koru:wN/vV/n:<node uuid>#text   (a `mermaid` block, drawn or drawing)
 //!     └── …
@@ -66,7 +66,7 @@
 //!
 //! **The locators are the ones Plan 1b.1's proof already searches by.** The
 //! interactive harness and this module mint the same occurrence for the same
-//! paragraph — `s:body#root`, `n:<uuid>#text`, `n:<attr uuid>#pill` — so the
+//! paragraph — `s:body#root`, `n:<uuid>#text`, `n:<uuid>.<attr uuid>#pill` — so the
 //! external proof and the shipping window are addressable the same way.
 //!
 //! ## The three publishes, and which one a keystroke gets
@@ -126,8 +126,9 @@ pub(crate) const BODY: &str = "body";
 pub(crate) const TEXT: ControlPart = ControlPart::new("text");
 
 /// An inline object inside a paragraph — a Koru pill. Scoped by the
-/// **attribute's** own uuid, so two pills in one paragraph are two controls and
-/// a pill keeps its identity when the text around it is edited.
+/// **paragraph and the attribute's** own uuid, so two pills in one paragraph
+/// are two controls, a pill keeps its identity when the text around it is
+/// edited, and one attribute id on two blocks is still two pills.
 pub(crate) const PILL: ControlPart = ControlPart::new("pill");
 
 /// **The box a checklist row draws**, as its own control — the same square
@@ -663,7 +664,7 @@ impl Bodies {
             for row in rows {
                 self.retired.push(paragraph_occurrence(cx, row));
                 for pill in self.published_pills.remove(&row).unwrap_or_default() {
-                    self.retired.push(pill_occurrence(cx, pill));
+                    self.retired.push(pill_occurrence(cx, row, pill));
                 }
                 self.retire_facts(cx, row, None);
             }
@@ -704,7 +705,7 @@ impl Bodies {
         for row in &update.removed {
             self.retired.push(paragraph_occurrence(cx, *row));
             for pill in self.published_pills.remove(row).unwrap_or_default() {
-                self.retired.push(pill_occurrence(cx, pill));
+                self.retired.push(pill_occurrence(cx, *row, pill));
             }
             self.retire_facts(cx, *row, None);
         }
@@ -725,7 +726,7 @@ impl Bodies {
             };
             for pill in before {
                 if !now.contains(pill) {
-                    self.retired.push(pill_occurrence(cx, *pill));
+                    self.retired.push(pill_occurrence(cx, row.id, *pill));
                 }
             }
         }
@@ -768,7 +769,7 @@ impl Bodies {
         for row in rows {
             self.retired.push(paragraph_occurrence(cx, row));
             for pill in self.published_pills.remove(&row).unwrap_or_default() {
-                self.retired.push(pill_occurrence(cx, pill));
+                self.retired.push(pill_occurrence(cx, row, pill));
             }
             self.retire_facts(cx, row, None);
         }
@@ -817,11 +818,13 @@ fn paragraph(cx: &Shell, row: &RowUpdate, read_only: bool) -> SemanticNode {
         .objects
         .iter()
         .map(|object| {
-            let mut pill =
-                SemanticNode::new(pill_occurrence(cx, object.attr.as_uuid()), object.role())
-                    // The caption the document already carries. **User content**, never
-                    // translated and never invented.
-                    .with_label(object.label.clone());
+            let mut pill = SemanticNode::new(
+                pill_occurrence(cx, row.id, object.attr.as_uuid()),
+                object.role(),
+            )
+            // The caption the document already carries. **User content**, never
+            // translated and never invented.
+            .with_label(object.label.clone());
             if let Some(value) = object.value() {
                 pill = pill.with_value(value.to_string());
             }
@@ -960,8 +963,11 @@ pub(crate) fn state_occurrence(cx: &Shell, row: KoruNodeId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, row.as_uuid(), STATE)
 }
 
-pub(crate) fn pill_occurrence(cx: &Shell, attr: uuid::Uuid) -> Occurrence {
-    Occurrence::model(cx.window, cx.view, attr, PILL)
+/// A pill, inside the paragraph that carries it. See `ObjectKey::Within`: an
+/// attribute id is unique within a block and not across a document, and older
+/// documents carry one on two blocks.
+pub(crate) fn pill_occurrence(cx: &Shell, row: KoruNodeId, attr: uuid::Uuid) -> Occurrence {
+    Occurrence::within(cx.window, cx.view, row.as_uuid(), attr, PILL)
 }
 
 /// A `RefCell` so a `&self` semantic query may mint ids. See the module note.

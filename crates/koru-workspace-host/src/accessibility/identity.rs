@@ -148,6 +148,17 @@ pub enum ObjectKey {
     /// and view, so an owner-local counter is unique here without a shared
     /// allocator threaded through the trait. See ADR-338.
     Instance { kind: &'static str, id: u64 },
+    /// **A model object that is only unique inside another one** — a pill, by
+    /// its attribute's id, inside the block that carries it.
+    ///
+    /// An attribute id is a node-level key: storage keeps attributes per block,
+    /// and nothing makes one id unique across a document. A paste used to copy
+    /// it unchanged, so documents exist with one attribute id on two blocks —
+    /// and a pill keyed by [`Model`](Self::Model) alone was then one node with
+    /// two parents, which AccessKit answers with a panic. Naming the host as
+    /// well makes those two pills two controls, in old documents as in new
+    /// ones. Written `n:<host>.<id>`, both as `Uuid::simple` writes them.
+    Within { host: Uuid, id: Uuid },
 }
 
 impl fmt::Display for ObjectKey {
@@ -156,6 +167,7 @@ impl fmt::Display for ObjectKey {
             Self::Surface(name) => write!(f, "s:{name}"),
             Self::Model(id) => write!(f, "n:{}", id.simple()),
             Self::Instance { kind, id } => write!(f, "{kind}:{id}"),
+            Self::Within { host, id } => write!(f, "n:{}.{}", host.simple(), id.simple()),
         }
     }
 }
@@ -201,6 +213,23 @@ impl Occurrence {
             window,
             view,
             object: ObjectKey::Model(id),
+            part,
+        }
+    }
+
+    /// A model object inside the one that hosts it — a pill inside its block.
+    /// See [`ObjectKey::Within`] for why the host is part of the identity.
+    pub fn within(
+        window: WindowSlot,
+        view: ViewSlot,
+        host: Uuid,
+        id: Uuid,
+        part: ControlPart,
+    ) -> Self {
+        Self {
+            window,
+            view,
+            object: ObjectKey::Within { host, id },
             part,
         }
     }

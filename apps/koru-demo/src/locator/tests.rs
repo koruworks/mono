@@ -18,6 +18,7 @@ fn every_shape_the_projection_writes_reads_back() {
         "koru:w3/v7/n:6f9619ff8b86d011b42d00cf4fc964ff#label",
         "koru:w1/v2/tab:7#root",
         "koru:w1/v1/onb:3#status",
+        "koru:w1/v1/n:6f9619ff8b86d011b42d00cf4fc964ff.0b8e77e98e124d36b01fe65e64fa4d5b#pill",
     ];
     for case in cases {
         let parsed = LocatorPattern::parse(case).unwrap_or_else(|e| panic!("{case}: {e}"));
@@ -25,6 +26,28 @@ fn every_shape_the_projection_writes_reads_back() {
         assert_eq!(parsed.exact().as_deref(), Some(case));
         assert!(parsed.matches(case));
     }
+}
+
+/// One attribute id in two blocks is two pills, and a pattern names one of
+/// them. Half a pill's object — a bad host or a bad attribute — is refused at
+/// parse time, the way a bad model id is.
+#[test]
+fn a_pill_is_named_by_its_block_and_its_attribute() {
+    let attr = "0b8e77e98e124d36b01fe65e64fa4d5b";
+    let first = format!("koru:w1/v1/n:3cc4af2d089045b3a4ea343968a93340.{attr}#pill");
+    let second = format!("koru:w1/v1/n:d059252c56c34c569617ba742a626894.{attr}#pill");
+    let pattern = LocatorPattern::parse(&first).expect("a pill locator");
+    assert!(pattern.matches(&first));
+    assert!(!pattern.matches(&second));
+    assert!(!pattern.matches(&format!("koru:w1/v1/n:{attr}#pill")));
+    assert!(matches!(
+        LocatorPattern::parse(&format!("koru:w1/v1/n:XYZ.{attr}#pill")),
+        Err(LocatorError::ModelId(_))
+    ));
+    assert!(matches!(
+        LocatorPattern::parse("koru:w1/v1/n:3cc4af2d089045b3a4ea343968a93340.#pill"),
+        Err(LocatorError::ModelId(_))
+    ));
 }
 
 #[test]

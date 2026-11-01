@@ -1360,11 +1360,12 @@ pub fn cut<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc) -> bool {
 
 // --------------------------------------------------------------- pasting
 
-/// Pour runs into a node at `at`, and report where they end.
+/// Pour pasted runs into a node at `at`, and report where they end.
 ///
 /// The body moved into the model as `WorkspaceDoc::insert_runs` when moving a
 /// selection to another document needed it against a document no editor holds;
-/// this delegation keeps every paste call site unchanged.
+/// this is every paste's way in, and it differs from that move in one thing:
+/// see [`fresh_pills`].
 fn insert_runs(
     ws: &mut WorkspaceDoc,
     id: NodeId,
@@ -1372,7 +1373,41 @@ fn insert_runs(
     runs: &[TextRun],
     attrs: &[Attr],
 ) -> usize {
-    ws.insert_runs(id, at, runs, attrs)
+    let (runs, attrs) = fresh_pills(runs, attrs);
+    ws.insert_runs(id, at, &runs, &attrs)
+}
+
+/// **A pasted pill is a new attribute**, so it gets a new `AttrId`.
+///
+/// `insert_pill` writes an attribute under the id it is handed, and a copy
+/// hands over the source's. Pasting a paragraph into the document it was copied
+/// from then left two blocks with one attribute id, and everything that names a
+/// pill by its id within a document saw one pill in two places — the
+/// accessibility tree published it under both paragraphs, which AccessKit
+/// rejects with a panic. [`CopiedAttr`] already mints afresh for a block's own
+/// attributes; this is the same rule for the ones a pill anchors.
+///
+/// One id **per anchor**, not per attribute, so a payload that already
+/// carried one id twice comes out as two pills. A move to another document
+/// does not come through here: it deletes the source, and keeps its ids.
+fn fresh_pills(runs: &[TextRun], attrs: &[Attr]) -> (Vec<TextRun>, Vec<Attr>) {
+    let mut minted = Vec::new();
+    let runs = runs
+        .iter()
+        .map(|run| {
+            let mut run = run.clone();
+            if let Some(pill) = run.pill
+                && let Some(attr) = attrs.iter().find(|attr| attr.id == pill)
+            {
+                let mut attr = attr.clone();
+                attr.id = koru_core::AttrId::new();
+                run.pill = Some(attr.id);
+                minted.push(attr);
+            }
+            run
+        })
+        .collect();
+    (runs, minted)
 }
 
 /// One run of unformatted text — which is all text from another application is.
@@ -2861,6 +2896,47 @@ mod tests {
             runs.iter().any(TextRun::is_pill),
             "and it is still anchored"
         );
+    }
+
+    /// **A pasted pill is a new attribute, with an id of its own.** Pasting
+    /// into the document the copy came from used to leave one attribute id on
+    /// two blocks, and the accessibility tree then published that pill under
+    /// both paragraphs — which AccessKit answers with a panic.
+    #[test]
+    fn a_pill_pasted_beside_its_source_gets_an_id_of_its_own() {
+        fixture();
+        let (mut ws, mut e) = editor_over(&[("due", 0)]);
+        let id = e.body.rows[0].id;
+        let attr = Attr::new("due", AttrValue::Text("Friday".into()));
+        ws.insert_pill(id, 3, &attr).unwrap();
+        e.body.refresh(&ws, id);
+        e.body.focus = 0;
+
+        assert!(copy(&mut e, &ws));
+        assert!(paste(&mut e, &mut ws));
+
+        let source = ws.read(id).unwrap();
+        let pasted_id = e.body.rows[1].id;
+        let pasted = ws.read(pasted_id).unwrap();
+        assert_eq!(
+            source.content.attrs()[0].id,
+            attr.id,
+            "the source keeps its id"
+        );
+        let fresh = pasted.content.attrs()[0].id;
+        assert_ne!(fresh, attr.id, "the paste minted its own");
+        assert_eq!(
+            pasted.content.attrs()[0].value,
+            attr.value,
+            "and carried the value"
+        );
+        let anchored = ws
+            .runs(pasted_id)
+            .unwrap()
+            .iter()
+            .find(|run| run.is_pill())
+            .and_then(|run| run.pill);
+        assert_eq!(anchored, Some(fresh), "the anchor names the new id");
     }
 
     /// A pasted URL becomes a link, the way a typed one does — no `Ctrl+K`
