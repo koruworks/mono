@@ -6,14 +6,14 @@
 //! checked, prepared and published by [`AttachmentStore`] on the gateway's
 //! blocking thread, and only then does the dispatcher record its row. The
 //! dispatcher reads and writes rows and checks a send's attachments; folder
-//! removals and a branch's links go to the cleanup thread.
+//! removals and a branch's copies go to the cleanup thread.
 
 use koru_ai_core::attachments::{MAX_ATTACHMENTS_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES};
 use koru_ai_core::{AttachmentInput, AttachmentRecord, ChatAttachment, ChatAttachmentId};
 use koru_ai_sqlite::RemovedAttachment;
 use koru_ai_wire::attachment_codes;
 
-use crate::attachments::{BranchLink, CleanupJob};
+use crate::attachments::{BranchFolder, CleanupJob};
 
 use super::*;
 
@@ -25,10 +25,10 @@ pub(super) enum StageAnswer {
 }
 
 /// A branch is either done (an idempotent replay, or one with nothing to
-/// link) or a copy whose attachment folders must be linked first.
+/// copy) or one whose attachment folders must be copied first.
 pub(super) enum BranchPlan {
     Done(BranchChatResponse),
-    Link(Box<BranchCopy>, Vec<BranchLink>),
+    Copy(Box<BranchCopy>, Vec<BranchFolder>),
 }
 
 impl WorkerState {
@@ -255,7 +255,7 @@ impl WorkerState {
 
     // ----- a branch (D14) -----------------------------------------------
 
-    /// Branch a chat. With attachments to carry, their folders are linked on
+    /// Branch a chat. With attachments to carry, their folders are copied on
     /// the cleanup thread first and the reply is held until that reports.
     pub(super) fn begin_branch_chat(
         &mut self,
@@ -279,17 +279,17 @@ impl WorkerState {
             Ok(BranchPlan::Done(response)) => {
                 let _ = reply.send(Ok(response));
             }
-            Ok(BranchPlan::Link(copy, links)) => {
+            Ok(BranchPlan::Copy(copy, folders)) => {
                 let branch = copy.chat.id;
                 self.branching.insert(branch);
                 let output = self.output.clone();
-                self.cleanup.submit(CleanupJob::LinkBranch {
-                    links,
-                    done: Box::new(move |linked| {
-                        let _ = output.send(Envelope::BranchLinked {
+                self.cleanup.submit(CleanupJob::CopyBranch {
+                    folders,
+                    done: Box::new(move |copied| {
+                        let _ = output.send(Envelope::BranchCopied {
                             context,
                             copy,
-                            linked: linked.is_ok(),
+                            copied: copied.is_ok(),
                             reply,
                         });
                     }),
@@ -298,18 +298,18 @@ impl WorkerState {
         }
     }
 
-    /// The branch's folders are linked (or could not be): commit it, or
+    /// The branch's folders are copied (or could not be): commit it, or
     /// give up and leave nothing behind.
-    pub(super) fn on_branch_linked(
+    pub(super) fn on_branch_copied(
         &mut self,
         context: RequestContext,
         copy: Box<BranchCopy>,
-        linked: bool,
+        copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     ) {
         let branch = copy.chat.id;
         self.branching.remove(&branch);
-        if !linked {
+        if !copied {
             let _ = reply.send(Err(failure(
                 attachment_codes::STORAGE,
                 "The branch's attachments could not be copied.",
@@ -335,9 +335,9 @@ impl WorkerState {
         source: ChatId,
         branch: ChatId,
         message_ids: &HashMap<MessageId, MessageId>,
-    ) -> ApiResult<(Vec<AttachmentRecord>, Vec<BranchLink>)> {
+    ) -> ApiResult<(Vec<AttachmentRecord>, Vec<BranchFolder>)> {
         let mut records = Vec::new();
-        let mut links = Vec::new();
+        let mut folders = Vec::new();
         for mut record in self
             .repository
             .attachment_records(source)
@@ -354,13 +354,13 @@ impl WorkerState {
             record.chat_id = branch;
             record.attachment.id = ChatAttachmentId::new();
             record.attachment.message_id = Some(message);
-            links.push(BranchLink {
+            folders.push(BranchFolder {
                 from,
                 to: (branch, record.attachment.id),
             });
             records.push(record);
         }
-        Ok((records, links))
+        Ok((records, folders))
     }
 }
 

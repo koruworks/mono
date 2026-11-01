@@ -241,30 +241,62 @@ fn nothing_newer_than_the_sweep_is_swept() {
 }
 
 #[test]
-fn a_branch_links_every_folder_or_none() {
+fn a_branch_copies_every_folder_or_none() {
     let (_directory, store) = store();
     let first = prepare(&store, "first.txt", b"first").unwrap();
     store.publish(&first).unwrap();
     let branch = ChatId::new();
-    let link = BranchLink {
+    let folder = BranchFolder {
         from: (first.record.chat_id, first.record.attachment.id),
         to: (branch, ChatAttachmentId::new()),
     };
-    store.link_for_branch(std::slice::from_ref(&link)).unwrap();
-    let linked = store
-        .attachment_dir(link.to.0, link.to.1)
+    store
+        .copy_for_branch(std::slice::from_ref(&folder))
+        .unwrap();
+    let copied = store
+        .attachment_dir(folder.to.0, folder.to.1)
         .join(ORIGINAL_DIR)
         .join("first.txt");
-    assert_eq!(fs::read(&linked).unwrap(), b"first");
+    assert_eq!(fs::read(&copied).unwrap(), b"first");
 
-    // A second link onto an existing folder fails, and takes back the one
+    // A second copy onto an existing folder fails, and takes back the one
     // it made before it.
-    let fresh = BranchLink {
-        from: link.from,
+    let fresh = BranchFolder {
+        from: folder.from,
         to: (branch, ChatAttachmentId::new()),
     };
-    assert!(store.link_for_branch(&[fresh.clone(), link]).is_err());
+    assert!(store.copy_for_branch(&[fresh.clone(), folder]).is_err());
     assert!(!store.attachment_dir(fresh.to.0, fresh.to.1).exists());
+}
+
+#[test]
+fn editing_a_branch_attachment_leaves_the_original_alone() {
+    let (_directory, store) = store();
+    let first = prepare(&store, "notes.txt", b"before").unwrap();
+    store.publish(&first).unwrap();
+    let folder = BranchFolder {
+        from: (first.record.chat_id, first.record.attachment.id),
+        to: (ChatId::new(), ChatAttachmentId::new()),
+    };
+    store
+        .copy_for_branch(std::slice::from_ref(&folder))
+        .unwrap();
+    let copied = store
+        .attachment_dir(folder.to.0, folder.to.1)
+        .join(ORIGINAL_DIR)
+        .join("notes.txt");
+
+    // Written in place, as an editor or an agent would: a hard link would
+    // carry the change into the original.
+    fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&copied)
+        .unwrap()
+        .write_all(b"after")
+        .unwrap();
+    assert_eq!(fs::read(&copied).unwrap(), b"after");
+    assert_eq!(fs::read(store.original(&first.record)).unwrap(), b"before");
 }
 
 #[test]
