@@ -158,7 +158,8 @@ fn there_is_one_swatch_color_per_preset() {
     );
 }
 
-/// **The heading carries *Global settings* at its right**, and choosing it is
+/// **The heading carries the settings icon at its right**, named *Global
+/// settings* for a screen reader, and choosing it is
 /// the one row that asks the host to leave the document: the Settings tab, on
 /// its Editor page. The keyboard can reach it, because it is selectable.
 #[test]

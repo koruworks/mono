@@ -65,11 +65,12 @@ pub use koru_keys::Hinted as Chord;
 pub enum Row {
     /// A small caps heading. Not selectable, and the keyboard steps over it.
     Heading(&'static str),
-    /// A heading with a small link at its right end, sized to the heading —
-    /// *Global settings* beside *PAGE SETTINGS*. Unlike a plain heading it can
-    /// be chosen: the arrow keys stop on it and Enter follows the link, and a
-    /// click anywhere on the heading's band does too, because the band is the
-    /// row's hit area like every other row's.
+    /// A heading with a settings icon at its right end — the sliders beside
+    /// *PAGE SETTINGS*, which open the global settings. Unlike a plain
+    /// heading it can be chosen: the arrow keys stop on it and Enter follows
+    /// the link, and a click anywhere on the heading's band does too, because
+    /// the band is the row's hit area like every other row's. `link` is the
+    /// icon's name in words, *Global settings*, for whoever cannot see it.
     HeadingLink {
         heading: &'static str,
         link: &'static str,
@@ -516,7 +517,7 @@ impl Menu {
                         Some(pal.text_dim),
                     );
                 }
-                Row::HeadingLink { heading, link } => {
+                Row::HeadingLink { heading, link: _ } => {
                     let laid = engine.simple_layout(
                         heading,
                         theme::role::hint().with_weight(theme::FontWeight::SemiBold),
@@ -530,23 +531,29 @@ impl Menu {
                         r.y + (r.h - line_h) * 0.5,
                         Some(pal.text_dim),
                     );
-                    // The heading's own size, in the accent a link wears, and
-                    // in the text color while it is the row under the pointer
-                    // or the keyboard — the hover a link has rather than a
-                    // row's tint.
-                    let laid = engine.simple_layout(link, theme::role::hint());
-                    let line_h = scene::first_line_height(&laid);
-                    scene::draw_layout_first_line(
+                    // The settings sliders, quiet like the heading, on an icon
+                    // button's tint and in the text color while the row is
+                    // under the pointer or the keyboard.
+                    let icon = engine.icon_layout(koru_draw::icons::FADERS, theme::CAPTION_ICON);
+                    let side = r.h.min(theme::CAPTION_ICON + 8.0);
+                    let x = r.x + r.w - PAD - side;
+                    let y = r.y + (r.h - side) * 0.5;
+                    let on = self.hover == Some(i);
+                    if on {
+                        scene::fill(
+                            scene,
+                            root,
+                            pal.hover_tint,
+                            &scene::rrect(x, y, side, side, 5.0),
+                        );
+                    }
+                    scene::draw_layout(
                         scene,
                         root,
-                        &laid,
-                        r.x + r.w - PAD - 4.0 - laid.width(),
-                        r.y + (r.h - line_h) * 0.5,
-                        Some(if self.hover == Some(i) {
-                            pal.text
-                        } else {
-                            pal.accent
-                        }),
+                        &icon,
+                        x + (side - icon.width()) * 0.5,
+                        y + (side - icon.height()) * 0.5,
+                        Some(if on { pal.text } else { pal.text_dim }),
                     );
                 }
                 Row::Divider => {

@@ -2944,7 +2944,6 @@ impl MainView {
         // be waiting, and a chip's *Go to task* pressed on its own did nothing
         // at all (finding 32).
         let mut acted = self.drain_task_view_request(ws);
-        acted |= self.drain_global_settings_request();
         acted |= self.finish_task_reveal();
         if self.pending_document_rename.is_none() && self.pending_document_attrs.is_none() {
             return acted;

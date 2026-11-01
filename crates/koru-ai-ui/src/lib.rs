@@ -3609,8 +3609,10 @@ impl ChatSurface {
             .ollama_search_link
             .is_some_and(|rect| rect.contains(x, y))
         {
-            if let Err(error) = koru_window::open_uri("https://ollama.com/search") {
-                self.status = Some(format!("Could not open the Ollama model catalog: {error}"));
+            // Off this thread, like every web link the chat opens: the shell
+            // can take a moment to hand a URL to the browser.
+            if !open_web_link("https://ollama.com/search") {
+                self.status = Some("Could not open the Ollama model catalog.".into());
             }
             return true;
         }

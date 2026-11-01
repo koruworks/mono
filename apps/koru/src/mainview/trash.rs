@@ -836,6 +836,9 @@ impl MainView {
         // …and a canvas's Run, Stop and open-a-page, for the same reason.
         acted |= self.drain_canvas_asks();
         acted |= self.drain_trash_request();
+        // …and the page menu's *Global settings*, which a click raises and
+        // nothing else would drain until a document next arrived.
+        acted |= self.drain_global_settings_request();
         acted |= self.drain_trash(ws);
         // Work through a dragged set, stopping the moment one of them puts a
         // question up — the rest wait behind it rather than going off while

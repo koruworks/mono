@@ -1175,7 +1175,7 @@ impl MenuAction {
             MenuAction::OpenDocumentInNewWindow => "Open in a new window",
             // One word for every row that renames — a file, a workspace, a
             // chat, a schedule — so it is one key in every language.
-            MenuAction::Rename | MenuAction::ScheduleRename => {
+            MenuAction::Rename | MenuAction::ScheduleRename | MenuAction::ListRename => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::ScheduleRename,
@@ -1247,7 +1247,6 @@ impl MenuAction {
             MenuAction::TaskDue => "Due\u{2026}",
             MenuAction::TaskPriority => "Priority\u{2026}",
             MenuAction::TaskList => "List\u{2026}",
-            MenuAction::ListRename => "Rename\u{2026}",
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
             MenuAction::TaskRemove => "Remove from Tasks",
