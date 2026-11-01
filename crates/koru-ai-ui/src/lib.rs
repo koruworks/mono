@@ -409,6 +409,16 @@ pub struct ChatSurface {
     /// current chat, and a tab that wanted a new one must not take it.
     /// Cleared when the chat it asked for arrives.
     fresh_chat_wanted: bool,
+    /// **A new chat not made yet**: the id of the transcript on screen when
+    /// it is a stand-in this surface built ([`ChatSurface::begin_unmade_chat`])
+    /// rather than one the service holds. Its model, folder, privacy and
+    /// workspace access are kept here, on the stand-in, until the first
+    /// message is sent, which makes the chat ([`ChatSurface::make_unmade_chat`]);
+    /// so a chat nobody wrote in never reaches the Chats list.
+    unmade_chat: Option<ChatId>,
+    /// A picture pasted into a chat not made yet: the paste is read once the
+    /// chat it is stored under exists.
+    paste_after_create: Option<ChatId>,
     openai_key: TextInput,
     openai_model: TextInput,
     ollama_endpoint: TextInput,
@@ -682,6 +692,8 @@ impl ChatSurface {
             conversation_hit_rect: Rect::new(14.0, HEADER_H, 432.0, 500.0),
             workspace_search,
             fresh_chat_wanted: false,
+            unmade_chat: None,
+            paste_after_create: None,
             openai_key,
             openai_model,
             ollama_endpoint,
@@ -897,6 +909,13 @@ impl ChatSurface {
     /// uses this to focus that tab before the read has landed, so a second
     /// pick of the same row does not mint another.
     pub fn current_chat_id(&self) -> Option<ChatId> {
+        // A chat not made yet has no id the service, or a host, can use.
+        self.shown_chat_id().filter(|_| !self.chat_unmade())
+    }
+
+    /// The chat on screen, a stand-in not made yet included, or the one a
+    /// link is opening.
+    fn shown_chat_id(&self) -> Option<ChatId> {
         self.transcript
             .as_ref()
             .map(|t| t.chat.id)
@@ -2172,6 +2191,9 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        let Some(command) = self.apply_to_unmade_chat(command) else {
+            return true;
+        };
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
             return false;
@@ -2350,31 +2372,73 @@ impl ChatSurface {
                 // Settings first opens instead of after a provider toggle.
                 self.validate_models_after_settings(selected);
             }
-            Update::Created(transcript) => {
+            Update::Created(mut transcript) => {
                 self.fresh_chat_wanted = false;
-                self.forget_input_walk();
+                // **The new chat on screen, made for its first message**: the
+                // message is already on its way behind the create, so its card,
+                // the dots and the wait stay. What was chosen on the stand-in
+                // shows until its own update, queued behind the create, lands.
+                let made = self
+                    .transcript
+                    .as_ref()
+                    .filter(|shown| shown.chat.id == transcript.chat.id)
+                    .cloned();
+                if let Some(stand_in) = &made {
+                    transcript.chat.private = stand_in.chat.private;
+                    transcript.chat.agent_working_folder =
+                        stand_in.chat.agent_working_folder.clone();
+                    transcript.tool_policy = stand_in.tool_policy.clone();
+                    if transcript.reasoning_control.is_none() {
+                        transcript.reasoning_control = stand_in.reasoning_control.clone();
+                    }
+                }
                 self.retain_staged_quotes_for(transcript.chat.id);
-                self.waiting = false;
-                self.attempt = None;
-                self.pending_assistant_message_id = None;
-                self.pending_user = None;
-                self.pulse = None;
-                self.live_usage = None;
-                self.live_sources.clear();
-                self.open_searches.clear();
-                self.draft.clear();
+                if made.is_none() {
+                    self.forget_input_walk();
+                    self.waiting = false;
+                    self.attempt = None;
+                    self.pending_assistant_message_id = None;
+                    self.pending_user = None;
+                    self.pulse = None;
+                    self.live_usage = None;
+                    self.live_sources.clear();
+                    self.open_searches.clear();
+                    self.draft.clear();
+                    self.pending_question_anchor = None;
+                    self.scroll_to_pending_question = false;
+                }
+                let chat = transcript.chat.id;
                 self.remember_chat(&transcript.chat, true);
                 self.transcript = Some(transcript);
-                self.select_context_workspace_if_needed();
+                if made.is_none() {
+                    self.select_context_workspace_if_needed();
+                }
                 self.usage_report = None;
                 self.history_open = false;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
-                self.pending_question_anchor = None;
-                self.scroll_to_pending_question = false;
                 self.expanded_tool_activity = None;
                 self.scroll_loaded_chat_to_bottom = false;
                 self.messages_dirty = true;
+                if made.is_some() {
+                    self.waiting = self.message_on_its_way();
+                }
+                if self.paste_after_create.take() == Some(chat) {
+                    self.begin_attachment_paste();
+                }
+            }
+            Update::CreateFailed(chat, failure) => {
+                // The chat on screen is a stand-in again, so the next send
+                // asks for it again; the message queued behind the create
+                // comes back to the composer with this reason.
+                if self.shown_chat_id() == Some(chat) {
+                    self.unmade_chat = Some(chat);
+                }
+                if self.paste_after_create == Some(chat) {
+                    self.paste_after_create = None;
+                }
+                self.waiting = false;
+                self.status = Some(failure_text(&failure, self.lang));
             }
             Update::Transcript(transcript) => {
                 self.retain_staged_quotes_for(transcript.chat.id);
@@ -2436,21 +2500,25 @@ impl ChatSurface {
                 self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {
                     transcript.chat = chat.clone();
                 }
-                self.status = Some(if chat.private {
-                    "This chat is private to you.".into()
-                } else {
-                    "Agents and connected assistants can read this chat.".into()
-                });
+                // Behind a new chat's create, it only repeats the stand-in's
+                // choice; the message is what the person is watching.
+                if !self.message_on_its_way() {
+                    self.status = Some(if chat.private {
+                        "This chat is private to you.".into()
+                    } else {
+                        "Agents and connected assistants can read this chat.".into()
+                    });
+                }
             }
             Update::FolderUpdated(chat) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2460,13 +2528,15 @@ impl ChatSurface {
                 self.status = None;
             }
             Update::ToolPolicy(policy) => {
-                self.waiting = false;
+                self.waiting = self.message_on_its_way();
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == policy.chat_id
                 {
                     transcript.tool_policy = policy;
                 }
-                self.status = Some("Workspace access updated for this chat.".into());
+                if !self.message_on_its_way() {
+                    self.status = Some("Workspace access updated for this chat.".into());
+                }
             }
             Update::ToolActivity(activity) => {
                 // A decision response is not the end of the provider turn;
@@ -2484,7 +2554,11 @@ impl ChatSurface {
                 // A tab that asked for a new chat does not take the
                 // service's current one (the CTO's note): the snapshot's
                 // chat is dropped and a chat is created below.
-                let transcript = if self.fresh_chat_wanted {
+                let transcript = if self.chat_unmade() {
+                    // A new chat not made yet stays on screen: deleting or
+                    // clearing others does not take it away.
+                    self.transcript.clone()
+                } else if self.fresh_chat_wanted {
                     None
                 } else {
                     transcript
@@ -2848,8 +2922,16 @@ impl ChatSurface {
                     code = failure.code,
                     "AI UI send was not accepted; the message is back in the composer"
                 );
-                self.give_back_sent(Some(&failure));
+                if self.chat_unmade() {
+                    // The create failed and said why; the send only follows.
+                    self.give_back_sent(None);
+                } else {
+                    self.give_back_sent(Some(&failure));
+                }
             }
+            // A command queued behind a create that failed: the create
+            // has said why.
+            Update::Failure(_) if self.chat_unmade() => {}
             Update::Failure(message) => {
                 tracing::warn!(
                     target: "koru_ai::ui",
@@ -3075,11 +3157,134 @@ impl ChatSurface {
             }
             return true;
         };
-        self.send_command(Command::Create(CreateChatRequest {
-            chat_id: ChatId::new(),
-            title: DEFAULT_CHAT_TITLE.into(),
-            model: selection,
-        }))
+        self.begin_unmade_chat(selection);
+        true
+    }
+
+    /// **Show a new chat on `model` without making it**: a stand-in
+    /// transcript that only this surface knows. Choosing its model, folder,
+    /// privacy or workspace access changes the stand-in
+    /// ([`Self::apply_to_unmade_chat`]); its first message makes the chat
+    /// ([`Self::make_unmade_chat`]). Leaving it unsent leaves nothing behind.
+    fn begin_unmade_chat(&mut self, model: ModelSelection) {
+        let chat = unmade_transcript(model);
+        let id = chat.chat.id;
+        self.fresh_chat_wanted = false;
+        self.forget_input_walk();
+        self.retain_staged_quotes_for(id);
+        self.usage_report = None;
+        self.expanded_tool_activity = None;
+        self.question_navigation = None;
+        self.question_navigation_anchor = None;
+        self.pending_question_anchor = None;
+        self.scroll_to_pending_question = false;
+        self.scroll_loaded_chat_to_bottom = false;
+        self.transcript = Some(chat);
+        self.unmade_chat = Some(id);
+        self.select_context_workspace_if_needed();
+        self.messages_dirty = true;
+    }
+
+    /// A message sent and not yet accepted: the surface keeps polling for
+    /// its answer whatever else lands first.
+    fn message_on_its_way(&self) -> bool {
+        self.sent_message.is_some() || self.staged_embedded_send.is_some()
+    }
+
+    /// Whether the chat on screen is a stand-in not made yet.
+    fn chat_unmade(&self) -> bool {
+        self.unmade_chat.is_some() && self.unmade_chat == self.shown_chat_id()
+    }
+
+    /// A command about the chat not made yet changes the stand-in instead of
+    /// reaching the service, which has no such chat; `None` when it was
+    /// applied here. Anything else is handed back to be queued.
+    fn apply_to_unmade_chat(&mut self, command: Command) -> Option<Command> {
+        if !self.chat_unmade() {
+            return Some(command);
+        }
+        let unmade = self.unmade_chat?;
+        let transcript = self.transcript.as_mut()?;
+        match command {
+            Command::UpdateModel(chat, request) if chat == unmade => {
+                let provider_changed =
+                    transcript.chat.current_model.provider != request.model.provider;
+                transcript.chat.current_model = request.model;
+                if provider_changed {
+                    transcript.reasoning_control = None;
+                }
+                self.chat_model_open = false;
+            }
+            Command::UpdatePrivacy(chat, request) if chat == unmade => {
+                transcript.chat.private = request.private;
+            }
+            Command::UpdateFolder(chat, request) if chat == unmade => {
+                transcript.chat.agent_working_folder = request.folder;
+            }
+            Command::UpdateToolPolicy(chat, request) if chat == unmade => {
+                transcript.tool_policy.mode = request.mode;
+                transcript.tool_policy.workspace_ids = request.workspace_ids;
+            }
+            Command::Rename(chat, request) if chat == unmade => {
+                transcript.chat.title = request.title;
+            }
+            // Nothing to read back: the stand-in is all there is.
+            Command::Read(chat) if chat == unmade => {}
+            command => return Some(command),
+        }
+        self.messages_dirty = true;
+        None
+    }
+
+    /// **Make the chat on screen if it is a stand-in**, for the first message
+    /// about to be sent: the create, then what was chosen on the stand-in
+    /// that the create does not carry. The reader answers them in order, so
+    /// everything queued after — the message, its title — finds the chat
+    /// made. `false` when the create could not be queued; the message stays
+    /// in the composer.
+    fn make_unmade_chat(&mut self) -> bool {
+        if !self.chat_unmade() {
+            return true;
+        }
+        let Some(stand_in) = self.transcript.clone() else {
+            return true;
+        };
+        let chat = stand_in.chat.id;
+        // Cleared first, so what follows is queued rather than kept here.
+        self.unmade_chat = None;
+        if !self.queue_command(Command::Create(CreateChatRequest {
+            chat_id: chat,
+            title: stand_in.chat.title.clone(),
+            model: stand_in.chat.current_model.clone(),
+        })) {
+            self.unmade_chat = Some(chat);
+            return false;
+        }
+        if let Some(folder) = stand_in.chat.agent_working_folder.clone() {
+            self.queue_command(Command::UpdateFolder(
+                chat,
+                koru_ai_wire::UpdateChatFolderRequest {
+                    folder: Some(folder),
+                },
+            ));
+        }
+        if stand_in.chat.private {
+            self.queue_command(Command::UpdatePrivacy(
+                chat,
+                koru_ai_wire::UpdateChatPrivacyRequest { private: true },
+            ));
+        }
+        let policy = &stand_in.tool_policy;
+        if policy.mode != ToolMode::Manual || !policy.workspace_ids.is_empty() {
+            self.queue_command(Command::UpdateToolPolicy(
+                chat,
+                UpdateChatToolPolicyRequest {
+                    mode: policy.mode,
+                    workspace_ids: policy.workspace_ids.clone(),
+                },
+            ));
+        }
+        true
     }
 
     fn current_selection(&self) -> Option<ModelSelection> {
@@ -3124,12 +3329,16 @@ impl ChatSurface {
     }
 
     /// **Start this surface's chat on `model`**, picked in the composer: a
-    /// chat with no message yet takes it, and a surface with no chat yet makes
-    /// one with it. The pick is remembered as what new chats start on — the
-    /// choice the setup used to save — so the next chat opens on it.
+    /// chat with no message yet takes it, and a surface with no chat yet
+    /// shows a new one on it, made only when its first message is sent
+    /// ([`Self::begin_unmade_chat`]). The pick is remembered as what new
+    /// chats start on — the choice the setup used to save — so the next chat
+    /// opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
         self.web_search_armed = false;
         let sent = match &self.transcript {
+            // A chat with no message yet takes it: the service's, or the
+            // stand-in of one not made yet, which keeps it here.
             Some(transcript) if transcript.messages.is_empty() => {
                 let chat = transcript.chat.id;
                 self.send_command(Command::UpdateModel(
@@ -3142,11 +3351,10 @@ impl ChatSurface {
             // A chat that has begun keeps its provider; only its models are
             // offered.
             Some(_) => return true,
-            None => self.send_command(Command::Create(CreateChatRequest {
-                chat_id: ChatId::new(),
-                title: DEFAULT_CHAT_TITLE.into(),
-                model: model.clone(),
-            })),
+            None => {
+                self.begin_unmade_chat(model.clone());
+                true
+            }
         };
         self.remember_choice(&model);
         sent
@@ -3320,6 +3528,11 @@ impl ChatSurface {
         if markdown.is_empty() && !self.has_strip() {
             return false;
         }
+        // A new chat is made by its first message, never before: the
+        // create is queued ahead of the message.
+        if !self.make_unmade_chat() {
+            return true;
+        }
         // Not while an attachment is still being stored, or could not be.
         let Some(sent_attachments) = self.take_attachments_for_send(chat_id) else {
             return true;
@@ -3448,7 +3661,7 @@ impl ChatSurface {
         let Some(sent) = self.sent_message.take() else {
             return;
         };
-        if self.current_chat_id() == Some(sent.chat) {
+        if self.shown_chat_id() == Some(sent.chat) {
             if self.composer.is_blank() {
                 self.composer.unstash(sent.composer);
             }
@@ -8064,6 +8277,40 @@ fn failure_label(class: Option<AiErrorClass>, lang: koru_i18n::Lang) -> String {
 /// more specific (*the agent refused that model*) — its own words after
 /// it. A code the surface does not know reads as the service's words alone,
 /// so nothing a service can say goes unshown.
+/// The stand-in a new chat is shown as until its first message makes it:
+/// what the service answers a create with — its title, no message, no
+/// workspace and manual approval — under a fresh id the create will use.
+fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
+    let id = ChatId::new();
+    let now = koru_ai_core::Timestamp::now();
+    ChatTranscript {
+        chat: Chat {
+            id,
+            title: DEFAULT_CHAT_TITLE.into(),
+            private: false,
+            current_model: model,
+            branched_from: None,
+            agent_working_folder: None,
+            created_at: now,
+            updated_at: now,
+        },
+        tool_policy: koru_ai_core::ChatToolPolicy {
+            chat_id: id,
+            mode: ToolMode::Manual,
+            workspace_ids: Vec::new(),
+        },
+        tool_activities: Vec::new(),
+        messages: Vec::new(),
+        blocks: Vec::new(),
+        pinned_documents: Vec::new(),
+        feedback: Vec::new(),
+        usage: Vec::new(),
+        sources: Vec::new(),
+        reasoning_control: None,
+        attachments: Vec::new(),
+    }
+}
+
 pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lang) -> String {
     let key = match failure.code.as_str() {
         "ai_configuration" => Some(koru_i18n::Key::AiFailureConfiguration),
@@ -8750,48 +8997,209 @@ mod tests {
         );
     }
 
-    /// **Picking a model makes the chat**, and remembers the choice so the
-    /// next chat opens on it: an agent at once, since its readiness is
-    /// already known.
-    #[test]
-    fn picking_an_agent_with_no_chat_makes_the_chat_on_it() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
-        let (reader, commands, _updates) = Reader::test_pair();
+    /// The surface of a chat not made yet, on Claude: a reader, settings with
+    /// the agent ready, and the pick made in the composer.
+    fn unmade_claude_chat(
+        mode: SurfaceMode,
+    ) -> (
+        ChatSurface,
+        std::sync::mpsc::Receiver<Command>,
+        std::sync::mpsc::SyncSender<Update>,
+    ) {
+        let mut surface = ChatSurface::new(mode);
+        let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.settings = Some(unchosen_settings(&["agent-claude"]));
         let claude = AiProviderId::parse("agent-claude").unwrap();
         surface
             .agent_status
             .insert(claude.clone(), AgentStatus::Ready);
-        assert!(surface.choose_agent_model(claude.clone(), AGENT_DEFAULT_MODEL.into()));
-        let Command::Create(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
-        else {
-            panic!("the chat is made");
-        };
-        assert_eq!(request.model.provider, claude);
-        assert_eq!(request.model.requested_model, AGENT_DEFAULT_MODEL);
+        assert!(surface.choose_agent_model(claude, AGENT_DEFAULT_MODEL.into()));
+        (surface, commands, updates)
+    }
+
+    /// **Picking a model makes no chat**: the pick is kept on the chat on
+    /// screen, the chip names it, and it is remembered so the next chat opens
+    /// on it. Nothing reaches the Chats list until the first message.
+    #[test]
+    fn picking_an_agent_with_no_chat_waits_for_the_first_message() {
+        let (surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
         let Command::SelectProvider(selected) =
             commands.recv_timeout(Duration::from_millis(50)).unwrap()
         else {
-            panic!("and the choice is remembered");
+            panic!("the choice is remembered, and nothing is made");
         };
         assert_eq!(selected.provider, claude);
+        assert!(commands.try_recv().is_err(), "no chat is made by a pick");
+        assert!(surface.chat_unmade());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .map(|t| t.chat.current_model.provider.clone()),
+            Some(claude)
+        );
+        assert_eq!(surface.chip_label(), "Claude", "the chip names the pick");
+        assert!(!surface.awaiting_model(), "send is on");
+        assert_eq!(surface.current_chat_id(), None, "no chat a host can name");
+        assert!(surface.chats.is_empty(), "nothing in the Chats list");
         assert!(!surface.showing_setup());
     }
 
-    /// **A chat chosen before opens as it did**: the remembered provider
-    /// validates and the chat is made on it — once, not twice (a tab that
-    /// owed a fresh chat asked for two).
+    /// **The first message makes the chat**, then goes into it: the create is
+    /// queued ahead of the message, under the id the message names, and the
+    /// message's card stays through the chat's arrival.
+    #[test]
+    fn the_first_message_makes_the_chat_and_is_sent_into_it() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let stand_in = surface.transcript.clone().unwrap();
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        let Command::Create(create) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the chat is made first");
+        };
+        assert_eq!(create.chat_id, stand_in.chat.id);
+        assert_eq!(create.model, stand_in.chat.current_model);
+        assert_eq!(create.title, DEFAULT_CHAT_TITLE);
+        let Command::Send(send) = commands.recv_timeout(Duration::from_millis(50)).unwrap() else {
+            panic!("then the message goes into it");
+        };
+        assert_eq!(send.chat_id, stand_in.chat.id);
+        assert_eq!(send.markdown, "Plan the launch");
+        assert!(surface.composer.is_blank());
+        assert!(!surface.chat_unmade());
+        assert_eq!(surface.current_chat_id(), Some(stand_in.chat.id));
+
+        let mut made = stand_in.clone();
+        made.chat.created_at = koru_ai_core::Timestamp::from_millis(7);
+        surface.apply_update(Update::Created(made));
+        assert_eq!(
+            surface.pending_user.as_deref(),
+            Some("Plan the launch"),
+            "the message's card stays while it is on its way"
+        );
+        assert!(surface.waiting, "and the surface keeps listening for it");
+        assert_eq!(surface.chats.len(), 1, "the chat is listed once it is made");
+    }
+
+    /// **A failed create gives the message back**, with the create's reason:
+    /// the chat on screen is a stand-in again, and the next send asks for it
+    /// again.
+    #[test]
+    fn a_failed_create_gives_the_first_message_back() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        while commands.try_recv().is_ok() {}
+        assert!(surface.composer.is_blank());
+        let failure = koru_ai_wire::Failure {
+            code: "ai_storage".into(),
+            message: "The chat could not be saved.".into(),
+            retryable: true,
+            details: Default::default(),
+        };
+        surface.apply_update(Update::CreateFailed(chat, failure.clone()));
+        assert!(surface.chat_unmade(), "a stand-in again");
+        let reason = surface.status.clone();
+        assert!(reason.is_some());
+        surface.apply_update(Update::Failure("Chat not found.".into()));
+        surface.apply_update(Update::SendFailed(failure));
+        assert_eq!(surface.composer.text(), "Plan the launch", "it is back");
+        assert!(surface.pending_user.is_none());
+        assert_eq!(surface.status, reason, "with the create's reason");
+
+        assert!(surface.send_composer());
+        assert!(
+            matches!(
+                commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+                Command::Create(request) if request.chat_id == chat
+            ),
+            "the next send asks for the chat again"
+        );
+    }
+
+    /// **What is chosen on a chat not made yet stays with it**: the folder
+    /// is kept on the stand-in, and follows the create when the first
+    /// message makes the chat, ahead of the message.
+    #[test]
+    fn a_new_chats_folder_is_kept_until_its_first_message() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        assert!(surface.shows_composer_footer(), "the folder can be chosen");
+        assert!(surface.working_folder_chosen(chat, "D:/work/koru".into()));
+        assert!(commands.try_recv().is_err(), "kept here, not sent");
+        assert_eq!(surface.folder_label(), "koru");
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        let order: Vec<&'static str> = std::iter::from_fn(|| commands.try_recv().ok())
+            .map(|command| match command {
+                Command::Create(_) => "create",
+                Command::UpdateFolder(about, request) => {
+                    assert_eq!(about, chat);
+                    assert_eq!(request.folder.as_deref(), Some("D:/work/koru"));
+                    "folder"
+                }
+                Command::Send(_) => "send",
+                Command::Rename(..) => "rename",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(order, ["create", "folder", "send", "rename"]);
+    }
+
+    /// **A chat not made yet stays on screen** when the list changes under
+    /// it: deleting another chat does not swap in the service's current one.
+    #[test]
+    fn a_chat_not_made_yet_survives_a_history_change() {
+        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        let other = transcript();
+        surface.apply_update(Update::HistoryChanged {
+            chats: vec![other.chat.clone()],
+            transcript: Some(other),
+        });
+        assert_eq!(surface.transcript.as_ref().map(|t| t.chat.id), Some(chat));
+        assert!(surface.chat_unmade());
+    }
+
+    /// **A picture pasted into a chat not made yet makes it** — a picture is
+    /// stored under its chat — and the paste is read once the chat exists.
+    #[test]
+    fn a_paste_into_a_chat_not_made_yet_makes_it_first() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        while commands.try_recv().is_ok() {}
+        let chat = surface.transcript.as_ref().unwrap().chat.id;
+        assert!(surface.begin_attachment_paste());
+        assert!(
+            !surface.clipboard_reading,
+            "not read before the chat exists"
+        );
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Create(request) if request.chat_id == chat
+        ));
+        assert_eq!(surface.paste_after_create, Some(chat));
+    }
+
+    /// **A chat chosen before opens as it did, without being made**: the
+    /// remembered provider validates and the chat view shows a new chat on
+    /// it; the first message makes it — once, not twice (a tab that owed a
+    /// fresh chat asked for two).
     #[test]
     fn a_remembered_provider_makes_one_chat_for_a_fresh_tab() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
         let mut settings = unchosen_settings(&[]);
         settings.selected_provider = Some(AiProviderId::parse(AiProviderId::KORU).unwrap());
         boot(&mut surface, settings);
-        while commands.try_recv().is_ok() {}
         surface.apply_update(Update::Validation(ProviderValidationResponse {
             provider: AiProviderId::parse(AiProviderId::KORU).unwrap(),
             status: ProviderValidationStatus::Ready,
@@ -8799,13 +9207,24 @@ mod tests {
             selected_model: None,
             failure: None,
         }));
-        let mut creates = 0;
-        while let Ok(command) = commands.try_recv() {
-            if let Command::Create(request) = command {
-                assert_eq!(request.model.provider.as_str(), AiProviderId::KORU);
-                creates += 1;
-            }
-        }
+        assert!(
+            !std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|command| matches!(command, Command::Create(_))),
+            "nothing is made before a message"
+        );
+        assert!(surface.chat_unmade());
+        assert_eq!(
+            surface
+                .transcript
+                .as_ref()
+                .map(|t| t.chat.current_model.provider.as_str()),
+            Some(AiProviderId::KORU)
+        );
+        surface.composer.set_text("hello");
+        assert!(surface.send_composer());
+        let creates = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter(|command| matches!(command, Command::Create(_)))
+            .count();
         assert_eq!(creates, 1);
         assert!(!surface.showing_setup());
     }

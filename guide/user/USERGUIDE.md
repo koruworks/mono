@@ -1247,15 +1247,17 @@ opens, goes straight to the chat: the greeting, and the composer with its
 chips, workspace access, approval mode, the model chip and send. Until a
 model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
-waits in the composer. The picker lists **Koru AI**, OpenAI (once a key has
-been saved), **Ollama** and the **Local agents**. A local agent starts the chat
-at once; Koru AI, OpenAI and Ollama are checked first — OpenAI and Ollama
-start on their saved model, or the first one they list — and one that cannot
-start says why in the line above the composer (*The hosted service is
-unreachable…*, Ollama not running, no models installed) and opens nothing
-else. Whatever you pick is remembered: the next new chat opens on it, as it
-did before. Until a chat has a message, the picker also offers the other
-providers, so a chat can still change provider before it starts.
+waits in the composer. For a chat with no message yet the picker lists the
+**Local agents**; a chat that has begun on Koru AI, OpenAI or Ollama keeps
+listing its own provider's models. Picking a model only sets it: the chip
+names it, and you can still choose the working folder or change your mind.
+The chat is made when you send its first message, which then goes into it —
+so a new chat you leave without writing anything never appears in **Chats**.
+Pasting a picture also makes the chat, because the picture is stored with it.
+If the chat cannot be made, your message comes back to the composer and the
+line above it says why. Whatever you pick is remembered: the next new chat
+opens on it, as it did before. Until a chat has a message, it can still
+change agent.
 
 The provider setup page — the **Koru AI**, OpenAI and **On this device —
 Ollama** cards with **Save & start chat** — is not shown for now: no menu,
