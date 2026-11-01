@@ -1,0 +1,22 @@
+title = "Koru Nightly for Android, with updates in the app"
+
+summary = [
+  "Koru Nightly now comes to Android as an APK on this release, beside the Windows, Mac and Linux builds.",
+  "Once installed, Koru Nightly for Android tells you when a newer nightly is out and installs it after checking its signature.",
+]
+
+body = """
+## Android
+
+**Koru Nightly as an APK.** Every nightly now includes a signed Android
+APK for phones and tablets running Android 10 or newer (64-bit ARM, plus
+x86_64 for emulators). Download it from this release and open it to
+install. It installs as its own app, Koru Nightly, next to any other Koru
+build, and it never comes from or goes to Google Play.
+
+**New nightlies from inside the app.** When you open Koru Nightly, it
+checks this release at most every three hours. If a newer nightly is out,
+a card offers to download it, shows what's new, and hands the APK to
+Android's installer once its size, checksum and signature match. Not now
+hides the card until the next nightly.
+"""
