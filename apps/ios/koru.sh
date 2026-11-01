@@ -9,6 +9,14 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 PROJECT="$SCRIPT_DIR/KoruMobile.xcodeproj"
 SCHEME="KoruMobile"
 BUNDLE_ID="do.koru.app"
+# **Koru Nightly** (Config/Nightly.xcconfig): `--nightly` on any build-like
+# command builds the separate app do.koru.app.nightly, "Koru Nightly", with its
+# own App Group, the way Android's -PkoruNightly=true does. Without it nothing
+# changes: the project's own settings are the stable app's.
+NIGHTLY_ID="do.koru.app.nightly"
+NIGHTLY_GROUP="group.$NIGHTLY_ID"
+NIGHTLY_XCCONFIG="$SCRIPT_DIR/Config/Nightly.xcconfig"
+NIGHTLY=no
 DERIVED_DATA="$SCRIPT_DIR/DerivedData"
 LOCAL_CONFIG="$SCRIPT_DIR/koru.local.conf"
 
@@ -233,6 +241,7 @@ write_git_stamp() {
 run_xcodebuild() {
     ACTION=$1
     shift
+    [ "$NIGHTLY" = no ] || set -- -xcconfig "$NIGHTLY_XCCONFIG" "$@"
     echo "[koru] xcodebuild $ACTION ($DESTINATION, $CONFIGURATION)..."
     write_git_stamp
     if [ "$DEVICE_KIND" = "physical" ]; then
@@ -488,6 +497,194 @@ show_doctor() {
     xcrun devicectl list devices
 }
 
+# ------------------------------------------------------- Koru Nightly, TestFlight
+
+# **Koru Nightly to TestFlight** (TECHNICAL.final 5.3, as amended on
+# 2026-11-01): what the nightly workflow's iOS job runs, and what a Mac runs to
+# check it. The iPhone is never on the release page: TestFlight hands the build
+# to testers and updates it.
+#
+# **The archive is built unsigned.** Signing it on a fresh CI machine would
+# have Xcode mint a new Apple Development certificate every night, and the
+# account's are capped. It is then signed ad hoc with each target's
+# entitlements, the App Group expanded, because the export keeps only the
+# entitlements a signature already carries: an unsigned archive would reach
+# TestFlight without its App Group, and the share sheet would stage into
+# nothing. **The export is Xcode's cloud signing**: the cloud-managed Apple
+# Distribution certificate and App Store profiles Xcode creates or reuses for
+# both bundle ids, through the App Store Connect API key when one is given and
+# the Xcode account otherwise. Nothing is installed in a keychain.
+#
+# Every exported .ipa is checked before anything is uploaded: the bundle ids,
+# the two versions, the display name, the App Group in both signatures, and an
+# Apple Distribution signature.
+testflight_fail_usage() {
+    fail "usage: ./koru.sh testflight --version <release version> --build <yyyymmddHHMM> [--export | --upload] [--key <AuthKey.p8> --key-id <id> --issuer <uuid>]"
+}
+
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$2" "$1/Info.plist" 2>/dev/null
+}
+
+# <bundle> <bundle id>: the identifiers, versions and name Koru Nightly carries.
+check_nightly_bundle() {
+    for pair in "CFBundleIdentifier=$2" "CFBundleShortVersionString=$TF_SHORT" \
+        "CFBundleVersion=$TF_BUNDLE" "KoruAppGroup=$NIGHTLY_GROUP" \
+        "CFBundleDisplayName=Koru Nightly"; do
+        KEY=${pair%%=*}
+        WANT=${pair#*=}
+        GOT=$(plist_value "$1" "$KEY")
+        [ "$GOT" = "$WANT" ] || fail "$(basename "$1"): $KEY is \"$GOT\", not \"$WANT\"."
+    done
+}
+
+# <bundle>: its signature asks for Koru Nightly's App Group.
+check_nightly_group() {
+    codesign -d --entitlements - --xml "$1" 2>/dev/null | grep -qF "<string>$NIGHTLY_GROUP</string>" \
+        || fail "$(basename "$1") is not signed with the App Group $NIGHTLY_GROUP."
+}
+
+# <entitlements file> <output>: the file with KORU_APP_GROUP expanded.
+expand_entitlements() {
+    sed "s/[\$](KORU_APP_GROUP)/$NIGHTLY_GROUP/g" "$1" > "$2" || exit $?
+    ! grep -qF "\$(" "$2" || fail "$1 names a build setting the archive step does not expand."
+    plutil -lint -s "$2" || fail "$2 is not a valid property list."
+}
+
+# <export | upload> <directory> [authentication arguments]
+export_archive() {
+    DEST=$1
+    DIR=$2
+    shift 2
+    OPTIONS="$TF_OUT/ExportOptions-$DEST.plist"
+    cp "$SCRIPT_DIR/ExportOptions.plist" "$OPTIONS"
+    /usr/libexec/PlistBuddy -c "Set :destination $DEST" "$OPTIONS" || exit $?
+    echo "[koru] xcodebuild -exportArchive ($DEST)..."
+    xcodebuild -exportArchive \
+        -archivePath "$TF_ARCHIVE" \
+        -exportOptionsPlist "$OPTIONS" \
+        -exportPath "$DIR" \
+        -allowProvisioningUpdates \
+        "$@" || exit $?
+}
+
+testflight() {
+    TF_VERSION=""
+    TF_BUILD=""
+    TF_MODE=archive
+    TF_KEY=""
+    TF_KEY_ID=""
+    TF_ISSUER=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --export) TF_MODE="export"; shift; continue ;;
+            --upload) TF_MODE="upload"; shift; continue ;;
+            --version|--build|--key|--key-id|--issuer) [ $# -ge 2 ] || testflight_fail_usage ;;
+            *) testflight_fail_usage ;;
+        esac
+        case "$1" in
+            --version) TF_VERSION=$2 ;;
+            --build) TF_BUILD=$2 ;;
+            --key) TF_KEY=$2 ;;
+            --key-id) TF_KEY_ID=$2 ;;
+            --issuer) TF_ISSUER=$2 ;;
+        esac
+        shift 2
+    done
+    [ -n "$TF_VERSION" ] && [ -n "$TF_BUILD" ] || testflight_fail_usage
+    TF_AUTH=no
+    if [ -n "$TF_KEY$TF_KEY_ID$TF_ISSUER" ]; then
+        [ -n "$TF_KEY" ] && [ -n "$TF_KEY_ID" ] && [ -n "$TF_ISSUER" ] \
+            || fail "--key, --key-id and --issuer go together."
+        [ -f "$TF_KEY" ] || fail "--key $TF_KEY is not a file."
+        TF_AUTH=yes
+    fi
+
+    ensure_rust
+    rustup target list --installed 2>/dev/null | grep -qx "$RUST_TRIPLE_DEVICE" \
+        || fail "the Rust target $RUST_TRIPLE_DEVICE is missing. Run: rustup target add $RUST_TRIPLE_DEVICE"
+    # CFBundleShortVersionString and CFBundleVersion, from the release version
+    # and the build time: MAJOR.MINOR.PATCH, and the APK's versionCode.
+    VERSIONS=$(cd "$REPO_ROOT" && env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET \
+        cargo run --quiet --locked -p koru-release -- ios-version --version "$TF_VERSION" --build "$TF_BUILD") || exit $?
+    VERSIONS=$(printf '%s\n' "$VERSIONS" | tail -n 1)
+    printf '%s\n' "$VERSIONS" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+ [0-9]+' \
+        || fail "koru-release ios-version printed \"$VERSIONS\"."
+    TF_SHORT=${VERSIONS% *}
+    TF_BUNDLE=${VERSIONS#* }
+
+    TF_OUT="$DERIVED_DATA/testflight"
+    TF_ARCHIVE="$TF_OUT/KoruNightly.xcarchive"
+    rm -rf "$TF_OUT"
+    mkdir -p "$TF_OUT"
+    write_git_stamp
+    echo "[koru] archiving Koru Nightly $TF_SHORT ($TF_BUNDLE), unsigned..."
+    # KORU_CONFIGURATION reaches the build phase that calls `native`, so the
+    # Rust staticlib is the release build the Release configuration links.
+    KORU_CONFIGURATION=Release xcodebuild archive \
+        -project "$PROJECT" \
+        -scheme "$SCHEME" \
+        -configuration Release \
+        -destination "generic/platform=iOS" \
+        -archivePath "$TF_ARCHIVE" \
+        -derivedDataPath "$DERIVED_DATA" \
+        -xcconfig "$NIGHTLY_XCCONFIG" \
+        "MARKETING_VERSION=$TF_SHORT" \
+        "CURRENT_PROJECT_VERSION=$TF_BUNDLE" \
+        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGNING_REQUIRED=NO \
+        "CODE_SIGN_IDENTITY=" || exit $?
+
+    APP="$TF_ARCHIVE/Products/Applications/KoruMobile.app"
+    APPEX="$APP/PlugIns/KoruShare.appex"
+    [ -d "$APPEX" ] || fail "the archive has no $APPEX."
+    check_nightly_bundle "$APP" "$NIGHTLY_ID"
+    check_nightly_bundle "$APPEX" "$NIGHTLY_ID.share"
+
+    # Inside out: anything embedded first, the extension, then the app.
+    ENTITLEMENTS="$TF_OUT/entitlements"
+    mkdir -p "$ENTITLEMENTS"
+    expand_entitlements "$SCRIPT_DIR/KoruShare/KoruShare.entitlements" "$ENTITLEMENTS/KoruShare.plist"
+    expand_entitlements "$SCRIPT_DIR/KoruMobile/KoruMobile.entitlements" "$ENTITLEMENTS/KoruMobile.plist"
+    for NESTED in "$APP"/Frameworks/*; do
+        [ -e "$NESTED" ] || continue
+        codesign --force --sign - "$NESTED" || exit $?
+    done
+    codesign --force --sign - --entitlements "$ENTITLEMENTS/KoruShare.plist" "$APPEX" || exit $?
+    codesign --force --sign - --entitlements "$ENTITLEMENTS/KoruMobile.plist" "$APP" || exit $?
+    check_nightly_group "$APPEX"
+    check_nightly_group "$APP"
+    echo "[koru] archive: $TF_ARCHIVE"
+    [ "$TF_MODE" != archive ] || return 0
+
+    if [ "$TF_AUTH" = yes ]; then
+        set -- -authenticationKeyPath "$TF_KEY" -authenticationKeyID "$TF_KEY_ID" -authenticationKeyIssuerID "$TF_ISSUER"
+    else
+        set --
+    fi
+    export_archive export "$TF_OUT/ipa" "$@"
+    IPA="$TF_OUT/ipa/KoruMobile.ipa"
+    [ -f "$IPA" ] || fail "the export wrote no $IPA."
+    (cd "$TF_OUT" && unzip -q "$IPA" -d payload) || exit $?
+    APP="$TF_OUT/payload/Payload/KoruMobile.app"
+    APPEX="$APP/PlugIns/KoruShare.appex"
+    for BUNDLE in "$APPEX" "$APP"; do
+        codesign --verify --strict "$BUNDLE" || fail "$(basename "$BUNDLE") does not verify."
+        codesign -d --verbose=2 "$BUNDLE" 2>&1 | grep -q '^Authority=Apple Distribution' \
+            || fail "$(basename "$BUNDLE") is not signed for distribution."
+        check_nightly_group "$BUNDLE"
+    done
+    check_nightly_bundle "$APP" "$NIGHTLY_ID"
+    check_nightly_bundle "$APPEX" "$NIGHTLY_ID.share"
+    echo "[koru] checked: $IPA"
+    [ "$TF_MODE" = upload ] || return 0
+
+    # The same archive again, now to App Store Connect. TestFlight refuses a
+    # CFBundleVersion it already has, so a re-run of one nightly fails here.
+    export_archive upload "$TF_OUT/upload" "$@"
+    echo "[koru] Koru Nightly $TF_SHORT ($TF_BUNDLE) is uploaded; TestFlight processes it, then gives it to the internal group."
+}
+
 show_help() {
     cat <<'EOF'
 Koru iOS
@@ -522,6 +719,12 @@ usage: ./koru.sh <command> [arguments]
   setup [team] [device] [kind]       save local signing/device settings
   sim                                forget the configured device; back to simulators
   xcode <args...>                    pass arguments directly to xcodebuild
+  testflight --version <v> --build <yyyymmddHHMM> [--export | --upload]
+             [--key <AuthKey.p8> --key-id <id> --issuer <uuid>]
+                                     archive Koru Nightly; with --export also
+                                     sign it for the App Store and check the
+                                     .ipa; with --upload also send it to
+                                     TestFlight (the nightly workflow runs this)
   open                               open the project in Xcode
   help                               show this message
 
@@ -530,6 +733,10 @@ Environment overrides:
   KORU_DEVICE_KIND=simulator|physical
   KORU_DEVELOPMENT_TEAM=<team-id>
   KORU_CONFIGURATION=Debug|Release
+
+Any build-like command takes --nightly: Koru Nightly (do.koru.app.nightly),
+a separate app beside Koru with its own App Group.
+  ./koru.sh run --nightly --device=phone
 
 Any command takes --device=<x> (or -d <x>): an alias, a UDID, or any part
 of a simulator's or phone's name. A named simulator is booted for you.
@@ -578,10 +785,12 @@ while [ "$LEFT" -gt 0 ]; do
             LEFT=$((LEFT - 1))
             ;;
         --device=*) DEVICE_WANTED=${ARG#--device=} ;;
+        --nightly) NIGHTLY=yes ;;
         *) set -- "$@" "$ARG" ;;
     esac
 done
 [ -z "$DEVICE_WANTED" ] || resolve_device_request "$DEVICE_WANTED"
+[ "$NIGHTLY" = no ] || BUNDLE_ID=$NIGHTLY_ID
 
 case "$COMMAND" in
     help|-h|--help) show_help; exit 0 ;;
@@ -739,6 +948,9 @@ case "$COMMAND" in
         ;;
     xcode)
         xcodebuild -project "$PROJECT" -scheme "$SCHEME" "$@"
+        ;;
+    testflight)
+        testflight "$@"
         ;;
     open)
         open "$PROJECT"

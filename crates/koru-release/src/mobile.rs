@@ -4,12 +4,16 @@
 //! TECHNICAL.final.md §5.4, rung 2): the Android APK beside the desktop
 //! packages on the same page, built by Gradle rather than by `package::build`.
 //!
-//! Three verbs, and none builds anything or talks to GitHub:
+//! Four verbs, and none builds anything or talks to GitHub:
 //!
 //! - `android-version-code --build <yyyymmddHHMM>` prints the APK's
 //!   `versionCode` for a build number. The build number itself does not fit:
 //!   Android holds the code in a signed 32-bit integer, and Play refuses
 //!   anything above 2100000000.
+//! - `ios-version --version <v> --build <yyyymmddHHMM>` prints the iOS app's
+//!   `CFBundleShortVersionString` and `CFBundleVersion`, for Koru Nightly's
+//!   TestFlight upload (`apps/ios/koru.sh testflight`). The iPhone is not on
+//!   the release page: TestFlight hands it out and updates it.
 //! - `dist-github-package <nightly|stable> --target android-aarch64 --package <apk> …`
 //!   takes the APK Gradle built and signed and writes what the publish job
 //!   uploads: the package under its release name, its `.minisig`, the feed
@@ -78,6 +82,52 @@ pub(crate) fn version_code_command(mut args: impl Iterator<Item = String>) -> Re
         _ => return Err(ANDROID_VERSION_CODE_USAGE.into()),
     };
     println!("{}", android_version_code(&build)?);
+    Ok(())
+}
+
+/// **The iOS app's two versions, for one release build.**
+/// `CFBundleShortVersionString` is the release version's `MAJOR.MINOR.PATCH`
+/// with any pre-release or build suffix stripped, because Apple accepts only
+/// integers there (`0.1.5` for `0.1.5-nightly.20261031+abc1234`).
+/// `CFBundleVersion` is the APK's `versionCode` for the same build, the
+/// minutes since 2026-01-01 UTC: it grows with every nightly, so TestFlight,
+/// which refuses a build number it has seen for the version, takes each one,
+/// and a phone of either platform names the same number for one nightly.
+pub(crate) fn ios_version(version: &str, build: &str) -> Result<(String, u32), String> {
+    let core = version.split(['-', '+']).next().unwrap_or_default();
+    let parts: Vec<&str> = core.split('.').collect();
+    let numeric = parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'))
+                && part.parse::<u32>().is_ok()
+        });
+    if !numeric {
+        return Err(format!(
+            "version {version:?} does not start with MAJOR.MINOR.PATCH, which is all CFBundleShortVersionString may hold"
+        ));
+    }
+    Ok((core.to_owned(), android_version_code(build)?))
+}
+
+pub(crate) const IOS_VERSION_USAGE: &str =
+    "usage: koru-release ios-version --version <release version> --build <yyyymmddHHMM>";
+
+/// Prints `<CFBundleShortVersionString> <CFBundleVersion>` on one line.
+pub(crate) fn ios_version_command(mut args: impl Iterator<Item = String>) -> Result<(), String> {
+    let (version, build) = match (
+        args.next().as_deref(),
+        args.next(),
+        args.next().as_deref(),
+        args.next(),
+        args.next(),
+    ) {
+        (Some("--version"), Some(version), Some("--build"), Some(build), None) => (version, build),
+        _ => return Err(IOS_VERSION_USAGE.into()),
+    };
+    let (short, bundle) = ios_version(&version, &build)?;
+    println!("{short} {bundle}");
     Ok(())
 }
 

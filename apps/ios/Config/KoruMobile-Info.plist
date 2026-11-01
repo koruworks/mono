@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The rest of the app's Info.plist is generated from the INFOPLIST_KEY_
+	     build settings; Xcode merges this file into it. It holds only what no
+	     INFOPLIST_KEY_ setting can carry. It lives outside the synchronized
+	     KoruMobile folder, or Xcode would also copy it in as a resource. -->
+	<!-- The App Group the app shares with its share extension, from
+	     KORU_APP_GROUP (group.do.koru.app, or group.do.koru.app.nightly for
+	     Koru Nightly). ShareInbox reads it, so the code cannot disagree with
+	     the entitlements. -->
+	<key>KoruAppGroup</key>
+	<string>$(KORU_APP_GROUP)</string>
+</dict>
+</plist>

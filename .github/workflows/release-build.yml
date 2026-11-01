@@ -13,7 +13,7 @@ on:
   workflow_call:
     inputs:
       platform:
-        description: linux, windows, macos or android
+        description: linux, windows, macos, android or ios
         type: string
         required: true
       channel:
@@ -938,3 +938,124 @@ jobs:
           path: dist/unpublished/
           retention-days: 7
           if-no-files-found: error
+
+  # **iOS: Koru Nightly through TestFlight, never a release asset**
+  # (TECHNICAL.final D11 and 5.3, as amended on 2026-11-01). The separate app
+  # `do.koru.app.nightly`, "Koru Nightly", with its own share extension and
+  # App Group (apps/ios/Config/Nightly.xcconfig), archived and uploaded by
+  # `apps/ios/koru.sh testflight`: unsigned archive, ad hoc signature with the
+  # App Group, then Xcode's cloud signing and upload through the App Store
+  # Connect API key - the same key the macOS job notarizes with. No
+  # certificate or profile is stored: Xcode creates or reuses the
+  # cloud-managed Apple Distribution certificate and the App Store profiles.
+  #
+  # Without the key the job only archives, to show the tree builds, and skips
+  # the upload. It writes no `<channel>-*` artifact, so a publish job never
+  # waits for it or sees it, and nightly.yml keeps it out of the publish
+  # job's `needs`: an iOS failure never holds back another platform. Only the
+  # nightly: the stable app, `do.koru.app`, goes to the App Store later.
+  ios:
+    name: build (ios)
+    if: inputs.platform == 'ios'
+    # Xcode 26.5 is the project's floor (apps/ios/README.md), and the macOS 26
+    # image is the one that carries it.
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: ${{ inputs.channel }}
+    permissions:
+      contents: read
+    outputs:
+      uploaded: ${{ steps.upload.outputs.uploaded }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      XCODE_APP: /Applications/Xcode_26.5.app
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      # **All of it, or no upload**, as the Mac's material is. The three
+      # values are the App Store Connect API key's; absent together, the
+      # nightly archives without uploading.
+      - name: Decide whether this build is uploaded
+        id: upload
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" != nightly ]; then
+            echo "::error::iOS is built only for the nightly, as Koru Nightly on TestFlight; the stable app goes to the App Store, which is not wired"
+            exit 1
+          fi
+          test -n "$VERSION" || { echo "::error::an iOS build names its release version: the caller passes it"; exit 1; }
+          have=0
+          for value in "$API_KEY" "$API_KEY_ID" "$API_ISSUER"; do
+            [ -n "$value" ] && have=$((have + 1))
+          done
+          if [ "$have" -eq 0 ]; then
+            echo "::notice::No App Store Connect API key in the environment: Koru Nightly is archived, not uploaded to TestFlight."
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$have" -ne 3 ]; then
+            echo "::error::The App Store Connect API key is incomplete: APPSTORE_API_KEY_P8, APPSTORE_API_KEY_ID and APPSTORE_API_ISSUER_ID go together"
+            exit 1
+          fi
+          echo "uploaded=true" >> "$GITHUB_OUTPUT"
+      # The image's default Xcode moves; the project names its floor.
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          test -d "$XCODE_APP" || { echo "::error::$XCODE_APP is not on this image"; exit 1; }
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+      # In the checkout, so rust-toolchain.toml's pinned toolchain gets it.
+      - name: Rust iOS target
+        run: rustup target add aarch64-apple-ios
+      # Patched crates; Xcode resolves SwiftProtobuf itself.
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # The key `koru-ci-notary` is the team's, role Admin, which cloud
+      # signing needs. Written for this job only and deleted at its end.
+      - name: Write the App Store Connect key
+        if: steps.upload.outputs.uploaded == 'true'
+        env:
+          API_KEY: ${{ secrets.APPSTORE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/ios-signing"
+          (umask 077 && mkdir -p "$dir" && printf '%s\n' "$API_KEY" > "$dir/AuthKey.p8")
+          test -s "$dir/AuthKey.p8"
+      # **The version is the release's, named by the caller** (the plan
+      # job's), stripped to MAJOR.MINOR.PATCH; the build number is the APK's
+      # versionCode for the same build (`koru-release ios-version`). The
+      # script checks the archive and, uploading, the signed .ipa: bundle
+      # ids, versions, display name, and the App Group in both signatures.
+      - name: Archive Koru Nightly and upload it to TestFlight
+        env:
+          UPLOAD: ${{ steps.upload.outputs.uploaded }}
+          VERSION: ${{ inputs.version }}
+          BUILD: ${{ inputs.build }}
+          API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+          API_ISSUER: ${{ vars.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$UPLOAD" = true ]; then
+            ./apps/ios/koru.sh testflight --version "$VERSION" --build "$BUILD" --upload \
+              --key "$RUNNER_TEMP/ios-signing/AuthKey.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER"
+            echo "Koru Nightly $VERSION, build $BUILD, is uploaded to TestFlight." >> "$GITHUB_STEP_SUMMARY"
+          else
+            ./apps/ios/koru.sh testflight --version "$VERSION" --build "$BUILD"
+            echo "Koru Nightly $VERSION, build $BUILD, is archived; without the App Store Connect key it is not uploaded." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Delete the App Store Connect key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ios-signing"

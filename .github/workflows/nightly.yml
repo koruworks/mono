@@ -13,7 +13,10 @@
 # (NIGHTLY rev2 §6); until then its disk image is a workflow artifact. Android
 # is the same: its APK is published once the release key is in the
 # environment (TECHNICAL.final D12, D13). Its feed, nightly-android-aarch64.json,
-# is what the installed Koru Nightly checks to offer the next APK (§5.5).
+# is what the installed Koru Nightly checks to offer the next APK (§5.5). iOS
+# builds every nightly too, as Koru Nightly on TestFlight rather than on this
+# page: it uploads once the App Store Connect key is in the environment, and
+# the publish job neither waits for it nor reads anything from it.
 #
 # The rules differ from ci.yml's on purpose, and only here: this workflow
 # signs and publishes, so its secrets live in the `nightly` environment, which
@@ -153,6 +156,24 @@ jobs:
     secrets: inherit
     with:
       platform: android
+      channel: nightly
+      build: ${{ needs.plan.outputs.build }}
+      version: ${{ needs.plan.outputs.version }}
+      download-base: https://github.com/${{ github.repository }}/releases/download/nightly
+
+  # iOS builds every nightly and uploads it to TestFlight, not to this
+  # release (D11, as amended 2026-11-01): Koru Nightly, do.koru.app.nightly.
+  # **Not in publish's `needs`**, so an iOS build that fails or runs long
+  # never holds back the platforms on the release page.
+  build-ios:
+    name: build-ios
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-build.yml
+    secrets: inherit
+    with:
+      platform: ios
       channel: nightly
       build: ${{ needs.plan.outputs.build }}
       version: ${{ needs.plan.outputs.version }}

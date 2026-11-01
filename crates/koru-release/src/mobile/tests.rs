@@ -51,6 +51,44 @@ fn the_version_code_fits_play_for_three_thousand_years() {
     assert!(android_version_code("999912312359").is_err());
 }
 
+#[test]
+fn the_ios_versions_are_the_numeric_core_and_the_version_code() {
+    assert_eq!(
+        ios_version("0.1.5-nightly.20261031+abc1234", "202610311530").unwrap(),
+        (
+            "0.1.5".to_owned(),
+            android_version_code("202610311530").unwrap()
+        )
+    );
+    assert_eq!(
+        ios_version("0.2.0-beta.1", "202611010105").unwrap().0,
+        "0.2.0"
+    );
+    assert_eq!(ios_version("1.10.0", "202611010105").unwrap().0, "1.10.0");
+    assert_eq!(
+        ios_version("0.1.5+abc1234", "202611010105").unwrap().0,
+        "0.1.5"
+    );
+}
+
+#[test]
+fn an_ios_version_without_three_integers_is_refused() {
+    for version in [
+        "",
+        "v0.1.5",
+        "0.1",
+        "0.1.5.1",
+        "0.01.5",
+        "0.1.x-nightly.20261031+abc1234",
+        "-nightly.20261031",
+        "0.1.99999999999",
+    ] {
+        assert!(ios_version(version, "202611010105").is_err(), "{version:?}");
+    }
+    // The build number is the APK's rule: nothing from before 2026.
+    assert!(ios_version("0.1.5", "202512312359").is_err());
+}
+
 fn parse(values: &[&str]) -> Result<PackageOptions, String> {
     PackageOptions::parse(values.iter().map(|value| value.to_string()))
 }
