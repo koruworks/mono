@@ -12138,6 +12138,36 @@ fn a_documents_diagram_viewer_takes_the_whole_window() {
     assert!(view.diagram_viewer_pane().is_none(), "the viewer closed");
 }
 
+/// The display-zoom chords and `Ctrl`+wheel zoom a lifted viewer's picture,
+/// wherever the pointer is, rather than the app: the viewer is the standing
+/// blocker, and the canvas path that used to hand them on declines under any
+/// blocker.
+#[test]
+fn the_zoom_gestures_are_the_lifted_viewers() {
+    let (mut view, mut workspace) = container();
+    let (leaf, node) = crate::leaf::tests::leaf_with_a_drawing(&mut workspace.ws, (400.0, 300.0));
+    view.tabs_mut().push(Tab::document(leaf, "Diagrams"));
+    let TabView::Leaf(Leaf::Document(document)) = &mut view.tabs_mut().active_mut().view else {
+        panic!("the document is active");
+    };
+    assert!(document.open_diagram_viewer(node));
+    view.sync_viewer_lift();
+    assert!(View::zoom_key(&mut view, ZoomIntent::In));
+    let zoom = |view: &MainView| match &view.tabs().active_tab().view {
+        TabView::Leaf(Leaf::Document(document)) => document.diagram_viewer().unwrap().zoom(),
+        _ => panic!("the document is active"),
+    };
+    assert_eq!(zoom(&view), koru_ui::media_viewer::ZOOM_STEP);
+    // Over the sidebar, outside the pane, the wheel still zooms the picture.
+    assert!(View::zoom_wheel(
+        &mut view,
+        MouseScrollDelta::LineDelta(0.0, -1.0),
+        2.0,
+        200.0
+    ));
+    assert!((zoom(&view) - 1.0).abs() < 1e-9);
+}
+
 /// The comment on `adopt_preferences` says it reaches every Settings tab. When
 /// Settings split out of Welcome, the fan-out still only named Welcome, so an
 /// already-open Settings tab kept showing the values it was minted with.
