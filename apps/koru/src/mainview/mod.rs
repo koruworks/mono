@@ -235,6 +235,26 @@ use nav::Spot;
 use new_document::{Action as NewDocumentAction, NewDocument, Purpose as PromptPurpose};
 use snapshot_prompt::{Action as SnapshotAction, SnapshotPrompt};
 use tab::{Tab, TabView};
+
+/// Which surface owns the media viewer lifted over the window
+/// (`MainView::lifted_viewer`).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum LiftedViewer {
+    /// The focused document's diagram viewer; its pane's rect.
+    Document(Rect),
+    /// A picture in the Koru AI column's chat, laid out in window
+    /// coordinates.
+    AiPane,
+    /// A picture in the focused pane's AI chat tab; its pane's rect.
+    AiTab(Rect),
+}
+
+/// A zoom gesture offered to a lifted viewer.
+#[derive(Copy, Clone, Debug)]
+enum ViewerZoom {
+    Key(ZoomIntent),
+    Wheel(MouseScrollDelta, f32, f32),
+}
 use tab_rules::KoruTabs;
 use workspace_icon::{EmojiColorPanel, Outcome as IconOutcome, Target as IconTarget};
 use workspace_rename::{Outcome as RenameOutcome, Target as RenameTarget, WorkspaceRename};
@@ -6941,6 +6961,93 @@ impl MainView {
         open.then(|| self.focused_pane_rect()).flatten()
     }
 
+    /// **Which surface's media viewer is lifted over the window**, if one
+    /// is: the focused document's diagram viewer, a picture in the Koru AI
+    /// column's chat, or one in the focused pane's AI chat tab (ADR-482).
+    /// Each is modal over the whole window, and every press, move, wheel and
+    /// key goes to its owner in the owner's own coordinates.
+    pub(super) fn lifted_viewer(&self) -> Option<LiftedViewer> {
+        if let Some(pane) = self.diagram_viewer_pane() {
+            return Some(LiftedViewer::Document(pane));
+        }
+        if self.ai_visible() && self.ai_chat.viewer_open() {
+            return Some(LiftedViewer::AiPane);
+        }
+        let open = matches!(
+            &self.panes.focused().active_tab().view,
+            TabView::AiChat(view) if view.viewer_open()
+        );
+        open.then(|| self.focused_pane_rect())
+            .flatten()
+            .map(LiftedViewer::AiTab)
+    }
+
+    /// The standing media viewer's semantics, in window coordinates.
+    pub(super) fn lifted_viewer_semantics(
+        &self,
+        lang: koru_i18n::Lang,
+    ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
+        match self.lifted_viewer()? {
+            LiftedViewer::AiPane => self.ai_chat.viewer_semantics(lang),
+            LiftedViewer::Document(_) | LiftedViewer::AiTab(_) => {
+                match &self.panes.focused().active_tab().view {
+                    TabView::Leaf(leaf) => leaf.viewer_semantics(lang),
+                    TabView::AiChat(view) => view.viewer_semantics(lang),
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Perform a viewer action a screen reader asked for on the standing
+    /// viewer.
+    pub(super) fn lifted_viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
+        match self.lifted_viewer() {
+            None => false,
+            Some(LiftedViewer::AiPane) => self.ai_chat.viewer_act(action),
+            Some(_) => match self.tabs_mut().active_view() {
+                TabView::Leaf(leaf) => leaf.viewer_act(action),
+                TabView::AiChat(view) => view.viewer_act(action),
+                _ => false,
+            },
+        }
+    }
+
+    /// The display-zoom chords and `Ctrl`+wheel, claimed by a lifted viewer
+    /// for its picture wherever the pointer and the keyboard are. `None`
+    /// when no viewer is up.
+    fn lifted_viewer_zoom(&mut self, zoom: ViewerZoom) -> Option<bool> {
+        use koru_ui::media_viewer::ZoomKey;
+        let key = |intent: ZoomIntent| match intent {
+            ZoomIntent::In => ZoomKey::In,
+            ZoomIntent::Out => ZoomKey::Out,
+            ZoomIntent::ActualSize => ZoomKey::ActualSize,
+        };
+        Some(match (self.lifted_viewer()?, zoom) {
+            (LiftedViewer::AiPane, ViewerZoom::Key(intent)) => {
+                self.ai_chat.viewer_zoom_key(key(intent))
+            }
+            (LiftedViewer::AiPane, ViewerZoom::Wheel(delta, x, y)) => {
+                self.ai_chat.viewer_zoom_wheel(delta, x, y)
+            }
+            (LiftedViewer::Document(pane) | LiftedViewer::AiTab(pane), zoom) => {
+                match (self.tabs_mut().active_view(), zoom) {
+                    (TabView::Leaf(leaf), ViewerZoom::Key(intent)) => View::zoom_key(leaf, intent),
+                    (TabView::Leaf(leaf), ViewerZoom::Wheel(delta, x, y)) => {
+                        View::zoom_wheel(leaf, delta, x - pane.x, y - pane.y)
+                    }
+                    (TabView::AiChat(view), ViewerZoom::Key(intent)) => {
+                        view.viewer_zoom_key(key(intent))
+                    }
+                    (TabView::AiChat(view), ViewerZoom::Wheel(delta, x, y)) => {
+                        view.viewer_zoom_wheel(delta, x - pane.x, y - pane.y)
+                    }
+                    _ => false,
+                }
+            }
+        })
+    }
+
     /// The focused pane's view rect, in window coordinates.
     fn focused_pane_rect(&self) -> Option<Rect> {
         let content = self.content();
@@ -6957,15 +7064,25 @@ impl MainView {
     /// frame and every press: both are cheap, and a viewer opened by the
     /// press itself must open at the window's size, not the pane's.
     pub(super) fn sync_viewer_lift(&mut self) {
+        let size = self.viewport;
+        // The Koru AI column's chat is laid out in the window's coordinates.
+        self.ai_chat.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
+            origin: (0.0, 0.0),
+            size,
+        }));
         let Some(pane) = self.focused_pane_rect() else {
             return;
         };
-        let size = self.viewport;
-        if let TabView::Leaf(leaf) = self.tabs_mut().active_view() {
-            leaf.set_viewer_lift(Some(koru_document::ViewerLift {
+        match self.tabs_mut().active_view() {
+            TabView::Leaf(leaf) => leaf.set_viewer_lift(Some(koru_document::ViewerLift {
                 origin: (pane.x, pane.y),
                 size,
-            }));
+            })),
+            TabView::AiChat(view) => view.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
+                origin: (pane.x, pane.y),
+                size,
+            })),
+            _ => {}
         }
     }
 
@@ -9186,6 +9303,19 @@ impl MainView {
             return self.error_mouse_down(x, y);
         }
         self.sync_viewer_lift();
+        // A chat's picture viewer, lifted from the Koru AI column or an AI
+        // chat tab, takes every press in the window, in its owner's
+        // coordinates.
+        match self.lifted_viewer() {
+            Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_down(x, y),
+            Some(LiftedViewer::AiTab(pane)) => {
+                let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+                if let TabView::AiChat(chat) = view {
+                    return View::mouse_down(chat, doc, x - pane.x, y - pane.y, ctrl);
+                }
+            }
+            _ => {}
+        }
         // A document's diagram viewer is modal over the window, not only
         // over its pane: a press on the dimmed chrome around that pane goes
         // to the viewer, in the pane's coordinates, so the scrim there
@@ -9622,6 +9752,17 @@ impl MainView {
         handled || opened || toasted || asked || binned || entity_changed
     }
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        // A chat's lifted picture viewer takes the release of its own press.
+        match self.lifted_viewer() {
+            Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
+            Some(LiftedViewer::AiTab(_)) => {
+                let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+                if let TabView::AiChat(chat) = view {
+                    return View::mouse_up(chat, doc);
+                }
+            }
+            _ => {}
+        }
         if self.updates_modal {
             // The release of an outside press is where the modal closes, so
             // both halves of the click are consumed here and neither reaches
@@ -10356,12 +10497,25 @@ impl View for MainView {
         // A document's lifted diagram viewer owns the pointer over the whole
         // window, for the same reason: a drag of the drawing must follow
         // the pointer past the pane, and chrome under its scrim stays quiet.
-        if let Some(pane) = self.diagram_viewer_pane() {
-            self.tooltip.set_hover(None, Instant::now());
-            let (lx, ly) = (x - pane.x, y - pane.y);
-            if let TabView::Leaf(leaf) = self.tabs_mut().active_view() {
-                return Leaf::mouse_move(leaf, lx, ly);
+        match self.lifted_viewer() {
+            Some(LiftedViewer::Document(pane)) => {
+                self.tooltip.set_hover(None, Instant::now());
+                let (lx, ly) = (x - pane.x, y - pane.y);
+                if let TabView::Leaf(leaf) = self.tabs_mut().active_view() {
+                    return Leaf::mouse_move(leaf, lx, ly);
+                }
             }
+            Some(LiftedViewer::AiPane) => {
+                self.tooltip.set_hover(None, Instant::now());
+                return self.ai_chat.mouse_move(x, y);
+            }
+            Some(LiftedViewer::AiTab(pane)) => {
+                self.tooltip.set_hover(None, Instant::now());
+                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                    return View::mouse_move(chat, x - pane.x, y - pane.y);
+                }
+            }
+            None => {}
         }
         // Modal: own the pointer so chrome under the scrim does not light up or
         // change the cursor (I-beam, sidebar ColResize).
@@ -10405,6 +10559,15 @@ impl View for MainView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        match self.lifted_viewer() {
+            Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_double_click(x, y),
+            Some(LiftedViewer::AiTab(pane)) => {
+                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                    return View::mouse_double_click(chat, ws, x - pane.x, y - pane.y);
+                }
+            }
+            _ => {}
+        }
         if self.updates_modal {
             return true;
         }
@@ -10653,11 +10816,24 @@ impl View for MainView {
         // The viewer takes the wheel wherever the pointer is: the window is
         // its while it is up, and neither the pane beside it nor the sidebar
         // scrolls under it.
-        if self.diagram_viewer_pane().is_some() {
-            if let TabView::Leaf(leaf) = self.tabs_mut().active_view() {
-                Leaf::scroll_by(leaf, delta);
+        match self.lifted_viewer() {
+            Some(LiftedViewer::Document(_)) => {
+                if let TabView::Leaf(leaf) = self.tabs_mut().active_view() {
+                    Leaf::scroll_by(leaf, delta);
+                }
+                return;
             }
-            return;
+            Some(LiftedViewer::AiPane) => {
+                self.ai_chat.scroll_by(delta);
+                return;
+            }
+            Some(LiftedViewer::AiTab(_)) => {
+                if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
+                    View::scroll_by(chat, delta);
+                }
+                return;
+            }
+            None => {}
         }
         if !self.content().contains(px, py) {
             return;
@@ -10691,10 +10867,16 @@ impl View for MainView {
     }
 
     fn zoom_wheel(&mut self, delta: MouseScrollDelta, x: f32, y: f32) -> bool {
+        if let Some(claimed) = self.lifted_viewer_zoom(ViewerZoom::Wheel(delta, x, y)) {
+            return claimed;
+        }
         self.canvas_zoom_wheel(delta, x, y)
     }
 
     fn zoom_key(&mut self, intent: ZoomIntent) -> bool {
+        if let Some(claimed) = self.lifted_viewer_zoom(ViewerZoom::Key(intent)) {
+            return claimed;
+        }
         self.canvas_zoom_key(intent)
     }
 
@@ -10735,6 +10917,15 @@ impl View for MainView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        match self.lifted_viewer() {
+            Some(LiftedViewer::AiPane) => return self.ai_chat.cursor_icon(),
+            Some(LiftedViewer::AiTab(_)) => {
+                if let TabView::AiChat(chat) = &self.panes.focused().active_tab().view {
+                    return View::cursor_icon(chat);
+                }
+            }
+            _ => {}
+        }
         if self.updates_modal {
             return CursorIcon::Default;
         }
@@ -14086,7 +14277,18 @@ impl MainView {
             // A document's own modal, never a layer of this container's: the
             // leaf answers it inside its own `key`, which the fall-through
             // below reaches. Named so adding a kind stays a compile error.
-            Blockers::Modal(ModalKind::DiagramViewer) => {}
+            // A chat's picture viewer answers every key while it stands; a
+            // document's is answered by the leaf in its own `key`.
+            Blockers::Modal(ModalKind::MediaViewer) => match self.lifted_viewer() {
+                Some(LiftedViewer::AiPane) => return self.ai_chat.key(key, text, mods),
+                Some(LiftedViewer::AiTab(_)) => {
+                    let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+                    if let TabView::AiChat(chat) = view {
+                        return View::key(chat, doc, key, text, mods);
+                    }
+                }
+                _ => {}
+            },
             Blockers::None => {}
         }
         // **Escape during the countdown aborts.** Every other key keeps

@@ -605,6 +605,10 @@ impl WindowApp for ChatApp {
 
     fn scroll_by(&mut self, delta: f32, mods: ModifiersState) -> bool {
         if mods.control_key() || mods.super_key() {
+            // An open picture takes the zoom wheel; the window keeps its own.
+            if self.view.viewer_zoom_wheel(delta) {
+                return true;
+            }
             return self.rezoom(self.zoom() + delta.signum() * 0.1);
         }
         self.view.scroll_by(delta)
@@ -627,7 +631,7 @@ impl WindowApp for ChatApp {
         } else {
             false
         };
-        if (mods.control_key() || mods.super_key()) && !mods.alt_key() {
+        if (mods.control_key() || mods.super_key()) && !mods.alt_key() && !self.view.viewer_open() {
             let zoom = match key {
                 Key::Character(value) if value.as_str() == "+" || value.as_str() == "=" => {
                     Some(self.zoom() + 0.1)
@@ -1039,7 +1043,26 @@ impl ChatView {
         self.save_pending_credential() || changed
     }
 
+    /// Whether the chat's picture viewer is up. It covers the whole window,
+    /// caption included, so while it is up every press is its own.
+    fn viewer_open(&self) -> bool {
+        self.settings.is_none() && self.surface.viewer_open()
+    }
+
+    /// `Ctrl`+wheel over an open picture zooms the picture.
+    fn viewer_zoom_wheel(&mut self, delta: f32) -> bool {
+        if !self.viewer_open() {
+            return false;
+        }
+        let wheel = MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, delta as f64));
+        let (x, y) = self.pointer;
+        self.surface.viewer_zoom_wheel(wheel, x, y)
+    }
+
     fn mouse_down(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
+        if self.viewer_open() {
+            return self.surface.mouse_down(x, y);
+        }
         let changed = if self.window_menu.is_some() || y <= theme::CAPTION_H {
             self.caption_mouse_down(engine, x, y)
         } else if let Some(settings) = self.settings.as_mut() {
@@ -1072,6 +1095,9 @@ impl ChatView {
     }
 
     fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
+        if self.viewer_open() {
+            return self.surface.mouse_double_click(x, y);
+        }
         if self.caption_hit(x, y) == Some(CaptionHit::Caption) {
             self.window_request = Some(WindowRequest::ToggleMaximise);
             true
@@ -1110,9 +1136,18 @@ impl ChatView {
             width,
             (height - theme::CAPTION_H).max(0.0),
         ));
+        // The surface is laid out in the window's coordinates, so a picture
+        // it opens is lifted over the whole window, caption included.
+        self.surface.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
+            origin: (0.0, 0.0),
+            size: (width, height),
+        }));
     }
 
     fn cursor_icon_at(&self, x: f32, y: f32) -> CursorIcon {
+        if self.viewer_open() {
+            return self.surface.cursor_icon();
+        }
         if self
             .window_menu
             .as_ref()
@@ -1177,6 +1212,10 @@ impl ChatView {
             #[cfg(not(windows))]
             let enabled = [true; 5];
             menu.draw(canvas, root, engine, self.viewport, &enabled);
+        }
+        // The chat's picture viewer, last, over the caption too.
+        if self.settings.is_none() {
+            self.surface.draw_lifted_viewer(canvas, root);
         }
     }
 

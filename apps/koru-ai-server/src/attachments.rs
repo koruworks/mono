@@ -95,9 +95,9 @@ pub(crate) struct SweepCounts {
     pub staging: u64,
 }
 
-/// One attachment folder a branch links into its own chat.
+/// One attachment folder a branch copies into its own chat.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BranchLink {
+pub(crate) struct BranchFolder {
     pub from: (ChatId, ChatAttachmentId),
     pub to: (ChatId, ChatAttachmentId),
 }
@@ -299,14 +299,15 @@ impl AttachmentStore {
         remove_dir_if_present(&self.chat_dir(chat));
     }
 
-    /// Hard-link each source folder's files into its branch folder, falling
-    /// back to a copy where a link is refused. All or nothing: on a failure
-    /// every folder this call made is removed.
-    pub(crate) fn link_for_branch(&self, links: &[BranchLink]) -> io::Result<()> {
+    /// Copy each source folder's files into its branch folder. A copy, not a
+    /// hard link: the two chats then hold separate files, so a person or an
+    /// agent editing one chat's file never changes the other's (D14). All or
+    /// nothing: on a failure every folder this call made is removed.
+    pub(crate) fn copy_for_branch(&self, folders: &[BranchFolder]) -> io::Result<()> {
         let mut made = Vec::new();
-        for link in links {
-            let from = self.attachment_dir(link.from.0, link.from.1);
-            let to = self.attachment_dir(link.to.0, link.to.1);
+        for folder in folders {
+            let from = self.attachment_dir(folder.from.0, folder.from.1);
+            let to = self.attachment_dir(folder.to.0, folder.to.1);
             if to.exists() {
                 remove_all(&made);
                 return Err(io::Error::new(
@@ -315,7 +316,7 @@ impl AttachmentStore {
                 ));
             }
             made.push(to.clone());
-            if let Err(error) = link_tree(&from, &to) {
+            if let Err(error) = copy_tree(&from, &to) {
                 remove_all(&made);
                 return Err(error);
             }
@@ -600,15 +601,23 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-fn link_tree(from: &Path, to: &Path) -> io::Result<()> {
+/// Copy a folder's files, each synced like a store's, so a branch's
+/// attachments are as durable as the originals once it commits.
+fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
         if entry.file_type()?.is_dir() {
-            link_tree(&entry.path(), &target)?;
-        } else if fs::hard_link(entry.path(), &target).is_err() {
-            fs::copy(entry.path(), &target)?;
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            let mut source = fs::File::open(entry.path())?;
+            let mut copy = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            io::copy(&mut source, &mut copy)?;
+            copy.sync_all()?;
         }
     }
     Ok(())
@@ -694,7 +703,7 @@ fn storage_failure_message() -> Failure {
 // ----- the cleanup thread -------------------------------------------------
 
 /// Work on attachment folders the dispatcher hands off rather than doing:
-/// removals after a delete, the start-up sweep, and a branch's links.
+/// removals after a delete, the start-up sweep, and a branch's copies.
 pub(crate) enum CleanupJob {
     RemoveChat(ChatId),
     Sweep {
@@ -702,14 +711,14 @@ pub(crate) enum CleanupJob {
         started: SystemTime,
         staged_removed: u64,
     },
-    LinkBranch {
-        links: Vec<BranchLink>,
+    CopyBranch {
+        folders: Vec<BranchFolder>,
         done: Box<dyn FnOnce(io::Result<()>) + Send>,
     },
 }
 
 /// One thread, `koru-ai-attachments`, working through [`CleanupJob`]s in
-/// order. Order matters: a branch's links and a later removal of the same
+/// order. Order matters: a branch's copies and a later removal of the same
 /// chat run one after the other, never interleaved.
 pub(crate) struct Cleanup {
     sender: Option<Sender<CleanupJob>>,
@@ -777,7 +786,7 @@ fn run_cleanup(store: &AttachmentStore, jobs: &Receiver<CleanupJob>) {
                     );
                 }
             }
-            CleanupJob::LinkBranch { links, done } => done(store.link_for_branch(&links)),
+            CleanupJob::CopyBranch { folders, done } => done(store.copy_for_branch(&folders)),
         }
     }
 }

@@ -5414,9 +5414,9 @@ fn the_viewer_opens_only_on_a_drawing() {
     let (_ws, mut view, node) = drawn_diagram_document();
     assert!(view.open_diagram_viewer(node));
     assert!(view.diagram_viewer_open());
-    assert_eq!(view.blockers(), Blockers::Modal(ModalKind::DiagramViewer));
+    assert_eq!(view.blockers(), Blockers::Modal(ModalKind::MediaViewer));
     let viewer = view.diagram_viewer().expect("open");
-    assert_eq!(viewer.node(), node);
+    assert_eq!(view.diagram_viewer_node(), Some(node));
     assert_eq!(viewer.zoom(), 1.0, "400 × 300 fits a 900 × 560 window");
 }
 
@@ -5467,7 +5467,7 @@ fn a_diagram_double_click_opens_without_a_third_press() {
         "the second click opens immediately"
     );
     assert_eq!(view.editor.view.wants_open_diagram, None);
-    assert_eq!(view.diagram_viewer().unwrap().node(), node);
+    assert_eq!(view.diagram_viewer_node(), Some(node));
 }
 
 /// The editor's *Copy image* control asks the same way, and the drawing it
@@ -5557,7 +5557,7 @@ fn zoom_gestures_are_the_viewers_while_it_is_up() {
     ));
     assert_eq!(
         view.diagram_viewer().unwrap().zoom(),
-        crate::diagram_viewer::ZOOM_STEP
+        koru_ui::media_viewer::ZOOM_STEP
     );
     assert!(View::zoom_wheel(
         &mut view,

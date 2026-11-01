@@ -4,6 +4,10 @@
 //! drawing is empty — the viewer never looks inside one, only at its size —
 //! and the window is 900 × 600, so the stage above the toolbar's band is
 //! 900 × 516 and the numbers below can be checked by hand.
+//!
+//! The diagram tests came with the viewer from `koru-document`
+//! (`diagram_viewer`) and assert what they asserted there; the bitmap stage,
+//! the action set and the semantics are tested after them.
 
 use std::sync::Arc;
 
@@ -38,8 +42,15 @@ fn prepared(width: f64, height: f64) -> Arc<PreparedDiagram> {
     })))
 }
 
-fn viewer(width: f64, height: f64) -> DiagramViewer {
-    DiagramViewer::open(NodeId::new(), prepared(width, height), VIEWPORT)
+fn viewer(width: f64, height: f64) -> MediaViewer {
+    MediaViewer::open(
+        Stage::Diagram(prepared(width, height)),
+        ViewerOptions {
+            actions: ActionSet::DIAGRAM,
+            title: String::new(),
+        },
+        VIEWPORT,
+    )
 }
 
 fn named(key: NamedKey) -> Key {
@@ -61,7 +72,7 @@ fn close_to(a: f32, b: f32) -> bool {
 #[test]
 fn the_stage_stops_above_the_toolbars_band() {
     let v = viewer(400.0, 300.0);
-    let stage = v.stage();
+    let stage = v.stage_rect();
     assert_eq!((stage.x, stage.y, stage.w), (0.0, 0.0, 900.0));
     assert_eq!(stage.h, STAGE_H);
     let bar = v.toolbar_rect();
@@ -80,7 +91,7 @@ fn opens_at_natural_size_when_it_fits_and_fitted_when_it_does_not() {
     let small = viewer(400.0, 300.0);
     assert_eq!(small.zoom(), 1.0);
     assert_eq!(small.pan(), (0.0, 0.0));
-    let rect = small.drawing_rect();
+    let rect = small.picture_rect();
     assert!(
         close_to(rect.x, 250.0) && close_to(rect.y, (STAGE_H - 300.0) * 0.5),
         "{rect:?}"
@@ -91,7 +102,7 @@ fn opens_at_natural_size_when_it_fits_and_fitted_when_it_does_not() {
     // 804 / 2000 is the tighter of the two fits (420 / 1000 the other).
     assert!((large.zoom() - 0.402).abs() < 1e-6, "{}", large.zoom());
     assert_eq!(large.pan(), (0.0, 0.0));
-    let rect = large.drawing_rect();
+    let rect = large.picture_rect();
     assert!(
         rect.x >= FIT_MARGIN - 0.01 && rect.y >= FIT_MARGIN - 0.01,
         "{rect:?}"
@@ -145,7 +156,7 @@ fn zooming_keeps_the_point_under_the_anchor_still() {
     // Fits: centred, anchor or no anchor.
     let mut v = viewer(400.0, 300.0);
     v.zoom_to(ZOOM_STEP, (250.0, 150.0));
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(
         close_to(rect.x, 200.0) && close_to(rect.y, (STAGE_H - 375.0) * 0.5),
         "{rect:?}"
@@ -156,13 +167,13 @@ fn zooming_keeps_the_point_under_the_anchor_still() {
     // (650, 342) of the drawing; at 2× it is still under (100, 100).
     let mut v = viewer(2000.0, 1000.0);
     v.actual_size();
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(
         close_to(rect.x, -550.0) && close_to(rect.y, -242.0),
         "{rect:?}"
     );
     v.zoom_to(2.0, (100.0, 100.0));
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(
         close_to(rect.x, -1200.0) && close_to(rect.y, -584.0),
         "{rect:?}"
@@ -172,7 +183,7 @@ fn zooming_keeps_the_point_under_the_anchor_still() {
     // And around the stage's centre, the drawing's centre stays put.
     let mut v = viewer(2000.0, 1000.0);
     v.zoom_to(1.0, (450.0, STAGE_H * 0.5));
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(close_to(rect.x + rect.w * 0.5, 450.0), "{rect:?}");
     assert!(close_to(rect.y + rect.h * 0.5, STAGE_H * 0.5), "{rect:?}");
 }
@@ -202,14 +213,14 @@ fn the_zoom_wheel_zooms_around_the_pointer() {
     v.actual_size();
     v.zoom_wheel(MouseScrollDelta::LineDelta(0.0, 1.0), 100.0, 100.0);
     assert_eq!(v.zoom(), ZOOM_STEP);
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(
         close_to(rect.x, -712.5) && close_to(rect.y, -327.5),
         "{rect:?}"
     );
     v.zoom_wheel(MouseScrollDelta::LineDelta(0.0, -1.0), 100.0, 100.0);
     assert!((v.zoom() - 1.0).abs() < 1e-9);
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(
         close_to(rect.x, -550.0) && close_to(rect.y, -242.0),
         "back where it was: {rect:?}"
@@ -229,12 +240,12 @@ fn the_zoom_wheel_zooms_around_the_pointer() {
 #[test]
 fn the_zoom_chords_are_the_viewers() {
     let mut v = viewer(400.0, 300.0);
-    v.zoom_key(ZoomIntent::In);
+    v.zoom_key(ZoomKey::In);
     assert_eq!(v.zoom(), ZOOM_STEP);
-    v.zoom_key(ZoomIntent::Out);
+    v.zoom_key(ZoomKey::Out);
     assert_eq!(v.zoom(), 1.0);
-    v.zoom_key(ZoomIntent::In);
-    v.zoom_key(ZoomIntent::ActualSize);
+    v.zoom_key(ZoomKey::In);
+    v.zoom_key(ZoomKey::ActualSize);
     assert_eq!(v.zoom(), 1.0);
 }
 
@@ -252,11 +263,11 @@ fn a_drag_is_clamped_to_the_overflow() {
     assert_eq!(v.mouse_down(450.0, 300.0), Outcome::Handled);
     assert!(v.mouse_move(450.0 + 5000.0, 300.0 + 5000.0));
     assert_eq!(v.pan(), (550.0, 242.0));
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(close_to(rect.x, 0.0) && close_to(rect.y, 0.0), "{rect:?}");
     assert!(v.mouse_move(450.0 - 5000.0, 300.0 - 5000.0));
     assert_eq!(v.pan(), (-550.0, -242.0));
-    let rect = v.drawing_rect();
+    let rect = v.picture_rect();
     assert!(close_to(rect.x + rect.w, 900.0), "{rect:?}");
     assert!(close_to(rect.y + rect.h, STAGE_H), "{rect:?}");
     assert!(
@@ -468,10 +479,10 @@ fn hover_over_a_button_is_reported_once_each_way() {
     let close = v.buttons().buttons()[5].rect();
     let (x, y) = (close.x + close.w * 0.5, close.y + close.h * 0.5);
     assert!(v.mouse_move(x, y));
-    assert_eq!(v.cursor(), koru_ui::cursor::PRESS);
+    assert_eq!(v.cursor(), crate::cursor::PRESS);
     assert!(!v.mouse_move(x + 1.0, y));
     assert!(v.mouse_move(10.0, 10.0));
-    assert_eq!(v.cursor(), koru_ui::cursor::IDLE);
+    assert_eq!(v.cursor(), crate::cursor::IDLE);
     assert!(!v.mouse_move(11.0, 10.0));
 }
 
@@ -564,5 +575,237 @@ fn a_double_click_toggles_natural_size_and_fit() {
     assert!(
         (v.zoom() - 0.402).abs() < 1e-6,
         "the bar is not the drawing"
+    );
+}
+
+// -------------------------------------------------------------- bitmap
+
+/// A picture `w` × `h` pixels, one colour; its levels are built here as a
+/// worker would build them.
+fn picture(w: u32, h: u32) -> Arc<ViewerImage> {
+    let rgba = image::RgbaImage::from_pixel(w, h, image::Rgba([40, 80, 120, 255]));
+    Arc::new(ViewerImage::from_rgba(rgba, (w, h)).expect("a picture"))
+}
+
+fn bitmap_viewer(w: u32, h: u32) -> MediaViewer {
+    MediaViewer::open(
+        Stage::Bitmap {
+            image: picture(w, h),
+        },
+        ViewerOptions {
+            actions: ActionSet::PICTURE,
+            title: "shot.png".into(),
+        },
+        VIEWPORT,
+    )
+}
+
+/// A picture is measured in its own pixels: one that fits opens at 100%,
+/// centred and unpadded; one that does not opens fitted, as a drawing does.
+#[test]
+fn a_picture_opens_at_natural_size_or_fitted() {
+    let small = bitmap_viewer(400, 300);
+    assert_eq!(small.zoom(), 1.0);
+    let rect = small.picture_rect();
+    assert!(
+        close_to(rect.x, 250.0) && close_to(rect.y, (STAGE_H - 300.0) * 0.5),
+        "{rect:?}"
+    );
+    assert_eq!(
+        small.card_rect(),
+        rect,
+        "a bitmap sits on its card unpadded"
+    );
+
+    let large = bitmap_viewer(4000, 2000);
+    // 804 / 4000 against 420 / 2000: the width is the tighter fit.
+    assert!((large.zoom() - 0.201).abs() < 1e-6, "{}", large.zoom());
+    let rect = large.picture_rect();
+    assert!(rect.x >= FIT_MARGIN - 0.01 && rect.y + rect.h <= STAGE_H - FIT_MARGIN + 0.01);
+    assert!(!large.draggable());
+}
+
+/// 100% is one picture pixel to one logical pixel, the wheel zooms around
+/// the pointer, and a drag stops where the picture's edge meets the stage's.
+#[test]
+fn a_picture_zooms_around_the_anchor_and_pans_within_its_overflow() {
+    let mut v = bitmap_viewer(2000, 1000);
+    v.actual_size();
+    let rect = v.picture_rect();
+    assert_eq!((rect.w, rect.h), (2000.0, 1000.0));
+    v.zoom_to(2.0, (100.0, 100.0));
+    let rect = v.picture_rect();
+    assert!(
+        close_to(rect.x, -1200.0) && close_to(rect.y, -584.0),
+        "the point under (100, 100) stayed there: {rect:?}"
+    );
+    v.actual_size();
+    v.mouse_down(450.0, 300.0);
+    v.mouse_move(5000.0, 5000.0);
+    v.mouse_up();
+    assert_eq!(v.pan(), (550.0, 242.0));
+    let rect = v.picture_rect();
+    assert!(close_to(rect.x, 0.0) && close_to(rect.y, 0.0), "{rect:?}");
+}
+
+/// The levels halve from the base down to a thumbnail's size; a picture
+/// larger than the GPU's texture limit is capped, keeping its shape and its
+/// natural size.
+#[test]
+fn a_picture_builds_halving_levels_and_is_capped_to_the_texture() {
+    let image = picture(1000, 500);
+    assert_eq!(image.natural_size(), (1000, 500));
+    let widths: Vec<u32> = (0..image.levels())
+        .map(|level| image.level(level).image.width)
+        .collect();
+    assert_eq!(widths, vec![1000, 500, 250, 125]);
+
+    let wide = picture(MAX_TEXTURE_EDGE + 808, 90);
+    assert_eq!(wide.natural_size(), (MAX_TEXTURE_EDGE + 808, 90));
+    let base = wide.level(0);
+    assert_eq!(base.image.width, MAX_TEXTURE_EDGE);
+    assert_eq!(base.image.height, 81, "the shape is kept");
+}
+
+/// Below 100% the smallest level still at least as wide as the picture on
+/// screen is drawn — never one stretched up; at 100% and above, the base.
+#[test]
+fn the_level_drawn_is_the_smallest_that_still_covers_the_screen() {
+    let image = picture(1000, 500);
+    assert_eq!(image.level_for(1000.0), 0);
+    assert_eq!(image.level_for(2000.0), 0, "above 100%: the base");
+    assert_eq!(image.level_for(501.0), 0, "500 would be stretched");
+    assert_eq!(image.level_for(500.0), 1);
+    assert_eq!(image.level_for(260.0), 1);
+    assert_eq!(image.level_for(250.0), 2);
+    assert_eq!(image.level_for(10.0), 3, "the smallest kept");
+}
+
+/// Decoding sniffs the format and keeps the file's size; bytes that are
+/// not a picture, or one over the limits, decode to nothing.
+#[test]
+fn decoding_reads_a_picture_and_refuses_what_is_not_one() {
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(300, 200))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let decoded = ViewerImage::decode(&png, image::Limits::default()).expect("a PNG");
+    assert_eq!(decoded.natural_size(), (300, 200));
+    assert!(ViewerImage::decode(b"MZ not a picture", image::Limits::default()).is_none());
+    let mut tight = image::Limits::default();
+    tight.max_image_width = Some(100);
+    assert!(ViewerImage::decode(&png, tight).is_none());
+}
+
+// ----------------------------------------------------------- actions
+
+/// A picture's toolbar is zoom, fit, open in external app and close: no
+/// copy or save button, and neither chord answers. A diagram's has no open.
+#[test]
+fn the_action_set_decides_the_toolbar_and_the_chords() {
+    let mut v = bitmap_viewer(400, 300);
+    let actions: Vec<Action> = v
+        .semantics(Lang::En)
+        .buttons
+        .iter()
+        .map(|b| b.action)
+        .collect();
+    assert_eq!(
+        actions,
+        vec![
+            Action::ZoomOut,
+            Action::ZoomIn,
+            Action::Fit,
+            Action::OpenExternally,
+            Action::Close
+        ]
+    );
+    let open = v.buttons().buttons()[3].rect();
+    assert_eq!(
+        v.mouse_down(open.x + open.w * 0.5, open.y + open.h * 0.5),
+        Outcome::OpenExternally
+    );
+    assert_eq!(
+        v.key(&ch("c"), Some("c"), koru_keys::PRIMARY),
+        Outcome::Handled,
+        "no copy on offer"
+    );
+    assert_eq!(v.copy_glyph(), icons::COPY, "and nothing confirmed");
+    assert_eq!(
+        v.key(
+            &ch("x"),
+            Some("x"),
+            koru_keys::PRIMARY | ModifiersState::SHIFT
+        ),
+        Outcome::Handled,
+        "no save on offer"
+    );
+    assert_eq!(v.act(Action::Copy), Outcome::Handled);
+    assert_eq!(v.act(Action::SaveAs), Outcome::Handled);
+
+    // Five buttons, two gaps fewer than a diagram's six and three.
+    let mut diagram = viewer(400.0, 300.0);
+    assert!(v.toolbar_rect().w < diagram.toolbar_rect().w);
+    assert_eq!(diagram.act(Action::OpenExternally), Outcome::Handled);
+}
+
+/// The actual-size action is the zoom readout's; it has no button but
+/// answers a screen reader's press.
+#[test]
+fn actual_size_is_an_action_without_a_button() {
+    let mut v = bitmap_viewer(4000, 2000);
+    assert!(v.zoom() < 1.0);
+    assert!(
+        !v.buttons()
+            .buttons()
+            .iter()
+            .any(|button| button.glyph() == icons::MAGNIFYING_GLASS_PLUS)
+    );
+    assert_eq!(v.act(Action::ActualSize), Outcome::Handled);
+    assert_eq!(v.zoom(), 1.0);
+    assert_eq!(v.pan(), (0.0, 0.0));
+}
+
+// --------------------------------------------------------- semantics
+
+/// Every button on offer is labelled in every language, at the rect it is
+/// drawn at; the readout speaks the zoom; a picture is named by its title
+/// and its size, a diagram with no title by its kind.
+#[test]
+fn semantics_label_every_button_in_every_language() {
+    let picture_viewer = bitmap_viewer(1920, 1080);
+    let diagram = viewer(400.0, 300.0);
+    for lang in Lang::ALL {
+        for v in [&picture_viewer, &diagram] {
+            let semantics = v.semantics(lang);
+            assert!(!semantics.name.is_empty(), "{lang:?}");
+            let drawn = v.buttons();
+            assert_eq!(semantics.buttons.len(), drawn.buttons().len());
+            for (control, button) in semantics.buttons.iter().zip(drawn.buttons()) {
+                assert!(
+                    !control.label.trim().is_empty(),
+                    "{lang:?} {:?}",
+                    control.action
+                );
+                assert_eq!(control.rect, button.rect());
+            }
+            let zoom = semantics.zoom.value.as_deref().expect("the zoom is spoken");
+            assert!(zoom.contains(&format!("{}", (v.zoom() * 100.0).round() as i64)));
+            assert_eq!(semantics.zoom.action, Action::ActualSize);
+        }
+        let semantics = picture_viewer.semantics(lang);
+        assert_eq!(semantics.name, "shot.png");
+        let size = semantics.description.expect("a picture's size");
+        assert!(size.contains("1920") && size.contains("1080"), "{size}");
+        assert!(diagram.semantics(lang).description.is_none());
+    }
+    assert_eq!(diagram.semantics(Lang::En).name, "Diagram");
+    assert_eq!(
+        picture_viewer.semantics(Lang::En).buttons[3].label,
+        "Open in external app"
+    );
+    assert_eq!(
+        picture_viewer.semantics(Lang::En).zoom.value.unwrap(),
+        "Zoom 39%"
     );
 }

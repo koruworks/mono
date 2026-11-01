@@ -81,6 +81,11 @@ pub(crate) enum Layer {
     ReminderOverlay,
     ReminderManagement,
     ReminderCreation,
+    /// The shared media viewer a tab or the Koru AI column lifted over the
+    /// window (ADR-482). Last: it is drawn under the container's menus and
+    /// modals, which still stand above everything a tab owns, and the keys
+    /// it claims are routed to its owner by the arm that names it.
+    MediaViewer,
 }
 
 impl Layer {
@@ -91,7 +96,7 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 20] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::FontPicker,
         Self::MoveTo,
         Self::Search,
@@ -112,6 +117,7 @@ impl Layer {
         Self::ReminderOverlay,
         Self::ReminderManagement,
         Self::ReminderCreation,
+        Self::MediaViewer,
     ];
 
     /// What this layer *is*, to a caller that only wants to know whether it can
@@ -142,6 +148,7 @@ impl Layer {
             Self::ReminderOverlay => Blockers::Modal(ModalKind::ReminderOverlay),
             Self::ReminderManagement => Blockers::Modal(ModalKind::ReminderManagement),
             Self::ReminderCreation => Blockers::Prompt(PromptKind::ReminderCreation),
+            Self::MediaViewer => Blockers::Modal(ModalKind::MediaViewer),
         }
     }
 }
@@ -208,6 +215,7 @@ impl MainView {
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
+            Layer::MediaViewer => self.lifted_viewer().is_some(),
         }
     }
 

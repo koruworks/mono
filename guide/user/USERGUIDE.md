@@ -1289,6 +1289,25 @@ reload or a restart: it is kept with the chat on this computer, never in Koru
 Cloud, and deleting the chat deletes it. An OpenAI, Ollama or Koru AI chat says
 that pictures go to local agents only.
 
+**Send a file.** Copy files in Explorer or Finder and paste them into the
+chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
+an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
+shows as a chip with its icon, name and size, and the agent is told where it
+is. Click a chip to open the file in the app your system uses for it; text and
+source code always open in your text editor, so a script never runs from the
+chat. Any other type — an `.exe`, a `.zip` — is refused, with one line naming
+it, and a file that only claims an allowed type is refused when Koru stores
+it. Pasting files is not available on Linux yet.
+
+**Look at a picture closely.** Click a picture on a message, or in the strip
+above the text, and it opens over the whole window — at its own size when it
+fits, fitted when it does not — in the same view a diagram opens in: zoom with
+`−` and `+`, `Ctrl`+wheel or `Ctrl+=`/`Ctrl+-`, `0` for its own size, drag or
+wheel to move around, double-click to switch between its own size and fitted.
+*Open in external app* on its toolbar opens it in Photos or whatever your system
+uses for pictures. `Esc`, the `×`, or a click on the dimmed window closes it.
+A screen reader hears the picture's name and size, the zoom, and the buttons.
+
 Long conversations use the same thin overlay scrollbar as documents: its
 wider invisible gutter pages when clicked, the thumb drags without jumping,
 hover or drag strengthens its colour, and the pointer becomes the vertical
@@ -4220,7 +4239,8 @@ dragged, and never hides under the toolbar. The view takes the whole
 window, sidebar and all, so a large drawing is seen as large as the window
 allows. The view's copy control puts a picture on the
 clipboard and its save control saves one; `Esc`, the `×`, or a click
-anywhere on the dimmed window closes it.
+anywhere on the dimmed window closes it. A screen reader hears the
+drawing's title (or *Diagram*), the zoom, and each control's name.
 
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced

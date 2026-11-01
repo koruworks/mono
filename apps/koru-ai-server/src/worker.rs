@@ -924,12 +924,12 @@ enum Envelope {
         chat: ChatId,
         outcome: EndOutcome,
     },
-    /// The cleanup thread linked (or could not link) a branch's attachment
+    /// The cleanup thread copied (or could not copy) a branch's attachment
     /// folders; the branch is committed or dropped on this.
-    BranchLinked {
+    BranchCopied {
         context: RequestContext,
         copy: Box<BranchCopy>,
-        linked: bool,
+        copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
 }
@@ -1246,9 +1246,9 @@ struct WorkerState {
     ollama_controls: HashMap<String, ReasoningControl>,
     /// Where chat attachments live; the dispatcher only computes paths.
     attachments: AttachmentStore,
-    /// The thread that removes attachment folders and links a branch's.
+    /// The thread that removes attachment folders and copies a branch's.
     cleanup: Cleanup,
-    /// Branches whose attachment folders are being linked.
+    /// Branches whose attachment folders are being copied.
     branching: HashSet<ChatId>,
 }
 
@@ -1459,12 +1459,12 @@ fn run_worker(
             Ok(Envelope::ChatSessionsEnded { chat, outcome }) => {
                 state.on_chat_sessions_ended(chat, outcome)
             }
-            Ok(Envelope::BranchLinked {
+            Ok(Envelope::BranchCopied {
                 context,
                 copy,
-                linked,
+                copied,
                 reply,
-            }) => state.on_branch_linked(context, copy, linked, reply),
+            }) => state.on_branch_copied(context, copy, copied, reply),
             Ok(Envelope::PullFinished(id)) => {
                 if state
                     .ollama_pull
@@ -2735,7 +2735,7 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         tool_policy.chat_id = chat.id;
-        let (attachments, links) = self.branch_attachments(source_chat, chat.id, &message_ids)?;
+        let (attachments, folders) = self.branch_attachments(source_chat, chat.id, &message_ids)?;
         let copy = BranchCopy {
             chat,
             tool_policy,
@@ -2745,8 +2745,8 @@ impl WorkerState {
             pinned_documents,
             attachments,
         };
-        if !links.is_empty() {
-            return Ok(BranchPlan::Link(Box::new(copy), links));
+        if !folders.is_empty() {
+            return Ok(BranchPlan::Copy(Box::new(copy), folders));
         }
         self.repository.create_branch(&copy).map_err(ai_failure)?;
         self.read_chat(context, request.branch_chat_id)
