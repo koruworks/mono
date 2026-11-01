@@ -7631,6 +7631,7 @@ name = "koru-workspace-host"
 version = "0.0.3"
 dependencies = [
  "accesskit",
+ "accesskit_consumer 0.35.0",
  "base64 0.22.1",
  "chrono",
  "directories",

@@ -27,12 +27,14 @@
 //! area's top-left**. [`build`] is the one place that multiplies by the scale
 //! factor, and no other part of this feature touches a scale.
 
-use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 
 use accesskit::{Action, Node, NodeId, Rect, Role, TextSelection, Tree, TreeId, TreeUpdate};
 use koru_draw::geometry::Rect as LogicalRect;
 
 use super::identity::{Occurrence, WindowSlot};
+use super::repair::{self, Repair};
 
 /// The runs of one text control, published or merely named.
 ///
@@ -465,6 +467,10 @@ pub struct Projection {
     /// the consumer drops an unreachable node by itself — so they are here for
     /// the occurrence map, which is what a later action is resolved against.
     pub retired: Vec<NodeId>,
+    /// What [`repair`] had to change so AccessKit would accept the update.
+    /// Empty unless a view published something twice, which is a bug in that
+    /// view; the window survives it instead of panicking. See [`super::repair`].
+    pub repairs: Vec<Repair>,
 }
 
 /// An update with nothing in it, so [`build`] can fill a value in as it goes.
@@ -502,6 +508,7 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
             .iter()
             .map(|occurrence| occurrence.node_id())
             .collect(),
+        repairs: Vec::new(),
     };
     let mut nodes: Vec<(NodeId, Node)> = Vec::new();
 
@@ -562,6 +569,19 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
         tree_id: TreeId::ROOT,
         focus,
     };
+    // **Last, over the finished update**, because a repeat can come from any
+    // view and only the whole update shows it: a control published twice is
+    // two entries here and its parent naming it twice, and either one is a
+    // panic inside `accesskit_consumer`.
+    projection.repairs = repair::repair(&mut projection.update, root_id);
+    if !projection.repairs.is_empty() {
+        let published: HashSet<NodeId> =
+            projection.update.nodes.iter().map(|(id, _)| *id).collect();
+        projection
+            .occurrences
+            .retain(|id, _| published.contains(id));
+        projection.nodes = projection.update.nodes.len();
+    }
     projection
 }
 
@@ -682,8 +702,15 @@ fn record(id: NodeId, occurrence: Occurrence, projection: &mut Projection) {
     // Any repeat is a bug, and the two kinds are worth telling apart in a
     // debugger but not in the count: either two locators hashed to one id, or
     // one control was published twice and would then have two parents.
-    if projection.occurrences.insert(id, occurrence).is_some() {
-        projection.duplicate_ids += 1;
+    //
+    // The first occurrence is kept, because the first copy of the node is the
+    // one [`repair`] keeps, and an action has to resolve to the control the
+    // client was actually given.
+    match projection.occurrences.entry(id) {
+        Entry::Occupied(_) => projection.duplicate_ids += 1,
+        Entry::Vacant(slot) => {
+            slot.insert(occurrence);
+        }
     }
 }
 
