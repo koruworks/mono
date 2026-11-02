@@ -54,6 +54,7 @@ mod chat_tools;
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
 
+mod local_ids;
 mod published_schema;
 pub mod tasks;
 mod tool_pages;
@@ -1934,7 +1935,10 @@ impl LocalBackend {
         ))
     }
 
-    fn edit_document(&self, a: EditDocumentRequest) -> Result<Value, ToolError> {
+    fn edit_document(&self, mut a: EditDocumentRequest) -> Result<Value, ToolError> {
+        // Ids left out and local names become UUIDs before anything else
+        // reads the batch, so everything below sees only UUIDs.
+        let created = local_ids::resolve_edit(&mut a.operations)?;
         let ws = workspace(&a.workspace_id)?;
         let doc_id = document(&a.document_id)?;
         self.ensure_readable(ws, doc_id, "document_id")?;
@@ -1964,7 +1968,11 @@ impl LocalBackend {
         // one delivery per `edit_document` call.
         tasks.deliver(&mut tasks::LogSink::default());
         let after = self.capture(ws, doc_id, &doc, "mcp_after", Some(&boundary))?;
-        Ok(json!({"revision": revision(&doc), "history": after}))
+        let mut answer = json!({"revision": revision(&doc), "history": after});
+        if !created.is_empty() {
+            answer["created"] = Value::Object(created);
+        }
+        Ok(answer)
     }
 
     /// Keep an image's bytes and put it in a document, as one tool call. The
@@ -1975,6 +1983,7 @@ impl LocalBackend {
     /// history markers are the edit's own.
     fn add_image(&self, a: AddImageRequest) -> Result<Value, ToolError> {
         use base64::Engine as _;
+        let (node_id, created) = local_ids::resolve_single(a.node_id)?;
         let ws = workspace(&a.workspace_id)?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(a.data_base64.trim())
@@ -1987,7 +1996,7 @@ impl LocalBackend {
             document_id: a.document_id,
             base_revision: a.base_revision,
             operations: vec![EditOperation::InsertImage {
-                node_id: a.node_id.clone(),
+                node_id: node_id.clone(),
                 parent_id: a.parent_id,
                 after_node_id: a.after_node_id,
                 hash: hash.clone(),
@@ -1997,7 +2006,10 @@ impl LocalBackend {
             }],
         })?;
         if let Some(object) = answer.as_object_mut() {
-            object.insert("node_id".into(), json!(a.node_id));
+            object.insert("node_id".into(), json!(node_id));
+            if !created.is_empty() {
+                object.insert("created".into(), Value::Object(created));
+            }
             object.insert("hash".into(), json!(hash));
             object.insert("mime".into(), json!(sniffed.mime));
             object.insert("width".into(), json!(sniffed.width));
@@ -2421,12 +2433,14 @@ impl Backend for LocalBackend {
                         .to_string(),
                     None => uuid::Uuid::new_v4().to_string(),
                 };
+                // The retry identity is the request as sent, before any id is
+                // minted, so a replay of a request that left ids out matches.
                 let request_hash = create_request_hash(&a, ws)?;
-                if a.initial_operations.is_some() && a.root_node_id.is_none() {
-                    return Err(ToolError::invalid(
-                        "root_node_id is required when initial_operations is present",
-                    ));
-                }
+                let mut a = a;
+                let created = local_ids::resolve_seed(
+                    &mut a.root_node_id,
+                    a.initial_operations.as_deref_mut(),
+                )?;
                 let root_id = match a.root_node_id.as_deref() {
                     Some(value) => node(value)?,
                     None => NodeId::new(),
@@ -2478,7 +2492,12 @@ impl Backend for LocalBackend {
                     let _ = self.capture(ws, seeded.id, &before, "mcp_before", Some(&boundary))?;
                     let _ = self.capture(ws, seeded.id, &returned, "mcp_after", Some(&boundary))?;
                 }
-                Ok(document_json(seeded.id, &returned)?)
+                let mut answer = document_json(seeded.id, &returned)?;
+                if !created.is_empty() {
+                    answer["created"] =
+                        Value::Object(local_ids::as_stored(created, &doc, &returned)?);
+                }
+                Ok(answer)
             }
             "ensure_file_note" => {
                 let a: FileRequest = from(arguments)?;
@@ -2827,8 +2846,10 @@ struct CreateDocumentRequest {
     /// Stable retry key. Reusing it with the same request replays the original
     /// success for seven days; reusing it with different input is an error.
     idempotency_key: Option<String>,
-    /// Fresh client-minted UUID for the document-title root. Required when
-    /// `initial_operations` is present so every parent reference is explicit.
+    /// The document-title root's id: a fresh UUID, a local name the seed's
+    /// inserts use as `parent_id`, or absent. Absent with
+    /// `initial_operations`, the title node is the local name `root`; the
+    /// server mints the UUID either way (`local_ids`).
     root_node_id: Option<String>,
     /// A non-empty atomic seed batch. When present, Koru does not add its
     /// ordinary blank paragraph.
@@ -2884,8 +2905,11 @@ struct AddImageRequest {
     document_id: String,
     /// The opaque `revision` of the latest `read_document`.
     base_revision: String,
-    /// A fresh UUID you mint; it names the new image block.
-    node_id: String,
+    /// The new image block's id: a fresh UUID, or absent for the server to
+    /// mint one, which the answer's `node_id` carries. A local name is
+    /// minted too and reported in `created`.
+    #[serde(default)]
+    node_id: Option<String>,
     /// The document-title node, or the block the image nests under.
     parent_id: String,
     /// A sibling to place it after; null means first.
@@ -3206,8 +3230,12 @@ enum EditOperation {
     },
     /// Insert one new text-shaped node as a child of an existing node.
     Insert {
-        /// Fresh client-minted UUID for the new node.
-        node_id: String,
+        /// The new node's id: a fresh UUID, a local name (any other string)
+        /// later operations in this request use for it, or absent. The
+        /// server mints the UUID for a name or an absent id (`local_ids`), so
+        /// past that point this is always one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
         /// UUID of the existing parent node. This is required: the absolute
         /// CRDT root is not a document body. For body paragraphs, use the
         /// document-title node's `node_id` from `read_document`.
@@ -3477,9 +3505,11 @@ impl<'a> TagSpec<'a> {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum InitialOperation {
     /// Insert a fresh text-shaped block. `parent_id` names the supplied
-    /// document root or a node inserted earlier in this batch.
+    /// document root or a node inserted earlier in this batch, by UUID or by
+    /// local name; `node_id` is a UUID, a local name or absent, as the edit.
     Insert {
-        node_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
         parent_id: String,
         /// A sibling inserted earlier in this batch; null means first.
         after_node_id: Option<String>,
@@ -4172,7 +4202,10 @@ fn apply_ops(
                 } else {
                     (Node::new(kind, Content::text(text))?, None)
                 };
-                value.id = node(node_id)?;
+                // `local_ids` has minted an id for one left out before any
+                // operation runs, so an absent one here is a caller that
+                // skipped it, refused as no UUID.
+                value.id = node(node_id.as_deref().unwrap_or_default())?;
                 let parent = parent(parent_id)?;
                 let index = after_index(doc, parent, after_node_id.as_deref())?;
                 let id = doc.insert(parent, value)?;
@@ -4611,7 +4644,7 @@ fn apply_initial_ops(
                 kind,
                 text,
             } => {
-                let id = node(node_id)?;
+                let id = node(node_id.as_deref().unwrap_or_default())?;
                 if available.contains(&id) {
                     return Err(ToolError::invalid(
                         "initial insert node_id must be fresh within the seed batch",
@@ -4765,7 +4798,7 @@ fn apply_initial_ops(
             "an initial operation produced task activity nothing delivers",
         );
         if let InitialOperation::Insert { node_id, .. } = operation {
-            let id = node(node_id)?;
+            let id = node(node_id.as_deref().unwrap_or_default())?;
             available.insert(id);
             inserted.insert(id);
         }
@@ -5461,7 +5494,7 @@ impl KoruMcp {
 impl KoruMcp {
     #[tool(
         title = "Read Koru model documentation",
-        description = "With no arguments: koru://docs/essentials, the short contract to read before the first mutation. uri koru://docs/model lists the contract's sections (slug, summary, tokens); section answers one by slug. Never the whole contract. For hosts that cannot read MCP resources; the markdown is the text block.",
+        description = "No arguments: koru://docs/essentials, to read before the first mutation. uri koru://docs/model lists the sections; section answers one by slug. For hosts without MCP resources.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn get_documentation(&self, Parameters(a): Parameters<DocumentationRequest>) -> CallToolResult {
@@ -5557,7 +5590,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Create a Koru document",
-        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language, set_mark, set_align and set_callout_look only) root_node_id is required, a fresh UUID for the title node; every parent is it or an earlier insert, and no blank paragraph is added. Read koru://docs/essentials before the first mutation.",
+        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language, set_mark, set_align and set_callout_look only) every parent is the title node or an earlier insert, and no blank paragraph is added. root_node_id and insert node_id may be omitted (the title node is then root) or local names later ops use; created maps each to its minted UUID. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -5583,7 +5616,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Edit a Koru document",
-        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert mints node_id; parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_mark turns one of bold, italic, underline, strike, code on or off over start_utf8..end_utf8 of expected (non-empty, on character boundaries). set_align sets start, center or end. insert_inline also takes {type:link,url,label?} (http, https or mailto). set_heading sets metadata.heading to 1–6, or null for body text. set_highlight sets runs[].highlight to yellow, green, blue or pink over the same byte range, or null to clear. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
+        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert's node_id is optional, or a local name later ops use; created maps each to its minted UUID. parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_mark turns one of bold, italic, underline, strike, code on or off over start_utf8..end_utf8 of expected (non-empty, on character boundaries). set_align sets start, center or end. insert_inline also takes {type:link,url,label?} (http, https or mailto). set_heading sets metadata.heading to 1–6, or null for body text. set_highlight sets runs[].highlight to yellow, green, blue or pink over the same byte range, or null to clear. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -5596,7 +5629,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Add an image to a document",
-        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is a fresh UUID you mint; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
+        description = "Store an image's bytes and place it as a block in one call, at base_revision from the latest read_document. data_base64 is a PNG, JPEG, GIF or WebP of at most 8 MiB; node_id is optional; parent_id is the document-title node or a block; after_node_id is a sibling, null meaning first. Answers the edit's revision and history with node_id, hash, mime, width and height. Read koru://docs/essentials before the first mutation.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -6964,9 +6997,18 @@ mod tests {
         ] {
             assert!(description.contains(phrase), "missing {phrase:?}");
         }
+        // node_id is optional: the server mints it when it is left out
+        // (`local_ids`). The optional fields' order follows the JSON map in
+        // use, as below, so only which ones are optional is pinned.
+        let insert = encoded
+            .split("insert(")
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .expect("insert's summary");
+        assert!(insert.starts_with("parent_id, kind, text, "), "{insert}");
         assert!(
-            encoded.contains("insert(node_id, parent_id, kind, text, after_node_id?)"),
-            "{encoded}"
+            insert.contains(" node_id?") && insert.contains("after_node_id?"),
+            "{insert}"
         );
         assert!(encoded.contains("insert_inline"));
         // A new operation is published with its fields, optional ones marked.
@@ -7060,7 +7102,7 @@ mod tests {
                 idempotency_key: Some(key.to_owned()),
                 root_node_id: Some(spell(root)),
                 initial_operations: Some(vec![InitialOperation::Insert {
-                    node_id: spell(paragraph),
+                    node_id: Some(spell(paragraph)),
                     parent_id: spell(root),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
@@ -7132,14 +7174,14 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: first.to_storage(),
+                    node_id: Some(first.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
                     text: "One".into(),
                 },
                 InitialOperation::Insert {
-                    node_id: second.to_storage(),
+                    node_id: Some(second.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: Some(first.to_storage()),
                     kind: InsertKind::Paragraph,
@@ -7176,7 +7218,7 @@ mod tests {
             &mut doc,
             root,
             &[InitialOperation::Insert {
-                node_id: NodeId::new().to_storage(),
+                node_id: Some(NodeId::new().to_storage()),
                 parent_id: NodeId::new().to_storage(),
                 after_node_id: None,
                 kind: InsertKind::Paragraph,
@@ -7249,14 +7291,14 @@ mod tests {
             &mut doc,
             &[
                 EditOperation::Insert {
-                    node_id: box_id.to_storage(),
+                    node_id: Some(box_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Callout,
                     text: "Mind the gap".into(),
                 },
                 EditOperation::Insert {
-                    node_id: empty_id.to_storage(),
+                    node_id: Some(empty_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: Some(box_id.to_storage()),
                     kind: InsertKind::Callout,
@@ -7452,7 +7494,7 @@ mod tests {
             &mut doc,
             &[
                 EditOperation::Insert {
-                    node_id: heading_id.to_storage(),
+                    node_id: Some(heading_id.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Paragraph,
@@ -7594,7 +7636,7 @@ mod tests {
             on: true,
         };
         let insert = |root: NodeId| InitialOperation::Insert {
-            node_id: first.to_storage(),
+            node_id: Some(first.to_storage()),
             parent_id: root.to_storage(),
             after_node_id: None,
             kind: InsertKind::Paragraph,
@@ -8200,7 +8242,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: block.to_storage(),
+                    node_id: Some(block.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Code,
@@ -8457,7 +8499,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: callout.to_storage(),
+                    node_id: Some(callout.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Callout,
@@ -8670,7 +8712,7 @@ mod tests {
             root,
             &[
                 InitialOperation::Insert {
-                    node_id: block.to_storage(),
+                    node_id: Some(block.to_storage()),
                     parent_id: root.to_storage(),
                     after_node_id: None,
                     kind: InsertKind::Code,
@@ -10697,7 +10739,7 @@ mod tests {
                 },
             },
             EditOperation::Insert {
-                node_id: id(),
+                node_id: Some(id()),
                 parent_id: id(),
                 after_node_id: None,
                 kind: InsertKind::Task,
@@ -10841,7 +10883,7 @@ mod tests {
         let first = NodeId::new().to_storage();
         let seed = vec![
             InitialOperation::Insert {
-                node_id: first.clone(),
+                node_id: Some(first.clone()),
                 parent_id: root.clone(),
                 after_node_id: None,
                 kind: InsertKind::Code,
@@ -11119,6 +11161,9 @@ mod tests {
         search_hits: Mutex<Vec<koru_store_wire::search::SearchHit>>,
         /// Every history marker captured, with the document as it stood.
         markers: Mutex<Vec<(HistoryEntry, Vec<u8>)>>,
+        /// Each `create_document` idempotency key: the request hash, the
+        /// document it made, and that document's first update.
+        seeds: Mutex<HashMap<String, (String, StoreDocumentId, Vec<u8>)>>,
     }
 
     impl MemoryStore {
@@ -11130,6 +11175,7 @@ mod tests {
                 blobs: Mutex::new(Vec::new()),
                 search_hits: Mutex::new(Vec::new()),
                 markers: Mutex::new(Vec::new()),
+                seeds: Mutex::new(HashMap::new()),
             })
         }
 
@@ -11362,11 +11408,57 @@ mod tests {
             Ok((note, true))
         }
 
+        /// The store's idempotency contract, in memory: a key seen with the
+        /// same request hash replays the document it made, with a different
+        /// one it is a conflict.
         fn seed_document(
             &self,
-            _request: EmbeddedSeedDocument,
+            request: EmbeddedSeedDocument,
         ) -> Result<EmbeddedSeededDocument, ToolError> {
-            unreachable!("the note tests never seed through the store")
+            let mut seeds = self.seeds.lock().unwrap();
+            if let Some((hash, id, update)) = seeds.get(&request.idempotency_key) {
+                if *hash != request.request_hash {
+                    return Err(ToolError {
+                        code: "idempotency_conflict".into(),
+                        message: "that key made a different document".into(),
+                        details: None,
+                    });
+                }
+                return Ok(EmbeddedSeededDocument {
+                    id: *id,
+                    initial_update: update.clone(),
+                    replayed: true,
+                });
+            }
+            let id = StoreDocumentId::new();
+            let doc = loro::LoroDoc::new();
+            doc.import(&request.initial_update)
+                .map_err(|error| ToolError::invalid(error.to_string()))?;
+            self.snapshots.lock().unwrap().insert(
+                id,
+                doc.export(loro::ExportMode::Snapshot)
+                    .map_err(|error| ToolError::invalid(error.to_string()))?,
+            );
+            self.entries.lock().unwrap().push(DocumentEntry {
+                id,
+                parent: request.parent,
+                ordinal: 0,
+                title: request.title,
+                kind: koru_core::explore::KIND_DOCUMENT.into(),
+                mime: None,
+                note: None,
+                trashed_at: None,
+                trashed_by: None,
+            });
+            seeds.insert(
+                request.idempotency_key,
+                (request.request_hash, id, request.initial_update.clone()),
+            );
+            Ok(EmbeddedSeededDocument {
+                id,
+                initial_update: request.initial_update,
+                replayed: false,
+            })
         }
 
         fn persist_update(
@@ -11731,6 +11823,119 @@ mod tests {
                 koru_core::explore::KIND_NOTE
             ]
         );
+    }
+
+    /// An agent no longer invents a UUID for each block: through the real
+    /// create and edit paths, ids left out and local names come back minted
+    /// in `created`, name the nodes the read shows, and a replayed create
+    /// answers the ids the first call stored.
+    #[test]
+    fn the_server_mints_new_node_ids_and_answers_which() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let context = RequestContext::local();
+        let workspace_id = store.workspace.to_storage();
+        let parent_of = |read: &Value, id: &Value| {
+            read["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|node| node["node_id"] == *id)
+                .unwrap_or_else(|| panic!("{id} is a node of {read}"))["parent_id"]
+                .clone()
+        };
+
+        let request = json!({
+            "workspace_id": workspace_id,
+            "title": "Jokes",
+            "idempotency_key": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "initial_operations": [
+                {"op": "insert", "node_id": "q", "parent_id": "root", "kind": "paragraph",
+                 "text": "Why?"},
+                {"op": "insert", "parent_id": "root", "after_node_id": "q", "kind": "paragraph",
+                 "text": "Because."},
+                {"op": "set_mark", "node_id": "q", "expected": "Why?", "start_utf8": 0,
+                 "end_utf8": 3, "mark": "bold", "on": true},
+            ],
+        });
+        let made = backend
+            .invoke(&context, "create_document", request.clone())
+            .unwrap();
+        let created = &made["created"];
+        assert_eq!(created["root"], made["root_node_id"]);
+        assert_eq!(parent_of(&made, &created["q"]), made["root_node_id"]);
+        assert_eq!(parent_of(&made, &created["1"]), made["root_node_id"]);
+        let texts: Vec<&Value> = made["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| &node["content"]["text"])
+            .collect();
+        assert_eq!(texts[1..], [&json!("Why?"), &json!("Because.")]);
+
+        // A retry with the same key replays the first document, and the ids
+        // it answers are the ones that document holds, not new ones.
+        let again = backend
+            .invoke(&context, "create_document", request)
+            .unwrap();
+        assert_eq!(again["document_id"], made["document_id"]);
+        assert_eq!(again["created"], made["created"]);
+
+        // An edit mixes a caller's UUID, an omitted id and local names.
+        let document_id = made["document_id"].as_str().unwrap();
+        let mine = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+        let edited = backend
+            .invoke(
+                &context,
+                "edit_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": made["revision"],
+                    "operations": [
+                        {"op": "insert", "node_id": "box", "parent_id": made["root_node_id"],
+                         "after_node_id": created["1"], "kind": "callout", "text": ""},
+                        {"op": "insert", "node_id": mine, "parent_id": "box",
+                         "kind": "paragraph", "text": "Mine"},
+                        {"op": "insert", "parent_id": "box", "after_node_id": mine,
+                         "kind": "paragraph", "text": "Minted"},
+                    ],
+                }),
+            )
+            .unwrap();
+        let minted = &edited["created"];
+        assert_eq!(
+            minted.as_object().unwrap().len(),
+            2,
+            "a caller's UUID is not reported: {minted}"
+        );
+        let read = backend
+            .invoke(
+                &context,
+                "read_document",
+                json!({"workspace_id": workspace_id, "document_id": document_id}),
+            )
+            .unwrap();
+        assert_eq!(parent_of(&read, &json!(mine)), minted["box"]);
+        assert_eq!(parent_of(&read, &minted["2"]), minted["box"]);
+
+        // Nothing is written when a name cannot be resolved.
+        let refused = backend
+            .invoke(
+                &context,
+                "edit_document",
+                json!({
+                    "workspace_id": workspace_id,
+                    "document_id": document_id,
+                    "base_revision": edited["revision"],
+                    "operations": [
+                        {"op": "insert", "parent_id": "nowhere", "kind": "paragraph", "text": "x"},
+                    ],
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "invalid_request");
+        assert!(refused.message.contains("nowhere"), "{refused}");
     }
 
     /// `edit_document` admits every kind `read_document` reads, so a note takes

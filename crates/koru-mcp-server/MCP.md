@@ -61,7 +61,8 @@ answer.
 `parent`, `title`, `kind`); `search_documents` finds **nodes** by words, tags
 and attributes, in one workspace or in all of them; `list_tasks` lists what is
 outstanding. Ids are UUIDs: a workspace id, a document id and a node id are
-different things even when they look alike, and a client mints the new ones.
+different things even when they look alike. You never invent one: a new
+node's id is left out, or given a local name, and the server mints it.
 
 **Reading.** `read_document` returns the whole document as `nodes` in
 preorder — each with `node_id`, `parent_id`, `kind`, its `content` (`text`,
@@ -73,16 +74,22 @@ edit is addressed with; numeric positions are never accepted.
 
 ```jsonc
 {"workspace_id": "…", "title": "Dad jokes",
- "idempotency_key": "<fresh UUID>",        // a retry replays, for seven days
- "root_node_id": "<fresh UUID>",           // the title node; required with a seed
- "initial_operations": [
-   {"op": "insert", "node_id": "<fresh UUID A>", "parent_id": "<root_node_id>",
+ "idempotency_key": "<a UUID>",            // optional: a retry replays, for seven days
+ "initial_operations": [                   // root_node_id left out: the title node is "root"
+   {"op": "insert", "node_id": "q", "parent_id": "root",
     "after_node_id": null, "kind": "paragraph", "text": "Why did the scarecrow win an award?"},
-   {"op": "insert", "node_id": "<fresh UUID B>", "parent_id": "<root_node_id>",
-    "after_node_id": "<A>", "kind": "paragraph", "text": "He was outstanding in his field."},
-   {"op": "set_mark", "node_id": "<B>", "expected": "He was outstanding in his field.",
+   {"op": "insert", "node_id": "a", "parent_id": "root",
+    "after_node_id": "q", "kind": "paragraph", "text": "He was outstanding in his field."},
+   {"op": "set_mark", "node_id": "a", "expected": "He was outstanding in his field.",
     "start_utf8": 7, "end_utf8": 18, "mark": "bold", "on": true}]}
 ```
+
+`"q"` and `"a"` are **local names**: any string that is not a UUID names a
+new node for the rest of the request, and the server mints its UUID. Leave
+`node_id` out when nothing later names the node. The answer carries
+`created`, each name (or the index of an operation whose id was left out)
+mapped to its minted UUID: `{"root": "…", "q": "…", "a": "…"}`. A UUID you
+send is used as given. [New node ids](#new-node-ids) has the rules.
 
 Every `parent_id` is the root or an earlier insert; `after_node_id` is `null`
 for first or an earlier sibling; a seed takes `insert`, `insert_inline`,
@@ -102,9 +109,9 @@ text as `expected`:
 {"workspace_id": "…", "document_id": "…", "base_revision": "<from the read>",
  "operations": [
    {"op": "replace_text", "node_id": "…", "expected": "Buy milk", "text": "Buy oat milk"},
-   {"op": "insert", "node_id": "<fresh UUID>", "parent_id": "<root_node_id>",
+   {"op": "insert", "node_id": "plumber", "parent_id": "<root_node_id>",
     "after_node_id": "…", "kind": "task", "text": "Call the plumber"},
-   {"op": "set_done", "node_id": "…", "expected": "Call the plumber", "done": true},
+   {"op": "set_done", "node_id": "plumber", "expected": "Call the plumber", "done": true},
    {"op": "set_mark", "node_id": "…", "expected": "Buy oat milk",
     "start_utf8": 4, "end_utf8": 12, "mark": "italic", "on": true},
    {"op": "set_heading", "node_id": "…", "expected": "Thursday morning", "heading": 2},
@@ -119,7 +126,9 @@ text as `expected`:
    {"op": "add_tag", "node_id": "…", "expected": "Call the plumber", "tag": "home/errands"}]}
 ```
 
-The batch applies in order and atomically, or not at all. `remove` takes the
+The batch applies in order and atomically, or not at all. A new node's
+`node_id` is a local name (`"plumber"`) or left out, as in a seed, and the
+answer's `created` maps it to the minted UUID. `remove` takes the
 whole subtree, and works on an image block: a block with no text has nothing
 for `expected` to compare, so for an image `remove`, `move`, `set_align`,
 `set_done`, `set_attribute` and `clear_attribute` ignore it (send an empty
@@ -218,7 +227,7 @@ This file is the long form; the reply points here.
   each publish one object whose tag (`op` or `type`) is an `enum`, whose
   properties are the union of the variants', with `additionalProperties:
   false`, and whose description is generated from the variants — for example
-  `insert(node_id, parent_id, kind, text, after_node_id?)`. Which fields a
+  `insert(parent_id, kind, text, node_id?, after_node_id?)`. Which fields a
   given op takes is enforced by the server, which rejects an unknown or
   misplaced field with an error rather than ignoring it.
 - **Kept:** every property name, type, enum value and `required`, `minimum` and
@@ -282,10 +291,10 @@ and as a test held them against real values. A failure is
 | `list_files`, `search_files` | `{ files: [file] }`, a file being `{ file_id, name, mime, size?, hash, root_node_id, note_id? }` |
 | `get_file` | a file |
 | `read_file` | `{ file, offset, length, total_bytes, eof, base64 }` |
-| `read_document`, `create_document` | `{ document_id, root_node_id, revision, schema_version, nodes }` — `nodes` in preorder, each with identity, parent, ordinal, depth, kind, typed metadata and typed content; a `code` node whose language is `mermaid` also carries `diagram` ([Diagrams](#diagrams)) |
-| `add_image` | the edit's `{ revision, history }` plus `{ node_id, hash, mime, width, height, size }` |
+| `read_document`, `create_document` | `{ document_id, root_node_id, revision, schema_version, nodes }` — `nodes` in preorder, each with identity, parent, ordinal, depth, kind, typed metadata and typed content; a `code` node whose language is `mermaid` also carries `diagram` ([Diagrams](#diagrams)). `create_document` adds `created?` ([New node ids](#new-node-ids)) |
+| `add_image` | the edit's `{ revision, history }` plus `{ node_id, created?, hash, mime, width, height, size }` |
 | `ensure_file_note` | `{ note_id, created }` |
-| `edit_document`, `restore_document_version` | `{ revision, history: entry }`, an entry being `{ id, document, version, reason, recorded_at, label?, message?, boundary?, pinned }` |
+| `edit_document`, `restore_document_version` | `{ revision, history: entry }`, and `created?` from `edit_document`, an entry being `{ id, document, version, reason, recorded_at, label?, message?, boundary?, pinned }` |
 | `extract_to_document` | `{ document_id, document_revision, source_revision, source_link_node_id, history: { document: entry, source: entry } }` |
 | `save_document_version` | an entry |
 | `list_document_versions` | `{ entries: [entry], next_before_at?, next_before_id? }` |
@@ -374,12 +383,13 @@ MCP bridge remains available for its other tools.
 
 ## Identities and document shape
 
-Every id that crosses the boundary is a UUID of one distinct type, and one
-Store document is one tree under its title node.
+Every id Koru stores or answers is a UUID of one distinct type, and one Store
+document is one tree under its title node.
 
 - `ProfileId`, `WorkspaceId`, Store `DocumentId`, `NodeId`, and `AttrId` are
-  distinct client-minted UUID types. Their strings may look alike; their
-  meanings are not interchangeable.
+  distinct UUID types. Their strings may look alike; their meanings are not
+  interchangeable. A new node's id is minted by the server unless the client
+  sends one ([New node ids](#new-node-ids)).
 - `TreeID` is Loro-local and must never cross the MCP boundary.
 - One Store document owns one Loro document. Its single root
   `Kind::Document` node is row 0 and its text is the document title.
@@ -406,6 +416,37 @@ Every operation that targets existing text carries its exact `expected` value,
 including `move`, `remove`, and `set_done`. This matters when the old UUID still
 exists after a concurrent split but now names the other half: Koru returns
 `precondition_failed` rather than applying the operation to the wrong content.
+
+### New node ids
+
+A new node's id — an `insert`'s `node_id` in `edit_document` or in
+`create_document`'s seed, `create_document`'s `root_node_id`, and
+`add_image`'s `node_id` — is one of three things:
+
+- **a UUID**, used exactly as given, as it always was;
+- **left out**, and the server mints one; or
+- **a local name**: any other string, such as `"intro"`. The server mints a
+  UUID for it, and a later operation in the **same request** names the node
+  by it, in `node_id`, `parent_id` or `after_node_id`.
+
+`create_document`'s `root_node_id` left out with a seed is the local name
+`root`, so the seed's inserts can say `"parent_id": "root"`.
+
+Every answer that minted something carries `created`: each local name, and
+each id left out under its operation's index (`"0"`, `"3"`), mapped to the
+UUID minted for it — `{"created": {"root": "…", "q": "…", "1": "…"}}`. It
+is absent when the request sent UUIDs only, which is exactly the request it
+always was. A name lives for one request: it is rewritten to its UUID before
+anything runs, nothing stores it, and the next request names the node by
+the UUID in `created` or in a read. **Stored node ids are UUIDs either way**,
+so this changes no stored format.
+
+A name is usable only after the insert that defines it, is defined once, and
+is never all digits (it would read as an index in `created`). A name used
+first, one nothing defines, one defined twice, and a string that looks like a
+UUID but is not one are each refused as `invalid_request`, naming the field
+(`operations[2].parent_id`) and the name, and nothing is written. The last
+rule keeps a mistyped UUID from silently becoming a new node.
 
 ## Typed blocks, text, and ordering
 
@@ -532,12 +573,16 @@ hash, metadata, root node, and manifest entry are committed consistently.
 
 When `initial_operations` is present:
 
-- it must be non-empty and `root_node_id` must be a fresh client-minted UUID;
+- it must be non-empty;
+- `root_node_id`, the title node's id, is a fresh UUID, a local name, or left
+  out, when the title node is the local name `root`
+  ([New node ids](#new-node-ids));
 - Koru does not add the default paragraph;
-- the caller supplies every body `node_id`;
+- each insert's `node_id` is a fresh UUID, a local name, or left out, and the
+  server mints a UUID for each of the last two;
 - only `insert`, `insert_inline`, `set_done`, `set_language`, `set_mark` and
   `set_callout_look` are legal;
-- `parent_id` names the supplied root or an earlier inserted node;
+- `parent_id` names the root or an earlier inserted node;
 - `after_node_id` is `null` for first or names an earlier inserted sibling; and
 - inline, completion, language, mark and callout-look operations can target only a
   node inserted earlier in the same array.
@@ -575,7 +620,9 @@ original document id and original success projection, even if the live document
 has since changed. Reusing the key for different input returns
 `idempotency_conflict`; after expiry the key may name a new request. Omitting
 the key is convenient for interactive use but a caller retry after an unknown
-transport outcome can create a duplicate.
+transport outcome can create a duplicate. The retry identity is the request as
+sent, so a request that left its ids out replays as itself, and the replay's
+`created` names the ids the first call stored, not new ones.
 
 ## Adding an image
 
@@ -583,9 +630,13 @@ transport outcome can create a duplicate.
 
 ```jsonc
 {"workspace_id": "…", "document_id": "…", "base_revision": "<from the read>",
- "node_id": "<fresh UUID>", "parent_id": "<root_node_id>", "after_node_id": null,
+ "parent_id": "<root_node_id>", "after_node_id": null,
  "data_base64": "<the file's bytes, standard base64>", "name": "library.jpg"}
 ```
+
+`node_id` is optional: left out, the server mints it and the answer's
+`node_id` is it. A UUID sent there is used as given; a local name is minted
+too and reported in `created` ([New node ids](#new-node-ids)).
 
 - **The bytes are checked, not trusted.** The format and the size come from the
   file's header: PNG, JPEG, GIF or WebP, at most 8 MiB decoded. Anything else —
@@ -604,8 +655,10 @@ transport outcome can create a duplicate.
   `mcp_before` and `mcp_after` history markers, and answers the edit's
   `revision` and `history` with `node_id`, `hash`, `mime`, `width`, `height` and
   `size`. A stale revision is `stale_node` as for any edit.
-- **Not idempotent.** `node_id` names the block, so repeating a call that
-  succeeded is refused as a duplicate id rather than adding a second image.
+- **Not idempotent.** A `node_id` you sent names the block, so repeating a
+  call that succeeded is refused as a duplicate id rather than adding a second
+  image. One the server minted is new on every call, so send your own UUID
+  when a retry must not add the image twice.
 - **What it does not do yet.** It does not add an image inside a seed
   (`create_document`), take a URL or a file path, or add a *file* to the
   workspace's file list; `list_files` and `read_file` are unchanged.

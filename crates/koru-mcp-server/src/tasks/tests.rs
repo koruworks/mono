@@ -1771,7 +1771,7 @@ fn a_completed_task_over_a_finished_list() -> (WorkspaceDoc, NodeId, NodeId) {
 
 fn insert_under(node: NodeId, parent: NodeId, kind: InsertKind, text: &str) -> EditOperation {
     EditOperation::Insert {
-        node_id: node.to_storage(),
+        node_id: Some(node.to_storage()),
         parent_id: parent.to_storage(),
         after_node_id: None,
         kind,
