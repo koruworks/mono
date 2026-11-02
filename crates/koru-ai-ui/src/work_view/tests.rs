@@ -277,9 +277,9 @@ const NEWS: &str = "# Top US News\n\n**1. Election eve**";
 
 /// A reply streamed as the service sends it: words, a search, more words,
 /// a read, then the answer — every call over before the answer starts.
-/// With `lose_id`, a command failing alongside the turn clears the id the
-/// turn was accepted with halfway through, and the stream runs on.
-fn stream_news(surface: &mut ChatSurface, lose_id: bool) -> MessageId {
+/// With `side_failure`, a command alongside the turn fails halfway through,
+/// and the stream runs on: the failure is not the reply's end.
+fn stream_news(surface: &mut ChatSurface, side_failure: bool) -> MessageId {
     let transcript = transcript();
     let chat = transcript.chat.id;
     surface.transcript = Some(transcript);
@@ -320,7 +320,7 @@ fn stream_news(surface: &mut ChatSurface, lose_id: bool) -> MessageId {
     };
     say(surface, SAID);
     call(surface, "agent.search", "Search the web");
-    if lose_id {
+    if side_failure {
         surface.apply_update(Update::Failure("Could not rename the chat.".into()));
     }
     say(surface, BETWEEN);
@@ -332,23 +332,30 @@ fn stream_news(surface: &mut ChatSurface, lose_id: bool) -> MessageId {
 
 #[test]
 fn a_running_reply_with_its_calls_done_is_still_working_above_its_answer() {
-    for lose_id in [false, true] {
+    for side_failure in [false, true] {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
-        let reply = stream_news(&mut surface, lose_id);
+        let reply = stream_news(&mut surface, side_failure);
 
-        assert_eq!(surface.work_layouts.len(), 1, "lose_id: {lose_id}");
+        assert_eq!(
+            surface.work_layouts.len(),
+            1,
+            "side_failure: {side_failure}"
+        );
         let work = &surface.work_layouts[0];
         assert_eq!(work.message, reply);
         // Every call has ended, the reply has not: still *Working for …*.
-        assert!(work.live, "lose_id: {lose_id}");
+        assert!(work.live, "side_failure: {side_failure}");
         assert!(tool_groups::header(work.live, 27_000, Lang::En).starts_with("Working for"));
         let answer = layout_of(&surface, reply);
-        assert!(work.top + work.height <= answer.top, "lose_id: {lose_id}");
+        assert!(
+            work.top + work.height <= answer.top,
+            "side_failure: {side_failure}"
+        );
         // What it said before and between its calls is the work's; what
         // followed the last call is the answer.
         let said = work.lines.iter().filter(|line| line.said).count();
-        assert_eq!(said, 2, "lose_id: {lose_id}");
-        assert_eq!(answer.display, NEWS, "lose_id: {lose_id}");
+        assert_eq!(said, 2, "side_failure: {side_failure}");
+        assert_eq!(answer.display, NEWS, "side_failure: {side_failure}");
     }
 }
 

@@ -372,6 +372,9 @@ pub struct ChatSurface {
     live_reasoning: String,
     reasoning_expanded: bool,
     attempt: Option<InferenceAttemptId>,
+    /// The attempt whose stream has sent its terminal event; it stays in
+    /// `attempt` until the transcript read that follows replaces it.
+    ended_attempt: Option<InferenceAttemptId>,
     pending_assistant_message_id: Option<MessageId>,
     pending_user: Option<String>,
     pulse: Option<PulsingDots>,
@@ -691,6 +694,7 @@ impl ChatSurface {
             live_reasoning: String::new(),
             reasoning_expanded: false,
             attempt: None,
+            ended_attempt: None,
             pending_assistant_message_id: None,
             pending_user: None,
             pulse: None,
@@ -2681,6 +2685,7 @@ impl ChatSurface {
                     _ => {}
                 }
                 if terminal {
+                    self.ended_attempt = self.attempt;
                     self.pulse = None;
                     self.open_searches.clear();
                     self.reasoning_expanded = false;
@@ -2970,11 +2975,21 @@ impl ChatSurface {
                     self.pull_active = false;
                     self.pull_status = None;
                 }
-                self.waiting = false;
-                self.attempt = None;
-                self.pending_assistant_message_id = None;
-                self.live_sources.clear();
-                self.open_searches.clear();
+                // **A failed side command is not the reply's end.** A
+                // rename, the automatic title, a policy, an approval or a
+                // stop that fails while a reply streams leaves the reply
+                // streaming: its attempt — and so Stop — and its id stay,
+                // and its own terminal event or recovery clears them. A
+                // send that fails is `SendFailed`, which gives it back.
+                if self.reply_streaming() {
+                    self.waiting = true;
+                } else {
+                    self.waiting = false;
+                    self.attempt = None;
+                    self.pending_assistant_message_id = None;
+                    self.live_sources.clear();
+                    self.open_searches.clear();
+                }
                 self.status = Some(message);
             }
         }
@@ -3037,7 +3052,7 @@ impl ChatSurface {
         }
         // Where a call of the running reply began, as far as the draft has
         // come; the stored offset replaces it once the row carries one.
-        if unplaced && self.running_reply() == Some(reply) {
+        if unplaced && self.pending_assistant_message_id == Some(reply) {
             self.live_offsets.insert(
                 activity_id,
                 u32::try_from(self.draft.len()).unwrap_or(u32::MAX),
@@ -3049,27 +3064,10 @@ impl ChatSurface {
         }
     }
 
-    /// The reply this surface is streaming: the one the service accepted
-    /// the turn with. Should that id be gone while the question still
-    /// waits for its answer — a command failing alongside the turn clears
-    /// it, and the stream runs on — it is the reply whose steps are here
-    /// and whose message is not yet.
-    fn running_reply(&self) -> Option<MessageId> {
-        if self.pending_assistant_message_id.is_some() || self.pending_user.is_none() {
-            return self.pending_assistant_message_id;
-        }
-        let transcript = self.transcript.as_ref()?;
-        transcript
-            .tool_activities
-            .iter()
-            .rev()
-            .map(|activity| activity.assistant_message_id)
-            .find(|reply| {
-                !transcript
-                    .messages
-                    .iter()
-                    .any(|message| message.id == *reply)
-            })
+    /// Whether a reply is streaming: a turn was accepted and its stream has
+    /// not yet sent its terminal event.
+    fn reply_streaming(&self) -> bool {
+        self.attempt.is_some() && self.attempt != self.ended_attempt
     }
 
     fn toggle_session_auto_approve(&mut self) -> bool {
@@ -5554,7 +5552,7 @@ impl ChatSurface {
         };
         let live_offsets = &self.live_offsets;
         let offset = |activity: &ToolActivity| effective_offset(activity, live_offsets);
-        let running = self.running_reply();
+        let running = self.pending_assistant_message_id;
         let mut inputs = Vec::new();
         // Where the running reply's answer starts in its draft, once a
         // call has cut what came before it away.
@@ -9491,6 +9489,84 @@ mod tests {
         assert_eq!(surface.attempt, Some(current));
         assert!(surface.waiting);
         assert_ne!(surface.status.as_deref(), Some("stale"));
+    }
+
+    /// A side command that fails while a reply streams — a rename, say —
+    /// leaves the reply running: Stop stays, and so does the reply's id.
+    /// The reply then ends as any other does. A failure after its stream
+    /// has ended — the transcript read that follows it — does not keep
+    /// Stop.
+    #[test]
+    fn a_side_command_failing_mid_reply_keeps_stop() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let transcript = transcript();
+        let chat = transcript.chat.id;
+        let event = |event| {
+            Update::Event(koru_ai_wire::StreamEvent {
+                version: koru_ai_wire::AI_STREAM_VERSION,
+                sequence: 1,
+                event,
+            })
+        };
+        let at = koru_ai_core::Timestamp::from_millis(2);
+        let accept = |surface: &mut ChatSurface| {
+            surface.transcript = Some(transcript.clone());
+            surface.pending_user = Some("Plan the launch".into());
+            let attempt_id = InferenceAttemptId::new();
+            let reply = MessageId::new();
+            surface.apply_update(Update::Accepted(koru_ai_wire::SendTurnAccepted {
+                attempt_id,
+                user_message_id: MessageId::new(),
+                assistant_message_id: reply,
+                replayed: false,
+            }));
+            surface.apply_update(event(PublicAiEvent::TextDelta {
+                attempt_id,
+                text: "First, the date.".into(),
+                at,
+            }));
+            (attempt_id, reply)
+        };
+
+        let (attempt_id, reply) = accept(&mut surface);
+        surface.apply_update(Update::Failure("The chat could not be renamed.".into()));
+        assert_eq!(surface.attempt, Some(attempt_id), "Stop stays");
+        assert_eq!(surface.pending_assistant_message_id, Some(reply));
+        assert!(surface.waiting, "the stream is still read");
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("The chat could not be renamed.")
+        );
+        assert!(commands.try_recv().is_err());
+
+        // The reply ends normally: its terminal event reads the chat, and
+        // the transcript that answers clears the turn.
+        surface.apply_update(event(PublicAiEvent::Completed {
+            attempt_id,
+            stop_reason: None,
+            at,
+        }));
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Read(read) if read == chat
+        ));
+        surface.apply_update(Update::Transcript(transcript.clone()));
+        assert_eq!(surface.attempt, None);
+        assert_eq!(surface.pending_assistant_message_id, None);
+
+        // A reply whose stream has ended, and whose transcript read fails.
+        let (attempt_id, _) = accept(&mut surface);
+        surface.apply_update(event(PublicAiEvent::Completed {
+            attempt_id,
+            stop_reason: None,
+            at,
+        }));
+        while commands.try_recv().is_ok() {}
+        surface.apply_update(Update::Failure("Chat not found.".into()));
+        assert_eq!(surface.attempt, None, "no Stop for a reply that has ended");
+        assert!(!surface.waiting);
     }
 
     #[test]
