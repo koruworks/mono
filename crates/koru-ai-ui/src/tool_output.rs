@@ -14,11 +14,12 @@
 //! color; an input that says nothing (`{}`) is not shown; and the outcome
 //! and the time sit on one quiet line under it all.
 
-use koru_ai_core::{ToolActivity, ToolActivityStatus};
+use koru_ai_core::{AgentToolKind, ToolActivity, ToolActivityStatus};
 use koru_i18n::{Key, Lang, fill, t};
 
 use crate::agents::{agent_row_detail, agent_row_outcome};
 
+mod command;
 pub(crate) mod layout;
 
 /// The color a piece of a detail is drawn in, resolved at draw time.
@@ -57,6 +58,8 @@ pub(crate) enum Piece {
     /// The tool's words as Markdown, laid out block by block as the chat
     /// lays out a reply.
     Markdown(String),
+    /// What the call did, on its own line: `$ git status`, a path, a query.
+    Header { text: String, mono: bool },
     /// Monospace lines on the code background.
     Code(Vec<CodeLine>),
     /// *Show all 120 lines* / *Show fewer lines*.
@@ -115,20 +118,51 @@ pub(crate) fn pieces(
     expanded: bool,
 ) -> Vec<Piece> {
     let call = Call::of(activity);
-    let mut pieces = Vec::new();
-    text_body(&call, lang, expanded, &mut pieces);
+    let rendered = match Shape::of(activity) {
+        Shape::Command => command::render(&call, lang, expanded),
+        Shape::Other => None,
+    }
+    .unwrap_or_else(|| text(&call, lang, expanded));
+    let mut pieces = rendered.pieces;
     pieces.push(Piece::Meta(status_line(
         activity,
-        call.error.is_none(),
+        call.error.is_none() && rendered.notes.is_empty(),
+        &rendered.notes,
         lang,
         now_ms,
     )));
     pieces
 }
 
+/// What a call is, for drawing it: by the kind it was filed under, and
+/// by its label's shape when the kind says only *a tool*.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Shape {
+    Command,
+    Other,
+}
+
+impl Shape {
+    pub fn of(activity: &ToolActivity) -> Self {
+        match AgentToolKind::parse(&activity.tool_name) {
+            Some(AgentToolKind::Command) => Self::Command,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What a renderer made of a call: its pieces, and short notes for its
+/// status line (*Exit code 1*).
+#[derive(Default)]
+pub(crate) struct Rendered {
+    pub pieces: Vec<Piece>,
+    pub notes: Vec<String>,
+}
+
 /// A row's words, cleaned once: the error without its fence, the output
 /// unless it only repeats the error, the input unless it says nothing.
 pub(crate) struct Call<'a> {
+    pub activity: &'a ToolActivity,
     pub error: Option<String>,
     pub output: Option<&'a str>,
     pub input: Option<&'a str>,
@@ -153,6 +187,7 @@ impl<'a> Call<'a> {
             .map(str::trim)
             .filter(|input| !says_nothing(input));
         Self {
+            activity,
             error,
             output,
             input,
@@ -177,7 +212,8 @@ pub(crate) fn says_nothing(input: &str) -> bool {
 
 /// The fallback: the input when there is one to show, the error once, and
 /// the output as Markdown.
-fn text_body(call: &Call<'_>, lang: Lang, expanded: bool, pieces: &mut Vec<Piece>) {
+fn text(call: &Call<'_>, lang: Lang, expanded: bool) -> Rendered {
+    let mut pieces = Vec::new();
     if let Some(input) = call.input {
         pieces.push(Piece::Meta(t(lang, Key::AiToolInput).to_owned()));
         pieces.extend(code_block(
@@ -192,10 +228,22 @@ fn text_body(call: &Call<'_>, lang: Lang, expanded: bool, pieces: &mut Vec<Piece
             pieces.push(Piece::Meta(t(lang, Key::AiToolOutput).to_owned()));
         }
     }
-    error_block(call, expanded, lang, pieces);
+    error_block(call, expanded, lang, &mut pieces);
     if let Some(output) = call.output {
         pieces.push(Piece::Markdown(strip_ansi(output)));
     }
+    Rendered {
+        pieces,
+        notes: Vec::new(),
+    }
+}
+
+/// A JSON input's string field, the first of `keys` it has.
+pub(crate) fn input_field<'a>(input: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| input.get(*key)?.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 /// The tool's own account of its failure, once, in the error color.
@@ -230,6 +278,7 @@ pub(crate) fn json_lines(text: &str) -> Vec<String> {
 pub(crate) fn status_line(
     activity: &ToolActivity,
     reason: bool,
+    notes: &[String],
     lang: Lang,
     now_ms: i64,
 ) -> String {
@@ -238,6 +287,7 @@ pub(crate) fn status_line(
     } else {
         agent_row_outcome(activity, lang)
     }];
+    parts.extend(notes.iter().cloned());
     if let Some(ended) = activity.completed_at {
         parts.push(crate::tool_groups::seconds(
             ended.millis() - activity.proposed_at.millis(),

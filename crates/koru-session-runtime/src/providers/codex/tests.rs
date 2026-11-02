@@ -1696,6 +1696,26 @@ const ERROR_SENTINELS: [&str; 9] = [
     "C:\\TOOL-PATH-SENTINEL\\private\\notes.md",
 ];
 
+/// D17: a command's exit code leads its output when it is not zero, and a
+/// web search keeps its query as its input.
+#[test]
+fn a_commands_exit_code_and_a_searchs_query_are_kept() {
+    let failed = json!({"type":"commandExecution","id":"c","status":"failed",
+        "command":"cargo test","aggregatedOutput":"error[E0308]","exitCode":101});
+    assert_eq!(
+        normalize::item_output(&failed).as_deref(),
+        Some("Exit code 101\nerror[E0308]")
+    );
+    let ran = json!({"type":"commandExecution","id":"c","status":"completed",
+        "command":"ls","aggregatedOutput":"a.txt","exitCode":0});
+    assert_eq!(normalize::item_output(&ran).as_deref(), Some("a.txt"));
+    let search = json!({"type":"webSearch","id":"w","query":"koru notes"});
+    assert_eq!(
+        normalize::item_input(&search).as_deref(),
+        Some("koru notes")
+    );
+}
+
 fn tool_item(native_id: &str, kind: &str, status: &str, error: Option<Value>) -> Value {
     let mut item = json!({ "id": native_id, "type": kind, "status": status });
     if let Some(error) = error {

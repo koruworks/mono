@@ -260,7 +260,19 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
 /// protocol.
 pub(super) fn item_output(item: &Value) -> Option<String> {
     let text = match item.get("type").and_then(Value::as_str)? {
-        "commandExecution" => item.get("aggregatedOutput")?.as_str()?.to_owned(),
+        // A command that exited non-zero says so first, as Claude's do:
+        // the chat reads `Exit code N` off the output's first line.
+        "commandExecution" => {
+            let output = item.get("aggregatedOutput").and_then(Value::as_str);
+            match item
+                .get("exitCode")
+                .and_then(Value::as_i64)
+                .filter(|code| *code != 0)
+            {
+                Some(code) => format!("Exit code {code}\n{}", output.unwrap_or_default()),
+                None => output?.to_owned(),
+            }
+        }
         "fileChange" => item
             .get("changes")?
             .as_array()?

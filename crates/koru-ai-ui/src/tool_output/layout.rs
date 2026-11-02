@@ -76,6 +76,14 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
                 engine.simple_layout_wrapped(text, role::meta(), width),
                 Some(Ink::Dim),
             )),
+            Piece::Header { text, mono } => {
+                let layout = if *mono {
+                    engine.simple_layout_wrapped_in(text, role::meta(), theme::code_stack(), width)
+                } else {
+                    engine.simple_layout_wrapped(text, role::meta(), width)
+                };
+                lines.push(line(layout, Some(Ink::Text)));
+            }
             Piece::Markdown(markdown) => {
                 for block in koru_ai_core::cut_markdown(markdown) {
                     let code = block.kind == koru_ai_core::MessageBlockKind::Code;

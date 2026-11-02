@@ -51,7 +51,10 @@ fn words(pieces: &[Piece]) -> Vec<String> {
     pieces
         .iter()
         .map(|piece| match piece {
-            Piece::Meta(text) | Piece::Markdown(text) | Piece::Toggle(text) => text.clone(),
+            Piece::Meta(text)
+            | Piece::Markdown(text)
+            | Piece::Toggle(text)
+            | Piece::Header { text, .. } => text.clone(),
             Piece::Code(lines) => lines
                 .iter()
                 .map(|line| format!("{}{}", line.gutter, line.text))
@@ -258,5 +261,112 @@ fn a_detail_is_fingerprinted_by_what_it_draws() {
     assert_ne!(
         layout::fingerprint(&a, 300.0),
         layout::fingerprint(&pieces(&other, Lang::En, NOW, false), 300.0)
+    );
+}
+
+// ----- commands -----------------------------------------------------------
+
+/// Claude's command: its input names the command, its output comes in a
+/// `console` fence. The header says what ran; the fence is gone.
+#[test]
+fn a_command_reads_as_its_line_over_what_it_printed() {
+    let ran = done(
+        "agent.command",
+        "git status",
+        Some(r#"{"command":"git status","description":"Show the tree's status"}"#),
+        "```console\nOn branch main\nnothing to commit\n```",
+    );
+    let pieces = pieces(&ran, Lang::En, NOW, false);
+    assert_eq!(
+        words(&pieces),
+        [
+            "$ git status",
+            "On branch main\nnothing to commit",
+            "Done · 1s · Just now"
+        ]
+    );
+    assert_eq!(
+        pieces[0],
+        Piece::Header {
+            text: "$ git status".into(),
+            mono: true
+        }
+    );
+}
+
+/// A failed command: its words once, in the error color, and its exit code
+/// on the status line rather than as the first line of its output.
+#[test]
+fn a_failed_command_shows_its_exit_code_and_its_error_once() {
+    let mut failed = row(
+        "agent.command",
+        Some("Terminal"),
+        ToolActivityStatus::Failed,
+    );
+    failed.agent_input = Some(r#"{"command":"git status"}"#.into());
+    failed.error_message = Some("```\nExit code 128\nfatal: not a git repository\n```".into());
+    failed.agent_output = failed.error_message.clone();
+    let pieces = pieces(&failed, Lang::En, NOW, false);
+    assert_eq!(
+        words(&pieces),
+        [
+            "$ git status",
+            "fatal: not a git repository",
+            "Failed · Exit code 128 · 1s · Just now"
+        ]
+    );
+    let Piece::Code(lines) = &pieces[1] else {
+        panic!("{pieces:?}")
+    };
+    assert_eq!(lines[0].ink, Ink::Error);
+}
+
+/// Codex's command is its input itself; a long output folds.
+#[test]
+fn a_long_command_output_folds() {
+    let output = (1..=100)
+        .map(|n| format!("\u{1b}[32mok\u{1b}[0m test {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ran = done(
+        "agent.command",
+        "command_execution",
+        Some("cargo test"),
+        &output,
+    );
+    let pieces = pieces(&ran, Lang::En, NOW, false);
+    assert_eq!(
+        pieces[0],
+        Piece::Header {
+            text: "$ cargo test".into(),
+            mono: true
+        }
+    );
+    let Piece::Code(lines) = &pieces[1] else {
+        panic!("{pieces:?}")
+    };
+    assert_eq!(lines.len(), HEAD_LINES + 1 + TAIL_LINES);
+    assert_eq!(lines[0].text, "ok test 1", "escapes are taken out");
+    assert_eq!(pieces[2], Piece::Toggle("Show all 100 lines".into()));
+    let open = super::pieces(&ran, Lang::En, NOW, true);
+    let Piece::Code(lines) = &open[1] else {
+        panic!("{open:?}")
+    };
+    assert_eq!(lines.len(), 100);
+}
+
+/// A command whose call never said what it ran, and printed nothing, is
+/// its status line alone — no `$ Terminal`, no `{}`.
+#[test]
+fn a_command_that_said_nothing_is_its_status_alone() {
+    let mut ran = row(
+        "agent.command",
+        Some("Terminal"),
+        ToolActivityStatus::Complete,
+    );
+    ran.agent_input = Some("{}".into());
+    assert_eq!(
+        words(&pieces(&ran, Lang::En, NOW, false)),
+        ["Done · 1s · Just now"]
     );
 }
