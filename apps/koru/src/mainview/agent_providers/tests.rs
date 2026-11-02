@@ -194,3 +194,50 @@ fn turning_an_agent_off_hides_it_everywhere_and_restore_brings_it_back() {
         "the pane shows all"
     );
 }
+
+/// **Agents › ends in Manage…, after a rule**, wherever the flyout opens.
+#[test]
+fn the_agents_menu_ends_in_manage_after_a_rule() {
+    let items = context_menu::agent_plus_items();
+    assert_eq!(items.last(), Some(&context_menu::MenuAction::ManageAgents));
+    assert_eq!(
+        items.get(items.len() - 2),
+        Some(&context_menu::MenuAction::Divider)
+    );
+    assert_eq!(
+        koru_ui::MenuItem::label(&context_menu::MenuAction::ManageAgents),
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::MenuManageAgents)
+    );
+}
+
+fn showing_agent_providers(view: &MainView) -> bool {
+    matches!(
+        &view.tabs().active_tab().view,
+        TabView::Settings(settings) if settings.page() == koru_settings_ui::PageId::AgentProviders
+    )
+}
+
+/// **Both doors open the page**: *Agents › Manage…* from the `+` menu and
+/// from the Agents tree, and the **+** at the end of a chat picker's rail.
+#[test]
+fn manage_and_the_pickers_plus_open_agent_providers() {
+    let mut view = MainView::new();
+    assert!(view.run_menu_action(
+        context_menu::MenuSubject::NewTab,
+        context_menu::MenuAction::ManageAgents
+    ));
+    assert!(showing_agent_providers(&view));
+
+    let mut view = MainView::new();
+    assert!(view.run_menu_action(
+        context_menu::MenuSubject::AgentTree { project: None },
+        context_menu::MenuAction::ManageAgents
+    ));
+    assert!(showing_agent_providers(&view));
+
+    let mut view = MainView::new();
+    assert!(!view.open_agent_settings_from_chat(), "nothing asked");
+    view.ai_chat.ask_for_agent_settings();
+    assert!(view.open_agent_settings_from_chat());
+    assert!(showing_agent_providers(&view));
+}

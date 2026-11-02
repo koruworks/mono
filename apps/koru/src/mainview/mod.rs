@@ -1775,10 +1775,16 @@ impl MainView {
             context_view: ContextView::new(),
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
-            ai_chat: ChatSurface::new_at(
-                SurfaceMode::ContextPane,
-                koru_workspace_host::cli::root_from_args(),
-            ),
+            ai_chat: {
+                let mut chat = ChatSurface::new_at(
+                    SurfaceMode::ContextPane,
+                    koru_workspace_host::cli::root_from_args(),
+                );
+                // Koru has a Settings tab: the picker's + opens *Agent
+                // providers*.
+                chat.offer_agent_settings(true);
+                chat
+            },
             ai_focused: false,
             document_history: {
                 // One resolved language for everything the app dates. Stored
@@ -4140,6 +4146,7 @@ impl MainView {
                         | MenuAction::NewCanvas
                         | MenuAction::NewShell
                         | MenuAction::NewAgent
+                        | MenuAction::ManageAgents
                         | MenuAction::ActiveShells
                         | MenuAction::ActiveAgents
                         | MenuAction::OpenRunningSession(_)
@@ -4221,6 +4228,7 @@ impl MainView {
             MenuSubject::AgentTree { project } => match action {
                 MenuAction::NewShell
                 | MenuAction::NewAgent
+                | MenuAction::ManageAgents
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
                 | MenuAction::OpenRunningSession(_) => true,
@@ -4504,6 +4512,9 @@ impl MainView {
                     self.open_session_tab_for_profile(index, None)
                 }
                 MenuAction::NewAiChat => self.open_ai_chat_tab(),
+                MenuAction::ManageAgents => {
+                    self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
+                }
                 MenuAction::Socials => self.open_socials_tab(),
                 // The `+` menu knows nothing about a subject, so the modal
                 // opens empty — one gesture, the same single path.
@@ -4585,6 +4596,9 @@ impl MainView {
             MenuSubject::AgentTree { project } => match action {
                 MenuAction::TerminalProfile(index) => {
                     self.open_session_tab_for_profile(index, project)
+                }
+                MenuAction::ManageAgents => {
+                    self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
                 }
                 MenuAction::Rename => {
                     project.is_some_and(|id| self.prompt_rename_agent_project(id))
@@ -13993,6 +14007,7 @@ impl View for MainView {
         let chats_changed = self.maintain_chats();
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
+        let agent_settings_opened = self.open_agent_settings_from_chat();
         self.ask_pending_ai_chat_folder();
         // The level meter's tick. `false` the moment the session ends, because
         // there is no `Listening` left to ask.
@@ -14144,6 +14159,7 @@ impl View for MainView {
             || reminder_geometry_changed
             || delegate_folder
             || agent_rows_changed
+            || agent_settings_opened
             || fonts_arrived
             || delegation_requested
             || delegation_answered
@@ -15385,6 +15401,18 @@ impl MainView {
             disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
         });
         true
+    }
+
+    /// The **+** at the end of a chat picker's agent rail was pressed — in
+    /// the pane or in the active chat tab: open Settings on Coding → Agent
+    /// providers, the same page *Agents › Manage…* opens.
+    fn open_agent_settings_from_chat(&mut self) -> bool {
+        let pane = self.ai_chat.take_agent_settings_request();
+        let tab = match self.tabs_mut().active_view() {
+            TabView::AiChat(view) => view.take_agent_settings_request(),
+            _ => false,
+        };
+        (pane || tab) && self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
     }
 
     /// Consume the one secret-bearing handoff immediately into the provider's

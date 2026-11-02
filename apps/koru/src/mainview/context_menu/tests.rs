@@ -369,7 +369,10 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
         agents.iter().all(|a| a.label() != "Codex (Embedded)"),
         "the Agents launch flyout offers the raw Codex CLI row only, not Codex (Embedded)"
     );
-    assert_eq!(submenu(MenuAction::NewAgent), Some(agents));
+    // The profiles, then — after a rule — *Manage…* (Agent providers).
+    let mut flyout = agents;
+    flyout.extend([MenuAction::Divider, MenuAction::ManageAgents]);
+    assert_eq!(submenu(MenuAction::NewAgent), Some(flyout));
     assert_eq!(
         submenu(MenuAction::Documents),
         Some(vec![MenuAction::NewDocument])

@@ -1040,3 +1040,43 @@ fn an_agent_turned_off_leaves_the_rail_but_a_chat_on_it_keeps_it() {
     surface.transcript = None;
     assert_eq!(surface.picker_rail().len(), 2, "restore defaults");
 }
+
+/// **A + ends the agent rail and opens Settings on Agent providers** (the
+/// user, 2026-11-02): only where the host offers that page, one square after
+/// the last mark; it raises no tooltip and is named for a screen reader
+/// instead; a click closes the picker and asks the host.
+#[test]
+fn the_rails_plus_asks_the_host_for_agent_providers() {
+    let mut surface = surface();
+    open(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+    assert_eq!(surface.picker_manage_rect(&geometry), None, "not offered");
+
+    surface.offer_agent_settings(true);
+    let geometry = surface.picker_geometry().unwrap();
+    let plus = surface
+        .picker_manage_rect(&geometry)
+        .expect("the + is drawn");
+    let rail = surface.picker_rail();
+    let marks = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail));
+    let last = marks.last().unwrap();
+    assert!(plus.y > last.y + last.h - 0.5, "after the last mark");
+    assert!(geometry.rail.contains(plus.x + 1.0, plus.y + plus.h - 1.0));
+    assert!(
+        surface
+            .picker_tooltip_at(&geometry, plus.x + plus.w * 0.5, plus.y + plus.h * 0.5)
+            .is_none(),
+        "no tooltip"
+    );
+    surface.lang = Lang::En;
+    assert_eq!(surface.picker_manage_name(), "Manage agent providers");
+
+    assert!(!surface.take_agent_settings_request());
+    assert_eq!(
+        surface.picker_mouse_down(plus.x + plus.w * 0.5, plus.y + plus.h * 0.5),
+        Some(true)
+    );
+    assert!(!surface.chat_model_open, "the picker closes");
+    assert!(surface.take_agent_settings_request());
+    assert!(!surface.take_agent_settings_request(), "asked once");
+}

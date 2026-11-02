@@ -359,6 +359,44 @@ pub(crate) fn scroll_into_view(index: usize, offset: usize, visible: usize) -> u
 }
 
 impl crate::ChatSurface {
+    /// **Say the host can open Settings on *Agent providers*** — then the
+    /// rail ends in a **+** that asks it to.
+    pub fn offer_agent_settings(&mut self, offered: bool) {
+        self.agent_settings_offered = offered;
+    }
+
+    /// Ask the host for Settings on Coding → Agent providers — what the
+    /// rail's **+** does, closing the picker first.
+    pub fn ask_for_agent_settings(&mut self) {
+        self.close_picker();
+        self.agent_settings_request = true;
+    }
+
+    /// The rail's **+** was pressed since the last ask: the host opens
+    /// Settings on Coding → Agent providers.
+    pub fn take_agent_settings_request(&mut self) -> bool {
+        std::mem::take(&mut self.agent_settings_request)
+    }
+
+    /// The **+** at the rail's end, while the host offers it: one more
+    /// square after the last mark.
+    pub(crate) fn picker_manage_rect(&self, geometry: &Geometry) -> Option<Rect> {
+        if !self.agent_settings_offered {
+            return None;
+        }
+        let rail = self.picker_rail();
+        rail_rects(geometry.rail, rail.len() + 1, self.rail_has_divider(&rail))
+            .last()
+            .copied()
+    }
+
+    /// What the **+** is called for a screen reader and the inspector — it
+    /// raises no tooltip (D25: the picker's rows show none; the rail's marks
+    /// keep theirs because they are named nowhere else, and this one is).
+    pub(crate) fn picker_manage_name(&self) -> &'static str {
+        t(self.lang, Key::AiPickerManageAgents)
+    }
+
     /// The rail's entries: every offered agent in registration order, led —
     /// on a chat that has begun on Koru AI, OpenAI or Ollama — by that
     /// provider (S1). A chat with no message yet is offered only agents
@@ -802,7 +840,8 @@ impl crate::ChatSurface {
             return None;
         }
         let rail = self.picker_rail();
-        let rail_h = rail_height(rail.len(), self.rail_has_divider(&rail));
+        let marks = rail.len() + usize::from(self.agent_settings_offered);
+        let rail_h = rail_height(marks, self.rail_has_divider(&rail));
         let levels = self.effort_control().is_some();
         let context = self.picker_context().is_some();
         let fast = self.picker_fast().is_some();
@@ -968,6 +1007,13 @@ impl crate::ChatSurface {
         {
             self.picker.focus = PickerFocus::Rail;
             self.select_rail_entry(rail[index].clone());
+            return Some(true);
+        }
+        if self
+            .picker_manage_rect(&geometry)
+            .is_some_and(|rect| rect.contains(x, y))
+        {
+            self.ask_for_agent_settings();
             return Some(true);
         }
         if geometry.refresh.contains(x, y) {
@@ -1411,6 +1457,33 @@ impl crate::ChatSurface {
             };
             let colour = if dim { p.text_dim } else { p.text };
             draw_mark(canvas, root, &mut self.engine, entry, *rect, colour);
+        }
+        if let Some(rect) = self.picker_manage_rect(&geometry) {
+            let hovered = rect.contains(self.pointer.0, self.pointer.1);
+            let _manage = koru_draw::inspect::scope(
+                self.picker_manage_name(),
+                "button",
+                root,
+                scene::rect(rect.x, rect.y, rect.w, rect.h),
+                |r| r.property("accessible name", self.picker_manage_name(), "caller label"),
+            );
+            if hovered {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.hover_tint,
+                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
+                );
+            }
+            let layout = self.engine.icon_layout(icons::PLUS, 16.0);
+            scene::draw_layout(
+                canvas,
+                root,
+                &layout,
+                rect.x + (rect.w - layout.width()) * 0.5,
+                rect.y + (rect.h - layout.height()) * 0.5,
+                Some(if hovered { p.text } else { p.text_dim }),
+            );
         }
         if divider && let Some(first) = rects.first() {
             let y = first.y + first.h + RAIL_GAP + RAIL_DIVIDER * 0.5 - 0.5;

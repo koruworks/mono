@@ -181,6 +181,12 @@ impl SettingsView {
         self.surface.set_agent_providers(rows)
     }
 
+    /// The page showing.
+    #[cfg(test)]
+    pub fn page(&self) -> koru_settings_ui::PageId {
+        self.surface.page()
+    }
+
     /// The rows as the page holds them.
     #[cfg(test)]
     pub fn agent_providers(&self) -> &[koru_settings_ui::AgentProviderRow] {

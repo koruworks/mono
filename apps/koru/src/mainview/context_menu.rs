@@ -300,6 +300,9 @@ pub enum MenuAction {
     /// A running shell or agent session listed under *Active*. Choosing it
     /// focuses the tab already showing it, or attaches a new one.
     OpenRunningSession(SessionId),
+    /// *Manage…*, at the foot of the *Agents* flyout: Settings on Coding →
+    /// Agent providers, where agents are turned on and off.
+    ManageAgents,
     /// Parent of the Chats flyout on the `+` menu.
     Chats,
     /// Open a new Koru AI chat as a main tab.
@@ -926,7 +929,7 @@ impl MenuAction {
         use koru_features as f;
         match self {
             // Agents (shell sessions stay).
-            Self::NewAgent | Self::ActiveAgents => f::agents(),
+            Self::NewAgent | Self::ActiveAgents | Self::ManageAgents => f::agents(),
             // A project is a row of the Agents view's tree.
             Self::DeleteProject => f::agent_views(),
             Self::TerminalProfile(index) => {
@@ -1049,6 +1052,9 @@ impl MenuAction {
             }
             MenuAction::NewShell => "Shell",
             MenuAction::NewAgent => "Agents",
+            MenuAction::ManageAgents => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::MenuManageAgents)
+            }
             MenuAction::ActiveShells | MenuAction::ActiveAgents => "Active",
             MenuAction::TerminalProfile(index) => {
                 return Cow::Owned(terminal_profile_label(index));
@@ -1420,6 +1426,7 @@ impl MenuAction {
             MenuAction::Canvases | MenuAction::NewCanvas => Some(koru_draw::icons::CANVAS),
             MenuAction::NewShell => Some(koru_draw::icons::TERMINAL),
             MenuAction::NewAgent => Some(koru_draw::icons::SPARKLE),
+            MenuAction::ManageAgents => Some(koru_draw::icons::FADERS),
             // A profile row wears the launched product's mark (Q-E6 P3/P4).
             // A glyph mark — the *System* row's OS logo — answers here; a
             // vector brand mark answers through [`brand_icon`] instead, and
@@ -1960,15 +1967,22 @@ pub fn shell_plus_items() -> Vec<MenuAction> {
     })
 }
 
-/// Agents flyout: *Active ▸* when any agent is running, then the profile list.
+/// Agents flyout: *Active ▸* when any agent is running, then the profile
+/// list, then — after a rule — *Manage…*, which opens Settings on Coding →
+/// Agent providers, where an agent left out of this list is turned back on.
 pub fn agent_plus_items() -> Vec<MenuAction> {
-    PLUS_RUNNING_AGENTS.with(|cell| {
+    let mut items = PLUS_RUNNING_AGENTS.with(|cell| {
         active_then_profiles(
             !cell.borrow().is_empty(),
             MenuAction::ActiveAgents,
             agent_profile_items(),
         )
-    })
+    });
+    if !items.is_empty() {
+        items.push(MenuAction::Divider);
+    }
+    items.push(MenuAction::ManageAgents);
+    items
 }
 
 fn active_then_profiles(

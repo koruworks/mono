@@ -42,6 +42,8 @@ struct ChatFace {
 impl AiChatView {
     fn over(mut surface: ChatSurface) -> Self {
         surface.set_hidden_agents(hidden_agents());
+        // Koru has a Settings tab: the picker's + opens *Agent providers*.
+        surface.offer_agent_settings(true);
         Self {
             surface,
             face: ChatFace::default(),
@@ -202,6 +204,12 @@ impl AiChatView {
     /// The coding agents turned off on this machine (Agent providers).
     pub fn set_hidden_agents(&mut self, keys: Vec<String>) -> bool {
         self.surface.set_hidden_agents(keys)
+    }
+
+    /// The picker's **+** was pressed: the container opens Settings on
+    /// Agent providers.
+    pub fn take_agent_settings_request(&mut self) -> bool {
+        self.surface.take_agent_settings_request()
     }
 }
 

@@ -496,6 +496,12 @@ pub struct ChatSurface {
     /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
     /// them. Hidden from every choice; a chat already on one keeps it.
     hidden_agents: std::collections::HashSet<String>,
+    /// The host can open Settings on *Agent providers*, so the picker's rail
+    /// ends in a **+** that asks it to. Off until a host says so: a window
+    /// with no such page draws no button that would do nothing.
+    agent_settings_offered: bool,
+    /// The **+** was pressed: the host opens Settings on Agent providers.
+    agent_settings_request: bool,
     openai_models: Vec<String>,
     ollama_models: Vec<String>,
     /// Each local agent's readiness, from its validation answer.
@@ -784,6 +790,8 @@ impl ChatSurface {
             approval_mode_chip_w: 0.0,
             agent_modes: HashMap::new(),
             hidden_agents: std::collections::HashSet::new(),
+            agent_settings_offered: false,
+            agent_settings_request: false,
             openai_models: Vec::new(),
             ollama_models: Vec::new(),
             agent_status: HashMap::new(),

@@ -1249,7 +1249,9 @@ model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
 left side, one icon each — Codex, Claude, OpenCode, Kimi, Grok and
-Antigravity — with the selected agent's models beside them under
+Antigravity, less any you have turned off — and a **+** at the foot of that
+column, which opens **Settings → Coding → Agent providers**; the selected
+agent's models sit beside them under
 their own names, and a **Search models…** box above the list (typing narrows
 it; every word must match). The ↻ at the end of the search box asks the agent
 for its list again — after you connect a new provider in OpenCode, say. A
@@ -3310,6 +3312,9 @@ terminal's **Agents ›** menu and from the delegate dialog's agents. Nothing is
 uninstalled or signed out, and a chat or a terminal session already on that
 agent stays and keeps working — its own picker still shows it. Turning one
 **on** does not install or sign in its CLI; the setup guide is for that.
+Two other doors lead to this page: the **+** at the foot of the chat model
+picker's agent column, and **Manage…**, the last row of the terminal's
+**Agents ›** menu, under a rule.
 **Restore defaults**, at the top of the page, turns every agent back on, which
 is how a new install starts. The choice belongs to **this computer**, because
 the agents installed differ from one machine to the next, so it does not follow
