@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- `./koru.sh testflight`'s export (TECHNICAL.final 5.3). Signed by
+	     Xcode's cloud-managed Apple Distribution certificate, with the App
+	     Store profiles Xcode creates or reuses for both bundle ids: nothing
+	     is installed on the machine. The script sets `destination` to
+	     `export` (an .ipa it can check) or `upload` (TestFlight). -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string>S9AYD7YJ9F</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>

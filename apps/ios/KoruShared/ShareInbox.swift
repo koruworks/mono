@@ -59,7 +59,20 @@ struct ShareInbox: Sendable {
         let manifest: Manifest
     }
 
-    static let appGroup = "group.do.koru.app"
+    /// The App Group both targets share, as the build names it: the
+    /// `KoruAppGroup` key each target's Info.plist takes from the build
+    /// setting `KORU_APP_GROUP`, the same setting both entitlements files
+    /// read. `group.do.koru.app` for Koru, `group.do.koru.app.nightly` for
+    /// Koru Nightly (`Config/Nightly.xcconfig`); never written here, so the
+    /// code cannot name a group the build did not sign for.
+    static let appGroup: String? = Bundle.main.object(forInfoDictionaryKey: "KoruAppGroup") as? String
+
+    /// The App Group container, or `nil` when the build names no group or
+    /// the entitlement is absent - a build problem, not a runtime state.
+    static func groupContainer() -> URL? {
+        guard let group = appGroup, !group.isEmpty else { return nil }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    }
 
     let root: URL
 
@@ -67,8 +80,7 @@ struct ShareInbox: Sendable {
     /// when the entitlement is absent — a build problem, not a runtime state,
     /// but the extension must degrade to "nothing shared" rather than crash.
     static func shared() -> ShareInbox? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        groupContainer()
             .map { ShareInbox(root: $0.appendingPathComponent("inbox", isDirectory: true)) }
     }
 
@@ -163,8 +175,7 @@ struct ShareDestinations: Codable, Equatable, Sendable {
     /// app that never ran. The extension degrades to destination-less staging.
     static func read() -> ShareDestinations? {
         guard
-            let group = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: ShareInbox.appGroup),
+            let group = ShareInbox.groupContainer(),
             let data = try? Data(contentsOf: file(in: group))
         else { return nil }
         return try? JSONDecoder().decode(ShareDestinations.self, from: data)
@@ -172,10 +183,7 @@ struct ShareDestinations: Codable, Equatable, Sendable {
 
     /// Atomic, like the manifest: a torn snapshot must never be readable.
     func write() throws {
-        guard
-            let group = FileManager.default.containerURL(
-                forSecurityApplicationGroupIdentifier: ShareInbox.appGroup)
-        else { return }
+        guard let group = ShareInbox.groupContainer() else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(self).write(to: Self.file(in: group), options: .atomic)
@@ -209,16 +217,12 @@ enum ShareRecentDestinations {
     }
 
     static func read() -> [Entry] {
-        guard let group = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: ShareInbox.appGroup)
-        else { return [] }
+        guard let group = ShareInbox.groupContainer() else { return [] }
         return read(in: group)
     }
 
     static func record(workspaceId: String) {
-        guard let group = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: ShareInbox.appGroup)
-        else { return }
+        guard let group = ShareInbox.groupContainer() else { return }
         record(workspaceId: workspaceId, in: group)
     }
 

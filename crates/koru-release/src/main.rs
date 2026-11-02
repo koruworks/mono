@@ -127,6 +127,7 @@ fn run() -> Result<(), String> {
             mobile::dist_github_package(&root, channel, options)
         }
         Some("android-version-code") => mobile::version_code_command(args),
+        Some("ios-version") => mobile::ios_version_command(args),
         Some("minisign-public-key") => mobile::public_key_command(args),
         // **Not a `dist-*` verb, because it builds nothing.** It reads what is
         // already published and rewrites one page from it.
@@ -166,6 +167,7 @@ fn run() -> Result<(), String> {
              koru-release nightly-notes [--select <before-sha> <after-sha>]\n  \
              koru-release nightly-version --build <yyyymmddHHMM>\n  \
              koru-release android-version-code --build <yyyymmddHHMM>\n  \
+             koru-release ios-version --version <release version> --build <yyyymmddHHMM>\n  \
              koru-release minisign-public-key --key <file> [--key-password-stdin]\n  \
              koru-release release-index [--keep-latest] [--dry-run <page.html>]\n  \
              koru-release voice-models plan|pin|fetch|publish|local [--only <id>] [--work <dir>] [--upload]\n  \
