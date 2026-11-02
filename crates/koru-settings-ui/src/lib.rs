@@ -13,7 +13,8 @@
 //! ## Pages
 //!
 //! The sidebar lists [`PageId`]s — Appearance, Editor, Reminders, Terminal,
-//! System — with a search box that narrows them by what they hold. One page is
+//! System, and under a **Coding** heading ([`PageGroup`]) Agent providers —
+//! with a search box that narrows them by what they hold. One page is
 //! laid out at a time, so a page that is not showing has no rects and cannot be
 //! pressed. **Reminders is the host's page**: its rows belong to `apps/koru`
 //! and are drawn into the slot [`host_section_rect`](SettingsSurface::host_section_rect)
@@ -80,6 +81,7 @@ pub mod links;
 mod page;
 pub mod state;
 
+mod agents;
 mod global;
 mod terminal;
 
@@ -90,8 +92,11 @@ mod tests;
 
 pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
-pub use page::PageId;
-pub use state::{AiSlot, Availability, DictionaryRow, Notice, RendererRow, VoiceFacts};
+pub use page::{PageGroup, PageId};
+pub use state::{
+    AgentAttention, AgentProviderRow, AgentProviderStatus, AiSlot, Availability, DictionaryRow,
+    Notice, RendererRow, VoiceFacts,
+};
 
 use action::Action;
 use page::{Block, Builder, Laid, Target, TilePreview, Widget};
@@ -144,6 +149,9 @@ pub struct Sections {
     pub terminal: bool,
     /// The host fills a Reminders page.
     pub reminders: bool,
+    /// The host lists the coding agents, so *Coding → Agent providers* is a
+    /// page (Koru's window only: it is the one that hides them).
+    pub agents: bool,
 }
 
 impl Sections {
@@ -154,6 +162,7 @@ impl Sections {
             ai: true,
             terminal: true,
             reminders: true,
+            agents: true,
         }
     }
 
@@ -164,6 +173,7 @@ impl Sections {
             ai: true,
             terminal: false,
             reminders: false,
+            agents: false,
         }
     }
 
@@ -174,6 +184,7 @@ impl Sections {
             ai: false,
             terminal: true,
             reminders: false,
+            agents: false,
         }
     }
 
@@ -186,6 +197,7 @@ impl Sections {
                 PageId::Reminders => self.reminders,
                 PageId::Terminal => self.terminal,
                 PageId::System => self.global || self.ai,
+                PageId::AgentProviders => self.agents,
             })
             .collect()
     }
@@ -237,6 +249,18 @@ fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
         )),
         _ => None,
     }
+}
+
+/// The air above a sidebar group's heading.
+const NAV_GROUP_GAP: f32 = 14.0;
+
+/// One run of the sidebar: a group's heading (none for the ungrouped pages)
+/// and the list under it, by index into the listed pages.
+struct NavRun {
+    group: Option<page::PageGroup>,
+    heading: Option<Rect>,
+    area: Rect,
+    pages: Vec<usize>,
 }
 
 /// Where the pointer is, in the surface's own vocabulary.
@@ -316,6 +340,8 @@ pub struct SettingsSurface {
 
     voice: VoiceFacts,
     renderer: RendererRow,
+    /// The coding agents on *Agent providers*, as the host last read them.
+    agent_providers: Vec<AgentProviderRow>,
     /// The host's Koru AI slot. Held but **not drawn** while the card is off
     /// Settings; kept so the hosts that fill it need not change.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -380,6 +406,7 @@ impl SettingsSurface {
             telemetry: None,
             voice: VoiceFacts::default(),
             renderer: RendererRow::none(),
+            agent_providers: Vec::new(),
             ai: AiSlot::default(),
             availability: Availability::Live,
             notice: None,
@@ -497,6 +524,20 @@ impl SettingsSurface {
 
     pub fn set_ai_slot(&mut self, slot: AiSlot) {
         self.ai = slot;
+    }
+
+    /// The coding agents *Agent providers* lists, in the host's order, each
+    /// with its status and switch. Answers whether anything moved.
+    pub fn set_agent_providers(&mut self, rows: Vec<AgentProviderRow>) -> bool {
+        let moved = self.agent_providers != rows;
+        self.agent_providers = rows;
+        moved
+    }
+
+    /// The rows as this surface holds them — the host's, with any press
+    /// already applied.
+    pub fn agent_providers(&self) -> &[AgentProviderRow] {
+        &self.agent_providers
     }
 
     /// Say whether this host can open the sample document
@@ -776,6 +817,42 @@ impl SettingsSurface {
         )
     }
 
+    /// **The sidebar's runs**: the ungrouped pages first, then each group's
+    /// pages under its heading, with the listed pages' indices each run
+    /// holds. One function for drawing and hit-testing, as everywhere here.
+    fn nav_runs(&self, listed: &[PageId]) -> Vec<NavRun> {
+        let nav = self.nav_rect();
+        let mut runs: Vec<NavRun> = Vec::new();
+        let mut y = nav.y;
+        for (index, page) in listed.iter().enumerate() {
+            let group = page.group();
+            let same = runs.last().is_some_and(|run| run.group == group);
+            if !same {
+                if let Some(last) = runs.last() {
+                    y = last.area.y + last.area.h;
+                }
+                let heading = group.map(|_| {
+                    if !runs.is_empty() {
+                        y += NAV_GROUP_GAP;
+                    }
+                    let at = Rect::new(nav.x, y, nav.w, Card::TITLE_H);
+                    y += Card::TITLE_H + Card::TITLE_GAP;
+                    at
+                });
+                runs.push(NavRun {
+                    group,
+                    heading,
+                    area: Rect::new(nav.x, y, nav.w, 0.0),
+                    pages: Vec::new(),
+                });
+            }
+            let run = runs.last_mut().expect("a run was just pushed");
+            run.pages.push(index);
+            run.area.h = NavList::height(run.pages.len());
+        }
+        runs
+    }
+
     /// Where the compact chips start: under the search box.
     fn chips_area(&self) -> Rect {
         let search = self.search_rect();
@@ -843,6 +920,7 @@ impl SettingsSurface {
             telemetry,
             voice,
             renderer,
+            agent_providers,
             availability,
             notice,
             laid,
@@ -850,7 +928,11 @@ impl SettingsSurface {
         } = self;
         let lang = *lang;
         let mut b = Builder::new(engine, rect.x, rect.w, rect.y);
-        b.title(page.label(self.lang), page.description(self.lang));
+        b.title_with_button(
+            page.label(lang),
+            page.description(lang),
+            (*page == PageId::AgentProviders).then(|| agents::title_button(lang)),
+        );
         // The one sentence a read-only surface owes, first thing on the page.
         if availability.is_down() && *page != PageId::Reminders {
             b.note(koru_i18n::t(lang, Key::SettingsUnavailableReadOnly));
@@ -887,6 +969,7 @@ impl SettingsSurface {
             }
             PageId::Terminal => terminal::lay_out(&mut b, lang, terminal),
             PageId::System => global::system(&mut b, &rows),
+            PageId::AgentProviders => agents::lay_out(&mut b, lang, agent_providers),
         }
         *laid = b.finish();
         // A relayout can drop the dropdown a list was opened from — the page
@@ -918,7 +1001,10 @@ impl SettingsSurface {
                 return koru_ui::ChipNav::chip_at(&self.nav_chips, x, y).map(Pointed::Nav);
             }
             let listed = self.listed();
-            return NavList::row_at(self.nav_rect(), listed.len(), x, y).map(Pointed::Nav);
+            return self.nav_runs(&listed).iter().find_map(|run| {
+                NavList::row_at(run.area, run.pages.len(), x, y)
+                    .map(|row| Pointed::Nav(run.pages[row]))
+            });
         }
         let cy = y + self.scroll;
         self.laid
@@ -1270,16 +1356,41 @@ impl SettingsSurface {
                 None,
             );
         } else {
-            NavList::draw(
-                scene_out,
-                root,
-                &mut self.engine,
-                nav,
-                &items,
-                current,
-                hovered,
-                None,
-            );
+            for run in self.nav_runs(&listed) {
+                if let (Some(group), Some(at)) = (run.group, run.heading) {
+                    // A group's heading: a card caption's words, as Manage's
+                    // nav captions are.
+                    koru_ui::text_paragraph::draw_line(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        group.label(self.lang),
+                        at.x + 8.0,
+                        at.y,
+                        theme::role::meta(),
+                        "theme::role::meta()",
+                        p.text_dim,
+                    );
+                }
+                let run_items: Vec<NavItem<'_>> = run
+                    .pages
+                    .iter()
+                    .map(|index| NavItem::new(listed[*index].label(self.lang)))
+                    .collect();
+                let local = |index: Option<usize>| {
+                    index.and_then(|index| run.pages.iter().position(|page| *page == index))
+                };
+                NavList::draw(
+                    scene_out,
+                    root,
+                    &mut self.engine,
+                    run.area,
+                    &run_items,
+                    local(current),
+                    local(hovered),
+                    None,
+                );
+            }
         }
         if items.is_empty() {
             koru_ui::text_paragraph::draw_line(
@@ -1362,7 +1473,22 @@ impl SettingsSurface {
                 y,
                 w,
                 title_h,
+                button,
             } => {
+                if let Some((label, rect, hit)) = button {
+                    ActionButton {
+                        label,
+                        style: koru_ui::ActionStyle::Secondary,
+                        trailing_icon: None,
+                    }
+                    .draw(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        *rect,
+                        hovered == Some(*hit),
+                    );
+                }
                 koru_ui::text_paragraph::KoruTextParagraph::new(
                     title,
                     title_style(),
@@ -1438,6 +1564,9 @@ impl SettingsSurface {
                     alpha,
                 );
                 for row in &card.rows {
+                    if let Some(key) = &row.mark {
+                        draw_row_mark(scene_out, root, &mut self.engine, row.rect, key, alpha);
+                    }
                     let _row = CardRow {
                         label: &row.label,
                         hint: row.hint.as_deref(),
@@ -1448,7 +1577,7 @@ impl SettingsSurface {
                         scene_out,
                         root,
                         &mut self.engine,
-                        row.rect,
+                        row.text_rect(),
                         row.text_w,
                         alpha,
                     );
@@ -1686,6 +1815,45 @@ impl SettingsSurface {
 
 /// What a theme tile shows: a sliver of that theme's page and ink, from the
 /// real palettes rather than a drawing of them.
+/// An agent row's brand mark, before its name: the agent's own mark where it
+/// has one, the robot otherwise — the mark the chat's rail and the terminal's
+/// Agents menu draw for the same key.
+fn draw_row_mark(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    row: Rect,
+    key: &str,
+    alpha: f32,
+) {
+    let color = theme::p().text.multiply_alpha(alpha);
+    let size = page::MARK_SIZE;
+    let at = Rect::new(
+        row.x + CardRow::PAD_X,
+        row.y + (row.h - size) * 0.5,
+        size,
+        size,
+    );
+    match koru_draw::brand::for_profile(key)
+        .unwrap_or(koru_draw::brand::ProfileMark::Glyph(icons::ROBOT))
+    {
+        koru_draw::brand::ProfileMark::Brand(icon) => {
+            scene::draw_brand_icon(canvas, root, at, color, icon)
+        }
+        koru_draw::brand::ProfileMark::Glyph(glyph) => {
+            let layout = engine.icon_layout(glyph, size);
+            scene::draw_layout(
+                canvas,
+                root,
+                &layout,
+                at.x + (at.w - layout.width()) * 0.5,
+                at.y + (at.h - layout.height()) * 0.5,
+                Some(color),
+            );
+        }
+    }
+}
+
 fn paint_theme_preview(canvas: &mut Scene, root: Affine, area: Rect, preview: TilePreview) {
     let sheet = |canvas: &mut Scene, rect: Rect, palette: &theme::Palette| {
         scene::fill(
@@ -1870,6 +2038,22 @@ impl SettingsSurface {
                     ..TerminalPatch::default()
                 })
             }
+            // The switch moves at once; the host stores the list and hides
+            // the agent everywhere, and hands the rows back.
+            Action::AgentEnabled(key, on) => {
+                if let Some(row) = self.agent_providers.iter_mut().find(|row| row.key == key) {
+                    row.on = on;
+                }
+                self.requests.push(Request::SetAgentEnabled { key, on });
+            }
+            Action::RestoreAgentDefaults => {
+                for row in &mut self.agent_providers {
+                    row.on = true;
+                }
+                self.requests.push(Request::RestoreAgentDefaults);
+            }
+            Action::RefreshAgentStatus => self.requests.push(Request::RefreshAgentStatus),
+            Action::AgentGuide(url) => self.requests.push(Request::OpenAgentGuide(url)),
         }
     }
 
@@ -2019,6 +2203,10 @@ fn clone_action(action: &Action) -> Action {
         Action::TerminalCursorBlink(v) => Action::TerminalCursorBlink(*v),
         Action::TerminalComposerDefault(v) => Action::TerminalComposerDefault(*v),
         Action::TerminalMatchCaret(v) => Action::TerminalMatchCaret(*v),
+        Action::AgentEnabled(key, on) => Action::AgentEnabled(key.clone(), *on),
+        Action::RestoreAgentDefaults => Action::RestoreAgentDefaults,
+        Action::RefreshAgentStatus => Action::RefreshAgentStatus,
+        Action::AgentGuide(url) => Action::AgentGuide(url),
     }
 }
 

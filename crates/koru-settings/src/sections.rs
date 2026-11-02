@@ -170,6 +170,18 @@ pub struct GlobalSettings {
     pub delegate_temporary_root: Option<String>,
     /// The internal session recorder's prefill. Device-local — see the type.
     pub recording: RecordingPrefs,
+    /// **The coding agents turned off on this machine**, by agent key
+    /// (`koru_session_profiles::ProfileLabel::agent_key`: `claude`, `codex`,
+    /// …), sorted and without repeats. An agent named here is hidden from
+    /// the chat's agent picker, the terminal's *Agents ›* menu and every new
+    /// session choice; its chats and sessions are kept and keep working.
+    ///
+    /// **The off list, not the on list**, so empty is the default — every
+    /// agent on — and an agent a later Koru adds is on until someone turns it
+    /// off. Device-local because the agents installed differ per machine.
+    /// `#[serde(default)]` so a section from a build without it still reads.
+    #[serde(default)]
+    pub disabled_agents: Vec<String>,
 }
 
 impl Default for GlobalSettings {
@@ -220,6 +232,8 @@ impl Default for GlobalSettings {
             // their own system when it moved.
             delegate_temporary_root: None,
             recording: RecordingPrefs::default(),
+            // Every agent on.
+            disabled_agents: Vec::new(),
         }
     }
 }
@@ -307,6 +321,10 @@ pub struct GlobalPatch {
     /// leaves the stored set alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording: Option<RecordingPrefs>,
+    /// The whole off list, written whole on every switch: an empty list is
+    /// *Restore defaults*. Absent leaves the stored list alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_agents: Option<Vec<String>>,
 }
 
 impl GlobalPatch {
@@ -354,6 +372,7 @@ impl GlobalPatch {
             || self.automatic_update_checks.is_some()
             || !self.delegate_temporary_root.is_unchanged()
             || self.recording.is_some()
+            || self.disabled_agents.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -365,6 +384,23 @@ impl GlobalPatch {
     /// Validation runs before a single byte is staged, so a rejected patch
     /// leaves the disk exactly as it was.
     pub fn validate(&self) -> Result<(), Invalid> {
+        // An agent key is a profile key's shape — short, lowercase, ASCII —
+        // and the list is bounded, so a hand-edit cannot grow the file.
+        if let Some(agents) = &self.disabled_agents {
+            let key = |key: &String| {
+                !key.is_empty()
+                    && key.len() <= MAX_AGENT_KEY
+                    && key.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+            };
+            if agents.len() > MAX_DISABLED_AGENTS || !agents.iter().all(key) {
+                return Err(Invalid::new(
+                    "disabled_agents",
+                    "an agent is named by its lowercase key, and at most 64 are listed",
+                ));
+            }
+        }
         if let Some(zoom) = self.zoom
             && Zoom::new(zoom).is_none()
         {
@@ -512,7 +548,21 @@ impl GlobalPatch {
         if let Some(recording) = self.recording {
             current.recording = recording;
         }
+        if let Some(agents) = self.disabled_agents {
+            current.disabled_agents = normalized_agents(agents);
+        }
     }
+}
+
+/// The most agents the off list holds, and the longest key it takes.
+const MAX_DISABLED_AGENTS: usize = 64;
+const MAX_AGENT_KEY: usize = 32;
+
+/// An off list as it is kept: sorted, each key once.
+pub(crate) fn normalized_agents(mut agents: Vec<String>) -> Vec<String> {
+    agents.sort();
+    agents.dedup();
+    agents
 }
 
 // -------------------------------------------------------------- Terminal

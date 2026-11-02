@@ -208,5 +208,86 @@ pub struct DictionaryRow {
     pub action: Option<String>,
 }
 
+/// **One coding agent on *Agent providers***, as the host read it: which
+/// agent, whether its CLI is ready, where its setup guide is, and whether it
+/// is on. The host owns every part of it — the agent list, the probe, the
+/// stored switch — and this crate only draws it and says what was pressed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentProviderRow {
+    /// The agent's key — `claude`, `codex`, … — which names its brand mark
+    /// and what its switch turns off.
+    pub key: String,
+    /// Its brand name, the same in every language.
+    pub name: String,
+    pub status: AgentProviderStatus,
+    /// Its install or setup page, opened by *Setup guide ↗*.
+    pub guide: Option<&'static str>,
+    pub on: bool,
+}
+
+/// Whether an agent's CLI is ready, in the words the row says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentProviderStatus {
+    /// Not read yet, or being read again.
+    Checking,
+    Ready,
+    /// Its program is not on `PATH`; the row names it.
+    NotInstalled {
+        program: String,
+    },
+    /// Installed, and something Koru already knows stands in the way.
+    NeedsAttention(AgentAttention),
+}
+
+/// Why an installed agent needs attention — only what Koru's existing
+/// checks already know.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentAttention {
+    /// A version Koru's managed route does not accept yet.
+    UnsupportedVersion,
+    SignedOut,
+    /// The check itself failed.
+    CheckFailed,
+    /// The agent is installed but the program a chat runs it through is
+    /// not — Claude's `claude-agent-acp`, Antigravity's `agy_acp_server`.
+    AdapterMissing {
+        program: String,
+    },
+}
+
+impl AgentProviderStatus {
+    /// The row's sentence: the status, and for one that is not ready, why.
+    pub fn words(&self, lang: koru_i18n::Lang) -> String {
+        use koru_i18n::{Key, fill, t};
+        let detail = |status: Key, why: String| {
+            fill(
+                t(lang, Key::SettingsAgentStatusDetail),
+                &[t(lang, status), &why],
+            )
+        };
+        let not_on_path = |program: &str| fill(t(lang, Key::SettingsAgentNotOnPath), &[program]);
+        match self {
+            Self::Checking => t(lang, Key::TerminalChecking).to_owned(),
+            Self::Ready => t(lang, Key::SettingsAgentReady).to_owned(),
+            Self::NotInstalled { program } => {
+                detail(Key::TerminalNotInstalled, not_on_path(program))
+            }
+            Self::NeedsAttention(why) => detail(
+                Key::SettingsAgentNeedsAttention,
+                match why {
+                    AgentAttention::UnsupportedVersion => {
+                        t(lang, Key::SettingsAgentUnsupportedVersion).to_owned()
+                    }
+                    AgentAttention::SignedOut => t(lang, Key::SettingsAgentSignedOut).to_owned(),
+                    AgentAttention::CheckFailed => {
+                        t(lang, Key::SettingsAgentCheckFailed).to_owned()
+                    }
+                    AgentAttention::AdapterMissing { program } => not_on_path(program),
+                },
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

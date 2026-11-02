@@ -977,3 +977,66 @@ fn codex_is_offered_with_its_models_levels_and_modes() {
     assert!(rows[2].full_access);
     assert_eq!(surface.current_approval_mode().as_deref(), Some("ask"));
 }
+
+/// **An agent turned off leaves the rail, and a chat already on it keeps
+/// working** (Settings → Coding → Agent providers): a new chat is offered
+/// only the agents left on; a chat that began on the hidden agent still has
+/// it on its rail, opens on it, and lists its models.
+#[test]
+fn an_agent_turned_off_leaves_the_rail_but_a_chat_on_it_keeps_it() {
+    let mut surface = surface();
+    assert!(surface.set_hidden_agents(["opencode".to_owned()]));
+    assert!(
+        !surface.set_hidden_agents(["opencode".to_owned()]),
+        "no change"
+    );
+    assert_eq!(
+        surface.picker_rail(),
+        [RailEntry::Agent(agent("agent-claude"))],
+        "a new chat is offered only the agents left on"
+    );
+
+    on_agent(
+        &mut surface,
+        "agent-opencode",
+        "opencode/beam-free",
+        ReasoningChoice::Default,
+    );
+    let transcript = surface.transcript.as_mut().unwrap();
+    let chat = transcript.chat.id;
+    transcript.messages.push(koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: chat,
+        ordinal: 0,
+        role: koru_ai_core::ChatRole::User,
+        state: koru_ai_core::MessageState::Complete,
+        markdown: "hello".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+        completed_at: None,
+    });
+    assert!(
+        surface
+            .picker_rail()
+            .contains(&RailEntry::Agent(agent("agent-opencode"))),
+        "the chat keeps its own agent"
+    );
+    assert_eq!(
+        surface.picker_initial_entry(),
+        Some(RailEntry::Agent(agent("agent-opencode")))
+    );
+    open(&mut surface);
+    assert!(
+        surface
+            .picker_rows()
+            .contains(&Row::Model("opencode/beam-free".into()))
+    );
+
+    assert!(surface.set_hidden_agents(Vec::new()));
+    surface.transcript = None;
+    assert_eq!(surface.picker_rail().len(), 2, "restore defaults");
+}

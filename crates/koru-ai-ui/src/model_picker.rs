@@ -362,8 +362,14 @@ impl crate::ChatSurface {
     /// The rail's entries: every offered agent in registration order, led —
     /// on a chat that has begun on Koru AI, OpenAI or Ollama — by that
     /// provider (S1). A chat with no message yet is offered only agents
-    /// (the user's call, 2026-10-31).
+    /// (the user's call, 2026-10-31). An agent turned off on *Agent
+    /// providers* is left out, unless it is the chat's own: that chat keeps
+    /// its agent, and keeps working.
     pub(crate) fn picker_rail(&self) -> Vec<RailEntry> {
+        let current = self
+            .transcript
+            .as_ref()
+            .map(|transcript| &transcript.chat.current_model.provider);
         let mut rail = Vec::new();
         if let Some(transcript) = &self.transcript
             && !transcript.messages.is_empty()
@@ -378,6 +384,7 @@ impl crate::ChatSurface {
                 settings
                     .agents
                     .iter()
+                    .filter(|agent| self.agent_shown(&agent.id) || Some(&agent.id) == current)
                     .map(|agent| RailEntry::Agent(agent.id.clone())),
             );
         }

@@ -1082,6 +1082,7 @@ impl MainView {
                 }
                 self.provider_readiness = Some(providers);
                 self.update_delegate_readiness();
+                self.sync_agent_providers();
                 true
             }
             // §7.4, the moment the host says so rather than on the refresh

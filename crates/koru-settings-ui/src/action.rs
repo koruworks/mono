@@ -143,6 +143,16 @@ pub(crate) enum Action {
     /// *Match the editor caret*: `true` sets width and height to
     /// `Application`; `false` gives them the editor caret's current values.
     TerminalMatchCaret(bool),
+
+    // ---------------------------------------------------- Agent providers
+    /// An agent's switch: its key, and the value the switch moves to.
+    AgentEnabled(String, bool),
+    /// *Restore defaults*: every agent on.
+    RestoreAgentDefaults,
+    /// *Refresh status*: read every agent's status again.
+    RefreshAgentStatus,
+    /// *Setup guide ↗*: the agent's install or setup page.
+    AgentGuide(&'static str),
 }
 
 /// **What the surface cannot do for itself.**
@@ -202,4 +212,17 @@ pub enum Request {
     /// journal's, behind the Gateway (the opt-in contract of 2026-10-11), and
     /// the write must leave the event loop — so it is the host's to perform.
     SetTelemetryConsent(bool),
+    /// Turn a coding agent on or off on this machine, by its key. The host
+    /// holds the stored list and everything that hides an agent.
+    SetAgentEnabled {
+        key: String,
+        on: bool,
+    },
+    /// Turn every coding agent on.
+    RestoreAgentDefaults,
+    /// Read every agent's status again — the host's existing checks, off
+    /// the event loop.
+    RefreshAgentStatus,
+    /// Open an agent's setup guide in the browser: a fixed vendor page.
+    OpenAgentGuide(&'static str),
 }

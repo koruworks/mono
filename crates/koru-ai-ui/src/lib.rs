@@ -75,7 +75,7 @@ mod tool_groups;
 mod usage;
 mod work_view;
 
-pub use agents::provider_mark;
+pub use agents::{agent_key, provider_mark};
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 
@@ -492,6 +492,10 @@ pub struct ChatSurface {
     approval_mode_chip_w: f32,
     /// Each agent's approval modes, from the same listing as its models.
     agent_modes: HashMap<AiProviderId, approval_modes::ListedModes>,
+    /// The coding agents turned off on this machine, by agent key
+    /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
+    /// them. Hidden from every choice; a chat already on one keeps it.
+    hidden_agents: std::collections::HashSet<String>,
     openai_models: Vec<String>,
     ollama_models: Vec<String>,
     /// Each local agent's readiness, from its validation answer.
@@ -779,6 +783,7 @@ impl ChatSurface {
             approval_mode_focus: None,
             approval_mode_chip_w: 0.0,
             agent_modes: HashMap::new(),
+            hidden_agents: std::collections::HashSet::new(),
             openai_models: Vec::new(),
             ollama_models: Vec::new(),
             agent_status: HashMap::new(),

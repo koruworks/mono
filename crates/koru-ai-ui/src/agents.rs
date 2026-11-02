@@ -742,6 +742,12 @@ pub(crate) fn is_agent_provider_str(provider: &str) -> bool {
 /// The one mapping, so the model picker's rail and a chat tab (D22) cannot
 /// give one agent two faces. It is `koru_draw::brand::for_profile` over the
 /// session layer's profile key, which an agent's id carries after `agent-`.
+/// The agent key a provider id names — `agent-claude` is `claude` — the key
+/// the host's *Agent providers* setting turns agents off by.
+pub fn agent_key(provider: &AiProviderId) -> Option<&str> {
+    provider.as_str().strip_prefix("agent-")
+}
+
 pub fn provider_mark(provider: &str) -> Option<koru_draw::brand::ProfileMark> {
     let key = match provider.strip_prefix("agent-") {
         Some(kind) => kind,
@@ -999,6 +1005,22 @@ impl crate::ChatSurface {
         ))
     }
 
+    /// **Turn coding agents off on this machine** (Settings → Coding → Agent
+    /// providers): the keys of the agents turned off. A hidden agent leaves
+    /// the picker's rail and the setup card; a chat already on one keeps it
+    /// and keeps working. Answers whether anything moved.
+    pub fn set_hidden_agents(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
+        let keys: std::collections::HashSet<String> = keys.into_iter().collect();
+        let moved = self.hidden_agents != keys;
+        self.hidden_agents = keys;
+        moved
+    }
+
+    /// Whether `agent` is offered as a choice: not turned off.
+    pub(crate) fn agent_shown(&self, agent: &AiProviderId) -> bool {
+        agent_key(agent).is_none_or(|key| !self.hidden_agents.contains(key))
+    }
+
     /// The Settings card's agent rows: one per agent, its name and its
     /// readiness word, the picked one tinted.
     pub(crate) fn agent_row_rects(&self, area: crate::Rect) -> Vec<(AiProviderId, crate::Rect)> {
@@ -1009,6 +1031,7 @@ impl crate::ChatSurface {
             .unwrap_or_default();
         agents
             .iter()
+            .filter(|agent| self.agent_shown(&agent.id))
             .enumerate()
             .map(|(index, agent)| {
                 (
@@ -1033,10 +1056,13 @@ impl crate::ChatSurface {
         if self.setup_provider != crate::SetupProvider::Agents {
             return 0.0;
         }
-        let rows = self
-            .settings
-            .as_ref()
-            .map_or(0, |settings| settings.agents.len());
+        let rows = self.settings.as_ref().map_or(0, |settings| {
+            settings
+                .agents
+                .iter()
+                .filter(|agent| self.agent_shown(&agent.id))
+                .count()
+        });
         (rows as f32 * 34.0 + 16.0 - 134.0).max(0.0)
     }
 

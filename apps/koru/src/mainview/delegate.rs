@@ -226,7 +226,17 @@ impl MainView {
             .unwrap_or_default();
         let store_workspace = koru_delegate_core::WorkspaceId::from_uuid(workspace.as_uuid());
 
-        let profiles = koru_session_profiles::built_in_profiles();
+        // An agent turned off on *Agent providers* is not a choice here.
+        let disabled = self.disabled_agents().to_vec();
+        let profiles: Vec<_> = koru_session_profiles::built_in_profiles()
+            .into_iter()
+            .filter(|profile| {
+                profile
+                    .label
+                    .agent_key()
+                    .is_none_or(|key| !disabled.iter().any(|off| off == key))
+            })
+            .collect();
         let agents = world::agents_for(
             &profiles,
             koru_session_profiles::MANAGED_PROVIDER_REGISTRATIONS,
@@ -500,12 +510,21 @@ impl MainView {
     /// shows actually moved.
     pub(crate) fn maintain_delegate_folder(&mut self) -> bool {
         let before = self.delegate_temporary_base();
+        let agents_before = self.disabled_agents().to_vec();
         if self.delegate_folder.poll().is_none() {
             return false;
         }
+        // The same link carries the agents turned off (Agent providers): a
+        // list another window changed, or the stored one arriving at start,
+        // reaches every surface here.
+        let agents_moved = self.disabled_agents() != agents_before.as_slice();
+        if agents_moved {
+            self.apply_hidden_agents();
+            self.sync_agent_providers();
+        }
         let after = self.delegate_temporary_base();
         if after == before {
-            return false;
+            return agents_moved;
         }
         if let Some(modal) = self.delegation.as_mut() {
             modal.chose_temporary_base(Ok(after));

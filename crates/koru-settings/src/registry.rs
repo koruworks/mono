@@ -416,6 +416,20 @@ pub const REGISTRY: &[SettingSpec] = &[
               default set. Device-local because the folder names a directory \
               on this machine — the delegate_temporary_root rule.",
     },
+    SettingSpec {
+        field: "disabled_agents",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The coding agents turned off on this machine (Settings → \
+              Coding → Agent providers), by agent key — `claude`, `codex`, \
+              …. An agent listed is hidden from the chat's agent picker, the \
+              terminal's Agents menu and new-session choices; its chats and \
+              sessions are kept. Absent — and an empty list — mean every \
+              agent is on, so an agent a later Koru adds starts on. \
+              Device-local because the agents installed differ per machine.",
+    },
     // ------------------------------------- Terminal, roaming: terminal.conf
     SettingSpec {
         field: "theme",

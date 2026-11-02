@@ -761,6 +761,26 @@ pub fn set_plus_canvases(canvases: Vec<(koru_core::DocumentId, String)>) {
 }
 
 thread_local! {
+    /// The coding agents turned off on this machine (Settings → Coding →
+    /// Agent providers), by agent key. Their rows leave the *Agents* flyout
+    /// wherever it opens; a session already running keeps its *Active* row.
+    static HIDDEN_AGENTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record the agents turned off, for the next agent menu to leave out.
+pub fn set_hidden_agents(keys: Vec<String>) {
+    HIDDEN_AGENTS.with(|cell| *cell.borrow_mut() = keys);
+}
+
+/// Whether a built-in profile is an agent turned off on this machine.
+fn agent_hidden(profile: &koru_session_profiles::LaunchProfile) -> bool {
+    profile
+        .label
+        .agent_key()
+        .is_some_and(|key| HIDDEN_AGENTS.with(|cell| cell.borrow().iter().any(|off| off == key)))
+}
+
+thread_local! {
     /// The Profiles the open workspace menu's *Move to Profile ▸* flyout
     /// offers, and the reason each of its dimmed rows gives — snapshotted as
     /// the menu opens, for `SESSION_PROJECT_NAMES`' reason: a row's label and
@@ -2098,6 +2118,7 @@ fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
         .filter(|(_, profile)| {
             profile.kind == kind
                 && profile.label != koru_session_profiles::ProfileLabel::CodexEmbedded
+                && !agent_hidden(profile)
         })
         .map(|(index, _)| MenuAction::TerminalProfile(index))
         .collect()

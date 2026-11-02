@@ -263,3 +263,38 @@ fn a_terminal_patch_refuses_a_proportional_font() {
         "follow-the-app is always allowed: the app's default is monospaced"
     );
 }
+
+/// **The off list is written whole, kept sorted, and bounded**: a switch
+/// sends the whole list, an empty one is *Restore defaults*, and a key that
+/// is not an agent key's shape is refused before anything is staged.
+#[test]
+fn the_disabled_agents_patch_is_whole_sorted_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch = GlobalPatch {
+        disabled_agents: Some(vec!["muse".into(), "grok".into(), "grok".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device());
+    assert!(!patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.disabled_agents, ["grok", "muse"]);
+    GlobalPatch {
+        disabled_agents: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.disabled_agents.is_empty(), "restore defaults");
+    for bad in ["", "Grok", "grok cli", &"a".repeat(33)] {
+        let patch = GlobalPatch {
+            disabled_agents: Some(vec![bad.to_owned()]),
+            ..GlobalPatch::default()
+        };
+        assert!(patch.validate().is_err(), "{bad:?}");
+    }
+    let too_many = GlobalPatch {
+        disabled_agents: Some((0..65).map(|n| format!("a{n}")).collect()),
+        ..GlobalPatch::default()
+    };
+    assert!(too_many.validate().is_err());
+}

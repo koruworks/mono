@@ -289,6 +289,7 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "automatic_checks",
     "delegate_temporary_root",
     "recording",
+    "disabled_agents",
 ];
 
 /// What a read of `desktop-v1.json` recovered, plus what it must carry back.
@@ -376,6 +377,13 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                     into.recording = prefs;
                 }
             }
+            // Read tolerantly, like `recording`: a value that is not a list
+            // of keys reads as every agent on rather than failing the load.
+            "disabled_agents" => {
+                if let Ok(agents) = serde_json::from_value::<Vec<String>>(value) {
+                    into.disabled_agents = crate::sections::normalized_agents(agents);
+                }
+            }
             _ => {
                 file.carried.insert(key, value);
             }
@@ -430,6 +438,14 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
         object.insert(
             "recording".into(),
             serde_json::to_value(&settings.recording).expect("recording prefs always serialize"),
+        );
+    }
+    // Written only while an agent is off: absent is what "every agent on" is
+    // spelled as, which is also what a build without this key reads.
+    if !settings.disabled_agents.is_empty() {
+        object.insert(
+            "disabled_agents".into(),
+            serde_json::to_value(&settings.disabled_agents).expect("a list of keys serializes"),
         );
     }
     serde_json::to_vec_pretty(&serde_json::Value::Object(object))

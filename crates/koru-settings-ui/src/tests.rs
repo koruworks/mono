@@ -100,10 +100,14 @@ pub(crate) fn page_lines(surface: &SettingsSurface) -> Vec<String> {
     for block in &surface.laid.blocks {
         match block {
             Block::Title {
-                title, description, ..
+                title,
+                description,
+                button,
+                ..
             } => {
                 out.push(title.clone());
                 out.push(description.clone());
+                out.extend(button.as_ref().map(|(label, _, _)| label.clone()));
             }
             Block::Note { text, .. } => out.push(text.clone()),
             Block::Tiles { title, .. } => out.extend(title.clone()),
@@ -161,6 +165,7 @@ fn clone_surface(surface: &SettingsSurface) -> SettingsSurface {
     copy.dictionary = surface.dictionary.clone();
     copy.voice = surface.voice.clone();
     copy.renderer = surface.renderer.clone();
+    copy.agent_providers = surface.agent_providers.clone();
     copy.ai = surface.ai.clone();
     copy.telemetry = surface.telemetry;
     copy.sample_document = surface.sample_document;
@@ -242,6 +247,10 @@ fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
                 link: Some((text, _, hit)),
                 ..
             } => out.push((text.clone(), Found::Hit(*hit), false)),
+            Block::Title {
+                button: Some((label, _, hit)),
+                ..
+            } => out.push((label.clone(), Found::Hit(*hit), false)),
             _ => {}
         }
     }
@@ -413,10 +422,21 @@ fn koru_lists_every_page_in_sidebar_order() {
             PageId::Reminders,
             PageId::Terminal,
             PageId::System,
+            PageId::AgentProviders,
         ]
     );
     // The standalone hosts, while they last: no Reminders, and the Terminal
-    // page only where the terminal is.
+    // page only where the terminal is. Neither lists the coding agents.
+    assert!(
+        !Sections::koru_ai()
+            .pages()
+            .contains(&PageId::AgentProviders)
+    );
+    assert!(
+        !Sections::terminal()
+            .pages()
+            .contains(&PageId::AgentProviders)
+    );
     assert!(!Sections::koru_ai().pages().contains(&PageId::Terminal));
     assert!(!Sections::terminal().pages().contains(&PageId::Reminders));
 }
@@ -571,7 +591,9 @@ fn focusing_the_search_box_selects_its_query_for_the_next_one() {
 fn blank_space_beside_the_column_mutates_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    assert!(!surface.mouse_down(NAV_W + 4.0, 300.0));
+    // Below the sidebar's last row (Coding's *Agent providers* now sits
+    // where 300 used to be blank).
+    assert!(!surface.mouse_down(NAV_W + 4.0, 600.0));
     assert!(!surface.mouse_down(996.0, 300.0));
     assert!(surface.take_requests().is_empty());
 }
@@ -1089,7 +1111,8 @@ fn every_page_draws_shared_components_nested_in_cards() {
         let snapshot = capture.finish();
         let records = &snapshot.records;
         let named = |name: &str| records.iter().filter(|r| r.name == name).count();
-        assert_eq!(named("KoruNavList"), 1, "{page:?}");
+        // Two runs: the ungrouped pages, and Coding's under its heading.
+        assert_eq!(named("KoruNavList"), 2, "{page:?}");
         assert!(named("KoruCard") >= 1, "{page:?}");
         let under = |index: usize, ancestor: &str| {
             let mut at = records[index].parent;

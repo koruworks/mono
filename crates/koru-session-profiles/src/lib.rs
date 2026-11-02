@@ -102,6 +102,53 @@ impl ProfileLabel {
             Self::PlatformShell | Self::Custom => None,
         }
     }
+
+    /// **The coding agent this label is**, by the one key every surface
+    /// shares: the built-in profile key, which is also the managed provider
+    /// kind (`agent-<key>` in a chat). `None` for a shell or a custom
+    /// profile.
+    ///
+    /// **Both Codex labels are `codex`.** The terminal's *Codex* (the plain
+    /// CLI) and *Codex (Embedded)* (the app-server a chat runs) are two ways
+    /// to run one agent, so a person turns Codex on or off once.
+    pub const fn agent_key(self) -> Option<&'static str> {
+        match self {
+            Self::Claude => Some("claude"),
+            Self::OpenCode => Some("opencode"),
+            Self::CodexEmbedded | Self::CodexCli => Some("codex"),
+            Self::Grok => Some("grok"),
+            Self::Kimi => Some("kimi"),
+            Self::Copilot => Some("copilot"),
+            Self::Gemini => Some("gemini"),
+            Self::QwenCode => Some("qwen"),
+            Self::Antigravity => Some("antigravity"),
+            Self::Muse => Some("muse"),
+            Self::PlatformShell | Self::PowerShell | Self::Bash | Self::Custom => None,
+        }
+    }
+}
+
+/// **Whether `profile` is one of the coding agents a person sees by name**:
+/// every built-in agent profile the terminal's *Agents ›* menu lists, which is
+/// every one but *Codex (Embedded)* — the app-server route stays a chat's,
+/// and its agent is the plain *Codex* row's. The settings page that turns
+/// agents on and off lists exactly these, in this order, so the page and the
+/// menu cannot disagree about which agents there are.
+pub fn is_coding_agent(profile: &LaunchProfile) -> bool {
+    profile.kind == ProfileKind::Agent
+        && matches!(profile.id, SessionProfileKey::BuiltIn(_))
+        && profile.label != ProfileLabel::CodexEmbedded
+        && profile.label.agent_key().is_some()
+}
+
+/// The coding agents, in `built_in_profiles()` order, each with its index in
+/// that list (what a menu row and the presence probe are keyed by).
+pub fn coding_agents() -> Vec<(usize, LaunchProfile)> {
+    built_in_profiles()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, profile)| is_coding_agent(profile))
+        .collect()
 }
 
 /// The display name a launch surface renders for `profile` — the single
@@ -655,6 +702,63 @@ mod tests {
             assert!(!name.is_empty());
             assert_ne!(name, "Codex CLI");
         }
+    }
+
+    /// **The coding agents a person turns on and off**: the *Agents ›* menu's
+    /// nine, in its order, each keyed by the managed kind a chat uses — both
+    /// Codex rows are one agent, and *Codex (Embedded)* is not listed.
+    #[test]
+    fn coding_agents_are_the_agents_menus_rows_keyed_by_kind() {
+        let agents = coding_agents();
+        let names: Vec<&str> = agents
+            .iter()
+            .map(|(_, profile)| display_name(profile, "System", "Custom"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Claude",
+                "OpenCode",
+                "Grok",
+                "Kimi",
+                "Codex",
+                "GitHub Copilot",
+                "Qwen Code",
+                "Antigravity",
+                "Muse"
+            ]
+        );
+        let keys: Vec<&str> = agents
+            .iter()
+            .map(|(_, profile)| profile.label.agent_key().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "claude",
+                "opencode",
+                "grok",
+                "kimi",
+                "codex",
+                "copilot",
+                "qwen",
+                "antigravity",
+                "muse"
+            ]
+        );
+        for registration in MANAGED_PROVIDER_REGISTRATIONS {
+            assert!(
+                keys.contains(&registration.kind),
+                "every managed kind is a coding agent: {}",
+                registration.kind
+            );
+        }
+        let profiles = built_in_profiles();
+        for (index, profile) in &agents {
+            assert_eq!(&profiles[*index], profile);
+        }
+        assert_eq!(ProfileLabel::CodexEmbedded.agent_key(), Some("codex"));
+        assert_eq!(ProfileLabel::PowerShell.agent_key(), None);
     }
 
     #[test]

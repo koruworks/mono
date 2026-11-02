@@ -62,6 +62,7 @@ mod harness;
 pub(crate) mod accessibility;
 mod agent_cli_updates;
 mod agent_mcp;
+mod agent_providers;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
@@ -6943,6 +6944,9 @@ impl MainView {
         self.size_visible_groups();
         self.ensure_tab_visible(self.tabs().active());
         self.sync_reminder_settings_views();
+        // *Agent providers* reads the presence probe and the session host's
+        // readiness; ask for both now, off the loop thread.
+        self.prepare_agent_providers();
         true
     }
 
@@ -9097,6 +9101,18 @@ impl MainView {
             }
             Request::OpenSampleDocument => {
                 self.open_sample_document();
+            }
+            Request::SetAgentEnabled { key, on } => {
+                self.set_agent_enabled(&key, on);
+            }
+            Request::RestoreAgentDefaults => {
+                self.restore_agent_defaults();
+            }
+            Request::RefreshAgentStatus => {
+                self.refresh_agent_status();
+            }
+            Request::OpenAgentGuide(url) => {
+                self.ask_pane(PaneRequest::OpenUri(url));
             }
         }
     }
@@ -13945,6 +13961,7 @@ impl View for MainView {
         // The presence probe answered since the last pass: the `+` menu's
         // profile rows may dim (or undim) without the pointer moving.
         let probe_changed = self.profile_probe.take_dirty();
+        let agent_rows_changed = probe_changed && self.sync_agent_providers();
         // **Only while Add… is standing.** This snapshot exists to notice the
         // chat list arriving under an open flyout, and `recent_chats` clones
         // its titles — a tick with no menu up must not pay for an answer
@@ -14126,6 +14143,7 @@ impl View for MainView {
             || reminder_snooze_opened
             || reminder_geometry_changed
             || delegate_folder
+            || agent_rows_changed
             || fonts_arrived
             || delegation_requested
             || delegation_answered

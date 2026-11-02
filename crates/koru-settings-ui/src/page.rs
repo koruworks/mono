@@ -36,16 +36,46 @@ pub enum PageId {
     Reminders,
     Terminal,
     System,
+    /// *Coding → Agent providers*: which coding agents Koru shows, and
+    /// whether their CLIs are ready. The host fills its rows.
+    AgentProviders,
+}
+
+/// A heading in the sidebar over the pages that belong together. A page
+/// with none sits in the ungrouped run at the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageGroup {
+    Coding,
+}
+
+impl PageGroup {
+    pub fn label(self, lang: Lang) -> &'static str {
+        match self {
+            Self::Coding => koru_i18n::t(lang, Key::SettingsCoding),
+        }
+    }
 }
 
 impl PageId {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::Editor,
         Self::Reminders,
         Self::Terminal,
         Self::System,
+        Self::AgentProviders,
     ];
+
+    /// The sidebar heading this page sits under, if any. A group's pages
+    /// follow the ungrouped ones in [`ALL`](Self::ALL).
+    pub fn group(self) -> Option<PageGroup> {
+        match self {
+            Self::AgentProviders => Some(PageGroup::Coding),
+            Self::Appearance | Self::Editor | Self::Reminders | Self::Terminal | Self::System => {
+                None
+            }
+        }
+    }
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
@@ -54,6 +84,7 @@ impl PageId {
             Self::Reminders => koru_i18n::t(lang, Key::ReminderTitle),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminal),
             Self::System => koru_i18n::t(lang, Key::SettingsSystem),
+            Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProviders),
         }
     }
 
@@ -64,6 +95,7 @@ impl PageId {
             Self::Reminders => koru_i18n::t(lang, Key::SettingsRemindersDescription),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminalDescription),
             Self::System => koru_i18n::t(lang, Key::SettingsSystemDescription),
+            Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProvidersDescription),
         }
     }
 
@@ -83,6 +115,9 @@ impl PageId {
             Self::Terminal => "shell cursor zoom font theme input blink composer",
             Self::System => {
                 "login startup start quit background close window renderer graphics vulkan directx opengl advanced privacy telemetry usage data analytics diagnostics"
+            }
+            Self::AgentProviders => {
+                "coding agents agent providers cli claude codex opencode grok kimi antigravity copilot qwen muse install path enable disable hide"
             }
         }
     }
@@ -144,6 +179,13 @@ impl PageId {
                 Key::SettingsStartOnLogin,
                 Key::SettingsPrivacy,
                 Key::SettingsShareUsageData,
+            ],
+            Self::AgentProviders => &[
+                Key::SettingsCoding,
+                Key::SettingsEnabledAgents,
+                Key::SettingsRestoreDefaults,
+                Key::SettingsRefreshAgentStatus,
+                Key::SettingsAgentSetupGuide,
             ],
         };
         keys.iter()
@@ -270,9 +312,30 @@ pub(crate) struct RowLaid {
     pub(crate) link: Option<(String, usize)>,
     /// A key chip beside the name.
     pub(crate) chip: Option<String>,
+    /// A brand mark before the name, by profile key — an agent's row on
+    /// *Agent providers*. The text then starts [`MARK_SLOT`] further in.
+    pub(crate) mark: Option<String>,
     pub(crate) text_w: f32,
     pub(crate) widget: Widget,
 }
+
+impl RowLaid {
+    /// Where the row's text is laid: the row, less a leading mark's slot.
+    pub(crate) fn text_rect(&self) -> Rect {
+        let indent = if self.mark.is_some() { MARK_SLOT } else { 0.0 };
+        Rect::new(
+            self.rect.x + indent,
+            self.rect.y,
+            self.rect.w - indent,
+            self.rect.h,
+        )
+    }
+}
+
+/// The room a row's leading brand mark takes: the mark and the air after it.
+pub(crate) const MARK_SLOT: f32 = 28.0;
+/// The mark's own square.
+pub(crate) const MARK_SIZE: f32 = 18.0;
 
 pub(crate) struct CardLaid {
     pub(crate) rect: Rect,
@@ -297,6 +360,9 @@ pub(crate) enum Block {
         y: f32,
         w: f32,
         title_h: f32,
+        /// A page-wide action at the title's right end — *Restore
+        /// defaults* — and its index in [`Laid::hits`].
+        button: Option<(String, Rect, usize)>,
     },
     /// A sentence standing on its own between cards — the read-only reason,
     /// a notice, a blocked section.
@@ -355,6 +421,8 @@ pub(crate) struct Builder<'a> {
     /// [`next_row_chip`](Self::next_row_chip); taken by the next row.
     pending_link: Option<(String, Action)>,
     pending_chip: Option<String>,
+    /// Set by [`next_row_mark`](Self::next_row_mark); taken by the next row.
+    pending_mark: Option<String>,
 }
 
 /// What a row asks for before it knows where it is.
@@ -385,7 +453,13 @@ impl<'a> Builder<'a> {
             card: None,
             pending_link: None,
             pending_chip: None,
+            pending_mark: None,
         }
+    }
+
+    /// Put a brand mark — the profile `key`'s — before the next row's name.
+    pub(crate) fn next_row_mark(&mut self, key: &str) {
+        self.pending_mark = Some(key.to_owned());
     }
 
     /// End the next row's hint with a link that does `action` — *apply to
@@ -407,23 +481,53 @@ impl<'a> Builder<'a> {
 
     // ----------------------------------------------------------- page level
 
-    pub(crate) fn title(&mut self, title: &str, description: &str) {
+    /// The page's title and its sentence, with an optional page-wide action
+    /// at its right end — the shared secondary button, level with the
+    /// title's first line. The title and its sentence wrap short of it.
+    pub(crate) fn title_with_button(
+        &mut self,
+        title: &str,
+        description: &str,
+        button: Option<(&str, Action)>,
+    ) {
         let title_style = crate::title_style();
+        let button = button.map(|(label, action)| {
+            let w = ActionButton {
+                label,
+                style: koru_ui::ActionStyle::Secondary,
+                trailing_icon: None,
+            }
+            .width(self.engine);
+            let line = title_style.metrics.line_height;
+            let at = Rect::new(
+                self.x + self.w - w,
+                self.y + (line - ActionButton::H).max(0.0) * 0.5,
+                w,
+                ActionButton::H,
+            );
+            let hit = self.push_hit(at, Target::Action(action));
+            (label.to_owned(), at, hit)
+        });
+        let text_w = match &button {
+            Some((_, at, _)) => (self.w - at.w - CardRow::GAP).max(40.0),
+            None => self.w,
+        };
         let title_h = self
             .engine
-            .simple_layout_wrapped(title, title_style, self.w)
+            .simple_layout_wrapped(title, title_style, text_w)
             .height();
         let desc_h = self
             .engine
-            .simple_layout_wrapped(description, theme::role::ui(), self.w)
+            .simple_layout_wrapped(description, theme::role::ui(), text_w)
             .height();
         self.laid.blocks.push(Block::Title {
             title: title.to_owned(),
             description: description.to_owned(),
             x: self.x,
             y: self.y,
-            w: self.w,
+            w: text_w,
             title_h,
+            button,
         });
         self.y += title_h + TITLE_GAP + desc_h + DESC_GAP;
     }
@@ -673,7 +777,9 @@ impl<'a> Builder<'a> {
             self.card(None);
         }
         let (control_w, control_h) = self.measure(&spec);
-        let text_w = CardRow::text_w(self.w, control_w);
+        let mark = self.pending_mark.take();
+        let indent = if mark.is_some() { MARK_SLOT } else { 0.0 };
+        let text_w = CardRow::text_w(self.w - indent, control_w);
         let pending_link = self.pending_link.take();
         let chip = self.pending_chip.take();
         let row = CardRow {
@@ -686,7 +792,8 @@ impl<'a> Builder<'a> {
             .height(self.engine, text_w, control_h)
             .max(CardRow::MIN_H);
         let rect = Rect::new(self.x, self.y, self.w, h);
-        let at = row.link_rect(self.engine, rect, text_w);
+        let text_rect = Rect::new(rect.x + indent, rect.y, rect.w - indent, rect.h);
+        let at = row.link_rect(self.engine, text_rect, text_w);
         let link = match (pending_link, at) {
             (Some((text, action)), Some(at)) => {
                 Some((text, self.push_hit(at, Target::Action(action))))
@@ -702,6 +809,7 @@ impl<'a> Builder<'a> {
                 hint: hint.map(str::to_owned),
                 link,
                 chip,
+                mark,
                 text_w,
                 widget,
             });

@@ -238,6 +238,8 @@ fn a_written_file_carries_every_key_the_authority_owns() {
             folder: Some("D:/videos".into()),
             ..crate::RecordingPrefs::default()
         },
+        // The off list is written only while an agent is off.
+        disabled_agents: vec!["grok".into()],
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -380,6 +382,37 @@ fn desktop_json_round_trips_and_carries_what_it_does_not_own() {
     let mut again = GlobalSettings::default();
     apply_desktop(&written, &mut again);
     assert_eq!(again, settings);
+}
+
+/// **The agents turned off on this machine** (Agent providers): read
+/// sorted and once each, absent while every agent is on, and a value that is
+/// not a list of keys reads as every agent on rather than failing the load.
+#[test]
+fn the_disabled_agents_round_trip_and_an_empty_list_writes_no_key() {
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"disabled_agents": ["muse", "grok", "muse"]}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.disabled_agents, ["grok", "muse"]);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(
+        value["disabled_agents"],
+        serde_json::json!(["grok", "muse"])
+    );
+
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again.disabled_agents, settings.disabled_agents);
+
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("disabled_agents").is_none(), "every agent on");
+
+    let mut odd = GlobalSettings::default();
+    apply_desktop(br#"{"disabled_agents": "grok"}"#, &mut odd);
+    assert!(odd.disabled_agents.is_empty());
 }
 
 #[test]

@@ -5442,6 +5442,14 @@
               }
             ]
           },
+          "disabled_agents": {
+            "description": "The whole off list, written whole on every switch: an empty list is\n*Restore defaults*. Absent leaves the stored list alone.",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "document_text_size": {
             "anyOf": [
               {
@@ -5685,6 +5693,14 @@
           },
           "dictation_tier": {
             "$ref": "#/components/schemas/DictationTier"
+          },
+          "disabled_agents": {
+            "default": [],
+            "description": "**The coding agents turned off on this machine**, by agent key\n(`koru_session_profiles::ProfileLabel::agent_key`: `claude`, `codex`,\n…), sorted and without repeats. An agent named here is hidden from\nthe chat's agent picker, the terminal's *Agents ›* menu and every new\nsession choice; its chats and sessions are kept and keep working.\n\n**The off list, not the on list**, so empty is the default — every\nagent on — and an agent a later Koru adds is on until someone turns it\noff. Device-local because the agents installed differ per machine.\n`#[serde(default)]` so a section from a build without it still reads.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "document_text_size": {
             "allOf": [

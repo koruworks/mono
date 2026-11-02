@@ -176,6 +176,17 @@ impl SettingsView {
         self.surface.scroll_to_voice()
     }
 
+    /// The coding agents *Agent providers* lists. Answers whether one moved.
+    pub fn set_agent_providers(&mut self, rows: Vec<koru_settings_ui::AgentProviderRow>) -> bool {
+        self.surface.set_agent_providers(rows)
+    }
+
+    /// The rows as the page holds them.
+    #[cfg(test)]
+    pub fn agent_providers(&self) -> &[koru_settings_ui::AgentProviderRow] {
+        self.surface.agent_providers()
+    }
+
     /// Show one page from its top — a document's *Global settings* link
     /// lands on Editor.
     pub fn show_page(&mut self, page: koru_settings_ui::PageId) -> bool {

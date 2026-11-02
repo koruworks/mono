@@ -40,7 +40,8 @@ struct ChatFace {
 }
 
 impl AiChatView {
-    fn over(surface: ChatSurface) -> Self {
+    fn over(mut surface: ChatSurface) -> Self {
+        surface.set_hidden_agents(hidden_agents());
         Self {
             surface,
             face: ChatFace::default(),
@@ -197,6 +198,30 @@ impl AiChatView {
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_open_document_request()
     }
+
+    /// The coding agents turned off on this machine (Agent providers).
+    pub fn set_hidden_agents(&mut self, keys: Vec<String>) -> bool {
+        self.surface.set_hidden_agents(keys)
+    }
+}
+
+/// **The agents turned off on this machine, for chat tabs opened later.**
+/// The window pushes the list to every surface it holds when it changes;
+/// a tab made afterwards takes it from here. One list per process, because
+/// the setting is one per machine.
+static HIDDEN_AGENTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn set_hidden_agents(keys: Vec<String>) {
+    *HIDDEN_AGENTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = keys;
+}
+
+fn hidden_agents() -> Vec<String> {
+    HIDDEN_AGENTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
 }
 
 impl AiChatView {

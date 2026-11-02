@@ -60,6 +60,17 @@ impl ProfileProbe {
             .is_none_or(|rows| rows.get(index).copied().unwrap_or(false))
     }
 
+    /// The probe's answer for row `index`: `Some(present)` once a probe has
+    /// answered, `None` before — what *Agent providers* reads as *Checking…*
+    /// where the menu reads optimism.
+    pub(super) fn presence(&self, index: usize) -> Option<bool> {
+        self.latest
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .map(|rows| rows.get(index).copied().unwrap_or(false))
+    }
+
     /// Start a probe on a worker, unless one is already out. Never blocks:
     /// the caller (opening the `+` menu) shows the last known answer and the
     /// wake ends the loop's wait when the fresh one lands. `wake` is `None`

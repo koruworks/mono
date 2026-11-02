@@ -3168,7 +3168,8 @@ Nothing is lost by closing a window: your work is written continuously, and the
 window comes back with its tabs.
 
 **The Settings tab** (`Ctrl+,`) is a list of pages down its left —
-**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, the
+**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, then
+**Agent providers** under a **Coding** heading, the
 current one marked by an accent rule — with a search box above them that
 narrows the list by what a page holds (type *microphone* and only Editor is
 left; Enter opens it). In a narrow window or split pane the list becomes a row
@@ -3290,6 +3291,29 @@ instant instead of a fresh start. **Ask** puts the question each time, and
 **Quit** closes Koru outright. If the Koru Agent is not running there is no way
 to bring Koru back, so ✕ closes it whatever this says; and a window closing for
 an update always closes properly.
+
+**Choose which coding agents Koru shows** on **Settings → Coding → Agent
+providers**. Under **Enabled agents** is one row per agent Koru supports —
+Claude, OpenCode, Grok, Kimi, Codex, GitHub Copilot, Qwen Code, Antigravity
+and Muse — each with its mark, its name, a switch, a **Setup guide ↗** link to
+the agent's own install page, and its status in plain words: **Ready**;
+**Not installed**, naming the program that is not on your `PATH` (*`grok`
+isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
+a version Koru does not support yet, signed out, the program a chat runs the
+agent through missing (Claude's `claude-agent-acp`, say), or a check that
+failed. The status reads what Koru's own checks found; **Refresh status** runs
+them again, and the rows update when the answers arrive. The card's first line
+counts them (*9 of 9 enabled*).
+
+Turning an agent **off** hides it from the chat's model picker, from the
+terminal's **Agents ›** menu and from the delegate dialog's agents. Nothing is
+uninstalled or signed out, and a chat or a terminal session already on that
+agent stays and keeps working — its own picker still shows it. Turning one
+**on** does not install or sign in its CLI; the setup guide is for that.
+**Restore defaults**, at the top of the page, turns every agent back on, which
+is how a new install starts. The choice belongs to **this computer**, because
+the agents installed differ from one machine to the next, so it does not follow
+you to another; a Koru older than this one ignores it.
 
 **Voice input** is the last card on the **Editor** page, marked *Transcribed
 on this device* — the point of the whole feature: voice is transcribed on this
