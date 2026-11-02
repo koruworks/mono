@@ -3318,7 +3318,8 @@ shows where it will land; or click a row and press `Ctrl+Shift+↑` or
 `Ctrl+Shift+↓` (`⌘⇧↑`/`⌘⇧↓` on a Mac), the keys that move a paragraph. `↑` and
 `↓` move to the row above or below, and `Esc` lets go.
 Turning an agent **off** hides it from the chat's model picker, from the
-terminal's **Agents ›** menu and from the delegate dialog's agents. Nothing is
+terminal's **Agents ›** menu, from the delegate dialog's agents and from a
+canvas agent node's menu of agents. Nothing is
 uninstalled or signed out, and a chat or a terminal session already on that
 agent stays and keeps working — its own picker still shows it. Turning one
 **on** does not install or sign in its CLI; the setup guide is for that.
@@ -4044,7 +4045,9 @@ for you.
 - **A chain of agents.** Add a start node, one or more agent nodes and an
   output node, and connect them in that order. An agent node asks for its
   instruction when you add it, and starts with the agent you last delegated
-  to; its header opens a menu of the agents ready on this computer. An output
+  to; its header opens a menu of the agents ready on this computer, in the
+  order set on **Settings → Coding → Agent providers** and without any you
+  have turned off there (a node already set to one still runs it). An output
   node asks for the title of the page it will write. Press **Run** on the start
   node to run the chain; each node shows where it is, and **Stop** stops it.
   When the page is written, its title appears on the output node — click it to

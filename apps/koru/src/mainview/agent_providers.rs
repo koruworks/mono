@@ -261,9 +261,10 @@ impl MainView {
         })
     }
 
-    /// Hand the off list, and where a new chat starts, to every chat surface
-    /// — the side pane's and every chat tab's — and the off list to the
-    /// menus, and both to chat tabs opened later.
+    /// Hand the off list, the order and where a new chat starts to every chat
+    /// surface — the side pane's and every chat tab's — the off list and
+    /// the order to the menus and the canvas runs' agents, and all of it to
+    /// chat tabs opened later.
     pub(super) fn apply_hidden_agents(&mut self) -> bool {
         let keys = self.disabled_agents().to_vec();
         let defaults = self.chat_agent_defaults();
@@ -273,7 +274,11 @@ impl MainView {
         crate::ai_chat_view::set_agent_order(order.clone());
         context_menu::set_hidden_agents(keys.clone());
         context_menu::set_agent_order(order.clone());
-        let mut changed = self.ai_chat.set_hidden_agents(keys.clone());
+        // A canvas's agent menu and a new node's default (D42).
+        let mut changed = self
+            .canvas_runs
+            .set_agent_settings(keys.clone(), order.clone());
+        changed |= self.ai_chat.set_hidden_agents(keys.clone());
         changed |= self.ai_chat.set_agent_defaults(defaults.clone());
         changed |= self.ai_chat.set_agent_order(order.clone());
         changed |= self.each_tab_mut(|tab| match &mut tab.view {

@@ -172,6 +172,13 @@ fn turning_an_agent_off_hides_it_everywhere_and_restore_brings_it_back() {
             .unwrap()
             .on
     );
+    // A canvas's agent menu leaves it out too (D42).
+    assert!(
+        !view
+            .canvas_runs
+            .set_agent_settings(vec!["grok".to_owned()], view.agent_order()),
+        "the canvas runs have it"
+    );
     // The chat pane's surface and a chat tab opened afterwards both hide it.
     assert!(!view.ai_chat.set_hidden_agents(["grok".to_owned()]));
     let mut later = crate::ai_chat_view::AiChatView::new();
