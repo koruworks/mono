@@ -1390,3 +1390,24 @@ fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
         "the flyout"
     );
 }
+
+/// **The rail sits on the window rail's ground** (D45): the shared token
+/// the app's own left rail is drawn in — the base colour for the theme on
+/// screen, or the theme's ground — and not the panel's white or charcoal.
+#[test]
+fn the_rail_is_the_colour_of_the_windows_rail() {
+    assert_eq!(rail_fill(), theme::base_fill());
+    let p = theme::p();
+    assert_ne!(
+        rail_fill(),
+        p.panel_bg,
+        "the rail reads apart from the list"
+    );
+    // The fill lies inside the panel, where the rail is.
+    let mut surface = surface();
+    open(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+    assert_eq!(geometry.rail.x, geometry.panel.x);
+    assert_eq!(geometry.rail.h, geometry.panel.h);
+    assert!(geometry.rail.x + geometry.rail.w <= geometry.list.x + 0.5);
+}

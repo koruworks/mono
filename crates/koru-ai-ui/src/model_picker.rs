@@ -29,7 +29,7 @@ use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
 use koru_ui::{Menu, MenuItem, Typed, scrollbar};
 use vello::Scene;
-use vello::kurbo::Affine;
+use vello::kurbo::{Affine, RoundedRect, RoundedRectRadii};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::agents::{
@@ -1580,13 +1580,30 @@ impl crate::ChatSurface {
             return;
         };
         let p = theme::p();
+        let radius = theme::overlay::popover().radius;
         PopoverShell {
             rect: geometry.panel,
-            radius: theme::overlay::popover().radius,
+            radius,
         }
         .draw(canvas, root);
 
-        // The rail.
+        // The rail, on the window rail's ground (D45): inside the shell's
+        // hairline, rounded where the panel is.
+        let rail_rect = geometry.rail;
+        let inset = 1.0;
+        let corner = f64::from((radius - inset).max(0.0));
+        scene::fill(
+            canvas,
+            root,
+            rail_fill(),
+            &RoundedRect::new(
+                f64::from(rail_rect.x + inset),
+                f64::from(rail_rect.y + inset),
+                f64::from(rail_rect.x + rail_rect.w),
+                f64::from(rail_rect.y + rail_rect.h - inset),
+                RoundedRectRadii::new(corner, 0.0, 0.0, corner),
+            ),
+        );
         let rail = self.picker_rail();
         let divider = self.rail_has_divider(&rail);
         let selected = self.picker_entry();
@@ -1879,6 +1896,15 @@ impl crate::ChatSurface {
             self.picker.focus == PickerFocus::Slider,
         );
     }
+}
+
+/// **The rail's ground** (D45): the colour of the window's own left rail —
+/// Home, documents, folders, tasks, chats — which is the window's ground
+/// ([`theme::base_fill`]): the person's base colour for the theme on
+/// screen, or the theme's own. The agents' marks sit on the same ground as
+/// the app's, light or dark.
+pub(crate) fn rail_fill() -> vello::peniko::Color {
+    theme::base_fill()
 }
 
 /// The search field itself: the search row short of ↻ at its end.
