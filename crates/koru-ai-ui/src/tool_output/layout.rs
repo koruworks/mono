@@ -22,6 +22,8 @@ use super::{CodeLine, Ink, Piece};
 pub(crate) enum DetailHit {
     /// Show all of a folded block, or fold it again.
     Toggle,
+    /// Open the n-th link of the detail.
+    Link(usize),
 }
 
 /// One laid-out line of a detail.
@@ -32,6 +34,8 @@ pub(crate) struct DetailLine {
     /// Drawn on the code background.
     pub panel: bool,
     pub hit: Option<DetailHit>,
+    /// Where a link line goes.
+    pub url: Option<String>,
 }
 
 /// The color an ink is drawn in, from the theme now.
@@ -65,11 +69,13 @@ pub(crate) fn fingerprint(pieces: &[Piece], width: f32) -> u64 {
 pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> Vec<DetailLine> {
     let width = width.max(1.0);
     let mut lines = Vec::new();
+    let mut links = 0;
     let line = |layout: Layout<Brush>, ink: Option<Ink>| DetailLine {
         layout: Rc::new(layout),
         ink,
         panel: false,
         hit: None,
+        url: None,
     };
     for piece in pieces {
         match piece {
@@ -99,6 +105,22 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
                 panel: true,
                 ..line(code_layout(engine, code, width), None)
             }),
+            Piece::Link { title, site, url } => {
+                let text = if site.is_empty() {
+                    title.clone()
+                } else {
+                    format!("{title} \u{00B7} {site}")
+                };
+                lines.push(DetailLine {
+                    hit: Some(DetailHit::Link(links)),
+                    url: Some(url.clone()),
+                    ..line(
+                        engine.simple_layout_wrapped(&text, role::meta(), width),
+                        Some(Ink::Link),
+                    )
+                });
+                links += 1;
+            }
             Piece::Toggle(text) => lines.push(DetailLine {
                 hit: Some(DetailHit::Toggle),
                 ..line(

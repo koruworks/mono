@@ -23,6 +23,7 @@ mod command;
 mod diff;
 mod file;
 pub(crate) mod layout;
+mod search;
 
 /// The color a piece of a detail is drawn in, resolved at draw time.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -66,6 +67,12 @@ pub(crate) enum Piece {
     Header { text: String, mono: bool },
     /// Monospace lines on the code background.
     Code(Vec<CodeLine>),
+    /// One result a person can open in the browser.
+    Link {
+        title: String,
+        site: String,
+        url: String,
+    },
     /// *Show all 120 lines* / *Show fewer lines*.
     Toggle(String),
 }
@@ -126,6 +133,8 @@ pub(crate) fn pieces(
         Shape::Command => command::render(&call, lang, expanded),
         Shape::Edit => diff::render(&call, lang, expanded),
         Shape::Read => file::render(&call, lang, expanded),
+        Shape::Web => search::render_web(&call, lang, expanded),
+        Shape::Matches => search::render_matches(&call, lang, expanded),
         Shape::Other => None,
     }
     .unwrap_or_else(|| text(&call, lang, expanded));
@@ -147,6 +156,10 @@ pub(crate) enum Shape {
     Command,
     Edit,
     Read,
+    /// A web search: its query and its results.
+    Web,
+    /// A search of local files: grep, glob.
+    Matches,
     Other,
 }
 
@@ -156,8 +169,25 @@ impl Shape {
             Some(AgentToolKind::Command) => Self::Command,
             Some(AgentToolKind::FileChange) => Self::Edit,
             Some(AgentToolKind::Read) => Self::Read,
-            _ => match activity.agent_label.as_deref().and_then(CallShape::of) {
-                Some(CallShape::Read) => Self::Read,
+            kind => match (
+                kind,
+                activity.agent_label.as_deref().and_then(CallShape::of),
+            ) {
+                (_, Some(CallShape::Read)) => Self::Read,
+                (_, Some(CallShape::Search)) => Self::Matches,
+                // *Fetch https://…* reads a page: its answer is text.
+                (_, Some(CallShape::Fetch)) => {
+                    if activity
+                        .agent_label
+                        .as_deref()
+                        .is_some_and(|label| label.trim_start().starts_with("Fetch"))
+                    {
+                        Self::Other
+                    } else {
+                        Self::Web
+                    }
+                }
+                (Some(AgentToolKind::Search), _) => Self::Web,
                 _ => Self::Other,
             },
         }
@@ -174,6 +204,7 @@ pub(crate) struct Rendered {
 
 /// A row's words, cleaned once: the error without its fence, the output
 /// unless it only repeats the error, the input unless it says nothing.
+#[derive(Clone)]
 pub(crate) struct Call<'a> {
     pub activity: &'a ToolActivity,
     pub error: Option<String>,

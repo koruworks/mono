@@ -6595,6 +6595,18 @@ impl ChatSurface {
             }
             work_view::WorkHit::Call(call) => flip(&mut self.opened_calls, call),
             work_view::WorkHit::Toggle(call) => flip(&mut self.expanded_outputs, call),
+            work_view::WorkHit::Link(..) => {
+                if let Some(url) = self
+                    .work_layouts
+                    .iter()
+                    .flat_map(|work| &work.lines)
+                    .find(|line| line.hit == Some(hit))
+                    .and_then(|line| line.url.as_deref())
+                {
+                    open_web_link(url);
+                }
+                return true;
+            }
         }
         self.messages_dirty = true;
         true

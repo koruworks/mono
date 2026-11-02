@@ -55,6 +55,7 @@ fn words(pieces: &[Piece]) -> Vec<String> {
             | Piece::Markdown(text)
             | Piece::Toggle(text)
             | Piece::Header { text, .. } => text.clone(),
+            Piece::Link { title, site, .. } => format!("{title} · {site}"),
             Piece::Code(lines) => lines
                 .iter()
                 .map(|line| format!("{}{}", line.gutter, line.text))
@@ -528,4 +529,92 @@ fn a_whole_read_has_no_range_and_its_title_names_it() {
         file::numbered("plain\ntext"),
         [(None, "plain".to_owned()), (None, "text".to_owned())]
     );
+}
+
+// ----- search results -----------------------------------------------------
+
+/// Claude's web search (claude-agent-acp's `formatWebSearchHit`): one
+/// `Title (url)` line per result becomes one row a person can open.
+#[test]
+fn a_web_search_reads_as_its_query_and_one_row_per_result() {
+    let search = done(
+        "agent.search",
+        "Search \"koru notes\"",
+        Some(r#"{"query":"koru notes"}"#),
+        "Koru — notes that think (https://www.koru.works/notes)\nKoru on GitHub (https://github.com/koruworks)",
+    );
+    let pieces = pieces(&search, Lang::En, NOW, false);
+    assert_eq!(
+        words(&pieces),
+        [
+            "\u{201C}koru notes\u{201D}",
+            "Koru — notes that think · koru.works",
+            "Koru on GitHub · github.com",
+            "Done · 1s · Just now"
+        ]
+    );
+    assert!(matches!(&pieces[1], Piece::Link { url, .. } if url == "https://www.koru.works/notes"));
+    // Each row opens its own link.
+    let mut engine = koru_draw::text::TextEngine::new();
+    let lines = layout::lay_out(&mut engine, &pieces, 400.0);
+    assert_eq!(lines[1].hit, Some(layout::DetailHit::Link(0)));
+    assert_eq!(
+        lines[2].url.as_deref(),
+        Some("https://github.com/koruworks")
+    );
+}
+
+/// An older CLI's dump: the `Links:` line is read; prose that lists no
+/// results is drawn as text under the query.
+#[test]
+fn a_web_search_reads_what_it_can_and_falls_back_to_text() {
+    let dump = "Web search results for query: \"koru\"\n\nLinks: [{\"title\":\"Koru\",\"url\":\"https://koru.works\"}]";
+    assert_eq!(
+        search::web_hits(dump),
+        [search::WebHit {
+            title: "Koru".into(),
+            url: "https://koru.works".into()
+        }]
+    );
+    let prose = done(
+        "agent.search",
+        "web_search",
+        Some("koru"),
+        "Koru is a workspace.",
+    );
+    assert_eq!(
+        words(&pieces(&prose, Lang::En, NOW, false)),
+        [
+            "\u{201C}koru\u{201D}",
+            "Koru is a workspace.",
+            "Done · 1s · Just now"
+        ]
+    );
+}
+
+/// Claude's Grep: `path:line:text` rows under the command it ran.
+#[test]
+fn a_local_search_reads_as_path_line_and_text_rows() {
+    let grep = done(
+        "agent.search",
+        "grep -n \"todo\" src",
+        Some(r#"{"pattern":"todo","path":"src","-n":true}"#),
+        "src/a.rs:12:    // todo: this\nC:\\koru\\b.rs:3:todo!()",
+    );
+    assert_eq!(
+        words(&pieces(&grep, Lang::En, NOW, false)),
+        [
+            "grep -n \"todo\" src",
+            "src/a.rs:12  // todo: this\nC:\\koru\\b.rs:3  todo!()",
+            "Done · 1s · Just now"
+        ]
+    );
+    // Glob's paths after its count; prose is not a list of matches.
+    assert_eq!(
+        search::matches("Found 2 files\nsrc/a.rs\nsrc/b.rs")
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(search::matches("I looked everywhere and found nothing").is_none());
 }

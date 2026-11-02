@@ -53,6 +53,8 @@ pub(crate) enum WorkHit {
     Call(ToolInvocationId),
     /// A call's folded block: show all of it, or fold it again.
     Toggle(ToolInvocationId),
+    /// One of a call's links, by its place in the call's detail.
+    Link(ToolInvocationId, usize),
 }
 
 pub(crate) struct WorkLine {
@@ -69,6 +71,8 @@ pub(crate) struct WorkLine {
     /// colors), and whether it sits on the code background.
     pub ink: Option<Option<Ink>>,
     pub panel: bool,
+    /// Where a link line goes.
+    pub url: Option<String>,
 }
 
 pub(crate) struct WorkLayout {
@@ -118,6 +122,7 @@ impl WorkLine {
             caret,
             ink: None,
             panel: false,
+            url: None,
         }
     }
 
@@ -221,6 +226,7 @@ pub(crate) fn build(
                             for (index, line) in detail.iter().enumerate() {
                                 let hit = line.hit.map(|hit| match hit {
                                     DetailHit::Toggle => WorkHit::Toggle(row.id),
+                                    DetailHit::Link(index) => WorkHit::Link(row.id, index),
                                 });
                                 let gap = match detail.get(index + 1) {
                                     None => LINE_GAP + line.panel as u8 as f32 * PANEL_PAD,
@@ -237,6 +243,7 @@ pub(crate) fn build(
                                         caret: None,
                                         ink: Some(line.ink),
                                         panel: line.panel,
+                                        url: line.url.clone(),
                                     },
                                     gap,
                                 );
