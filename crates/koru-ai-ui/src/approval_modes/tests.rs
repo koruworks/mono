@@ -172,9 +172,11 @@ fn the_chip_names_the_current_mode_and_is_absent_without_modes() {
 fn shift_tab_chooses_the_next_mode_and_says_which() {
     let (mut surface, commands) = surface();
     // The chat is not made yet: the stand-in keeps the choice.
+    surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
     assert!(shift_tab(&mut surface));
     assert_eq!(mode_of(&surface).as_deref(), Some("acceptEdits"));
     assert_eq!(surface.copy_feedback.label(), Some("Accept edits"));
+    assert!(commands.try_recv().is_err(), "nothing reaches the service");
     surface.unmade_chat = None;
     for expected in ["plan", "auto", "dontAsk", "default"] {
         assert!(shift_tab(&mut surface));
