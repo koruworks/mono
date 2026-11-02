@@ -1159,6 +1159,14 @@ fn checked_in_schema_evidence_matches_the_adapter_boundary() {
             )),
             "38027ec8a6fffc2422b674cab13dc1a05c26e13a48349c46a274609d52090e35",
         ),
+        (
+            "0.166.0",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/fixtures/codex-app-server/0.166.0/schema-evidence.json"
+            )),
+            "e025e54fb11354eb82767ea040b40efa17b34dfc706c9433a6115b5f4771c465",
+        ),
     ] {
         let evidence: Value = serde_json::from_str(evidence).unwrap();
         assert!(SUPPORTED_CODEX_VERSIONS.contains(&version), "{version}");
@@ -1168,7 +1176,7 @@ fn checked_in_schema_evidence_matches_the_adapter_boundary() {
     }
     assert_eq!(
         SUPPORTED_CODEX_VERSIONS.len(),
-        7,
+        8,
         "every supported version has evidence"
     );
 
@@ -2026,8 +2034,8 @@ fn discovery_lists_every_text_model_under_one_group_and_shuts_down() {
     // is no name, and the picker formats the id instead.
     let first = &models.models()[0];
     assert_eq!(first.name.as_ref().unwrap().as_str(), "Fixture");
-    // Its efforts are captured in Koru's words, its default with them;
-    // they are never applied (a chosen effort has no Codex route yet).
+    // Its efforts are captured in Koru's words, its default with them; a
+    // chosen one rides `turn/start` (see the effort test below).
     let reasoning = first.reasoning.as_ref().unwrap();
     assert_eq!(
         reasoning.levels,
@@ -2477,4 +2485,91 @@ fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
     let (thread, turns) = run("fixture-plain", Some(true), &[Some(true)]);
     assert_eq!(thread, [Value::Null], "a model with no Fast tier");
     assert_eq!(turns, [Value::Null]);
+}
+
+/// **A chosen level rides every turn** (Codex back in the picker): the
+/// model's own effort word on each `turn/start`, `none` for *Off* when the
+/// model lists it, nothing for *Default*; a level the model does not list
+/// refuses the session before any thread.
+#[test]
+fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
+    use koru_session_protocol::LaunchReasoning;
+    let model_list = json!({
+        "id": 2,
+        "result": {
+            "data": [
+                { "isDefault": true, "model": "fixture-levels", "inputModalities": ["text"],
+                  "supportedReasoningEfforts": [{"reasoningEffort": "none"}, {"reasoningEffort": "low"},
+                                                {"reasoningEffort": "xhigh"}],
+                  "defaultReasoningEffort": "low" }
+            ],
+            "nextCursor": null
+        }
+    });
+    let run = |reasoning: Option<LaunchReasoning>| {
+        let mut frames = initialize_frames(false);
+        frames[1] = model_list.clone();
+        for index in 0..2 {
+            frames.push(
+                json!({ "id": 4 + index, "result": { "turn": { "id": format!("turn-{index}") } } }),
+            );
+        }
+        let state = Arc::new(Mutex::new(ReplayState::default()));
+        let transport = ReplayTransport {
+            inbound: frames.into_iter().collect(),
+            state: Arc::clone(&state),
+        };
+        let selection = koru_session_protocol::LaunchSelection {
+            reasoning,
+            ..Default::default()
+        };
+        let mut control = CodexControl::with_transport(
+            config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+            Some(Box::new(transport)),
+        );
+        let started = control.start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        });
+        if let Err(failure) = started {
+            let sent = state.lock().unwrap().sent.clone();
+            assert!(
+                !sent
+                    .iter()
+                    .any(|message| message["method"] == "thread/start")
+            );
+            return Err(failure.code);
+        }
+        for _ in 0..2 {
+            control
+                .submit(AgentInput {
+                    turn_id: AgentTurnId::mint(),
+                    text: "<prompt>".into(),
+                    attachments: Vec::new(),
+                    mode: None,
+                    fast: None,
+                })
+                .unwrap();
+        }
+        let sent = state.lock().unwrap().sent.clone();
+        Ok(sent
+            .iter()
+            .filter(|message| message["method"] == "turn/start")
+            .map(|message| message["params"]["effort"].clone())
+            .collect::<Vec<_>>())
+    };
+    assert_eq!(
+        run(Some(LaunchReasoning::XHigh)),
+        Ok(vec![json!("xhigh"), json!("xhigh")])
+    );
+    assert_eq!(
+        run(Some(LaunchReasoning::Off)),
+        Ok(vec![json!("none"), json!("none")])
+    );
+    assert_eq!(run(None), Ok(vec![Value::Null, Value::Null]));
+    assert_eq!(
+        run(Some(LaunchReasoning::High)),
+        Err(ErrorCode::CapabilityNotNegotiated)
+    );
 }

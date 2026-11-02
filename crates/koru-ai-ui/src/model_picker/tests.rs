@@ -907,3 +907,73 @@ fn the_fast_row_shows_only_when_the_model_offers_it_and_stays_changeable() {
     assert!(press(&mut surface, NamedKey::ArrowLeft));
     assert!(!surface.picker_fast().unwrap().on);
 }
+
+/// **Codex is on the rail again, with its models, levels and modes** (the
+/// user, 2026-11-02): the AI service offers it like any agent, its catalog
+/// is asked for with the others, and a Codex chat then has the three
+/// approval modes Koru gives it, *Ask for approval* first and the default.
+#[test]
+fn codex_is_offered_with_its_models_levels_and_modes() {
+    let mut surface = surface();
+    surface.apply_update(crate::reader::Update::Settings(settings(
+        &[
+            ("agent-claude", "Claude"),
+            ("agent-codex", "Codex"),
+            ("agent-opencode", "OpenCode"),
+        ],
+        None,
+    )));
+    surface
+        .agent_status
+        .insert(agent("agent-codex"), AgentStatus::Ready);
+    assert!(
+        surface
+            .picker_rail()
+            .contains(&RailEntry::Agent(agent("agent-codex")))
+    );
+    let mut leveled = model("gpt-5.5", "codex", Some("GPT-5.5"), None);
+    leveled.reasoning = Some(ReasoningControl::Levels {
+        values: vec![ReasoningLevel::Low, ReasoningLevel::XHigh],
+        default: Some(ReasoningLevel::Low),
+        supports_off: true,
+    });
+    let mode = |id: &str| koru_ai_wire::AgentModeView {
+        id: id.into(),
+        name: None,
+        description: None,
+    };
+    surface.apply_update(crate::reader::Update::AgentModels(
+        koru_ai_wire::AgentModelsResponse {
+            provider: agent("agent-codex"),
+            models: vec![leveled],
+            modes: vec![mode("ask"), mode("auto-review"), mode("full-access")],
+            default_mode: Some("ask".into()),
+        },
+    ));
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-codex")));
+    assert!(
+        surface
+            .picker_rows()
+            .contains(&Row::Model("gpt-5.5".into()))
+    );
+
+    on_agent(
+        &mut surface,
+        "agent-codex",
+        "gpt-5.5",
+        ReasoningChoice::Default,
+    );
+    let rows = surface.approval_mode_rows();
+    assert_eq!(
+        rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["ask", "auto-review", "full-access"]
+    );
+    assert_eq!(
+        rows[0].title,
+        t(Lang::En, Key::AiAgentModeAskApproval),
+        "Koru's own words"
+    );
+    assert!(rows[2].full_access);
+    assert_eq!(surface.current_approval_mode().as_deref(), Some("ask"));
+}

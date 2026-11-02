@@ -83,22 +83,25 @@ pub fn agent_provider_kinds() -> Vec<AgentProviderKind> {
         .collect()
 }
 
-/// Whether Koru AI's agent picker offers this agent.
-///
-/// **Every agent but Codex (Embedded)** (the user's call): it read *Needs a
-/// supported version* on most machines, and a terminal's Agents menu already
-/// offers the plain Codex CLI instead. Not offered is not removed — the
-/// provider stays registered, so a chat already on it still runs, and Codex
-/// still serves delegation.
-pub fn offered_in_picker(kind: &AgentProviderKind) -> bool {
-    kind.kind.as_str() != koru_session_profiles::CODEX_REGISTRATION.kind
-}
-
 /// The name a person knows the agent by — the profile's brand name, which
 /// is the same in every language.
+///
+/// **Codex reads "Codex"** in a chat. Its managed route is the app-server
+/// behind the `codex` profile, which a terminal calls *Codex (Embedded)* to
+/// tell it from the plain CLI row; a chat has only this one Codex, so the
+/// parenthesis would explain nothing (the user, 2026-11-02: Codex is back in
+/// the picker).
 pub fn brand_label(kind: &AgentProviderKind) -> String {
     koru_session_profiles::resolve(&kind.profile)
-        .map(|profile| koru_session_profiles::display_name(&profile, "", "").to_owned())
+        .map(|profile| match profile.label {
+            koru_session_profiles::ProfileLabel::CodexEmbedded => {
+                koru_session_profiles::ProfileLabel::CodexCli
+                    .brand_name()
+                    .unwrap_or("Codex")
+                    .to_owned()
+            }
+            _ => koru_session_profiles::display_name(&profile, "", "").to_owned(),
+        })
         .unwrap_or_else(|_| kind.kind.as_str().to_owned())
 }
 
@@ -358,20 +361,23 @@ mod tests {
         ));
     }
 
-    /// **The picker leaves out Codex (Embedded)** and offers every other
-    /// agent; the provider itself stays in the list, so chats already on it
-    /// still run.
+    /// **Codex is offered again, as "Codex"** (the user, 2026-11-02): every
+    /// managed agent is a chat provider, and Codex's app-server route reads
+    /// as the plain brand rather than the terminal's *Codex (Embedded)*.
     #[test]
-    fn the_picker_offers_every_agent_but_codex_embedded() {
+    fn codex_is_offered_and_named_plainly() {
         let kinds = agent_provider_kinds();
-        let offered: Vec<&str> = kinds
+        let codex = kinds
             .iter()
-            .filter(|kind| offered_in_picker(kind))
-            .map(|kind| kind.kind.as_str())
-            .collect();
-        assert!(!offered.contains(&"codex"), "{offered:?}");
-        assert_eq!(offered.len(), kinds.len() - 1, "{offered:?}");
-        assert!(kinds.iter().any(|kind| kind.kind.as_str() == "codex"));
+            .find(|kind| kind.kind.as_str() == "codex")
+            .expect("Codex is a chat provider");
+        assert_eq!(codex.id.as_str(), "agent-codex");
+        assert_eq!(brand_label(codex), "Codex");
+        let labels: Vec<String> = kinds.iter().map(brand_label).collect();
+        assert!(
+            labels.iter().all(|label| !label.contains("Embedded")),
+            "{labels:?}"
+        );
     }
 
     #[test]

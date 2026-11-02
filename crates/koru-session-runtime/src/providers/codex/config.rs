@@ -33,8 +33,7 @@ pub struct CodexConfig {
     /// exactly as it did before delegation existed.
     pub(super) delegation: Option<DelegationLaunch>,
     /// What this launch chose by hand (protocol v16): a model the thread
-    /// starts on. An effort has no Codex route yet and is refused before
-    /// the config is built.
+    /// starts on, and an effort every turn carries.
     pub(super) selection: Option<LaunchSelection>,
     /// Stdio MCP servers rendered as `mcp_servers.<name>` overrides, beside
     /// any delegated endpoint.

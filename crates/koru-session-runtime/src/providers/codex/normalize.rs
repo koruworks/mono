@@ -14,8 +14,8 @@ pub(super) struct CodexModel {
     pub display_name: Option<koru_session_protocol::ModelLabel>,
     pub description: Option<koru_session_protocol::ModelLabel>,
     /// Its `supportedReasoningEfforts` and `defaultReasoningEffort`, in
-    /// Koru's vocabulary. Captured for the catalog, never applied: a chosen
-    /// effort has no Codex route yet.
+    /// Koru's vocabulary: the catalog's levels, and the ones a chosen effort
+    /// is checked against.
     pub reasoning: Option<koru_session_protocol::ModelReasoning>,
     /// Codex names a newer model to move to (`upgrade` is set): its own mark
     /// for an older one (D11).

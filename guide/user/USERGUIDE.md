@@ -1248,7 +1248,8 @@ chips, workspace access, approval mode, the model chip and send. Until a
 model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
-left side, one icon each, with the selected agent's models beside them under
+left side, one icon each — Codex, Claude, OpenCode, Kimi, Grok and
+Antigravity — with the selected agent's models beside them under
 their own names, and a **Search models…** box above the list (typing narrows
 it; every word must match). The ↻ at the end of the search box asks the agent
 for its list again — after you connect a new provider in OpenCode, say. A

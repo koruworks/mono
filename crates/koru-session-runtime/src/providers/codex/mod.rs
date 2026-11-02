@@ -33,12 +33,13 @@ use super::process::{JsonRpcTransport, StdioJsonRpc, TransportReceive};
 
 pub const CODEX_PROVIDER: &str = koru_session_profiles::CODEX_REGISTRATION.kind;
 pub const CODEX_PROTOCOL_VERSION: &str = "v2";
-/// The reviewed allowlist. 0.156.1 (2026-09-25), 0.158.0 (2026-09-29) and
-/// 0.163.0 (2026-10-27) were admitted on the maintainers' instruction with
-/// schema evidence and a no-prompt handshake, and without a recorded turn —
-/// see each version's `tests/fixtures/codex-app-server/<version>/README.md`.
+/// The reviewed allowlist. 0.156.1 (2026-09-25), 0.158.0 (2026-09-29),
+/// 0.163.0 (2026-10-27), 0.165.0 (2026-10-28) and 0.166.0 (2026-11-02) were
+/// admitted on the maintainers' instruction with schema evidence and a
+/// no-prompt handshake, and without a recorded turn — see each version's
+/// `tests/fixtures/codex-app-server/<version>/README.md`.
 pub const SUPPORTED_CODEX_VERSIONS: &[&str] = &[
-    "0.150.1", "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0",
+    "0.150.1", "0.153.4", "0.154.0", "0.156.1", "0.158.0", "0.163.0", "0.165.0", "0.166.0",
 ];
 
 /// One Codex app-server process, one ephemeral Codex thread, and one Koru
@@ -71,6 +72,9 @@ pub struct CodexControl {
     rerouted_models: BTreeMap<AgentTurnId, ModelName>,
     /// The thread's model's *Fast* service tier, when it lists one (D11).
     fast_tier: Option<String>,
+    /// The reasoning effort the chat chose, in Codex's word (`none`, `low`,
+    /// … `xhigh`), sent with every turn; `None` lets Codex decide.
+    effort: Option<&'static str>,
     shut_down: bool,
 }
 
@@ -144,6 +148,7 @@ impl CodexControl {
             thread_model: None,
             rerouted_models: BTreeMap::new(),
             fast_tier: None,
+            effort: None,
             shut_down: false,
         }
     }
@@ -351,6 +356,22 @@ impl AgentControl for CodexControl {
             .and_then(|selection| selection.model.clone());
         let model = self.select_model(requested.as_ref())?;
         self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
+        // The chat's level (agent-models D18): one the model lists, or the
+        // session is refused rather than run at a level nobody chose.
+        if let Some(level) = self
+            .config
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.reasoning)
+        {
+            self.effort = Some(effort(model.reasoning.as_ref(), level).ok_or_else(|| {
+                failure(
+                    ErrorCode::CapabilityNotNegotiated,
+                    ProviderStage::Initialize,
+                    ProviderDiagnostic::HandshakeRejected,
+                )
+            })?);
+        }
         let cwd = self.config.working_directory.to_str().ok_or_else(|| {
             failure(
                 ErrorCode::InvalidRequest,
@@ -564,6 +585,9 @@ impl AgentControl for CodexControl {
         });
         if let Some(tier) = self.service_tier(input.fast) {
             params["serviceTier"] = tier;
+        }
+        if let Some(effort) = self.effort {
+            params["effort"] = json!(effort);
         }
         let response = self.call("turn/start", params, ProviderStage::Submit)?;
         let native_id = response
@@ -847,6 +871,22 @@ fn malformed_submit() -> ProviderFailure {
         ProviderStage::Submit,
         ProviderDiagnostic::MalformedFrame,
     )
+}
+
+/// **A level as Codex takes it**: `turn/start`'s `effort`, which holds for
+/// that turn and the ones after it. Only a level the model lists, or `none`
+/// for *Off* when it lists that; Codex has no bare *On*.
+fn effort(
+    reasoning: Option<&koru_session_protocol::ModelReasoning>,
+    level: koru_session_protocol::LaunchReasoning,
+) -> Option<&'static str> {
+    use koru_session_protocol::LaunchReasoning;
+    let reasoning = reasoning?;
+    match level {
+        LaunchReasoning::Off => reasoning.off.then_some("none"),
+        LaunchReasoning::On => None,
+        level => reasoning.levels.contains(&level).then(|| level.as_str()),
+    }
 }
 
 pub(super) fn failure(

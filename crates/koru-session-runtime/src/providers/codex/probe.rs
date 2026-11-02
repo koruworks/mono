@@ -137,20 +137,9 @@ impl ManagedProviderFactory for CodexFactory {
     }
 
     fn create(&self, request: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
-        // A chosen model rides to `thread/start`; a chosen effort has no
-        // Codex route yet and is refused rather than ignored (protocol v16,
-        // `LaunchSelection`).
-        if request
-            .selection
-            .as_ref()
-            .is_some_and(|selection| selection.reasoning.is_some())
-        {
-            return Err(failure(
-                ErrorCode::CapabilityNotNegotiated,
-                ProviderStage::Initialize,
-                ProviderDiagnostic::HandshakeRejected,
-            ));
-        }
+        // A chosen model rides to `thread/start` and a chosen effort to
+        // every `turn/start`; one the model does not list is refused when the
+        // thread starts (protocol v16, `LaunchSelection`).
         if request
             .delegation
             .as_ref()
