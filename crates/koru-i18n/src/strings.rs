@@ -294,9 +294,7 @@ pub enum Key {
     AiToolModeAutomatic,
     AiToolModeManualHelp,
     AiToolModeAutoHelp,
-    AiToolAutoApproveSession,
     AiToolModeManual,
-    AiToolModeAutoSession,
     AiToolWorkspaceAccess,
     AiToolSpaceOne,
     AiToolSpaces,
@@ -2710,7 +2708,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1866] = [
+    pub const ALL: [Key; 1864] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2899,9 +2897,7 @@ impl Key {
         Key::AiToolModeAutomatic,
         Key::AiToolModeManualHelp,
         Key::AiToolModeAutoHelp,
-        Key::AiToolAutoApproveSession,
         Key::AiToolModeManual,
-        Key::AiToolModeAutoSession,
         Key::AiToolWorkspaceAccess,
         Key::AiToolSpaceOne,
         Key::AiToolSpaces,
@@ -6706,18 +6702,6 @@ pub const ROWS: &[Row] = &[
         zh_hans: "已授权的读取和更改可能会直接运行，无需暂停。",
         ja: "許可された読み取りと変更は、一時停止せずに実行されることがあります。",
     },
-    // The panel's last button, and the middle one on a tool's approval card.
-    Row {
-        key: Key::AiToolAutoApproveSession,
-        en: "Auto-approve this session",
-        es: "Aprobar todo en esta sesión",
-        pt_br: "Aprovar tudo nesta sessão",
-        de: "In dieser Sitzung automatisch freigeben",
-        fr: "Tout approuver pour cette session",
-        ar: "الموافقة تلقائيًا في هذه الجلسة",
-        zh_hans: "本次会话自动批准",
-        ja: "このセッションは自動承認",
-    },
     // The composer's tool-mode chip, in manual approval.
     Row {
         key: Key::AiToolModeManual,
@@ -6729,18 +6713,6 @@ pub const ROWS: &[Row] = &[
         ar: "يدوي",
         zh_hans: "手动",
         ja: "手動",
-    },
-    // The composer's tool-mode chip, while this session approves on its own.
-    Row {
-        key: Key::AiToolModeAutoSession,
-        en: "Auto session",
-        es: "Sesión automática",
-        pt_br: "Sessão automática",
-        de: "Sitzung automatisch",
-        fr: "Session auto",
-        ar: "جلسة تلقائية",
-        zh_hans: "本会话自动",
-        ja: "セッション自動",
     },
     // The composer's workspace chip, before there is a chat.
     Row {

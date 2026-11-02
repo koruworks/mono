@@ -1350,9 +1350,10 @@ again.
 The approval control is independent and sits immediately left of the model
 control. **Manual approval** lets reads proceed but pauses every proposed
 change for an explicit decision. **Automatic** allows both reads and changes
-within the selected workspaces. **Auto-approve this session** temporarily
-approves changes for the current chat until this app session ends without
-changing the durable Manual/Automatic policy. The composer footer keeps the
+within the selected workspaces. A chat with a local agent has no approval
+control: the agent asks for permission with its own choices, on a card in the
+reply. A proposed change waits on a card with **Approve** and **Deny**. The
+composer footer keeps the
 incognito, globe and workspace controls against its left edge and approval plus
 model controls against its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control

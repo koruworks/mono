@@ -12,7 +12,8 @@ const WORKSPACE_LIST_Y: f32 = 31.0;
 const WORKSPACE_SEARCH_H: f32 = 34.0;
 const WORKSPACE_SEARCH_GAP: f32 = 8.0;
 const WORKSPACE_SEARCH_THRESHOLD: usize = 5;
-const MODE_PANEL_H: f32 = 130.0;
+/// The heading, the two modes and two lines of help.
+const MODE_PANEL_H: f32 = 100.0;
 /// The room between a toolbar panel and the composer, and the window's edge.
 const COMPOSER_PANEL_GAP: f32 = 4.0;
 
@@ -128,16 +129,6 @@ impl ChatSurface {
         ])
     }
 
-    pub(super) fn tool_mode_session_button(&self) -> Option<Rect> {
-        let panel = self.tool_mode_panel()?;
-        Some(Rect::new(
-            panel.x + 8.0,
-            panel.y + 96.0,
-            panel.w - 16.0,
-            BUTTON_H,
-        ))
-    }
-
     pub(super) fn tool_access_workspace_list(&self) -> Option<Rect> {
         let panel = self.tool_access_panel()?;
         let list_y = panel.y + self.tool_access_fixed_height() - 4.0;
@@ -166,10 +157,10 @@ impl ChatSurface {
         let Some(panel) = self.tool_mode_panel() else {
             return;
         };
-        let Some((chat_id, policy)) = self
+        let Some(policy) = self
             .transcript
             .as_ref()
-            .map(|transcript| (transcript.chat.id, transcript.tool_policy.clone()))
+            .map(|transcript| transcript.tool_policy.clone())
         else {
             return;
         };
@@ -233,19 +224,6 @@ impl ChatSurface {
             panel.x + 10.0,
             panel.y + 63.0,
             Some(p.text_dim),
-        );
-        let session = self
-            .tool_mode_session_button()
-            .expect("an open mode panel has a session button");
-        draw_surface_button(
-            canvas,
-            root,
-            &mut self.engine,
-            session,
-            koru_i18n::t(lang, Key::AiToolAutoApproveSession),
-            ButtonRole::Secondary,
-            session.contains(self.pointer.0, self.pointer.1),
-            self.session_auto_approve_chats.contains(&chat_id),
         );
     }
 

@@ -482,8 +482,6 @@ pub struct ChatSurface {
     picker_tooltip: Tooltip,
     tool_access_open: bool,
     tool_mode_open: bool,
-    session_auto_approve_chats: HashSet<ChatId>,
-    session_approval_sent: HashSet<ToolInvocationId>,
     openai_models: Vec<String>,
     ollama_models: Vec<String>,
     /// Each local agent's readiness, from its validation answer.
@@ -766,8 +764,6 @@ impl ChatSurface {
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
             tool_mode_open: false,
-            session_auto_approve_chats: HashSet::new(),
-            session_approval_sent: HashSet::new(),
             openai_models: Vec::new(),
             ollama_models: Vec::new(),
             agent_status: HashMap::new(),
@@ -1643,12 +1639,6 @@ impl ChatSurface {
                     return self.update_tool_policy(ToolMode::Auto, policy.workspace_ids);
                 }
             }
-            if self
-                .tool_mode_session_button()
-                .is_some_and(|rect| rect.contains(x, y))
-            {
-                return self.toggle_session_auto_approve();
-            }
         }
         if self.tool_access_open {
             if self
@@ -1795,8 +1785,7 @@ impl ChatSurface {
             return match part {
                 part if part >= agents::CHOICE_PART_BASE => self.decide_agent_choice(tool, part),
                 1 => self.send_command(Command::ApproveTool(tool)),
-                2 => self.auto_approve_tool_for_session(tool),
-                3 => self.send_command(Command::DenyTool(tool)),
+                2 => self.send_command(Command::DenyTool(tool)),
                 _ => true,
             };
         }
@@ -3015,10 +3004,6 @@ impl ChatSurface {
     }
 
     fn upsert_tool_activity(&mut self, mut activity: ToolActivity) {
-        let should_auto_approve = activity.status == ToolActivityStatus::ApprovalRequired
-            && activity.approval == ToolApproval::Pending
-            && self.session_auto_approve_chats.contains(&activity.chat_id)
-            && self.session_approval_sent.insert(activity.id);
         let activity_id = activity.id;
         let Some(transcript) = &mut self.transcript else {
             return;
@@ -3026,7 +3011,6 @@ impl ChatSurface {
         if transcript.chat.id != activity.chat_id {
             return;
         }
-        let should_auto_approve = should_auto_approve && !is_agent_row(&activity);
         let (reply, unplaced) = (
             activity.assistant_message_id,
             activity.text_offset.is_none()
@@ -3059,62 +3043,12 @@ impl ChatSurface {
             );
         }
         self.messages_dirty = true;
-        if should_auto_approve {
-            self.send_command(Command::ApproveTool(activity_id));
-        }
     }
 
     /// Whether a reply is streaming: a turn was accepted and its stream has
     /// not yet sent its terminal event.
     fn reply_streaming(&self) -> bool {
         self.attempt.is_some() && self.attempt != self.ended_attempt
-    }
-
-    fn toggle_session_auto_approve(&mut self) -> bool {
-        let Some(chat_id) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.chat.id)
-        else {
-            return false;
-        };
-        if !self.session_auto_approve_chats.insert(chat_id) {
-            self.session_auto_approve_chats.remove(&chat_id);
-            return true;
-        }
-        // An agent's request is not approved this way: it waits for one of
-        // the agent's own choices, and the service refuses a bare approval
-        // of it (`choice_required`) — as `upsert_tool_activity` knows.
-        let pending: Vec<_> = self
-            .transcript
-            .as_ref()
-            .into_iter()
-            .flat_map(|transcript| &transcript.tool_activities)
-            .filter(|activity| {
-                activity.status == ToolActivityStatus::ApprovalRequired
-                    && activity.approval == ToolApproval::Pending
-                    && !is_agent_row(activity)
-            })
-            .map(|activity| activity.id)
-            .filter(|id| self.session_approval_sent.insert(*id))
-            .collect();
-        for tool in pending {
-            self.send_command(Command::ApproveTool(tool));
-        }
-        true
-    }
-
-    fn auto_approve_tool_for_session(&mut self, tool: ToolInvocationId) -> bool {
-        let Some(chat_id) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.chat.id)
-        else {
-            return false;
-        };
-        self.session_auto_approve_chats.insert(chat_id);
-        self.session_approval_sent.insert(tool);
-        self.send_command(Command::ApproveTool(tool))
     }
 
     fn update_tool_policy(&mut self, mode: ToolMode, workspace_ids: Vec<WorkspaceId>) -> bool {
@@ -4905,13 +4839,6 @@ impl ChatSurface {
     fn tool_mode_label(&self) -> &'static str {
         use koru_i18n::Key;
         let key = match &self.transcript {
-            Some(transcript)
-                if self
-                    .session_auto_approve_chats
-                    .contains(&transcript.chat.id) =>
-            {
-                Key::AiToolModeAutoSession
-            }
             Some(transcript) if transcript.tool_policy.mode == ToolMode::Auto => {
                 Key::AiToolModeAutomatic
             }
@@ -5172,12 +5099,6 @@ impl ChatSurface {
                             return Some((13, index));
                         }
                     }
-                }
-                if self
-                    .tool_mode_session_button()
-                    .is_some_and(|rect| rect.contains(x, y))
-                {
-                    return Some((13, 2));
                 }
             }
             if self.tool_access_open {
@@ -6354,20 +6275,13 @@ impl ChatSurface {
                         &tool.activity,
                     );
                 } else {
-                    let [approve, auto_session, deny] = tool_activity_action_rects(row);
-                    let lang = self.lang;
-                    let label = |key| koru_i18n::t(lang, key);
-                    let (approve_label, session_label, deny_label) = (
-                        label(koru_i18n::Key::AiToolApprove),
-                        label(koru_i18n::Key::AiToolAutoApproveSession),
-                        label(koru_i18n::Key::AiToolDeny),
-                    );
+                    let [approve, deny] = tool_activity_action_rects(row);
                     draw_surface_button(
                         canvas,
                         root,
                         &mut self.engine,
                         approve,
-                        approve_label,
+                        koru_i18n::t(self.lang, koru_i18n::Key::AiToolApprove),
                         ButtonRole::Primary,
                         approve.contains(self.pointer.0, self.pointer.1),
                         false,
@@ -6376,18 +6290,8 @@ impl ChatSurface {
                         canvas,
                         root,
                         &mut self.engine,
-                        auto_session,
-                        session_label,
-                        ButtonRole::Secondary,
-                        auto_session.contains(self.pointer.0, self.pointer.1),
-                        false,
-                    );
-                    draw_surface_button(
-                        canvas,
-                        root,
-                        &mut self.engine,
                         deny,
-                        deny_label,
+                        koru_i18n::t(self.lang, koru_i18n::Key::AiToolDeny),
                         ButtonRole::Secondary,
                         deny.contains(self.pointer.0, self.pointer.1),
                         false,
@@ -6550,8 +6454,8 @@ impl ChatSurface {
         })
     }
 
-    /// Part 0 is the card, 1 is Approve, 2 is session auto-approve, 3 is
-    /// Deny, and an agent's choices count from `agents::CHOICE_PART_BASE`.
+    /// Part 0 is the card, 1 is Approve, 2 is Deny, and an agent's choices
+    /// count from `agents::CHOICE_PART_BASE`.
     fn tool_activity_at(&self, x: f32, y: f32) -> Option<(ToolInvocationId, u8)> {
         let area = self.conversation_hit_rect;
         if !area.contains(x, y) {
@@ -6573,15 +6477,12 @@ impl ChatSurface {
                 }
                 return Some((tool.activity.id, 0));
             }
-            let [approve, auto_session, deny] = tool_activity_action_rects(row);
+            let [approve, deny] = tool_activity_action_rects(row);
             if approve.contains(x, y) {
                 return Some((tool.activity.id, 1));
             }
-            if auto_session.contains(x, y) {
-                return Some((tool.activity.id, 2));
-            }
             if deny.contains(x, y) {
-                return Some((tool.activity.id, 3));
+                return Some((tool.activity.id, 2));
             }
             return Some((tool.activity.id, 0));
         }
@@ -7829,15 +7730,13 @@ fn message_card(area: Rect, y: f32, h: f32, message: &MessageLayout) -> Rect {
     Rect::new(area.x + area.w - width, y, width, h)
 }
 
-fn tool_activity_action_rects(row: Rect) -> [Rect; 3] {
+fn tool_activity_action_rects(row: Rect) -> [Rect; 2] {
     let approve_w = 78.0;
     let deny_w = 58.0;
-    let auto_w = (row.w - approve_w - deny_w - 40.0).max(104.0);
     let y = row.y + row.h - BUTTON_H - 8.0;
     [
         Rect::new(row.x + 10.0, y, approve_w, BUTTON_H),
-        Rect::new(row.x + 94.0, y, auto_w, BUTTON_H),
-        Rect::new(row.x + row.w - deny_w - 10.0, y, deny_w, BUTTON_H),
+        Rect::new(row.x + 94.0, y, deny_w, BUTTON_H),
     ]
 }
 
@@ -10495,16 +10394,16 @@ mod tests {
         assert!(surface.work_layouts[0].top < pending.top);
     }
 
+    /// A tool waiting for approval waits for the person: nothing approves
+    /// it on its own, whatever was approved before it in the chat.
     #[test]
-    fn session_auto_approval_approves_current_and_future_mutations() {
+    fn a_waiting_tool_is_never_approved_on_its_own() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         let chat = transcript.chat.id;
         surface.reader = Some(reader);
         surface.transcript = Some(transcript);
-        assert!(surface.toggle_session_auto_approve());
-        assert!(surface.session_auto_approve_chats.contains(&chat));
 
         let activity = ToolActivity {
             id: ToolInvocationId::new(),
@@ -10531,62 +10430,8 @@ mod tests {
             display_target: None,
             live: None,
         };
-        surface.upsert_tool_activity(activity.clone());
-        assert!(matches!(
-            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::ApproveTool(id) if id == activity.id
-        ));
         surface.upsert_tool_activity(activity);
         assert!(commands.recv_timeout(Duration::from_millis(10)).is_err());
-    }
-
-    /// Turning the session's auto-approval on approves the waiting Koru
-    /// tool and leaves the agent's request alone: that one needs one of the
-    /// agent's own choices, and the service refuses a bare approval.
-    #[test]
-    fn session_auto_approval_leaves_an_agents_request_waiting() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
-        let (reader, commands, _updates) = Reader::test_pair();
-        let mut transcript = transcript();
-        let chat = transcript.chat.id;
-        let waiting = |tool_name: &str| ToolActivity {
-            id: ToolInvocationId::new(),
-            attempt_id: InferenceAttemptId::new(),
-            chat_id: chat,
-            assistant_message_id: MessageId::new(),
-            tool_name: tool_name.into(),
-            read_only: false,
-            status: ToolActivityStatus::ApprovalRequired,
-            approval: ToolApproval::Pending,
-            proposed_at: koru_ai_core::Timestamp::from_millis(1),
-            started_at: None,
-            completed_at: None,
-            result_bytes: None,
-            error_code: None,
-            target_workspace_id: None,
-            target_document_id: None,
-            error_message: None,
-            agent_label: None,
-            agent_summary: None,
-            agent_input: None,
-            agent_output: None,
-            text_offset: None,
-            display_target: None,
-            live: None,
-        };
-        let koru = waiting("create_document");
-        let agent = waiting("agent.approval");
-        transcript.tool_activities = vec![koru.clone(), agent.clone()];
-        surface.reader = Some(reader);
-        surface.transcript = Some(transcript);
-
-        assert!(surface.toggle_session_auto_approve());
-        assert!(matches!(
-            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::ApproveTool(id) if id == koru.id
-        ));
-        assert!(commands.recv_timeout(Duration::from_millis(10)).is_err());
-        assert!(!surface.session_approval_sent.contains(&agent.id));
     }
 
     #[test]
