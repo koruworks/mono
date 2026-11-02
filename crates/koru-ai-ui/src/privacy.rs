@@ -3,6 +3,7 @@
 //! Per-chat privacy and tool-access controls.
 
 use koru_ai_wire::UpdateChatPrivacyRequest;
+use koru_i18n::Key;
 
 use super::*;
 
@@ -97,7 +98,7 @@ impl ChatSurface {
         if !self.tool_mode_open || self.transcript.is_none() {
             return None;
         }
-        let button = self.tool_mode_button();
+        let button = self.tool_mode_button()?;
         let width = self.composer_hit_rect.w.min(320.0).max(1.0);
         let x = (button.x + button.w - width)
             .min(self.viewport.x + self.viewport.w - width - 4.0)
@@ -175,7 +176,10 @@ impl ChatSurface {
             &scene::Panel::popover(8.0),
         );
         let p = theme::p();
-        let heading = self.engine.simple_layout("TOOL APPROVAL", role::meta());
+        let lang = self.lang;
+        let heading = self
+            .engine
+            .simple_layout(koru_i18n::t(lang, Key::AiToolApprovalHeading), role::meta());
         scene::draw_layout_first_line(
             canvas,
             root,
@@ -188,9 +192,10 @@ impl ChatSurface {
             .tool_mode_buttons()
             .expect("an open mode panel has mode buttons");
         for (rect, label, mode) in [
-            (modes[0], "Manual approval", ToolMode::Manual),
-            (modes[1], "Automatic", ToolMode::Auto),
+            (modes[0], Key::AiToolModeManualApproval, ToolMode::Manual),
+            (modes[1], Key::AiToolModeAutomatic, ToolMode::Auto),
         ] {
+            let label = koru_i18n::t(lang, label);
             draw_surface_button(
                 canvas,
                 root,
@@ -203,11 +208,14 @@ impl ChatSurface {
             );
         }
         let help = self.engine.simple_layout_wrapped(
-            if policy.mode == ToolMode::Manual {
-                "Reads run immediately. Changes wait for your approval."
-            } else {
-                "Granted reads and changes may run without pausing."
-            },
+            koru_i18n::t(
+                lang,
+                if policy.mode == ToolMode::Manual {
+                    Key::AiToolModeManualHelp
+                } else {
+                    Key::AiToolModeAutoHelp
+                },
+            ),
             role::meta(),
             panel.w - 20.0,
         );
@@ -227,7 +235,7 @@ impl ChatSurface {
             root,
             &mut self.engine,
             session,
-            "Auto-approve this session",
+            koru_i18n::t(lang, Key::AiToolAutoApproveSession),
             ButtonRole::Secondary,
             session.contains(self.pointer.0, self.pointer.1),
             self.session_auto_approve_chats.contains(&chat_id),

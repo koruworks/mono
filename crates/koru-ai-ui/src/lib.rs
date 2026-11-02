@@ -1697,7 +1697,10 @@ impl ChatSurface {
             }
             return true;
         }
-        if self.tool_mode_button().contains(x, y) {
+        if self
+            .tool_mode_button()
+            .is_some_and(|button| button.contains(x, y))
+        {
             self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
@@ -3081,6 +3084,9 @@ impl ChatSurface {
             self.session_auto_approve_chats.remove(&chat_id);
             return true;
         }
+        // An agent's request is not approved this way: it waits for one of
+        // the agent's own choices, and the service refuses a bare approval
+        // of it (`choice_required`) — as `upsert_tool_activity` knows.
         let pending: Vec<_> = self
             .transcript
             .as_ref()
@@ -3089,6 +3095,7 @@ impl ChatSurface {
             .filter(|activity| {
                 activity.status == ToolActivityStatus::ApprovalRequired
                     && activity.approval == ToolApproval::Pending
+                    && !is_agent_row(activity)
             })
             .map(|activity| activity.id)
             .filter(|id| self.session_approval_sent.insert(*id))
@@ -4639,16 +4646,25 @@ impl ChatSurface {
         }
     }
 
-    fn tool_mode_button(&self) -> Rect {
+    /// The Manual/Automatic chip, left of the model chip. **Not on an agent
+    /// chat**: the policy is enforced only by Koru's own tool loop, and an
+    /// agent asks through its own choices, so there the chip would do
+    /// nothing.
+    fn tool_mode_button(&self) -> Option<Rect> {
+        if self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+        }) {
+            return None;
+        }
         let toolbar = self.composer_toolbar_rect();
         let model = self.chat_model_button();
         let width = (toolbar.w * 0.24).clamp(72.0, 105.0);
-        Rect::new(
+        Some(Rect::new(
             (model.x - 6.0 - width).max(toolbar.x),
             toolbar.y,
             width.min((model.x - toolbar.x - 6.0).max(1.0)),
             toolbar.h,
-        )
+        ))
     }
 
     fn koru_chat(&self) -> bool {
@@ -4758,14 +4774,19 @@ impl ChatSurface {
 
     fn tool_access_button(&self) -> Rect {
         let toolbar = self.composer_toolbar_rect();
-        let mode = self.tool_mode_button();
+        // The chip to its right: the mode chip, or the model chip where
+        // there is no mode chip.
+        let next_x = self
+            .tool_mode_button()
+            .unwrap_or_else(|| self.chat_model_button())
+            .x;
         let x = self
             .web_search_button()
             .or_else(|| self.privacy_button())
             .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
         let width = (toolbar.w * 0.28)
             .clamp(78.0, 140.0)
-            .min((mode.x - x - 6.0).max(1.0));
+            .min((next_x - x - 6.0).max(1.0));
         Rect::new(x, toolbar.y, width, toolbar.h)
     }
 
@@ -4870,27 +4891,35 @@ impl ChatSurface {
     }
 
     fn tool_access_label(&self) -> String {
+        use koru_i18n::Key;
         let Some(transcript) = &self.transcript else {
-            return "Workspace access".into();
+            return koru_i18n::t(self.lang, Key::AiToolWorkspaceAccess).into();
         };
-        let count = transcript.tool_policy.workspace_ids.len();
-        format!("{count} {}", if count == 1 { "space" } else { "spaces" })
+        match transcript.tool_policy.workspace_ids.len() {
+            1 => koru_i18n::t(self.lang, Key::AiToolSpaceOne).into(),
+            count => koru_i18n::fill(
+                koru_i18n::t(self.lang, Key::AiToolSpaces),
+                &[&count.to_string()],
+            ),
+        }
     }
 
     fn tool_mode_label(&self) -> &'static str {
-        let Some(transcript) = &self.transcript else {
-            return "Manual";
+        use koru_i18n::Key;
+        let key = match &self.transcript {
+            Some(transcript)
+                if self
+                    .session_auto_approve_chats
+                    .contains(&transcript.chat.id) =>
+            {
+                Key::AiToolModeAutoSession
+            }
+            Some(transcript) if transcript.tool_policy.mode == ToolMode::Auto => {
+                Key::AiToolModeAutomatic
+            }
+            _ => Key::AiToolModeManual,
         };
-        if self
-            .session_auto_approve_chats
-            .contains(&transcript.chat.id)
-        {
-            "Auto session"
-        } else if transcript.tool_policy.mode == ToolMode::Auto {
-            "Automatic"
-        } else {
-            "Manual"
-        }
+        koru_i18n::t(self.lang, key)
     }
 
     fn model_options_panel(&self) -> Option<Rect> {
@@ -5132,7 +5161,10 @@ impl ChatSurface {
             if self.tool_access_button().contains(x, y) {
                 return Some((5, 6));
             }
-            if self.tool_mode_button().contains(x, y) {
+            if self
+                .tool_mode_button()
+                .is_some_and(|button| button.contains(x, y))
+            {
                 return Some((5, 9));
             }
             if self.tool_mode_open {
@@ -5359,19 +5391,20 @@ impl ChatSurface {
                 access_button,
                 access_button.contains(self.pointer.0, self.pointer.1),
             );
-            let mode_button = self.tool_mode_button();
-            ActionButton::new(
-                self.tool_mode_label(),
-                ActionStyle::Ghost,
-                Some(icons::CARET_DOWN),
-            )
-            .draw(
-                canvas,
-                root,
-                &mut self.engine,
-                mode_button,
-                mode_button.contains(self.pointer.0, self.pointer.1),
-            );
+            if let Some(mode_button) = self.tool_mode_button() {
+                ActionButton::new(
+                    self.tool_mode_label(),
+                    ActionStyle::Ghost,
+                    Some(icons::CARET_DOWN),
+                )
+                .draw(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    mode_button,
+                    mode_button.contains(self.pointer.0, self.pointer.1),
+                );
+            }
             if let Some(privacy) = self.privacy_button() {
                 let private = self
                     .transcript
@@ -6324,12 +6357,19 @@ impl ChatSurface {
                     );
                 } else {
                     let [approve, auto_session, deny] = tool_activity_action_rects(row);
+                    let lang = self.lang;
+                    let label = |key| koru_i18n::t(lang, key);
+                    let (approve_label, session_label, deny_label) = (
+                        label(koru_i18n::Key::AiToolApprove),
+                        label(koru_i18n::Key::AiToolAutoApproveSession),
+                        label(koru_i18n::Key::AiToolDeny),
+                    );
                     draw_surface_button(
                         canvas,
                         root,
                         &mut self.engine,
                         approve,
-                        "Approve",
+                        approve_label,
                         ButtonRole::Primary,
                         approve.contains(self.pointer.0, self.pointer.1),
                         false,
@@ -6339,7 +6379,7 @@ impl ChatSurface {
                         root,
                         &mut self.engine,
                         auto_session,
-                        "Auto-approve this session",
+                        session_label,
                         ButtonRole::Secondary,
                         auto_session.contains(self.pointer.0, self.pointer.1),
                         false,
@@ -6349,7 +6389,7 @@ impl ChatSurface {
                         root,
                         &mut self.engine,
                         deny,
-                        "Deny",
+                        deny_label,
                         ButtonRole::Secondary,
                         deny.contains(self.pointer.0, self.pointer.1),
                         false,
@@ -9756,7 +9796,10 @@ mod tests {
 
         let toolbar = surface.composer_toolbar_rect();
         let workspace = surface.tool_access_button();
-        let approval = surface.tool_mode_button();
+        surface.lang = koru_i18n::Lang::En;
+        let approval = surface
+            .tool_mode_button()
+            .expect("a Koru-run chat has the mode chip");
         let model = surface.chat_model_button();
         let privacy = surface.privacy_button().expect("a chat can be private");
         let search = surface
@@ -10421,6 +10464,55 @@ mod tests {
         assert!(commands.recv_timeout(Duration::from_millis(10)).is_err());
     }
 
+    /// Turning the session's auto-approval on approves the waiting Koru
+    /// tool and leaves the agent's request alone: that one needs one of the
+    /// agent's own choices, and the service refuses a bare approval.
+    #[test]
+    fn session_auto_approval_leaves_an_agents_request_waiting() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        let chat = transcript.chat.id;
+        let waiting = |tool_name: &str| ToolActivity {
+            id: ToolInvocationId::new(),
+            attempt_id: InferenceAttemptId::new(),
+            chat_id: chat,
+            assistant_message_id: MessageId::new(),
+            tool_name: tool_name.into(),
+            read_only: false,
+            status: ToolActivityStatus::ApprovalRequired,
+            approval: ToolApproval::Pending,
+            proposed_at: koru_ai_core::Timestamp::from_millis(1),
+            started_at: None,
+            completed_at: None,
+            result_bytes: None,
+            error_code: None,
+            target_workspace_id: None,
+            target_document_id: None,
+            error_message: None,
+            agent_label: None,
+            agent_summary: None,
+            agent_input: None,
+            agent_output: None,
+            text_offset: None,
+            display_target: None,
+            live: None,
+        };
+        let koru = waiting("create_document");
+        let agent = waiting("agent.approval");
+        transcript.tool_activities = vec![koru.clone(), agent.clone()];
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+
+        assert!(surface.toggle_session_auto_approve());
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::ApproveTool(id) if id == koru.id
+        ));
+        assert!(commands.recv_timeout(Duration::from_millis(10)).is_err());
+        assert!(!surface.session_approval_sent.contains(&agent.id));
+    }
+
     #[test]
     fn reasoning_choices_are_capability_driven() {
         use koru_ai_core::ReasoningLevel;
@@ -10597,11 +10689,13 @@ mod tests {
         let (fx, fy) = (folder.x + folder.w * 0.5, folder.y + folder.h * 0.5);
         assert!(!composer.contains(fx, fy), "the folder is outside the box");
 
-        // The toolbar no longer holds it: the mode stands next to the chip.
-        let mode = surface.tool_mode_button();
+        // The toolbar no longer holds it. An agent chat has no mode chip:
+        // its policy is not Koru's to enforce.
+        assert!(surface.tool_mode_button().is_none());
+        let access = surface.tool_access_button();
         let model = surface.chat_model_button();
-        assert!((mode.x + mode.w + 6.0 - model.x).abs() < 0.01);
-        assert!(!mode.contains(fx, fy) && !model.contains(fx, fy));
+        assert!(access.x + access.w < model.x);
+        assert!(!access.contains(fx, fy) && !model.contains(fx, fy));
 
         // Hit where it is drawn, and only there.
         assert_eq!(surface.control_hover_at(fx, fy), Some((5, 12)));
