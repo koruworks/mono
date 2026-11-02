@@ -746,29 +746,74 @@ fn an_agent_without_modes_of_its_own_is_served_its_factorys() {
     );
 }
 
-/// **Fast mode is served, never written** (koru-ai D11): a model's Fast mode
-/// rides the served list and a walk's survives a fresh capture, while the
-/// file keeps the format and content it has.
+/// `ids` as a list in which the models named in `fast` offer Fast mode.
+fn with_fast(ids: &[&str], fast: &[&str]) -> ProviderModels {
+    let mut models: Vec<_> = catalog(ids).models().to_vec();
+    for model in &mut models {
+        if fast.contains(&model.id.as_str()) {
+            model.fast = Some(koru_session_protocol::ModelFast {
+                on_by_default: false,
+            });
+        }
+    }
+    models.try_into().unwrap()
+}
+
+/// **Fast mode is served and written** (koru-ai D11, format 3): a model's
+/// Fast mode rides the served list, a walk's survives a fresh capture, and a
+/// host started on the file serves every model's Fast row again — not only
+/// the start model's, which is all the probe reads.
 #[test]
-fn a_models_fast_mode_is_served_and_kept_out_of_the_file() {
+fn a_models_fast_mode_survives_a_cache_reload() {
     let world = World::new(true);
     let store = Arc::new(MemoryCatalogStore::default());
     let cache = world.cache(store.clone(), false);
-    let mut fast = catalog(&["default", "opus"]);
-    let mut models: Vec<_> = fast.models().to_vec();
-    models[1].fast = Some(koru_session_protocol::ModelFast {
-        on_by_default: false,
-    });
-    fast = models.try_into().unwrap();
+    let fast = with_fast(&["default", "opus", "sonnet"], &["opus", "sonnet"]);
     observe(&cache, &available("claude", "0.76.0"), Some(fast.clone()));
     assert_eq!(cache.serve(&kind("claude")).unwrap(), fast);
-    let written = String::from_utf8(store.bytes().unwrap()).unwrap();
-    assert!(written.contains("\"opus\""));
-    assert!(!written.contains("fast"), "the file keeps its format");
+    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    assert_eq!(written["format"], 3);
 
-    let kept = keep_walked_levels(catalog(&["default", "opus"]), &fast);
+    let reopened = world.cache(
+        Arc::new(MemoryCatalogStore::with_bytes(store.bytes().unwrap())),
+        false,
+    );
+    let served = reopened.serve(&kind("claude")).unwrap();
+    assert_eq!(served, fast, "every model keeps its Fast row");
+    assert!(served.models()[0].fast.is_none());
+    assert!(served.models()[2].fast.is_some());
+
+    let kept = keep_walked_levels(catalog(&["default", "opus", "sonnet"]), &fast);
     assert!(
         kept.models()[1].fast.is_some(),
         "a walk's Fast mode is kept"
     );
+}
+
+/// **A format-2 file is listed again**: it was written without any model's
+/// Fast mode, so serving it would hide the Fast row of every model but the
+/// start one until the next walk.
+#[test]
+fn a_format_2_cache_is_listed_again() {
+    let world = World::new(true);
+    let old = serde_json::to_vec(&serde_json::json!({
+        "format": 2,
+        "providers": {"opencode": entry(KORU_VERSION, "1.19.5", &["opencode/old"])},
+    }))
+    .unwrap();
+    let store = Arc::new(MemoryCatalogStore::with_bytes(old));
+    let cache = world.cache(store.clone(), true);
+    assert!(
+        cache.lock().entries.is_empty(),
+        "nothing read from format 2"
+    );
+    observe(&cache, &available("opencode", "1.19.5"), None);
+    assert_eq!(
+        ids(&cache.serve(&kind("opencode")).unwrap()),
+        ["opencode/beam-free"],
+        "the agent is listed again"
+    );
+    assert_eq!(world.calls(), 1);
+    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    assert_eq!(written["format"], CATALOG_FORMAT);
 }

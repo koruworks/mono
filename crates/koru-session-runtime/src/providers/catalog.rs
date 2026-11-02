@@ -7,8 +7,8 @@
 //! ([`CatalogSource`]): the readiness probe's own session start, which
 //! already receives an ACP agent's list; a background listing on this
 //! cache's one worker (OpenCode's catalog commands), run once per agent
-//! version; or a listing made when somebody asks (Codex, which the picker
-//! does not offer). Every listing waits for one of the host's two model
+//! version; or a listing made when somebody asks (Codex, whose list the
+//! picker asks for). Every listing waits for one of the host's two model
 //! slots, and a person's runs on a thread of its own, so the request that
 //! started it answers within its budget whether or not the list is ready.
 //!
@@ -22,7 +22,9 @@
 //! (Claude) has its models walked once per version on the same worker
 //! (D16): the probe's capture is served meanwhile, with levels for its start
 //! model alone, and the walk's levels are kept, and served, while the
-//! version holds.
+//! version holds. The walk reads each model's **Fast mode** (koru-ai D11)
+//! the same way, and the file keeps it (format 3), so after a restart every
+//! model has its Fast row, not only the start model the probe reads.
 //!
 //! An entry is keyed by the agent's kind, the version the readiness probe
 //! read, and the Koru version. A persisted entry is served while its agent
@@ -51,7 +53,14 @@ use std::time::{Duration, Instant};
 /// Claude's 1M siblings are folded into it. An older Koru reading a format-2
 /// file would take the folded list without its 1M choices, so it lists again
 /// instead; a format-1 file is listed again here for the same reason.
-pub const CATALOG_FORMAT: u32 = 2;
+///
+/// 3: a model may carry its **Fast mode** (`ProviderModel::fast`, koru-ai
+/// D11), so after a restart every model the walk or a listing read keeps its
+/// Fast row, not only the agent's start model. An older Koru reading a
+/// format-3 file would drop Fast for every model but the start one until its
+/// next walk, so it lists again instead; a format-2 file holds no Fast and is
+/// listed again here.
+pub const CATALOG_FORMAT: u32 = 3;
 /// A file larger than this is not read.
 pub const MAX_CATALOG_FILE_BYTES: usize = 4 * 1024 * 1024;
 /// Listings the host runs at once: the worker's one, and one for a person.
@@ -750,7 +759,7 @@ impl ProviderCatalogCache {
                 .filter_map(|(kind, entry)| {
                     Some((
                         kind.as_str().to_owned(),
-                        serde_json::to_value(written(&entry.stored)).ok()?,
+                        serde_json::to_value(&entry.stored).ok()?,
                     ))
                 })
                 .collect();
@@ -809,9 +818,10 @@ fn drop_entry(state: &mut State, kind: &ProviderKind, reason: CatalogDrop) {
     }
 }
 
-/// A fresh probe capture with the walk's levels kept: the capture's own
-/// list, and for each model the capture has no levels for, those the walk
-/// read. The capture's start model is the fresher fact and keeps its own.
+/// A fresh probe capture with the walk's levels and Fast mode kept: the
+/// capture's own list, and for each model the capture has no levels or Fast
+/// for, those the walk read. The capture's start model is the fresher fact
+/// and keeps its own.
 fn keep_walked_levels(captured: ProviderModels, walked: &ProviderModels) -> ProviderModels {
     let models: Vec<_> = captured
         .models()
@@ -831,8 +841,8 @@ fn keep_walked_levels(captured: ProviderModels, walked: &ProviderModels) -> Prov
     ProviderModels::try_from(models).unwrap_or(captured)
 }
 
-/// The capture's list with each model's levels as the walk read them; a
-/// model the walk did not reach keeps what it had.
+/// The capture's list with each model's levels and Fast mode as the walk
+/// read them; a model the walk did not reach keeps what it had.
 fn walked_levels(captured: &ProviderModels, walked: &ProviderModels) -> ProviderModels {
     let models: Vec<_> = captured
         .models()
@@ -847,34 +857,6 @@ fn walked_levels(captured: &ProviderModels, walked: &ProviderModels) -> Provider
         })
         .collect();
     ProviderModels::try_from(models).unwrap_or_else(|_| captured.clone())
-}
-
-/// **An entry as the file keeps it**: without each model's Fast mode
-/// (koru-ai D11), so the file keeps the format and content it has. Fast mode
-/// is read again by every probe of the agent's start model and by the levels
-/// walk, and kept in memory for the host's run.
-fn written(stored: &Stored) -> std::borrow::Cow<'_, Stored> {
-    if stored
-        .models
-        .models()
-        .iter()
-        .all(|model| model.fast.is_none())
-    {
-        return std::borrow::Cow::Borrowed(stored);
-    }
-    let models: Vec<_> = stored
-        .models
-        .models()
-        .iter()
-        .map(|model| {
-            let mut model = model.clone();
-            model.fast = None;
-            model
-        })
-        .collect();
-    let mut written = stored.clone();
-    written.models = ProviderModels::try_from(models).unwrap_or_else(|_| stored.models.clone());
-    std::borrow::Cow::Owned(written)
 }
 
 fn captured_event(kind: &ProviderKind, stored: &Stored) {
