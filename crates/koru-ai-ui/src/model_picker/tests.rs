@@ -457,12 +457,11 @@ fn the_list_reads_each_agent_state() {
         ],
         "a flat list: no heading"
     );
-    let (label, more) = surface.picker_row_label(&claude, &Row::Default);
     assert_eq!(
-        label, "Default (recommended)",
+        surface.picker_row_label(&claude, &Row::Default),
+        "Default (recommended)",
         "the agent's own default entry"
     );
-    assert_eq!(more.as_deref(), Some("Opus 4.7 · Most capable"));
 
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-opencode")));
     let rows = surface.picker_rows();
@@ -706,6 +705,34 @@ fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
     assert!(!surface.chat_model_open);
 }
 
+/// **A model row raises no tooltip** (D25, the user: *don't show
+/// tooltips*): the row already reads the model's name. A rail mark, an icon
+/// whose agent is named nowhere else on screen, keeps its one.
+#[test]
+fn a_model_row_raises_no_tooltip_and_a_rail_mark_keeps_its_name() {
+    let mut surface = surface();
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let geometry = surface.picker_geometry().unwrap();
+    for visible in 0..3 {
+        let row = geometry.row(visible);
+        assert!(
+            surface
+                .picker_tooltip_at(&geometry, row.x + 20.0, row.y + row.h * 0.5)
+                .is_none(),
+            "row {visible} raised a tooltip"
+        );
+    }
+    let rail = surface.picker_rail();
+    let mark = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail))[0];
+    assert!(
+        surface
+            .picker_tooltip_at(&geometry, mark.x + mark.w * 0.5, mark.y + mark.h * 0.5)
+            .is_some(),
+        "the mark is named on hover"
+    );
+}
+
 /// Claude with two older models it marks as such.
 fn with_legacy(surface: &mut ChatSurface) {
     if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
@@ -738,7 +765,7 @@ fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
         ]
     );
     assert_eq!(
-        surface.picker_row_label(&claude, &Row::LegacyMore).0,
+        surface.picker_row_label(&claude, &Row::LegacyMore),
         "Legacy models"
     );
     type_query(&mut surface, "claude-");

@@ -61,13 +61,13 @@ const PAD: f32 = 4.0;
 /// The picker is as wide as the composer, up to this.
 pub(crate) const MAX_W: f32 = 360.0;
 /// The tooltips' keys, so moving from one mark or row to the next is a new
-/// tooltip: the rail's first mark, ↻, ↺, the read-only footer, the first row.
+/// tooltip: the rail's first mark, ↻, ↺, the read-only footer. A model row
+/// has none (D25).
 const TOOLTIP_RAIL: u64 = 0x5049_0000;
 const TOOLTIP_REFRESH: u64 = 0x5049_1000;
 const TOOLTIP_RESET: u64 = 0x5049_1001;
 const TOOLTIP_LOCKED: u64 = 0x5049_1002;
 const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
-const TOOLTIP_ROW: u64 = 0x5049_2000;
 
 /// One mark on the rail: a local agent, or — first, and only on a chat that
 /// has begun on one — Koru AI, OpenAI or Ollama (S1).
@@ -737,33 +737,24 @@ impl crate::ChatSurface {
             .collect()
     }
 
-    /// A row's label, and its tooltip's words: the full label, and the
-    /// model's description beside its id (§8).
-    fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> (String, Option<String>) {
+    /// A row's label. A row raises no tooltip (D25, the user: *don't show
+    /// tooltips*): the row already reads the model's name, and the tooltip
+    /// that repeated it — with the description and id beside it — covered
+    /// the next rows while choosing.
+    fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> String {
         match (entry, row) {
-            (_, Row::Heading(text) | Row::Note(text)) => (text.clone(), None),
-            (RailEntry::Provider(_), Row::Model(id)) => (self.provider_model_label(id), None),
-            (RailEntry::Provider(_), Row::Default) => (String::new(), None),
-            (_, Row::LegacyMore) => (t(self.lang, Key::AiModelsLegacy).to_owned(), None),
+            (_, Row::Heading(text) | Row::Note(text)) => text.clone(),
+            (RailEntry::Provider(_), Row::Model(id)) => self.provider_model_label(id),
+            (RailEntry::Provider(_), Row::Default) => String::new(),
+            (_, Row::LegacyMore) => t(self.lang, Key::AiModelsLegacy).to_owned(),
             (RailEntry::Agent(agent), Row::Default) => {
-                let models = self.listed_agent_models(agent);
-                let description = models
-                    .iter()
-                    .find(|model| model.id == AGENT_DEFAULT_MODEL)
-                    .and_then(|model| model.description.clone());
-                (default_model_label(models, self.lang), description)
+                default_model_label(self.listed_agent_models(agent), self.lang)
             }
             (RailEntry::Agent(agent), Row::Model(id)) => {
                 let models = self.listed_agent_models(agent);
                 match models.iter().find(|model| &model.id == id) {
-                    Some(model) => (
-                        model_label(model),
-                        Some(match &model.description {
-                            Some(description) => format!("{description} — {id}"),
-                            None => id.clone(),
-                        }),
-                    ),
-                    None => (fallback_label(id, ""), Some(id.clone())),
+                    Some(model) => model_label(model),
+                    None => fallback_label(id, ""),
                 }
             }
         }
@@ -1138,23 +1129,10 @@ impl crate::ChatSurface {
                 t(self.lang, Key::AiEffortLockedAfterStart),
             ));
         }
-        if geometry.list.contains(x, y) {
-            let visible = ((y - geometry.list.y) / ROW_H).floor().max(0.0) as usize;
-            let index = self.picker.offset + visible;
-            let entry = self.picker_entry()?;
-            let row = self.picker_rows().into_iter().nth(index)?;
-            let (label, more) = self.picker_row_label(&entry, &row);
-            let text = match more {
-                Some(more) => format!("{label}\n{more}"),
-                None if !label.is_empty() => label,
-                None => return None,
-            };
-            return Some(TooltipContent::new(
-                TOOLTIP_ROW + index as u64,
-                geometry.row(visible),
-                text,
-            ));
-        }
+        // **A model row raises none** (D25): the row already reads its name,
+        // and a tooltip over the list hid the rows below it while choosing.
+        // A rail mark keeps its tooltip above: an icon with no name on
+        // screen, its tooltip is the only place its agent is named.
         None
     }
 
@@ -1494,7 +1472,7 @@ impl crate::ChatSurface {
                         &scene::rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
                     );
                 }
-                let (label, _) = self.picker_row_label(entry, row);
+                let label = self.picker_row_label(entry, row);
                 let (style, colour, indent) = match row {
                     Row::Heading(_) => (theme::role::meta(), p.text_dim, 8.0),
                     Row::Note(_) => (theme::role::meta(), p.text_dim, 8.0),
