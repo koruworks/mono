@@ -4,8 +4,9 @@
 //! down a rail, one mark each; above the selected agent's models sits a
 //! *Search models…* field with ↻; the footer shows the chat's reasoning
 //! level as a word, ↺ back to the model's default, and the stepped slider.
-//! It anchors to the chip, so it opens below a centred composer and above a
-//! bottom one, and it is driven fully from the keyboard.
+//! It opens upward, above the composer and end-aligned with the chip, as the
+//! workspace and tool-approval panels do — below the chip only when there is
+//! no room above — and it is driven fully from the keyboard.
 //!
 //! The geometry, the rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
@@ -754,8 +755,9 @@ impl crate::ChatSurface {
         }
     }
 
-    /// The picker's parts, while it is open: anchored to the chip, end
-    /// aligned, below it when there is room and above it otherwise.
+    /// The picker's parts, while it is open: **above the composer**, end
+    /// aligned with the chip, where the workspace and tool-approval panels
+    /// open; anchored below the chip only when there is no room above.
     pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
         if !self.chat_model_open {
             return None;
@@ -769,14 +771,13 @@ impl crate::ChatSurface {
             rail_h,
             footer,
         );
-        let shell = PopoverShell::anchored(
-            self.chat_model_button(),
-            self.viewport,
-            w,
-            h,
-            PopoverAlign::End,
-        );
-        Some(geometry(shell.rect, footer))
+        let chip = self.chat_model_button();
+        let panel = if self.fits_above_composer(h) {
+            self.above_composer(chip.x + chip.w - w, w, h)
+        } else {
+            PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
+        };
+        Some(geometry(panel, footer))
     }
 
     pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {

@@ -135,6 +135,42 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     assert!(rail_bound >= rail_height(8, true));
 }
 
+/// D12: the picker opens upward, above the composer and end-aligned with
+/// the chip, as the workspace and tool-approval panels do — and below the
+/// chip only when the window has no room above.
+#[test]
+fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
+    let mut surface = surface();
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    // A chat under way: the composer at the window's foot.
+    surface.pending_user = Some("Plan the launch".into());
+    surface.composer_rect();
+    open(&mut surface);
+    let panel = surface.picker_geometry().unwrap().panel;
+    let chip = surface.chat_model_button();
+    let composer = surface.composer_hit_rect;
+    assert!(panel.y + panel.h <= composer.y, "above the composer");
+    assert!(
+        (panel.x + panel.w - (chip.x + chip.w)).abs() < 0.5,
+        "end-aligned"
+    );
+    surface.close_picker();
+
+    // A composer near the window's top has no room above it: the picker
+    // hangs from the chip instead.
+    surface.composer_hit_rect = Rect::new(20.0, 60.0, 600.0, 100.0);
+    assert!(!surface.fits_above_composer(panel.h));
+    open(&mut surface);
+    let low = surface.picker_geometry().unwrap().panel;
+    let chip = surface.chat_model_button();
+    assert!(low.y >= chip.y + chip.h, "below the chip");
+}
+
 #[test]
 fn the_rail_stacks_its_marks_with_a_divider_after_a_built_in_provider() {
     let rail = Rect::new(0.0, 0.0, RAIL_W, 400.0);
