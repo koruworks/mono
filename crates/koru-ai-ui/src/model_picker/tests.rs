@@ -130,7 +130,7 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
             (context.y + context.h - footer.y).abs() < 0.5,
             "right above it"
         );
-        assert_eq!(geometry.visible_rows(), LIST_ROWS);
+        assert!((geometry.list.h - LIST_ROWS as f32 * ROW_H).abs() < 0.5);
         assert!(geometry.reset().unwrap().x + 24.0 <= footer.x + footer.w);
     }
     assert_eq!(size(1000.0, 0.0).0, MAX_W);
@@ -163,9 +163,9 @@ fn the_picker_keeps_one_height_from_agent_to_agent() {
     assert_eq!(heights[0], h);
 
     let levels = geometry(Rect::new(0.0, 0.0, 360.0, h), true, false, false);
-    assert!(levels.visible_rows() >= LIST_ROWS, "no Context row");
+    assert!(levels.list.h >= rows - 0.5, "no Context row");
     let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false, false, false);
-    assert!(bare.visible_rows() > LIST_ROWS, "neither row: more rows");
+    assert!(bare.list.h > rows + ROW_H - 0.5, "neither row: more rows");
 }
 
 /// Claude's list as the runtime folds it (koru-ai D10): *Opus* carries its
@@ -369,9 +369,157 @@ fn the_highlight_steps_over_rows_that_cannot_be_chosen() {
     assert_eq!(step_highlight(&choosable, Some(3), 1), None);
     assert_eq!(step_highlight(&choosable, Some(3), -1), Some(1));
     assert_eq!(step_highlight(&choosable, None, -1), Some(3));
-    assert_eq!(scroll_into_view(12, 0, 9), 4);
-    assert_eq!(scroll_into_view(2, 4, 9), 2);
-    assert_eq!(scroll_into_view(5, 4, 9), 4);
+    let even = [ROW_H; 13];
+    let room = 9.0 * ROW_H;
+    assert_eq!(scroll_into_view(&even, 12, 0, room), 4);
+    assert_eq!(scroll_into_view(&even, 2, 4, room), 2);
+    assert_eq!(scroll_into_view(&even, 5, 4, room), 4);
+}
+
+/// **Rows of two heights scroll by whole rows** (D43): a row is shown only
+/// when all of it fits, the highlight scrolls until its row is whole in
+/// view, the wheel stops at the last page with the last row at the foot,
+/// and a press lands on the row drawn under it.
+#[test]
+fn rows_of_two_heights_place_scroll_and_hit_whole() {
+    let heights = [ROW_H, TALL_ROW_H, TALL_ROW_H, ROW_H, TALL_ROW_H, TALL_ROW_H];
+    let room = LIST_ROWS as f32 * ROW_H; // 180: 30 + 46 + 46 + 30 = 152 fits
+    assert_eq!(rows_that_fit(&heights, 0, room), 4);
+    assert_eq!(rows_that_fit(&heights, 4, room), 2);
+    assert_eq!(rows_that_fit(&[TALL_ROW_H], 0, 10.0), 1, "the first always");
+    assert_eq!(rows_that_fit(&[], 0, room), 0);
+    // Row 5 in view: the rows from 2 to 5 are 46 + 30 + 46 + 46 = 168.
+    assert_eq!(scroll_into_view(&heights, 5, 0, room), 2);
+    assert_eq!(scroll_into_view(&heights, 1, 3, room), 1, "up: to the row");
+    assert_eq!(scroll_into_view(&heights, 3, 0, room), 0, "already whole");
+    assert_eq!(max_offset(&heights, room), 2);
+    assert_eq!(max_offset(&heights[..3], room), 0, "all fit");
+    assert_eq!(max_offset(&[], room), 0);
+    assert_eq!(row_top(&heights, 2), ROW_H + TALL_ROW_H);
+    assert_eq!(offset_at(&heights, 70.0, 2), 1, "nearest top: 30");
+    assert_eq!(
+        offset_at(&heights, 500.0, 2),
+        2,
+        "no further than the last page"
+    );
+    assert_eq!(row_at(&heights, 0, 29.0), Some(0));
+    assert_eq!(row_at(&heights, 0, 31.0), Some(1));
+    assert_eq!(row_at(&heights, 2, 47.0), Some(3));
+    assert_eq!(row_at(&heights, 0, -1.0), None);
+    assert_eq!(row_at(&heights, 0, 1_000.0), None);
+}
+
+/// **A model's description is its row's second line** (D43): Claude's
+/// *Default* and *Sonnet* carry one and are two lines tall; *Opus* has
+/// none and stays one line, as do the built-in providers' rows.
+#[test]
+fn a_description_is_a_second_line_and_a_row_without_one_stays_one_line() {
+    let mut surface = surface();
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let rows = surface.picker_rows();
+    assert_eq!(
+        rows,
+        [
+            Row::Default,
+            Row::Model("opus".into()),
+            Row::Model("sonnet".into())
+        ]
+    );
+    let entry = surface.picker_entry().unwrap();
+    let described: Vec<Option<String>> = rows
+        .iter()
+        .map(|row| surface.picker_row_description(&entry, row))
+        .collect();
+    assert_eq!(
+        described,
+        [
+            Some("Opus 4.7 · Most capable".to_owned()),
+            None,
+            Some("Fast and able".to_owned())
+        ]
+    );
+    assert_eq!(
+        surface.picker_row_heights(&rows),
+        [TALL_ROW_H, ROW_H, TALL_ROW_H]
+    );
+    // Where they are drawn, one under the next.
+    let geometry = surface.picker_geometry().unwrap();
+    let first = surface.picker_row_rect(&geometry, 0).unwrap();
+    let second = surface.picker_row_rect(&geometry, 1).unwrap();
+    assert_eq!(first.h, TALL_ROW_H);
+    assert_eq!(second.y, first.y + TALL_ROW_H);
+    assert_eq!(second.h, ROW_H);
+    // A blank description is no description.
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[2].description = Some("  ".into());
+    }
+    assert_eq!(surface.picker_row_heights(&rows)[2], ROW_H);
+    // A heading or a note is never two lines.
+    assert!(
+        surface
+            .picker_row_description(&entry, &Row::Heading("Claude".into()))
+            .is_none()
+    );
+}
+
+/// **A list of two-line rows still scrolls to its end** (D43): the wheel
+/// stops with the last model whole at the foot, the keyboard scrolls the
+/// highlight into view, and a press chooses the row drawn under it.
+#[test]
+fn a_list_of_two_line_rows_scrolls_to_its_last_model() {
+    let mut surface = surface();
+    surface.agent_models.insert(
+        agent("agent-claude"),
+        AgentModels::Listed(
+            (0..12)
+                .map(|n| {
+                    model(
+                        &format!("m{n}"),
+                        "claude",
+                        Some(&format!("Model {n}")),
+                        Some("Said under its name"),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    open(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+    let rows = surface.picker_rows();
+    let last = rows.len() - 1;
+    while surface.picker_scroll(-1.0) {}
+    let shown = surface
+        .picker_row_rect(&geometry, last)
+        .expect("the last row is in view");
+    assert!(shown.y + shown.h <= geometry.list.y + geometry.list.h + 0.5);
+    assert!(!surface.picker_scroll(-1.0), "no further");
+    assert!(surface.picker_scrollbar(&geometry).is_some());
+
+    while surface.picker_scroll(1.0) {}
+    assert_eq!(surface.picker.offset, 0);
+    surface.picker.focus = PickerFocus::List;
+    surface.picker.highlight = Some(0);
+    for _ in 0..last {
+        press(&mut surface, NamedKey::ArrowDown);
+    }
+    assert_eq!(surface.picker.highlight, Some(last));
+    assert!(surface.picker_row_rect(&geometry, last).is_some());
+
+    let row = surface.picker_row_rect(&geometry, last).unwrap();
+    surface.picker_mouse_down(row.x + 20.0, row.y + row.h - 2.0);
+    assert_eq!(
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .current_model
+            .requested_model,
+        format!("m{}", last - 1),
+        "the row under the press: the last model (row 0 is the agent's Default)"
+    );
 }
 
 /// §9.3: the level as a word; *(default)* after the model's stated
@@ -684,7 +832,7 @@ fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
     open(&mut surface);
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
     let geometry = surface.picker_geometry().unwrap();
-    let row = geometry.row(1);
+    let row = surface.picker_row_rect(&geometry, 1).unwrap();
     assert_eq!(
         surface.picker_mouse_down(row.x + 20.0, row.y + row.h * 0.5),
         Some(true)
@@ -715,7 +863,7 @@ fn a_model_row_raises_no_tooltip_and_a_rail_mark_keeps_its_name() {
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
     let geometry = surface.picker_geometry().unwrap();
     for visible in 0..3 {
-        let row = geometry.row(visible);
+        let row = surface.picker_row_rect(&geometry, visible).unwrap();
         assert!(
             surface
                 .picker_tooltip_at(&geometry, row.x + 20.0, row.y + row.h * 0.5)
@@ -795,7 +943,8 @@ fn the_legacy_flyout_opens_walks_closes_and_chooses() {
     press(&mut surface, NamedKey::ArrowRight);
     let menu = surface.picker.legacy.as_ref().expect("Right opens it");
     assert_eq!(menu.items().len(), 2);
-    let parent = surface.picker_geometry().unwrap().row(3);
+    let geometry = surface.picker_geometry().unwrap();
+    let parent = surface.picker_row_rect(&geometry, 3).unwrap();
     let panel = menu.panel(surface.menu_viewport());
     assert!(
         panel.x >= parent.x + parent.w - 0.5 || panel.x + panel.w <= parent.x + 0.5,

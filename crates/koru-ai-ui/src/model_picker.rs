@@ -9,6 +9,9 @@
 //! workspace and tool-approval panels do — below the chip only when there is
 //! no room above — and it is driven fully from the keyboard.
 //!
+//! A model row reads its description on a second, smaller line when the
+//! agent gives one (D43).
+//!
 //! The geometry, the rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
 //! ([`PickerState`]) and draws.
@@ -48,12 +51,21 @@ const RAIL_GAP: f32 = 6.0;
 const RAIL_DIVIDER: f32 = 9.0;
 /// The search row, with ↻ at its end.
 pub(crate) const SEARCH_H: f32 = 40.0;
+/// A row of one line: a heading, a note, a model with no description.
 pub(crate) const ROW_H: f32 = 30.0;
-/// **The picker's one size** (D13): the search row, six rows of the list
-/// and the footer — the size the person chose. The list scrolls inside it
-/// when there are more, and a short list leaves room under it rather than
-/// shrinking the picker, so the picker keeps its size from agent to agent.
-/// A model with no footer gives the room to the list.
+/// **A model row with its description under its name** (D43): the name,
+/// then the description a size smaller and dimmed, one line each — the
+/// approval-mode list's two-line row.
+pub(crate) const TALL_ROW_H: f32 = 46.0;
+/// **The picker's one size** (D13): the search row, six one-line rows of
+/// the list and the footer — the box the person chose. The list scrolls
+/// inside it when there are more, and a short list leaves room under it
+/// rather than shrinking the picker, so the picker keeps its size from
+/// agent to agent. A model with no footer gives the room to the list.
+///
+/// **The box, not the count** (D43): a row that reads its description is
+/// taller, so fewer of them fit and the list scrolls by whole rows of
+/// either height; the picker does not grow to keep six two-line rows.
 pub(crate) const LIST_ROWS: usize = 6;
 /// The footer: the level's word and ↺ on one line, the slider under it.
 pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
@@ -191,21 +203,6 @@ pub(crate) struct Geometry {
 }
 
 impl Geometry {
-    /// Row `visible` of the list, counted from the first one shown.
-    pub(crate) fn row(&self, visible: usize) -> Rect {
-        Rect::new(
-            self.list.x,
-            self.list.y + visible as f32 * ROW_H,
-            self.list.w,
-            ROW_H,
-        )
-    }
-
-    /// How many rows the list has room for.
-    pub(crate) fn visible_rows(&self) -> usize {
-        (self.list.h / ROW_H).floor().max(0.0) as usize
-    }
-
     /// ↺, at the footer line's end.
     pub(crate) fn reset(&self) -> Option<Rect> {
         let footer = self.footer?;
@@ -347,15 +344,85 @@ pub(crate) fn step_highlight(
     None
 }
 
-/// The first row shown so that `index` is in view, starting from `offset`.
-pub(crate) fn scroll_into_view(index: usize, offset: usize, visible: usize) -> usize {
-    if index < offset {
-        index
-    } else if visible > 0 && index >= offset + visible {
-        index + 1 - visible
-    } else {
-        offset
+// **Rows of two heights** (D43). The list still scrolls by whole rows —
+// `offset` is the first row shown — and these place them: a row is shown
+// only when all of it fits, and the first one is shown whatever its height.
+
+/// Half a pixel of slack, so rows that fit exactly are not lost to rounding.
+const FIT: f32 = 0.5;
+
+/// How many of `heights`, from `offset`, fit whole in `room` — at least one
+/// while there is one.
+pub(crate) fn rows_that_fit(heights: &[f32], offset: usize, room: f32) -> usize {
+    let mut used = 0.0;
+    let mut count = 0;
+    for height in heights.iter().skip(offset) {
+        if count > 0 && used + height > room + FIT {
+            break;
+        }
+        used += height;
+        count += 1;
     }
+    count
+}
+
+/// The first row shown so that row `index` is whole in view, starting from
+/// `offset`: unchanged when it already is.
+pub(crate) fn scroll_into_view(heights: &[f32], index: usize, offset: usize, room: f32) -> usize {
+    if index < offset || index >= heights.len() {
+        return index.min(offset);
+    }
+    let mut first = offset;
+    while first < index && heights[first..=index].iter().sum::<f32>() > room + FIT {
+        first += 1;
+    }
+    first
+}
+
+/// The furthest the list scrolls: the first row of its last page, so the
+/// last row sits at the list's foot rather than above empty room.
+pub(crate) fn max_offset(heights: &[f32], room: f32) -> usize {
+    let mut first = heights.len();
+    let mut used = 0.0;
+    while first > 0 && used + heights[first - 1] <= room + FIT {
+        first -= 1;
+        used += heights[first];
+    }
+    first.min(heights.len().saturating_sub(1))
+}
+
+/// The top of row `index`, from the list's first row.
+pub(crate) fn row_top(heights: &[f32], index: usize) -> f32 {
+    heights.iter().take(index).sum()
+}
+
+/// The row whose top is nearest `scroll` pixels down the list, no further
+/// than `max` — what a scrollbar drag lands on.
+pub(crate) fn offset_at(heights: &[f32], scroll: f32, max: usize) -> usize {
+    let (mut best, mut best_top) = (0, 0.0_f32);
+    let mut top = 0.0_f32;
+    for (index, height) in heights.iter().enumerate().take(max + 1) {
+        if (top - scroll).abs() < (best_top - scroll).abs() {
+            (best, best_top) = (index, top);
+        }
+        top += height;
+    }
+    best
+}
+
+/// The row at `dy` pixels below the top of the list scrolled to `offset`.
+pub(crate) fn row_at(heights: &[f32], offset: usize, dy: f32) -> Option<usize> {
+    if dy < 0.0 {
+        return None;
+    }
+    let mut top = 0.0;
+    for (index, height) in heights.iter().enumerate().skip(offset) {
+        if dy < top + height {
+            return Some(index);
+        }
+        top += height;
+    }
+    None
 }
 
 impl crate::ChatSurface {
@@ -683,10 +750,9 @@ impl crate::ChatSurface {
         else {
             return false;
         };
-        let Some(visible) = index.checked_sub(self.picker.offset) else {
+        let Some(parent) = self.picker_row_rect(&geometry, index) else {
             return false;
         };
-        let parent = geometry.row(visible);
         let current = self
             .transcript
             .as_ref()
@@ -805,6 +871,66 @@ impl crate::ChatSurface {
         }
     }
 
+    /// **A row's second line** (D43): the description its agent gives the
+    /// model — the agent's *Default* reads what it stands for. `None` for
+    /// every other row, and for a model with no description, which stays
+    /// one line.
+    pub(crate) fn picker_row_description(&self, entry: &RailEntry, row: &Row) -> Option<String> {
+        let (RailEntry::Agent(agent), Row::Default | Row::Model(_)) = (entry, row) else {
+            return None;
+        };
+        let id = match row {
+            Row::Model(id) => id.as_str(),
+            _ => AGENT_DEFAULT_MODEL,
+        };
+        self.listed_agent_models(agent)
+            .iter()
+            .find(|model| model.id == id)
+            .and_then(|model| model.description.as_deref())
+            .map(str::trim)
+            .filter(|description| !description.is_empty())
+            .map(str::to_owned)
+    }
+
+    /// Each row's height: two lines for a row with a description, one
+    /// otherwise.
+    pub(crate) fn picker_row_heights(&self, rows: &[Row]) -> Vec<f32> {
+        let entry = self.picker_entry();
+        rows.iter()
+            .map(|row| {
+                let tall = entry
+                    .as_ref()
+                    .is_some_and(|entry| self.picker_row_description(entry, row).is_some());
+                if tall { TALL_ROW_H } else { ROW_H }
+            })
+            .collect()
+    }
+
+    /// Row `index` where it is drawn, while it is in view.
+    pub(crate) fn picker_row_rect(&self, geometry: &Geometry, index: usize) -> Option<Rect> {
+        let heights = self.picker_row_heights(&self.picker_rows());
+        let offset = self.picker.offset;
+        let shown = rows_that_fit(&heights, offset, geometry.list.h);
+        if index < offset || index >= offset + shown {
+            return None;
+        }
+        let top = row_top(&heights, index) - row_top(&heights, offset);
+        Some(Rect::new(
+            geometry.list.x,
+            geometry.list.y + top,
+            geometry.list.w,
+            heights[index],
+        ))
+    }
+
+    /// The row drawn at `y`, if any.
+    fn picker_row_at(&self, geometry: &Geometry, y: f32) -> Option<usize> {
+        let heights = self.picker_row_heights(&self.picker_rows());
+        let offset = self.picker.offset;
+        let index = row_at(&heights, offset, y - geometry.list.y)?;
+        (index < offset + rows_that_fit(&heights, offset, geometry.list.h)).then_some(index)
+    }
+
     /// Whether a row is the chat's current model.
     fn picker_row_current(&self, entry: &RailEntry, row: &Row) -> bool {
         let Some(model) = self
@@ -855,12 +981,23 @@ impl crate::ChatSurface {
         Some(geometry(panel, levels, context, fast))
     }
 
+    /// The list's scrollbar. Its content is measured to the top of the last
+    /// page plus the list, so the thumb meets the track's foot exactly when
+    /// the list can scroll no further.
     pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {
+        let heights = self.picker_row_heights(&self.picker_rows());
+        let last_page = max_offset(&heights, geometry.list.h);
         scrollbar::ScrollbarGeom::for_content(
             geometry.list,
-            self.picker_rows().len() as f32 * ROW_H,
-            self.picker.offset as f32 * ROW_H,
+            row_top(&heights, last_page) + geometry.list.h,
+            row_top(&heights, self.picker.offset),
         )
+    }
+
+    /// Where a scrollbar drag to `scroll` pixels puts the list's first row.
+    fn picker_offset_at(&self, geometry: &Geometry, scroll: f32) -> usize {
+        let heights = self.picker_row_heights(&self.picker_rows());
+        offset_at(&heights, scroll, max_offset(&heights, geometry.list.h))
     }
 
     /// **Open the picker** on the chat's own entry, the query empty, the
@@ -894,10 +1031,11 @@ impl crate::ChatSurface {
             self.picker.offset = 0;
             return;
         };
-        let visible = self
+        let room = self
             .picker_geometry()
-            .map_or(LIST_ROWS, |geometry| geometry.visible_rows());
-        self.picker.offset = scroll_into_view(index, self.picker.offset, visible);
+            .map_or(LIST_ROWS as f32 * ROW_H, |geometry| geometry.list.h);
+        let heights = self.picker_row_heights(&self.picker_rows());
+        self.picker.offset = scroll_into_view(&heights, index, self.picker.offset, room);
     }
 
     fn select_rail_entry(&mut self, entry: RailEntry) {
@@ -996,7 +1134,7 @@ impl crate::ChatSurface {
             };
             self.picker.scroll_drag = Some(grab);
             let scroll = scrollbar.scroll_for_pointer(y, grab);
-            self.picker.offset = (scroll / ROW_H).round() as usize;
+            self.picker.offset = self.picker_offset_at(&geometry, scroll);
             return Some(true);
         }
         let rail = self.picker_rail();
@@ -1051,10 +1189,8 @@ impl crate::ChatSurface {
             return Some(true);
         }
         if geometry.list.contains(x, y) {
-            let visible = ((y - geometry.list.y) / ROW_H).floor().max(0.0) as usize;
-            let index = self.picker.offset + visible;
             self.picker.focus = PickerFocus::List;
-            if index < self.picker_rows().len() {
+            if let Some(index) = self.picker_row_at(&geometry, y) {
                 return Some(self.choose_picker_row(index));
             }
         }
@@ -1091,7 +1227,7 @@ impl crate::ChatSurface {
         }
         if let Some(grab) = self.picker.scroll_drag {
             if let Some(scrollbar) = self.picker_scrollbar(&geometry) {
-                let next = (scrollbar.scroll_for_pointer(y, grab) / ROW_H).round() as usize;
+                let next = self.picker_offset_at(&geometry, scrollbar.scroll_for_pointer(y, grab));
                 let changed = next != self.picker.offset;
                 self.picker.offset = next;
                 return Some(changed);
@@ -1192,10 +1328,10 @@ impl crate::ChatSurface {
     /// The wheel over the open picker scrolls its list, a row a notch.
     pub(crate) fn picker_scroll(&mut self, dy: f32) -> bool {
         let previous = self.picker.offset;
-        let visible = self
+        let room = self
             .picker_geometry()
-            .map_or(LIST_ROWS, |geometry| geometry.visible_rows());
-        let max = self.picker_rows().len().saturating_sub(visible);
+            .map_or(LIST_ROWS as f32 * ROW_H, |geometry| geometry.list.h);
+        let max = max_offset(&self.picker_row_heights(&self.picker_rows()), room);
         if dy > 0.0 {
             self.picker.offset = self.picker.offset.saturating_sub(dy.ceil() as usize);
         } else if dy < 0.0 {
@@ -1526,15 +1662,19 @@ impl crate::ChatSurface {
         // The list.
         let rows = self.picker_rows();
         let choosable = self.picker_choosable(&rows);
-        let visible = geometry.visible_rows();
+        let heights = self.picker_row_heights(&rows);
+        let visible = rows_that_fit(&heights, self.picker.offset, geometry.list.h);
         if let Some(entry) = &selected {
+            let mut top = geometry.list.y;
             for (index, row) in rows
                 .iter()
                 .enumerate()
                 .skip(self.picker.offset)
                 .take(visible)
             {
-                let rect = geometry.row(index - self.picker.offset);
+                let rect = Rect::new(geometry.list.x, top, geometry.list.w, heights[index]);
+                top += rect.h;
+                let description = self.picker_row_description(entry, row);
                 let current = self.picker_row_current(entry, row);
                 let can = choosable[index];
                 let highlighted = self.picker.highlight == Some(index)
@@ -1598,14 +1738,36 @@ impl crate::ChatSurface {
                 let room = (end - rect.x - indent - check_w).max(1.0);
                 let shown = self.engine.elided(&label, style, room);
                 let line = self.engine.simple_layout(&shown, style);
+                // One line sits in the row's middle; a name with its
+                // description under it starts near the top, as an
+                // approval mode's does. What sits at the row's end stays
+                // in the middle of the whole row either way.
+                let name_y = if description.is_some() {
+                    rect.y + 5.0
+                } else {
+                    rect.y + (rect.h - line.height()) * 0.5
+                };
                 scene::draw_layout_first_line(
                     canvas,
                     root,
                     &line,
                     rect.x + indent,
-                    rect.y + (rect.h - line.height()) * 0.5,
+                    name_y,
                     Some(colour),
                 );
+                if let Some(description) = &description {
+                    let style = theme::role::meta();
+                    let shown = self.engine.elided(description, style, room);
+                    let second = self.engine.simple_layout(&shown, style);
+                    scene::draw_layout_first_line(
+                        canvas,
+                        root,
+                        &second,
+                        rect.x + indent,
+                        name_y + line.height() + 2.0,
+                        Some(p.text_dim),
+                    );
+                }
                 if current {
                     let check = self.engine.icon_layout(icons::CHECK, 13.0);
                     scene::draw_layout(
