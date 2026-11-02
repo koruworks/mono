@@ -181,6 +181,18 @@ impl SettingsView {
         self.surface.set_agent_providers(rows)
     }
 
+    /// Where a new chat starts, as *Agent providers* shows it. Answers
+    /// whether it moved.
+    pub fn set_agent_defaults(&mut self, defaults: koru_settings_ui::AgentDefaults) -> bool {
+        self.surface.set_agent_defaults(defaults)
+    }
+
+    /// The defaults as the page holds them.
+    #[cfg(test)]
+    pub fn agent_defaults(&self) -> &koru_settings_ui::AgentDefaults {
+        self.surface.agent_defaults()
+    }
+
     /// The page showing.
     #[cfg(test)]
     pub fn page(&self) -> koru_settings_ui::PageId {

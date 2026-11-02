@@ -195,6 +195,63 @@ fn turning_an_agent_off_hides_it_everywhere_and_restore_brings_it_back() {
     );
 }
 
+fn settings_defaults(view: &MainView) -> AgentDefaults {
+    view.tabs()
+        .iter()
+        .find_map(|tab| match &tab.view {
+            TabView::Settings(settings) => Some(settings.agent_defaults().clone()),
+            _ => None,
+        })
+        .expect("a Settings tab")
+}
+
+/// **The default permission is stored on this machine and reaches every
+/// chat surface** (D39): the side pane's and a chat tab opened afterwards
+/// both start new chats from it, and Restore defaults puts both back on
+/// Manual.
+#[test]
+fn the_default_permission_is_stored_and_reaches_every_chat_surface() {
+    let mut view = MainView::new();
+    assert!(view.open_settings_tab());
+    assert_eq!(settings_defaults(&view), AgentDefaults::default());
+
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentPermission {
+        other: false,
+        permission: AgentPermission::Yolo,
+    });
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentPermission {
+        other: true,
+        permission: AgentPermission::Yolo,
+    });
+    // An agent with no auto mode is never set to Auto.
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentPermission {
+        other: true,
+        permission: AgentPermission::Auto,
+    });
+    let section = view.delegate_folder.authoritative();
+    assert_eq!(section.default_permission, AgentPermission::Yolo);
+    assert_eq!(section.default_permission_other, AgentPermission::Yolo);
+    assert_eq!(settings_defaults(&view).permission, AgentPermission::Yolo);
+    let yolo = koru_ai_ui::AgentDefaults {
+        permission: koru_ai_ui::NewChatPermission::Yolo,
+        permission_other: koru_ai_ui::NewChatPermission::Yolo,
+    };
+    // A tab opened later reads the same defaults from a process-wide copy
+    // other tests write in parallel, so only the pane is asserted here.
+    assert!(!view.ai_chat.set_agent_defaults(yolo), "the pane has it");
+
+    view.perform_settings_request(koru_settings_ui::Request::RestoreAgentDefaults);
+    let section = view.delegate_folder.authoritative();
+    assert_eq!(section.default_permission, AgentPermission::Manual);
+    assert_eq!(section.default_permission_other, AgentPermission::Manual);
+    assert_eq!(settings_defaults(&view), AgentDefaults::default());
+    assert!(
+        !view
+            .ai_chat
+            .set_agent_defaults(koru_ai_ui::AgentDefaults::default())
+    );
+}
+
 /// **Agents › ends in Manage…, after a rule**, wherever the flyout opens.
 #[test]
 fn the_agents_menu_ends_in_manage_after_a_rule() {

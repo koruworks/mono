@@ -267,11 +267,128 @@ fn the_list_opens_upward_and_a_press_chooses() {
     assert!(surface.approval_mode_panel().is_none());
 }
 
-/// **A new chat starts in the mode its agent was last used in** — from the
-/// chats list — and never in Full access; its first message makes the chat
-/// with that mode.
+fn codex_modes() -> ListedModes {
+    ListedModes {
+        modes: vec![
+            mode("ask", Some("Ask for approval"), None),
+            mode("auto-review", Some("Approve for me"), None),
+            mode("full-access", Some("Full access"), None),
+        ],
+        default: Some("ask".into()),
+    }
+}
+
+fn opencode_modes() -> ListedModes {
+    ListedModes {
+        modes: vec![mode("build", None, None), mode("plan", None, None)],
+        default: Some("build".into()),
+    }
+}
+
+/// **The mapping, every agent by every setting** (D39): Claude, Codex and
+/// OpenCode as they list their modes, and an agent Koru has no table for
+/// that spells full access one of the known ways.
 #[test]
-fn a_new_chat_starts_from_the_last_mode_used_with_its_agent() {
+fn the_default_maps_onto_every_agents_own_modes() {
+    use NewChatPermission::{Auto, Manual, Yolo};
+    let map = |agent_id: &str, listed: &ListedModes, supported, other| {
+        default_mode(&agent(agent_id), listed, supported, other)
+    };
+    let claude = claude_modes();
+    let codex = codex_modes();
+    let opencode = opencode_modes();
+    // (agent, its modes, supported setting, other setting, the mode)
+    let cases: [(
+        &str,
+        &ListedModes,
+        NewChatPermission,
+        NewChatPermission,
+        &str,
+    ); 12] = [
+        ("agent-claude", &claude, Manual, Yolo, "default"),
+        ("agent-claude", &claude, Auto, Manual, "auto"),
+        ("agent-claude", &claude, Yolo, Manual, "bypassPermissions"),
+        ("agent-codex", &codex, Manual, Yolo, "ask"),
+        ("agent-codex", &codex, Auto, Manual, "auto-review"),
+        ("agent-codex", &codex, Yolo, Manual, "full-access"),
+        // OpenCode has no auto mode: it reads the second setting, and has
+        // no full-access mode either.
+        ("agent-opencode", &opencode, Yolo, Manual, "build"),
+        ("agent-opencode", &opencode, Manual, Yolo, "build"),
+        ("agent-opencode", &opencode, Auto, Auto, "build"),
+        ("agent-opencode", &opencode, Yolo, Yolo, "build"),
+        ("agent-claude", &claude, Manual, Manual, "default"),
+        ("agent-codex", &codex, Manual, Manual, "ask"),
+    ];
+    for (agent_id, listed, supported, other, expected) in cases {
+        assert_eq!(
+            map(agent_id, listed, supported, other).as_deref(),
+            Some(expected),
+            "{agent_id} {supported:?}/{other:?}"
+        );
+    }
+    // An agent with no table, no auto mode, and a `yolo` mode: the second
+    // setting, by the alias.
+    let muse = ListedModes {
+        modes: vec![mode("normal", None, None), mode("YOLO", None, None)],
+        default: Some("normal".into()),
+    };
+    assert_eq!(
+        map("agent-muse", &muse, Manual, Yolo).as_deref(),
+        Some("YOLO")
+    );
+    assert_eq!(
+        map("agent-muse", &muse, Yolo, Manual).as_deref(),
+        Some("normal"),
+        "Manual is the default it reports"
+    );
+    // Lists none: no mode to start in.
+    assert_eq!(map("agent-kimi", &ListedModes::default(), Yolo, Yolo), None);
+    // Which agents are the supported ones is decided by their modes.
+    assert!(has_auto_mode(&agent("agent-claude"), &claude));
+    assert!(has_auto_mode(&agent("agent-codex"), &codex));
+    assert!(!has_auto_mode(&agent("agent-opencode"), &opencode));
+}
+
+/// **Yolo falls back to Manual where full access is not offered** — Claude
+/// lists `bypassPermissions` only where it may — and Manual never lands on
+/// a mode that runs everything, even one the agent reports as its own.
+#[test]
+fn yolo_falls_back_where_full_access_is_not_advertised() {
+    let mut claude = claude_modes();
+    claude.modes.retain(|mode| mode.id != "bypassPermissions");
+    assert_eq!(
+        default_mode(
+            &agent("agent-claude"),
+            &claude,
+            NewChatPermission::Yolo,
+            NewChatPermission::Manual
+        )
+        .as_deref(),
+        Some("default")
+    );
+    let reckless = ListedModes {
+        modes: vec![mode("full-access", None, None), mode("careful", None, None)],
+        default: Some("full-access".into()),
+    };
+    assert_eq!(
+        default_mode(
+            &agent("agent-grok"),
+            &reckless,
+            NewChatPermission::Manual,
+            NewChatPermission::Manual
+        )
+        .as_deref(),
+        Some("careful")
+    );
+}
+
+/// **A new chat starts from the setting, not from the last mode used** —
+/// the chats list says nothing about it any more — and a Yolo default does
+/// start a chat in Full access, because the person chose it. Its first
+/// message makes the chat with that mode.
+#[test]
+fn a_new_chat_starts_from_the_default_not_the_last_mode_used() {
     let (mut surface, commands) = surface();
     let template = surface.transcript.as_ref().unwrap().chat.clone();
     let claude = |mode: Option<&str>| {
@@ -284,25 +401,77 @@ fn a_new_chat_starts_from_the_last_mode_used_with_its_agent() {
 
     surface.chats = vec![claude(Some("plan")), claude(Some("acceptEdits"))];
     surface.begin_unmade_chat(model.clone());
-    assert_eq!(mode_of(&surface).as_deref(), Some("plan"));
+    assert_eq!(mode_of(&surface).as_deref(), Some("default"), "Manual");
 
-    surface.chats = vec![claude(Some("bypassPermissions"))];
+    surface.set_agent_defaults(crate::AgentDefaults {
+        permission: NewChatPermission::Auto,
+        ..crate::AgentDefaults::default()
+    });
     surface.begin_unmade_chat(model.clone());
-    assert_eq!(
-        surface.transcript.as_ref().unwrap().chat.agent_mode,
-        None,
-        "Full access never carries over"
-    );
-    assert_eq!(mode_of(&surface).as_deref(), Some("default"));
+    assert_eq!(mode_of(&surface).as_deref(), Some("auto"));
 
-    surface.chats = vec![claude(Some("acceptEdits"))];
+    surface.set_agent_defaults(crate::AgentDefaults {
+        permission: NewChatPermission::Yolo,
+        ..crate::AgentDefaults::default()
+    });
     surface.begin_unmade_chat(model);
+    assert_eq!(
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .agent_mode
+            .as_deref(),
+        Some("bypassPermissions"),
+        "an explicit Yolo carries into a new chat"
+    );
     assert!(surface.make_unmade_chat());
     assert!(matches!(
         commands.recv_timeout(Duration::from_millis(50)).unwrap(),
         Command::Create(_)
     ));
-    assert_eq!(chosen(&commands).as_deref(), Some("acceptEdits"));
+    assert_eq!(chosen(&commands).as_deref(), Some("bypassPermissions"));
+    // Shift+Tab still never steps to it.
+    let rows = surface.approval_mode_rows();
+    assert_eq!(
+        next_mode(&rows, Some("auto")).map(|row| row.id.as_str()),
+        Some("dontAsk")
+    );
+}
+
+/// A new chat begun before its agent listed its modes takes its default when
+/// they arrive; one whose mode was chosen meanwhile keeps the choice.
+#[test]
+fn a_chat_begun_before_its_modes_are_listed_takes_its_default_on_arrival() {
+    let (mut surface, _commands) = surface();
+    surface.set_agent_defaults(crate::AgentDefaults {
+        permission: NewChatPermission::Auto,
+        ..crate::AgentDefaults::default()
+    });
+    let claude = agent("agent-claude");
+    let listed = surface.agent_modes.remove(&claude).unwrap();
+    let model = surface
+        .transcript
+        .as_ref()
+        .unwrap()
+        .chat
+        .current_model
+        .clone();
+    surface.begin_unmade_chat(model.clone());
+    assert_eq!(surface.transcript.as_ref().unwrap().chat.agent_mode, None);
+    surface.agent_modes.insert(claude.clone(), listed.clone());
+    surface.adopt_default_mode(&claude);
+    assert_eq!(mode_of(&surface).as_deref(), Some("auto"));
+
+    surface.agent_modes.remove(&claude);
+    surface.begin_unmade_chat(model);
+    if let Some(transcript) = surface.transcript.as_mut() {
+        transcript.chat.agent_mode = Some("plan".into());
+    }
+    surface.agent_modes.insert(claude.clone(), listed);
+    surface.adopt_default_mode(&claude);
+    assert_eq!(mode_of(&surface).as_deref(), Some("plan"));
 }
 
 /// The registry's chord is the one the chat answers.

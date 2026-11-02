@@ -425,6 +425,15 @@
         ],
         "type": "object"
       },
+      "AgentPermission": {
+        "description": "**The permission a new agent chat starts in** (Settings → Coding →\nAgent providers), in `desktop-v1.json`. Each agent's own modes are\nwhat a chat runs in; this names which of them a new chat starts from\n(`koru-ai-ui`'s `approval_modes` does the mapping): *Manual* is the\nagent's asking mode, *Auto* the mode that approves safe actions on its\nown, *Yolo* the one that runs everything without asking. An agent that\noffers no such mode starts in *Manual*.",
+        "enum": [
+          "manual",
+          "auto",
+          "yolo"
+        ],
+        "type": "string"
+      },
       "AgentProviderView": {
         "properties": {
           "id": {
@@ -5356,6 +5365,34 @@
               }
             ]
           },
+          "default_permission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The permission a new chat with a supported agent starts in."
+          },
+          "default_permission_other": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The permission a new chat with any other agent starts in: *Manual*\nor *Yolo* — an agent with no auto mode has no *Auto* to start in."
+          },
           "default_view_mode": {
             "anyOf": [
               {
@@ -5670,6 +5707,24 @@
           },
           "default_canvas_background": {
             "$ref": "#/components/schemas/CanvasBackground"
+          },
+          "default_permission": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              }
+            ],
+            "default": "manual",
+            "description": "**The permission a new chat with a supported agent starts in** — an\nagent that has an auto mode (Claude, Codex). *Manual* by default.\nThe chat's own mode is still the chat's: a change inside a chat\napplies to that chat only, and this names only where the next new\nchat starts. Device-local, beside `disabled_agents`."
+          },
+          "default_permission_other": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AgentPermission"
+              }
+            ],
+            "default": "manual",
+            "description": "The same for every other agent — one with no auto mode (OpenCode):\n*Manual* or *Yolo*, never *Auto*. *Manual* by default."
           },
           "default_view_mode": {
             "$ref": "#/components/schemas/ViewModeChoice"

@@ -18,6 +18,16 @@ use koru_ai_wire::{
 };
 use koru_i18n::{Key, Lang, t};
 
+/// **Where a new chat starts**, as the person set it on *Agent providers*:
+/// the permission a chat with a supported agent (one with an auto mode)
+/// starts in, and the one any other agent's starts in. The host hands it
+/// over; a new chat reads it and an existing chat never does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentDefaults {
+    pub permission: crate::approval_modes::NewChatPermission,
+    pub permission_other: crate::approval_modes::NewChatPermission,
+}
+
 /// How ready one agent is for a chat, as the picker and the card say it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AgentStatus {
@@ -1016,6 +1026,15 @@ impl crate::ChatSurface {
         let keys: std::collections::HashSet<String> = keys.into_iter().collect();
         let moved = self.hidden_agents != keys;
         self.hidden_agents = keys;
+        moved
+    }
+
+    /// **Where a new chat starts** (Settings → Coding → Agent providers), as
+    /// the host's settings hold it. Only a new chat reads it; a chat that
+    /// exists keeps its own mode. Answers whether anything moved.
+    pub fn set_agent_defaults(&mut self, defaults: AgentDefaults) -> bool {
+        let moved = self.agent_defaults != defaults;
+        self.agent_defaults = defaults;
         moved
     }
 

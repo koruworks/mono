@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::page::{Block, Widget};
-use crate::state::{AgentAttention, AgentProviderRow, AgentProviderStatus};
+use crate::state::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
 use crate::tests::{GLOBALS, koru, page_lines, press, switch};
 use crate::{PageGroup, PageId, Request, SettingsSurface};
 use koru_draw::geometry::Rect;
 use koru_i18n::{Key, Lang, t};
+use koru_settings::AgentPermission;
 use koru_ui::NavList;
 
 /// What a host hands over: one agent of every status.
@@ -192,6 +193,99 @@ fn the_page_sits_under_the_coding_heading_and_opens_from_the_sidebar() {
     let (x, y) = row.centre();
     assert!(surface.mouse_down(x, y));
     assert_eq!(surface.page(), PageId::AgentProviders);
+}
+
+/// The segment `word` of the segmented control on the row named `row`: its
+/// hit, and whether it is the selected one.
+fn segment(surface: &SettingsSurface, row: &str, word: &str) -> Option<(usize, bool)> {
+    surface.laid.blocks.iter().find_map(|block| match block {
+        Block::Card(card) => card.rows.iter().find_map(|r| match &r.widget {
+            Widget::Segmented {
+                labels,
+                selected,
+                first,
+                ..
+            } if r.label == row => labels
+                .iter()
+                .position(|label| label == word)
+                .map(|at| (first + at, *selected == Some(at))),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+fn press_segment(surface: &mut SettingsSurface, row: &str, word: &str) -> bool {
+    let (hit, _) = segment(surface, row, word).unwrap_or_else(|| panic!("{row} › {word}"));
+    let (x, y) = surface.laid.hits[hit].rect.centre();
+    surface.mouse_down(x, y - surface.scroll)
+}
+
+/// **Default permission for new chats** (D39): *Supported agents* offers
+/// Manual, Auto and Yolo, *Other agents* only Manual and Yolo, both on
+/// Manual; the sentence under them says plainly what Yolo means; a press
+/// moves the control and asks the host to store it.
+#[test]
+fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = on_page(rows());
+    let lines = page_lines(&surface);
+    for line in [
+        "Default permission for new chats",
+        "Supported agents",
+        "Other agents",
+    ] {
+        assert!(lines.iter().any(|l| l == line), "{line:?} in {lines:?}");
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("Yolo means the agent runs everything without asking")),
+        "{lines:?}"
+    );
+    for word in ["Manual", "Auto", "Yolo"] {
+        let (_, on) = segment(&surface, "Supported agents", word).expect(word);
+        assert_eq!(on, word == "Manual", "{word}");
+    }
+    assert!(
+        segment(&surface, "Other agents", "Auto").is_none(),
+        "no Auto"
+    );
+    assert_eq!(
+        segment(&surface, "Other agents", "Manual").map(|(_, on)| on),
+        Some(true)
+    );
+
+    assert!(press_segment(&mut surface, "Supported agents", "Auto"));
+    assert_eq!(
+        surface.take_requests(),
+        [Request::SetAgentPermission {
+            other: false,
+            permission: AgentPermission::Auto
+        }]
+    );
+    surface.relayout();
+    assert_eq!(
+        segment(&surface, "Supported agents", "Auto").map(|(_, on)| on),
+        Some(true)
+    );
+    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
+    assert_eq!(
+        surface.take_requests(),
+        [Request::SetAgentPermission {
+            other: true,
+            permission: AgentPermission::Yolo
+        }]
+    );
+    // The same choice again asks for nothing.
+    surface.relayout();
+    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
+    assert!(surface.take_requests().is_empty());
+
+    // Restore defaults puts both back on Manual.
+    assert!(press(&mut surface, "Restore defaults"));
+    assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
+    assert_eq!(*surface.agent_defaults(), AgentDefaults::default());
 }
 
 /// Every word the page and its heading say exists in every language.

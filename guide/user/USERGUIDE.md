@@ -1371,8 +1371,9 @@ more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 **Plan**. Full access is shown in the warning color. `Shift+Tab` in the
 composer steps to the next mode and says which beside the chip; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
-new chat with the same agent starts in the mode you last used with it, except
-Full access, which it never starts in. A mode chosen while a reply is running
+change inside a chat applies to that chat only, and a new chat starts from the
+**default permission** you set on **Settings → Coding → Agent providers** —
+Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
 applies to your next message, and the note beside the chip says so. When the
 agent leaves a mode by itself — Claude after you approve its plan — the chip
 follows. Whatever the mode, the agent asks for permission with its own choices,
@@ -3315,7 +3316,21 @@ agent stays and keeps working — its own picker still shows it. Turning one
 Two other doors lead to this page: the **+** at the foot of the chat model
 picker's agent column, and **Manage…**, the last row of the terminal's
 **Agents ›** menu, under a rule.
-**Restore defaults**, at the top of the page, turns every agent back on, which
+**Default permission for new chats**, a card on the same page, chooses the
+mode a new agent chat starts in. **Supported agents** — the ones that can
+approve safe actions on their own, Claude and Codex — offer **Manual** (the
+agent asks before it acts: Claude's Ask first, Codex's Ask for approval),
+**Auto** (Claude's Auto, Codex's Approve for me) and **Yolo**. **Other
+agents**, which have no auto mode, offer **Manual** (OpenCode's Build, or the
+agent's own default) and **Yolo**. **Yolo means the agent runs everything
+without asking**: Claude's Full access where it offers it, Codex's Full access;
+an agent that offers no full-access mode starts in Manual instead. Both are
+Manual until you change them. A new chat starts from this setting rather than
+from the mode you last used; changing the mode inside a chat changes that chat
+only, `Shift+Tab` still never steps to Full access, and a branch of a chat
+starts with no mode of its own.
+**Restore defaults**, at the top of the page, turns every agent back on and
+puts both permissions back on Manual, which
 is how a new install starts. The choice belongs to **this computer**, because
 the agents installed differ from one machine to the next, so it does not follow
 you to another; a Koru older than this one ignores it.

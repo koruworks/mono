@@ -9128,6 +9128,9 @@ impl MainView {
             Request::OpenAgentGuide(url) => {
                 self.ask_pane(PaneRequest::OpenUri(url));
             }
+            Request::SetAgentPermission { other, permission } => {
+                self.set_agent_permission(other, permission);
+            }
         }
     }
 

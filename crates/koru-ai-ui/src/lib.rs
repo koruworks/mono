@@ -77,7 +77,8 @@ mod tool_output;
 mod usage;
 mod work_view;
 
-pub use agents::{agent_key, provider_mark};
+pub use agents::{AgentDefaults, agent_key, provider_mark};
+pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 
@@ -503,6 +504,8 @@ pub struct ChatSurface {
     /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
     /// them. Hidden from every choice; a chat already on one keeps it.
     hidden_agents: std::collections::HashSet<String>,
+    /// Where a new chat starts, as the host's *Agent providers* holds it.
+    agent_defaults: agents::AgentDefaults,
     /// The host can open Settings on *Agent providers*, so the picker's rail
     /// ends in a **+** that asks it to. Off until a host says so: a window
     /// with no such page draws no button that would do nothing.
@@ -799,6 +802,7 @@ impl ChatSurface {
             approval_mode_chip_w: 0.0,
             agent_modes: HashMap::new(),
             hidden_agents: std::collections::HashSet::new(),
+            agent_defaults: agents::AgentDefaults::default(),
             agent_settings_offered: false,
             agent_settings_request: false,
             openai_models: Vec::new(),
@@ -2882,6 +2886,9 @@ impl ChatSurface {
                         },
                     );
                 }
+                // A new chat begun before its agent's modes were known
+                // starts from its default now (D39).
+                self.adopt_default_mode(&response.provider);
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
@@ -3276,9 +3283,9 @@ impl ChatSurface {
     /// ([`Self::make_unmade_chat`]). Leaving it unsent leaves nothing behind.
     fn begin_unmade_chat(&mut self, model: ModelSelection) {
         let mut chat = unmade_transcript(model);
-        // A new chat with an agent starts in the mode the agent was last
-        // used in — never Full access (D7).
-        chat.chat.agent_mode = self.remembered_approval_mode(&chat.chat.current_model.provider);
+        // A new chat with an agent starts from the person's default
+        // permission, mapped onto the agent's own modes (D39).
+        chat.chat.agent_mode = self.default_approval_mode(&chat.chat.current_model.provider);
         self.approval_mode_open = false;
         let id = chat.chat.id;
         self.fresh_chat_wanted = false;
@@ -3325,9 +3332,9 @@ impl ChatSurface {
                     transcript.reasoning_control = None;
                     // Fast mode belongs to the model it was chosen on.
                     transcript.chat.agent_fast = None;
-                    // Another agent: the mode it was last used in (D7).
+                    // Another agent: its default permission (D39).
                     let agent = transcript.chat.current_model.provider.clone();
-                    let mode = self.remembered_approval_mode(&agent);
+                    let mode = self.default_approval_mode(&agent);
                     if let Some(transcript) = self.transcript.as_mut() {
                         transcript.chat.agent_mode = mode;
                     }

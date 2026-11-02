@@ -153,6 +153,9 @@ pub(crate) enum Action {
     RefreshAgentStatus,
     /// *Setup guide ↗*: the agent's install or setup page.
     AgentGuide(&'static str),
+    /// *Default permission for new chats*: `true` for the *Other agents*
+    /// row, and the permission chosen.
+    AgentPermission(bool, koru_settings::AgentPermission),
 }
 
 /// **What the surface cannot do for itself.**
@@ -225,4 +228,10 @@ pub enum Request {
     RefreshAgentStatus,
     /// Open an agent's setup guide in the browser: a fixed vendor page.
     OpenAgentGuide(&'static str),
+    /// Store the permission new chats start in, on this machine: for the
+    /// supported agents, or (`other`) for every other agent.
+    SetAgentPermission {
+        other: bool,
+        permission: koru_settings::AgentPermission,
+    },
 }

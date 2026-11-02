@@ -20,10 +20,16 @@
 //! the agent from the chat's agent rail, from *Agents ›* and from every new
 //! session choice; a chat or a session already on it keeps working, and
 //! nothing is uninstalled or signed out.
+//!
+//! **Where a new chat starts** is the same kind of setting, beside it: the
+//! permission a new chat with a supported agent starts in and the one any
+//! other agent's does (`default_permission`, `default_permission_other`,
+//! D39). Every chat surface is handed them; only a new chat reads them.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
 use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
-use koru_settings_ui::{AgentAttention, AgentProviderRow, AgentProviderStatus};
+use koru_settings::AgentPermission;
+use koru_settings_ui::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
 
 use super::{MainView, TabView, context_menu};
 
@@ -103,11 +109,45 @@ pub(crate) fn agent_status(
     }
 }
 
+/// A stored permission in the chat surface's words.
+pub(crate) fn new_chat_permission(permission: AgentPermission) -> koru_ai_ui::NewChatPermission {
+    match permission {
+        AgentPermission::Manual => koru_ai_ui::NewChatPermission::Manual,
+        AgentPermission::Auto => koru_ai_ui::NewChatPermission::Auto,
+        AgentPermission::Yolo => koru_ai_ui::NewChatPermission::Yolo,
+    }
+}
+
 impl MainView {
     /// The agents turned off on this machine, as the Global link last read
     /// (or was just told) them.
     pub(super) fn disabled_agents(&self) -> &[String] {
         &self.delegate_folder.authoritative().disabled_agents
+    }
+
+    /// Where a new chat starts, as *Agent providers* shows it.
+    pub(super) fn agent_defaults(&self) -> AgentDefaults {
+        let section = self.delegate_folder.authoritative();
+        AgentDefaults {
+            permission: section.default_permission,
+            permission_other: section.default_permission_other,
+        }
+    }
+
+    /// Where a new chat starts, in the chat surface's words.
+    pub(super) fn chat_agent_defaults(&self) -> koru_ai_ui::AgentDefaults {
+        let section = self.delegate_folder.authoritative();
+        koru_ai_ui::AgentDefaults {
+            permission: new_chat_permission(section.default_permission),
+            permission_other: new_chat_permission(section.default_permission_other),
+        }
+    }
+
+    /// Everything a chat surface is handed from *Agent providers*: the
+    /// agents turned off, and where a new chat starts. What
+    /// `maintain_delegate_folder` compares to tell whether to hand it on.
+    pub(super) fn agent_settings_snapshot(&self) -> (Vec<String>, koru_ai_ui::AgentDefaults) {
+        (self.disabled_agents().to_vec(), self.chat_agent_defaults())
     }
 
     /// Every coding agent as *Agent providers* shows it.
@@ -129,24 +169,36 @@ impl MainView {
             .collect()
     }
 
-    /// Hand the rows to every Settings tab. Answers whether one moved.
+    /// Hand the rows, and where a new chat starts, to every Settings tab.
+    /// Answers whether one moved.
     pub(super) fn sync_agent_providers(&mut self) -> bool {
         let rows = self.agent_provider_rows();
+        let defaults = self.agent_defaults();
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Settings(view) => view.set_agent_providers(rows.clone()),
+            TabView::Settings(view) => {
+                let rows_moved = view.set_agent_providers(rows.clone());
+                view.set_agent_defaults(defaults.clone()) || rows_moved
+            }
             _ => false,
         })
     }
 
-    /// Hand the off list to every chat surface — the side pane's and every
-    /// chat tab's — and to the menus, and to chat tabs opened later.
+    /// Hand the off list, and where a new chat starts, to every chat surface
+    /// — the side pane's and every chat tab's — and the off list to the
+    /// menus, and both to chat tabs opened later.
     pub(super) fn apply_hidden_agents(&mut self) -> bool {
         let keys = self.disabled_agents().to_vec();
+        let defaults = self.chat_agent_defaults();
         crate::ai_chat_view::set_hidden_agents(keys.clone());
+        crate::ai_chat_view::set_agent_defaults(defaults.clone());
         context_menu::set_hidden_agents(keys.clone());
         let mut changed = self.ai_chat.set_hidden_agents(keys.clone());
+        changed |= self.ai_chat.set_agent_defaults(defaults.clone());
         changed |= self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::AiChat(view) => view.set_hidden_agents(keys.clone()),
+            TabView::AiChat(view) => {
+                let hidden = view.set_hidden_agents(keys.clone());
+                view.set_agent_defaults(defaults.clone()) || hidden
+            }
             _ => false,
         });
         changed
@@ -167,19 +219,55 @@ impl MainView {
         self.save_disabled_agents(list)
     }
 
-    /// *Restore defaults*: every agent on.
+    /// *Restore defaults*: every agent on, and new chats back to *Manual*.
     pub(super) fn restore_agent_defaults(&mut self) -> bool {
-        self.save_disabled_agents(Vec::new())
+        self.save_agent_settings(koru_settings::GlobalPatch {
+            disabled_agents: Some(Vec::new()),
+            default_permission: Some(AgentPermission::Manual),
+            default_permission_other: Some(AgentPermission::Manual),
+            ..koru_settings::GlobalPatch::default()
+        })
+    }
+
+    /// **The permission new chats start in**, for the supported agents or
+    /// (`other`) the rest: stored on this machine, and handed to every chat
+    /// surface for its next new chat.
+    pub(super) fn set_agent_permission(
+        &mut self,
+        other: bool,
+        permission: AgentPermission,
+    ) -> bool {
+        // An agent with no auto mode has no *Auto*; the page offers none.
+        if other && permission == AgentPermission::Auto {
+            return false;
+        }
+        let patch = if other {
+            koru_settings::GlobalPatch {
+                default_permission_other: Some(permission),
+                ..koru_settings::GlobalPatch::default()
+            }
+        } else {
+            koru_settings::GlobalPatch {
+                default_permission: Some(permission),
+                ..koru_settings::GlobalPatch::default()
+            }
+        };
+        self.save_agent_settings(patch)
     }
 
     fn save_disabled_agents(&mut self, list: Vec<String>) -> bool {
-        self.delegate_folder.save(
-            koru_settings::GlobalPatch {
-                disabled_agents: Some(list),
-                ..koru_settings::GlobalPatch::default()
-            },
-            |patch, section| patch.clone().apply(section),
-        );
+        self.save_agent_settings(koru_settings::GlobalPatch {
+            disabled_agents: Some(list),
+            ..koru_settings::GlobalPatch::default()
+        })
+    }
+
+    /// Store one *Agent providers* change through the window's Global link
+    /// (its worker writes the file), and hand the result to everything that
+    /// shows it.
+    fn save_agent_settings(&mut self, patch: koru_settings::GlobalPatch) -> bool {
+        self.delegate_folder
+            .save(patch, |patch, section| patch.clone().apply(section));
         self.apply_hidden_agents();
         self.sync_agent_providers();
         true

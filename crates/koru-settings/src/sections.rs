@@ -13,10 +13,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::values::{
-    AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
-    CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
-    DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting, GlobalShortcut,
-    IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, RgbColor,
+    AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,
+    CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,
+    DictationLanguage, DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting,
+    GlobalShortcut, IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, RgbColor,
     TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
     Zoom, validate_endpoint, validate_model, validate_skin_tone,
 };
@@ -182,6 +182,17 @@ pub struct GlobalSettings {
     /// `#[serde(default)]` so a section from a build without it still reads.
     #[serde(default)]
     pub disabled_agents: Vec<String>,
+    /// **The permission a new chat with a supported agent starts in** — an
+    /// agent that has an auto mode (Claude, Codex). *Manual* by default.
+    /// The chat's own mode is still the chat's: a change inside a chat
+    /// applies to that chat only, and this names only where the next new
+    /// chat starts. Device-local, beside `disabled_agents`.
+    #[serde(default)]
+    pub default_permission: AgentPermission,
+    /// The same for every other agent — one with no auto mode (OpenCode):
+    /// *Manual* or *Yolo*, never *Auto*. *Manual* by default.
+    #[serde(default)]
+    pub default_permission_other: AgentPermission,
 }
 
 impl Default for GlobalSettings {
@@ -234,6 +245,9 @@ impl Default for GlobalSettings {
             recording: RecordingPrefs::default(),
             // Every agent on.
             disabled_agents: Vec::new(),
+            // A new chat asks before it acts until a person says otherwise.
+            default_permission: AgentPermission::Manual,
+            default_permission_other: AgentPermission::Manual,
         }
     }
 }
@@ -325,6 +339,13 @@ pub struct GlobalPatch {
     /// *Restore defaults*. Absent leaves the stored list alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_agents: Option<Vec<String>>,
+    /// The permission a new chat with a supported agent starts in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_permission: Option<AgentPermission>,
+    /// The permission a new chat with any other agent starts in: *Manual*
+    /// or *Yolo* — an agent with no auto mode has no *Auto* to start in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_permission_other: Option<AgentPermission>,
 }
 
 impl GlobalPatch {
@@ -373,6 +394,8 @@ impl GlobalPatch {
             || !self.delegate_temporary_root.is_unchanged()
             || self.recording.is_some()
             || self.disabled_agents.is_some()
+            || self.default_permission.is_some()
+            || self.default_permission_other.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -400,6 +423,12 @@ impl GlobalPatch {
                     "an agent is named by its lowercase key, and at most 64 are listed",
                 ));
             }
+        }
+        if self.default_permission_other == Some(AgentPermission::Auto) {
+            return Err(Invalid::new(
+                "default_permission_other",
+                "an agent with no auto mode starts in manual or yolo",
+            ));
         }
         if let Some(zoom) = self.zoom
             && Zoom::new(zoom).is_none()
@@ -516,6 +545,8 @@ impl GlobalPatch {
             start_on_login,
             reminder_start_on_login_explained,
             automatic_update_checks,
+            default_permission,
+            default_permission_other,
         );
         self.base_color_light.apply(&mut current.base_color_light);
         self.base_color_dark.apply(&mut current.base_color_dark);

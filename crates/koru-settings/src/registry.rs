@@ -430,6 +430,31 @@ pub const REGISTRY: &[SettingSpec] = &[
               agent is on, so an agent a later Koru adds starts on. \
               Device-local because the agents installed differ per machine.",
     },
+    SettingSpec {
+        field: "default_permission",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Token,
+        doc: "The permission a new chat with a supported agent — one with \
+              an auto mode, Claude or Codex — starts in (Settings → Coding → \
+              Agent providers): `manual`, `auto` or `yolo`, mapped onto the \
+              agent's own modes by `koru-ai-ui`'s `approval_modes`. A change \
+              inside a chat stays that chat's. Absent is `manual`. \
+              Device-local beside `disabled_agents`.",
+    },
+    SettingSpec {
+        field: "default_permission_other",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Token,
+        doc: "The same for every other agent — one with no auto mode: \
+              `manual` or `yolo`, never `auto` (refused on a patch, read as \
+              `manual` from a file). Yolo falls back to the agent's asking \
+              mode when the agent offers no full-access mode. Absent is \
+              `manual`.",
+    },
     // ------------------------------------- Terminal, roaming: terminal.conf
     SettingSpec {
         field: "theme",

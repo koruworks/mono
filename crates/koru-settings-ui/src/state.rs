@@ -225,6 +225,18 @@ pub struct AgentProviderRow {
     pub on: bool,
 }
 
+/// **Where a new chat starts**, as the host's settings hold it: the
+/// *Default permission for new chats* card. The host owns the stored values;
+/// a press here moves the control at once and asks the host to store it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentDefaults {
+    /// What a new chat with a supported agent (one with an auto mode)
+    /// starts in.
+    pub permission: koru_settings::AgentPermission,
+    /// What a new chat with any other agent starts in: *Manual* or *Yolo*.
+    pub permission_other: koru_settings::AgentPermission,
+}
+
 /// Whether an agent's CLI is ready, in the words the row says it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentProviderStatus {

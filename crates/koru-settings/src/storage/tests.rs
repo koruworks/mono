@@ -240,6 +240,9 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         },
         // The off list is written only while an agent is off.
         disabled_agents: vec!["grok".into()],
+        // The default permissions are written only when not Manual.
+        default_permission: AgentPermission::Auto,
+        default_permission_other: AgentPermission::Yolo,
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -413,6 +416,40 @@ fn the_disabled_agents_round_trip_and_an_empty_list_writes_no_key() {
     let mut odd = GlobalSettings::default();
     apply_desktop(br#"{"disabled_agents": "grok"}"#, &mut odd);
     assert!(odd.disabled_agents.is_empty());
+}
+
+/// **The two default permissions** (D39): absent is *Manual*, a choice is
+/// written and read back, *Manual* writes no key, and an *Auto* for agents
+/// with no auto mode — a hand-edit — reads as *Manual*.
+#[test]
+fn the_default_permissions_round_trip_and_manual_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("default_permission").is_none());
+    assert!(value.get("default_permission_other").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"default_permission": "auto", "default_permission_other": "yolo"}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.default_permission, AgentPermission::Auto);
+    assert_eq!(settings.default_permission_other, AgentPermission::Yolo);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(value["default_permission"], "auto");
+    assert_eq!(value["default_permission_other"], "yolo");
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again, settings);
+
+    let mut odd = GlobalSettings::default();
+    apply_desktop(
+        br#"{"default_permission": "sometimes", "default_permission_other": "auto"}"#,
+        &mut odd,
+    );
+    assert_eq!(odd.default_permission, AgentPermission::Manual);
+    assert_eq!(odd.default_permission_other, AgentPermission::Manual);
 }
 
 #[test]

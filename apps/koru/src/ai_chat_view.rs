@@ -47,6 +47,7 @@ struct ChatFace {
 impl AiChatView {
     fn over(mut surface: Box<ChatSurface>) -> Self {
         surface.set_hidden_agents(hidden_agents());
+        surface.set_agent_defaults(agent_defaults());
         // Koru has a Settings tab: the picker's + opens *Agent providers*.
         surface.offer_agent_settings(true);
         Self {
@@ -211,6 +212,11 @@ impl AiChatView {
         self.surface.set_hidden_agents(keys)
     }
 
+    /// Where a new chat starts (Agent providers).
+    pub fn set_agent_defaults(&mut self, defaults: koru_ai_ui::AgentDefaults) -> bool {
+        self.surface.set_agent_defaults(defaults)
+    }
+
     /// The picker's **+** was pressed: the container opens Settings on
     /// Agent providers.
     pub fn take_agent_settings_request(&mut self) -> bool {
@@ -235,6 +241,25 @@ fn hidden_agents() -> Vec<String> {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clone()
+}
+
+/// **Where a new chat starts, for chat tabs opened later** — the same
+/// arrangement as [`HIDDEN_AGENTS`], for the same reason.
+static AGENT_DEFAULTS: std::sync::Mutex<Option<koru_ai_ui::AgentDefaults>> =
+    std::sync::Mutex::new(None);
+
+pub(crate) fn set_agent_defaults(defaults: koru_ai_ui::AgentDefaults) {
+    *AGENT_DEFAULTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(defaults);
+}
+
+fn agent_defaults() -> koru_ai_ui::AgentDefaults {
+    AGENT_DEFAULTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+        .unwrap_or_default()
 }
 
 impl AiChatView {

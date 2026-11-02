@@ -15,8 +15,12 @@
 //! agent that lists none has no chip.
 //!
 //! **Remembered per chat.** The choice is the chat's (`Chat::agent_mode`). A
-//! new chat starts from the mode of the last chat with the same agent —
-//! never from *Full access*, which is always chosen again by hand.
+//! new chat starts from the person's **default permission** (Settings →
+//! Coding → Agent providers, D39): *Manual*, *Auto* or *Yolo* for an agent
+//! with an auto mode, *Manual* or *Yolo* for any other, mapped onto the
+//! agent's own modes by [`default_mode`] — the one place that mapping is
+//! made. A change inside a chat stays that chat's. *Yolo* is the only way a
+//! new chat starts in *Full access*: the person chose it there.
 //!
 //! **Shift+Tab** steps to the next mode and says which beside the chip. It
 //! skips *Full access*. The composer is asked first, so an outdent would
@@ -66,20 +70,20 @@ pub(crate) struct ModeRow {
     pub help: Option<String>,
     pub icon: char,
     /// *Full access*: drawn in the warning color, never stepped to by
-    /// Shift+Tab, never carried into a new chat.
+    /// Shift+Tab, and a new chat's only by a *Yolo* default.
     pub full_access: bool,
 }
 
 /// The modes Koru words: the agent's kind, the mode's id, its title, its
-/// line, its icon, and whether it is full access.
-const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
+/// line, its icon, and its [`Role`].
+const KNOWN: &[(&str, &str, Words, Words, char, Role)] = &[
     (
         "agent-claude",
         "default",
         Words::AiAgentModeAskFirst,
         Words::AiAgentModeAskFirstHelp,
         icons::QUESTION,
-        false,
+        Role::Ask,
     ),
     (
         "agent-claude",
@@ -87,7 +91,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeAcceptEdits,
         Words::AiAgentModeAcceptEditsHelp,
         icons::PENCIL,
-        false,
+        Role::Other,
     ),
     (
         "agent-claude",
@@ -95,7 +99,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModePlan,
         Words::AiAgentModePlanHelp,
         icons::LIST_CHECKS,
-        false,
+        Role::Other,
     ),
     (
         "agent-claude",
@@ -103,7 +107,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeAuto,
         Words::AiAgentModeAutoHelp,
         icons::SPARKLE,
-        false,
+        Role::Auto,
     ),
     (
         "agent-claude",
@@ -111,7 +115,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeFullAccess,
         Words::AiAgentModeFullAccessHelp,
         icons::WARNING,
-        true,
+        Role::Full,
     ),
     (
         "agent-codex",
@@ -119,7 +123,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeAskApproval,
         Words::AiAgentModeAskApprovalHelp,
         icons::QUESTION,
-        false,
+        Role::Ask,
     ),
     (
         "agent-codex",
@@ -127,7 +131,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeApproveForMe,
         Words::AiAgentModeApproveForMeHelp,
         icons::ROBOT,
-        false,
+        Role::Auto,
     ),
     (
         "agent-codex",
@@ -135,7 +139,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeFullAccess,
         Words::AiAgentModeCodexFullAccessHelp,
         icons::WARNING,
-        true,
+        Role::Full,
     ),
     (
         "agent-opencode",
@@ -143,7 +147,7 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModeBuild,
         Words::AiAgentModeBuildHelp,
         icons::WRENCH,
-        false,
+        Role::Ask,
     ),
     (
         "agent-opencode",
@@ -151,15 +155,158 @@ const KNOWN: &[(&str, &str, Words, Words, char, bool)] = &[
         Words::AiAgentModePlan,
         Words::AiAgentModeOpenCodePlanHelp,
         icons::LIST_CHECKS,
-        false,
+        Role::Other,
     ),
 ];
 
-/// Whether `id` is `agent`'s *Full access*, which is never carried over.
-pub(crate) fn is_full_access(agent: &AiProviderId, id: &str) -> bool {
-    KNOWN
+/// **What a mode is for**, as far as a new chat's default needs to know:
+/// the agent's asking mode, the one that approves safe actions on its own,
+/// the one that runs everything without asking, or none of those (Claude's
+/// *Accept edits* and *Plan*, OpenCode's *Plan*).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    Ask,
+    Auto,
+    Full,
+    Other,
+}
+
+/// **The ids other agents spell the same three roles with** — the known
+/// aliases, compared without case and with `_` read as `-`. A mode in
+/// [`KNOWN`] has its role from there; these are for an agent Koru has no
+/// table for, so that a new agent offering `yolo` or `full-access` is not
+/// started in it by *Manual*, and is by *Yolo*.
+const ASK_ALIASES: &[&str] = &[
+    "default",
+    "ask",
+    "manual",
+    "read-only",
+    "readonly",
+    "suggest",
+];
+const AUTO_ALIASES: &[&str] = &["auto", "auto-review", "autoreview", "auto-approve"];
+const FULL_ALIASES: &[&str] = &[
+    "bypasspermissions",
+    "bypass-permissions",
+    "full-access",
+    "fullaccess",
+    "yolo",
+    "danger-full-access",
+    "dangerously-skip-permissions",
+];
+
+/// `id`'s role for `agent`: its row in [`KNOWN`], else a known alias, else
+/// [`Role::Other`].
+pub(crate) fn role_of(agent: &AiProviderId, id: &str) -> Role {
+    if let Some(known) = KNOWN
         .iter()
-        .any(|known| known.0 == agent.as_str() && known.1 == id && known.5)
+        .find(|known| known.0 == agent.as_str() && known.1 == id)
+    {
+        return known.5;
+    }
+    let spelled = id.to_ascii_lowercase().replace('_', "-");
+    let spelled = spelled.as_str();
+    if FULL_ALIASES.contains(&spelled) {
+        Role::Full
+    } else if AUTO_ALIASES.contains(&spelled) {
+        Role::Auto
+    } else if ASK_ALIASES.contains(&spelled) {
+        Role::Ask
+    } else {
+        Role::Other
+    }
+}
+
+/// Whether `id` is `agent`'s *Full access*: drawn in the warning color and
+/// never stepped to by Shift+Tab.
+pub(crate) fn is_full_access(agent: &AiProviderId, id: &str) -> bool {
+    role_of(agent, id) == Role::Full
+}
+
+/// **The permission a new chat starts in**, as the person set it on *Agent
+/// providers*. Each agent's own modes are what a chat runs in;
+/// [`default_mode`] maps this onto them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NewChatPermission {
+    /// The agent's asking mode: Claude's *Ask first*, Codex's *Ask for
+    /// approval*, OpenCode's *Build*.
+    #[default]
+    Manual,
+    /// The mode that approves safe actions on its own: Claude's *Auto*,
+    /// Codex's *Approve for me*. An agent with none starts in *Manual*.
+    Auto,
+    /// The mode that runs everything without asking: Claude's
+    /// `bypassPermissions` where it offers it, Codex's *Full access*. An
+    /// agent that offers none starts in *Manual*.
+    Yolo,
+}
+
+/// Whether `agent` is one of the **supported agents** — it offers a mode
+/// that approves safe actions on its own — and so starts from the first of
+/// the two defaults rather than the second.
+pub(crate) fn has_auto_mode(agent: &AiProviderId, listed: &ListedModes) -> bool {
+    listed
+        .modes
+        .iter()
+        .any(|mode| role_of(agent, &mode.id) == Role::Auto)
+}
+
+/// **The mode a new chat with `agent` starts in** — the one tested place the
+/// two default permissions meet an agent's own modes (D39).
+///
+/// An agent with an auto mode takes `supported`, any other `other` (where
+/// *Auto* means *Manual*: it has nothing to approve with). Then:
+///
+/// - *Manual* is the agent's asking mode; failing one, the mode it reports
+///   it starts in, unless that runs everything; failing that, its first
+///   mode that does not.
+/// - *Auto* is its auto mode, and *Manual* without one.
+/// - *Yolo* is its full-access mode **only where it offers one**, and
+///   *Manual* otherwise — never a mode the agent did not list, which the
+///   adapter would refuse.
+///
+/// `None` only for an agent that lists no modes at all, whose chat has no
+/// mode to start in.
+pub(crate) fn default_mode(
+    agent: &AiProviderId,
+    listed: &ListedModes,
+    supported: NewChatPermission,
+    other: NewChatPermission,
+) -> Option<String> {
+    let first = |role: Role| {
+        listed
+            .modes
+            .iter()
+            .find(|mode| role_of(agent, &mode.id) == role)
+            .map(|mode| mode.id.clone())
+    };
+    let manual = || {
+        first(Role::Ask)
+            .or_else(|| {
+                listed
+                    .default
+                    .clone()
+                    .filter(|id| listed.modes.iter().any(|mode| &mode.id == id))
+                    .filter(|id| role_of(agent, id) != Role::Full)
+            })
+            .or_else(|| {
+                listed
+                    .modes
+                    .iter()
+                    .find(|mode| role_of(agent, &mode.id) != Role::Full)
+                    .map(|mode| mode.id.clone())
+            })
+    };
+    let permission = if has_auto_mode(agent, listed) {
+        supported
+    } else {
+        other
+    };
+    match permission {
+        NewChatPermission::Manual => manual(),
+        NewChatPermission::Auto => first(Role::Auto).or_else(manual),
+        NewChatPermission::Yolo => first(Role::Full).or_else(manual),
+    }
 }
 
 /// `agent`'s modes as rows, in the agent's order: Koru's words for the ones
@@ -178,19 +325,22 @@ pub(crate) fn rows(
                 .iter()
                 .find(|known| known.0 == agent.as_str() && known.1 == mode.id)
             {
-                Some((_, _, title, help, icon, full_access)) => ModeRow {
+                Some((_, _, title, help, icon, role)) => ModeRow {
                     id: mode.id.clone(),
                     title: t(lang, *title).to_owned(),
                     help: Some(t(lang, *help).to_owned()),
                     icon: *icon,
-                    full_access: *full_access,
+                    full_access: *role == Role::Full,
                 },
+                // An agent Koru has no words for keeps its own; one of the
+                // known full-access spellings is still drawn and stepped as
+                // *Full access*.
                 None => ModeRow {
                     id: mode.id.clone(),
                     title: mode.name.clone().unwrap_or_else(|| mode.id.clone()),
                     help: mode.description.clone(),
                     icon: icons::FADERS,
-                    full_access: false,
+                    full_access: is_full_access(agent, &mode.id),
                 },
             }
         })
@@ -248,18 +398,35 @@ impl crate::ChatSurface {
             .find(|row| row.id == current)
     }
 
-    /// **The mode a new chat with `agent` starts in**: the mode of the last
-    /// chat with the same agent, in the chats list's order — unless that is
-    /// *Full access*, which is never carried over. `None` is the agent's
-    /// own default.
-    pub(crate) fn remembered_approval_mode(&self, agent: &AiProviderId) -> Option<String> {
-        let last = self
-            .chats
-            .iter()
-            .find(|chat| chat.current_model.provider == *agent)?;
-        last.agent_mode
-            .clone()
-            .filter(|mode| !is_full_access(agent, mode))
+    /// **The mode a new chat with `agent` starts in**: the person's default
+    /// permission mapped onto the agent's own modes ([`default_mode`]) —
+    /// not the mode it was last used in. `None` until the agent has listed
+    /// its modes; the chat takes its default when they arrive
+    /// ([`Self::adopt_default_mode`]).
+    pub(crate) fn default_approval_mode(&self, agent: &AiProviderId) -> Option<String> {
+        let listed = self.agent_modes.get(agent)?;
+        default_mode(
+            agent,
+            listed,
+            self.agent_defaults.permission,
+            self.agent_defaults.permission_other,
+        )
+    }
+
+    /// A new chat not made yet whose agent had not listed its modes when it
+    /// was begun takes its default now that they have arrived — unless a
+    /// mode was chosen on it meanwhile.
+    pub(crate) fn adopt_default_mode(&mut self, agent: &AiProviderId) {
+        if !self.chat_unmade() {
+            return;
+        }
+        let mode = self.default_approval_mode(agent);
+        if let Some(transcript) = self.transcript.as_mut()
+            && transcript.chat.current_model.provider == *agent
+            && transcript.chat.agent_mode.is_none()
+        {
+            transcript.chat.agent_mode = mode;
+        }
     }
 
     /// The chip, left of the model chip where an API chat has its

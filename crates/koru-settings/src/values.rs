@@ -264,6 +264,22 @@ token_enum! {
 }
 
 token_enum! {
+    /// **The permission a new agent chat starts in** (Settings → Coding →
+    /// Agent providers), in `desktop-v1.json`. Each agent's own modes are
+    /// what a chat runs in; this names which of them a new chat starts from
+    /// (`koru-ai-ui`'s `approval_modes` does the mapping): *Manual* is the
+    /// agent's asking mode, *Auto* the mode that approves safe actions on its
+    /// own, *Yolo* the one that runs everything without asking. An agent that
+    /// offers no such mode starts in *Manual*.
+    AgentPermission, default = Manual, fold_case = true,
+    {
+        Manual => "manual";
+        Auto => "auto";
+        Yolo => "yolo";
+    }
+}
+
+token_enum! {
     /// The terminal row's `cursor_width=`.
     ///
     /// `application` means "follow the app's caret width" — the terminal's own

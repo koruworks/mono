@@ -298,3 +298,30 @@ fn the_disabled_agents_patch_is_whole_sorted_and_validated() {
     };
     assert!(too_many.validate().is_err());
 }
+
+/// **The default permissions are this machine's**, and an agent with no auto
+/// mode is never told to start in *Auto*.
+#[test]
+fn the_default_permissions_patch_is_device_local_and_other_has_no_auto() {
+    let mut section = GlobalSettings::default();
+    assert_eq!(section.default_permission, AgentPermission::Manual);
+    assert_eq!(section.default_permission_other, AgentPermission::Manual);
+    let patch = GlobalPatch {
+        default_permission: Some(AgentPermission::Yolo),
+        default_permission_other: Some(AgentPermission::Yolo),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.default_permission, AgentPermission::Yolo);
+    assert_eq!(section.default_permission_other, AgentPermission::Yolo);
+    let auto_other = GlobalPatch {
+        default_permission_other: Some(AgentPermission::Auto),
+        ..GlobalPatch::default()
+    };
+    assert!(auto_other.validate().is_err());
+    let body: GlobalPatch =
+        serde_json::from_str(r#"{"default_permission":"auto"}"#).expect("a token");
+    assert_eq!(body.default_permission, Some(AgentPermission::Auto));
+}

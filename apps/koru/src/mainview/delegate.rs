@@ -510,14 +510,14 @@ impl MainView {
     /// shows actually moved.
     pub(crate) fn maintain_delegate_folder(&mut self) -> bool {
         let before = self.delegate_temporary_base();
-        let agents_before = self.disabled_agents().to_vec();
+        let agents_before = self.agent_settings_snapshot();
         if self.delegate_folder.poll().is_none() {
             return false;
         }
-        // The same link carries the agents turned off (Agent providers): a
-        // list another window changed, or the stored one arriving at start,
-        // reaches every surface here.
-        let agents_moved = self.disabled_agents() != agents_before.as_slice();
+        // The same link carries *Agent providers* — the agents turned off
+        // and where a new chat starts: what another window changed, or the
+        // stored settings arriving at start, reach every surface here.
+        let agents_moved = self.agent_settings_snapshot() != agents_before;
         if agents_moved {
             self.apply_hidden_agents();
             self.sync_agent_providers();

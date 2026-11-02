@@ -94,8 +94,8 @@ pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
 pub use state::{
-    AgentAttention, AgentProviderRow, AgentProviderStatus, AiSlot, Availability, DictionaryRow,
-    Notice, RendererRow, VoiceFacts,
+    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AiSlot, Availability,
+    DictionaryRow, Notice, RendererRow, VoiceFacts,
 };
 
 use action::Action;
@@ -342,6 +342,8 @@ pub struct SettingsSurface {
     renderer: RendererRow,
     /// The coding agents on *Agent providers*, as the host last read them.
     agent_providers: Vec<AgentProviderRow>,
+    /// Where a new chat starts, as the host last read it.
+    agent_defaults: AgentDefaults,
     /// The host's Koru AI slot. Held but **not drawn** while the card is off
     /// Settings; kept so the hosts that fill it need not change.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -407,6 +409,7 @@ impl SettingsSurface {
             voice: VoiceFacts::default(),
             renderer: RendererRow::none(),
             agent_providers: Vec::new(),
+            agent_defaults: AgentDefaults::default(),
             ai: AiSlot::default(),
             availability: Availability::Live,
             notice: None,
@@ -538,6 +541,19 @@ impl SettingsSurface {
     /// already applied.
     pub fn agent_providers(&self) -> &[AgentProviderRow] {
         &self.agent_providers
+    }
+
+    /// Where a new chat starts, as the host's settings hold it. Answers
+    /// whether anything moved.
+    pub fn set_agent_defaults(&mut self, defaults: AgentDefaults) -> bool {
+        let moved = self.agent_defaults != defaults;
+        self.agent_defaults = defaults;
+        moved
+    }
+
+    /// The defaults as this surface holds them, with any press applied.
+    pub fn agent_defaults(&self) -> &AgentDefaults {
+        &self.agent_defaults
     }
 
     /// Say whether this host can open the sample document
@@ -921,6 +937,7 @@ impl SettingsSurface {
             voice,
             renderer,
             agent_providers,
+            agent_defaults,
             availability,
             notice,
             laid,
@@ -969,7 +986,9 @@ impl SettingsSurface {
             }
             PageId::Terminal => terminal::lay_out(&mut b, lang, terminal),
             PageId::System => global::system(&mut b, &rows),
-            PageId::AgentProviders => agents::lay_out(&mut b, lang, agent_providers),
+            PageId::AgentProviders => {
+                agents::lay_out(&mut b, lang, agent_providers, agent_defaults)
+            }
         }
         *laid = b.finish();
         // A relayout can drop the dropdown a list was opened from — the page
@@ -2050,10 +2069,25 @@ impl SettingsSurface {
                 for row in &mut self.agent_providers {
                     row.on = true;
                 }
+                self.agent_defaults = AgentDefaults::default();
                 self.requests.push(Request::RestoreAgentDefaults);
             }
             Action::RefreshAgentStatus => self.requests.push(Request::RefreshAgentStatus),
             Action::AgentGuide(url) => self.requests.push(Request::OpenAgentGuide(url)),
+            // The control moves at once; the host stores it and hands every
+            // chat surface the new default.
+            Action::AgentPermission(other, permission) => {
+                let current = if other {
+                    &mut self.agent_defaults.permission_other
+                } else {
+                    &mut self.agent_defaults.permission
+                };
+                if *current != permission {
+                    *current = permission;
+                    self.requests
+                        .push(Request::SetAgentPermission { other, permission });
+                }
+            }
         }
     }
 
@@ -2207,6 +2241,7 @@ fn clone_action(action: &Action) -> Action {
         Action::RestoreAgentDefaults => Action::RestoreAgentDefaults,
         Action::RefreshAgentStatus => Action::RefreshAgentStatus,
         Action::AgentGuide(url) => Action::AgentGuide(url),
+        Action::AgentPermission(other, permission) => Action::AgentPermission(*other, *permission),
     }
 }
 

@@ -30,11 +30,11 @@ use std::path::Path;
 use crate::paths::staging_path;
 use crate::sections::{GlobalSettings, TerminalSettings};
 use crate::values::{
-    CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice,
-    DensityChoice, DictationGesture, DictationInput, DictationLanguage, DictationShortcut,
-    DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice, PopoutCloseChoice,
-    RgbColor, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
-    ViewModeChoice, Zoom,
+    AgentPermission, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
+    CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
+    DictationShortcut, DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice,
+    PopoutCloseChoice, RgbColor, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth,
+    ThemeChoice, ViewModeChoice, Zoom,
 };
 
 #[cfg(test)]
@@ -290,6 +290,8 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "delegate_temporary_root",
     "recording",
     "disabled_agents",
+    "default_permission",
+    "default_permission_other",
 ];
 
 /// What a read of `desktop-v1.json` recovered, plus what it must carry back.
@@ -384,6 +386,23 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                     into.disabled_agents = crate::sections::normalized_agents(agents);
                 }
             }
+            // A token this build does not know reads as *Manual*, the
+            // token parser's default: never a mode nobody chose.
+            "default_permission" => {
+                if let Some(text) = value.as_str() {
+                    into.default_permission = AgentPermission::parse(text);
+                }
+            }
+            // An agent with no auto mode has no *Auto*: a hand-edited one
+            // reads as *Manual* rather than as something it cannot be.
+            "default_permission_other" => {
+                if let Some(text) = value.as_str() {
+                    into.default_permission_other = match AgentPermission::parse(text) {
+                        AgentPermission::Auto => AgentPermission::Manual,
+                        permission => permission,
+                    };
+                }
+            }
             _ => {
                 file.carried.insert(key, value);
             }
@@ -446,6 +465,20 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
         object.insert(
             "disabled_agents".into(),
             serde_json::to_value(&settings.disabled_agents).expect("a list of keys serializes"),
+        );
+    }
+    // Written only once chosen: absent is *Manual*, which is also what a
+    // build without these keys starts every chat in.
+    if settings.default_permission != AgentPermission::Manual {
+        object.insert(
+            "default_permission".into(),
+            settings.default_permission.token().into(),
+        );
+    }
+    if settings.default_permission_other != AgentPermission::Manual {
+        object.insert(
+            "default_permission_other".into(),
+            settings.default_permission_other.token().into(),
         );
     }
     serde_json::to_vec_pretty(&serde_json::Value::Object(object))
