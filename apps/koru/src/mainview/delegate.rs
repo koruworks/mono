@@ -226,9 +226,11 @@ impl MainView {
             .unwrap_or_default();
         let store_workspace = koru_delegate_core::WorkspaceId::from_uuid(workspace.as_uuid());
 
-        // An agent turned off on *Agent providers* is not a choice here.
+        // An agent turned off on *Agent providers* is not a choice here, and
+        // the rest are listed in the person's order.
         let disabled = self.disabled_agents().to_vec();
-        let profiles: Vec<_> = koru_session_profiles::built_in_profiles()
+        let order = self.agent_order();
+        let mut profiles: Vec<_> = koru_session_profiles::built_in_profiles()
             .into_iter()
             .filter(|profile| {
                 profile
@@ -237,6 +239,9 @@ impl MainView {
                     .is_none_or(|key| !disabled.iter().any(|off| off == key))
             })
             .collect();
+        profiles.sort_by_key(|profile| {
+            super::agent_providers::order_rank(&order, profile.label.agent_key())
+        });
         let agents = world::agents_for(
             &profiles,
             koru_session_profiles::MANAGED_PROVIDER_REGISTRATIONS,

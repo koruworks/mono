@@ -45,7 +45,8 @@ pub(crate) fn lay_out(
         ),
         Some(t(lang, Key::SettingsEnabledAgentsHint)),
     );
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
+        b.next_row_draggable(index);
         b.next_row_mark(&row.key);
         if let Some(guide) = row.guide {
             b.next_row_link(
@@ -59,6 +60,23 @@ pub(crate) fn lay_out(
             row.on,
             Action::AgentEnabled(row.key.clone(), !row.on),
         );
+    }
+    b.note(&order_hint(lang));
+}
+
+/// How to move an agent: by its handle, or with the move chords the editor's
+/// blocks use — named through the shortcut registry, and left out when the
+/// person has turned chord hints off.
+fn order_hint(lang: Lang) -> String {
+    let chord = |id| koru_keys::show_hint(id, koru_keys::Section::Guide);
+    match (
+        chord(koru_keys::ShortcutId::MoveRowUp),
+        chord(koru_keys::ShortcutId::MoveRowDown),
+    ) {
+        (Some(up), Some(down)) => {
+            koru_i18n::fill(t(lang, Key::SettingsAgentOrderHint), &[&up, &down])
+        }
+        _ => t(lang, Key::SettingsAgentOrderHintNoKeys).to_owned(),
     }
 }
 

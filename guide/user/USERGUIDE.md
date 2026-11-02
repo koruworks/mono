@@ -1248,8 +1248,9 @@ chips, workspace access, approval mode, the model chip and send. Until a
 model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
-left side, one icon each — Codex, Claude, OpenCode, Kimi, Grok and
-Antigravity, less any you have turned off — and a **+** at the foot of that
+left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex and
+Antigravity, in the order set on Agent providers and less any you have
+turned off — and a **+** at the foot of that
 column, which opens **Settings → Coding → Agent providers**; the selected
 agent's models sit beside them under
 their own names, and a **Search models…** box above the list (typing narrows
@@ -3308,6 +3309,14 @@ failed. The status reads what Koru's own checks found; **Refresh status** runs
 them again, and the rows update when the answers arrive. The card's first line
 counts them (*9 of 9 enabled*).
 
+**The order of the rows is the order agents are listed in everywhere** — the
+chat model picker's agent column, the terminal's **Agents ›** menu, the
+Default agent chips and the delegate dialog. It starts with Claude, then
+the order above. To change it, drag a row by its handle — the same six dots
+a paragraph has in a document, shown when you point at the row — and a line
+shows where it will land; or click a row and press `Ctrl+Shift+↑` or
+`Ctrl+Shift+↓` (`⌘⇧↑`/`⌘⇧↓` on a Mac), the keys that move a paragraph. `↑` and
+`↓` move to the row above or below, and `Esc` lets go.
 Turning an agent **off** hides it from the chat's model picker, from the
 terminal's **Agents ›** menu and from the delegate dialog's agents. Nothing is
 uninstalled or signed out, and a chat or a terminal session already on that
@@ -3336,8 +3345,9 @@ Manual until you change them. A new chat starts from this setting rather than
 from the mode you last used; changing the mode inside a chat changes that chat
 only, `Shift+Tab` still never steps to Full access, and a branch of a chat
 starts with no mode of its own.
-**Restore defaults**, at the top of the page, turns every agent back on, sets
-the default agent back to Auto and puts both permissions back on Manual, which
+**Restore defaults**, at the top of the page, turns every agent back on, puts
+them back in the built-in order, sets the default agent back to Auto and puts
+both permissions back on Manual, which
 is how a new install starts. The choice belongs to **this computer**, because
 the agents installed differ from one machine to the next, so it does not follow
 you to another; a Koru older than this one ignores it.

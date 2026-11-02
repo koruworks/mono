@@ -1041,6 +1041,44 @@ fn an_agent_turned_off_leaves_the_rail_but_a_chat_on_it_keeps_it() {
     assert_eq!(surface.picker_rail().len(), 2, "restore defaults");
 }
 
+/// **The rail lists the agents in the person's order** (D41), and an agent
+/// the order does not name follows the ones it does.
+#[test]
+fn the_rail_follows_the_agents_order() {
+    let mut surface = surface();
+    surface.settings = Some(settings(
+        &[
+            ("agent-codex", "Codex"),
+            ("agent-claude", "Claude"),
+            ("agent-opencode", "OpenCode"),
+        ],
+        None,
+    ));
+    let rail = |surface: &ChatSurface| surface.picker_rail();
+    assert_eq!(
+        rail(&surface),
+        [
+            RailEntry::Agent(agent("agent-codex")),
+            RailEntry::Agent(agent("agent-claude")),
+            RailEntry::Agent(agent("agent-opencode"))
+        ],
+        "no order: the service's"
+    );
+    assert!(surface.set_agent_order(["opencode".to_owned(), "claude".to_owned()]));
+    assert_eq!(
+        rail(&surface),
+        [
+            RailEntry::Agent(agent("agent-opencode")),
+            RailEntry::Agent(agent("agent-claude")),
+            RailEntry::Agent(agent("agent-codex"))
+        ]
+    );
+    assert!(
+        !surface.set_agent_order(["opencode".to_owned(), "claude".to_owned()]),
+        "no change"
+    );
+}
+
 /// **A new chat starts with the default agent** (D40), not the agent last
 /// used; *Auto* — no default — keeps the last used, and so does a default
 /// that is turned off or not installed on this computer.

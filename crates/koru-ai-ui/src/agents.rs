@@ -1058,6 +1058,32 @@ impl crate::ChatSurface {
         (self.agent_shown(&agent.id) && installed).then(|| agent.id.clone())
     }
 
+    /// **The order the agents are listed in** (Settings → Coding → Agent
+    /// providers), by key: the picker's rail and the setup card follow it.
+    /// An agent it does not name follows the ones it does, in the service's
+    /// order. Answers whether anything moved.
+    pub fn set_agent_order(&mut self, keys: impl IntoIterator<Item = String>) -> bool {
+        let keys: Vec<String> = keys.into_iter().collect();
+        let moved = self.agent_order != keys;
+        self.agent_order = keys;
+        moved
+    }
+
+    /// The service's agents in the person's order.
+    pub(crate) fn ordered_agents(&self) -> Vec<&AgentProviderView> {
+        let mut agents: Vec<&AgentProviderView> = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.agents.iter().collect())
+            .unwrap_or_default();
+        agents.sort_by_key(|agent| {
+            agent_key(&agent.id)
+                .and_then(|key| self.agent_order.iter().position(|known| known == key))
+                .unwrap_or(usize::MAX)
+        });
+        agents
+    }
+
     /// Whether `agent` is offered as a choice: not turned off.
     pub(crate) fn agent_shown(&self, agent: &AiProviderId) -> bool {
         agent_key(agent).is_none_or(|key| !self.hidden_agents.contains(key))
@@ -1066,13 +1092,8 @@ impl crate::ChatSurface {
     /// The Settings card's agent rows: one per agent, its name and its
     /// readiness word, the picked one tinted.
     pub(crate) fn agent_row_rects(&self, area: crate::Rect) -> Vec<(AiProviderId, crate::Rect)> {
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.as_slice())
-            .unwrap_or_default();
-        agents
-            .iter()
+        self.ordered_agents()
+            .into_iter()
             .filter(|agent| self.agent_shown(&agent.id))
             .enumerate()
             .map(|(index, agent)| {

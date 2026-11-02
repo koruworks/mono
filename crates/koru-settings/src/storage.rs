@@ -293,6 +293,7 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "default_permission",
     "default_permission_other",
     "default_agent",
+    "agent_order",
 ];
 
 /// What a read of `desktop-v1.json` recovered, plus what it must carry back.
@@ -404,6 +405,15 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                     };
                 }
             }
+            // Read tolerantly: anything but a list of agent keys is the
+            // built-in order, and a key twice keeps its first place.
+            "agent_order" => {
+                if let Ok(order) = serde_json::from_value::<Vec<String>>(value)
+                    && order.iter().all(|key| crate::sections::is_agent_key(key))
+                {
+                    into.agent_order = crate::sections::ordered_agents(order);
+                }
+            }
             // A key that is not an agent key's shape reads as *Auto*.
             "default_agent" => {
                 if let Some(key) = value.as_str()
@@ -488,6 +498,14 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
         object.insert(
             "default_permission_other".into(),
             settings.default_permission_other.token().into(),
+        );
+    }
+    // Written only once moved: absent is the built-in order, which is also
+    // what a build without this key lists.
+    if !settings.agent_order.is_empty() {
+        object.insert(
+            "agent_order".into(),
+            serde_json::to_value(&settings.agent_order).expect("a list of keys serializes"),
         );
     }
     // Written only once an agent is chosen: absent is *Auto*.

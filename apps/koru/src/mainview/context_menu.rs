@@ -775,6 +775,17 @@ pub fn set_hidden_agents(keys: Vec<String>) {
     HIDDEN_AGENTS.with(|cell| *cell.borrow_mut() = keys);
 }
 
+thread_local! {
+    /// The order the coding agents are listed in (Agent providers), every
+    /// agent named; the *Agents* flyout lists its rows in it.
+    static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record the agents' order, for the next agent menu to follow.
+pub fn set_agent_order(keys: Vec<String>) {
+    AGENT_ORDER.with(|cell| *cell.borrow_mut() = keys);
+}
+
 /// Whether a built-in profile is an agent turned off on this machine.
 fn agent_hidden(profile: &koru_session_profiles::LaunchProfile) -> bool {
     profile
@@ -2126,7 +2137,7 @@ fn terminal_profile_mark(index: usize) -> Option<koru_draw::brand::ProfileMark> 
 }
 
 fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
-    built_in_profiles()
+    let mut profiles: Vec<_> = built_in_profiles()
         .into_iter()
         .enumerate()
         .filter(|(_, profile)| {
@@ -2134,6 +2145,19 @@ fn profile_items_of_kind(kind: ProfileKind) -> Vec<MenuAction> {
                 && profile.label != koru_session_profiles::ProfileLabel::CodexEmbedded
                 && !agent_hidden(profile)
         })
+        .collect();
+    // Agents in the person's order (Agent providers); a row with no agent
+    // key — a shell — keeps its place after them, in catalogue order.
+    AGENT_ORDER.with(|cell| {
+        let order = cell.borrow();
+        if !order.is_empty() {
+            profiles.sort_by_key(|(_, profile)| {
+                super::agent_providers::order_rank(&order, profile.label.agent_key())
+            });
+        }
+    });
+    profiles
+        .into_iter()
         .map(|(index, _)| MenuAction::TerminalProfile(index))
         .collect()
 }

@@ -9134,6 +9134,9 @@ impl MainView {
             Request::SetDefaultAgent(agent) => {
                 self.set_default_agent(agent);
             }
+            Request::SetAgentOrder(keys) => {
+                self.set_agent_order(keys);
+            }
         }
     }
 

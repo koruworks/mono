@@ -467,6 +467,19 @@ pub const REGISTRY: &[SettingSpec] = &[
               installed falls back to Auto where a chat is made, and the \
               page says so; the key is kept.",
     },
+    SettingSpec {
+        field: "agent_order",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The order the coding agents are listed in (dragged on \
+              Settings → Coding → Agent providers), by agent key: the chat's \
+              agent rail, the Agents menu, the Default agent chips and the \
+              delegate dialog follow it. Absent — and an empty list — is the \
+              built-in order, Claude first; an agent it does not name \
+              follows the named ones. Device-local beside disabled_agents.",
+    },
     // ------------------------------------- Terminal, roaming: terminal.conf
     SettingSpec {
         field: "theme",

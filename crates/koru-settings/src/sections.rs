@@ -200,6 +200,14 @@ pub struct GlobalSettings {
     /// brings the choice back.
     #[serde(default)]
     pub default_agent: Option<String>,
+    /// **The order the coding agents are listed in**, by agent key, as the
+    /// person dragged them on *Agent providers*: the chat's agent rail, the
+    /// terminal's *Agents ›* menu, the *Default agent* chips and the
+    /// delegate dialog all follow it. Empty is the built-in order (Claude
+    /// first); an agent it does not name — one a later Koru adds — follows
+    /// the named ones in the built-in order. Each key once.
+    #[serde(default)]
+    pub agent_order: Vec<String>,
 }
 
 impl Default for GlobalSettings {
@@ -257,6 +265,8 @@ impl Default for GlobalSettings {
             default_permission_other: AgentPermission::Manual,
             // *Auto*: the last agent used.
             default_agent: None,
+            // The built-in order.
+            agent_order: Vec::new(),
         }
     }
 }
@@ -358,6 +368,10 @@ pub struct GlobalPatch {
     /// The agent a new chat starts with; `null` is *Auto*.
     #[serde(skip_serializing_if = "Field::is_unchanged")]
     pub default_agent: Field<String>,
+    /// The whole order, written whole on every move: an empty list is the
+    /// built-in order. Absent leaves the stored order alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_order: Option<Vec<String>>,
 }
 
 impl GlobalPatch {
@@ -409,6 +423,7 @@ impl GlobalPatch {
             || self.default_permission.is_some()
             || self.default_permission_other.is_some()
             || !self.default_agent.is_unchanged()
+            || self.agent_order.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -434,6 +449,14 @@ impl GlobalPatch {
             return Err(Invalid::new(
                 "default_permission_other",
                 "an agent with no auto mode starts in manual or yolo",
+            ));
+        }
+        if let Some(order) = &self.agent_order
+            && (order.len() > MAX_DISABLED_AGENTS || !order.iter().all(|key| is_agent_key(key)))
+        {
+            return Err(Invalid::new(
+                "agent_order",
+                "an agent is named by its lowercase key, and at most 64 are listed",
             ));
         }
         if let Field::Set(key) = &self.default_agent
@@ -597,7 +620,19 @@ impl GlobalPatch {
             current.disabled_agents = normalized_agents(agents);
         }
         self.default_agent.apply(&mut current.default_agent);
+        if let Some(order) = self.agent_order {
+            current.agent_order = ordered_agents(order);
+        }
     }
+}
+
+/// An order as it is kept: each key once, at its first place.
+pub(crate) fn ordered_agents(order: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    order
+        .into_iter()
+        .filter(|key| seen.insert(key.clone()))
+        .collect()
 }
 
 /// Whether `key` has an agent key's shape: short, lowercase ASCII letters,

@@ -353,6 +353,12 @@ pub struct SettingsSurface {
     notice: Option<Notice>,
 
     laid: Laid,
+    /// The agent row the keyboard is on (*Agent providers*), by key: a press
+    /// on the row or its handle puts it there, and the move chords move it.
+    agent_focus: Option<String>,
+    /// An agent row being dragged by its handle: where it came from and
+    /// where it would land, by index into the rows.
+    agent_drag: Option<(usize, usize)>,
     /// The compact nav's chips, in viewport space, and the band they sit in.
     nav_chips: Vec<Rect>,
     nav_band_h: f32,
@@ -414,6 +420,8 @@ impl SettingsSurface {
             availability: Availability::Live,
             notice: None,
             laid: Laid::default(),
+            agent_focus: None,
+            agent_drag: None,
             nav_chips: Vec::new(),
             nav_band_h: 0.0,
             requests: Vec::new(),
@@ -690,6 +698,8 @@ impl SettingsSurface {
         self.page = page;
         self.scroll = 0.0;
         self.open = None;
+        self.agent_focus = None;
+        self.agent_drag = None;
         self.sync_preview();
         moved
     }
@@ -1036,6 +1046,11 @@ impl SettingsSurface {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         let moved = self.pointer != (x, y);
         self.pointer = (x, y);
+        if let Some((from, to)) = self.agent_drag {
+            let over = self.drag_target(y + self.scroll).unwrap_or(to);
+            self.agent_drag = Some((from, over));
+            return moved || over != to;
+        }
         if let Some(open) = self.open.as_mut() {
             let viewport = self.viewport;
             open.menu.hover = open.menu.item_at(viewport, x, y).or(open.menu.hover);
@@ -1077,7 +1092,111 @@ impl SettingsSurface {
 
     pub fn mouse_up(&mut self) -> bool {
         self.search.release();
-        false
+        match self.agent_drag.take() {
+            Some((from, to)) => {
+                self.move_agent(from, to);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The draggable row a drag at content-space `y` lands on: the one under
+    /// it, the first above them all and the last below.
+    fn drag_target(&self, y: f32) -> Option<usize> {
+        let rows = &self.laid.drag_rows;
+        let first = rows.first()?;
+        if y < first.y {
+            return Some(0);
+        }
+        Some(
+            rows.iter()
+                .position(|row| y < row.y + row.h)
+                .unwrap_or(rows.len() - 1),
+        )
+    }
+
+    /// **Move agent row `from` to `to`** — by a drag or a chord — and ask the
+    /// host to store the whole order. The row keeps the keyboard.
+    fn move_agent(&mut self, from: usize, to: usize) -> bool {
+        let len = self.agent_providers.len();
+        if from == to || from >= len || to >= len || self.availability.is_down() {
+            return false;
+        }
+        let row = self.agent_providers.remove(from);
+        self.agent_focus = Some(row.key.clone());
+        self.agent_providers.insert(to, row);
+        self.requests.push(Request::SetAgentOrder(
+            self.agent_providers
+                .iter()
+                .map(|row| row.key.clone())
+                .collect(),
+        ));
+        true
+    }
+
+    /// The agent row the keyboard is on, by index.
+    fn agent_focus_index(&self) -> Option<usize> {
+        let key = self.agent_focus.as_deref()?;
+        self.agent_providers.iter().position(|row| row.key == key)
+    }
+
+    /// The agent row the keyboard is on, by key — for a host's test.
+    pub fn focused_agent(&self) -> Option<&str> {
+        self.agent_focus.as_deref()
+    }
+
+    /// **The keys an agent row with the keyboard answers** (*Agent
+    /// providers*): the editor's move chords — the same registry entries a
+    /// paragraph block moves with — move it up or down; Up and Down move the
+    /// keyboard to the next row; Escape lets it go. `None` for any other key,
+    /// or with no row focused.
+    fn agent_row_key(
+        &mut self,
+        key: &WinitKey,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<bool> {
+        if self.page != PageId::AgentProviders {
+            return None;
+        }
+        let at = self.agent_focus_index()?;
+        let chord = |id| koru_keys::registry::get(id).chord.matches(key, text, mods);
+        if chord(koru_keys::ShortcutId::MoveRowUp) {
+            // Taken at the top too: the row is the keyboard's, and a chord
+            // that cannot move it still belongs to it.
+            if at > 0 {
+                self.move_agent(at, at - 1);
+            }
+            return Some(true);
+        }
+        if chord(koru_keys::ShortcutId::MoveRowDown) {
+            self.move_agent(at, at + 1);
+            return Some(true);
+        }
+        if !mods.is_empty() {
+            return None;
+        }
+        let step = |to: usize| self.agent_providers.get(to).map(|row| row.key.clone());
+        match key {
+            WinitKey::Named(NamedKey::ArrowUp) => {
+                if let Some(key) = at.checked_sub(1).and_then(step) {
+                    self.agent_focus = Some(key);
+                }
+                Some(true)
+            }
+            WinitKey::Named(NamedKey::ArrowDown) => {
+                if let Some(key) = step(at + 1) {
+                    self.agent_focus = Some(key);
+                }
+                Some(true)
+            }
+            WinitKey::Named(NamedKey::Escape) => {
+                self.agent_focus = None;
+                Some(true)
+            }
+            _ => None,
+        }
     }
 
     /// Put the keyboard in the search box with the query it holds selected,
@@ -1137,8 +1256,9 @@ impl SettingsSurface {
                 true
             }
             None => {
-                let was = self.search_focused;
+                let was = self.search_focused || self.agent_focus.is_some();
                 self.search_focused = false;
+                self.agent_focus = None;
                 was
             }
         }
@@ -1148,6 +1268,14 @@ impl SettingsSurface {
         let Some(hit) = self.laid.hits.get(index) else {
             return;
         };
+        // An agent row keeps the keyboard only while it is what was pressed.
+        let row = match hit.target {
+            Target::Grip(n) | Target::Row(n) => Some(n),
+            _ => None,
+        };
+        self.agent_focus = row
+            .and_then(|n| self.agent_providers.get(n))
+            .map(|row| row.key.clone());
         match &hit.target {
             Target::Action(action) => {
                 let action = clone_action(action);
@@ -1157,6 +1285,9 @@ impl SettingsSurface {
                 let dropdown = *dropdown;
                 self.open_dropdown(dropdown);
             }
+            // The handle starts a drag; the drop is the release.
+            Target::Grip(n) => self.agent_drag = Some((*n, *n)),
+            Target::Row(_) => {}
         }
     }
 
@@ -1220,6 +1351,11 @@ impl SettingsSurface {
             }
             self.sync_preview();
             return true;
+        }
+        if !self.search_focused
+            && let Some(handled) = self.agent_row_key(key, text, mods)
+        {
+            return handled;
         }
         if self.search_focused {
             match key {
@@ -1309,6 +1445,7 @@ impl SettingsSurface {
                 self.draw_block(scene_out, content, block, hovered);
             }
             self.laid.blocks = blocks;
+            self.draw_drop_line(scene_out, content);
             scene_out.pop_layer();
         }
 
@@ -1583,6 +1720,7 @@ impl SettingsSurface {
                     alpha,
                 );
                 for row in &card.rows {
+                    self.draw_row_drag(scene_out, root, row);
                     if let Some(key) = &row.mark {
                         let size = page::MARK_SIZE;
                         let at = Rect::new(
@@ -1661,6 +1799,91 @@ impl SettingsSurface {
             }
             Block::Host => {}
         }
+    }
+
+    /// While an agent row is dragged: a line where it would land — the
+    /// block drag's own drop indicator, two pixels in `drop_indicator`, at
+    /// the target row's top edge moving up and its bottom edge moving down.
+    fn draw_drop_line(&self, scene_out: &mut Scene, root: Affine) {
+        let Some((from, to)) = self.agent_drag.filter(|(from, to)| from != to) else {
+            return;
+        };
+        let Some(row) = self.laid.drag_rows.get(to) else {
+            return;
+        };
+        let y = if to < from { row.y } else { row.y + row.h };
+        let _line = inspect::scope(
+            "Drop indicator",
+            "part",
+            root,
+            scene::rect(row.x, y - 1.0, row.w, 2.0),
+            |r| r.property("lands at", to, "view state"),
+        );
+        scene::fill(
+            scene_out,
+            root,
+            theme::p().drop_indicator,
+            &scene::rrect(row.x, y - 1.0, row.w, 2.0, 1.0),
+        );
+    }
+
+    /// A draggable row's move handle — the editor's six-dot grip, shown, as
+    /// a block's is, while the pointer is on the row, while the row has the
+    /// keyboard and while it is dragged — and the focus ring of the row the
+    /// keyboard is on.
+    fn draw_row_drag(&mut self, scene_out: &mut Scene, root: Affine, row: &page::RowLaid) {
+        let Some((n, grip)) = row.drag else {
+            return;
+        };
+        let pointer = (self.pointer.0, self.pointer.1 + self.scroll);
+        let on_row = row.rect.contains(pointer.0, pointer.1) && self.open.is_none();
+        let focused = self.agent_focus_index() == Some(n);
+        let dragged = self.agent_drag.is_some_and(|(from, _)| from == n);
+        if focused {
+            scene::stroke(
+                scene_out,
+                root,
+                theme::p().focus_ring,
+                theme::BORDER_W * 2.0,
+                &scene::rrect(
+                    row.rect.x + 1.0,
+                    row.rect.y + 1.0,
+                    row.rect.w - 2.0,
+                    row.rect.h - 2.0,
+                    6.0,
+                ),
+            );
+        }
+        if !(on_row || focused || dragged) || self.availability.is_down() {
+            return;
+        }
+        let name = self
+            .agent_providers
+            .get(n)
+            .map(|agent| {
+                koru_i18n::fill(
+                    koru_i18n::t(self.lang, Key::SettingsAgentMoveHandle),
+                    &[&agent.name],
+                )
+            })
+            .unwrap_or_default();
+        let _grip = inspect::scope(
+            "Grip icon",
+            "part",
+            root,
+            scene::rect(grip.x, grip.y, grip.w, grip.h),
+            |r| {
+                r.property("name", name.as_str(), "accessible name");
+                r.property("drawn", "koru_draw::scene::grip_dots", "shared painter");
+            },
+        );
+        let over_grip = pointer.0 < row.rect.x + CardRow::PAD_X && on_row;
+        let color = if over_grip || dragged {
+            theme::p().grip_active
+        } else {
+            theme::p().grip
+        };
+        scene::grip_dots(scene_out, root, grip, color);
     }
 
     fn draw_widget(

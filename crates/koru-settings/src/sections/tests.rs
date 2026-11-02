@@ -326,6 +326,33 @@ fn the_default_permissions_patch_is_device_local_and_other_has_no_auto() {
     assert_eq!(body.default_permission, Some(AgentPermission::Auto));
 }
 
+/// **The order is written whole**: each key once at its first place, an
+/// empty list is the built-in order, and a key that is not an agent key's
+/// shape is refused.
+#[test]
+fn the_agent_order_patch_is_whole_deduplicated_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch = GlobalPatch {
+        agent_order: Some(vec!["codex".into(), "claude".into(), "codex".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.agent_order, ["codex", "claude"]);
+    GlobalPatch {
+        agent_order: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.agent_order.is_empty(), "restore defaults");
+    let bad = GlobalPatch {
+        agent_order: Some(vec!["Claude Code".into()]),
+        ..GlobalPatch::default()
+    };
+    assert!(bad.validate().is_err());
+}
+
 /// **The default agent is set by key and cleared to Auto with `null`**; a
 /// value that is not an agent key is refused before anything is staged.
 #[test]

@@ -28,6 +28,12 @@
 //! surface is handed them; only a new chat reads them. A default agent that
 //! is turned off or not installed falls back to *Auto* — the last agent
 //! used — in the chat, and the page says so.
+//!
+//! **The order the agents are listed in** (`agent_order`, D41) is dragged on
+//! the page and followed everywhere an agent is chosen: the chat's agent
+//! rail, the terminal's *Agents ›* menu, the *Default agent* chips (the
+//! page's own rows) and the delegate dialog. [`agent_order`] is the one
+//! place the stored order meets the built-in one.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
 use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
@@ -112,6 +118,37 @@ pub(crate) fn agent_status(
     }
 }
 
+/// **The order the coding agents are listed in**: the keys `stored` names,
+/// in its order, then every other coding agent in the built-in order —
+/// Claude first, then the *Agents ›* menu's order — so an empty `stored` is
+/// the built-in order and an agent a later Koru adds is listed, last. A key
+/// no agent has is left out.
+pub(crate) fn agent_order(stored: &[String]) -> Vec<String> {
+    let built_in: Vec<&'static str> = koru_session_profiles::coding_agents()
+        .into_iter()
+        .filter_map(|(_, profile)| profile.label.agent_key())
+        .collect();
+    let mut order: Vec<String> = Vec::with_capacity(built_in.len());
+    for key in stored {
+        if built_in.contains(&key.as_str()) && !order.contains(key) {
+            order.push(key.clone());
+        }
+    }
+    for key in built_in {
+        if !order.iter().any(|known| known == key) {
+            order.push(key.to_owned());
+        }
+    }
+    order
+}
+
+/// Where `key` sorts in `order`: its place, and after every listed agent
+/// for one it does not name (a shell, a custom profile).
+pub(crate) fn order_rank(order: &[String], key: Option<&str>) -> usize {
+    key.and_then(|key| order.iter().position(|known| known == key))
+        .unwrap_or(usize::MAX)
+}
+
 /// **Why the default agent is not what a new chat gets**, in the page's
 /// words: it is turned off, or its program is not on this computer. `None`
 /// for *Auto*, an agent that can be had, and one the page does not list.
@@ -172,15 +209,28 @@ impl MainView {
     /// Everything a chat surface is handed from *Agent providers*: the
     /// agents turned off, and where a new chat starts. What
     /// `maintain_delegate_folder` compares to tell whether to hand it on.
-    pub(super) fn agent_settings_snapshot(&self) -> (Vec<String>, koru_ai_ui::AgentDefaults) {
-        (self.disabled_agents().to_vec(), self.chat_agent_defaults())
+    pub(super) fn agent_settings_snapshot(
+        &self,
+    ) -> (Vec<String>, koru_ai_ui::AgentDefaults, Vec<String>) {
+        (
+            self.disabled_agents().to_vec(),
+            self.chat_agent_defaults(),
+            self.agent_order(),
+        )
     }
 
-    /// Every coding agent as *Agent providers* shows it.
+    /// The order the agents are listed in, every agent named.
+    pub(super) fn agent_order(&self) -> Vec<String> {
+        agent_order(&self.delegate_folder.authoritative().agent_order)
+    }
+
+    /// Every coding agent as *Agent providers* shows it, in the person's
+    /// order.
     pub(super) fn agent_provider_rows(&self) -> Vec<AgentProviderRow> {
         let disabled = self.disabled_agents();
         let readiness = self.provider_readiness.as_deref();
-        koru_session_profiles::coding_agents()
+        let order = self.agent_order();
+        let mut rows: Vec<AgentProviderRow> = koru_session_profiles::coding_agents()
             .into_iter()
             .filter_map(|(index, profile)| {
                 let key = profile.label.agent_key()?;
@@ -192,7 +242,9 @@ impl MainView {
                     on: !disabled.iter().any(|off| off == key),
                 })
             })
-            .collect()
+            .collect();
+        rows.sort_by_key(|row| order_rank(&order, Some(&row.key)));
+        rows
     }
 
     /// Hand the rows, and where a new chat starts, to every Settings tab.
@@ -215,15 +267,20 @@ impl MainView {
     pub(super) fn apply_hidden_agents(&mut self) -> bool {
         let keys = self.disabled_agents().to_vec();
         let defaults = self.chat_agent_defaults();
+        let order = self.agent_order();
         crate::ai_chat_view::set_hidden_agents(keys.clone());
         crate::ai_chat_view::set_agent_defaults(defaults.clone());
+        crate::ai_chat_view::set_agent_order(order.clone());
         context_menu::set_hidden_agents(keys.clone());
+        context_menu::set_agent_order(order.clone());
         let mut changed = self.ai_chat.set_hidden_agents(keys.clone());
         changed |= self.ai_chat.set_agent_defaults(defaults.clone());
+        changed |= self.ai_chat.set_agent_order(order.clone());
         changed |= self.each_tab_mut(|tab| match &mut tab.view {
             TabView::AiChat(view) => {
                 let hidden = view.set_hidden_agents(keys.clone());
-                view.set_agent_defaults(defaults.clone()) || hidden
+                let defaults = view.set_agent_defaults(defaults.clone());
+                view.set_agent_order(order.clone()) || hidden || defaults
             }
             _ => false,
         });
@@ -253,6 +310,23 @@ impl MainView {
             default_permission: Some(AgentPermission::Manual),
             default_permission_other: Some(AgentPermission::Manual),
             default_agent: koru_settings::Field::Clear,
+            agent_order: Some(Vec::new()),
+            ..koru_settings::GlobalPatch::default()
+        })
+    }
+
+    /// **The order the agents are listed in**, as the page was dragged:
+    /// stored on this machine — nothing when it is the built-in order — and
+    /// handed to every list of agents at once.
+    pub(super) fn set_agent_order(&mut self, keys: Vec<String>) -> bool {
+        let order = agent_order(&keys);
+        let stored = if order == agent_order(&[]) {
+            Vec::new()
+        } else {
+            order
+        };
+        self.save_agent_settings(koru_settings::GlobalPatch {
+            agent_order: Some(stored),
             ..koru_settings::GlobalPatch::default()
         })
     }

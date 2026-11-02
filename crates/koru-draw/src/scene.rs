@@ -152,6 +152,21 @@ pub fn circle(cx: f32, cy: f32, r: f32) -> vello::kurbo::Circle {
     vello::kurbo::Circle::new((cx as f64, cy as f64), r as f64)
 }
 
+/// **The move handle's six dots** — the "grab me" idiom a paragraph block's
+/// drag grip draws in the editor's margin, two columns of three, at the top
+/// left of `at` (a [`theme::GRIP_W`] × [`theme::GRIP_H`] slot). Here so every
+/// row that can be dragged — a block, an agent on *Agent providers* — wears
+/// the same grip; the caller names it in the inspector.
+pub fn grip_dots(scene: &mut Scene, root: Affine, at: crate::geometry::Rect, color: Color) {
+    for row in 0..3 {
+        for col in 0..2 {
+            let cx = at.x + 3.0 + col as f32 * 5.0;
+            let cy = at.y + 3.0 + row as f32 * 4.5;
+            fill(scene, root, color, &circle(cx, cy, 1.4));
+        }
+    }
+}
+
 /// Draw a standalone layout's glyphs and tagged icon slots, optionally recoloring.
 #[track_caller]
 pub fn draw_layout(

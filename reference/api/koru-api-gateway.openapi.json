@@ -5254,6 +5254,14 @@
         "additionalProperties": false,
         "description": "One patch of [`GlobalSettings`]. Absent fields are left alone.",
         "properties": {
+          "agent_order": {
+            "description": "The whole order, written whole on every move: an empty list is the\nbuilt-in order. Absent leaves the stored order alone.",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "automatic_update_checks": {
             "nullable": true,
             "type": "boolean"
@@ -5662,6 +5670,14 @@
         "additionalProperties": false,
         "description": "Everything that applies to Koru as a whole, whoever is consuming it.",
         "properties": {
+          "agent_order": {
+            "default": [],
+            "description": "**The order the coding agents are listed in**, by agent key, as the\nperson dragged them on *Agent providers*: the chat's agent rail, the\nterminal's *Agents ›* menu, the *Default agent* chips and the\ndelegate dialog all follow it. Empty is the built-in order (Claude\nfirst); an agent it does not name — one a later Koru adds — follows\nthe named ones in the built-in order. Each key once.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "automatic_update_checks": {
             "type": "boolean"
           },

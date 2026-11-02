@@ -253,6 +253,13 @@ pub(crate) enum Target {
     Action(Action),
     /// Open dropdown `n` of the page's [`Laid::dropdowns`].
     Dropdown(usize),
+    /// The move handle of draggable row `n` ([`Laid::drag_rows`]): a press
+    /// takes the row's focus and starts a drag.
+    Grip(usize),
+    /// The rest of draggable row `n`: a press takes its focus, which the
+    /// move chords then act on. Pushed after the row's controls, so a
+    /// switch or a link still wins.
+    Row(usize),
 }
 
 /// A dropdown's list, kept beside the layout so a press can open it.
@@ -334,6 +341,9 @@ pub(crate) struct RowLaid {
     /// A brand mark before the name, by profile key — an agent's row on
     /// *Agent providers*. The text then starts [`MARK_SLOT`] further in.
     pub(crate) mark: Option<String>,
+    /// A row that can be dragged to a new place: its index among the
+    /// page's draggable rows, and its move handle, in the card's left inset.
+    pub(crate) drag: Option<(usize, Rect)>,
     pub(crate) text_w: f32,
     pub(crate) widget: Widget,
 }
@@ -350,6 +360,10 @@ impl RowLaid {
         )
     }
 }
+
+/// The move handle's slot in a draggable row: in the card's left inset, the
+/// editor's grip size, a little in from the card's edge.
+pub(crate) const GRIP_INSET: f32 = 3.0;
 
 /// The room a row's leading brand mark takes: the mark and the air after it.
 pub(crate) const MARK_SLOT: f32 = 28.0;
@@ -418,6 +432,9 @@ pub(crate) struct Laid {
     pub(crate) anchors: Vec<(Anchor, f32)>,
     pub(crate) host: Option<Rect>,
     pub(crate) bottom: f32,
+    /// Every draggable row's rect, by its index — where a drag lands and
+    /// where the drop line is drawn.
+    pub(crate) drag_rows: Vec<Rect>,
 }
 
 /// The card being filled.
@@ -442,6 +459,9 @@ pub(crate) struct Builder<'a> {
     pending_chip: Option<String>,
     /// Set by [`next_row_mark`](Self::next_row_mark); taken by the next row.
     pending_mark: Option<String>,
+    /// Set by [`next_row_draggable`](Self::next_row_draggable); taken by
+    /// the next row.
+    pending_drag: Option<usize>,
 }
 
 /// What a row asks for before it knows where it is.
@@ -473,7 +493,14 @@ impl<'a> Builder<'a> {
             pending_link: None,
             pending_chip: None,
             pending_mark: None,
+            pending_drag: None,
         }
+    }
+
+    /// Make the next row draggable — index `n` among the page's draggable
+    /// rows — with a move handle in its left inset.
+    pub(crate) fn next_row_draggable(&mut self, n: usize) {
+        self.pending_drag = Some(n);
     }
 
     /// Put a brand mark — the profile `key`'s — before the next row's name.
@@ -817,6 +844,7 @@ impl<'a> Builder<'a> {
                 link: None,
                 chip: None,
                 mark: None,
+                drag: None,
                 text_w: 0.0,
                 widget: Widget::Chips(chips),
             });
@@ -865,6 +893,27 @@ impl<'a> Builder<'a> {
             .height(self.engine, text_w, control_h)
             .max(CardRow::MIN_H);
         let rect = Rect::new(self.x, self.y, self.w, h);
+        // The handle's press covers the whole inset, the row's full height,
+        // so it is not a 12-pixel target.
+        let drag = self.pending_drag.take().map(|n| {
+            let grip = Rect::new(
+                rect.x + GRIP_INSET,
+                rect.y + (rect.h - koru_draw::theme::GRIP_H) * 0.5,
+                koru_draw::theme::GRIP_W,
+                koru_draw::theme::GRIP_H,
+            );
+            self.push_hit(
+                Rect::new(rect.x, rect.y, CardRow::PAD_X, rect.h),
+                Target::Grip(n),
+            );
+            if self.laid.drag_rows.len() <= n {
+                self.laid
+                    .drag_rows
+                    .resize(n + 1, Rect::new(0.0, 0.0, 0.0, 0.0));
+            }
+            self.laid.drag_rows[n] = rect;
+            (n, grip)
+        });
         let text_rect = Rect::new(rect.x + indent, rect.y, rect.w - indent, rect.h);
         let at = row.link_rect(self.engine, text_rect, text_w);
         let link = match (pending_link, at) {
@@ -875,6 +924,9 @@ impl<'a> Builder<'a> {
         };
         let slot = CardRow::control_slot(rect, control_w, control_h);
         let widget = self.place(spec, slot);
+        if let Some((n, _)) = drag {
+            self.push_hit(rect, Target::Row(n));
+        }
         if let Some(card) = self.card.as_mut() {
             card.rows.push(RowLaid {
                 rect,
@@ -883,6 +935,7 @@ impl<'a> Builder<'a> {
                 link,
                 chip,
                 mark,
+                drag,
                 text_w,
                 widget,
             });

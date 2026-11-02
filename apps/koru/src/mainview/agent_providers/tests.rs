@@ -334,6 +334,77 @@ fn the_default_agent_note_names_an_agent_that_is_not_installed() {
     assert_eq!(default_agent_note(None, &rows), None);
 }
 
+/// **The order is Claude first, then the menu's, until it is dragged**, and
+/// an order names every agent once: a stored one's keys first, the rest after
+/// in the built-in order, a key no agent has left out.
+#[test]
+fn the_agent_order_fills_in_the_built_in_order() {
+    let built_in = agent_order(&[]);
+    assert_eq!(built_in[0], "claude");
+    assert_eq!(built_in.len(), koru_session_profiles::coding_agents().len());
+    let order = agent_order(&[
+        "muse".into(),
+        "nobody".into(),
+        "codex".into(),
+        "muse".into(),
+    ]);
+    assert_eq!(&order[..2], ["muse", "codex"]);
+    assert_eq!(order[2], "claude");
+    assert_eq!(order.len(), built_in.len());
+    assert_eq!(order_rank(&order, Some("codex")), 1);
+    assert_eq!(order_rank(&order, None), usize::MAX, "a shell sorts last");
+}
+
+/// **The order applies everywhere agents are listed** (D41): the page's
+/// rows, the *Agents ›* menu, the chat pane and later chat tabs, stored on
+/// this machine — and nothing stored for the built-in order. Restore
+/// defaults puts the built-in order back.
+#[test]
+fn the_agent_order_reaches_the_menu_the_chats_and_the_page() {
+    let mut view = MainView::new();
+    assert!(view.open_settings_tab());
+    let mut order = agent_order(&[]);
+    order.swap(0, 4);
+    let moved = order.clone();
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentOrder(order));
+    assert_eq!(view.delegate_folder.authoritative().agent_order, moved);
+    assert_eq!(
+        settings_rows(&view)
+            .iter()
+            .map(|row| row.key.clone())
+            .collect::<Vec<_>>(),
+        moved,
+        "the page, and so the Default agent chips"
+    );
+    let menu: Vec<String> =
+        agents_menu()
+            .into_iter()
+            .map(str::to_owned)
+            .fold(Vec::new(), |mut keys, key| {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+                keys
+            });
+    assert_eq!(menu, moved, "Agents › follows it");
+    assert!(
+        !view.ai_chat.set_agent_order(moved.clone()),
+        "the chat pane's rail has it"
+    );
+    // A tab opened later reads a process-wide copy other tests write in
+    // parallel; the pane is the one asserted.
+
+    // Dragged back to the built-in order: nothing is stored.
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentOrder(agent_order(&[])));
+    assert!(view.delegate_folder.authoritative().agent_order.is_empty());
+
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentOrder(moved));
+    view.perform_settings_request(koru_settings_ui::Request::RestoreAgentDefaults);
+    assert!(view.delegate_folder.authoritative().agent_order.is_empty());
+    assert_eq!(settings_rows(&view)[0].key, "claude");
+    assert_eq!(agents_menu()[0], "claude");
+}
+
 /// **Agents › ends in Manage…, after a rule**, wherever the flyout opens.
 #[test]
 fn the_agents_menu_ends_in_manage_after_a_rule() {

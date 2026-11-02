@@ -239,4 +239,7 @@ pub enum Request {
     /// Store the agent new chats start with, on this machine: a key, or
     /// `None` for *Auto* (the last agent used).
     SetDefaultAgent(Option<String>),
+    /// Store the order the agents are listed in, on this machine: every
+    /// agent's key, in the order the page now shows them.
+    SetAgentOrder(Vec<String>),
 }

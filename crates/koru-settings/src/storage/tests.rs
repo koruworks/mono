@@ -245,6 +245,8 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         default_permission_other: AgentPermission::Yolo,
         // The default agent is written only when one is chosen.
         default_agent: Some("codex".into()),
+        // The order is written only once moved.
+        agent_order: vec!["codex".into(), "claude".into()],
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -452,6 +454,41 @@ fn the_default_permissions_round_trip_and_manual_writes_no_key() {
     );
     assert_eq!(odd.default_permission, AgentPermission::Manual);
     assert_eq!(odd.default_permission_other, AgentPermission::Manual);
+}
+
+/// **The agents' order** (D41): absent is the built-in order and writes no
+/// key, an order is written and read back with each key once, and anything
+/// but a list of agent keys reads as the built-in order.
+#[test]
+fn the_agent_order_round_trips_and_the_built_in_order_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("agent_order").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(
+        br#"{"agent_order": ["codex", "claude", "codex", "grok"]}"#,
+        &mut settings,
+    );
+    assert_eq!(settings.agent_order, ["codex", "claude", "grok"]);
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(
+        value["agent_order"],
+        serde_json::json!(["codex", "claude", "grok"])
+    );
+    let mut again = GlobalSettings::default();
+    apply_desktop(&written, &mut again);
+    assert_eq!(again.agent_order, settings.agent_order);
+
+    for odd in [
+        &br#"{"agent_order": "codex"}"#[..],
+        br#"{"agent_order": ["Codex"]}"#,
+    ] {
+        let mut read = GlobalSettings::default();
+        apply_desktop(odd, &mut read);
+        assert!(read.agent_order.is_empty());
+    }
 }
 
 /// **The default agent** (D40): absent is *Auto* and writes no key, a key is

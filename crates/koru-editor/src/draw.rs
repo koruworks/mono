@@ -2555,13 +2555,7 @@ pub fn draw_grip(scene: &mut Scene, root: Affine, row: &Paragraph, oy: f32, acti
     } else {
         theme::p().grip
     };
-    for row in 0..3 {
-        for col in 0..2 {
-            let cx = (grip.x + 3.0 + col as f32 * 5.0) as f64;
-            let cy = (grip.y + 3.0 + row as f32 * 4.5) as f64;
-            fill(scene, root, color, &Circle::new((cx, cy), 1.4));
-        }
-    }
+    koru_draw::scene::grip_dots(scene, root, grip, color);
 }
 
 /// What a margin icon drawn from geometry leaves in the inspector: one

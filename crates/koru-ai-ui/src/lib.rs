@@ -506,6 +506,8 @@ pub struct ChatSurface {
     hidden_agents: std::collections::HashSet<String>,
     /// Where a new chat starts, as the host's *Agent providers* holds it.
     agent_defaults: agents::AgentDefaults,
+    /// The order the agents are listed in, by key, as the host holds it.
+    agent_order: Vec<String>,
     /// The host can open Settings on *Agent providers*, so the picker's rail
     /// ends in a **+** that asks it to. Off until a host says so: a window
     /// with no such page draws no button that would do nothing.
@@ -803,6 +805,7 @@ impl ChatSurface {
             agent_modes: HashMap::new(),
             hidden_agents: std::collections::HashSet::new(),
             agent_defaults: agents::AgentDefaults::default(),
+            agent_order: Vec::new(),
             agent_settings_offered: false,
             agent_settings_request: false,
             openai_models: Vec::new(),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::page::{Block, Widget};
+use crate::page::{Block, Target, Widget};
 use crate::state::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
 use crate::tests::{GLOBALS, koru, page_lines, press, switch};
 use crate::{PageGroup, PageId, Request, SettingsSurface};
@@ -376,6 +376,141 @@ fn the_default_agent_chips_offer_auto_and_every_agent_that_is_on() {
     assert!(press(&mut surface, "Restore defaults"));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(surface.agent_defaults().agent, None);
+}
+
+/// The page hit whose target `want` picks.
+fn hit_of(surface: &SettingsSurface, want: impl Fn(&Target) -> bool) -> usize {
+    surface
+        .laid
+        .hits
+        .iter()
+        .position(|hit| want(&hit.target))
+        .expect("a hit")
+}
+
+fn keys(surface: &SettingsSurface) -> Vec<&str> {
+    surface
+        .agent_providers()
+        .iter()
+        .map(|row| row.key.as_str())
+        .collect()
+}
+
+/// **An agent row is dragged by its handle** (D41), the way a paragraph
+/// block is: a press on the handle takes the row, the drop line follows the
+/// pointer, and the release puts the row there and asks the host to store
+/// the whole order. Dropping it where it was asks for nothing.
+#[test]
+fn an_agent_row_is_dragged_by_its_handle_to_a_new_place() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = on_page(rows());
+    assert_eq!(surface.laid.drag_rows.len(), 5, "every agent row moves");
+    let grip = hit_of(&surface, |target| matches!(target, Target::Grip(0)));
+    let (x, y) = surface.laid.hits[grip].rect.centre();
+    assert!(surface.mouse_down(x, y - surface.scroll));
+    assert_eq!(surface.focused_agent(), Some("claude"));
+    assert_eq!(surface.agent_drag, Some((0, 0)));
+    let over = surface.laid.drag_rows[2];
+    assert!(surface.mouse_move(x, over.y + over.h * 0.5 - surface.scroll));
+    assert_eq!(
+        surface.agent_drag,
+        Some((0, 2)),
+        "the drop line is at Codex"
+    );
+    assert!(surface.mouse_up());
+    assert_eq!(
+        surface.take_requests(),
+        [Request::SetAgentOrder(
+            ["grok", "codex", "claude", "antigravity", "muse"]
+                .map(str::to_owned)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        keys(&surface),
+        ["grok", "codex", "claude", "antigravity", "muse"]
+    );
+    surface.relayout();
+    assert_eq!(
+        agent_rows(&surface)
+            .into_iter()
+            .map(|(mark, _, _)| mark)
+            .collect::<Vec<_>>(),
+        ["grok", "codex", "claude", "antigravity", "muse"],
+        "the page lists them so"
+    );
+    // Past the last row lands last; back where it began asks for nothing.
+    let grip = hit_of(&surface, |target| matches!(target, Target::Grip(4)));
+    let (x, y) = surface.laid.hits[grip].rect.centre();
+    assert!(surface.mouse_down(x, y - surface.scroll));
+    surface.mouse_move(x, y - surface.scroll + 500.0);
+    surface.mouse_move(x, y - surface.scroll);
+    assert!(surface.mouse_up());
+    assert!(surface.take_requests().is_empty());
+}
+
+/// **The move chords move a focused row** — the same registry entries a
+/// paragraph block moves with — Up and Down move the keyboard between rows,
+/// Escape lets go, and the first row goes no higher.
+#[test]
+fn the_move_chords_move_the_focused_agent_row() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = on_page(rows());
+    let chord = |id| koru_keys::registry::get(id).chord.mods;
+    let up = chord(koru_keys::ShortcutId::MoveRowUp);
+    let down = chord(koru_keys::ShortcutId::MoveRowDown);
+    let key = |surface: &mut SettingsSurface, named, mods| {
+        surface.key(&winit::keyboard::Key::Named(named), None, mods)
+    };
+    use winit::keyboard::{ModifiersState, NamedKey};
+
+    // No row has the keyboard: the chord is not the page's.
+    assert!(!key(&mut surface, NamedKey::ArrowDown, down));
+
+    let row = hit_of(&surface, |target| matches!(target, Target::Row(1)));
+    let rect = surface.laid.hits[row].rect;
+    assert!(surface.mouse_down(rect.x + rect.w * 0.4, rect.y + 4.0 - surface.scroll));
+    assert_eq!(surface.focused_agent(), Some("grok"));
+    assert!(
+        surface.take_requests().is_empty(),
+        "a press on the row only focuses it"
+    );
+
+    assert!(key(&mut surface, NamedKey::ArrowDown, down));
+    assert_eq!(
+        keys(&surface),
+        ["claude", "codex", "grok", "antigravity", "muse"]
+    );
+    assert_eq!(
+        surface.take_requests(),
+        [Request::SetAgentOrder(
+            ["claude", "codex", "grok", "antigravity", "muse"]
+                .map(str::to_owned)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        surface.focused_agent(),
+        Some("grok"),
+        "the row keeps the keyboard"
+    );
+
+    assert!(key(
+        &mut surface,
+        NamedKey::ArrowUp,
+        ModifiersState::empty()
+    ));
+    assert_eq!(surface.focused_agent(), Some("codex"));
+    assert!(key(&mut surface, NamedKey::ArrowUp, up));
+    assert!(
+        key(&mut surface, NamedKey::ArrowUp, up),
+        "taken, and nothing moves"
+    );
+    assert_eq!(keys(&surface)[0], "codex");
+    assert_eq!(surface.take_requests().len(), 1, "only the move that moved");
+
+    assert!(key(&mut surface, NamedKey::Escape, ModifiersState::empty()));
+    assert_eq!(surface.focused_agent(), None);
 }
 
 /// Every word the page and its heading say exists in every language.

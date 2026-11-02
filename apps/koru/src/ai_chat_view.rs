@@ -48,6 +48,7 @@ impl AiChatView {
     fn over(mut surface: Box<ChatSurface>) -> Self {
         surface.set_hidden_agents(hidden_agents());
         surface.set_agent_defaults(agent_defaults());
+        surface.set_agent_order(agent_order());
         // Koru has a Settings tab: the picker's + opens *Agent providers*.
         surface.offer_agent_settings(true);
         Self {
@@ -217,6 +218,11 @@ impl AiChatView {
         self.surface.set_agent_defaults(defaults)
     }
 
+    /// The order the agents are listed in (Agent providers).
+    pub fn set_agent_order(&mut self, keys: Vec<String>) -> bool {
+        self.surface.set_agent_order(keys)
+    }
+
     /// The picker's **+** was pressed: the container opens Settings on
     /// Agent providers.
     pub fn take_agent_settings_request(&mut self) -> bool {
@@ -260,6 +266,23 @@ fn agent_defaults() -> koru_ai_ui::AgentDefaults {
         .unwrap_or_else(|error| error.into_inner())
         .clone()
         .unwrap_or_default()
+}
+
+/// **The agents' order, for chat tabs opened later** — the same
+/// arrangement again.
+static AGENT_ORDER: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn set_agent_order(keys: Vec<String>) {
+    *AGENT_ORDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = keys;
+}
+
+fn agent_order() -> Vec<String> {
+    AGENT_ORDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
 }
 
 impl AiChatView {
