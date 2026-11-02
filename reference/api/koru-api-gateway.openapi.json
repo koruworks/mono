@@ -269,6 +269,26 @@
         },
         "type": "object"
       },
+      "AgentModeView": {
+        "description": "One approval mode an agent offers: its own id, and what it says of it.\nA client words the ids it knows and shows these for the rest.",
+        "properties": {
+          "description": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
       "AgentModelContext": {
         "description": "A model's longer context window: the id that runs the model with it,\nand its size in tokens.",
         "properties": {
@@ -354,9 +374,21 @@
       "AgentModelsResponse": {
         "description": "The models one local agent lists, in the agent's own ids. Empty when the\nagent lists none: the picker then shows no model level under it.",
         "properties": {
+          "default_mode": {
+            "description": "The mode the agent reports it starts in — the one a chat that chose\nnone runs in. Absent when the agent does not say.",
+            "nullable": true,
+            "type": "string"
+          },
           "models": {
             "items": {
               "$ref": "#/components/schemas/AgentModelView"
+            },
+            "type": "array"
+          },
+          "modes": {
+            "description": "The agent's approval modes (koru-ai D7), in its order, with its own\nids. Empty when it offers none: a client then shows no mode control.",
+            "items": {
+              "$ref": "#/components/schemas/AgentModeView"
             },
             "type": "array"
           },

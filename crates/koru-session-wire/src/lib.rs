@@ -676,6 +676,11 @@ pub struct SessionCatalog {
 pub enum Response {
     ProviderModels {
         models: koru_session_protocol::ProviderModels,
+        /// The agent's approval modes (koru-ai D7), beside its models so a
+        /// picker fills before a session exists. Defaulted: an older host
+        /// sends none and an older client leaves them unread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modes: Option<koru_session_protocol::AgentModes>,
     },
     Health {
         health: HostHealth,

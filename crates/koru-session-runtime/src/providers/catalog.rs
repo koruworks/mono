@@ -28,9 +28,16 @@
 //! read, and the Koru version. A persisted entry is served while its agent
 //! still reads *Checking* — a dimmed list during the first seconds — and
 //! is fresh again once the probe reads the same version.
+//!
+//! **An agent's approval modes** (koru-ai D7) are kept beside its entry, in
+//! memory only: every probe's session start reads them again, and the file
+//! keeps the format it has. An agent that advertises none, Codex, has the
+//! ones Koru gives it from its factory.
 
-use super::{CatalogSource, ManagedProviderRegistry};
-use koru_session_protocol::{ErrorCode, ExecutableAvailability, ProviderKind, ProviderModels};
+use super::{CatalogSource, ManagedProviderRegistry, ProbeCapture};
+use koru_session_protocol::{
+    AgentModes, ErrorCode, ExecutableAvailability, ProviderKind, ProviderModels,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -205,6 +212,9 @@ struct State {
     /// Bumped whenever an entry is dropped, so a listing that started
     /// before the drop cannot put back what the drop removed.
     generations: BTreeMap<ProviderKind, u64>,
+    /// The approval modes each agent's latest probe read (D7). Never
+    /// written to the file.
+    modes: BTreeMap<ProviderKind, AgentModes>,
 }
 
 /// One listing: its own number, and the generation of the kind it lists.
@@ -350,6 +360,44 @@ impl ProviderCatalogCache {
         sequence: u64,
         drop: Option<CatalogDrop>,
     ) {
+        self.observe_row(readiness, captured, None, sequence, drop);
+    }
+
+    /// A probe's answer: its row, and everything its session start
+    /// received — the models as [`observe`](Self::observe) takes them, and
+    /// the agent's approval modes, which replace those an earlier probe read
+    /// once the row says the agent is ready.
+    pub fn observe_capture(
+        &self,
+        readiness: &koru_session_protocol::ProviderReadiness,
+        capture: ProbeCapture,
+        sequence: u64,
+    ) {
+        self.observe_row(
+            readiness,
+            capture.models,
+            Some(capture.modes),
+            sequence,
+            None,
+        );
+    }
+
+    /// The approval modes `kind` offers (D7): those its latest probe read,
+    /// else the ones Koru gives an agent that advertises none. `None` when
+    /// there are neither, and a picker shows no mode control.
+    pub fn modes(&self, kind: &ProviderKind) -> Option<AgentModes> {
+        let read = self.lock().modes.get(kind).cloned();
+        read.or_else(|| self.registry.fixed_modes(kind))
+    }
+
+    fn observe_row(
+        &self,
+        readiness: &koru_session_protocol::ProviderReadiness,
+        captured: Option<ProviderModels>,
+        modes: Option<Option<AgentModes>>,
+        sequence: u64,
+        drop: Option<CatalogDrop>,
+    ) {
         let kind = readiness.kind.clone();
         let source = self.registry.catalog_source(&kind);
         let walks = self.registry.walks_model_levels(&kind);
@@ -369,6 +417,14 @@ impl ProviderCatalogCache {
             state
                 .readiness
                 .insert(kind.clone(), readiness.availability.clone());
+            if let (ExecutableAvailability::Available { .. }, Some(modes)) =
+                (&readiness.availability, modes)
+            {
+                match modes {
+                    Some(modes) => state.modes.insert(kind.clone(), modes),
+                    None => state.modes.remove(&kind),
+                };
+            }
             if let ExecutableAvailability::Available { version } = &readiness.availability {
                 match (source, captured) {
                     (Some(CatalogSource::Probe), Some(models)) => {
@@ -746,6 +802,7 @@ fn current_run(state: &State, kind: &ProviderKind) -> Option<Run> {
 
 fn drop_entry(state: &mut State, kind: &ProviderKind, reason: CatalogDrop) {
     *state.generations.entry(kind.clone()).or_default() += 1;
+    state.modes.remove(kind);
     if state.entries.remove(kind).is_some() {
         tracing::info!(target: "koru::provider_models", event = "catalog.dropped",
             provider = %kind, reason = reason.as_str());

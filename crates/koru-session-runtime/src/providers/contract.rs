@@ -198,6 +198,14 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
         CatalogSource::OnDemand
     }
 
+    /// **The approval modes Koru gives an agent that advertises none**
+    /// (koru-ai D7): Codex's, which its adapter maps onto the app-server's
+    /// own approval and sandbox settings. An agent that advertises its own
+    /// has them read from its session start instead, and answers `None`.
+    fn fixed_modes(&self) -> Option<koru_session_protocol::AgentModes> {
+        None
+    }
+
     /// Whether this provider's levels are read by walking its models once
     /// per version (agent-models D16), because its session offers levels for
     /// the model it is on and no other.

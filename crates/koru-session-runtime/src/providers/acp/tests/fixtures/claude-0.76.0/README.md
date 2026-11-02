@@ -21,3 +21,12 @@ Refresh by installing exactly @agentclientprotocol/claude-agent-acp@0.76.0
 under a task target directory, running bounded initialize/session-new with no
 model prompt, and retaining only these closed structured facts. Never copy
 credentials, raw account fields or provider frames into the fixtures.
+
+new-session.sanitized.json is the `session/new` answer observed on Windows x64
+on 2026-11-02 with an isolated, signed-out config directory (koru-ai D7, D11):
+the wrapper's `modes` and its `mode`, `model`, `thought_level` and `fast`
+config options, reduced to their ids, values and the wrapper's own fixed mode
+words. Model and level names are replaced with `<label>`. `bypassPermissions`
+is listed because the wrapper was not running as root; `fast` is the select
+fallback (`on`/`off`) a client gets when it does not advertise boolean config
+options, as Koru does not.

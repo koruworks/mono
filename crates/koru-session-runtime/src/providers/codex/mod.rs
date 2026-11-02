@@ -4,6 +4,7 @@ mod config;
 mod events;
 mod launch;
 mod models;
+mod modes;
 mod normalize;
 mod probe;
 

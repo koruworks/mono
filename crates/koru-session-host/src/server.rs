@@ -945,10 +945,15 @@ fn handle_request(
                 // one of its two slots, or is refused with `Backpressure`.
                 // The list is the agent's user-level one whatever folder
                 // the request names (agent-models §11).
+                // The agent's approval modes ride beside its models (D7),
+                // from the same memory.
                 state
                     .catalog
                     .serve(&provider)
-                    .map(|models| Response::ProviderModels { models })
+                    .map(|models| Response::ProviderModels {
+                        models,
+                        modes: state.catalog.modes(&provider),
+                    })
                     .map_err(failure)
             }
         }

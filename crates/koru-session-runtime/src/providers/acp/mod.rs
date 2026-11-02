@@ -8,6 +8,7 @@ mod events;
 mod grok;
 mod input;
 mod models;
+mod modes;
 mod probe;
 mod routes;
 
@@ -45,6 +46,11 @@ pub struct AcpControl {
     /// What the session advertised under its `model` config option, for
     /// discovery; empty where the route advertises none.
     model_options: Vec<koru_session_protocol::ProviderModel>,
+    /// The approval modes the session advertised, with the one it is in
+    /// (koru-ai D7); `None` where it advertised none.
+    modes: Option<koru_session_protocol::AgentModes>,
+    /// The `mode` config option's id, when the modes came with one.
+    mode_config: Option<String>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
@@ -107,6 +113,8 @@ impl AcpControl {
             wrapper_auth: None,
             grok_inventory: None,
             model_options: Vec::new(),
+            modes: None,
+            mode_config: None,
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
@@ -132,6 +140,28 @@ impl AcpControl {
     /// The models the started session advertised; empty before start.
     pub(super) fn model_options(&self) -> &[koru_session_protocol::ProviderModel] {
         &self.model_options
+    }
+
+    /// The approval modes the session advertised, in the mode it is in now;
+    /// `None` before start and where it advertised none (D7).
+    pub(super) fn modes(&self) -> Option<&koru_session_protocol::AgentModes> {
+        self.modes.as_ref()
+    }
+
+    /// Follow the mode an answer or an update reports: the session's modes
+    /// with that one current. The new mode when it moved, `None` when it is
+    /// the same, is not one of the session's, or the answer names none.
+    fn follow_mode(
+        &mut self,
+        reported: Option<koru_session_protocol::AgentModeId>,
+    ) -> Option<koru_session_protocol::AgentModeId> {
+        let reported = reported?;
+        let modes = self.modes.as_ref()?;
+        if modes.current() == Some(&reported) {
+            return None;
+        }
+        self.modes = Some(modes.with_current(&reported)?);
+        Some(reported)
     }
 
     fn ensure_transport(&mut self) -> Result<(), ProviderFailure> {
@@ -592,6 +622,10 @@ impl AcpControl {
             .ok_or_else(handshake_rejected)?
             .to_owned();
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
+        if let Some(read) = modes::read(&session) {
+            self.modes = Some(read.modes);
+            self.mode_config = read.config_id;
+        }
         if self.config.route.is_claude() {
             self.model_options =
                 claude::fold_context_siblings(std::mem::take(&mut self.model_options));
@@ -615,6 +649,9 @@ impl AcpControl {
                 .map_err(|_| models::selection_unavailable())?;
             models::validate_applied(&selected, model)?;
             tracing::info!(target: "koru::acp", event = "acp.model.selected", session_id = %start.session_id, selected = true);
+            // A model may not offer a mode the session was in (Claude's
+            // `auto`), and the agent moves it; the answer says where.
+            self.follow_mode(modes::current(&selected));
             latest = Some(selected);
         }
         if let Some(level) = self.config.requested_reasoning() {

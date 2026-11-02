@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use koru_session_protocol::{ErrorCode, ProviderKind, ProviderModels};
+use koru_session_protocol::{AgentModes, ErrorCode, ProviderKind, ProviderModels};
 
 use super::{AgentCapabilities, ProviderDiagnostic, ProviderFailure, ProviderStage};
 
@@ -70,6 +70,18 @@ pub struct ProviderDiscovery {
     pub managed: ManagedAvailability,
     /// The model list the probe's session start received, for the catalog.
     pub models: Option<ProviderModels>,
+    /// The approval modes the same start received (koru-ai D7), for the
+    /// catalog; `None` where the agent advertised none.
+    pub modes: Option<AgentModes>,
+}
+
+/// **What a probe's session start received** for the host's catalog: its
+/// model list when the catalog comes from the probe, and the agent's
+/// approval modes whatever the catalog's source (koru-ai D7).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProbeCapture {
+    pub models: Option<ProviderModels>,
+    pub modes: Option<AgentModes>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +190,24 @@ pub trait CompatibilityProbe: Send + 'static {
     ) -> Result<(AgentCapabilities, Option<ProviderModels>), ProviderFailure> {
         self.probe(limits).map(|capabilities| (capabilities, None))
     }
+
+    /// The probe, its model list as [`probe_with_models`](Self::probe_with_models)
+    /// keeps it, and the approval modes its start received (D7).
+    fn probe_with_capture(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<(AgentCapabilities, ProbeCapture), ProviderFailure> {
+        self.probe_with_models(limits)
+            .map(|(capabilities, models)| {
+                (
+                    capabilities,
+                    ProbeCapture {
+                        models,
+                        modes: None,
+                    },
+                )
+            })
+    }
 }
 
 /// A discovery run starts bounded provider probes on named background threads.
@@ -205,12 +235,12 @@ impl DiscoveryRun {
                 .spawn(move || {
                     let raw_available =
                         catch_unwind(AssertUnwindSafe(|| probe.raw_available())).unwrap_or(false);
-                    let mut models = None;
+                    let mut capture = ProbeCapture::default();
                     let managed = match catch_unwind(AssertUnwindSafe(|| {
-                        probe.probe_with_models(limits)
+                        probe.probe_with_capture(limits)
                     })) {
                         Ok(Ok((capabilities, captured))) if capabilities.provider == provider => {
-                            models = captured;
+                            capture = captured;
                             ManagedAvailability::Compatible(capabilities)
                         }
                         Ok(Ok(_)) => ManagedAvailability::Incompatible {
@@ -227,7 +257,8 @@ impl DiscoveryRun {
                         provider,
                         raw_available,
                         managed,
-                        models,
+                        models: capture.models,
+                        modes: capture.modes,
                     });
                 })
                 .map_err(|_| {

@@ -10751,6 +10751,8 @@ mod tests {
         }];
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: claude.clone(),
+            modes: Vec::new(),
+            default_mode: None,
             models: listed.clone(),
         }));
         surface.prefetch_agent_models();
@@ -10855,6 +10857,8 @@ mod tests {
         };
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: AiProviderId::parse("agent-claude").unwrap(),
+            modes: Vec::new(),
+            default_mode: None,
             models: vec![
                 model(
                     "opus",

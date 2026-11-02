@@ -1354,6 +1354,127 @@
     "title": "AgentEventObservation",
     "type": "object"
   },
+  "AgentMode": {
+    "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One mode, with what the agent itself says about it.",
+    "properties": {
+      "description": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "id": {
+        "$ref": "#/$defs/AgentModeId"
+      },
+      "name": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelLabel"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The agent's own name for it: ACP's mode `name`."
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "AgentMode",
+    "type": "object"
+  },
+  "AgentModeId": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+    "title": "AgentModeId",
+    "type": "string"
+  },
+  "AgentModes": {
+    "$defs": {
+      "AgentMode": {
+        "description": "One mode, with what the agent itself says about it.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelLabel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agent's own name for it: ACP's mode `name`."
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
+      "ModelLabel": {
+        "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**The modes an agent offers**, in the agent's order, and the one it\nreports it is in. Never empty: an agent that offers none has no\n`AgentModes` at all, and a surface shows no mode control for it.",
+    "properties": {
+      "current": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "modes": {
+        "items": {
+          "$ref": "#/$defs/AgentMode"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "modes"
+    ],
+    "title": "AgentModes",
+    "type": "object"
+  },
   "AgentTurnId": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "format": "uuid",

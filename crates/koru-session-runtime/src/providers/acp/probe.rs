@@ -307,6 +307,17 @@ impl CompatibilityProbe for AcpCompatibilityProbe {
         ),
         ProviderFailure,
     > {
+        self.probe_with_capture(limits)
+            .map(|(capabilities, capture)| (capabilities, capture.models))
+    }
+
+    /// The same start, keeping its `model` values as
+    /// [`probe_with_models`](Self::probe_with_models) does and, on every
+    /// route, the approval modes it advertised (koru-ai D7).
+    fn probe_with_capture(
+        &self,
+        limits: ProbeLimits,
+    ) -> Result<(AgentCapabilities, ProbeCapture), ProviderFailure> {
         let version = self.version(limits)?;
         let config = AcpConfig::new(
             self.route.clone(),
@@ -324,9 +335,10 @@ impl CompatibilityProbe for AcpCompatibilityProbe {
                     .ok()
             })
             .flatten();
+        let modes = control.modes().cloned();
         let shutdown = control.shutdown();
         let capabilities = result?;
         shutdown?;
-        Ok((capabilities, models))
+        Ok((capabilities, ProbeCapture { models, modes }))
     }
 }

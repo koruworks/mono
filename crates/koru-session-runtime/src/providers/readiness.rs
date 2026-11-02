@@ -5,12 +5,10 @@
 //! the model list a probe's session start received, also go to the model
 //! catalog beside it.
 use super::{
-    CatalogDrop, DiscoveryRun, ManagedProviderRegistry, ProbeLimits, ProviderCatalogCache,
-    ProviderDiagnostic, ProviderDiscovery, ProviderFailure, ProviderStage,
+    CatalogDrop, DiscoveryRun, ManagedProviderRegistry, ProbeCapture, ProbeLimits,
+    ProviderCatalogCache, ProviderDiagnostic, ProviderDiscovery, ProviderFailure, ProviderStage,
 };
-use koru_session_protocol::{
-    ErrorCode, ExecutableAvailability, ProviderKind, ProviderModels, ProviderReadiness,
-};
+use koru_session_protocol::{ErrorCode, ExecutableAvailability, ProviderKind, ProviderReadiness};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
@@ -189,7 +187,7 @@ impl ProviderReadinessCache {
             self.complete(
                 generation,
                 failed(kind, ProviderDiagnostic::InvalidState),
-                None,
+                ProbeCapture::default(),
             );
         } else if start {
             self.spawn_probe(kind, generation);
@@ -207,19 +205,19 @@ impl ProviderReadinessCache {
             .name("koru-provider-readiness".into())
             .stack_size(256 * 1024)
             .spawn(move || {
-                let (result, models, run) =
+                let (result, capture, run) =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         discover(&registry, &requested, cwd, timeout)
                     }))
                     .unwrap_or_else(|_| {
                         (
                             failed(requested.clone(), ProviderDiagnostic::UnexpectedExit),
-                            None,
+                            ProbeCapture::default(),
                             None,
                         )
                     });
                 if let Some(cache) = weak.upgrade() {
-                    cache.complete(generation, result, models);
+                    cache.complete(generation, result, capture);
                 }
                 // A visible timeout does not mean the provider stopped.
                 // Hold this permit until its actual worker exits.
@@ -234,7 +232,7 @@ impl ProviderReadinessCache {
             self.complete(
                 generation,
                 failed(kind.clone(), ProviderDiagnostic::Spawn),
-                None,
+                ProbeCapture::default(),
             );
             self.finished(kind);
         }
@@ -259,12 +257,7 @@ impl ProviderReadinessCache {
     /// Accept a probe's answer if it is still the latest asked for, and
     /// hand the catalog the row and what the probe's start captured. A
     /// stale answer reaches neither.
-    fn complete(
-        &self,
-        generation: u64,
-        result: ProviderReadiness,
-        models: Option<ProviderModels>,
-    ) -> bool {
+    fn complete(&self, generation: u64, result: ProviderReadiness, capture: ProbeCapture) -> bool {
         let sequence = {
             let mut state = self.state.lock().unwrap_or_else(|held| held.into_inner());
             let Some(entry) = state.entries.get_mut(&result.kind) else {
@@ -277,7 +270,7 @@ impl ProviderReadinessCache {
             publish(&mut state, result.clone())
         };
         if let Some(catalog) = &self.catalog {
-            catalog.observe(&result, models, sequence, None);
+            catalog.observe_capture(&result, capture, sequence);
         }
         true
     }
@@ -306,11 +299,7 @@ fn discover(
     kind: &ProviderKind,
     cwd: PathBuf,
     timeout: std::time::Duration,
-) -> (
-    ProviderReadiness,
-    Option<ProviderModels>,
-    Option<DiscoveryRun>,
-) {
+) -> (ProviderReadiness, ProbeCapture, Option<DiscoveryRun>) {
     let limits = ProbeLimits::default();
     let mut owner = None;
     let result = registry.compatibility_probe(kind, cwd).and_then(|probe| {
@@ -334,19 +323,20 @@ fn discover(
             )
         })
     });
-    let mut models = None;
+    let mut capture = ProbeCapture::default();
     let readiness = match result {
         Ok(ProviderDiscovery {
             managed,
-            models: captured,
+            models,
+            modes,
             ..
         }) => {
-            models = captured;
+            capture = ProbeCapture { models, modes };
             managed.readiness(kind.clone())
         }
         Err(failure) => super::discovery::classify_failure(failure).readiness(kind.clone()),
     };
-    (readiness, models, owner)
+    (readiness, capture, owner)
 }
 
 /// Send a row to every subscriber and number it; the number orders the

@@ -118,6 +118,11 @@ impl ManagedProviderFactory for CodexFactory {
         CodexControl::new(config).discover_models()
     }
 
+    /// Codex advertises no modes; Koru gives it three (koru-ai D7).
+    fn fixed_modes(&self) -> Option<koru_session_protocol::AgentModes> {
+        Some(super::modes::offered())
+    }
+
     fn compatibility_probe(
         &self,
         executable: OsString,

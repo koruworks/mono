@@ -737,33 +737,52 @@ pub(super) fn agent_models(
             false,
         ));
     };
-    let models = agents
+    let catalog = agents
         .discover_models(&kind, refresh)
         .map_err(agent_models_failure)?;
+    let label = |label: &Option<koru_session_protocol::ModelLabel>| {
+        label.as_ref().map(|label| label.as_str().to_owned())
+    };
+    let (modes, default_mode) = catalog
+        .modes
+        .as_ref()
+        .map_or_else(Default::default, |modes| {
+            (
+                modes
+                    .modes()
+                    .iter()
+                    .map(|mode| koru_ai_wire::AgentModeView {
+                        id: mode.id.as_str().to_owned(),
+                        name: label(&mode.name),
+                        description: label(&mode.description),
+                    })
+                    .collect(),
+                modes.current().map(|id| id.as_str().to_owned()),
+            )
+        });
     Ok(AgentModelsResponse {
         provider,
-        models: models
+        modes,
+        default_mode,
+        models: catalog
+            .models
             .models()
             .iter()
-            .map(|model| {
-                let label = |label: &Option<koru_session_protocol::ModelLabel>| {
-                    label.as_ref().map(|label| label.as_str().to_owned())
-                };
-                AgentModelView {
-                    id: model.id.as_str().to_owned(),
-                    group: model.group.as_str().to_owned(),
-                    name: label(&model.name),
-                    description: label(&model.description),
-                    group_name: label(&model.group_name),
-                    legacy: model.legacy,
-                    reasoning: model.reasoning.as_ref().and_then(reasoning_control),
-                    context: model.context.as_ref().map(|context| {
-                        koru_ai_wire::AgentModelContext {
-                            id: context.id.as_str().to_owned(),
-                            tokens: context.tokens,
-                        }
+            .map(|model| AgentModelView {
+                id: model.id.as_str().to_owned(),
+                group: model.group.as_str().to_owned(),
+                name: label(&model.name),
+                description: label(&model.description),
+                group_name: label(&model.group_name),
+                legacy: model.legacy,
+                reasoning: model.reasoning.as_ref().and_then(reasoning_control),
+                context: model
+                    .context
+                    .as_ref()
+                    .map(|context| koru_ai_wire::AgentModelContext {
+                        id: context.id.as_str().to_owned(),
+                        tokens: context.tokens,
                     }),
-                }
             })
             .collect(),
     })

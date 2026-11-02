@@ -663,3 +663,85 @@ fn walked_levels_lay_over_the_capture_and_a_model_not_reached_keeps_its_own() {
     let kept = keep_walked_levels(captured(), &leveled(&["default", "opus"]));
     assert!(kept.models().iter().all(|model| model.reasoning.is_some()));
 }
+
+fn modes(ids: &[&str], current: &str) -> AgentModes {
+    AgentModes::new(
+        ids.iter()
+            .map(|id| koru_session_protocol::AgentMode::new(id.parse().unwrap()))
+            .collect(),
+        current.parse().ok(),
+    )
+    .unwrap()
+}
+
+/// **An agent's approval modes ride beside its list** (koru-ai D7): those a
+/// ready probe read replace the last ones, a drop forgets them, and the file
+/// never holds them.
+#[test]
+fn a_probes_modes_are_served_beside_the_list_and_never_written() {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let next = || SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    let world = World::new(true);
+    let store = Arc::new(MemoryCatalogStore::default());
+    let cache = world.cache(store.clone(), false);
+    assert_eq!(cache.modes(&kind("claude")), None);
+
+    let read = modes(&["default", "plan"], "default");
+    cache.observe_capture(
+        &available("claude", "0.76.0"),
+        ProbeCapture {
+            models: Some(catalog(&["default", "opus"])),
+            modes: Some(read.clone()),
+        },
+        next(),
+    );
+    assert_eq!(cache.modes(&kind("claude")), Some(read));
+    assert!(
+        !String::from_utf8(store.bytes().unwrap())
+            .unwrap()
+            .contains("plan"),
+        "the file keeps its format"
+    );
+
+    // A row that is not ready says nothing about modes.
+    cache.observe_capture(
+        &readiness("claude", ExecutableAvailability::Checking),
+        ProbeCapture::default(),
+        next(),
+    );
+    assert!(cache.modes(&kind("claude")).is_some());
+    cache.drop_entry(&kind("claude"), CatalogDrop::Refresh);
+    assert_eq!(cache.modes(&kind("claude")), None);
+}
+
+/// An agent that advertises none has the ones Koru gives it.
+#[test]
+fn an_agent_without_modes_of_its_own_is_served_its_factorys() {
+    struct Fixed;
+    impl ManagedProviderFactory for Fixed {
+        fn create(&self, _: ManagedProviderRequest) -> Result<ManagedProvider, ProviderFailure> {
+            Err(ProviderFailure::new(
+                ErrorCode::ProviderFailed,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::HandshakeRejected,
+            ))
+        }
+        fn fixed_modes(&self) -> Option<AgentModes> {
+            Some(modes(&["ask", "full-access"], "ask"))
+        }
+    }
+    let mut registry = ManagedProviderRegistry::default();
+    registry
+        .register(CODEX_REGISTRATION, Arc::new(Fixed))
+        .unwrap();
+    let cache = ProviderCatalogCache::new(
+        Arc::new(registry),
+        PathBuf::from("fixture-sessions"),
+        Box::new(MemoryCatalogStore::default()),
+        false,
+    );
+    assert_eq!(
+        cache.modes(&kind("codex")),
+        Some(modes(&["ask", "full-access"], "ask"))
+    );
+}

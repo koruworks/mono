@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "sessionId": "<private-session>",
+    "configOptions": [
+      {
+        "id": "model",
+        "name": "<label>",
+        "category": "model",
+        "type": "select",
+        "currentValue": "provider-a/model-a",
+        "options": [
+          {"value": "provider-a/model-a", "name": "<label>"},
+          {"value": "provider-b/model-b", "name": "<label>"}
+        ]
+      },
+      {
+        "id": "mode",
+        "name": "<label>",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "build",
+        "options": [
+          {"value": "build", "name": "<label>"},
+          {"value": "plan", "name": "<label>"}
+        ]
+      }
+    ]
+  }
+}

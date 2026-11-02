@@ -91,6 +91,13 @@ impl ManagedProviderRegistry {
             .map(|entry| entry.factory.catalog_source())
     }
 
+    /// The modes Koru gives `kind` when the agent advertises none (D7).
+    pub fn fixed_modes(&self, kind: &ProviderKind) -> Option<koru_session_protocol::AgentModes> {
+        self.entries
+            .get(kind)
+            .and_then(|entry| entry.factory.fixed_modes())
+    }
+
     /// Whether `kind`'s levels are read by the catalog's walk (D16).
     pub fn walks_model_levels(&self, kind: &ProviderKind) -> bool {
         self.entries

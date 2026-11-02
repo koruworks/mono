@@ -672,6 +672,23 @@ impl SessionClient {
         provider: koru_session_protocol::ProviderKind,
         working_directory: PathBuf,
     ) -> Result<koru_session_protocol::ProviderModels, ClientError> {
+        self.discover_provider_catalog(provider, working_directory)
+            .map(|(models, _)| models)
+    }
+
+    /// An agent's models and, beside them, its approval modes (koru-ai D7);
+    /// `None` from a host that sends none, or for an agent with none.
+    pub fn discover_provider_catalog(
+        &self,
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    ) -> Result<
+        (
+            koru_session_protocol::ProviderModels,
+            Option<koru_session_protocol::AgentModes>,
+        ),
+        ClientError,
+    > {
         if !self.supports_provider_models() {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,
@@ -684,7 +701,7 @@ impl SessionClient {
             },
             Duration::from_secs(30),
         )? {
-            Response::ProviderModels { models } => Ok(models),
+            Response::ProviderModels { models, modes } => Ok((models, modes)),
             _ => Err(ClientError::UnexpectedResponse),
         }
     }

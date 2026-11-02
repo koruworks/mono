@@ -608,6 +608,25 @@ pub struct AgentProviderView {
 pub struct AgentModelsResponse {
     pub provider: AiProviderId,
     pub models: Vec<AgentModelView>,
+    /// The agent's approval modes (koru-ai D7), in its order, with its own
+    /// ids. Empty when it offers none: a client then shows no mode control.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<AgentModeView>,
+    /// The mode the agent reports it starts in — the one a chat that chose
+    /// none runs in. Absent when the agent does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
+}
+
+/// One approval mode an agent offers: its own id, and what it says of it.
+/// A client words the ids it knows and shows these for the rest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModeView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// The models route's optional body. With `refresh`, the agent's list is

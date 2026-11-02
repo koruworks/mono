@@ -2598,6 +2598,8 @@ fn an_agent_models_levels_become_its_effort_control() {
     );
     let response = koru_ai_wire::AgentModelsResponse {
         provider: AiProviderId::parse("agent-claude").unwrap(),
+        modes: Vec::new(),
+        default_mode: None,
         models: vec![
             koru_ai_wire::AgentModelView {
                 id: "opus".into(),

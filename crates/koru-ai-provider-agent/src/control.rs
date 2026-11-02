@@ -95,7 +95,15 @@ pub struct AgentSessions {
     live: Arc<LiveTurns>,
     /// The manual refreshes under way, one per agent: a second joins the
     /// first rather than asking the host to re-probe again.
-    refreshes: Arc<crate::joined::Joined<ProviderKind, Result<ProviderModels, ErrorCode>>>,
+    refreshes: Arc<crate::joined::Joined<ProviderKind, Result<AgentCatalog, ErrorCode>>>,
+}
+
+/// What an agent offers a picker: its models and, beside them, its approval
+/// modes (koru-ai D7), `None` when it has none.
+#[derive(Clone, Debug)]
+pub struct AgentCatalog {
+    pub models: ProviderModels,
+    pub modes: Option<koru_session_protocol::AgentModes>,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -120,7 +128,7 @@ impl AgentSessions {
         &self,
         kind: &AgentProviderKind,
         refresh: bool,
-    ) -> Result<ProviderModels, ErrorCode> {
+    ) -> Result<AgentCatalog, ErrorCode> {
         if refresh {
             return self
                 .refreshes
@@ -133,7 +141,7 @@ impl AgentSessions {
         &self,
         kind: &AgentProviderKind,
         refresh: bool,
-    ) -> Result<ProviderModels, ErrorCode> {
+    ) -> Result<AgentCatalog, ErrorCode> {
         let started = Instant::now();
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
@@ -145,14 +153,17 @@ impl AgentSessions {
                         "agent models refresh requested"
                     );
                 }
-                client.discover_provider_models(kind.kind.clone(), default_working_directory())
+                client.discover_provider_catalog(kind.kind.clone(), default_working_directory())
             });
-        let models = match listed {
-            Ok(models) => models,
+        let (models, modes) = match listed {
+            Ok(listed) => listed,
             Err(ClientError::Session(failure))
                 if failure.code == ErrorCode::CapabilityNotNegotiated =>
             {
-                ProviderModels::try_from(Vec::new()).expect("an empty catalog is valid")
+                (
+                    ProviderModels::try_from(Vec::new()).expect("an empty catalog is valid"),
+                    None,
+                )
             }
             Err(error) => {
                 tracing::warn!(
@@ -168,10 +179,11 @@ impl AgentSessions {
             target: "koru_ai::agent",
             provider = %kind.kind,
             count = models.models().len(),
+            modes = modes.as_ref().map_or(0, |modes| modes.modes().len()),
             elapsed_ms = started.elapsed().as_millis() as u64,
             "agent models listed"
         );
-        Ok(models)
+        Ok(AgentCatalog { models, modes })
     }
 
     /// Start the control thread for the session host at `endpoint`. The

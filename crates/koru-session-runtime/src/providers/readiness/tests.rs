@@ -5,6 +5,7 @@ use crate::providers::{
     AgentCapabilities, CompatibilityProbe, DelegationFacts, ManagedProvider,
     ManagedProviderFactory, ManagedProviderRequest,
 };
+use koru_session_protocol::ProviderModels;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
