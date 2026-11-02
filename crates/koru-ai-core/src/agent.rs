@@ -36,6 +36,9 @@ pub enum AgentToolKind {
     Command,
     FileChange,
     Search,
+    /// Reading a file. No agent protocol names it yet: a call is filed here
+    /// when its label has the shape of a read ([`CallShape::Read`]).
+    Read,
     Mcp,
     Other,
     /// A permission request, which is its own row: the agent's protocol
@@ -50,6 +53,7 @@ impl AgentToolKind {
             Self::Command => "agent.command",
             Self::FileChange => "agent.file_change",
             Self::Search => "agent.search",
+            Self::Read => "agent.read",
             Self::Mcp => "agent.mcp",
             Self::Other => "agent.other",
             Self::Approval => "agent.approval",
@@ -62,6 +66,7 @@ impl AgentToolKind {
             "agent.command" => Self::Command,
             "agent.file_change" => Self::FileChange,
             "agent.search" => Self::Search,
+            "agent.read" => Self::Read,
             "agent.mcp" => Self::Mcp,
             "agent.other" => Self::Other,
             "agent.approval" => Self::Approval,
@@ -75,6 +80,74 @@ impl AgentToolKind {
     pub fn is_agent_token(token: &str) -> bool {
         Self::parse(token).is_some()
     }
+
+    /// The kind a completed call is filed under: what the agent said, or —
+    /// when it said only *a tool* — what the call's label has the shape of.
+    pub fn refined(self, label: Option<&str>) -> Self {
+        if !matches!(self, Self::Tool | Self::Other) {
+            return self;
+        }
+        match label.and_then(CallShape::of) {
+            Some(CallShape::Read) => Self::Read,
+            Some(CallShape::Search | CallShape::Fetch) => Self::Search,
+            _ => self,
+        }
+    }
+}
+
+/// What a call's label says it did, read from the label's shape: an agent
+/// whose protocol files every call but commands and edits as *other* still
+/// titles a read *Read README.md* and a lookup *Find `*.rs`*.
+///
+/// This is the one place a label's wording is matched. It decides only how
+/// a call is summarized; nothing is refused or routed by it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallShape {
+    /// Reading a file: *Read src/main.rs*.
+    Read,
+    /// Looking through local files: *Find …*, *grep …*, *List …*.
+    Search,
+    /// Reaching the web: *Fetch https://…*, or a quoted query.
+    Fetch,
+    /// Looking up which tools exist — plumbing a person has no use for.
+    ToolDiscovery,
+    /// One of Koru's own tools, reached through its MCP server; the tool's
+    /// own name (`read_document`).
+    Koru(String),
+}
+
+impl CallShape {
+    pub fn of(label: &str) -> Option<Self> {
+        let label = label.trim();
+        if let Some(tool) = koru_tool(label) {
+            return Some(Self::Koru(tool));
+        }
+        let first = label.split_whitespace().next()?;
+        Some(match first {
+            "ToolSearch" => Self::ToolDiscovery,
+            "Read" => Self::Read,
+            "Find" | "Glob" | "grep" | "Grep" | "List" | "Search" => Self::Search,
+            "Fetch" => Self::Fetch,
+            _ if label.len() > 2 && label.starts_with('"') && label.ends_with('"') => Self::Fetch,
+            _ => return None,
+        })
+    }
+}
+
+/// `koru`'s tool in a label that names an MCP server and one of its tools:
+/// `mcp__koru__read_document`, `koru.read_document`, `koru/read_document`.
+fn koru_tool(label: &str) -> Option<String> {
+    let rest = label.strip_prefix("mcp__").unwrap_or(label);
+    let lower = rest.to_ascii_lowercase();
+    let tool = ["koru__", "koru.", "koru/", "koru:"]
+        .iter()
+        .find_map(|prefix| lower.strip_prefix(prefix))?;
+    let tool = tool.split_whitespace().next()?;
+    (!tool.is_empty()
+        && tool
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
+    .then(|| tool.to_owned())
 }
 
 /// What choosing an offered option means, as the agent classified it. The
@@ -251,6 +324,7 @@ mod tests {
             AgentToolKind::Command,
             AgentToolKind::FileChange,
             AgentToolKind::Search,
+            AgentToolKind::Read,
             AgentToolKind::Mcp,
             AgentToolKind::Other,
             AgentToolKind::Approval,
@@ -259,6 +333,52 @@ mod tests {
             assert!(AgentToolKind::is_agent_token(kind.as_token()));
         }
         assert!(!AgentToolKind::is_agent_token("workspace.read_document"));
+    }
+
+    #[test]
+    fn a_labels_shape_says_what_a_call_did() {
+        assert_eq!(CallShape::of("Read README.md"), Some(CallShape::Read));
+        assert_eq!(CallShape::of("Find `**/*.rs`"), Some(CallShape::Search));
+        assert_eq!(CallShape::of("grep -n \"todo\""), Some(CallShape::Search));
+        assert_eq!(
+            CallShape::of("Fetch https://example.com"),
+            Some(CallShape::Fetch)
+        );
+        assert_eq!(CallShape::of("\"koru notes app\""), Some(CallShape::Fetch));
+        assert_eq!(CallShape::of("ToolSearch"), Some(CallShape::ToolDiscovery));
+        assert_eq!(
+            CallShape::of("mcp__koru__read_document"),
+            Some(CallShape::Koru("read_document".into()))
+        );
+        assert_eq!(
+            CallShape::of("koru.search_documents"),
+            Some(CallShape::Koru("search_documents".into()))
+        );
+        assert_eq!(CallShape::of("`git status`"), None);
+        assert_eq!(CallShape::of("Reading"), None);
+        assert_eq!(CallShape::of("\""), None);
+        assert_eq!(CallShape::of("mcp__korus__x"), None);
+    }
+
+    #[test]
+    fn only_an_unnamed_kind_is_refined_by_its_label() {
+        assert_eq!(
+            AgentToolKind::Other.refined(Some("Read a.txt")),
+            AgentToolKind::Read
+        );
+        assert_eq!(
+            AgentToolKind::Tool.refined(Some("Find x")),
+            AgentToolKind::Search
+        );
+        assert_eq!(
+            AgentToolKind::Command.refined(Some("Read a.txt")),
+            AgentToolKind::Command
+        );
+        assert_eq!(AgentToolKind::Other.refined(None), AgentToolKind::Other);
+        assert_eq!(
+            AgentToolKind::Other.refined(Some("mcp__koru__read_document")),
+            AgentToolKind::Other
+        );
     }
 
     #[test]

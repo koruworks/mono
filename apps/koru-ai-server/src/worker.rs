@@ -3838,6 +3838,7 @@ impl WorkerState {
                 agent_summary: None,
                 agent_input: None,
                 agent_output: None,
+                text_offset: None,
                 display_target: None,
                 live: None,
             };

@@ -138,6 +138,13 @@ pub struct ToolActivity {
     /// [`crate::AGENT_CONTENT_CHARS`], kept since schema 8 (UC17).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_output: Option<String>,
+    /// How much of the reply's Markdown, in bytes, had arrived when the
+    /// call began: the text before it was said before it, the text after
+    /// it after. Kept since schema 10 on a local agent's rows, so a reopened
+    /// reply can still tell the agent's running commentary from its final
+    /// answer. `None` on earlier rows and on Koru's own tool rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_offset: Option<u32>,
     /// Current display text resolved from Store by a trusted local client. It
     /// is neither public wire data nor durable AI state, so renames cannot make
     /// the audit database stale.

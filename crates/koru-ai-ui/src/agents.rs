@@ -269,6 +269,7 @@ pub(crate) fn agent_row_title(activity: &ToolActivity, lang: Lang) -> String {
         AgentToolKind::Command => Key::AiAgentRanCommand,
         AgentToolKind::FileChange => Key::AiAgentChangedFile,
         AgentToolKind::Search => Key::AiAgentSearched,
+        AgentToolKind::Read => Key::AiStepReadOne,
         AgentToolKind::Approval => Key::AiAgentAskedPermission,
     };
     t(lang, key).to_owned()
@@ -536,6 +537,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         }

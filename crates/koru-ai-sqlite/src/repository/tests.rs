@@ -167,6 +167,7 @@ fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
         agent_summary: None,
         agent_input: None,
         agent_output: None,
+        text_offset: None,
         display_target: None,
         live: None,
     };
@@ -193,6 +194,72 @@ fn tool_audit_keeps_only_stable_targets_and_public_failure_context() {
     for forbidden in ["arguments", "results", "query", "title", "path", "content"] {
         assert!(!columns.iter().any(|column| column.contains(forbidden)));
     }
+}
+
+#[test]
+fn an_agent_row_records_where_the_reply_stood_when_it_began() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    repository.begin_turn(&pending).unwrap();
+    // Bytes, not characters: the surface slices its draft by the same count.
+    repository
+        .apply_event(
+            &AiEvent::TextDelta {
+                attempt_id: pending.attempt.id,
+                text: "Je vais lire é.".into(),
+                at: at(2),
+            },
+            &[],
+        )
+        .unwrap();
+    let row = |tool_name: &str| ToolActivity {
+        id: ToolInvocationId::new(),
+        attempt_id: pending.attempt.id,
+        chat_id,
+        assistant_message_id: pending.assistant_message.id,
+        tool_name: tool_name.into(),
+        read_only: false,
+        status: ToolActivityStatus::Proposed,
+        approval: ToolApproval::NotRequired,
+        proposed_at: at(3),
+        started_at: None,
+        completed_at: None,
+        result_bytes: None,
+        error_code: None,
+        target_workspace_id: None,
+        target_document_id: None,
+        error_message: None,
+        agent_label: None,
+        agent_summary: None,
+        agent_input: None,
+        agent_output: None,
+        text_offset: None,
+        display_target: None,
+        live: None,
+    };
+    let agent = row(AgentToolKind::Tool.as_token());
+    repository.create_tool_activity(&agent).unwrap();
+    let workspace = row("read_document");
+    repository.create_tool_activity(&workspace).unwrap();
+    assert_eq!(
+        repository
+            .tool_activity(agent.id)
+            .unwrap()
+            .unwrap()
+            .text_offset,
+        Some("Je vais lire é.".len() as u32)
+    );
+    // Koru's own tool rows keep no offset: their reply reads as before.
+    assert_eq!(
+        repository
+            .tool_activity(workspace.id)
+            .unwrap()
+            .unwrap()
+            .text_offset,
+        None
+    );
 }
 
 fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {

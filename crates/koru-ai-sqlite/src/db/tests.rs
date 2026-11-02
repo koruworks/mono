@@ -315,7 +315,7 @@ fn a_v8_database_with_chats_gains_attachments_and_reads_as_before() {
         .unwrap();
 
     prepare(&mut connection).unwrap();
-    assert_eq!(user_version(&connection).unwrap(), 9);
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
     let title: String = connection
         .query_row("SELECT title FROM chats WHERE id = 'chat'", [], |row| {
             row.get(0)
@@ -331,7 +331,7 @@ fn a_v8_database_with_chats_gains_attachments_and_reads_as_before() {
 
     // Reopened, it is already current and nothing runs again.
     prepare(&mut connection).unwrap();
-    assert_eq!(user_version(&connection).unwrap(), 9);
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
 }
 
 #[test]
@@ -346,8 +346,26 @@ fn a_build_that_understands_only_schema_8_refuses_schema_9() {
         koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
         OpenError::SchemaTooNew {
             database: crate::DATABASE_FILE,
-            discovered: 9,
+            discovered: SCHEMA_VERSION,
             supported: 8,
+        }
+    );
+}
+
+#[test]
+fn a_build_that_understands_only_schema_9_refuses_schema_10() {
+    let mut connection = open_in_memory().unwrap();
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 9,
+        migrations: &MIGRATIONS[..9],
+    };
+    assert_eq!(
+        koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
+        OpenError::SchemaTooNew {
+            database: crate::DATABASE_FILE,
+            discovered: 10,
+            supported: 9,
         }
     );
 }
@@ -477,4 +495,57 @@ fn a_real_database_is_wal_full_and_foreign_keyed() {
     assert_eq!(journal, "wal");
     assert_eq!(synchronous, 2, "durable chat commits require FULL");
     assert!(foreign_keys);
+}
+
+#[test]
+fn an_empty_database_opens_at_schema_10_with_the_text_offset_column() {
+    let connection = open_in_memory().unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 10);
+    let has_column: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('tool_invocations') WHERE name = 'text_offset'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(has_column, "schema 10 adds text_offset");
+}
+
+#[test]
+fn a_v9_database_keeps_its_tool_rows_with_no_text_offset() {
+    const V9: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 9,
+        migrations: MIGRATIONS.split_at(9).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V9).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 9);
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO tool_invocations (
+                 id, attempt_id, chat_id, tool_name, read_only, status, approval,
+                 proposed_at_ms, started_at_ms, completed_at_ms, agent_label
+             ) VALUES ('row', 'attempt', 'chat', 'agent.other', 0, 'complete',
+                       'not_required', 1, 1, 2, 'Read a.txt');
+             PRAGMA foreign_keys = ON;",
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let (label, offset): (String, Option<i64>) = connection
+        .query_row(
+            "SELECT agent_label, text_offset FROM tool_invocations WHERE id = 'row'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(label, "Read a.txt");
+    assert_eq!(offset, None, "an earlier row folds its steps only");
+    let refused = connection.execute("UPDATE tool_invocations SET text_offset = -1", []);
+    assert!(refused.is_err(), "an offset is never negative");
 }

@@ -14890,6 +14890,13 @@
               }
             ]
           },
+          "text_offset": {
+            "description": "How much of the reply's Markdown, in bytes, had arrived when the\ncall began: the text before it was said before it, the text after\nit after. Kept since schema 10 on a local agent's rows, so a reopened\nreply can still tell the agent's running commentary from its final\nanswer. `None` on earlier rows and on Koru's own tool rows.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "tool_name": {
             "type": "string"
           }

@@ -379,6 +379,7 @@ impl WorkerState {
                 row.agent_label = (!label.is_empty()).then_some(label);
                 row.agent_input = input.as_deref().and_then(bound_agent_content);
                 self.repository.create_tool_activity(&row).and_then(|()| {
+                    row.text_offset = self.recorded_text_offset(invocation)?;
                     row.status = ToolActivityStatus::Running;
                     row.started_at = Some(at);
                     self.repository.advance_agent_activity(&row).map(|()| {
@@ -400,7 +401,12 @@ impl WorkerState {
                 // tool produced is the row's too (schema 8, UC17).
                 row.error_message = if succeeded { None } else { detail };
                 row.agent_output = output.as_deref().and_then(bound_agent_content);
-                row.tool_name = tool.as_token().to_owned();
+                // A kind the agent left unnamed is read from the call's
+                // label: *Read README.md* is filed as a read.
+                row.tool_name = tool
+                    .refined(row.agent_label.as_deref())
+                    .as_token()
+                    .to_owned();
                 row.status = if succeeded {
                     ToolActivityStatus::Complete
                 } else {
@@ -429,6 +435,7 @@ impl WorkerState {
                 );
                 row.agent_summary = (!summary.is_empty()).then_some(summary);
                 self.repository.create_tool_activity(&row).and_then(|()| {
+                    row.text_offset = self.recorded_text_offset(invocation)?;
                     row.status = ToolActivityStatus::ApprovalRequired;
                     self.repository.advance_agent_activity(&row).map(|()| {
                         self.remember_agent_row(attempt.id, invocation);
@@ -488,6 +495,15 @@ impl WorkerState {
                 );
             }
         }
+    }
+
+    /// Where the reply stood when the row was written, as the repository
+    /// recorded it (schema 10): the public event carries it from the start.
+    fn recorded_text_offset(&self, invocation: ToolInvocationId) -> Result<Option<u32>, AiError> {
+        Ok(self
+            .repository
+            .tool_activity(invocation)?
+            .and_then(|row| row.text_offset))
     }
 
     fn remember_agent_row(&mut self, attempt: InferenceAttemptId, invocation: ToolInvocationId) {
@@ -621,6 +637,7 @@ fn agent_row(
         agent_summary: None,
         agent_input: None,
         agent_output: None,
+        text_offset: None,
         display_target: None,
         live: None,
     }

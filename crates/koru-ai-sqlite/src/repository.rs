@@ -735,9 +735,13 @@ impl AiPersistence for Repository {
                     id, attempt_id, chat_id, tool_name, read_only, status, approval,
                     proposed_at_ms, started_at_ms, completed_at_ms, result_bytes, error_code,
                     target_workspace_id, target_document_id, error_message,
-                    agent_label, agent_summary, agent_input, agent_output
+                    agent_label, agent_summary, agent_input, agent_output, text_offset
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, NULL, ?9, ?10, NULL,
-                           ?11, ?12, ?13, ?14)",
+                           ?11, ?12, ?13, ?14,
+                           CASE WHEN ?15 THEN (
+                               SELECT length(CAST(markdown AS BLOB)) FROM messages
+                                WHERE id = ?16
+                           ) END)",
                 params![
                     activity.id.to_storage(),
                     activity.attempt_id.to_storage(),
@@ -753,6 +757,11 @@ impl AiPersistence for Repository {
                     activity.agent_summary,
                     activity.agent_input,
                     activity.agent_output,
+                    // Where the reply stood when a local agent's call began
+                    // (schema 10). Text deltas are written before the next
+                    // event is applied, so the length is exact.
+                    AgentToolKind::is_agent_token(&activity.tool_name),
+                    activity.assistant_message_id.to_storage(),
                 ],
             )
             .map_err(storage_failed)?;
@@ -1768,7 +1777,8 @@ const TOOL_ACTIVITY_COLUMNS: &str = "id, attempt_id, chat_id, tool_name, read_on
     result_bytes, error_code, target_workspace_id, target_document_id, error_message,
     agent_label, agent_summary, agent_input, agent_output,
     (SELECT assistant_message_id FROM inference_attempts
-      WHERE id = tool_invocations.attempt_id)";
+      WHERE id = tool_invocations.attempt_id),
+    text_offset";
 
 fn query_tool_activity(
     connection: &Connection,
@@ -2295,6 +2305,10 @@ fn tool_activity_from_row(row: &Row<'_>) -> rusqlite::Result<ToolActivity> {
         agent_summary: row.get(16)?,
         agent_input: row.get(17)?,
         agent_output: row.get(18)?,
+        text_offset: row
+            .get::<_, Option<i64>>(20)?
+            .map(|offset| u32::try_from(offset).map_err(|_| decode_failed(20, "text offset")))
+            .transpose()?,
         display_target: None,
         live: None,
     })

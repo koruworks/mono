@@ -71,6 +71,7 @@ mod reader;
 mod sources;
 mod tool_groups;
 mod usage;
+mod work_view;
 
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
@@ -161,7 +162,6 @@ const GREETINGS: [koru_i18n::Key; 20] = [
 ];
 /// How long a title made from a first message may be, in characters.
 const AUTO_TITLE_CHARS: usize = 48;
-const TOOL_ACTIVITY_ROW_H: f32 = 34.0;
 const TOOL_ACTIVITY_MIN_EXPANDED_H: f32 = 60.0;
 const TOOL_ACCESS_WORKSPACE_ROW_H: f32 = 32.0;
 const TOOL_ACCESS_VISIBLE_ROWS: usize = 6;
@@ -217,6 +217,8 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
+    /// A reply's *Worked for …* header: Enter or Space opens it.
+    Work(MessageId),
     WorkspaceSearch,
     OpenAiKey,
     OpenAiModel,
@@ -259,6 +261,8 @@ enum ResponseAction {
     Retry(MessageId),
 }
 
+/// A pending permission request: the one card in a turn, always open, with
+/// its choices — never folded into the work view (`work_view`).
 struct ToolActivityLayout {
     activity: ToolActivity,
     before_message: Option<MessageId>,
@@ -266,16 +270,6 @@ struct ToolActivityLayout {
     title: Layout<Brush>,
     detail: Layout<Brush>,
     expanded_height: f32,
-    /// Inside a collapsed box: laid out, never drawn or hit.
-    hidden: bool,
-}
-
-/// One turn's tool rows as a box: the heading that sums them up, above the
-/// rows it folds (`tool_groups`).
-struct ToolGroupLayout {
-    message: MessageId,
-    top: f32,
-    title: Layout<Brush>,
 }
 
 #[derive(Clone)]
@@ -428,10 +422,23 @@ pub struct ChatSurface {
     pointer: (f32, f32),
     message_layouts: Vec<MessageLayout>,
     tool_activity_layouts: Vec<ToolActivityLayout>,
-    tool_group_layouts: Vec<ToolGroupLayout>,
-    /// The turns whose tool box is folded to its heading.
-    collapsed_tool_groups: HashSet<MessageId>,
-    tool_group_hover: Option<MessageId>,
+    /// Each reply's work view, in the order the replies happened.
+    work_layouts: Vec<work_view::WorkLayout>,
+    /// The finished replies whose work is opened; every other one is
+    /// folded to *Worked for …*. In memory only.
+    opened_work: HashSet<MessageId>,
+    /// The step groups opened to a line per call, by reply and position.
+    opened_step_groups: HashSet<(MessageId, usize)>,
+    /// The calls opened to their detail.
+    opened_calls: HashSet<ToolInvocationId>,
+    work_hover: Option<work_view::WorkHit>,
+    /// Where each call of the running reply began in its draft, noted as
+    /// its row arrived, for a row whose stored offset has not come yet.
+    live_offsets: HashMap<ToolInvocationId, u32>,
+    /// When the running reply was accepted, for *Working for 6s*.
+    live_turn_started_ms: Option<i64>,
+    /// When a live work header last ticked.
+    work_ticked_at: Option<Instant>,
     message_width: f32,
     last_rebuild_stats: RebuildStats,
     messages_dirty: bool,
@@ -491,7 +498,6 @@ pub struct ChatSurface {
     response_hover: Option<(usize, u8)>,
     response_message_hover: Option<usize>,
     tool_activity_hover: Option<(ToolInvocationId, u8)>,
-    expanded_tool_activity: Option<ToolInvocationId>,
     tool_workspace_offset: usize,
     copy_feedback: Tooltip,
     web_search_tooltip: Tooltip,
@@ -713,9 +719,14 @@ impl ChatSurface {
             pointer: (0.0, 0.0),
             message_layouts: Vec::new(),
             tool_activity_layouts: Vec::new(),
-            tool_group_layouts: Vec::new(),
-            collapsed_tool_groups: HashSet::new(),
-            tool_group_hover: None,
+            work_layouts: Vec::new(),
+            opened_work: HashSet::new(),
+            opened_step_groups: HashSet::new(),
+            opened_calls: HashSet::new(),
+            work_hover: None,
+            live_offsets: HashMap::new(),
+            live_turn_started_ms: None,
+            work_ticked_at: None,
             message_width: 0.0,
             last_rebuild_stats: RebuildStats::default(),
             messages_dirty: true,
@@ -759,7 +770,6 @@ impl ChatSurface {
             response_hover: None,
             response_message_hover: None,
             tool_activity_hover: None,
-            expanded_tool_activity: None,
             tool_workspace_offset: 0,
             copy_feedback: Tooltip::default(),
             web_search_tooltip: Tooltip::default(),
@@ -1079,6 +1089,7 @@ impl ChatSurface {
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
+            self.work_tick_deadline(),
             self.viewer
                 .as_ref()
                 .and_then(|open| open.viewer.maintenance_deadline()),
@@ -1107,6 +1118,14 @@ impl ChatSurface {
             changed = true;
         }
         changed |= self.maintain_remote_images();
+        // A running reply's *Working for 6s* moves on once a second.
+        if self
+            .work_tick_deadline()
+            .is_some_and(|deadline| _now >= deadline)
+        {
+            self.work_ticked_at = Some(_now);
+            changed = true;
+        }
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
@@ -1197,7 +1216,7 @@ impl ChatSurface {
         if self.control_hover_at(p.0, p.1).is_some() || self.response_hover.is_some() {
             return CursorIcon::Default;
         }
-        if self.tool_activity_at(p.0, p.1).is_some() {
+        if self.tool_activity_at(p.0, p.1).is_some() || self.work_hit_at(p.0, p.1).is_some() {
             return CursorIcon::Default;
         }
         if let Some(hit) = self.response_text_hit(p.0, p.1) {
@@ -1298,6 +1317,11 @@ impl ChatSurface {
                 }
             ));
             return self.navigate_questions(matches!(key, Key::Named(NamedKey::ArrowDown)));
+        }
+        if let Focus::Work(message) = self.focus
+            && let Some(handled) = self.work_key(message, key, mods)
+        {
+            return handled;
         }
         if self.focus != Focus::Composer {
             self.focus = Focus::Composer;
@@ -1747,39 +1771,22 @@ impl ChatSurface {
             }
             return true;
         }
-        if let Some(message) = self.tool_group_at(x, y) {
-            if !self.collapsed_tool_groups.remove(&message) {
-                self.collapsed_tool_groups.insert(message);
+        if let Some(hit) = self.work_hit_at(x, y) {
+            if let work_view::WorkHit::Header(message) = hit {
+                self.focus = Focus::Work(message);
+                self.composer.set_focused(false);
             }
-            self.messages_dirty = true;
-            return true;
+            return self.toggle_work(hit);
         }
         if let Some((tool, part)) = self.tool_activity_at(x, y) {
-            match part {
-                part if part >= agents::CHOICE_PART_BASE => {
-                    return self.decide_agent_choice(tool, part);
-                }
-                1 => return self.send_command(Command::ApproveTool(tool)),
-                2 => return self.auto_approve_tool_for_session(tool),
-                3 => return self.send_command(Command::DenyTool(tool)),
-                _ => {
-                    self.expanded_tool_activity = if self.expanded_tool_activity == Some(tool) {
-                        None
-                    } else {
-                        Some(tool)
-                    };
-                    let content_extent = self.position_conversation_items();
-                    let viewport_height = self.conversation_rect().h;
-                    self.conversation_extent = self
-                        .pending_question_anchor
-                        .into_iter()
-                        .chain(self.question_navigation_anchor)
-                        .fold(content_extent, |extent, top| {
-                            extent.max(top + viewport_height)
-                        });
-                    return true;
-                }
-            }
+            // A permission card is always open: only its choices act.
+            return match part {
+                part if part >= agents::CHOICE_PART_BASE => self.decide_agent_choice(tool, part),
+                1 => self.send_command(Command::ApproveTool(tool)),
+                2 => self.auto_approve_tool_for_session(tool),
+                3 => self.send_command(Command::DenyTool(tool)),
+                _ => true,
+            };
         }
         if let Some(action) = self.response_action_at(x, y) {
             return self.perform_response_action(action);
@@ -1957,7 +1964,7 @@ impl ChatSurface {
         let old_response_hover = self.response_hover;
         let old_message_hover = self.response_message_hover;
         let old_tool_hover = self.tool_activity_hover;
-        let old_group_hover = self.tool_group_hover;
+        let old_work_hover = self.work_hover;
         self.response_message_hover = if self.showing_setup() {
             None
         } else {
@@ -1973,10 +1980,10 @@ impl ChatSurface {
         } else {
             self.tool_activity_at(x, y)
         };
-        self.tool_group_hover = if self.showing_setup() {
+        self.work_hover = if self.showing_setup() {
             None
         } else {
-            self.tool_group_at(x, y)
+            self.work_hit_at(x, y)
         };
         let dragged = if self.focus == Focus::WorkspaceSearch {
             self.tool_access_search_rect()
@@ -1994,7 +2001,7 @@ impl ChatSurface {
             || old_response_hover != self.response_hover
             || old_message_hover != self.response_message_hover
             || old_tool_hover != self.tool_activity_hover
-            || old_group_hover != self.tool_group_hover
+            || old_work_hover != self.work_hover
             || old_control_hover != self.control_hover_at(x, y)
             || search_tooltip_changed
             || pane_left
@@ -2364,7 +2371,6 @@ impl ChatSurface {
                 if let Some(current) = &transcript {
                     self.retain_staged_quotes_for(current.chat.id);
                 }
-                self.expanded_tool_activity = transcript.as_ref().and_then(pending_tool_activity);
                 self.scroll_loaded_chat_to_bottom = transcript.is_some();
                 self.transcript = transcript;
                 self.select_context_workspace_if_needed();
@@ -2420,7 +2426,6 @@ impl ChatSurface {
                 self.history_open = false;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
-                self.expanded_tool_activity = None;
                 self.scroll_loaded_chat_to_bottom = false;
                 self.messages_dirty = true;
                 if made.is_some() {
@@ -2466,8 +2471,8 @@ impl ChatSurface {
                 }
                 self.remember_chat(&transcript.chat, false);
                 if changed_chat {
-                    self.expanded_tool_activity = pending_tool_activity(&transcript);
                     self.forget_input_walk();
+                    self.live_offsets.clear();
                 }
                 self.transcript = Some(transcript);
                 if changed_chat {
@@ -2607,6 +2612,7 @@ impl ChatSurface {
                 self.sent_message = None;
                 self.attempt = Some(accepted.attempt_id);
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
+                self.live_turn_started_ms = Some(koru_ai_core::Timestamp::now().millis());
                 self.messages_dirty = true;
             }
             Update::Event(event) => {
@@ -3000,11 +3006,19 @@ impl ChatSurface {
             return;
         }
         let should_auto_approve = should_auto_approve && !is_agent_row(&activity);
-        if !should_auto_approve
-            && activity.status == ToolActivityStatus::ApprovalRequired
-            && activity.approval == ToolApproval::Pending
+        // Where a call of the running reply began, as far as the draft has
+        // come; the stored offset replaces it once the row carries one.
+        if activity.text_offset.is_none()
+            && Some(activity.assistant_message_id) == self.pending_assistant_message_id
+            && !transcript
+                .tool_activities
+                .iter()
+                .any(|existing| existing.id == activity.id)
         {
-            self.expanded_tool_activity = Some(activity.id);
+            self.live_offsets.insert(
+                activity.id,
+                u32::try_from(self.draft.len()).unwrap_or(u32::MAX),
+            );
         }
         if let Some(existing) = transcript
             .tool_activities
@@ -3023,7 +3037,6 @@ impl ChatSurface {
         }
         self.messages_dirty = true;
         if should_auto_approve {
-            self.expanded_tool_activity = None;
             self.send_command(Command::ApproveTool(activity_id));
         }
     }
@@ -3052,7 +3065,6 @@ impl ChatSurface {
             .map(|activity| activity.id)
             .filter(|id| self.session_approval_sent.insert(*id))
             .collect();
-        self.expanded_tool_activity = None;
         for tool in pending {
             self.send_command(Command::ApproveTool(tool));
         }
@@ -3069,7 +3081,6 @@ impl ChatSurface {
         };
         self.session_auto_approve_chats.insert(chat_id);
         self.session_approval_sent.insert(tool);
-        self.expanded_tool_activity = None;
         self.send_command(Command::ApproveTool(tool))
     }
 
@@ -3167,7 +3178,6 @@ impl ChatSurface {
             if self.transcript.take().is_some() {
                 self.forget_input_walk();
                 self.usage_report = None;
-                self.expanded_tool_activity = None;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
                 self.messages_dirty = true;
@@ -3190,7 +3200,6 @@ impl ChatSurface {
         self.forget_input_walk();
         self.retain_staged_quotes_for(id);
         self.usage_report = None;
-        self.expanded_tool_activity = None;
         self.question_navigation = None;
         self.question_navigation_anchor = None;
         self.pending_question_anchor = None;
@@ -5464,16 +5473,35 @@ impl ChatSurface {
     fn rebuild_messages(&mut self, width: f32) {
         let started = Instant::now();
         self.tool_activity_layouts.clear();
-        self.tool_group_layouts.clear();
+        self.work_layouts.clear();
         self.request_document_titles();
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+        let lang = self.lang;
+        let now_ms = koru_ai_core::Timestamp::now().millis();
+        let work_width = (width - PAD * 2.0).max(1.0);
+        let detail = |activity: &ToolActivity| {
+            if is_agent_row(activity) {
+                agent_row_body(activity, lang, now_ms)
+            } else {
+                tool_activity_detail(activity)
+            }
+        };
+        let opened = work_view::Opened {
+            replies: &self.opened_work,
+            groups: &self.opened_step_groups,
+            calls: &self.opened_calls,
+        };
+        let live_offsets = &self.live_offsets;
+        let offset = |activity: &ToolActivity| effective_offset(activity, live_offsets);
         let mut inputs = Vec::new();
+        let mut pending_answer: Option<String> = None;
         if let Some(transcript) = &self.transcript {
             let usage_by_message = transcript
                 .usage
                 .iter()
                 .map(|entry| (entry.message_id, &entry.usage))
                 .collect::<HashMap<_, _>>();
+            let mut worked: HashSet<MessageId> = HashSet::new();
             for message in &transcript.messages {
                 if !message.markdown.is_empty() || message.state != MessageState::Pending {
                     let wrap_width = message_wrap_width(message.role, width);
@@ -5495,11 +5523,50 @@ impl ChatSurface {
                     };
                     // The person's own message carries its chips as
                     // `[[koru://doc/…]]`; they read as titled links.
-                    let (display, links) = if message.role == ChatRole::User {
+                    let (mut display, links) = if message.role == ChatRole::User {
                         doc_links::titled(&display, &self.document_titles, untitled)
                     } else {
                         (display, Vec::new())
                     };
+                    let mut blocks: Vec<(MessageBlockId, String)> = transcript
+                        .blocks
+                        .iter()
+                        .filter(|block| block.message_id == message.id)
+                        .map(|block| (block.id, block.markdown.clone()))
+                        .collect();
+                    // A reply that used tools: what the agent said before
+                    // its last call folds with the steps; the rest is the
+                    // answer (`tool_groups`).
+                    let rows = reply_rows(transcript, message.id);
+                    if message.role == ChatRole::Assistant
+                        && let Some(cut) =
+                            tool_groups::cut_reply(&message.markdown, &rows, offset, &blocks)
+                    {
+                        if cut.answer_start > 0 {
+                            display = message.markdown[cut.answer_start..].trim_start().to_owned();
+                            blocks = cut.blocks;
+                        }
+                        worked.insert(message.id);
+                        self.work_layouts.push(work_view::build(
+                            &mut self.engine,
+                            lang,
+                            work_width,
+                            work_view::WorkInput {
+                                message: message.id,
+                                live: message.state == MessageState::Pending,
+                                started_ms: message.created_at.millis(),
+                                worked_ms: tool_groups::worked_ms(
+                                    Some(message.created_at.millis()),
+                                    message.completed_at.map(|at| at.millis()),
+                                    &rows,
+                                ),
+                                items: cut.items,
+                                groups: cut.groups,
+                            },
+                            &opened,
+                            detail,
+                        ));
+                    }
                     inputs.push(MessageInput {
                         id: message.id,
                         role: message.role,
@@ -5515,12 +5582,7 @@ impl ChatSurface {
                             .find(|entry| entry.message_id == message.id)
                             .map(|entry| entry.sources.clone())
                             .unwrap_or_default(),
-                        blocks: transcript
-                            .blocks
-                            .iter()
-                            .filter(|block| block.message_id == message.id)
-                            .map(|block| (block.id, block.markdown.clone()))
-                            .collect(),
+                        blocks,
                         attachments: transcript
                             .attachments
                             .iter()
@@ -5530,35 +5592,94 @@ impl ChatSurface {
                     });
                 }
             }
-            let now_ms = koru_ai_core::Timestamp::now().millis();
+            // The running reply: its draft is cut the same way, at the
+            // offsets its rows carry or the surface noted as they came.
+            if self.pending_user.is_some()
+                && let Some(message) = self.pending_assistant_message_id
+                && !worked.contains(&message)
+            {
+                let rows = reply_rows(transcript, message);
+                if let Some(cut) =
+                    tool_groups::cut_reply::<MessageBlockId>(&self.draft, &rows, offset, &[])
+                {
+                    pending_answer = Some(self.draft[cut.answer_start..].trim_start().to_owned());
+                    worked.insert(message);
+                    self.work_layouts.push(work_view::build(
+                        &mut self.engine,
+                        lang,
+                        work_width,
+                        work_view::WorkInput {
+                            message,
+                            live: true,
+                            started_ms: self.live_turn_started_ms.unwrap_or(now_ms),
+                            worked_ms: 0,
+                            items: cut.items,
+                            groups: cut.groups,
+                        },
+                        &opened,
+                        detail,
+                    ));
+                }
+            }
+            // Steps whose reply is not a message here (yet): a view of
+            // their own, with no text to cut.
+            let mut orphans: Vec<MessageId> = Vec::new();
             for activity in &transcript.tool_activities {
-                let (title, detail) = if is_agent_row(activity) {
-                    (
-                        agent_row_title(activity, self.lang),
-                        agent_row_body(activity, self.lang, now_ms),
-                    )
+                if !worked.contains(&activity.assistant_message_id)
+                    && !orphans.contains(&activity.assistant_message_id)
+                {
+                    orphans.push(activity.assistant_message_id);
+                }
+            }
+            for message in orphans {
+                let rows = reply_rows(transcript, message);
+                if let Some(cut) = tool_groups::cut_reply::<MessageBlockId>("", &rows, offset, &[])
+                {
+                    let live = rows.iter().any(|row| !row.status.is_terminal());
+                    let started_ms = rows
+                        .iter()
+                        .map(|row| row.proposed_at.millis())
+                        .min()
+                        .unwrap_or(now_ms);
+                    self.work_layouts.push(work_view::build(
+                        &mut self.engine,
+                        lang,
+                        work_width,
+                        work_view::WorkInput {
+                            message,
+                            live,
+                            started_ms,
+                            worked_ms: tool_groups::worked_ms(None, None, &rows),
+                            items: cut.items,
+                            groups: cut.groups,
+                        },
+                        &opened,
+                        detail,
+                    ));
+                }
+            }
+            // A pending permission request is a card of its own, open, in
+            // front of its reply.
+            for activity in transcript
+                .tool_activities
+                .iter()
+                .filter(|activity| tool_groups::is_card(activity))
+            {
+                let title = if is_agent_row(activity) {
+                    agent_row_title(activity, self.lang)
                 } else {
-                    (
-                        tool_activity_title(activity),
-                        tool_activity_detail(activity),
-                    )
+                    tool_activity_title(activity)
                 };
                 let detail = self.engine.simple_layout_wrapped(
-                    &detail,
+                    &detail(activity),
                     role::meta(),
                     (width - 28.0).max(1.0),
                 );
-                let actions_height = if activity.status == ToolActivityStatus::ApprovalRequired
-                    && activity.approval == ToolApproval::Pending
-                {
-                    let choices = agents::offered_choice_count(activity);
-                    if choices > 0 {
-                        choices as f32 * (BUTTON_H + 6.0) + 6.0
-                    } else {
-                        BUTTON_H + 12.0
-                    }
+                let choices = agents::offered_choice_count(activity);
+                let actions_height = if choices > 0 {
+                    choices as f32 * (BUTTON_H + 6.0) + 6.0
                 } else {
-                    0.0
+                    BUTTON_H + 12.0
                 };
                 let expanded_height =
                     (43.0 + detail.height() + actions_height).max(TOOL_ACTIVITY_MIN_EXPANDED_H);
@@ -5573,33 +5694,6 @@ impl ChatSurface {
                     ),
                     detail,
                     expanded_height,
-                    hidden: self
-                        .collapsed_tool_groups
-                        .contains(&activity.assistant_message_id),
-                });
-            }
-            // One box per turn, in the order the turns happened.
-            let mut turns: Vec<MessageId> = Vec::new();
-            for activity in &transcript.tool_activities {
-                if !turns.contains(&activity.assistant_message_id) {
-                    turns.push(activity.assistant_message_id);
-                }
-            }
-            for message in turns {
-                let rows: Vec<&ToolActivity> = transcript
-                    .tool_activities
-                    .iter()
-                    .filter(|activity| activity.assistant_message_id == message)
-                    .collect();
-                let title = tool_groups::summary(&rows, self.lang);
-                self.tool_group_layouts.push(ToolGroupLayout {
-                    message,
-                    top: 0.0,
-                    title: self.engine.simple_layout_wrapped(
-                        &title,
-                        role::row(),
-                        (width - 46.0).max(1.0),
-                    ),
                 });
             }
         }
@@ -5661,6 +5755,14 @@ impl ChatSurface {
                 .then_some(self.live_usage.as_ref())
                 .flatten()
                 .and_then(|usage| usage_line(usage, self.lang));
+            // Once the agent has called a tool, what it said before the
+            // call is in the work view above; the card shows what follows.
+            let answer = pending_answer.unwrap_or_else(|| self.draft.clone());
+            let display = if self.draft.is_empty() && !self.open_searches.is_empty() {
+                "Searching the web…".to_owned()
+            } else {
+                answer
+            };
             messages.push(MessageLayout {
                 id: self.pending_assistant_message_id,
                 top: 0.0,
@@ -5668,21 +5770,11 @@ impl ChatSurface {
                 state: MessageState::Pending,
                 markdown: self.draft.clone(),
                 links: Vec::new(),
-                display: if self.draft.is_empty() && !self.open_searches.is_empty() {
-                    "Searching the web…".to_owned()
-                } else {
-                    self.draft.clone()
-                },
                 wrap_width: assistant_width,
-                layout: self.engine.simple_layout_wrapped(
-                    if self.draft.is_empty() && !self.open_searches.is_empty() {
-                        "Searching the web…"
-                    } else {
-                        &self.draft
-                    },
-                    role::ui(),
-                    assistant_width,
-                ),
+                layout: self
+                    .engine
+                    .simple_layout_wrapped(&display, role::ui(), assistant_width),
+                display,
                 usage: usage_text.as_ref().map(|line| {
                     self.engine
                         .simple_layout_wrapped(line, role::hint(), assistant_width)
@@ -5732,84 +5824,59 @@ impl ChatSurface {
         );
     }
 
-    /// Place durable activity at the turn where it happened. An inference
-    /// attempt creates its assistant message before proposing tools, so the
-    /// matching activity belongs immediately before that assistant response,
-    /// not in a second list at the end of the transcript.
+    /// Place each reply's work and its pending permission cards in front of
+    /// the reply. An inference attempt creates its assistant message before
+    /// it proposes tools, so the activity belongs immediately before that
+    /// response, not in a second list at the end of the transcript.
     fn position_conversation_items(&mut self) -> f32 {
         let mut top = 0.0;
-        let mut positioned_tools = vec![false; self.tool_activity_layouts.len()];
+        let mut placed_work = vec![false; self.work_layouts.len()];
+        let mut placed_cards = vec![false; self.tool_activity_layouts.len()];
         for message_index in 0..self.message_layouts.len() {
-            let message_id = self.message_layouts[message_index].id;
-            if let Some(message_id) = message_id {
-                if let Some(group) = self
-                    .tool_group_layouts
-                    .iter_mut()
-                    .find(|group| group.message == message_id)
-                {
-                    group.top = top;
-                    top += tool_groups::GROUP_H + 6.0;
-                }
-                for (tool_index, tool) in self.tool_activity_layouts.iter_mut().enumerate() {
-                    if tool.before_message == Some(message_id) {
-                        if tool.hidden {
-                            positioned_tools[tool_index] = true;
-                            continue;
-                        }
-                        tool.top = top;
-                        top += if self.expanded_tool_activity == Some(tool.activity.id) {
-                            tool.expanded_height
-                        } else {
-                            TOOL_ACTIVITY_ROW_H
-                        } + 6.0;
-                        positioned_tools[tool_index] = true;
-                    }
-                }
+            if let Some(message_id) = self.message_layouts[message_index].id {
+                top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
             }
             self.message_layouts[message_index].top = top;
             top += message_height(&self.message_layouts[message_index]) + CARD_GAP;
         }
-        // Rows whose turn is not (yet) a message in the list — an attempt's
-        // first proposal before its assistant card lands — still sit under
-        // their box, after the messages.
-        let placed: Vec<MessageId> = self
-            .message_layouts
-            .iter()
-            .filter_map(|message| message.id)
-            .collect();
-        for group_index in 0..self.tool_group_layouts.len() {
-            let message = self.tool_group_layouts[group_index].message;
-            if placed.contains(&message) {
-                continue;
-            }
-            self.tool_group_layouts[group_index].top = top;
-            top += tool_groups::GROUP_H + 6.0;
-            for (tool_index, tool) in self.tool_activity_layouts.iter_mut().enumerate() {
-                if positioned_tools[tool_index] || tool.before_message != Some(message) {
-                    continue;
-                }
-                positioned_tools[tool_index] = true;
-                if tool.hidden {
-                    continue;
-                }
-                tool.top = top;
-                top += if self.expanded_tool_activity == Some(tool.activity.id) {
-                    tool.expanded_height
-                } else {
-                    TOOL_ACTIVITY_ROW_H
-                } + 6.0;
+        // Work whose reply is not (yet) a message in the list — an attempt's
+        // first call before its assistant card lands — follows the messages.
+        for index in 0..self.work_layouts.len() {
+            if !placed_work[index] {
+                let message = self.work_layouts[index].message;
+                top = self.place_turn(message, top, &mut placed_work, &mut placed_cards);
             }
         }
-        for (tool_index, tool) in self.tool_activity_layouts.iter_mut().enumerate() {
-            if positioned_tools[tool_index] || tool.hidden {
-                continue;
+        for (index, card) in self.tool_activity_layouts.iter_mut().enumerate() {
+            if !placed_cards[index] {
+                card.top = top;
+                top += card.expanded_height + 6.0;
             }
-            tool.top = top;
-            top += if self.expanded_tool_activity == Some(tool.activity.id) {
-                tool.expanded_height
-            } else {
-                TOOL_ACTIVITY_ROW_H
-            } + 6.0;
+        }
+        top
+    }
+
+    /// A reply's work view, then its cards, from `top`; where they end.
+    fn place_turn(
+        &mut self,
+        message: MessageId,
+        mut top: f32,
+        placed_work: &mut [bool],
+        placed_cards: &mut [bool],
+    ) -> f32 {
+        for (index, work) in self.work_layouts.iter_mut().enumerate() {
+            if !placed_work[index] && work.message == message {
+                placed_work[index] = true;
+                work.top = top;
+                top += work.height + 6.0;
+            }
+        }
+        for (index, card) in self.tool_activity_layouts.iter_mut().enumerate() {
+            if !placed_cards[index] && card.before_message == Some(message) {
+                placed_cards[index] = true;
+                card.top = top;
+                top += card.expanded_height + 6.0;
+            }
         }
         top
     }
@@ -5819,16 +5886,15 @@ impl ChatSurface {
             .message_layouts
             .iter()
             .map(|message| message.top + message_height(message) + CARD_GAP);
-        let tools = self
+        let cards = self
             .tool_activity_layouts
             .iter()
-            .filter(|tool| !tool.hidden)
-            .map(|tool| tool.top + self.tool_activity_height(tool.activity.id) + 6.0);
-        let groups = self
-            .tool_group_layouts
+            .map(|card| card.top + card.expanded_height + 6.0);
+        let work = self
+            .work_layouts
             .iter()
-            .map(|group| group.top + tool_groups::GROUP_H + 6.0);
-        messages.chain(tools).chain(groups).fold(0.0, f32::max)
+            .map(|work| work.top + work.height + 6.0);
+        messages.chain(cards).chain(work).fold(0.0, f32::max)
     }
 
     fn draw_messages(&mut self, canvas: &mut Scene, root: Affine) {
@@ -6095,89 +6161,41 @@ impl ChatSurface {
                 }
             }
         }
-        for group in &self.tool_group_layouts {
-            let row = Rect::new(
-                area.x,
-                area.y - self.conversation_scroll + group.top,
-                area.w,
-                tool_groups::GROUP_H,
+        let now_ms = koru_ai_core::Timestamp::now().millis();
+        for work in &self.work_layouts {
+            let origin = Rect::new(
+                area.x + PAD,
+                area.y - self.conversation_scroll + work.top,
+                (area.w - PAD * 2.0).max(1.0),
+                work.height,
             );
-            if row.y + row.h < area.y || row.y > area.y + area.h {
+            if origin.y + origin.h < area.y || origin.y > area.y + area.h {
                 continue;
             }
-            let hovered = self.tool_group_hover == Some(group.message);
-            scene::fill(
+            work_view::draw(
                 canvas,
                 root,
-                if hovered { p.hover_tint } else { p.panel_bg },
-                &scene::rrect(row.x, row.y, row.w, row.h, 7.0),
-            );
-            let icon = self.engine.icon_layout(icons::WRENCH, 14.0);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                row.x + 9.0,
-                row.y + 7.0,
-                Some(p.text_dim),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &group.title,
-                row.x + 31.0,
-                row.y + 6.0,
-                Some(p.text),
-            );
-            let caret = self.engine.icon_layout(
-                if self.collapsed_tool_groups.contains(&group.message) {
-                    icons::CARET_RIGHT
-                } else {
-                    icons::CARET_DOWN
-                },
-                13.0,
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &caret,
-                row.x + row.w - caret.width() - 9.0,
-                row.y + 7.0,
-                Some(p.text_dim),
+                &mut self.engine,
+                self.lang,
+                work,
+                origin,
+                self.work_hover,
+                self.focus == Focus::Work(work.message),
+                now_ms,
             );
         }
         for tool in &self.tool_activity_layouts {
-            if tool.hidden {
-                continue;
-            }
-            let height = if self.expanded_tool_activity == Some(tool.activity.id) {
-                tool.expanded_height
-            } else {
-                TOOL_ACTIVITY_ROW_H
-            };
-            let inset = if tool.before_message.is_some() {
-                tool_groups::ROW_INSET
-            } else {
-                0.0
-            };
             let row = Rect::new(
-                area.x + inset,
+                area.x,
                 area.y - self.conversation_scroll + tool.top,
-                area.w - inset,
-                height,
+                area.w,
+                tool.expanded_height,
             );
             if row.y + row.h >= area.y && row.y <= area.y + area.h {
-                let hovered = self
-                    .tool_activity_hover
-                    .is_some_and(|(id, _)| id == tool.activity.id);
                 scene::fill(
                     canvas,
                     root,
-                    if hovered || self.expanded_tool_activity == Some(tool.activity.id) {
-                        p.hover_tint
-                    } else {
-                        p.panel_bg
-                    },
+                    p.hover_tint,
                     &scene::rrect(row.x, row.y, row.w, row.h, 7.0),
                 );
                 scene::stroke(
@@ -6204,79 +6222,56 @@ impl ChatSurface {
                     row.y + 8.0,
                     Some(p.text),
                 );
-                let caret = self.engine.icon_layout(
-                    if self.expanded_tool_activity == Some(tool.activity.id) {
-                        icons::CARET_UP
-                    } else {
-                        icons::CARET_DOWN
-                    },
-                    13.0,
-                );
-                scene::draw_layout_first_line(
+                scene::draw_layout(
                     canvas,
                     root,
-                    &caret,
-                    row.x + row.w - caret.width() - 9.0,
-                    row.y + 9.0,
+                    &tool.detail,
+                    row.x + 12.0,
+                    row.y + 35.0,
                     Some(p.text_dim),
                 );
-                if self.expanded_tool_activity == Some(tool.activity.id) {
-                    scene::draw_layout(
+                if is_agent_row(&tool.activity) {
+                    agents::draw_agent_choices(
                         canvas,
                         root,
-                        &tool.detail,
-                        row.x + 12.0,
-                        row.y + 35.0,
-                        Some(p.text_dim),
+                        &mut self.engine,
+                        self.lang,
+                        self.pointer,
+                        row,
+                        &tool.activity,
                     );
-                    if tool.activity.status == ToolActivityStatus::ApprovalRequired
-                        && tool.activity.approval == ToolApproval::Pending
-                        && is_agent_row(&tool.activity)
-                    {
-                        agents::draw_agent_choices(
-                            canvas,
-                            root,
-                            &mut self.engine,
-                            self.lang,
-                            self.pointer,
-                            row,
-                            &tool.activity,
-                        );
-                    } else if tool.activity.status == ToolActivityStatus::ApprovalRequired
-                        && tool.activity.approval == ToolApproval::Pending
-                    {
-                        let [approve, auto_session, deny] = tool_activity_action_rects(row);
-                        draw_surface_button(
-                            canvas,
-                            root,
-                            &mut self.engine,
-                            approve,
-                            "Approve",
-                            ButtonRole::Primary,
-                            approve.contains(self.pointer.0, self.pointer.1),
-                            false,
-                        );
-                        draw_surface_button(
-                            canvas,
-                            root,
-                            &mut self.engine,
-                            auto_session,
-                            "Auto-approve this session",
-                            ButtonRole::Secondary,
-                            auto_session.contains(self.pointer.0, self.pointer.1),
-                            false,
-                        );
-                        draw_surface_button(
-                            canvas,
-                            root,
-                            &mut self.engine,
-                            deny,
-                            "Deny",
-                            ButtonRole::Secondary,
-                            deny.contains(self.pointer.0, self.pointer.1),
-                            false,
-                        );
-                    }
+                } else {
+                    let [approve, auto_session, deny] = tool_activity_action_rects(row);
+                    draw_surface_button(
+                        canvas,
+                        root,
+                        &mut self.engine,
+                        approve,
+                        "Approve",
+                        ButtonRole::Primary,
+                        approve.contains(self.pointer.0, self.pointer.1),
+                        false,
+                    );
+                    draw_surface_button(
+                        canvas,
+                        root,
+                        &mut self.engine,
+                        auto_session,
+                        "Auto-approve this session",
+                        ButtonRole::Secondary,
+                        auto_session.contains(self.pointer.0, self.pointer.1),
+                        false,
+                    );
+                    draw_surface_button(
+                        canvas,
+                        root,
+                        &mut self.engine,
+                        deny,
+                        "Deny",
+                        ButtonRole::Secondary,
+                        deny.contains(self.pointer.0, self.pointer.1),
+                        false,
+                    );
                 }
             }
         }
@@ -6369,87 +6364,106 @@ impl ChatSurface {
         None
     }
 
-    fn tool_activity_height(&self, id: ToolInvocationId) -> f32 {
-        if self.expanded_tool_activity == Some(id) {
-            self.tool_activity_layouts
-                .iter()
-                .find(|tool| tool.activity.id == id)
-                .map_or(TOOL_ACTIVITY_MIN_EXPANDED_H, |tool| tool.expanded_height)
-        } else {
-            TOOL_ACTIVITY_ROW_H
-        }
-    }
-
-    /// The tool box heading under the pointer: the turn it belongs to.
-    fn tool_group_at(&self, x: f32, y: f32) -> Option<MessageId> {
+    /// What in a reply's work view is under the pointer.
+    fn work_hit_at(&self, x: f32, y: f32) -> Option<work_view::WorkHit> {
         let area = self.conversation_hit_rect;
         if !area.contains(x, y) {
             return None;
         }
-        self.tool_group_layouts
-            .iter()
-            .find(|group| {
-                Rect::new(
-                    area.x,
-                    area.y - self.conversation_scroll + group.top,
-                    area.w,
-                    tool_groups::GROUP_H,
-                )
-                .contains(x, y)
-            })
-            .map(|group| group.message)
+        self.work_layouts.iter().find_map(|work| {
+            work_view::hit(
+                work,
+                area.x + PAD,
+                area.y - self.conversation_scroll + work.top,
+                (area.w - PAD * 2.0).max(1.0),
+                x,
+                y,
+            )
+        })
     }
 
-    /// Part 0 is the row, 1 is Approve, 2 is session auto-approve, and 3 is Deny.
+    /// Open or fold what was hit: a reply's work, a step group, a call.
+    fn toggle_work(&mut self, hit: work_view::WorkHit) -> bool {
+        fn flip<T: std::hash::Hash + Eq>(set: &mut HashSet<T>, value: T) {
+            if !set.remove(&value) {
+                set.insert(value);
+            }
+        }
+        match hit {
+            work_view::WorkHit::Header(message) => flip(&mut self.opened_work, message),
+            work_view::WorkHit::Group(message, index) => {
+                flip(&mut self.opened_step_groups, (message, index));
+            }
+            work_view::WorkHit::Call(call) => flip(&mut self.opened_calls, call),
+        }
+        self.messages_dirty = true;
+        true
+    }
+
+    /// Enter or Space opens the focused reply's work; Escape gives the
+    /// keyboard back to the composer. Anything else is the composer's.
+    fn work_key(&mut self, message: MessageId, key: &Key, mods: ModifiersState) -> Option<bool> {
+        if !mods.is_empty() {
+            return None;
+        }
+        match key {
+            Key::Named(NamedKey::Enter | NamedKey::Space) => {
+                Some(self.toggle_work(work_view::WorkHit::Header(message)))
+            }
+            Key::Character(value) if value.as_str() == " " => {
+                Some(self.toggle_work(work_view::WorkHit::Header(message)))
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.focus = Focus::Composer;
+                self.composer.set_focused(true);
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+
+    /// When a running reply's *Working for …* moves on next.
+    fn work_tick_deadline(&self) -> Option<Instant> {
+        self.work_layouts.iter().any(|work| work.live).then(|| {
+            self.work_ticked_at
+                .map_or_else(Instant::now, |at| at + Duration::from_secs(1))
+        })
+    }
+
+    /// Part 0 is the card, 1 is Approve, 2 is session auto-approve, 3 is
+    /// Deny, and an agent's choices count from `agents::CHOICE_PART_BASE`.
     fn tool_activity_at(&self, x: f32, y: f32) -> Option<(ToolInvocationId, u8)> {
         let area = self.conversation_hit_rect;
         if !area.contains(x, y) {
             return None;
         }
         for tool in &self.tool_activity_layouts {
-            if tool.hidden {
+            let row = Rect::new(
+                area.x,
+                area.y - self.conversation_scroll + tool.top,
+                area.w,
+                tool.expanded_height,
+            );
+            if !row.contains(x, y) {
                 continue;
             }
-            let height = self.tool_activity_height(tool.activity.id);
-            let inset = if tool.before_message.is_some() {
-                tool_groups::ROW_INSET
-            } else {
-                0.0
-            };
-            let row = Rect::new(
-                area.x + inset,
-                area.y - self.conversation_scroll + tool.top,
-                area.w - inset,
-                height,
-            );
-            if row.contains(x, y) {
-                if self.expanded_tool_activity == Some(tool.activity.id)
-                    && tool.activity.status == ToolActivityStatus::ApprovalRequired
-                    && tool.activity.approval == ToolApproval::Pending
-                    && is_agent_row(&tool.activity)
-                {
-                    if let Some(part) = agents::agent_choice_at(row, &tool.activity, x, y) {
-                        return Some((tool.activity.id, part));
-                    }
-                    return Some((tool.activity.id, 0));
-                }
-                if self.expanded_tool_activity == Some(tool.activity.id)
-                    && tool.activity.status == ToolActivityStatus::ApprovalRequired
-                    && tool.activity.approval == ToolApproval::Pending
-                {
-                    let [approve, auto_session, deny] = tool_activity_action_rects(row);
-                    if approve.contains(x, y) {
-                        return Some((tool.activity.id, 1));
-                    }
-                    if auto_session.contains(x, y) {
-                        return Some((tool.activity.id, 2));
-                    }
-                    if deny.contains(x, y) {
-                        return Some((tool.activity.id, 3));
-                    }
+            if is_agent_row(&tool.activity) {
+                if let Some(part) = agents::agent_choice_at(row, &tool.activity, x, y) {
+                    return Some((tool.activity.id, part));
                 }
                 return Some((tool.activity.id, 0));
             }
+            let [approve, auto_session, deny] = tool_activity_action_rects(row);
+            if approve.contains(x, y) {
+                return Some((tool.activity.id, 1));
+            }
+            if auto_session.contains(x, y) {
+                return Some((tool.activity.id, 2));
+            }
+            if deny.contains(x, y) {
+                return Some((tool.activity.id, 3));
+            }
+            return Some((tool.activity.id, 0));
         }
         None
     }
@@ -7756,16 +7770,25 @@ fn tool_activity_duration(activity: &ToolActivity) -> Option<String> {
     })
 }
 
-fn pending_tool_activity(transcript: &ChatTranscript) -> Option<ToolInvocationId> {
+/// A reply's rows, in the order they happened.
+fn reply_rows(transcript: &ChatTranscript, message: MessageId) -> Vec<&ToolActivity> {
     transcript
         .tool_activities
         .iter()
-        .rev()
-        .find(|activity| {
-            activity.status == ToolActivityStatus::ApprovalRequired
-                && activity.approval == ToolApproval::Pending
-        })
-        .map(|activity| activity.id)
+        .filter(|activity| activity.assistant_message_id == message)
+        .collect()
+}
+
+/// Where a call began in its reply: the stored offset, or the one this
+/// surface noted while the reply ran.
+fn effective_offset(
+    activity: &ToolActivity,
+    live: &HashMap<ToolInvocationId, u32>,
+) -> Option<usize> {
+    activity
+        .text_offset
+        .or_else(|| live.get(&activity.id).copied())
+        .map(|offset| offset as usize)
 }
 
 fn tool_activity_detail(activity: &ToolActivity) -> String {
@@ -10047,6 +10070,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         };
@@ -10056,15 +10080,15 @@ mod tests {
         surface.validated_ready = true;
         let area = surface.conversation_rect();
         surface.rebuild_messages(area.w);
-        assert_eq!(surface.expanded_tool_activity, Some(activity.id));
-        // The row sits under its turn's box heading, inset as a member.
+        // A pending request is a card of its own, open, never folded: no
+        // work view sums it up.
+        assert!(surface.work_layouts.is_empty());
         let placed = surface.tool_activity_layouts[0].top;
-        assert!(placed >= tool_groups::GROUP_H);
         let row = Rect::new(
-            area.x + tool_groups::ROW_INSET,
+            area.x,
             area.y + placed,
-            area.w - tool_groups::ROW_INSET,
-            surface.tool_activity_height(activity.id),
+            area.w,
+            surface.tool_activity_layouts[0].expanded_height,
         );
         surface.mouse_move(row.x + 4.0, row.y + 4.0);
         assert_eq!(surface.cursor_icon(), CursorIcon::Default);
@@ -10122,6 +10146,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: Some("Launch plan".into()),
             live: None,
         };
@@ -10145,9 +10170,11 @@ mod tests {
         failed.status = ToolActivityStatus::Failed;
         failed.completed_at = Some(koru_ai_core::Timestamp::from_millis(3));
         failed.error_message = Some("The requested node no longer exists.".into());
-        surface.expanded_tool_activity = None;
         surface.upsert_tool_activity(failed);
-        assert_eq!(surface.expanded_tool_activity, None);
+        assert_eq!(
+            surface.transcript.as_ref().unwrap().tool_activities[0].status,
+            ToolActivityStatus::Failed
+        );
     }
 
     #[test]
@@ -10211,6 +10238,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         });
@@ -10228,9 +10256,10 @@ mod tests {
             .iter()
             .find(|message| message.id == Some(assistant_id))
             .unwrap();
-        let tool = &surface.tool_activity_layouts[0];
-        assert!(user.top < tool.top);
-        assert!(tool.top < assistant.top);
+        // The finished step folds into the reply's work view, in front of it.
+        let work = &surface.work_layouts[0];
+        assert!(user.top < work.top);
+        assert!(work.top < assistant.top);
     }
 
     #[test]
@@ -10259,6 +10288,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         });
@@ -10273,7 +10303,7 @@ mod tests {
             .iter()
             .find(|message| message.id == Some(assistant_id))
             .unwrap();
-        assert!(surface.tool_activity_layouts[0].top < pending.top);
+        assert!(surface.work_layouts[0].top < pending.top);
     }
 
     #[test]
@@ -10308,6 +10338,7 @@ mod tests {
             agent_summary: None,
             agent_input: None,
             agent_output: None,
+            text_offset: None,
             display_target: None,
             live: None,
         };
