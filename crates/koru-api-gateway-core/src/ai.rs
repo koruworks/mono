@@ -40,6 +40,14 @@ use crate::{GatewayPrincipal, GatewayState};
 
 type SchemaFor = fn(&mut SchemaGenerator) -> Schema;
 pub const SSE_CAPACITY: usize = 32;
+/// How long an AI stream may stay silent before the gateway sends an SSE
+/// comment. An agent thinking, waiting on a permission or running a long
+/// command can say nothing for minutes; without traffic the window's read
+/// limit ([`koru_api_client`]'s stream client) took the quiet for a dropped
+/// connection and showed *Connection interrupted*. Clients skip comment
+/// lines, so a build that predates this reads the stream unchanged.
+const SSE_KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(15);
+const SSE_KEEP_ALIVE_FRAME: &[u8] = b": keep-alive\n\n";
 
 pub struct AiRoute {
     pub operation_id: &'static str,
@@ -1656,7 +1664,10 @@ fn sse_response(response: koru_ai_api::AiResponseStream) -> Response {
         |mut state| async move {
             let next = match state.first.take() {
                 Some(first) => Some(first),
-                None => state.receiver.recv().await,
+                None => match tokio::time::timeout(SSE_KEEP_ALIVE, state.receiver.recv()).await {
+                    Ok(next) => next,
+                    Err(_) => Some(Bytes::from_static(SSE_KEEP_ALIVE_FRAME)),
+                },
             };
             next.map(|bytes| (Ok::<_, Infallible>(bytes), state))
         },
@@ -1694,7 +1705,10 @@ fn model_pull_sse_response(response: koru_ai_api::ModelPullResponseStream) -> Re
         |mut state| async move {
             let next = match state.first.take() {
                 Some(first) => Some(first),
-                None => state.receiver.recv().await,
+                None => match tokio::time::timeout(SSE_KEEP_ALIVE, state.receiver.recv()).await {
+                    Ok(next) => next,
+                    Err(_) => Some(Bytes::from_static(SSE_KEEP_ALIVE_FRAME)),
+                },
             };
             next.map(|bytes| (Ok::<_, Infallible>(bytes), state))
         },

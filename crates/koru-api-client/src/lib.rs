@@ -197,8 +197,14 @@ fn http_client() -> reqwest::blocking::Client {
 }
 
 fn stream_http_client() -> reqwest::blocking::Client {
+    // **An explicit read limit.** A blocking client left unset reads with a
+    // 30 s default, and an agent can be silent longer than that while it
+    // thinks or waits on a permission: the stream was cut and the window said
+    // *Connection interrupted*. The gateway now sends a keep-alive comment
+    // every 15 s, so 60 s of nothing at all means the connection is gone.
     reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .expect("build the bounded gateway stream client")
 }
@@ -1295,9 +1301,10 @@ impl ModelPullEventStream {
     }
 }
 
-fn read_sse_frame(
-    reader: &mut BufReader<reqwest::blocking::Response>,
-) -> AiResult<Option<(String, String)>> {
+/// One `event:`/`data:` frame. Comment lines (`: keep-alive`, which the
+/// gateway sends while an agent is quiet) and the blank lines after them are
+/// skipped, so they never reach a caller as a frame.
+fn read_sse_frame(reader: &mut impl BufRead) -> AiResult<Option<(String, String)>> {
     let mut name = String::new();
     let mut data = Vec::new();
     loop {
@@ -1620,6 +1627,24 @@ fn boundary_error(message: impl Into<String>) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A quiet agent is not a dropped stream.** The gateway's keep-alive
+    /// comments between two events are skipped: the reader sees the two
+    /// events and then the end, nothing in between.
+    #[test]
+    fn keep_alive_comments_between_events_are_skipped() {
+        let wire = b"event: event\ndata: {\"a\":1}\n\n: keep-alive\n\n: keep-alive\n\nevent: event\ndata: {\"b\":2}\n\n";
+        let mut reader = std::io::Cursor::new(&wire[..]);
+        assert_eq!(
+            read_sse_frame(&mut reader).unwrap(),
+            Some(("event".into(), r#"{"a":1}"#.into()))
+        );
+        assert_eq!(
+            read_sse_frame(&mut reader).unwrap(),
+            Some(("event".into(), r#"{"b":2}"#.into()))
+        );
+        assert_eq!(read_sse_frame(&mut reader).unwrap(), None);
+    }
 
     #[test]
     fn ai_namespace_stays_disabled_without_the_capability() {
