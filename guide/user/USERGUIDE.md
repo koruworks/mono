@@ -3316,6 +3316,13 @@ agent stays and keeps working — its own picker still shows it. Turning one
 Two other doors lead to this page: the **+** at the foot of the chat model
 picker's agent column, and **Manage…**, the last row of the terminal's
 **Agents ›** menu, under a rule.
+**Default agent**, the first card on the page, chooses the agent a new chat
+starts with: a row of chips, **Auto** first, then one per agent that is on,
+each with its mark. **Auto** — the default — starts a new chat with the last
+agent you used, as Koru always has. If the agent you chose is turned off or
+not installed, new chats start as Auto would, and a line under the chips
+says so (*Codex is turned off, so new chats start with the last agent you
+used.*); turning it back on brings your choice back.
 **Default permission for new chats**, a card on the same page, chooses the
 mode a new agent chat starts in. **Supported agents** — the ones that can
 approve safe actions on their own, Claude and Codex — offer **Manual** (the
@@ -3329,8 +3336,8 @@ Manual until you change them. A new chat starts from this setting rather than
 from the mode you last used; changing the mode inside a chat changes that chat
 only, `Shift+Tab` still never steps to Full access, and a branch of a chat
 starts with no mode of its own.
-**Restore defaults**, at the top of the page, turns every agent back on and
-puts both permissions back on Manual, which
+**Restore defaults**, at the top of the page, turns every agent back on, sets
+the default agent back to Auto and puts both permissions back on Manual, which
 is how a new install starts. The choice belongs to **this computer**, because
 the agents installed differ from one machine to the next, so it does not follow
 you to another; a Koru older than this one ignores it.

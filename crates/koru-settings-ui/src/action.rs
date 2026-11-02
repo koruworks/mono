@@ -156,6 +156,8 @@ pub(crate) enum Action {
     /// *Default permission for new chats*: `true` for the *Other agents*
     /// row, and the permission chosen.
     AgentPermission(bool, koru_settings::AgentPermission),
+    /// *Default agent*: an agent's key, or `None` for *Auto*.
+    DefaultAgent(Option<String>),
 }
 
 /// **What the surface cannot do for itself.**
@@ -234,4 +236,7 @@ pub enum Request {
         other: bool,
         permission: koru_settings::AgentPermission,
     },
+    /// Store the agent new chats start with, on this machine: a key, or
+    /// `None` for *Auto* (the last agent used).
+    SetDefaultAgent(Option<String>),
 }

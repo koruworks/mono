@@ -292,6 +292,7 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "disabled_agents",
     "default_permission",
     "default_permission_other",
+    "default_agent",
 ];
 
 /// What a read of `desktop-v1.json` recovered, plus what it must carry back.
@@ -403,6 +404,14 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                     };
                 }
             }
+            // A key that is not an agent key's shape reads as *Auto*.
+            "default_agent" => {
+                if let Some(key) = value.as_str()
+                    && crate::sections::is_agent_key(key)
+                {
+                    into.default_agent = Some(key.to_owned());
+                }
+            }
             _ => {
                 file.carried.insert(key, value);
             }
@@ -480,6 +489,10 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
             "default_permission_other".into(),
             settings.default_permission_other.token().into(),
         );
+    }
+    // Written only once an agent is chosen: absent is *Auto*.
+    if let Some(agent) = &settings.default_agent {
+        object.insert("default_agent".into(), agent.as_str().into());
     }
     serde_json::to_vec_pretty(&serde_json::Value::Object(object))
         .expect("a settings object always serializes")

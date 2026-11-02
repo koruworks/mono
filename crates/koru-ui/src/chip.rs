@@ -7,6 +7,11 @@
 //! measured and remain one line. A caller that must clamp an exceptionally
 //! long localized label gets a hard clip at the chip boundary rather than text
 //! leaking into its neighbour.
+//!
+//! A chip may reserve a **leading slot** before its label
+//! ([`Chip::leading`]) for a mark the caller draws there — an agent's brand
+//! mark on *Agent providers*' *Default agent* row. The label then starts after
+//! the slot instead of being centred, and the width counts the slot.
 
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
@@ -15,10 +20,12 @@ use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::Fill;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Chip<'a> {
     label: &'a str,
     selected: bool,
+    /// Room before the label for a mark the caller draws; `0.0` for none.
+    leading: f32,
 }
 
 impl<'a> Chip<'a> {
@@ -27,11 +34,30 @@ impl<'a> Chip<'a> {
     pub const RADIUS: f32 = 6.0;
 
     pub const fn new(label: &'a str, selected: bool) -> Self {
-        Self { label, selected }
+        Self {
+            label,
+            selected,
+            leading: 0.0,
+        }
+    }
+
+    /// Reserve `w` before the label for a mark the caller draws in
+    /// [`leading_rect`](Self::leading_rect). The label starts after it.
+    pub const fn leading(mut self, w: f32) -> Self {
+        self.leading = w;
+        self
     }
 
     pub fn width(self, engine: &mut TextEngine) -> f32 {
-        engine.simple_layout(self.label, theme::role::row()).width() + Self::PAD_X * 2.0
+        engine.simple_layout(self.label, theme::role::row()).width()
+            + Self::PAD_X * 2.0
+            + self.leading
+    }
+
+    /// Where the caller draws its leading mark inside `rect`: the reserved
+    /// slot, from the chip's left inset, the chip's full height.
+    pub fn leading_rect(self, rect: Rect) -> Rect {
+        Rect::new(rect.x + Self::PAD_X, rect.y, self.leading, rect.h)
     }
 
     #[track_caller]
@@ -60,6 +86,7 @@ impl<'a> Chip<'a> {
                     format!("{} / {} / {}", self.selected, hovered, focused),
                     "instance state",
                 );
+                r.property("leading slot", self.leading, "instance state");
                 r.property("docs", "docs/features/koruui/COMPONENTS.md", "catalog");
             },
         );
@@ -96,11 +123,17 @@ impl<'a> Chip<'a> {
 
         let text = engine.simple_layout(self.label, theme::role::row());
         canvas.push_clip_layer(Fill::NonZero, root, &shape);
+        // Centred alone; after the slot when the chip leads with a mark.
+        let x = if self.leading > 0.0 {
+            rect.x + Self::PAD_X + self.leading
+        } else {
+            rect.x + (rect.w - text.width()) * 0.5
+        };
         scene::draw_layout_first_line(
             canvas,
             root,
             &text,
-            rect.x + (rect.w - text.width()) * 0.5,
+            x,
             crate::text_field::baseline_centred_y(&text, rect.y, rect.h),
             Some(if self.selected { p.text } else { p.text_dim }),
         );
@@ -157,6 +190,18 @@ mod tests {
         let label = engine.simple_layout("Coming up", theme::role::row());
         let width = Chip::new("Coming up", false).width(&mut engine);
         assert!((width - label.width() - Chip::PAD_X * 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_leading_slot_widens_the_chip_and_sits_inside_its_inset() {
+        let mut engine = TextEngine::new();
+        let plain = Chip::new("Claude", false).width(&mut engine);
+        let marked = Chip::new("Claude", false).leading(22.0);
+        assert!((marked.width(&mut engine) - plain - 22.0).abs() < 0.01);
+        let rect = Rect::new(10.0, 4.0, marked.width(&mut engine), Chip::H);
+        let slot = marked.leading_rect(rect);
+        assert_eq!(slot.x, rect.x + Chip::PAD_X);
+        assert_eq!((slot.w, slot.h), (22.0, Chip::H));
     }
 
     #[test]

@@ -1041,6 +1041,65 @@ fn an_agent_turned_off_leaves_the_rail_but_a_chat_on_it_keeps_it() {
     assert_eq!(surface.picker_rail().len(), 2, "restore defaults");
 }
 
+/// **A new chat starts with the default agent** (D40), not the agent last
+/// used; *Auto* — no default — keeps the last used, and so does a default
+/// that is turned off or not installed on this computer.
+#[test]
+fn a_new_chat_starts_with_the_default_agent_and_falls_back_to_auto() {
+    let mut surface = surface();
+    surface.settings = Some(settings(
+        &[("agent-claude", "Claude"), ("agent-opencode", "OpenCode")],
+        Some("agent-claude"),
+    ));
+    let started_on = |surface: &mut ChatSurface| {
+        surface.transcript = None;
+        assert!(surface.create_chat());
+        surface
+            .transcript
+            .as_ref()
+            .map(|transcript| transcript.chat.current_model.provider.clone())
+    };
+    assert_eq!(
+        started_on(&mut surface),
+        Some(agent("agent-claude")),
+        "Auto: the last used"
+    );
+
+    let opencode = crate::AgentDefaults {
+        agent: Some("opencode".into()),
+        ..crate::AgentDefaults::default()
+    };
+    assert!(surface.set_agent_defaults(opencode.clone()));
+    assert!(!surface.set_agent_defaults(opencode), "no change");
+    assert_eq!(started_on(&mut surface), Some(agent("agent-opencode")));
+    surface.transcript = None;
+    assert_eq!(
+        surface.picker_initial_entry(),
+        Some(RailEntry::Agent(agent("agent-opencode"))),
+        "the picker opens on it"
+    );
+
+    // Turned off: Auto.
+    surface.set_hidden_agents(["opencode".to_owned()]);
+    assert_eq!(started_on(&mut surface), Some(agent("agent-claude")));
+    surface.set_hidden_agents(Vec::new());
+    // Not installed: Auto.
+    surface
+        .agent_status
+        .insert(agent("agent-opencode"), AgentStatus::NotInstalled);
+    assert_eq!(started_on(&mut surface), Some(agent("agent-claude")));
+    surface
+        .agent_status
+        .insert(agent("agent-opencode"), AgentStatus::Ready);
+    assert_eq!(started_on(&mut surface), Some(agent("agent-opencode")));
+    // An agent this service does not list: Auto.
+    surface.set_agent_defaults(crate::AgentDefaults {
+        agent: Some("grok".into()),
+        ..crate::AgentDefaults::default()
+    });
+    assert_eq!(started_on(&mut surface), Some(agent("agent-claude")));
+}
+
 /// **A + ends the agent rail and opens Settings on Agent providers** (the
 /// user, 2026-11-02): only where the host offers that page, one square after
 /// the last mark; it raises no tooltip and is named for a screen reader

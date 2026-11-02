@@ -442,10 +442,12 @@ impl crate::ChatSurface {
             .transcript
             .as_ref()
             .map(|transcript| transcript.chat.current_model.provider.clone());
-        let selected = self
-            .settings
-            .as_ref()
-            .and_then(|settings| settings.selected_provider.clone());
+        // The default agent where one is set (D40), else the last chosen.
+        let selected = self.default_agent_provider().or_else(|| {
+            self.settings
+                .as_ref()
+                .and_then(|settings| settings.selected_provider.clone())
+        });
         let ready = |entry: &&RailEntry| {
             self.agent_status.get(entry.provider()).copied() == Some(AgentStatus::Ready)
         };

@@ -3,7 +3,9 @@
 //! **Coding → Agent providers**: which coding agents Koru shows, whether
 //! their CLIs are ready, and where a new chat starts.
 //!
-//! The *Default permission for new chats* card — two segmented controls, the
+//! The *Default agent* card first — *Auto* and one chip per agent that is on,
+//! each with its mark, and a note when the chosen agent cannot be had. Then
+//! the *Default permission for new chats* card — two segmented controls, the
 //! supported agents' *Manual · Auto · Yolo* and the other agents' *Manual ·
 //! Yolo*, and a sentence saying plainly what each means. Then one row per
 //! agent the host lists — its brand mark and name, its status in plain words,
@@ -27,6 +29,7 @@ pub(crate) fn lay_out(
     rows: &[AgentProviderRow],
     defaults: &AgentDefaults,
 ) {
+    default_agent(b, lang, rows, defaults);
     permissions(b, lang, defaults);
     let on = rows.iter().filter(|row| row.on).count();
     b.caption_with_link(
@@ -56,6 +59,42 @@ pub(crate) fn lay_out(
             row.on,
             Action::AgentEnabled(row.key.clone(), !row.on),
         );
+    }
+}
+
+/// **Default agent**: *Auto* — the last agent used — and one chip per agent
+/// that is on, in the page's order, each with its mark. The chosen agent's
+/// chip is the selected one; with none, or one that is turned off and so has
+/// no chip, *Auto* is. The host's note says when the choice falls back.
+fn default_agent(
+    b: &mut Builder<'_>,
+    lang: Lang,
+    rows: &[AgentProviderRow],
+    defaults: &AgentDefaults,
+) {
+    let chosen = defaults
+        .agent
+        .as_deref()
+        .filter(|key| rows.iter().any(|row| row.on && row.key == *key));
+    let mut chips = vec![(
+        Action::DefaultAgent(None),
+        t(lang, Key::SettingsDefaultAgentAuto).to_owned(),
+        None,
+        chosen.is_none(),
+    )];
+    chips.extend(rows.iter().filter(|row| row.on).map(|row| {
+        (
+            Action::DefaultAgent(Some(row.key.clone())),
+            row.name.clone(),
+            Some(row.key.clone()),
+            chosen == Some(row.key.as_str()),
+        )
+    }));
+    b.card(Some(t(lang, Key::SettingsDefaultAgent)));
+    b.row_chips(chips);
+    b.note(t(lang, Key::SettingsDefaultAgentHint));
+    if let Some(note) = &defaults.agent_note {
+        b.note(note);
     }
 }
 

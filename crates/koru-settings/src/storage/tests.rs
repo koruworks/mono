@@ -243,6 +243,8 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         // The default permissions are written only when not Manual.
         default_permission: AgentPermission::Auto,
         default_permission_other: AgentPermission::Yolo,
+        // The default agent is written only when one is chosen.
+        default_agent: Some("codex".into()),
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -450,6 +452,33 @@ fn the_default_permissions_round_trip_and_manual_writes_no_key() {
     );
     assert_eq!(odd.default_permission, AgentPermission::Manual);
     assert_eq!(odd.default_permission_other, AgentPermission::Manual);
+}
+
+/// **The default agent** (D40): absent is *Auto* and writes no key, a key is
+/// written and read back, and anything that is not an agent key reads as
+/// *Auto*.
+#[test]
+fn the_default_agent_round_trips_and_auto_writes_no_key() {
+    let none = render_desktop(&GlobalSettings::default(), &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&none).unwrap();
+    assert!(value.get("default_agent").is_none());
+
+    let mut settings = GlobalSettings::default();
+    apply_desktop(br#"{"default_agent": "codex"}"#, &mut settings);
+    assert_eq!(settings.default_agent.as_deref(), Some("codex"));
+    let written = render_desktop(&settings, &DesktopFile::default());
+    let value: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    assert_eq!(value["default_agent"], "codex");
+
+    for odd in [
+        &br#"{"default_agent": "Codex CLI"}"#[..],
+        br#"{"default_agent": 7}"#,
+        br#"{"default_agent": null}"#,
+    ] {
+        let mut read = GlobalSettings::default();
+        apply_desktop(odd, &mut read);
+        assert_eq!(read.default_agent, None);
+    }
 }
 
 #[test]

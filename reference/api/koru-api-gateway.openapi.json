@@ -5352,6 +5352,14 @@
               }
             ]
           },
+          "default_agent": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_string"
+              }
+            ],
+            "description": "The agent a new chat starts with; `null` is *Auto*."
+          },
           "default_canvas_background": {
             "anyOf": [
               {
@@ -5704,6 +5712,12 @@
           },
           "code_font": {
             "$ref": "#/components/schemas/FontSetting"
+          },
+          "default_agent": {
+            "default": null,
+            "description": "**The agent a new chat starts with**, by agent key, or `None` for\n*Auto* — the last agent used, which is what a chat did before this\nexisted. An agent that is turned off or not installed falls back to\n*Auto* where a chat is made; the key is kept, so turning it back on\nbrings the choice back.",
+            "nullable": true,
+            "type": "string"
           },
           "default_canvas_background": {
             "$ref": "#/components/schemas/CanvasBackground"

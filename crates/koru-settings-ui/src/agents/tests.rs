@@ -288,6 +288,96 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
     assert_eq!(*surface.agent_defaults(), AgentDefaults::default());
 }
 
+/// The *Default agent* chips, as `(label, mark, selected, hit)`.
+fn chips(surface: &SettingsSurface) -> Vec<(String, Option<String>, bool, usize)> {
+    surface
+        .laid
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Card(card) => Some(card.rows.iter()),
+            _ => None,
+        })
+        .flatten()
+        .find_map(|row| match &row.widget {
+            Widget::Chips(chips) => Some(
+                chips
+                    .iter()
+                    .map(|chip| {
+                        (
+                            chip.label.clone(),
+                            chip.mark.clone(),
+                            chip.selected,
+                            chip.hit,
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// **Default agent** (D40): *Auto* first and chosen, then one chip per agent
+/// that is on, each with its mark; a press asks the host; a note the host
+/// gives is said under the chips; Restore defaults goes back to *Auto*.
+#[test]
+fn the_default_agent_chips_offer_auto_and_every_agent_that_is_on() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = on_page(rows());
+    let lines = page_lines(&surface);
+    assert!(lines.iter().any(|l| l == "Default agent"), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == t(Lang::En, Key::SettingsDefaultAgentHint)),
+        "{lines:?}"
+    );
+    let shown = chips(&surface);
+    assert_eq!(
+        shown
+            .iter()
+            .map(|(label, mark, on, _)| (label.as_str(), mark.as_deref(), *on))
+            .collect::<Vec<_>>(),
+        [
+            ("Auto", None, true),
+            ("Claude", Some("claude"), false),
+            ("Grok", Some("grok"), false),
+            ("Codex", Some("codex"), false),
+            ("Muse", Some("muse"), false),
+        ],
+        "Antigravity is off, so it is no choice"
+    );
+    let codex = shown[3].3;
+    let (x, y) = surface.laid.hits[codex].rect.centre();
+    assert!(surface.mouse_down(x, y - surface.scroll));
+    assert_eq!(
+        surface.take_requests(),
+        [Request::SetDefaultAgent(Some("codex".into()))]
+    );
+    surface.relayout();
+    assert!(chips(&surface)[3].2, "Codex is chosen");
+
+    // The host says the choice cannot be had; Auto shows chosen for an
+    // agent that has no chip.
+    surface.set_agent_defaults(AgentDefaults {
+        agent: Some("antigravity".into()),
+        agent_note: Some("Antigravity is turned off.".into()),
+        ..AgentDefaults::default()
+    });
+    surface.relayout();
+    assert!(chips(&surface)[0].2, "Auto");
+    assert!(
+        page_lines(&surface)
+            .iter()
+            .any(|l| l == "Antigravity is turned off.")
+    );
+
+    assert!(press(&mut surface, "Restore defaults"));
+    assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
+    assert_eq!(surface.agent_defaults().agent, None);
+}
+
 /// Every word the page and its heading say exists in every language.
 #[test]
 fn the_page_reads_in_every_language() {

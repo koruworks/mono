@@ -455,6 +455,18 @@ pub const REGISTRY: &[SettingSpec] = &[
               mode when the agent offers no full-access mode. Absent is \
               `manual`.",
     },
+    SettingSpec {
+        field: "default_agent",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "The agent a new chat starts with (Settings → Coding → Agent \
+              providers), by agent key. `null` — and an absent key — is \
+              Auto: the last agent used. An agent turned off or not \
+              installed falls back to Auto where a chat is made, and the \
+              page says so; the key is kept.",
+    },
     // ------------------------------------- Terminal, roaming: terminal.conf
     SettingSpec {
         field: "theme",

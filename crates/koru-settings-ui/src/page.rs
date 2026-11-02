@@ -21,7 +21,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_i18n::{Key, Lang};
 use koru_ui::{
-    ActionButton, Card, CardRow, Dropdown, DropdownOption, PageShell, PreviewTile, Segmented,
+    ActionButton, Card, CardRow, Chip, Dropdown, DropdownOption, PageShell, PreviewTile, Segmented,
     Stepper, Toggle,
 };
 use vello::peniko::Color;
@@ -302,7 +302,26 @@ pub(crate) enum Widget {
         more: Option<usize>,
     },
     Pair(Box<Widget>, Box<Widget>),
+    /// A wrapping row of choice chips across the whole row — *Default
+    /// agent*'s *Auto* and one per agent. The row has no name of its own.
+    Chips(Vec<ChipLaid>),
 }
+
+/// One chip of a [`Widget::Chips`] row.
+pub(crate) struct ChipLaid {
+    pub(crate) rect: Rect,
+    pub(crate) label: String,
+    /// A brand mark, by profile key, in the chip's leading slot.
+    pub(crate) mark: Option<String>,
+    pub(crate) selected: bool,
+    pub(crate) hit: usize,
+}
+
+/// The leading slot a chip with a brand mark reserves: the mark and the air
+/// after it.
+pub(crate) const CHIP_MARK_SLOT: f32 = 20.0;
+/// The mark's own square inside it.
+pub(crate) const CHIP_MARK_SIZE: f32 = 14.0;
 
 pub(crate) struct RowLaid {
     pub(crate) rect: Rect,
@@ -749,6 +768,60 @@ impl<'a> Builder<'a> {
             hint,
             Spec::Button(action, button.to_owned(), koru_ui::ActionStyle::Ghost),
         );
+    }
+
+    /// **A row of choice chips**, wrapping across the card's width — the
+    /// shared [`Chip`], each optionally led by a brand mark (by profile key).
+    /// The row has no name; the card's title says what the chips choose.
+    pub(crate) fn row_chips(&mut self, items: Vec<(Action, String, Option<String>, bool)>) {
+        if self.card.is_none() {
+            self.card(None);
+        }
+        let left = self.x + CardRow::PAD_X;
+        let right = self.x + self.w - CardRow::PAD_X;
+        let top = self.y + CardRow::PAD_Y;
+        let (mut x, mut y) = (left, top);
+        let mut chips = Vec::with_capacity(items.len());
+        for (action, label, mark, selected) in items {
+            let slot = if mark.is_some() { CHIP_MARK_SLOT } else { 0.0 };
+            let w = Chip::new(&label, selected)
+                .leading(slot)
+                .width(self.engine)
+                .max(koru_ui::chip::MIN_W);
+            if x > left && x + w > right {
+                x = left;
+                y += Chip::H + koru_ui::chip::GAP;
+            }
+            let rect = Rect::new(x, y, w, Chip::H);
+            let hit = self.push_hit(rect, Target::Action(action));
+            chips.push(ChipLaid {
+                rect,
+                label,
+                mark,
+                selected,
+                hit,
+            });
+            x += w + koru_ui::chip::GAP;
+        }
+        let bottom = chips
+            .iter()
+            .map(|chip| chip.rect.y + chip.rect.h)
+            .fold(top, f32::max);
+        let h = (bottom + CardRow::PAD_Y - self.y).max(CardRow::MIN_H);
+        let rect = Rect::new(self.x, self.y, self.w, h);
+        if let Some(card) = self.card.as_mut() {
+            card.rows.push(RowLaid {
+                rect,
+                label: String::new(),
+                hint: None,
+                link: None,
+                chip: None,
+                mark: None,
+                text_w: 0.0,
+                widget: Widget::Chips(chips),
+            });
+        }
+        self.y += h;
     }
 
     pub(crate) fn row_stepper(

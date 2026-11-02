@@ -235,6 +235,7 @@ fn the_default_permission_is_stored_and_reaches_every_chat_surface() {
     let yolo = koru_ai_ui::AgentDefaults {
         permission: koru_ai_ui::NewChatPermission::Yolo,
         permission_other: koru_ai_ui::NewChatPermission::Yolo,
+        ..koru_ai_ui::AgentDefaults::default()
     };
     // A tab opened later reads the same defaults from a process-wide copy
     // other tests write in parallel, so only the pane is asserted here.
@@ -250,6 +251,87 @@ fn the_default_permission_is_stored_and_reaches_every_chat_surface() {
             .ai_chat
             .set_agent_defaults(koru_ai_ui::AgentDefaults::default())
     );
+}
+
+/// **The default agent is stored on this machine and reaches the chat
+/// surfaces** (D40); turned off, the page says new chats fall back to the
+/// last agent used, and Restore defaults goes back to Auto.
+#[test]
+fn the_default_agent_is_stored_and_falls_back_when_turned_off() {
+    let mut view = MainView::new();
+    assert!(view.open_settings_tab());
+    view.perform_settings_request(koru_settings_ui::Request::SetDefaultAgent(Some(
+        "codex".into(),
+    )));
+    assert_eq!(
+        view.delegate_folder
+            .authoritative()
+            .default_agent
+            .as_deref(),
+        Some("codex")
+    );
+    assert_eq!(settings_defaults(&view).agent.as_deref(), Some("codex"));
+    assert_eq!(settings_defaults(&view).agent_note, None);
+    assert!(
+        !view.ai_chat.set_agent_defaults(view.chat_agent_defaults()),
+        "the pane has it"
+    );
+    assert_eq!(view.chat_agent_defaults().agent.as_deref(), Some("codex"));
+
+    view.perform_settings_request(koru_settings_ui::Request::SetAgentEnabled {
+        key: "codex".into(),
+        on: false,
+    });
+    let note = settings_defaults(&view).agent_note.expect("a note");
+    assert!(note.starts_with("Codex"), "{note}");
+    assert_eq!(
+        note,
+        koru_i18n::fill(
+            koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::SettingsDefaultAgentOff
+            ),
+            &["Codex"]
+        )
+    );
+
+    view.perform_settings_request(koru_settings_ui::Request::RestoreAgentDefaults);
+    assert_eq!(view.delegate_folder.authoritative().default_agent, None);
+    assert_eq!(settings_defaults(&view), AgentDefaults::default());
+}
+
+/// A default agent that is not installed is said too; Auto, and an agent
+/// that can be had, say nothing.
+#[test]
+fn the_default_agent_note_names_an_agent_that_is_not_installed() {
+    let row = |key: &str, name: &str, status, on| AgentProviderRow {
+        key: key.into(),
+        name: name.into(),
+        status,
+        guide: None,
+        on,
+    };
+    let rows = [
+        row("claude", "Claude", AgentProviderStatus::Ready, true),
+        row(
+            "grok",
+            "Grok",
+            AgentProviderStatus::NotInstalled {
+                program: "grok".into(),
+            },
+            true,
+        ),
+    ];
+    let lang = crate::format::lang();
+    assert_eq!(
+        default_agent_note(Some("grok"), &rows),
+        Some(koru_i18n::fill(
+            koru_i18n::t(lang, koru_i18n::Key::SettingsDefaultAgentMissing),
+            &["Grok"]
+        ))
+    );
+    assert_eq!(default_agent_note(Some("claude"), &rows), None);
+    assert_eq!(default_agent_note(None, &rows), None);
 }
 
 /// **Agents › ends in Manage…, after a rule**, wherever the flyout opens.

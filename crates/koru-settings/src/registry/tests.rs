@@ -126,13 +126,14 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
     );
     assert_eq!(
         count(Section::Global, StorageClass::DeviceLocal),
-        12,
+        13,
         "Global device-local: close behavior, global shortcut, start on \
          login, its reminder explanation record, automatic update checks, \
          global dictation enable + chord, where a delegated run's own folder \
          is made (ADR-365), the session recorder's prefill (SESSIONRECORD), \
-         the coding agents turned off (Agent providers, 2026-11-02), and the \
-         two default permissions for new chats (D39)"
+         the coding agents turned off (Agent providers, 2026-11-02), the \
+         two default permissions for new chats (D39) and the default agent \
+         (D40)"
     );
     assert_eq!(
         count(Section::Terminal, StorageClass::Roaming),
@@ -155,7 +156,7 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
         "every AI row is delegated: the authority faces `ai.db` and the vault, \
          it does not own them"
     );
-    assert_eq!(REGISTRY.len(), 52);
+    assert_eq!(REGISTRY.len(), 53);
 }
 
 #[test]

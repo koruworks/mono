@@ -325,3 +325,26 @@ fn the_default_permissions_patch_is_device_local_and_other_has_no_auto() {
         serde_json::from_str(r#"{"default_permission":"auto"}"#).expect("a token");
     assert_eq!(body.default_permission, Some(AgentPermission::Auto));
 }
+
+/// **The default agent is set by key and cleared to Auto with `null`**; a
+/// value that is not an agent key is refused before anything is staged.
+#[test]
+fn the_default_agent_patch_sets_clears_and_validates() {
+    let mut section = GlobalSettings::default();
+    let patch: GlobalPatch = serde_json::from_str(r#"{"default_agent":"claude"}"#).unwrap();
+    assert!(patch.touches_device() && !patch.touches_roaming());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(section.default_agent.as_deref(), Some("claude"));
+    let auto: GlobalPatch = serde_json::from_str(r#"{"default_agent":null}"#).unwrap();
+    assert!(auto.touches_device());
+    auto.apply(&mut section);
+    assert_eq!(section.default_agent, None);
+    for bad in ["", "Claude", "claude code"] {
+        let patch = GlobalPatch {
+            default_agent: Field::Set(bad.to_owned()),
+            ..GlobalPatch::default()
+        };
+        assert!(patch.validate().is_err(), "{bad:?}");
+    }
+}

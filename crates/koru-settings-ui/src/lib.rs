@@ -1584,7 +1584,19 @@ impl SettingsSurface {
                 );
                 for row in &card.rows {
                     if let Some(key) = &row.mark {
-                        draw_row_mark(scene_out, root, &mut self.engine, row.rect, key, alpha);
+                        let size = page::MARK_SIZE;
+                        let at = Rect::new(
+                            row.rect.x + CardRow::PAD_X,
+                            row.rect.y + (row.rect.h - size) * 0.5,
+                            size,
+                            size,
+                        );
+                        draw_mark(scene_out, root, &mut self.engine, at, key, alpha);
+                    }
+                    // A row of chips has no name of its own.
+                    if row.label.is_empty() {
+                        self.draw_widget(scene_out, root, &row.widget, hovered, alpha);
+                        continue;
                     }
                     let _row = CardRow {
                         label: &row.label,
@@ -1777,6 +1789,30 @@ impl SettingsSurface {
                 self.draw_widget(scene_out, root, first, hovered, alpha);
                 self.draw_widget(scene_out, root, second, hovered, alpha);
             }
+            Widget::Chips(chips) => {
+                for laid in chips {
+                    let slot = if laid.mark.is_some() {
+                        page::CHIP_MARK_SLOT
+                    } else {
+                        0.0
+                    };
+                    let chip = koru_ui::Chip::new(&laid.label, laid.selected).leading(slot);
+                    chip.draw(
+                        scene_out,
+                        root,
+                        &mut self.engine,
+                        laid.rect,
+                        hovered == Some(laid.hit),
+                        false,
+                    );
+                    if let Some(key) = &laid.mark {
+                        let lead = chip.leading_rect(laid.rect);
+                        let size = page::CHIP_MARK_SIZE;
+                        let at = Rect::new(lead.x, lead.y + (lead.h - size) * 0.5, size, size);
+                        draw_mark(scene_out, root, &mut self.engine, at, key, alpha);
+                    }
+                }
+            }
         }
     }
 
@@ -1834,25 +1870,20 @@ impl SettingsSurface {
 
 /// What a theme tile shows: a sliver of that theme's page and ink, from the
 /// real palettes rather than a drawing of them.
-/// An agent row's brand mark, before its name: the agent's own mark where it
-/// has one, the robot otherwise — the mark the chat's rail and the terminal's
-/// Agents menu draw for the same key.
-fn draw_row_mark(
+/// An agent's brand mark in the square `at` — before an agent row's name, or
+/// in a *Default agent* chip: the agent's own mark where it has one, the
+/// robot otherwise — the mark the chat's rail and the terminal's Agents menu
+/// draw for the same key.
+fn draw_mark(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
-    row: Rect,
+    at: Rect,
     key: &str,
     alpha: f32,
 ) {
     let color = theme::p().text.multiply_alpha(alpha);
-    let size = page::MARK_SIZE;
-    let at = Rect::new(
-        row.x + CardRow::PAD_X,
-        row.y + (row.h - size) * 0.5,
-        size,
-        size,
-    );
+    let size = at.w;
     match koru_draw::brand::for_profile(key)
         .unwrap_or(koru_draw::brand::ProfileMark::Glyph(icons::ROBOT))
     {
@@ -2069,6 +2100,7 @@ impl SettingsSurface {
                 for row in &mut self.agent_providers {
                     row.on = true;
                 }
+                // Both permissions on Manual, and Auto for the agent.
                 self.agent_defaults = AgentDefaults::default();
                 self.requests.push(Request::RestoreAgentDefaults);
             }
@@ -2086,6 +2118,14 @@ impl SettingsSurface {
                     *current = permission;
                     self.requests
                         .push(Request::SetAgentPermission { other, permission });
+                }
+            }
+            Action::DefaultAgent(agent) => {
+                if self.agent_defaults.agent != agent {
+                    self.agent_defaults.agent = agent.clone();
+                    // The host says again whether the new choice can be had.
+                    self.agent_defaults.agent_note = None;
+                    self.requests.push(Request::SetDefaultAgent(agent));
                 }
             }
         }
@@ -2242,6 +2282,7 @@ fn clone_action(action: &Action) -> Action {
         Action::RefreshAgentStatus => Action::RefreshAgentStatus,
         Action::AgentGuide(url) => Action::AgentGuide(url),
         Action::AgentPermission(other, permission) => Action::AgentPermission(*other, *permission),
+        Action::DefaultAgent(agent) => Action::DefaultAgent(agent.clone()),
     }
 }
 

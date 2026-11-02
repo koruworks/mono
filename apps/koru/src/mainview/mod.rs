@@ -9131,6 +9131,9 @@ impl MainView {
             Request::SetAgentPermission { other, permission } => {
                 self.set_agent_permission(other, permission);
             }
+            Request::SetDefaultAgent(agent) => {
+                self.set_default_agent(agent);
+            }
         }
     }
 

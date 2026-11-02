@@ -3429,9 +3429,13 @@ impl ChatSurface {
         true
     }
 
+    /// What a new chat starts on: the default agent where one is set and
+    /// can be had (D40), else the provider last chosen — *Auto*.
     fn current_selection(&self) -> Option<ModelSelection> {
         let settings = self.settings.as_ref()?;
-        let provider = settings.selected_provider.clone()?;
+        let provider = self
+            .default_agent_provider()
+            .or_else(|| settings.selected_provider.clone())?;
         let (requested_model, default_reasoning) = match provider.as_str() {
             AiProviderId::OPENAI if settings.openai.credential_configured => {
                 (settings.openai.model.clone()?, settings.openai.reasoning)

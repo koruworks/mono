@@ -223,6 +223,11 @@ fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
                 walk(a, laid, out);
                 walk(b, laid, out);
             }
+            Widget::Chips(chips) => {
+                for chip in chips {
+                    out.push((chip.label.clone(), Found::Hit(chip.hit), chip.selected));
+                }
+            }
             Widget::None | Widget::Toggle { .. } | Widget::Swatches { .. } => {}
         }
     }

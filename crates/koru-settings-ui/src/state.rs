@@ -235,6 +235,11 @@ pub struct AgentDefaults {
     pub permission: koru_settings::AgentPermission,
     /// What a new chat with any other agent starts in: *Manual* or *Yolo*.
     pub permission_other: koru_settings::AgentPermission,
+    /// The agent a new chat starts with, by key; `None` is *Auto*.
+    pub agent: Option<String>,
+    /// Why the chosen agent is not what a new chat gets — it is turned off,
+    /// or not installed — in the host's words; `None` while it is.
+    pub agent_note: Option<String>,
 }
 
 /// Whether an agent's CLI is ready, in the words the row says it.

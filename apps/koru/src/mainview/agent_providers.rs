@@ -22,9 +22,12 @@
 //! nothing is uninstalled or signed out.
 //!
 //! **Where a new chat starts** is the same kind of setting, beside it: the
-//! permission a new chat with a supported agent starts in and the one any
-//! other agent's does (`default_permission`, `default_permission_other`,
-//! D39). Every chat surface is handed them; only a new chat reads them.
+//! agent it starts with (`default_agent`, D40) and the permission a new chat
+//! with a supported agent starts in and the one any other agent's does
+//! (`default_permission`, `default_permission_other`, D39). Every chat
+//! surface is handed them; only a new chat reads them. A default agent that
+//! is turned off or not installed falls back to *Auto* — the last agent
+//! used — in the chat, and the page says so.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
 use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
@@ -109,6 +112,22 @@ pub(crate) fn agent_status(
     }
 }
 
+/// **Why the default agent is not what a new chat gets**, in the page's
+/// words: it is turned off, or its program is not on this computer. `None`
+/// for *Auto*, an agent that can be had, and one the page does not list.
+pub(crate) fn default_agent_note(agent: Option<&str>, rows: &[AgentProviderRow]) -> Option<String> {
+    let row = rows.iter().find(|row| Some(row.key.as_str()) == agent)?;
+    let lang = crate::format::lang();
+    let words = if !row.on {
+        koru_i18n::Key::SettingsDefaultAgentOff
+    } else if matches!(row.status, AgentProviderStatus::NotInstalled { .. }) {
+        koru_i18n::Key::SettingsDefaultAgentMissing
+    } else {
+        return None;
+    };
+    Some(koru_i18n::fill(koru_i18n::t(lang, words), &[&row.name]))
+}
+
 /// A stored permission in the chat surface's words.
 pub(crate) fn new_chat_permission(permission: AgentPermission) -> koru_ai_ui::NewChatPermission {
     match permission {
@@ -125,21 +144,28 @@ impl MainView {
         &self.delegate_folder.authoritative().disabled_agents
     }
 
-    /// Where a new chat starts, as *Agent providers* shows it.
-    pub(super) fn agent_defaults(&self) -> AgentDefaults {
+    /// Where a new chat starts, as *Agent providers* shows it beside
+    /// `rows`: with a note when the default agent is turned off or not
+    /// installed, and so falls back to *Auto*.
+    pub(super) fn agent_defaults(&self, rows: &[AgentProviderRow]) -> AgentDefaults {
         let section = self.delegate_folder.authoritative();
         AgentDefaults {
             permission: section.default_permission,
             permission_other: section.default_permission_other,
+            agent: section.default_agent.clone(),
+            agent_note: default_agent_note(section.default_agent.as_deref(), rows),
         }
     }
 
-    /// Where a new chat starts, in the chat surface's words.
+    /// Where a new chat starts, in the chat surface's words. The surface
+    /// itself falls back to *Auto* for an agent it hides or knows is not
+    /// installed.
     pub(super) fn chat_agent_defaults(&self) -> koru_ai_ui::AgentDefaults {
         let section = self.delegate_folder.authoritative();
         koru_ai_ui::AgentDefaults {
             permission: new_chat_permission(section.default_permission),
             permission_other: new_chat_permission(section.default_permission_other),
+            agent: section.default_agent.clone(),
         }
     }
 
@@ -173,7 +199,7 @@ impl MainView {
     /// Answers whether one moved.
     pub(super) fn sync_agent_providers(&mut self) -> bool {
         let rows = self.agent_provider_rows();
-        let defaults = self.agent_defaults();
+        let defaults = self.agent_defaults(&rows);
         self.each_tab_mut(|tab| match &mut tab.view {
             TabView::Settings(view) => {
                 let rows_moved = view.set_agent_providers(rows.clone());
@@ -219,12 +245,26 @@ impl MainView {
         self.save_disabled_agents(list)
     }
 
-    /// *Restore defaults*: every agent on, and new chats back to *Manual*.
+    /// *Restore defaults*: every agent on, and new chats back to *Auto*
+    /// and *Manual*.
     pub(super) fn restore_agent_defaults(&mut self) -> bool {
         self.save_agent_settings(koru_settings::GlobalPatch {
             disabled_agents: Some(Vec::new()),
             default_permission: Some(AgentPermission::Manual),
             default_permission_other: Some(AgentPermission::Manual),
+            default_agent: koru_settings::Field::Clear,
+            ..koru_settings::GlobalPatch::default()
+        })
+    }
+
+    /// **The agent new chats start with**: a key, or `None` for *Auto*.
+    /// Stored on this machine and handed to every chat surface.
+    pub(super) fn set_default_agent(&mut self, agent: Option<String>) -> bool {
+        self.save_agent_settings(koru_settings::GlobalPatch {
+            default_agent: match agent {
+                Some(key) => koru_settings::Field::Set(key),
+                None => koru_settings::Field::Clear,
+            },
             ..koru_settings::GlobalPatch::default()
         })
     }

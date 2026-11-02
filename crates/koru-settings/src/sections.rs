@@ -193,6 +193,13 @@ pub struct GlobalSettings {
     /// *Manual* or *Yolo*, never *Auto*. *Manual* by default.
     #[serde(default)]
     pub default_permission_other: AgentPermission,
+    /// **The agent a new chat starts with**, by agent key, or `None` for
+    /// *Auto* — the last agent used, which is what a chat did before this
+    /// existed. An agent that is turned off or not installed falls back to
+    /// *Auto* where a chat is made; the key is kept, so turning it back on
+    /// brings the choice back.
+    #[serde(default)]
+    pub default_agent: Option<String>,
 }
 
 impl Default for GlobalSettings {
@@ -248,6 +255,8 @@ impl Default for GlobalSettings {
             // A new chat asks before it acts until a person says otherwise.
             default_permission: AgentPermission::Manual,
             default_permission_other: AgentPermission::Manual,
+            // *Auto*: the last agent used.
+            default_agent: None,
         }
     }
 }
@@ -346,6 +355,9 @@ pub struct GlobalPatch {
     /// or *Yolo* — an agent with no auto mode has no *Auto* to start in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_permission_other: Option<AgentPermission>,
+    /// The agent a new chat starts with; `null` is *Auto*.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub default_agent: Field<String>,
 }
 
 impl GlobalPatch {
@@ -396,6 +408,7 @@ impl GlobalPatch {
             || self.disabled_agents.is_some()
             || self.default_permission.is_some()
             || self.default_permission_other.is_some()
+            || !self.default_agent.is_unchanged()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -410,14 +423,7 @@ impl GlobalPatch {
         // An agent key is a profile key's shape — short, lowercase, ASCII —
         // and the list is bounded, so a hand-edit cannot grow the file.
         if let Some(agents) = &self.disabled_agents {
-            let key = |key: &String| {
-                !key.is_empty()
-                    && key.len() <= MAX_AGENT_KEY
-                    && key.bytes().all(|byte| {
-                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-                    })
-            };
-            if agents.len() > MAX_DISABLED_AGENTS || !agents.iter().all(key) {
+            if agents.len() > MAX_DISABLED_AGENTS || !agents.iter().all(|key| is_agent_key(key)) {
                 return Err(Invalid::new(
                     "disabled_agents",
                     "an agent is named by its lowercase key, and at most 64 are listed",
@@ -428,6 +434,14 @@ impl GlobalPatch {
             return Err(Invalid::new(
                 "default_permission_other",
                 "an agent with no auto mode starts in manual or yolo",
+            ));
+        }
+        if let Field::Set(key) = &self.default_agent
+            && !is_agent_key(key)
+        {
+            return Err(Invalid::new(
+                "default_agent",
+                "an agent is named by its lowercase key, or null for auto",
             ));
         }
         if let Some(zoom) = self.zoom
@@ -582,7 +596,18 @@ impl GlobalPatch {
         if let Some(agents) = self.disabled_agents {
             current.disabled_agents = normalized_agents(agents);
         }
+        self.default_agent.apply(&mut current.default_agent);
     }
+}
+
+/// Whether `key` has an agent key's shape: short, lowercase ASCII letters,
+/// digits and `-` (`claude`, `codex`, `qwen`, …).
+pub(crate) fn is_agent_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_AGENT_KEY
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// The most agents the off list holds, and the longest key it takes.

@@ -19,13 +19,17 @@ use koru_ai_wire::{
 use koru_i18n::{Key, Lang, t};
 
 /// **Where a new chat starts**, as the person set it on *Agent providers*:
-/// the permission a chat with a supported agent (one with an auto mode)
-/// starts in, and the one any other agent's starts in. The host hands it
-/// over; a new chat reads it and an existing chat never does.
+/// the agent it starts with, the permission a chat with a supported agent
+/// (one with an auto mode) starts in, and the one any other agent's starts
+/// in. The host hands it over; a new chat reads it and an existing chat
+/// never does.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentDefaults {
     pub permission: crate::approval_modes::NewChatPermission,
     pub permission_other: crate::approval_modes::NewChatPermission,
+    /// The agent a new chat starts with, by key (`claude`, `codex`, …);
+    /// `None` is *Auto*: the last agent used.
+    pub agent: Option<String>,
 }
 
 /// How ready one agent is for a chat, as the picker and the card say it.
@@ -1036,6 +1040,22 @@ impl crate::ChatSurface {
         let moved = self.agent_defaults != defaults;
         self.agent_defaults = defaults;
         moved
+    }
+
+    /// **The agent a new chat starts with** (D40): the default agent, while
+    /// it is listed, turned on and not known to be missing from this
+    /// computer. `None` is *Auto* — the last agent used — which is also
+    /// where a default that cannot be had falls back.
+    pub(crate) fn default_agent_provider(&self) -> Option<AiProviderId> {
+        let key = self.agent_defaults.agent.as_deref()?;
+        let agent = self
+            .settings
+            .as_ref()?
+            .agents
+            .iter()
+            .find(|agent| agent_key(&agent.id) == Some(key))?;
+        let installed = self.agent_status.get(&agent.id) != Some(&AgentStatus::NotInstalled);
+        (self.agent_shown(&agent.id) && installed).then(|| agent.id.clone())
     }
 
     /// Whether `agent` is offered as a choice: not turned off.
