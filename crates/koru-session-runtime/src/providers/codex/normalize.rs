@@ -257,7 +257,8 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
 
 /// What the item produced (UC17), by its kind: a command's aggregated
 /// output, a file change's diffs, an MCP call's result. Bounded by the
-/// protocol.
+/// protocol; a JSON result too long for it is summarized
+/// ([`bound_tool_output`](crate::providers::tool_output::bound_tool_output)).
 pub(super) fn item_output(item: &Value) -> Option<String> {
     let text = match item.get("type").and_then(Value::as_str)? {
         // A command that exited non-zero says so first, as Claude's do:
@@ -297,7 +298,7 @@ pub(super) fn item_output(item: &Value) -> Option<String> {
         },
         _ => return None,
     };
-    koru_session_protocol::bound_tool_content(&text)
+    crate::providers::tool_output::bound_tool_output(&text)
 }
 
 /// A thread's cumulative token counts as the app-server reports them under

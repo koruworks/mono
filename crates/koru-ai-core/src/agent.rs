@@ -201,7 +201,10 @@ pub const LIVE_TEXT_LIMIT: usize = 512;
 
 /// The most of a tool call's input or output the chat keeps, in characters
 /// — the same bound the session protocol applies before it crosses, applied
-/// again here so a row never carries more than its column admits.
+/// again here so a row never carries more than its column admits. A JSON
+/// result too long for it already arrives as a summary that fits, marked
+/// `_truncated` (`koru-session-runtime`'s `providers::tool_output`), so this
+/// cut leaves it whole.
 pub const AGENT_CONTENT_CHARS: usize = 4_000;
 
 /// `text`, trimmed and cut to [`AGENT_CONTENT_CHARS`] characters; `None`

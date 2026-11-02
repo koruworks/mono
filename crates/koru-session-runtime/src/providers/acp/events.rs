@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::providers::tool_output::bound_tool_output;
 use koru_session_protocol::{ToolFailure, bound_tool_content, bound_tool_detail};
 
 impl AcpControl {
@@ -421,7 +422,8 @@ fn refine_tool(tool: &mut Tool, update: &Value) {
 }
 
 /// What the tool produced (UC17): its diffs and its result text, else its
-/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`.
+/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`; a JSON result
+/// too long for it is summarized ([`bound_tool_output`]).
 fn tool_output(tool: &mut Tool) -> Option<String> {
     let produced = [tool.diff.take(), tool.text.take()]
         .into_iter()
@@ -433,7 +435,7 @@ fn tool_output(tool: &mut Tool) -> Option<String> {
     } else {
         produced
     };
-    bound_tool_content(&text)
+    bound_tool_output(&text)
 }
 
 /// A content array's text blocks, joined; `None` when it has none.

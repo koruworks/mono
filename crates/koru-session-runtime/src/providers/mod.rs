@@ -17,6 +17,7 @@ mod jsonl;
 mod process;
 mod readiness;
 mod registry;
+mod tool_output;
 pub use readiness::ProviderReadinessCache;
 
 pub use acp::*;
