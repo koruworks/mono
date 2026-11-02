@@ -831,6 +831,13 @@
     "remix_filled": "System/checkbox-blank-fill",
     "tabler": "square"
   },
+  "STAR": {
+    "filled": "star",
+    "lucide": "star",
+    "remix": "System/star-line",
+    "remix_filled": "System/star-fill",
+    "tabler": "star"
+  },
   "STOP": {
     "filled": "player-stop",
     "lucide": "square",

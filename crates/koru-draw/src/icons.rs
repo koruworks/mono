@@ -266,6 +266,10 @@ pub const POP_OUT: char = '\u{E5DE}';
 /// Pin a window above the others — `ph-push-pin`. Drawn in the accent colour
 /// while the window is pinned, dim when it is not; one glyph, tinted by state.
 pub const PUSH_PIN: char = '\u{E3E2}';
+/// A favorite — `ph-star`. The chat's model picker shows it outlined at a
+/// hovered model's end and **filled** (`icon_layout_filled`) on a favorite,
+/// and the agent rail's *Favorites* entry wears it.
+pub const STAR: char = '\u{E46A}';
 
 /// Leftward — `ph-caret-left`. Its alphabetical neighbours place it: down,
 /// **left**, right, up, and it is the taller narrower one of that middle pair.
@@ -567,7 +571,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 151] = [
+pub const ALL: [(&str, char); 152] = [
     ("GRAPH", GRAPH),
     ("TERMINAL", TERMINAL),
     ("TABLE_COMPACT", TABLE_COMPACT),
@@ -645,6 +649,7 @@ pub const ALL: [(&str, char); 151] = [
     ("WINDOW_RESTORE", WINDOW_RESTORE),
     ("POP_OUT", POP_OUT),
     ("PUSH_PIN", PUSH_PIN),
+    ("STAR", STAR),
     ("CARET_LEFT", CARET_LEFT),
     ("CARET_RIGHT", CARET_RIGHT),
     ("CARET_DOWN", CARET_DOWN),
