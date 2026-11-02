@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://koru.do"><img src="assets/logo.png" alt="Koru logo" height="80"></a>
 </p>
-<p align="center"><strong>Your private workspace for thinking, writing and AI.</strong></p>
+<p align="center"><strong>A free notes app that works with your AI subscription.</strong></p>
 <p align="center">
   <a href="https://koru.do"><img src="https://img.shields.io/badge/%E2%9C%A8-Website-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Website"></a>
   <a href="https://koru.do/#download"><img src="https://img.shields.io/badge/%E2%9C%A8-Download-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Download Koru"></a>
@@ -12,10 +12,10 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and an itinerary, next to a Claude Code agent tab" width="100%">
+  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and a checklist, next to the AI Chat tab" width="100%">
 </p>
 
-# Koru is a private, local-first AI workspace
+# Koru is a free notes app that works with your AI subscription
 
 Koru is an open-source, local-first workspace for thinking, writing and working
 with AI. Documents, files and terminal sessions, including your shells and AI
@@ -280,10 +280,10 @@ registration. A build without them turns those features off and says so.
 If Koru is useful to you, a post about it really helps a small, independent
 project get found. Follow the build on X: [@liechti_dev](https://x.com/liechti_dev).
 
-[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace)
-[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace)
-[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace&via=liechti_dev)
-[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20private%2C%20open-source%2C%20local-first%20AI%20workspace%20https%3A%2F%2Fkoru.do)
+[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
+[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
+[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription&via=liechti_dev)
+[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription%20https%3A%2F%2Fkoru.do)
 [![Share on LinkedIn](https://img.shields.io/badge/share%20on-linkedin-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fkoru.do)
 [![Share on Facebook](https://img.shields.io/badge/share%20on-facebook-1877F2?logo=facebook&logoColor=white)](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fkoru.do)
 
