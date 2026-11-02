@@ -133,6 +133,7 @@ define_catalogue!(
     ProviderModels,
     ModelLabel,
     ModelReasoning,
+    ModelContext,
     ModelIdentity,
     CachedInputRelationship,
     McpEndpoint,

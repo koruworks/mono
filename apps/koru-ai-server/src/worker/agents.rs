@@ -757,6 +757,12 @@ pub(super) fn agent_models(
                     group_name: label(&model.group_name),
                     legacy: model.legacy,
                     reasoning: model.reasoning.as_ref().and_then(reasoning_control),
+                    context: model.context.as_ref().map(|context| {
+                        koru_ai_wire::AgentModelContext {
+                            id: context.id.as_str().to_owned(),
+                            tokens: context.tokens,
+                        }
+                    }),
                 }
             })
             .collect(),
@@ -781,12 +787,20 @@ pub(super) fn reasoning_control(
     })
 }
 
-/// Each listed model's control, as the dispatcher's index keeps it.
+/// Each listed model's control, as the dispatcher's index keeps it — under
+/// its longer context's id too, which runs the same model (koru-ai D10).
 pub(super) fn agent_controls(response: &AgentModelsResponse) -> Vec<(String, ReasoningControl)> {
     response
         .models
         .iter()
-        .filter_map(|model| Some((model.id.clone(), model.reasoning.clone()?)))
+        .filter_map(|model| Some((model, model.reasoning.clone()?)))
+        .flat_map(|(model, control)| {
+            let context = model
+                .context
+                .as_ref()
+                .map(|context| (context.id.clone(), control.clone()));
+            std::iter::once((model.id.clone(), control)).chain(context)
+        })
         .collect()
 }
 

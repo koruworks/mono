@@ -2607,6 +2607,7 @@ fn an_agent_models_levels_become_its_effort_control() {
                 group_name: None,
                 legacy: false,
                 reasoning: Some(control.clone()),
+                context: None,
             },
             koru_ai_wire::AgentModelView {
                 id: "haiku".into(),
@@ -2616,6 +2617,7 @@ fn an_agent_models_levels_become_its_effort_control() {
                 group_name: None,
                 legacy: false,
                 reasoning: None,
+                context: None,
             },
         ],
     };

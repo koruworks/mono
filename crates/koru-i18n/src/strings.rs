@@ -300,6 +300,12 @@ pub enum Key {
     AiToolSpaces,
     AiToolApprove,
     AiToolDeny,
+    // The model picker's Context row (koru-ai D10).
+    AiModelContext,
+    AiModelContextAuto,
+    AiModelContextMillions,
+    AiModelContextThousands,
+    AiModelContextLockedAfterStart,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2708,7 +2714,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1864] = [
+    pub const ALL: [Key; 1869] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2903,6 +2909,11 @@ impl Key {
         Key::AiToolSpaces,
         Key::AiToolApprove,
         Key::AiToolDeny,
+        Key::AiModelContext,
+        Key::AiModelContextAuto,
+        Key::AiModelContextMillions,
+        Key::AiModelContextThousands,
+        Key::AiModelContextLockedAfterStart,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -6773,6 +6784,66 @@ pub const ROWS: &[Row] = &[
         ar: "رفض",
         zh_hans: "拒绝",
         ja: "拒否",
+    },
+    // The model picker's footer: the row that chooses a model's context window.
+    Row {
+        key: Key::AiModelContext,
+        en: "Context",
+        es: "Contexto",
+        pt_br: "Contexto",
+        de: "Kontext",
+        fr: "Contexte",
+        ar: "السياق",
+        zh_hans: "上下文",
+        ja: "コンテキスト",
+    },
+    // The Context row's first choice: the model's own window.
+    Row {
+        key: Key::AiModelContextAuto,
+        en: "Auto",
+        es: "Automático",
+        pt_br: "Automático",
+        de: "Auto",
+        fr: "Auto",
+        ar: "تلقائي",
+        zh_hans: "自动",
+        ja: "自動",
+    },
+    // A context window of {} million tokens, as the Context row names it.
+    Row {
+        key: Key::AiModelContextMillions,
+        en: "{}M",
+        es: "{}M",
+        pt_br: "{}M",
+        de: "{} Mio.",
+        fr: "{}M",
+        ar: "{} مليون",
+        zh_hans: "{}M",
+        ja: "{}M",
+    },
+    // A context window of {} thousand tokens, as the Context row names it.
+    Row {
+        key: Key::AiModelContextThousands,
+        en: "{}k",
+        es: "{}k",
+        pt_br: "{}k",
+        de: "{}k",
+        fr: "{}k",
+        ar: "{} ألف",
+        zh_hans: "{}k",
+        ja: "{}k",
+    },
+    // An agent chat's context after its first message: the agent started with it.
+    Row {
+        key: Key::AiModelContextLockedAfterStart,
+        en: "The agent started with this context; it can be changed in a new chat",
+        es: "El agente empezó con este contexto; puedes cambiarlo en un chat nuevo",
+        pt_br: "O agente começou com este contexto; você pode mudá-lo em um novo chat",
+        de: "Der Agent hat mit diesem Kontext begonnen; ändern lässt er sich in einem neuen Chat",
+        fr: "L’agent a démarré avec ce contexte ; vous pouvez le changer dans une nouvelle discussion",
+        ar: "بدأ الوكيل بهذا السياق؛ يمكن تغييره في محادثة جديدة",
+        zh_hans: "代理已按此上下文启动；可在新对话中更改",
+        ja: "エージェントはこのコンテキストで開始しました。新しいチャットで変更できます",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

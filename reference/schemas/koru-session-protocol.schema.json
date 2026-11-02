@@ -3982,6 +3982,33 @@
     "title": "McpToolName",
     "type": "string"
   },
+  "ModelContext": {
+    "$defs": {
+      "ModelName": {
+        "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/ModelName"
+      },
+      "tokens": {
+        "description": "The window, in tokens: `1000000` for a 1M window.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "tokens"
+    ],
+    "title": "ModelContext",
+    "type": "object"
+  },
   "ModelIdentity": {
     "$defs": {
       "ModelName": {
@@ -5109,6 +5136,25 @@
           }
         ]
       },
+      "ModelContext": {
+        "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/ModelName"
+          },
+          "tokens": {
+            "description": "The window, in tokens: `1000000` for a 1M window.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
       "ModelLabel": {
         "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
         "type": "string"
@@ -5151,6 +5197,17 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
     "properties": {
+      "context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A longer context window the model runs with under an id of its own,\nwhich the adapter folded into this model rather than list it twice.\nOptional and defaulted: an older peer leaves it unread and sees the\nmodel as before, so it needs no protocol version of its own."
+      },
       "description": {
         "anyOf": [
           {
@@ -5236,6 +5293,25 @@
           }
         ]
       },
+      "ModelContext": {
+        "description": "**A model's longer context window** (koru-ai D10): the id that runs the\nsame model with it, and its size. Choosing it only chooses which id a\nsession is started with; the id is the agent's, opaque to Koru.",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/ModelName"
+          },
+          "tokens": {
+            "description": "The window, in tokens: `1000000` for a 1M window.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
       "ModelLabel": {
         "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
         "type": "string"
@@ -5277,6 +5353,17 @@
       "ProviderModel": {
         "description": "One model an agent offers, with what the agent itself says about it.\n\nEvery field after `group` is v18 (`PROVIDER_MODEL_FACTS_PROTOCOL_VERSION`)\nand optional: an older peer leaves it unread, and an older agent that\nsends none leaves the picker to format the id.",
         "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A longer context window the model runs with under an id of its own,\nwhich the adapter folded into this model rather than list it twice.\nOptional and defaulted: an older peer leaves it unread and sees the\nmodel as before, so it needs no protocol version of its own."
+          },
           "description": {
             "anyOf": [
               {

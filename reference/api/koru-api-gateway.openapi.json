@@ -269,8 +269,40 @@
         },
         "type": "object"
       },
+      "AgentModelContext": {
+        "description": "A model's longer context window: the id that runs the model with it,\nand its size in tokens.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tokens": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "tokens"
+        ],
+        "type": "object"
+      },
       "AgentModelView": {
         "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentModelContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "A longer context window the model runs with under an id of its own\n(koru-ai D10). A chat chooses it by taking that id as its model.\nAbsent for a model with no such choice."
+          },
           "description": {
             "description": "The agent's own description of the model.",
             "nullable": true,

@@ -3,8 +3,9 @@
 //! **The composer's model picker** (agent-models §9, rung 5): the agents run
 //! down a rail, one mark each; above the selected agent's models sits a
 //! *Search models…* field with ↻; the footer shows the chat's reasoning
-//! level as a word, ↺ back to the model's default, and the stepped slider.
-//! It opens upward, above the composer and end-aligned with the chip, as the
+//! level as a word, ↺ back to the model's default, and the stepped slider;
+//! above it, for a model with a longer window, the Context row
+//! ([`context`]). It opens upward, above the composer and end-aligned with the chip, as the
 //! workspace and tool-approval panels do — below the chip only when there is
 //! no room above — and it is driven fully from the keyboard.
 //!
@@ -29,10 +30,13 @@ use vello::kurbo::Affine;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::agents::{
-    AgentModels, AgentStatus, default_model_label, fallback_label, group_label, is_agent_provider,
-    listed_models, model_groups, model_label,
+    AgentModels, AgentStatus, default_model_label, fallback_label, find_listed, group_label,
+    is_agent_provider, listed_models, model_groups, model_label,
 };
 use crate::effort;
+
+mod context;
+pub(crate) use context::CONTEXT_H;
 
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
@@ -60,6 +64,7 @@ const TOOLTIP_RAIL: u64 = 0x5049_0000;
 const TOOLTIP_REFRESH: u64 = 0x5049_1000;
 const TOOLTIP_RESET: u64 = 0x5049_1001;
 const TOOLTIP_LOCKED: u64 = 0x5049_1002;
+const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
 const TOOLTIP_ROW: u64 = 0x5049_2000;
 
 /// One mark on the rail: a local agent, or — first, and only on a chat that
@@ -85,6 +90,8 @@ pub(crate) enum PickerFocus {
     Search,
     Rail,
     List,
+    /// The Context row's two choices (koru-ai D10).
+    Context,
     Reset,
     Slider,
 }
@@ -171,7 +178,10 @@ pub(crate) struct Geometry {
     pub(crate) search: Rect,
     pub(crate) refresh: Rect,
     pub(crate) list: Rect,
+    /// The level's section: its word, ↺ and the slider.
     pub(crate) footer: Option<Rect>,
+    /// The Context row, above the level's section (koru-ai D10).
+    pub(crate) context: Option<Rect>,
 }
 
 impl Geometry {
@@ -208,27 +218,30 @@ impl Geometry {
 }
 
 /// The picker's width and height: as wide as the composer up to
-/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows and the
-/// footer, whatever the list holds — never shorter than the rail needs.
+/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows, the Context
+/// row and the level's footer, whatever the list holds and whether or not
+/// the chat's model has either row — never shorter than the rail needs.
 pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
     let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
-    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H;
+    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + CONTEXT_H + FOOTER_H;
     (width, height.max(rail_h))
 }
 
-/// The picker's parts inside `panel`.
-pub(crate) fn geometry(panel: Rect, footer: bool) -> Geometry {
+/// The picker's parts inside `panel`: the level's footer at the foot when
+/// `levels`, the Context row above it when `context`, and the list in what
+/// is left.
+pub(crate) fn geometry(panel: Rect, levels: bool, context: bool) -> Geometry {
     let inner_x = panel.x + RAIL_W;
     let inner_w = (panel.w - RAIL_W - PAD).max(1.0);
-    let footer_rect = footer.then(|| {
-        Rect::new(
-            inner_x,
-            panel.y + panel.h - PAD - FOOTER_H,
-            inner_w,
-            FOOTER_H,
-        )
+    let mut bottom = panel.y + panel.h - PAD;
+    let footer_rect = levels.then(|| {
+        bottom -= FOOTER_H;
+        Rect::new(inner_x, bottom, inner_w, FOOTER_H)
     });
-    let bottom = footer_rect.map_or(panel.y + panel.h - PAD, |footer| footer.y);
+    let context_rect = context.then(|| {
+        bottom -= CONTEXT_H;
+        Rect::new(inner_x, bottom, inner_w, CONTEXT_H)
+    });
     let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
     let refresh = Rect::new(
         search.x + search.w - 28.0,
@@ -245,6 +258,7 @@ pub(crate) fn geometry(panel: Rect, footer: bool) -> Geometry {
         refresh,
         list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
         footer: footer_rect,
+        context: context_rect,
     }
 }
 
@@ -621,7 +635,12 @@ impl crate::ChatSurface {
             .as_ref()
             .filter(|transcript| transcript.chat.current_model.provider == agent)
             .map(|transcript| transcript.chat.current_model.requested_model.clone());
-        let items: Vec<LegacyItem> = listed_models(self.listed_agent_models(&agent))
+        let models = self.listed_agent_models(&agent);
+        let current = current
+            .as_deref()
+            .and_then(|current| find_listed(models, current))
+            .map(|(listed, _)| listed.id.clone());
+        let items: Vec<LegacyItem> = listed_models(models)
             .filter(|model| model.legacy)
             .map(|model| LegacyItem {
                 id: model.id.clone(),
@@ -752,7 +771,15 @@ impl crate::ChatSurface {
         }
         match row {
             Row::Default => model.requested_model == AGENT_DEFAULT_MODEL,
-            Row::Model(id) => &model.requested_model == id,
+            // A chat on a model's longer context is on that model.
+            Row::Model(id) => {
+                &model.requested_model == id
+                    || find_listed(
+                        self.listed_agent_models(entry.provider()),
+                        &model.requested_model,
+                    )
+                    .is_some_and(|(listed, _)| &listed.id == id)
+            }
             _ => false,
         }
     }
@@ -766,7 +793,8 @@ impl crate::ChatSurface {
         }
         let rail = self.picker_rail();
         let rail_h = rail_height(rail.len(), self.rail_has_divider(&rail));
-        let footer = self.effort_control().is_some();
+        let levels = self.effort_control().is_some();
+        let context = self.picker_context().is_some();
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
         let panel = if self.fits_above_composer(h) {
@@ -774,7 +802,7 @@ impl crate::ChatSurface {
         } else {
             PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
         };
-        Some(geometry(panel, footer))
+        Some(geometry(panel, levels, context))
     }
 
     pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {
@@ -947,6 +975,9 @@ impl crate::ChatSurface {
             self.picker.focus = PickerFocus::Reset;
             return Some(self.reset_level());
         }
+        if let Some(handled) = self.context_mouse_down(&geometry, x, y) {
+            return Some(handled);
+        }
         if let (Some(section), Some(control)) =
             (geometry.slider_section(), self.effort_control().cloned())
             && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
@@ -1071,6 +1102,16 @@ impl crate::ChatSurface {
                 t(self.lang, Key::AiEffortReset),
             ));
         }
+        if let Some(context) = geometry.context
+            && context.contains(x, y)
+            && self.effort_locked()
+        {
+            return Some(TooltipContent::new(
+                TOOLTIP_CONTEXT_LOCKED,
+                context,
+                t(self.lang, Key::AiModelContextLockedAfterStart),
+            ));
+        }
         if let Some(footer) = geometry.footer
             && footer.contains(x, y)
             && self.effort_locked()
@@ -1132,6 +1173,7 @@ impl crate::ChatSurface {
             return None;
         }
         let footer = self.effort_control().is_some();
+        let context = self.picker_context().is_some();
         // The flyout first: Up and Down walk it, Enter chooses, Left and
         // Esc close it.
         if let Some(menu) = &mut self.picker.legacy {
@@ -1167,17 +1209,13 @@ impl crate::ChatSurface {
                 return Some(true);
             }
             WinitKey::Named(NamedKey::Tab) => {
-                let order: &[PickerFocus] = if footer {
-                    &[
-                        PickerFocus::Search,
-                        PickerFocus::Rail,
-                        PickerFocus::List,
-                        PickerFocus::Reset,
-                        PickerFocus::Slider,
-                    ]
-                } else {
-                    &[PickerFocus::Search, PickerFocus::Rail, PickerFocus::List]
-                };
+                let mut order = vec![PickerFocus::Search, PickerFocus::Rail, PickerFocus::List];
+                if context {
+                    order.push(PickerFocus::Context);
+                }
+                if footer {
+                    order.extend([PickerFocus::Reset, PickerFocus::Slider]);
+                }
                 let at = order
                     .iter()
                     .position(|focus| *focus == self.picker.focus)
@@ -1225,6 +1263,14 @@ impl crate::ChatSurface {
                     key
                 {
                     return Some(self.step_level(*direction == NamedKey::ArrowRight));
+                }
+            }
+            // Left is Auto, Right the longer window.
+            PickerFocus::Context => {
+                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
+                    key
+                {
+                    return Some(self.choose_context(*direction == NamedKey::ArrowRight));
                 }
             }
             PickerFocus::Search | PickerFocus::List => {}
@@ -1492,6 +1538,9 @@ impl crate::ChatSurface {
                 || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
             scrollbar::draw(canvas, root, scrollbar, active);
         }
+
+        // The Context row, above the level's.
+        self.draw_context_row(canvas, root, &geometry);
 
         // The footer: the level's word, ↺, and the slider.
         let (Some(footer), Some(control), Some(shown)) = (

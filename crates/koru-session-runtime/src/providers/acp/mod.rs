@@ -592,6 +592,10 @@ impl AcpControl {
             .ok_or_else(handshake_rejected)?
             .to_owned();
         self.model_options = models::config_models(&session, self.config.route.provider.as_str());
+        if self.config.route.is_claude() {
+            self.model_options =
+                claude::fold_context_siblings(std::mem::take(&mut self.model_options));
+        }
         let requested_model = self.config.requested_model();
         // The latest answer's options: the model's levels arrive with the
         // answer that set the model (D18).

@@ -646,6 +646,19 @@ pub struct AgentModelView {
     /// none: a client shows it no level control.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<koru_ai_core::ReasoningControl>,
+    /// A longer context window the model runs with under an id of its own
+    /// (koru-ai D10). A chat chooses it by taking that id as its model.
+    /// Absent for a model with no such choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<AgentModelContext>,
+}
+
+/// A model's longer context window: the id that runs the model with it,
+/// and its size in tokens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModelContext {
+    pub id: String,
+    pub tokens: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

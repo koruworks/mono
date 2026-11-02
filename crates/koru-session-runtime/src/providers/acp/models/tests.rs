@@ -419,3 +419,48 @@ fn an_opencode_deprecated_model_is_legacy() {
     let marks: Vec<bool> = catalog.models().iter().map(|model| model.legacy).collect();
     assert_eq!(marks, [false, true], "sorted by id: new, then old");
 }
+
+/// **koru-ai D10: Claude's 1M siblings fold into a context choice.** The
+/// wrapper's list as seen: *Default*, *Opus (1M context)*, *Fable*,
+/// *Sonnet*, *Haiku*, *Opus*. `opus[1m]` becomes `opus`'s 1M context, in
+/// the sibling's earlier place, under the base's own name; a sibling whose
+/// base is not listed stays a model of its own; nothing else moves.
+#[test]
+fn claudes_one_million_siblings_fold_into_their_base_as_its_context() {
+    let session = json!({"configOptions":[{"id":"model","type":"select","currentValue":"default",
+    "options":[
+        {"value":"default","name":"Default (recommended)","description":"Opus (1M context)"},
+        {"value":"opus[1m]","name":"Opus (1M context)"},
+        {"value":"fable","name":"Fable 5.1"},
+        {"value":"sonnet","name":"Sonnet 5"},
+        {"value":"haiku","name":"Haiku 4.5"},
+        {"value":"opus","name":"Opus"},
+        {"value":"sonnet-next[1m]","name":"Sonnet Next (1M context)"}
+    ]}]});
+    let models = super::super::claude::fold_context_siblings(config_models(&session, "claude"));
+    let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "default",
+            "opus",
+            "fable",
+            "sonnet",
+            "haiku",
+            "sonnet-next[1m]"
+        ]
+    );
+    let opus = &models[1];
+    assert_eq!(opus.name.as_ref().unwrap().as_str(), "Opus");
+    let context = opus.context.as_ref().unwrap();
+    assert_eq!(context.id.as_str(), "opus[1m]");
+    assert_eq!(context.tokens, 1_000_000);
+    assert!(models[5].context.is_none(), "no base listed: no choice");
+    assert!(
+        models
+            .iter()
+            .filter(|model| model.id.as_str() != "opus")
+            .all(|model| model.context.is_none())
+    );
+    assert!(ProviderModels::try_from(models).is_ok());
+}

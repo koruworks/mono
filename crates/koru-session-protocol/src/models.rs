@@ -42,6 +42,22 @@ pub struct ProviderModel {
     /// The reasoning levels the agent offers for this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ModelReasoning>,
+    /// A longer context window the model runs with under an id of its own,
+    /// which the adapter folded into this model rather than list it twice.
+    /// Optional and defaulted: an older peer leaves it unread and sees the
+    /// model as before, so it needs no protocol version of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ModelContext>,
+}
+
+/// **A model's longer context window** (koru-ai D10): the id that runs the
+/// same model with it, and its size. Choosing it only chooses which id a
+/// session is started with; the id is the agent's, opaque to Koru.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelContext {
+    pub id: ModelName,
+    /// The window, in tokens: `1000000` for a 1M window.
+    pub tokens: u32,
 }
 
 impl ProviderModel {
@@ -56,6 +72,7 @@ impl ProviderModel {
             group_name: None,
             legacy: false,
             reasoning: None,
+            context: None,
         }
     }
 
@@ -68,6 +85,10 @@ impl ProviderModel {
         short(&self.name)
             && short(&self.group_name)
             && self.reasoning.as_ref().is_none_or(ModelReasoning::valid)
+            && self
+                .context
+                .as_ref()
+                .is_none_or(|context| context.tokens > 0 && context.id != self.id)
     }
 }
 
@@ -254,9 +275,20 @@ impl ProviderModels {
 impl TryFrom<Vec<ProviderModel>> for ProviderModels {
     type Error = TokenParseError;
     fn try_from(models: Vec<ProviderModel>) -> Result<Self, Self::Error> {
-        let ids: std::collections::BTreeSet<_> = models.iter().map(|model| &model.id).collect();
+        // A context's id names a model too: no two of either may share one.
+        let ids: std::collections::BTreeSet<_> = models
+            .iter()
+            .flat_map(|model| {
+                std::iter::once(&model.id).chain(model.context.as_ref().map(|context| &context.id))
+            })
+            .collect();
+        let named = models.len()
+            + models
+                .iter()
+                .filter(|model| model.context.is_some())
+                .count();
         if models.len() > MAX_PROVIDER_MODELS
-            || ids.len() != models.len()
+            || ids.len() != named
             || !models.iter().all(ProviderModel::valid)
         {
             return Err(TokenParseError("invalid model catalog"));

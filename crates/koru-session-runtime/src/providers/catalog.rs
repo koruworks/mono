@@ -39,7 +39,12 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 /// The file's own format. Another number is an empty cache.
-pub const CATALOG_FORMAT: u32 = 1;
+///
+/// 2: a model may carry its longer context (`ProviderModel::context`), and
+/// Claude's 1M siblings are folded into it. An older Koru reading a format-2
+/// file would take the folded list without its 1M choices, so it lists again
+/// instead; a format-1 file is listed again here for the same reason.
+pub const CATALOG_FORMAT: u32 = 2;
 /// A file larger than this is not read.
 pub const MAX_CATALOG_FILE_BYTES: usize = 4 * 1024 * 1024;
 /// Listings the host runs at once: the worker's one, and one for a person.

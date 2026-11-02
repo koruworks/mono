@@ -41,6 +41,7 @@ fn model(id: &str, group: &str, name: Option<&str>, description: Option<&str>) -
         group_name: None,
         legacy: false,
         reasoning: None,
+        context: None,
     }
 }
 
@@ -117,12 +118,17 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     for composer in [280.0, 360.0, 1000.0] {
         let (w, h) = size(composer, rail_height(2, false));
         assert!(w <= MAX_W && w <= composer.max(RAIL_W + 160.0));
-        let geometry = geometry(Rect::new(10.0, 20.0, w, h), true);
+        let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true);
         assert_eq!(geometry.rail.w, RAIL_W);
         assert!(geometry.search.x >= geometry.rail.x + RAIL_W);
         assert!(geometry.refresh.x + geometry.refresh.w <= geometry.search.x + geometry.search.w);
         let footer = geometry.footer.unwrap();
-        assert!(geometry.list.y + geometry.list.h <= footer.y + 0.5);
+        let context = geometry.context.unwrap();
+        assert!(geometry.list.y + geometry.list.h <= context.y + 0.5);
+        assert!(
+            (context.y + context.h - footer.y).abs() < 0.5,
+            "right above it"
+        );
         assert_eq!(geometry.visible_rows(), LIST_ROWS);
         assert!(geometry.reset().unwrap().x + 24.0 <= footer.x + footer.w);
     }
@@ -132,13 +138,14 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     assert!(rail_bound >= rail_height(8, true));
 }
 
-/// D13: one size — search, six rows, the footer — whatever the agent
-/// lists: a short list leaves room, a long one scrolls, and a model with
-/// no footer gives its room to the list.
+/// D13: one size — search, six rows, the Context row and the level's
+/// footer — whatever the agent lists: a short list leaves room, a long one
+/// scrolls, and a model without either row gives its room to the list.
 #[test]
 fn the_picker_keeps_one_height_from_agent_to_agent() {
     let (_, h) = size(360.0, rail_height(2, false));
-    assert!((h - (PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H)).abs() < 0.5);
+    let rows = LIST_ROWS as f32 * ROW_H;
+    assert!((h - (PAD * 2.0 + SEARCH_H + rows + CONTEXT_H + FOOTER_H)).abs() < 0.5);
 
     let mut surface = surface();
     let mut heights = Vec::new();
@@ -154,11 +161,149 @@ fn the_picker_keeps_one_height_from_agent_to_agent() {
     assert_eq!(heights[0], heights[1], "lists of different lengths");
     assert_eq!(heights[0], h);
 
-    let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false);
-    assert!(bare.visible_rows() > LIST_ROWS, "no footer: more rows");
+    let levels = geometry(Rect::new(0.0, 0.0, 360.0, h), true, false);
+    assert!(levels.visible_rows() >= LIST_ROWS, "no Context row");
+    let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false, false);
+    assert!(bare.visible_rows() > LIST_ROWS, "neither row: more rows");
 }
 
-/// D12: the picker opens upward, above the composer and end-aligned with
+/// Claude's list as the runtime folds it (koru-ai D10): *Opus* carries its
+/// 1M window as a context choice.
+fn with_opus_context(surface: &mut ChatSurface) {
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[1].context = Some(koru_ai_wire::AgentModelContext {
+            id: "opus[1m]".into(),
+            tokens: 1_000_000,
+        });
+    }
+}
+
+/// D10: a model with a longer window shows a Context row — *Auto* and *1M*
+/// — and choosing *1M* gives the chat that window's id as its model; the
+/// list keeps one *Opus*, current either way. A model without one shows no
+/// row.
+#[test]
+fn the_context_row_chooses_which_id_the_chat_takes() {
+    let mut surface = surface();
+    let (reader, commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    with_opus_context(&mut surface);
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert!(surface.picker_context().is_none(), "sonnet: none");
+    assert!(surface.picker_geometry().unwrap().context.is_none());
+    surface.close_picker();
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    let chat = surface.transcript.as_ref().unwrap().chat.id;
+    surface.unmade_chat = Some(chat);
+    open(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+    let row = geometry.context.expect("opus has a Context row");
+    assert_eq!(context::window_label(koru_i18n::Lang::En, 1_000_000), "1M");
+    while commands.try_recv().is_ok() {}
+
+    surface.picker.focus = PickerFocus::Context;
+    assert!(press(&mut surface, NamedKey::ArrowRight));
+    let model = |surface: &ChatSurface| {
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .current_model
+            .requested_model
+            .clone()
+    };
+    assert_eq!(model(&surface), "opus[1m]");
+    assert!(surface.picker_context().unwrap().chosen_long);
+    let rows = surface.picker_rows();
+    let opus = rows
+        .iter()
+        .position(|row| *row == Row::Model("opus".into()))
+        .unwrap();
+    let entry = surface.picker_entry().unwrap();
+    assert!(
+        surface.picker_row_current(&entry, &rows[opus]),
+        "still Opus"
+    );
+    assert!(
+        !rows.contains(&Row::Model("opus[1m]".into())),
+        "listed once"
+    );
+
+    // A press on *Auto* takes the model's own id again.
+    let (_, control) = surface.context_control(row, 1_000_000);
+    let auto = control.segments[0];
+    assert_eq!(
+        surface.picker_mouse_down(auto.x + 2.0, auto.y + 2.0),
+        Some(true)
+    );
+    assert_eq!(model(&surface), "opus");
+}
+
+/// D10: once an agent chat has begun, its window is shown, not changed —
+/// as its level is.
+#[test]
+fn the_context_is_read_only_once_the_chat_has_begun() {
+    let mut surface = surface();
+    with_opus_context(&mut surface);
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus[1m]",
+        ReasoningChoice::Default,
+    );
+    let transcript = surface.transcript.as_mut().unwrap();
+    let chat = transcript.chat.id;
+    transcript.messages.push(koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: chat,
+        ordinal: 0,
+        role: koru_ai_core::ChatRole::User,
+        state: koru_ai_core::MessageState::Complete,
+        markdown: "Plan the launch".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+        completed_at: None,
+    });
+    surface.lang = koru_i18n::Lang::En;
+    open(&mut surface);
+    let choice = surface.picker_context().expect("still shown");
+    assert!(choice.chosen_long);
+    assert!(surface.choose_context(false));
+    assert_eq!(
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .current_model
+            .requested_model,
+        "opus[1m]"
+    );
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(t(koru_i18n::Lang::En, Key::AiModelContextLockedAfterStart))
+    );
+}
+// D12: the picker opens upward, above the composer and end-aligned with
 /// the chip, as the workspace and tool-approval panels do — and below the
 /// chip only when the window has no room above.
 #[test]

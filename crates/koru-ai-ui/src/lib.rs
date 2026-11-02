@@ -15,8 +15,8 @@ use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
     DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageBlockId,
     MessageId, MessageState, ModelSelection, ReasoningChoice, ReasoningControl, SourceLink,
-    ToolActivity, ToolActivityStatus, ToolApproval, ToolInvocationId, ToolMode, UsageReport,
-    WebSearchPhase, WorkspaceId,
+    ToolActivity, ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase,
+    WorkspaceId,
 };
 
 /// Re-exported so a host can name the id [`ChatSurface::open_link`] and
@@ -8287,7 +8287,7 @@ mod tests {
     use koru_ai_core::ReasoningLevel;
     use std::time::Duration;
 
-    use koru_ai_core::{ProfileId, UsageTotals};
+    use koru_ai_core::{ProfileId, ToolApproval, UsageTotals};
 
     fn transcript() -> ChatTranscript {
         let now = koru_ai_core::Timestamp::from_millis(1);
@@ -9197,6 +9197,7 @@ mod tests {
                 group_name: None,
                 legacy: false,
                 reasoning: None,
+                context: None,
             })
             .collect();
         surface
@@ -10746,6 +10747,7 @@ mod tests {
             group_name: None,
             legacy: false,
             reasoning: None,
+            context: None,
         }];
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: claude.clone(),
@@ -10849,6 +10851,7 @@ mod tests {
             group_name: None,
             legacy: false,
             reasoning,
+            context: None,
         };
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: AiProviderId::parse("agent-claude").unwrap(),

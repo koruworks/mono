@@ -50,6 +50,38 @@ fn model_facts_round_trip_and_labels_stay_out_of_debug() {
     assert!(!format!("{:?}", model.description).contains("sentinel"));
 }
 
+/// A model's longer context (koru-ai D10) round-trips; a peer that does not
+/// know the field reads the model without it; and its id is held to the
+/// catalog's rule that no two models share an id.
+#[test]
+fn a_models_context_round_trips_and_its_id_is_unique_in_the_catalog() {
+    let mut opus = ProviderModel::new("opus".parse().unwrap(), "claude".parse().unwrap());
+    opus.context = Some(ModelContext {
+        id: "opus[1m]".parse().unwrap(),
+        tokens: 1_000_000,
+    });
+    let models = ProviderModels::try_from(vec![opus.clone()]).unwrap();
+    let json = serde_json::to_value(&models).unwrap();
+    assert_eq!(json[0]["context"]["id"], "opus[1m]");
+    assert_eq!(json[0]["context"]["tokens"], 1_000_000);
+    assert_eq!(
+        serde_json::from_value::<ProviderModels>(json).unwrap(),
+        models
+    );
+    let plain: ProviderModels =
+        serde_json::from_value(serde_json::json!([{"id":"opus","group":"claude"}])).unwrap();
+    assert!(plain.models()[0].context.is_none());
+
+    let sibling = ProviderModel::new("opus[1m]".parse().unwrap(), "claude".parse().unwrap());
+    assert!(ProviderModels::try_from(vec![opus.clone(), sibling]).is_err());
+    let mut itself = opus.clone();
+    itself.context.as_mut().unwrap().id = "opus".parse().unwrap();
+    assert!(ProviderModels::try_from(vec![itself]).is_err());
+    let mut empty = opus;
+    empty.context.as_mut().unwrap().tokens = 0;
+    assert!(ProviderModels::try_from(vec![empty]).is_err());
+}
+
 #[test]
 fn a_label_is_trimmed_bounded_and_free_of_control_characters() {
     assert_eq!(ModelLabel::name("  Opus  ").unwrap().as_str(), "Opus");

@@ -101,6 +101,28 @@ pub(crate) fn listed_models(models: &[AgentModelView]) -> impl Iterator<Item = &
         .filter(|model| model.id != AGENT_DEFAULT_MODEL)
 }
 
+/// **The listed model a chat's model id names**, and whether the id is
+/// that model's longer context (koru-ai D10): a chat on `opus[1m]` is on
+/// *Opus*, with its 1M context.
+pub(crate) fn find_listed<'a>(
+    models: &'a [AgentModelView],
+    id: &str,
+) -> Option<(&'a AgentModelView, bool)> {
+    models.iter().find_map(|model| {
+        if model.id == id {
+            Some((model, false))
+        } else if model
+            .context
+            .as_ref()
+            .is_some_and(|context| context.id == id)
+        {
+            Some((model, true))
+        } else {
+            None
+        }
+    })
+}
+
 /// A model's label: the agent's own name for it, or the id formatted.
 pub(crate) fn model_label(model: &AgentModelView) -> String {
     model
@@ -223,10 +245,8 @@ pub(crate) fn agent_chip_label(
     if requested_model == AGENT_DEFAULT_MODEL || requested_model.is_empty() {
         return name.to_owned();
     }
-    let label = models
-        .iter()
-        .find(|model| model.id == requested_model)
-        .map(model_label)
+    let label = find_listed(models, requested_model)
+        .map(|(model, _)| model_label(model))
         .unwrap_or_else(|| fallback_label(requested_model, ""));
     let first_word = |text: &str| text.split_whitespace().next().map(str::to_lowercase);
     if first_word(&label).is_some() && first_word(&label) == first_word(name) {
@@ -401,6 +421,7 @@ mod tests {
             group_name: None,
             legacy: false,
             reasoning: None,
+            context: None,
         }
     }
 
@@ -750,10 +771,11 @@ impl crate::ChatSurface {
         if !is_agent_provider(&model.provider) {
             return None;
         }
-        self.listed_agent_models(&model.provider)
-            .iter()
-            .find(|listed| listed.id == model.requested_model)
-            .and_then(|listed| listed.reasoning.as_ref())
+        find_listed(
+            self.listed_agent_models(&model.provider),
+            &model.requested_model,
+        )
+        .and_then(|(listed, _)| listed.reasoning.as_ref())
     }
 
     /// The models listed for `agent`, empty while none are known.
