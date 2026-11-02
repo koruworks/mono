@@ -63,6 +63,28 @@ impl BlockLayout {
             .as_ref()
             .map_or_else(|| self.layout.width(), |table| table.width)
     }
+
+    /// The link under `(x, y)`, measured from the block's top-left.
+    pub fn link_at(&self, x: f32, y: f32) -> Option<&koru_markdown::LinkSpan> {
+        if self.table.is_some() || self.image.is_some() {
+            return None;
+        }
+        let byte = byte_at(&self.layout, x, y)?;
+        self.links.iter().find(|link| link.range.contains(&byte))
+    }
+}
+
+/// The byte of `layout`'s text under `(x, y)`, measured from its top-left,
+/// when a character is there. parley's exact hit-test still snaps a point
+/// above or below the layout to its first or last line, so a pointer
+/// anywhere in a column of text would land on every other layout's edge
+/// lines at that `x`; the layout's own height is checked first.
+pub(crate) fn byte_at(layout: &Layout<Brush>, x: f32, y: f32) -> Option<usize> {
+    if x < 0.0 || y < 0.0 || y >= layout.height() {
+        return None;
+    }
+    parley::layout::Cluster::from_point_exact(layout, x, y)
+        .map(|(cluster, _)| cluster.text_range().start)
 }
 
 pub(crate) struct MessageInput {
@@ -216,3 +238,6 @@ fn reusable(message: &MessageLayout, input: &MessageInput) -> bool {
                     && (old.wrap_width - input.wrap_width).abs() <= 0.5
             })
 }
+
+#[cfg(test)]
+mod tests;

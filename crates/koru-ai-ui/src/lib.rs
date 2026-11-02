@@ -43,7 +43,7 @@ use koru_ui::tooltip::{Tooltip, TooltipContent};
 use koru_ui::{Menu, PulsingDots, TextArea, Typed};
 use parley::Layout;
 use parley::editing::{Cursor, Selection};
-use parley::layout::{Affinity, Cluster};
+use parley::layout::Affinity;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::event::MouseScrollDelta;
@@ -1847,12 +1847,10 @@ impl ChatSurface {
             let card_y = area.y - self.conversation_scroll + message.top;
             let card = message_card(area, card_y, h, message);
             let origin = (card.x + PAD, card.y + PAD);
-            let Some((cluster, _)) =
-                Cluster::from_point_exact(&message.layout, x - origin.0, y - origin.1)
+            let Some(index) = layout_cache::byte_at(&message.layout, x - origin.0, y - origin.1)
             else {
                 continue;
             };
-            let index = cluster.text_range().start;
             if let Some(link) = message
                 .links
                 .iter()
@@ -6579,16 +6577,9 @@ impl ChatSurface {
                         if block.table.is_none() && rect.contains(x, y) {
                             let selection =
                                 Selection::from_point(&block.layout, x - origin.0, y - origin.1);
-                            let link = Cluster::from_point_exact(
-                                &block.layout,
-                                x - origin.0,
-                                y - origin.1,
-                            )
-                            .and_then(|(cluster, _)| {
-                                let index = cluster.text_range().start;
-                                block.links.iter().find(|link| link.range.contains(&index))
-                            })
-                            .map(|link| link.url.clone());
+                            let link = block
+                                .link_at(x - origin.0, y - origin.1)
+                                .map(|link| link.url.clone());
                             return Some(ResponseTextHit {
                                 position: ResponsePosition {
                                     message: message_index,
@@ -6922,13 +6913,8 @@ impl ChatSurface {
         ox: f32,
         oy: f32,
     ) {
-        let Some((cluster, _)) =
-            Cluster::from_point_exact(&block.layout, self.pointer.0 - ox, self.pointer.1 - oy)
-        else {
-            return;
-        };
-        let index = cluster.text_range().start;
-        let Some(link) = block.links.iter().find(|link| link.range.contains(&index)) else {
+        // Every block is asked, so the pointer must be on this one.
+        let Some(link) = block.link_at(self.pointer.0 - ox, self.pointer.1 - oy) else {
             return;
         };
         let selection = Selection::new(

@@ -7,7 +7,7 @@ use koru_draw::{
     text::TextEngine,
     theme::{self, Brush},
 };
-use parley::{Layout, editing::Selection};
+use parley::Layout;
 
 pub(crate) struct SourceSpan {
     pub source: SourceLink,
@@ -20,8 +20,11 @@ pub(crate) struct SourcesLayout {
 }
 
 impl SourcesLayout {
+    /// The source whose title is under `(x, y)`, measured from the line's
+    /// top-left — not the nearest one: the gaps between titles and the room
+    /// after the last are not a link.
     pub fn hit(&self, x: f32, y: f32) -> Option<&str> {
-        let byte = Selection::from_point(&self.layout, x, y).focus().index();
+        let byte = crate::layout_cache::byte_at(&self.layout, x, y)?;
         self.links
             .iter()
             .find(|link| link.bytes.contains(&byte))
