@@ -405,7 +405,14 @@ pub(crate) fn status_line(
             now_ms,
         ));
     }
-    parts.join(" \u{00B7} ")
+    // The outcome words are written to follow a title (*… — failed*);
+    // this line starts with one.
+    let line = parts.join(" \u{00B7} ");
+    let mut chars = line.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => line,
+    }
 }
 
 /// A text that is one fenced block, without its fences: the info string

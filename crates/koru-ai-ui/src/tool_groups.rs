@@ -148,8 +148,7 @@ fn fold_permissions(rows: &[&ToolActivity]) -> Vec<(ToolInvocationId, ToolInvoca
             continue;
         };
         let names = |call: &ToolActivity| {
-            call.assistant_message_id == permission.assistant_message_id
-                && step_kind(call).is_some_and(|kind| kind != StepKind::Permission)
+            step_kind(call).is_some_and(|kind| kind != StepKind::Permission)
                 && call
                     .agent_label
                     .as_deref()

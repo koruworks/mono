@@ -61,7 +61,11 @@ pub(crate) fn fingerprint(pieces: &[Piece], width: f32) -> u64 {
         color.to_rgba8().to_u32().hash(&mut hasher);
     }
     theme::code_stack().hash(&mut hasher);
-    theme::role::meta().metrics.size.to_bits().hash(&mut hasher);
+    theme::ui_stack().hash(&mut hasher);
+    // Markdown is set at the density-aware `ui` size; the rest at `meta`.
+    for style in [theme::role::ui(), theme::role::meta()] {
+        style.metrics.size.to_bits().hash(&mut hasher);
+    }
     hasher.finish()
 }
 

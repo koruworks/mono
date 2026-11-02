@@ -217,7 +217,13 @@ fn the_header_opens_the_commentary_and_the_steps_by_click_and_by_key() {
     );
     surface.toggle_work(WorkHit::Call(first));
     rebuild(&mut surface);
-    assert_eq!(surface.work_layouts[0].lines.len(), 5);
+    // Its detail: the file it read, and its status line.
+    assert_eq!(surface.work_layouts[0].lines.len(), 6);
+    assert!(
+        surface.work_layouts[0].lines[3..5]
+            .iter()
+            .all(|line| line.ink.is_some())
+    );
 
     // Enter on the focused header folds it again.
     assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
