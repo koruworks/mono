@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
-    DocumentDestination, DocumentExportId, DocumentId, FeedbackEventId, FeedbackValue,
-    InferenceAttemptId, MessageBlockId, MessageId, MessageState, ModelSelection, ReasoningChoice,
-    ReasoningControl, SourceLink, ToolActivity, ToolActivityStatus, ToolApproval, ToolInvocationId,
-    ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
+    DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageBlockId,
+    MessageId, MessageState, ModelSelection, ReasoningChoice, ReasoningControl, SourceLink,
+    ToolActivity, ToolActivityStatus, ToolApproval, ToolInvocationId, ToolMode, UsageReport,
+    WebSearchPhase, WorkspaceId,
 };
 
 /// Re-exported so a host can name the id [`ChatSurface::open_link`] and
@@ -24,10 +24,10 @@ use koru_ai_core::{
 /// dependency of its own.
 pub use koru_ai_core::ChatId;
 use koru_ai_wire::{
-    BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, FeedbackRequest,
-    ModelPullEvent, ProviderSettingsResponse, ProviderValidationResponse, ProviderValidationStatus,
-    PublicAiEvent, PullOllamaModelRequest, RenameChatRequest, RetryTurnRequest,
-    SelectProviderRequest, SendTurnRequest, UpdateChatModelRequest, UpdateChatToolPolicyRequest,
+    BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, ModelPullEvent,
+    ProviderSettingsResponse, ProviderValidationResponse, ProviderValidationStatus, PublicAiEvent,
+    PullOllamaModelRequest, RenameChatRequest, RetryTurnRequest, SelectProviderRequest,
+    SendTurnRequest, UpdateChatModelRequest, UpdateChatToolPolicyRequest,
     UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest,
 };
 use koru_draw::geometry::Rect;
@@ -253,7 +253,6 @@ enum DestructiveAction {
 
 enum ResponseAction {
     Copy(String),
-    Rate(MessageId, FeedbackValue),
     Branch(MessageId),
     Store(MessageId),
     Link(MessageBlockId),
@@ -5522,12 +5521,6 @@ impl ChatSurface {
                             .filter(|block| block.message_id == message.id)
                             .map(|block| (block.id, block.markdown.clone()))
                             .collect(),
-                        rating: transcript
-                            .feedback
-                            .iter()
-                            .rev()
-                            .find(|event| event.message_id == Some(message.id))
-                            .map(|event| event.value),
                         attachments: transcript
                             .attachments
                             .iter()
@@ -5634,7 +5627,6 @@ impl ChatSurface {
                 sources: None,
                 markdown,
                 blocks: Vec::new(),
-                rating: None,
                 attachments: Vec::new(),
             });
         }
@@ -5662,7 +5654,6 @@ impl ChatSurface {
                 usage: None,
                 sources: None,
                 blocks: Vec::new(),
-                rating: None,
                 attachments: self.pending_user_tiles.clone(),
             });
             let assistant_width = message_wrap_width(ChatRole::Assistant, width);
@@ -5703,7 +5694,6 @@ impl ChatSurface {
                     assistant_width,
                 ),
                 blocks: Vec::new(),
-                rating: None,
                 attachments: Vec::new(),
             });
         }
@@ -6079,17 +6069,13 @@ impl ChatSurface {
                     && self.response_message_hover == Some(message_index)
                 {
                     if message.state == MessageState::Complete {
-                        for index in 0..6 {
+                        for index in 0..RESPONSE_ACTIONS {
                             let rect = action_rect(card, index);
-                            let active = matches!(
-                                (index, message.rating),
-                                (1, Some(FeedbackValue::Good)) | (2, Some(FeedbackValue::Bad))
-                            );
                             IconButton::new(response_action_glyph(index), rect)
                                 .with_state(IconButtonState {
                                     hovered: rect.contains(self.pointer.0, self.pointer.1),
-                                    active,
-                                    disabled: index == 5 && message.blocks.is_empty(),
+                                    active: false,
+                                    disabled: index == 3 && message.blocks.is_empty(),
                                 })
                                 .draw(canvas, root, &mut self.engine);
                         }
@@ -6325,29 +6311,13 @@ impl ChatSurface {
                 && self.response_message_hover == Some(message_index)
             {
                 if message.state == MessageState::Complete {
-                    for index in 0..6 {
+                    for index in 0..RESPONSE_ACTIONS {
                         if action_rect(card, index).contains(x, y) {
                             return match index {
                                 0 => Some(ResponseAction::Copy(message.markdown.clone())),
-                                1 => Some(ResponseAction::Rate(
-                                    message_id,
-                                    if message.rating == Some(FeedbackValue::Good) {
-                                        FeedbackValue::Cleared
-                                    } else {
-                                        FeedbackValue::Good
-                                    },
-                                )),
-                                2 => Some(ResponseAction::Rate(
-                                    message_id,
-                                    if message.rating == Some(FeedbackValue::Bad) {
-                                        FeedbackValue::Cleared
-                                    } else {
-                                        FeedbackValue::Bad
-                                    },
-                                )),
-                                3 => Some(ResponseAction::Branch(message_id)),
-                                4 => Some(ResponseAction::Store(message_id)),
-                                5 => message
+                                1 => Some(ResponseAction::Branch(message_id)),
+                                2 => Some(ResponseAction::Store(message_id)),
+                                3 => message
                                     .blocks
                                     .first()
                                     .map(|block| ResponseAction::Link(block.id)),
@@ -6495,7 +6465,7 @@ impl ChatSurface {
                 && self.response_message_hover == Some(message_index)
             {
                 let action_count = if message.state == MessageState::Complete {
-                    6
+                    RESPONSE_ACTIONS
                 } else if matches!(
                     message.state,
                     MessageState::Failed | MessageState::Interrupted
@@ -7088,14 +7058,6 @@ impl ChatSurface {
                 self.show_copy_feedback("Copied");
                 true
             }
-            ResponseAction::Rate(message, value) => self.send_command(Command::Feedback(
-                message,
-                FeedbackRequest {
-                    event_id: FeedbackEventId::new(),
-                    value,
-                    surface: self.mode.wire(),
-                },
-            )),
             ResponseAction::Branch(message) => self.send_command(Command::Branch(
                 chat.id,
                 BranchChatRequest {
@@ -7843,13 +7805,16 @@ fn format_result_bytes(bytes: u64) -> String {
     format!("{:.1} MB", kib / 1_024.0)
 }
 
+/// The buttons under a finished reply: copy, branch, store, link. Rating a
+/// reply (thumbs up and down) is off for now (the user's call, 2026-11-02);
+/// the service keeps its feedback store and API, so it can come back.
+const RESPONSE_ACTIONS: usize = 4;
+
 fn response_action_glyph(index: usize) -> char {
     match index {
         0 => icons::COPY,
-        1 => icons::THUMBS_UP,
-        2 => icons::THUMBS_DOWN,
-        3 => icons::GIT_BRANCH,
-        4 => icons::FLOPPY_DISK,
+        1 => icons::GIT_BRANCH,
+        2 => icons::FLOPPY_DISK,
         _ => icons::LINK,
     }
 }

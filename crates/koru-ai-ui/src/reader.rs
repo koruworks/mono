@@ -5,12 +5,12 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_cha
 use std::time::{Duration, Instant};
 
 use koru_ai_core::{
-    AiProviderId, AttemptStatus, ChatId, InferenceAttemptId, MessageId, ProfileId, ToolActivity,
+    AiProviderId, AttemptStatus, ChatId, InferenceAttemptId, ProfileId, ToolActivity,
     ToolInvocationId, UsageReport, WorkspaceId,
 };
 use koru_ai_wire::{
-    BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, FeedbackRequest,
-    ModelPullEvent, ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelRequest,
+    BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, ModelPullEvent,
+    ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelRequest,
     RenameChatRequest, RetryTurnRequest, SelectProviderRequest, SendTurnAccepted, SendTurnRequest,
     StreamEvent, UpdateChatModelRequest, UpdateChatPrivacyRequest, UpdateChatToolPolicyRequest,
     UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest,
@@ -48,7 +48,6 @@ pub(crate) enum Command {
     ClearUsage(Option<ChatId>),
     Send(SendTurnRequest),
     Cancel(InferenceAttemptId),
-    Feedback(MessageId, FeedbackRequest),
     Branch(ChatId, BranchChatRequest),
     Retry(ChatId, RetryTurnRequest),
     Export(ChatId, ExportChatRequest),
@@ -87,7 +86,6 @@ impl Command {
             Self::ClearUsage(_) => "clear_usage",
             Self::Send(_) => "send",
             Self::Cancel(_) => "cancel",
-            Self::Feedback(_, _) => "feedback",
             Self::Branch(_, _) => "branch",
             Self::Retry(_, _) => "retry",
             Self::Export(_, _) => "export",
@@ -519,20 +517,6 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 if let Err(failure) = client.ai().cancel_attempt(attempt) {
                     let _ = updates.send(Update::Failure(failure.message));
                 }
-            }
-            Command::Feedback(message, request) => {
-                let result = client.ai().feedback(message, &request).and_then(|event| {
-                    let chat = event.event.chat_id.ok_or_else(|| koru_ai_wire::Failure {
-                        code: "invalid_response".into(),
-                        message: "Feedback lost its chat.".into(),
-                        retryable: true,
-                        details: Default::default(),
-                    })?;
-                    client.ai().read_chat(chat).map(|transcript| {
-                        Update::Transcript(decorate_transcript(&client, transcript))
-                    })
-                });
-                send_result(&updates, result);
             }
             Command::Branch(chat, request) => {
                 send_result(

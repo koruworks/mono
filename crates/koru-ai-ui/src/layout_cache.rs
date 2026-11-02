@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use koru_ai_core::{ChatRole, FeedbackValue, MessageBlockId, MessageId, MessageState, SourceLink};
+use koru_ai_core::{ChatRole, MessageBlockId, MessageId, MessageState, SourceLink};
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Brush};
 use parley::Layout;
@@ -29,7 +29,6 @@ pub(crate) struct MessageLayout {
     pub usage: Option<Layout<Brush>>,
     pub sources: Option<SourcesLayout>,
     pub blocks: Vec<BlockLayout>,
-    pub rating: Option<FeedbackValue>,
     /// The pictures and files sent with a message the person wrote, drawn
     /// as tiles under its text at sizes known before any thumbnail loads.
     pub attachments: Vec<Tile>,
@@ -77,7 +76,6 @@ pub(crate) struct MessageInput {
     pub usage_text: Option<String>,
     pub sources: Vec<SourceLink>,
     pub blocks: Vec<(MessageBlockId, String)>,
-    pub rating: Option<FeedbackValue>,
     pub attachments: Vec<Tile>,
 }
 
@@ -155,7 +153,6 @@ pub(crate) fn reconcile(
             usage,
             sources,
             blocks,
-            rating: input.rating,
             attachments: input.attachments,
         });
     }
@@ -207,7 +204,6 @@ fn reusable(message: &MessageLayout, input: &MessageInput) -> bool {
             .map(|sources| sources.sources().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
             == input.sources
-        && message.rating == input.rating
         && message.attachments == input.attachments
         && message.blocks.len() == input.blocks.len()
         && message
