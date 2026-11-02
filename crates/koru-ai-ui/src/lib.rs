@@ -2394,9 +2394,18 @@ impl ChatSurface {
                 settings,
                 chats,
                 transcript,
+                link_missing,
                 destinations,
                 destination_error,
             } => {
+                // **The chat this tab was opened on is gone** — deleted since
+                // the tab was saved (ADR-483-chattabrestore). The tab forgets
+                // it and becomes a new chat, made once the provider
+                // validates, rather than naming a chat nobody can open.
+                if link_missing {
+                    self.pending_link_chat = None;
+                    self.fresh_chat_wanted = true;
+                }
                 // A tab opened for a new chat does not take the service's
                 // current chat from the boot either — the last one used —
                 // the same rule `HistoryChanged` keeps below. The chat it
@@ -8723,6 +8732,7 @@ mod tests {
             },
             chats: vec![last.chat.clone()],
             transcript: Some(last.clone()),
+            link_missing: false,
             destinations: Vec::new(),
             destination_error: None,
         });
@@ -8732,6 +8742,38 @@ mod tests {
         );
         assert!(surface.fresh_chat_wanted, "the new chat is still owed");
         assert_eq!(surface.chats.len(), 1, "the list is still the list");
+    }
+
+    /// **A tab reopened on a chat that has since been deleted becomes a new
+    /// chat** (ADR-483-chattabrestore): the boot says the chat it was asked
+    /// for is missing, and the tab forgets it rather than naming it — so it
+    /// is not saved over it again — and owes a new chat instead.
+    #[test]
+    fn a_tab_opened_on_a_deleted_chat_becomes_a_new_chat() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        let gone = ChatId::new();
+        assert!(surface.open_link(gone, None));
+        surface.reader = Some(reader);
+        assert_eq!(surface.current_chat_id(), Some(gone), "opening it");
+        let other = transcript();
+        surface.apply_update(Update::Boot {
+            settings: unchosen_settings(&[]),
+            chats: vec![other.chat.clone()],
+            transcript: None,
+            link_missing: true,
+            destinations: Vec::new(),
+            destination_error: None,
+        });
+        assert_eq!(
+            surface.current_chat_id(),
+            None,
+            "the gone chat is forgotten"
+        );
+        assert!(surface.transcript.is_none(), "no other chat is taken");
+        assert!(surface.fresh_chat_wanted, "a new chat is owed");
+        assert!(surface.settings.is_some(), "and the boot completed");
+        assert!(!surface.current_chat_made());
     }
 
     /// **A tab opened for a new chat gets one** (the CTO's note): the boot
@@ -8808,6 +8850,7 @@ mod tests {
             settings,
             chats: Vec::new(),
             transcript: None,
+            link_missing: false,
             destinations: Vec::new(),
             destination_error: None,
         });

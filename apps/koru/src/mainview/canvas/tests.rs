@@ -325,7 +325,7 @@ fn a_pinned_canvas_survives_a_restart() {
         settings
             .pinned_tabs
             .iter()
-            .any(|pin: &PinnedTabRef| pin.document == canvas)
+            .any(|pin: &PinnedTabRef| pin.document() == Some(canvas))
     );
 
     let back = reopen(&settings, copy_of(&canvas_ws), canvas, true);

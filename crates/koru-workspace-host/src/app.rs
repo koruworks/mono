@@ -222,7 +222,7 @@ fn reopen_remembered_documents(workspace: &mut koru_workspace::Workspace, settin
     let span = timing::Span::start("reopen documents");
     let showing_pin = settings
         .pinned_tab
-        .and_then(|i| settings.pinned_tabs.get(i).map(|p| p.document));
+        .and_then(|i| settings.pinned_tabs.get(i).and_then(|p| p.document()));
     let last = showing_pin.or(showing);
     let current = settings.workspace;
     // **Every column's documents**, not just the focused one's: `tabs` is the
@@ -13147,7 +13147,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 .runtime
                 .settings
                 .pinned_tab
-                .and_then(|i| self.runtime.settings.pinned_tabs.get(i).map(|p| p.document))
+                .and_then(|i| {
+                    self.runtime
+                        .settings
+                        .pinned_tabs
+                        .get(i)
+                        .and_then(|p| p.document())
+                })
                 .or_else(|| {
                     self.runtime
                         .settings
@@ -13161,7 +13167,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     .settings
                     .pinned_tabs
                     .iter()
-                    .find(|p| p.document == doc)
+                    .find(|p| p.document() == Some(doc))
                     .map(|p| p.workspace)
                     .or_else(|| {
                         self.runtime

@@ -118,6 +118,10 @@ pub(crate) enum Update {
         settings: ProviderSettingsResponse,
         chats: Vec<koru_ai_core::Chat>,
         transcript: Option<ChatTranscript>,
+        /// The chat the boot was asked to open is gone: the service answered
+        /// `not_found` for it. The surface forgets the link and starts a new
+        /// chat instead.
+        link_missing: bool,
         destinations: Vec<DestinationOption>,
         destination_error: Option<String>,
     },
@@ -329,11 +333,28 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 let result = (|| {
                     let settings = client.ai().provider_settings()?;
                     let chats = client.ai().list_chats()?.chats;
-                    let transcript = requested_chat
-                        .or_else(|| chats.first().map(|chat| chat.id))
-                        .map(|chat| client.ai().read_chat(chat))
-                        .transpose()?
-                        .map(|transcript| decorate_transcript(&client, transcript));
+                    // **A chat asked for by name that the service no longer
+                    // holds** — deleted since a tab was saved over it
+                    // (ADR-483-chattabrestore) — boots without it. Failing
+                    // the whole boot left the tab with no settings and no
+                    // list, on an error it could do nothing about. Any other
+                    // failure still fails the boot.
+                    let mut link_missing = false;
+                    let transcript = match requested_chat {
+                        Some(chat) => match client.ai().read_chat(chat) {
+                            Ok(transcript) => Some(transcript),
+                            Err(failure) if authoritatively_missing(&failure) => {
+                                link_missing = true;
+                                None
+                            }
+                            Err(failure) => return Err(failure),
+                        },
+                        None => chats
+                            .first()
+                            .map(|chat| client.ai().read_chat(chat.id))
+                            .transpose()?,
+                    }
+                    .map(|transcript| decorate_transcript(&client, transcript));
                     let (destinations, destination_error) =
                         match client.store().profiles().and_then(|profiles| {
                             client
@@ -370,6 +391,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         settings,
                         chats,
                         transcript,
+                        link_missing,
                         destinations,
                         destination_error,
                     })
@@ -832,7 +854,7 @@ fn recover_attempt(
                 }
             }
             Ok(_) => {}
-            Err(failure) if authoritative_attempt_missing(&failure) => {
+            Err(failure) if authoritatively_missing(&failure) => {
                 tracing::warn!(
                     target: "koru_ai::ui_stream",
                     attempt = %attempt_id,
@@ -864,7 +886,10 @@ fn recover_attempt(
     }
 }
 
-fn authoritative_attempt_missing(failure: &koru_ai_wire::Failure) -> bool {
+/// The service says, and will keep saying, that the item asked about does not
+/// exist: an attempt that recovery waits on, or a chat a boot was asked to
+/// open. A retryable `not_found` is not this.
+fn authoritatively_missing(failure: &koru_ai_wire::Failure) -> bool {
     failure.code == "not_found" && !failure.retryable
 }
 
@@ -1097,7 +1122,7 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(16);
 #[cfg(test)]
 mod tests {
     use super::{
-        CLIENT_SCOPES, Command, Update, authoritative_attempt_missing, off_thread, refused_answer,
+        CLIENT_SCOPES, Command, Update, authoritatively_missing, off_thread, refused_answer,
         workspace_catalog_failure,
     };
 
@@ -1194,8 +1219,8 @@ mod tests {
             details: Default::default(),
         };
 
-        assert!(authoritative_attempt_missing(&failure("not_found", false)));
-        assert!(!authoritative_attempt_missing(&failure("not_found", true)));
-        assert!(!authoritative_attempt_missing(&failure("transport", true)));
+        assert!(authoritatively_missing(&failure("not_found", false)));
+        assert!(!authoritatively_missing(&failure("not_found", true)));
+        assert!(!authoritatively_missing(&failure("transport", true)));
     }
 }

@@ -12,7 +12,8 @@ use koru_draw::theme;
 use koru_workspace::Workspace;
 use koru_workspace_host::View;
 use koru_workspace_host::settings::{
-    GroupActiveState, PaneNodeState, PaneTreeState, PinnedTabRef, Settings, SplitAxisState, TabRef,
+    GroupActiveState, PaneNodeState, PaneTreeState, PinnedTabRef, PinnedTarget, Settings,
+    SplitAxisState, TabRef,
 };
 
 use super::MainView;
@@ -194,14 +195,7 @@ impl MainView {
             .tabs()
             .iter()
             .filter(|t| t.is_pinned())
-            .filter_map(|t| {
-                Some(PinnedTabRef {
-                    document: t.document?,
-                    workspace: t.pinned?,
-                    scroll: t.view.scroll(),
-                    show_title: t.show_title,
-                })
-            })
+            .filter_map(pinned_tab_ref)
             .collect();
         settings.pinned_tab = self.panes.focused().tabs().pinned_showing();
         settings.tabs = self
@@ -211,16 +205,9 @@ impl MainView {
             .iter()
             // A diff tab is a working artifact over two fetched snapshots;
             // restoring it would need a re-fetch that can fail at startup, so
-            // it is deliberately not part of the session. AI chat tabs are
-            // likewise not restored: there is no `TabRef` for them, and a chat
-            // is a live conversation rather than a place in the library.
-            .filter(|t| {
-                !t.is_pinned()
-                    && !matches!(
-                        t.view,
-                        TabView::Diff(_) | TabView::AiChat(_) | TabView::Socials(_)
-                    )
-            })
+            // it is deliberately not part of the session. A Socials tab is
+            // not either.
+            .filter(|t| !t.is_pinned() && !matches!(t.view, TabView::Diff(_) | TabView::Socials(_)))
             .filter_map(|t| {
                 // A draft names nothing in this document, so it comes back as
                 // an empty draft rather than as a node that will not parse.
@@ -260,8 +247,11 @@ impl MainView {
                     // filter ever lost, degrading to a welcome tab is the same
                     // tolerance a leaf over nothing already gets.
                     TabView::Diff(_) => TabRef::Welcome,
-                    TabView::AiChat(_) => TabRef::Welcome,
                     TabView::Socials(_) => TabRef::Welcome,
+                    // **A chat tab by its chat** (ADR-483-chattabrestore). A
+                    // new chat not sent yet has no id the service knows — the
+                    // `?` — and skips itself: there is nothing to reopen.
+                    TabView::AiChat(a) => chat_tab_ref(a)?,
                     // **The saved record is `{session_id, profile_key}`**
                     // (TERMINATAB), in tab order with the rest of the strip.
                     // A tab whose launch has not come back named yet has no
@@ -451,6 +441,10 @@ impl MainView {
                     }
                     self.restored_session_tab(*session, profile.clone(), recovery.clone())
                 }
+                TabRef::Chat(chat) => match restored_chat_tab(*chat) {
+                    Some(tab) => tab,
+                    None => continue,
+                },
                 TabRef::Document {
                     id,
                     workspace: home,
@@ -503,27 +497,11 @@ impl MainView {
             tabs.push(tab);
         }
         if self.panes.focused().tabs().pinned_count() == 0 {
-            let mut pins = Vec::new();
-            for pin in &settings.pinned_tabs {
-                let Some(doc) = workspace.document(pin.document) else {
-                    continue;
-                };
-                let Some(root) = koru_workspace::document_root(doc) else {
-                    continue;
-                };
-                let name = koru_workspace::name_of(doc, root);
-                let Some(view) = self.restored_document_view(workspace, doc, root, pin.document)
-                else {
-                    continue;
-                };
-                let mut tab =
-                    Tab::document_at(view, &name, Some(pin.document), Some(pin.workspace));
-                tab.pinned = Some(pin.workspace);
-                tab.show_title = pin.show_title;
-                tab.view.set_scroll(pin.scroll);
-                tab.invalidate_size();
-                pins.push(tab);
-            }
+            let pins: Vec<Tab> = settings
+                .pinned_tabs
+                .iter()
+                .filter_map(|pin| self.pin_from_ref(workspace, pin))
+                .collect();
             if !pins.is_empty() {
                 self.panes
                     .focused_mut()
@@ -716,6 +694,7 @@ impl MainView {
                 }
                 self.restored_session_tab(*session, profile.clone(), recovery.clone())
             }
+            TabRef::Chat(chat) => restored_chat_tab(*chat)?,
             TabRef::Document {
                 id,
                 workspace: home,
@@ -734,15 +713,20 @@ impl MainView {
     }
 
     fn pin_from_ref(&self, workspace: &Workspace, pin: &PinnedTabRef) -> Option<Tab> {
-        let doc = workspace.document(pin.document)?;
-        let root = koru_workspace::document_root(doc)?;
-        let name = koru_workspace::name_of(doc, root);
-        let mut tab = Tab::document_at(
-            self.restored_document_view(workspace, doc, root, pin.document)?,
-            &name,
-            Some(pin.document),
-            Some(pin.workspace),
-        );
+        let mut tab = match pin.target {
+            PinnedTarget::Document(document) => {
+                let doc = workspace.document(document)?;
+                let root = koru_workspace::document_root(doc)?;
+                let name = koru_workspace::name_of(doc, root);
+                Tab::document_at(
+                    self.restored_document_view(workspace, doc, root, document)?,
+                    &name,
+                    Some(document),
+                    Some(pin.workspace),
+                )
+            }
+            PinnedTarget::Chat(chat) => restored_chat_tab(chat)?,
+        };
         tab.pinned = Some(pin.workspace);
         tab.show_title = pin.show_title;
         tab.view.set_scroll(pin.scroll);
@@ -756,11 +740,7 @@ impl MainView {
                 .tabs()
                 .iter()
                 .filter(|t| {
-                    !t.is_pinned()
-                        && !matches!(
-                            t.view,
-                            TabView::Diff(_) | TabView::AiChat(_) | TabView::Socials(_)
-                        )
+                    !t.is_pinned() && !matches!(t.view, TabView::Diff(_) | TabView::Socials(_))
                 })
                 .filter_map(|t| {
                     let which = match &t.view {
@@ -785,8 +765,10 @@ impl MainView {
                         // the filter ever lost, degrading to a welcome tab is
                         // the same tolerance a leaf over nothing already gets.
                         TabView::Diff(_) => TabRef::Welcome,
-                        TabView::AiChat(_) => TabRef::Welcome,
                         TabView::Socials(_) => TabRef::Welcome,
+                        // See the sibling arm above: a made chat by its id, a
+                        // new chat not at all.
+                        TabView::AiChat(a) => chat_tab_ref(a)?,
                         // **The saved record is `{session_id, profile_key}`**
                         // (TERMINATAB), in tab order with the rest of the
                         // strip. A tab whose launch has not come back named
@@ -819,14 +801,7 @@ impl MainView {
                 .tabs()
                 .iter()
                 .filter(|t| t.is_pinned())
-                .filter_map(|t| {
-                    Some(PinnedTabRef {
-                        document: t.document?,
-                        workspace: t.pinned?,
-                        scroll: t.view.scroll(),
-                        show_title: t.show_title,
-                    })
-                })
+                .filter_map(pinned_tab_ref)
                 .collect();
             let active = match group.tabs().pinned_showing() {
                 Some(i) => GroupActiveState::Pinned(i),
@@ -907,6 +882,41 @@ fn tasks_tab_ref(target: RailTarget) -> koru_workspace_host::TasksTabRef {
             Bucket::Completed => "completed",
         }),
     }
+}
+
+/// The saved word for a chat tab: the chat it is over, or `None` for a new
+/// chat whose first message has not been sent — the service holds nothing
+/// to reopen — which the caller then skips (ADR-483-chattabrestore). A tab
+/// still opening a chat by link names that chat, so a restore quit before
+/// the chat has loaded loses nothing.
+fn chat_tab_ref(view: &crate::ai_chat_view::AiChatView) -> Option<TabRef> {
+    view.chat_id().map(|chat| TabRef::Chat(chat.as_uuid()))
+}
+
+/// What a pinned tab saves: its document, or its chat. A pinned tab that is
+/// neither — or a new chat not sent yet — saves nothing.
+fn pinned_tab_ref(tab: &Tab) -> Option<PinnedTabRef> {
+    let target = match &tab.view {
+        TabView::AiChat(view) => PinnedTarget::Chat(view.chat_id()?.as_uuid()),
+        _ => PinnedTarget::Document(tab.document?),
+    };
+    Some(PinnedTabRef {
+        target,
+        workspace: tab.pinned?,
+        scroll: tab.view.scroll(),
+        show_title: tab.show_title,
+    })
+}
+
+/// A saved chat tab, opened back onto its chat (ADR-483-chattabrestore).
+///
+/// **Nothing here waits on the AI service**: the tab starts its surface's
+/// reader thread and asks for the chat, and the answer lands on a later pass.
+/// A chat deleted since is answered as missing, and the tab becomes a new
+/// chat (`koru_ai_ui`'s boot). `None` in a build that hides Koru AI, which
+/// drops the tab as a hidden surface's tab is dropped.
+fn restored_chat_tab(chat: uuid::Uuid) -> Option<Tab> {
+    koru_features::ai().then(|| Tab::ai_chat_existing(koru_ai_ui::ChatId::from_uuid(chat)))
 }
 
 /// Which token a tab over a private workspace writes: the release notes or

@@ -142,6 +142,16 @@ pub enum TabRef {
         profile: SessionProfileKey,
         recovery: Option<SessionRecovery>,
     },
+    /// An AI chat tab, by the chat it is over (ADR-483-chattabrestore).
+    ///
+    /// The id is the AI service's `ChatId`, held as its uuid because this
+    /// crate does not depend on the AI crates. Only a chat the service holds
+    /// is ever written — a new chat not sent yet has nothing to reopen.
+    ///
+    /// Written as `chat:<uuid>`. An **older reader** matches none of its
+    /// words, prefixes or a bare node id (`chat:<uuid>` is not a uuid), so it
+    /// drops this one entry and keeps every other tab.
+    Chat(uuid::Uuid),
 }
 
 /// One agent's terminal look: each half is `None` when that half follows the
@@ -386,6 +396,8 @@ impl TabRef {
                     }
                 }
             }
+            // Hyphenated, so its last segment can never read as the scroll.
+            Self::Chat(chat) => format!("chat:{}", chat.hyphenated()),
         }
     }
 
@@ -402,6 +414,9 @@ impl TabRef {
             other if other.starts_with("tasks:") => {
                 TasksTabRef::parse(&other["tasks:".len()..]).map(Self::Tasks)
             }
+            other if other.starts_with("chat:") => uuid::Uuid::try_parse(&other["chat:".len()..])
+                .ok()
+                .map(Self::Chat),
             other => match other.strip_prefix("session:") {
                 Some(rest) => Self::parse_session(rest),
                 None => match other.strip_prefix("doc:") {
@@ -456,20 +471,57 @@ impl TabRef {
     }
 }
 
-/// A pinned document tab, window-scoped and independent of the current workspace.
+/// What a pinned tab is over: a document, or an AI chat (ADR-483-chattabrestore).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PinnedTarget {
+    Document(DocumentId),
+    /// The AI service's `ChatId`, as [`TabRef::Chat`] carries it. Written
+    /// `chat:` where a document is `doc:`, which an older reader's pinned
+    /// grammar requires, so it drops this one pin and keeps the rest.
+    Chat(uuid::Uuid),
+}
+
+/// A pinned tab, window-scoped and independent of the current workspace.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PinnedTabRef {
-    pub document: DocumentId,
+    pub target: PinnedTarget,
+    /// The workspace it was pinned in, and a document's home.
     pub workspace: WorkspaceId,
     pub scroll: f32,
     pub show_title: bool,
 }
 
 impl PinnedTabRef {
+    /// A pinned document tab.
+    pub fn document_pin(
+        document: DocumentId,
+        workspace: WorkspaceId,
+        scroll: f32,
+        show_title: bool,
+    ) -> Self {
+        Self {
+            target: PinnedTarget::Document(document),
+            workspace,
+            scroll,
+            show_title,
+        }
+    }
+
+    /// The document this pin is over; `None` for a chat.
+    pub fn document(&self) -> Option<DocumentId> {
+        match self.target {
+            PinnedTarget::Document(id) => Some(id),
+            PinnedTarget::Chat(_) => None,
+        }
+    }
+
     fn to_storage(self) -> String {
+        let target = match self.target {
+            PinnedTarget::Document(id) => format!("doc:{}", id.to_storage()),
+            PinnedTarget::Chat(chat) => format!("chat:{}", chat.hyphenated()),
+        };
         format!(
-            "doc:{}@{}:{:.0}:{}",
-            self.document.to_storage(),
+            "{target}@{}:{:.0}:{}",
             self.workspace.to_storage(),
             self.scroll,
             if self.show_title { "title" } else { "icon" }
@@ -489,11 +541,15 @@ impl PinnedTabRef {
             },
             None => (rest, 0.0),
         };
-        let (doc, workspace) = rest.split_once('@')?;
-        let document = doc.strip_prefix("doc:").and_then(DocumentId::parse)?;
+        let (target, workspace) = rest.split_once('@')?;
+        let target = match (target.strip_prefix("doc:"), target.strip_prefix("chat:")) {
+            (Some(id), _) => PinnedTarget::Document(DocumentId::parse(id)?),
+            (_, Some(id)) => PinnedTarget::Chat(uuid::Uuid::try_parse(id).ok()?),
+            _ => return None,
+        };
         let workspace = WorkspaceId::parse(workspace)?;
         Some(Self {
-            document,
+            target,
             workspace,
             scroll,
             show_title: title,
@@ -1882,8 +1938,12 @@ impl Settings {
         fn group_documents(node: &PaneNodeState, out: &mut Vec<(DocumentId, Option<WorkspaceId>)>) {
             match node {
                 PaneNodeState::Group { main, pinned, .. } => {
+                    // A chat entry, pinned or not, is the AI service's to
+                    // reopen: nothing here asks the store for it.
                     for pin in pinned {
-                        out.push((pin.document, Some(pin.workspace)));
+                        if let Some(id) = pin.document() {
+                            out.push((id, Some(pin.workspace)));
+                        }
                     }
                     for (which, _) in main {
                         if let TabRef::Document { id, workspace } = which {
@@ -1904,7 +1964,9 @@ impl Settings {
             }
         }
         for pin in &self.pinned_tabs {
-            all.push((pin.document, Some(pin.workspace)));
+            if let Some(id) = pin.document() {
+                all.push((id, Some(pin.workspace)));
+            }
         }
         if let Some(tree) = &self.pane_tree {
             group_documents(&tree.root, &mut all);
@@ -2953,12 +3015,7 @@ mod tests {
                 ratio: 0.333,
                 left: Box::new(PaneNodeState::Group {
                     main: vec![(TabRef::Welcome, 0.0), (TabRef::Node(a), 12.0)],
-                    pinned: vec![PinnedTabRef {
-                        document: doc,
-                        workspace: ws,
-                        scroll: 7.0,
-                        show_title: true,
-                    }],
+                    pinned: vec![PinnedTabRef::document_pin(doc, ws, 7.0, true)],
                     active: GroupActiveState::Pinned(0),
                 }),
                 right: Box::new(PaneNodeState::Group {
@@ -2979,8 +3036,8 @@ mod tests {
         assert_eq!(after.pane_tree, before.pane_tree);
     }
 
-    /// Two columns, a document in the left and a chat (which is not saved) in
-    /// the right, with the right focused: `tabs=` is the focused group's copy
+    /// Two columns, a document in the left and a new chat (which is not saved
+    /// until it is sent into) in the right, with the right focused: `tabs=` is the focused group's copy
     /// and is empty, so the document is only in the tree. It must still be one
     /// the shell reopens before restore — or the column comes back as Welcome,
     /// which is what a restart did.
@@ -3024,6 +3081,183 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(s.remembered_documents(), vec![(doc, Some(ws))]);
+    }
+
+    /// **A chat tab is a word of the file** (ADR-483-chattabrestore):
+    /// `chat:<uuid>` in `tabs=`, in a group of `pane_tree=` and, pinned, in
+    /// `pinned_tabs=`, each back as it went out — and beside a document whose
+    /// scroll and home survive with it.
+    #[test]
+    fn a_chat_tab_round_trips_in_every_place_a_tab_is_written() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let (chat, pinned_chat, column_chat) = (
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        );
+        let chat_pin = PinnedTabRef {
+            target: PinnedTarget::Chat(pinned_chat),
+            workspace: ws,
+            scroll: 0.0,
+            show_title: true,
+        };
+        let before = Settings {
+            workspace: Some(ws),
+            tabs: vec![
+                (TabRef::document(doc, Some(ws)), 40.0),
+                (TabRef::Chat(chat), 0.0),
+            ],
+            tab: 1,
+            pinned_tabs: vec![chat_pin, PinnedTabRef::document_pin(doc, ws, 0.0, false)],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Split {
+                    axis: SplitAxisState::Vertical,
+                    ratio: 0.5,
+                    left: Box::new(PaneNodeState::Group {
+                        main: vec![
+                            (TabRef::document(doc, Some(ws)), 40.0),
+                            (TabRef::Chat(chat), 0.0),
+                        ],
+                        pinned: vec![chat_pin],
+                        active: GroupActiveState::Main(1),
+                    }),
+                    right: Box::new(PaneNodeState::Group {
+                        main: vec![(TabRef::Chat(column_chat), 0.0)],
+                        pinned: vec![],
+                        active: GroupActiveState::Main(0),
+                    }),
+                },
+                focused: vec![0],
+            }),
+            ..Settings::default()
+        };
+        let body = before.profile_body();
+        assert!(
+            body.contains(&format!("chat:{chat}")),
+            "spelled chat:<uuid>: {body}"
+        );
+        let after = Settings::from_text(&body);
+        assert_eq!(after.tabs, before.tabs);
+        assert_eq!(after.tab, 1);
+        assert_eq!(after.pinned_tabs, before.pinned_tabs);
+        assert_eq!(after.pane_tree, before.pane_tree);
+    }
+
+    /// `remembered_documents` is what the shell opens from the store before
+    /// restore. A chat is the AI service's, never the store's: no chat entry —
+    /// in `tabs`, pinned, or in a column of the tree — names a document.
+    #[test]
+    fn remembered_documents_ignores_chat_tabs() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let chat = uuid::Uuid::new_v4();
+        let s = Settings {
+            tabs: vec![(TabRef::Chat(chat), 0.0)],
+            pinned_tabs: vec![PinnedTabRef {
+                target: PinnedTarget::Chat(chat),
+                workspace: ws,
+                scroll: 0.0,
+                show_title: false,
+            }],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Group {
+                    main: vec![
+                        (TabRef::Chat(chat), 0.0),
+                        (TabRef::document(doc, Some(ws)), 0.0),
+                    ],
+                    pinned: vec![PinnedTabRef {
+                        target: PinnedTarget::Chat(uuid::Uuid::new_v4()),
+                        workspace: ws,
+                        scroll: 0.0,
+                        show_title: false,
+                    }],
+                    active: GroupActiveState::Main(0),
+                },
+                focused: vec![],
+            }),
+            ..Settings::default()
+        };
+        assert_eq!(s.remembered_documents(), vec![(doc, Some(ws))]);
+    }
+
+    /// A chat entry that is not a uuid is not a chat: dropped on its own,
+    /// like any entry that will not parse.
+    #[test]
+    fn a_chat_entry_that_is_not_a_uuid_is_dropped_alone() {
+        let parsed = parse_tabs("welcome:0,chat:not-a-chat:0,trash:0");
+        assert_eq!(parsed, vec![(TabRef::Welcome, 0.0), (TabRef::Trash, 0.0)]);
+        assert_eq!(PinnedTabRef::parse("chat:nope@x:0:icon"), None);
+    }
+
+    /// **What a chat entry means to a build that has never heard of one.**
+    /// The grammar before `chat:` — keywords, `tasks:`, `session:`, `doc:`,
+    /// then a bare node id — and the pinned grammar that requires `doc:` are
+    /// replicated below, reduced to *what kind of tab came back*. A `chat:`
+    /// entry falls through all of it, so an older reader drops that one entry
+    /// and keeps every neighbour (ADR-483-chattabrestore).
+    #[test]
+    fn an_older_reader_skips_a_chat_entry_and_keeps_the_other_tabs() {
+        fn old_parse(s: &str) -> Option<&'static str> {
+            match s {
+                "welcome" | "workspaces" | "profiles" | "manage" | "trash" | "whatsnew"
+                | "sync-settings" | "draft" => Some("keyword"),
+                other if other.starts_with("tasks:") => Some("tasks"),
+                other if other.starts_with("session:") => Some("session"),
+                other => match other.strip_prefix("doc:") {
+                    Some(rest) => {
+                        let id = rest.split_once('@').map_or(rest, |(id, _)| id);
+                        koru_core::DocumentId::parse(id).map(|_| "document")
+                    }
+                    None => NodeId::parse(other).map(|_| "node"),
+                },
+            }
+        }
+        /// `PinnedTabRef::parse` before pinned chats, reduced the same way.
+        fn old_pin(s: &str) -> Option<&'static str> {
+            let rest = s.rsplit_once(':').map_or(s, |(rest, _)| rest);
+            let rest = rest.rsplit_once(':').map_or(rest, |(rest, _)| rest);
+            let (doc, ws) = rest.split_once('@')?;
+            DocumentId::parse(doc.strip_prefix("doc:")?)?;
+            WorkspaceId::parse(ws)?;
+            Some("pin")
+        }
+        let ws = WorkspaceId::new();
+        let line = write_tabs(&[
+            (TabRef::Welcome, 0.0),
+            (TabRef::Chat(uuid::Uuid::new_v4()), 0.0),
+            (TabRef::document(DocumentId::new(), Some(ws)), 40.0),
+            (TabRef::Node(NodeId::new()), 8.0),
+        ]);
+        // The old entry loop, verbatim: split on commas, peel a numeric scroll
+        // from the last colon, hand the rest to the old parser.
+        let survivors: Vec<&str> = line
+            .split(',')
+            .filter_map(|entry| {
+                let which = match entry.rsplit_once(':') {
+                    Some((w, sc)) if sc.parse::<f32>().is_ok() => w,
+                    _ => entry,
+                };
+                old_parse(which)
+            })
+            .collect();
+        assert_eq!(survivors, ["keyword", "document", "node"]);
+
+        let pins = write_pinned_tabs(&[
+            PinnedTabRef {
+                target: PinnedTarget::Chat(uuid::Uuid::new_v4()),
+                workspace: ws,
+                scroll: 0.0,
+                show_title: true,
+            },
+            PinnedTabRef::document_pin(DocumentId::new(), ws, 0.0, false),
+        ]);
+        let pinned: Vec<&str> = pins.split(',').filter_map(old_pin).collect();
+        assert_eq!(
+            pinned,
+            ["pin"],
+            "the pinned chat dropped, the document kept"
+        );
     }
 
     /// A ratio that is not a number is a corrupt row, not a geometry: NaN

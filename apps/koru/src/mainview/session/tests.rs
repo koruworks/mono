@@ -520,6 +520,153 @@ fn a_session_tab_still_launching_is_not_captured_but_its_neighbours_are() {
     );
 }
 
+// ----------------------------------------------------------- chat tabs (D23)
+
+/// What a tab is, for comparing a strip across a restart: a chat by the chat
+/// it is over, anything else by its label.
+fn tab_kind(tab: &crate::mainview::tab::Tab) -> String {
+    match &tab.view {
+        crate::mainview::tab::TabView::AiChat(chat) => format!("chat {:?}", chat.chat_id()),
+        _ => tab.label.clone(),
+    }
+}
+
+/// Every column's strip and which tab it shows, in tree order.
+fn columns(v: &MainView) -> Vec<(Vec<String>, usize)> {
+    v.panes
+        .iter_groups()
+        .map(|(_, g)| (g.iter_tabs().map(tab_kind).collect(), g.tabs().active()))
+        .collect()
+}
+
+/// **A chat tab comes back on its chat** (ADR-483-chattabrestore), in its
+/// column, at its place, showing if it was — here in a split whose left
+/// column mixes Welcome and a chat and whose right mixes a document and a
+/// chat.
+#[test]
+fn chat_tabs_survive_a_restart_in_a_split_beside_document_tabs() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use crate::mainview::tab::Tab;
+
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let (left, right) = (koru_ai_ui::ChatId::new(), koru_ai_ui::ChatId::new());
+    v.tabs_mut().push(Tab::ai_chat_existing(left)); // [Welcome, Notes, left]
+    let notes = v
+        .tabs()
+        .iter()
+        .find(|t| t.label == "Notes")
+        .map(|t| t.id)
+        .expect("the document tab");
+    let notes = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), notes)
+        .expect("took the document tab");
+    v.panes.split(&PanePath::root(), SplitDir::Right, notes);
+    for (_, group) in v.panes.iter_groups_mut() {
+        if group.iter_tabs().any(|t| t.label == "Notes") {
+            group.tabs_mut().push(Tab::ai_chat_existing(right));
+        }
+    }
+    let before = columns(&v);
+    assert_eq!(before.len(), 2, "two columns");
+    let chat = |id: koru_ai_ui::ChatId| format!("chat {:?}", Some(id));
+    assert!(before[0].0.contains(&chat(left)) && before[1].0.contains(&chat(right)));
+
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    // The flat list is the focused column's copy; the tree has both.
+    let tree = format!("{:?}", settings.pane_tree);
+    for id in [left, right] {
+        assert!(
+            tree.contains(&format!("{:?}", TabRef::Chat(id.as_uuid()))),
+            "{tree}"
+        );
+    }
+
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        columns(&back),
+        before,
+        "every column, every tab and its showing one"
+    );
+}
+
+/// **A new chat not sent yet is not saved**: the service holds nothing to
+/// reopen. Its neighbours are untouched.
+#[test]
+fn an_unsent_chat_tab_is_not_saved_but_its_neighbours_are() {
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    v.tabs_mut().push(crate::mainview::tab::Tab::ai_chat());
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.tabs.len(),
+        2,
+        "Welcome and Notes: {:?}",
+        settings.tabs
+    );
+    let tree = format!("{:?}", settings.pane_tree);
+    assert!(
+        !tree.contains("Chat("),
+        "nothing in the tree either: {tree}"
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        back.tabs().iter().map(tab_kind).collect::<Vec<_>>(),
+        ["Welcome", "Notes"]
+    );
+}
+
+/// A pinned chat tab is pinned again after a restart, on its chat.
+#[test]
+fn a_pinned_chat_tab_comes_back_pinned() {
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let chat = koru_ai_ui::ChatId::new();
+    v.tabs_mut()
+        .push(crate::mainview::tab::Tab::ai_chat_existing(chat));
+    let at = v.tabs().len() - 1;
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.pinned_tabs.first().map(|pin| pin.target),
+        Some(koru_workspace_host::PinnedTarget::Chat(chat.as_uuid()))
+    );
+    let back = reopened(&mut workspace, &settings);
+    let pinned: Vec<String> = back
+        .tabs()
+        .iter()
+        .filter(|t| t.is_pinned())
+        .map(tab_kind)
+        .collect();
+    assert_eq!(pinned, [format!("chat {:?}", Some(chat))]);
+}
+
+/// **A chat nothing answers for does not stop the restore.** A saved chat
+/// that was deleted since comes back as a chat tab opening it, beside every
+/// other tab; the AI service's answer — *missing* — then turns it into a new
+/// chat (`koru_ai_ui`'s boot), on a later pass and off this thread.
+#[test]
+fn a_saved_chat_that_is_gone_restores_without_a_panic() {
+    let (v, mut workspace) = on_document();
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    let gone = uuid::Uuid::new_v4();
+    settings.pane_tree = None;
+    settings.tabs.push((TabRef::Chat(gone), 0.0));
+    settings.tab = settings.tabs.len() - 1;
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(
+        back.tabs().iter().map(tab_kind).collect::<Vec<_>>(),
+        [
+            "Welcome".to_owned(),
+            "Notes".to_owned(),
+            format!("chat {:?}", Some(koru_ai_ui::ChatId::from_uuid(gone)))
+        ]
+    );
+    assert_eq!(back.tabs().active(), 2, "and it is the one showing");
+}
+
 // ------------------------------------------------ the Agents tree's verbs
 //
 // P5: every project mutation the tree offers is a typed backend verb — the
