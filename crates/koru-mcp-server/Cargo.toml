@@ -26,6 +26,9 @@ koru-store-wire = { path = "../koru-store-wire" }
 chrono = { workspace = true }
 koru-core = { path = "../koru-core" }
 koru-workspace = { path = "../koru-workspace" }
+# A task's title, by the one rule the read model answers `list_tasks` with, so
+# `update_task` checks the `title` it was handed against the same chain.
+koru-title = { path = "../koru-title" }
 # Whether a `mermaid` code block draws, for the `diagram` field a read carries.
 # It inspects without laying out, so a read stays cheap; no renderer is linked.
 koru-diagram = { path = "../koru-diagram" }

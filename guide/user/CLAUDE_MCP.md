@@ -46,7 +46,7 @@ reconnect with `/mcp`, to get the rebuilt one.
 ## Serve fewer tools
 
 The bridge serves every Koru tool by default, which costs an agent about
-5,000 tokens of its context at the start of every session. If it only needs
+5,500 tokens of its context at the start of every session. If it only needs
 some of them, add `--toolsets` with the groups it needs after `serve --stdio`:
 
 ```bat
@@ -54,8 +54,9 @@ claude mcp add --scope user koru -- <repo>\target\debug\koru-mcp.exe serve --std
 ```
 
 The toolsets are `docs` (documents: find, read, create, edit, images,
-extraction), `files`, `versions` (saved versions), `tasks` and `chat`; the
-documentation and the workspace list are always on. A tool from a group that
+extraction), `files`, `versions` (saved versions), `tasks` (list tasks, and
+complete, reopen, re-date or re-prioritise one — on its own, without `docs`)
+and `chat`; the documentation and the workspace list are always on. A tool from a group that
 is left out is not listed, and if the agent calls it anyway the error names
 the group to add. `koru.bat mcp-add` registers every toolset; the table of
 sizes and the rules are under *Toolsets* in

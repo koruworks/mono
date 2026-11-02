@@ -60,7 +60,8 @@ answer.
 `workspace_id`. `list_documents` is a workspace's document tree (`id`,
 `parent`, `title`, `kind`); `search_documents` finds **nodes** by words, tags
 and attributes, in one workspace or in all of them; `list_tasks` lists what is
-outstanding. Ids are UUIDs: a workspace id, a document id and a node id are
+outstanding, and `update_task` completes, reopens, re-dates or re-prioritises
+one by the ids its row carries, with no document read. Ids are UUIDs: a workspace id, a document id and a node id are
 different things even when they look alike. You never invent one: a new
 node's id is left out, or given a local name, and the server mints it.
 
@@ -189,8 +190,9 @@ The current tool surface is:
 - `get_documentation`, `list_workspaces`, `list_documents`, `search_documents`,
   `list_tasks`, `read_document`, `list_files`, `search_files`, `get_file`, and
   `read_file` for discovery and reads;
-- `create_document`, `edit_document`, `add_image`, `ensure_file_note`, and
-  `extract_to_document` for durable semantic mutations; and
+- `create_document`, `edit_document`, `update_task`, `add_image`,
+  `ensure_file_note`, and `extract_to_document` for durable semantic
+  mutations; and
 - `save_document_version`, `list_document_versions`,
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
@@ -244,8 +246,9 @@ in both operation unions took it to 17,973, `add_image`, a 22nd tool, to
 to 20,375, under one budget last set at 20,500 bytes
 ([ADR-471](../../docs/decisions/ADR-471-mcpessentials.md),
 [ADR-473](../../docs/decisions/ADR-473-addimage.md)). It was 20,491 bytes
-when that budget was split into one per [toolset](#toolsets). It cannot get
-under 8 KiB with 21 typed tools: the names, titles, safety hints and typed
+when that budget was split into one per [toolset](#toolsets), and
+`update_task`, a 23rd tool, took it to 21,908. It cannot get under 8 KiB
+with 21 typed tools: the names, titles, safety hints and typed
 parameters alone come to about 9.6 KB before a word of description. That
 matters for Grok CLI 1.0.34, which can lose an 8,192-byte chunk of any longer
 line it reads from a stdio server — see the ADR for what was measured.
@@ -253,7 +256,7 @@ line it reads from a stdio server — see the ADR for what was measured.
 ### Toolsets
 
 Every agent reads the whole reply into its context when a session starts,
-about 5,000 tokens, whether it then touches one document or none. So the
+about 5,500 tokens, whether it then touches one document or none. So the
 tools are grouped into **toolsets**, and a bridge started with
 `--toolsets docs,tasks` lists only those and `core`
 (`crates/koru-mcp-server/src/toolsets.rs`). **Without the flag every toolset
@@ -266,9 +269,9 @@ group (maintainers, 2026-11-02).
 | `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 12,396 | 3,099 | 13,650 |
 | `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
-| `tasks` | `list_tasks` | 1,682 | 421 | 1,860 |
+| `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
-| every toolset on | the whole reply, envelope included | 20,491 | 5,123 | 22,640 |
+| every toolset on | the whole reply, envelope included | 21,908 | 5,477 | 24,190 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -288,10 +291,11 @@ decision recorded here.
   `get_documentation` with that uri) end with one sentence naming them. A
   section about a tool that is off is still served; the sentence says those
   tools are not. With every toolset on, neither changes.
-- **The toolsets do not depend on each other**, which leaves two gaps a
-  narrower bridge opens deliberately: a task is changed with `edit_document`,
-  so `tasks` without `docs` lists tasks but cannot complete one, and a file's
-  note is read and edited through `docs`.
+- **The toolsets do not depend on each other.** `tasks` alone lists a task
+  and changes it — `update_task` completes, reopens, re-dates and
+  re-prioritises by the ids a row carries, with no document read
+  ([Changing a task](#changing-a-task)). The one gap a narrower bridge opens
+  deliberately is a file's note, which is read and edited through `docs`.
 - `--toolsets` takes comma-separated names, spaces around them allowed;
   `core` may be named and changes nothing. An unknown or empty name stops the
   bridge with the list of names, rather than starting it without the tools
@@ -349,6 +353,7 @@ and as a test held them against real values. A failure is
 | `add_image` | the edit's `{ revision, history }` plus `{ node_id, created?, hash, mime, width, height, size }` |
 | `ensure_file_note` | `{ note_id, created }` |
 | `edit_document`, `restore_document_version` | `{ revision, history: entry }`, and `created?` from `edit_document`, an entry being `{ id, document, version, reason, recorded_at, label?, message?, boundary?, pinned }` |
+| `update_task` | the edit's `{ revision, history }` plus `task: { workspace_id, document_id, node_id, title, lifecycle, due?, priority?, list? }`, read from the document after the edit ([Changing a task](#changing-a-task)) |
 | `extract_to_document` | `{ document_id, document_revision, source_revision, source_link_node_id, history: { document: entry, source: entry } }` |
 | `save_document_version` | an entry |
 | `list_document_versions` | `{ entries: [entry], next_before_at?, next_before_id? }` |
@@ -913,11 +918,12 @@ each tag exactly once (ADR-190, amended).
 
 A **task** is an ordinary node that carries the task marker, or one that
 carries a deadline: a due date *is* a task, so there is no separate object to
-create and no `create_task` here. This surface therefore names no new
-operation. Four of the ones it already has mean something more when the node
-they point at is a task, and each reaches exactly the same outcome the desktop
-reaches from the same gesture — the same lifecycle, the same cascade, the same
-reopening. Only the attribution differs. The third is `move`: moving
+create and no `create_task` here. This surface therefore names no new edit
+operation — `update_task` ([below](#changing-a-task)) is these same
+operations, addressed by a `list_tasks` row. Four of the ones it has mean
+something more when the node they point at is a task, and each reaches
+exactly the same outcome the desktop reaches from the same gesture — the same
+lifecycle, the same cascade, the same reopening. Only the attribution differs. The third is `move`: moving
 unfinished structural work under a completed task reopens that task (reason
 `unfinished_child_added`), exactly as dragging it there in the app would, and
 moving a structural child out of a task records its departure.
@@ -1080,9 +1086,60 @@ moment ago may not be a row yet. An empty list means every workspace in scope
 has reached the read model. There is no separate `indexing` flag here because
 it would be that same list said twice.
 
-To change what a list reports, use `edit_document`: `set_done` for the
-lifecycle, `set_attribute` of `koru.due` for the deadline, `koru.priority` for
-the priority.
+To change what a list reports, use `update_task` (below), or `edit_document`:
+`set_done` for the lifecycle, `set_attribute` of `koru.due` for the deadline,
+`koru.priority` for the priority.
+
+### Changing a task
+
+`update_task` changes one task by the identity a `list_tasks` row carries, so a
+bridge serving the `tasks` toolset alone can complete what it lists:
+
+```jsonc
+{"workspace_id": "…", "document_id": "…", "node_id": "…",   // the row's ids
+ "expected": "Ship the report",                              // the row's title
+ "done": true,                                               // or false: reopen
+ "due": {"type": "date", "value": "2026-09-11"},             // null: no deadline
+ "priority": "high",                                         // null: none
+ "list": "0193…000a"}                                        // null: no list
+```
+
+- **It is `edit_document`, not a second door.** The changes become the
+  operations described above — `set_attribute` or `clear_attribute` of
+  `koru.due`, `koru.priority` and `koru.list`, then `set_done` — and run as one
+  atomic batch through the same validation, task commands, cascade, history
+  markers (`mcp_before`, `mcp_after`), durability wait and activity
+  attribution. `done` is therefore the lifecycle, with its cascade, and
+  clearing `due` keeps the task.
+- **Each change is absent, `null` or a value**: absent leaves it, `null`
+  clears it (`due`, `priority` and `list`; `done` is `true` or `false`), a
+  value sets it. At least one is required. `due` takes the two shapes a
+  deadline has — `date` `{value}` or `datetime_zoned` `{instant_ms, timezone}`
+  — exactly as a row reports it; `priority` is `low`, `medium`, `high` or
+  `urgent`; `list` is a `koru.list` id. A value that does not fit is the
+  model's own `attribute_rejected`, as in an edit.
+- **No `base_revision`; `expected` is the precondition.** `list_tasks` reads
+  the store's read model and opens no document, so it has no revision to hand
+  back, and asking for one would send a tasks-only agent to a tool its bridge
+  does not serve. `expected` is the row's `title` — compared with the node's
+  text by the read model's own rule, trimmed, so the title a row reports is
+  the title that matches — or the node's exact text from `read_document`. The
+  server reads the document, checks `expected`, and edits at the revision it
+  read. An image or a file has no text, so `expected` is ignored there, as in
+  an edit.
+- **Refusals name `list_tasks` as the retry**, in `details.retry`. A task
+  whose text changed since it was listed is `precondition_failed`; a `node_id`
+  the document no longer holds is `stale_node`; a node that is not a task is
+  `invalid_request` — `update_task` changes tasks and never makes one, which
+  `edit_document`'s `koru.due` does. The read model trails an edit, so a list
+  taken a moment after a change can still report the old title;
+  `updating_workspaces` names a workspace that is behind. Every refusal writes
+  nothing.
+- **It answers what changed**: the edit's `revision` and `history`, and
+  `task` — `workspace_id`, `document_id`, `node_id`, `title`, `lifecycle`,
+  `due`, `priority` and `list` in a row's names and shapes, read from the
+  document after the edit, since the read model has not caught up yet.
+- It requires `edit_documents`, like every mutation here.
 
 ### Two limits on tasks through this surface
 

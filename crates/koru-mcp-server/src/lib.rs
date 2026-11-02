@@ -794,6 +794,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         },
         "create_document"
         | "edit_document"
+        | "update_task"
         | "add_image"
         | "ensure_file_note"
         | "extract_to_document"
@@ -1937,7 +1938,13 @@ impl LocalBackend {
         ))
     }
 
-    fn edit_document(&self, mut a: EditDocumentRequest) -> Result<Value, ToolError> {
+    fn edit_document(&self, a: EditDocumentRequest) -> Result<Value, ToolError> {
+        self.edit(a).map(|(answer, _)| answer)
+    }
+
+    /// `edit_document`, handing back the document as the edit left it, for a
+    /// caller that answers with something read from it.
+    fn edit(&self, mut a: EditDocumentRequest) -> Result<(Value, WorkspaceDoc), ToolError> {
         // Ids left out and local names become UUIDs before anything else
         // reads the batch, so everything below sees only UUIDs.
         let created = local_ids::resolve_edit(&mut a.operations)?;
@@ -1974,6 +1981,128 @@ impl LocalBackend {
         if !created.is_empty() {
             answer["created"] = Value::Object(created);
         }
+        Ok((answer, doc))
+    }
+
+    /// Change one task by the identity `list_tasks` answers, without a
+    /// document read: so a bridge serving `tasks` alone can complete what it
+    /// lists.
+    ///
+    /// **It is `edit_document`, not a second mutation path.** The changes
+    /// become the operations an agent would have sent — `set_attribute` and
+    /// `clear_attribute` of `koru.due`, `koru.priority` and `koru.list`, then
+    /// `set_done` — and run through [`edit`](Self::edit): the same fork
+    /// validation, task commands, history markers, durability wait and
+    /// activity attempt. What this adds is the read the agent did not make —
+    /// the revision, and the node's exact text for each `expected` — and the
+    /// precondition that read is checked against: the `title` the row
+    /// reported, computed by the read model's own rule
+    /// (`koru_title::resolve_title`).
+    fn update_task(&self, a: UpdateTaskRequest) -> Result<Value, ToolError> {
+        let ws = workspace(&a.workspace_id)?;
+        let doc_id = document(&a.document_id)?;
+        let id = node(&a.node_id)?;
+        if a.done.is_none() && a.due.is_none() && a.priority.is_none() && a.list.is_none() {
+            return Err(ToolError::invalid(
+                "update_task needs done, due, priority or list; null clears due, priority or list",
+            ));
+        }
+        self.ensure_readable(ws, doc_id, "document_id")?;
+        let (_, doc) = self.join(ws, doc_id)?;
+        let retry = |code: &str, message: String| ToolError {
+            code: code.into(),
+            message,
+            details: Some(json!({"node_id": id.to_storage(), "retry": "list_tasks"})),
+        };
+        let current = match doc.read(id) {
+            Ok(current) => current,
+            Err(koru_core::StoreError::NoSuchNode(_)) => {
+                return Err(retry(
+                    "stale_node",
+                    format!(
+                        "node {} is not in that document; list_tasks again for the task's current ids",
+                        id.to_storage()
+                    ),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if !koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&current)) {
+            return Err(retry(
+                "invalid_request",
+                format!(
+                    "node {} is not a task; update_task changes what list_tasks lists",
+                    id.to_storage()
+                ),
+            ));
+        }
+        // An image or a file has no text, so there is nothing to be stale
+        // about and the node id is the target — `edit_document`'s own rule.
+        let text = current.content.as_text().unwrap_or_default().to_owned();
+        if current.content.as_text().is_some()
+            && a.expected != text
+            && a.expected != koru_title::resolve_title(&text, current.meta.name.as_deref())
+        {
+            return Err(retry(
+                "precondition_failed",
+                format!(
+                    "update_task expected does not match task {}; list_tasks again and retry with its title",
+                    id.to_storage()
+                ),
+            ));
+        }
+
+        let node_id = || a.node_id.clone();
+        let expected = || text.clone();
+        let set_or_clear = |key: &str, value: Option<AttributeValue>| match value {
+            Some(value) => EditOperation::SetAttribute {
+                node_id: node_id(),
+                expected: expected(),
+                key: key.into(),
+                value,
+            },
+            None => EditOperation::ClearAttribute {
+                node_id: node_id(),
+                expected: expected(),
+                key: key.into(),
+            },
+        };
+        let mut operations = Vec::new();
+        if let Some(due) = a.due {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_DUE,
+                due.map(AttributeValue::from),
+            ));
+        }
+        if let Some(priority) = a.priority {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_PRIORITY,
+                priority.map(|priority| AttributeValue::Text {
+                    value: priority.token().into(),
+                }),
+            ));
+        }
+        if let Some(list) = a.list {
+            operations.push(set_or_clear(
+                koru_core::attributes::KEY_LIST,
+                list.map(|value| AttributeValue::Text { value }),
+            ));
+        }
+        // Last: what the task carries first, then whether it is done.
+        if let Some(done) = a.done {
+            operations.push(EditOperation::SetDone {
+                node_id: node_id(),
+                expected: expected(),
+                done,
+            });
+        }
+        let (mut answer, doc) = self.edit(EditDocumentRequest {
+            workspace_id: a.workspace_id,
+            document_id: a.document_id,
+            base_revision: revision(&doc),
+            operations,
+        })?;
+        answer["task"] = task_json(&doc, ws, doc_id, id)?;
         Ok(answer)
     }
 
@@ -2517,6 +2646,10 @@ impl Backend for LocalBackend {
                 let a: EditDocumentRequest = from(arguments)?;
                 self.edit_document(a)
             }
+            "update_task" => {
+                let a: UpdateTaskRequest = from(arguments)?;
+                self.update_task(a)
+            }
             "add_image" => {
                 let a: AddImageRequest = from(arguments)?;
                 self.add_image(a)
@@ -2819,6 +2952,105 @@ struct ListTasksRequest {
     /// The `task:` reference the previous page ended on, from `next_after`.
     /// Keyset paging, never an offset — see `restarted`.
     cursor: Option<String>,
+}
+
+/// What `update_task` accepts: a task as `list_tasks` names it, and the
+/// changes to make to it.
+///
+/// **No `base_revision`.** `list_tasks` reads the store's read model and opens
+/// no document, so it has no revision to hand back, and requiring one would
+/// send a tasks-only agent to a tool its bridge does not serve. The
+/// precondition is `expected` instead — the row's `title`, which is what makes
+/// a stale identity fail rather than complete the wrong half of a split row —
+/// and the server edits at the revision it has just read.
+///
+/// Each change is absent (leave it), `null` (clear it — `due`, `priority` and
+/// `list` only) or a value. At least one is required.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateTaskRequest {
+    /// The row's `workspace_id`.
+    workspace_id: String,
+    /// The row's `document_id`.
+    document_id: String,
+    /// The row's `node_id`.
+    node_id: String,
+    /// The row's `title`, or the node's exact text from `read_document`.
+    /// Ignored on an image or a file, which has no text to compare.
+    expected: String,
+    /// Complete (`true`) or reopen (`false`): `set_done`'s lifecycle.
+    #[serde(default)]
+    done: Option<bool>,
+    /// The deadline, in a shape `list_tasks` reports; `null` clears it and
+    /// keeps the task.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    due: Option<Option<TaskDue>>,
+    /// `low`, `medium`, `high` or `urgent`; `null` clears it.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    priority: Option<Option<TaskPriority>>,
+    /// A `koru.list` id, as a row's `list` reports it; `null` takes the task
+    /// out of its list.
+    #[serde(
+        default,
+        deserialize_with = "set_or_clear",
+        skip_serializing_if = "Option::is_none"
+    )]
+    list: Option<Option<String>>,
+}
+
+/// A deadline `update_task` writes: the two of [`AttributeValue`]'s shapes
+/// `koru.due` takes. A floating wall clock is not one of them (ADR-183), so it
+/// is not offered here rather than offered and refused.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(inline)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum TaskDue {
+    Date { value: String },
+    DatetimeZoned { instant_ms: i64, timezone: String },
+}
+
+impl From<TaskDue> for AttributeValue {
+    fn from(due: TaskDue) -> Self {
+        match due {
+            TaskDue::Date { value } => Self::Date { value },
+            TaskDue::DatetimeZoned {
+                instant_ms,
+                timezone,
+            } => Self::DatetimeZoned {
+                instant_ms,
+                timezone,
+            },
+        }
+    }
+}
+
+/// `koru.priority`'s tokens, in their semantic order.
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum TaskPriority {
+    Low,
+    Medium,
+    High,
+    Urgent,
+}
+
+impl TaskPriority {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Urgent => "urgent",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -5219,6 +5451,31 @@ fn task_row_json(row: &koru_store_wire::tasks::TaskRow) -> Value {
     })
 }
 
+/// The task `update_task` changed, as the edit left it, in a `list_tasks`
+/// row's names and shapes — so a bridge serving `tasks` alone sees what it
+/// did without a read it cannot make. Read from the document, not the read
+/// model, which trails the edit.
+fn task_json(
+    doc: &WorkspaceDoc,
+    workspace: StoreWorkspaceId,
+    document: StoreDocumentId,
+    id: NodeId,
+) -> Result<Value, ToolError> {
+    let node = doc.read(id)?;
+    let fields = koru_core::tasks::TaskFields::of(&node);
+    let text = node.content.as_text().unwrap_or_default();
+    Ok(json!({
+        "workspace_id": workspace.to_storage(),
+        "document_id": document.to_storage(),
+        "node_id": id.to_storage(),
+        "title": koru_title::resolve_title(text, node.meta.name.as_deref()),
+        "lifecycle": fields.lifecycle.as_str(),
+        "due": node.attr(koru_core::attributes::KEY_DUE).map(|attr| attr_json(attr)["value"].clone()),
+        "priority": node.attr(koru_core::attributes::KEY_PRIORITY).and_then(koru_core::Attr::as_text),
+        "list": node.attr(koru_core::attributes::KEY_LIST).and_then(koru_core::Attr::as_text),
+    }))
+}
+
 /// A deadline in **the same three shapes `read_document` publishes and
 /// `set_attribute` accepts** (ADR-183), rebuilt from the read model's flat
 /// `(kind, value, zone)` triple.
@@ -5578,11 +5835,24 @@ impl KoruMcp {
     }
     #[tool(
         title = "List Koru tasks",
-        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with edit_document: set_done, or set_attribute of koru.due.",
+        description = "List tasks (nodes with the task marker or a deadline) in workspace_ids (empty: all) from the store's read model: open by default, soonest due first. A row carries its task: reference, the workspace_id, document_id and node_id to edit it by, title, breadcrumb, lifecycle, due, priority and list. due filters per temporal type: dates {after, before} for days and wall clocks, instants {after_ms, before_ms} for zoned deadlines; naming one leaves the other out. min_priority orders low < medium < high < urgent; list is a list id; limit is at most 500. Page with cursor = next_after; restarted means the cursor's row stopped matching and this is page one again; updating_workspaces may be behind. Change a task with update_task.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn list_tasks(&self, Parameters(a): Parameters<ListTasksRequest>) -> CallToolResult {
         self.call("list_tasks", a)
+    }
+    #[tool(
+        title = "Update a Koru task",
+        description = "Change one task by a list_tasks row's workspace_id, document_id and node_id; expected is the row's title, or the node's exact text. done completes (true) or reopens (false), with the cascade the app applies. due is {type:date,value:YYYY-MM-DD} or {type:datetime_zoned,instant_ms,timezone:IANA}; priority low, medium, high or urgent; list a koru.list id; null clears due (the task stays), priority or list, and absent leaves it. No base_revision: on stale_node or precondition_failed, list_tasks again. Answers the edit's revision and history and the task as it now is.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    fn update_task(&self, Parameters(a): Parameters<UpdateTaskRequest>) -> CallToolResult {
+        self.call("update_task", a)
     }
     #[tool(
         title = "List Koru files",
@@ -6146,7 +6416,7 @@ mod tests {
     }
 
     #[test]
-    fn the_official_sdk_exposes_all_twenty_two_tools() {
+    fn the_official_sdk_exposes_all_twenty_three_tools() {
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let names: std::collections::HashSet<_> = server
             .tool_router
@@ -6160,6 +6430,7 @@ mod tests {
             "list_documents",
             "search_documents",
             "list_tasks",
+            "update_task",
             "list_files",
             "search_files",
             "get_file",
@@ -6179,7 +6450,7 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
     }
 
     fn an_arg(key: &str, op: &str, values: &[&str], kinds: &[&str]) -> AttrFilterArg {
@@ -6371,7 +6642,7 @@ mod tests {
 
     /// The bytes the `tools/list` reply may take with every toolset on,
     /// newline excluded. Grok CLI 1.0.34 can lose an 8,192-byte chunk of any
-    /// longer line (ADR-433-compacttools); 22 typed tools cannot fit under
+    /// longer line (ADR-433-compacttools); 23 typed tools cannot fit under
     /// that. Until 2026-11-02 this was one number, last raised to 20,500 for
     /// `set_callout_look` (ADR-468-callout; 20,375 bytes measured, 20,491 at
     /// the split). It is now the sum of each toolset's budget and the reply's
@@ -6416,7 +6687,7 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        assert_eq!(listed.tools.len(), 22);
+        assert_eq!(listed.tools.len(), 23);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -6534,7 +6805,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
-        assert_eq!(expected.len(), 22);
+        assert_eq!(expected.len(), 23);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -6704,7 +6975,7 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
         let routed: HashSet<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
@@ -11206,7 +11477,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 22);
+        assert_eq!(tools.len(), 23);
         assert!(
             tools
                 .iter()
@@ -12461,5 +12732,244 @@ mod tests {
         assert!(reads_back(&backend, &workspace_id, page, "Rewritten"));
         restore(page, &entry).unwrap();
         assert!(reads_back(&backend, &workspace_id, page, "Kept"));
+    }
+
+    // ------------------------------------------------- update_task, in memory
+
+    /// A page whose one line is a task due 2026-09-04, made the way an agent
+    /// makes one: a `koru.due` through `edit_document`.
+    fn a_task(store: &Arc<MemoryStore>, text: &str) -> (StoreDocumentId, NodeId) {
+        let page = store.add_document(koru_core::explore::KIND_DOCUMENT, "Plan", text);
+        let (revision, line) = store.stored(page);
+        call(
+            &store.backend(),
+            "edit_document",
+            json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "base_revision": revision,
+                "operations": [{
+                    "op": "set_attribute", "node_id": line.to_storage(), "expected": text,
+                    "key": "koru.due", "value": {"type": "date", "value": "2026-09-04"},
+                }],
+            }),
+        )
+        .expect("a due makes the line a task");
+        (page, line)
+    }
+
+    /// The node as the store now holds it.
+    fn stored_task(store: &MemoryStore, page: StoreDocumentId, line: NodeId) -> koru_core::Node {
+        WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&page])
+            .unwrap()
+            .read(line)
+            .unwrap()
+    }
+
+    /// What `tasks` was split out for: a bridge serving `tasks` alone lists
+    /// `update_task` beside `list_tasks`, and completes, reopens, re-dates and
+    /// re-prioritises a task with it — through the edit path, so the store
+    /// holds the lifecycle the app would have written — and answers the task
+    /// as it now is, since it cannot read the document.
+    #[tokio::test]
+    async fn a_tasks_only_bridge_completes_and_reopens_a_task() {
+        use rmcp::ServiceExt;
+
+        let store = MemoryStore::new();
+        let (page, line) = a_task(&store, "Ship the report");
+        let markers = store.markers.lock().unwrap().len();
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server = KoruMcp::new(Arc::new(store.backend()), RequestContext::local())
+            .with_toolsets(Toolsets::parse("tasks").expect("tasks"));
+        let server_task = tokio::spawn(async move {
+            if let Ok(running) = server.serve(server_transport).await {
+                let _ = running.waiting().await;
+            }
+        });
+        let client = ().serve(client_transport).await.expect("MCP initialize handshake");
+
+        let listed: HashSet<String> = client
+            .peer()
+            .list_all_tools()
+            .await
+            .expect("tools/list")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let expected: HashSet<String> = [
+            "get_documentation",
+            "list_workspaces",
+            "list_tasks",
+            "update_task",
+        ]
+        .map(String::from)
+        .into();
+        assert_eq!(listed, expected);
+
+        let update = |changes: Value| {
+            let mut arguments = json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "node_id": line.to_storage(),
+                "expected": "Ship the report",
+            });
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            rmcp::model::CallToolRequestParams::new("update_task")
+                .with_arguments(serde_json::from_value(arguments).expect("arguments object"))
+        };
+
+        let completed = client
+            .peer()
+            .call_tool(update(json!({"done": true})))
+            .await
+            .expect("update_task on a tasks bridge");
+        assert_ne!(completed.is_error, Some(true), "{completed:?}");
+        let task = &completed.structured_content.as_ref().expect("an answer")["task"];
+        assert_eq!(task["lifecycle"], "completed", "{task}");
+        assert_eq!(task["title"], "Ship the report");
+        assert_eq!(task["due"], json!({"type": "date", "value": "2026-09-04"}));
+        let node = stored_task(&store, page, line);
+        assert_eq!(
+            koru_core::tasks::TaskFields::of(&node).lifecycle.as_str(),
+            "completed"
+        );
+        assert!(node.meta.done, "the checkbox follows the lifecycle");
+        assert_eq!(
+            store.markers.lock().unwrap().len(),
+            markers + 2,
+            "the edit's own mcp_before and mcp_after"
+        );
+
+        let reopened = client
+            .peer()
+            .call_tool(update(
+                json!({"done": false, "priority": "high", "due": null}),
+            ))
+            .await
+            .expect("a second update");
+        assert_ne!(reopened.is_error, Some(true), "{reopened:?}");
+        let task = &reopened.structured_content.as_ref().expect("an answer")["task"];
+        assert_eq!(task["lifecycle"], "open", "{task}");
+        assert_eq!(task["priority"], "high");
+        assert_eq!(task["due"], Value::Null);
+        let node = stored_task(&store, page, line);
+        assert!(
+            koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&node)),
+            "clearing the due keeps the task"
+        );
+
+        client.cancel().await.expect("close MCP client");
+        server_task.abort();
+    }
+
+    /// A task whose text moved since it was listed, or that was removed, is
+    /// refused with `list_tasks` as the retry and nothing written. The title
+    /// the read model reports — trimmed — still matches the text it came from.
+    #[test]
+    fn update_task_refuses_a_stale_task_and_writes_nothing() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let (page, line) = a_task(&store, "Ship the report");
+        let update = |expected: &str| {
+            call(
+                &backend,
+                "update_task",
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": page.to_storage(),
+                    "node_id": line.to_storage(),
+                    "expected": expected,
+                    "done": true,
+                }),
+            )
+        };
+        let edit = |operation: Value| {
+            let (revision, _) = store.stored(page);
+            call(
+                &backend,
+                "edit_document",
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": page.to_storage(),
+                    "base_revision": revision,
+                    "operations": [operation],
+                }),
+            )
+            .unwrap();
+        };
+
+        // Renamed by somebody else after the agent listed it.
+        edit(json!({"op": "replace_text", "node_id": line.to_storage(),
+                    "expected": "Ship the report", "text": "Ship the final report "}));
+        let before = store.state();
+        let stale = update("Ship the report").expect_err("the listed title is stale");
+        assert_eq!(stale.code, "precondition_failed", "{stale}");
+        assert_eq!(stale.details.as_ref().unwrap()["retry"], "list_tasks");
+        assert!(store.state() == before, "a refused update wrote");
+
+        // The title list_tasks reports now is the trimmed text, and matches.
+        let done = update("Ship the final report").expect("the current title");
+        assert_eq!(done["task"]["lifecycle"], "completed");
+
+        // Removed after it was listed.
+        edit(json!({"op": "remove", "node_id": line.to_storage(),
+                    "expected": "Ship the final report "}));
+        let before = store.state();
+        let gone = update("Ship the final report").expect_err("the task is gone");
+        assert_eq!(gone.code, "stale_node", "{gone}");
+        assert_eq!(gone.details.as_ref().unwrap()["retry"], "list_tasks");
+        assert!(store.state() == before, "a refused update wrote");
+    }
+
+    /// A node id that names nothing, and a node that is not a task, are
+    /// refused rather than made into one; so is a call that asks for no
+    /// change, and an unknown field.
+    #[test]
+    fn update_task_refuses_an_unknown_task() {
+        let store = MemoryStore::new();
+        let backend = store.backend();
+        let page = store.add_document(koru_core::explore::KIND_DOCUMENT, "Plan", "Just a note");
+        let (_, line) = store.stored(page);
+        let update = |node: NodeId, changes: Value| {
+            let mut arguments = json!({
+                "workspace_id": store.workspace.to_storage(),
+                "document_id": page.to_storage(),
+                "node_id": node.to_storage(),
+                "expected": "Just a note",
+            });
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            call(&backend, "update_task", arguments)
+        };
+        let before = store.state();
+
+        let nowhere = update(NodeId::new(), json!({"done": true})).unwrap_err();
+        assert_eq!(nowhere.code, "stale_node", "{nowhere}");
+        assert_eq!(nowhere.details.as_ref().unwrap()["retry"], "list_tasks");
+
+        let plain = update(
+            line,
+            json!({"due": {"type": "date", "value": "2026-09-04"}}),
+        )
+        .expect_err("a plain line is not a task");
+        assert_eq!(plain.code, "invalid_request", "{plain}");
+        assert!(plain.message.contains("not a task"), "{plain}");
+        assert!(
+            !koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&stored_task(
+                &store, page, line
+            ))),
+            "and it did not become one"
+        );
+
+        let idle = update(line, json!({})).unwrap_err();
+        assert_eq!(idle.code, "invalid_request", "{idle}");
+        let unknown = update(line, json!({"done": true, "title": "Renamed"})).unwrap_err();
+        assert!(unknown.message.contains("unknown field"), "{unknown}");
+        assert!(store.state() == before, "a refused update wrote");
     }
 }

@@ -36,7 +36,7 @@ pub enum Toolset {
     Files,
     /// Saved versions: save, list, compare and restore.
     Versions,
-    /// The open-task list.
+    /// The task list, and changing a task it lists.
     Tasks,
     /// Koru AI chats, read-only.
     Chat,
@@ -95,7 +95,7 @@ impl Toolset {
                 "compare_document_versions",
                 "restore_document_version",
             ],
-            Toolset::Tasks => &["list_tasks"],
+            Toolset::Tasks => &["list_tasks", "update_task"],
             Toolset::Chat => CHAT_TOOL_NAMES,
         }
     }
@@ -239,15 +239,16 @@ impl fmt::Display for Toolsets {
 /// Each toolset's share of the `tools/list` reply, in bytes: the sum of its
 /// tools as each is published (compacted), plus one separator each. Set at
 /// the size measured on 2026-11-02 plus about 10% (measured: core 697, docs
-/// 12,396, files 2,266, versions 2,036, tasks 1,682, chat 1,369). Growth past
-/// one is a decision to record in MCP.md's table, not a number to bump.
+/// 12,396, files 2,266, versions 2,036, tasks 3,099 with `update_task`, chat
+/// 1,369). Growth past one is a decision to record in MCP.md's table, not a
+/// number to bump.
 #[cfg(test)]
 pub(crate) const BUDGETS: [(Toolset, usize); 6] = [
     (Toolset::Core, 770),
     (Toolset::Docs, 13_650),
     (Toolset::Files, 2_500),
     (Toolset::Versions, 2_250),
-    (Toolset::Tasks, 1_860),
+    (Toolset::Tasks, 3_410),
     (Toolset::Chat, 1_510),
 ];
 

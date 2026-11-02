@@ -6369,6 +6369,7 @@ dependencies = [
  "koru-history",
  "koru-store-core",
  "koru-store-wire",
+ "koru-title",
  "koru-workspace",
  "loro",
  "rmcp",
