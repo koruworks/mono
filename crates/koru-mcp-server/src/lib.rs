@@ -3579,7 +3579,9 @@ enum EditOperation {
         node_id: String,
         /// Exact current text returned by `read_document`.
         expected: String,
-        /// 1–6, or null for body text.
+        /// 1–6, or null for body text. The range is published so the schema
+        /// says it rather than `u8`'s 0–255; the server refuses outside it.
+        #[schemars(range(min = 1, max = 6))]
         heading: Option<u8>,
     },
     /// A highlight colour over a byte range of an existing node's text.
@@ -3927,10 +3929,13 @@ enum InsertKind {
     // survive a read (ADR-471). It returns when contacts are a supported
     // surface, with the pill's find-or-create semantics rather than a bare
     // insert.
-    /// A callout box: a container with no text of its own. The inserted node
-    /// is the box; a non-empty `text` becomes a first paragraph inside it,
-    /// and later inserts under it are the rest of the box's lines. It
-    /// arrives with the default icon and tint; `set_callout_look` changes them.
+    //
+    // A callout box: a container with no text of its own. The inserted node
+    // is the box; a non-empty `text` becomes a first paragraph inside it,
+    // and later inserts under it are the rest of the box's lines. It
+    // arrives with the default icon and tint; `set_callout_look` changes them.
+    // A plain comment, not `///`: schemars publishes a documented variant as
+    // a branch of its own, which split `kind` into two schemas.
     Callout,
 }
 
@@ -5896,7 +5901,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Create a Koru document",
-        description = "Atomically create, and optionally seed, a complete document before it becomes visible; returns it as read_document does. parent_document_id nests it (absent: the workspace root); kind defaults to page. A UUID idempotency_key replays the same request for seven days. With initial_operations (non-empty; insert, insert_inline, set_done, set_language, set_mark, set_align and set_callout_look only) every parent is the title node or an earlier insert, and no blank paragraph is added. root_node_id and insert node_id may be omitted (the title node is then root) or local names later ops use; created maps each to its minted UUID. Read koru://docs/essentials before the first mutation.",
+        description = "Atomically create a document, optionally seeded, and return it as read_document does. parent_document_id nests it (absent: workspace root); kind is page or absent. A UUID idempotency_key replays the same request for seven days. initial_operations, when sent, are non-empty, target the title node or earlier inserts only, and replace the blank first paragraph. root_node_id and insert node_ids are omitted or local names (an omitted root is \"root\"); created maps each to its minted UUID. Operations follow edit_document. Read koru://docs/essentials before the first mutation; rules: get_documentation section creating-a-complete-document.",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -5922,7 +5927,7 @@ impl KoruMcp {
     }
     #[tool(
         title = "Edit a Koru document",
-        description = "Atomically apply edits, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. Each op on an existing node carries expected, its exact current text; on stale_node or a mismatch, reread and retry. insert's node_id is optional, or a local name later ops use; created maps each to its minted UUID. parent_id is required and body blocks go under the document-title node, never the absolute CRDT root. after_node_id is a sibling and null means first; numeric ordinals are unsupported. at_utf8 is a UTF-8 byte offset into expected. remove takes the node's whole subtree. set_mark turns one of bold, italic, underline, strike, code on or off over start_utf8..end_utf8 of expected (non-empty, on character boundaries). set_align sets start, center or end. insert_inline also takes {type:link,url,label?} (http, https or mailto). set_heading sets metadata.heading to 1–6, or null for body text. set_highlight sets runs[].highlight to yellow, green, blue or pink over the same byte range, or null to clear. set_attribute writes koru.due, koru.priority, koru.color or a workspace's custom key in the value shapes read_document reports: date {value: YYYY-MM-DD}, datetime_zoned {instant_ms, timezone: IANA name}, datetime_floating {wall}. add_tag and remove_tag take a tag name or a tag_id. set_callout_look takes an emoji icon and an accent color token; omit one to keep it, null restores the default. Unknown fields are errors.",
+        description = "Apply operations atomically, in order, at base_revision from the latest read_document. Read koru://docs/essentials before the first mutation. An op on an existing node sends expected, its exact current text (\"\" for an image); on stale_node or a mismatch, reread and retry. A new node_id is omitted or a local name later ops use; created maps it to the minted UUID. parent_id is the title node for body blocks, never the absolute CRDT root; after_node_id is a sibling, null for first; numeric ordinals are unsupported. *_utf8 are UTF-8 byte offsets into expected, on character boundaries. highlight: yellow, green, blue, pink, null clears. Callout icon: one emoji; color: red, orange, yellow, green, teal, blue, purple, pink, gray; null restores the default, absent keeps it. Link url: http, https or mailto. set_attribute koru.due: date {value:YYYY-MM-DD} or datetime_zoned {instant_ms, timezone:IANA}; koru.priority: text low, medium, high or urgent; other keys take the shape read_document reports. add_tag/remove_tag: tag (a name) or tag_id. Rules: get_documentation sections typed-blocks-text-and-ordering, attributes-and-tags, tasks.",
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -7415,6 +7420,34 @@ mod tests {
 
             assert!(error.to_string().contains("missing field `parent_id`"));
         }
+    }
+
+    /// A description that sends an agent to the contract names sections that
+    /// exist, so moving detail out of a description and into
+    /// `get_documentation` cannot leave a slug that answers nothing.
+    #[test]
+    fn every_section_a_tool_description_names_exists() {
+        let mut named = Vec::new();
+        for tool in KoruMcp::tool_router().list_all() {
+            let description = tool.description.as_deref().unwrap_or_default();
+            for (at, marker) in description.match_indices("get_documentation section") {
+                let rest = &description[at + marker.len()..];
+                let list = rest.strip_prefix('s').unwrap_or(rest);
+                let list = list.split('.').next().unwrap_or_default();
+                for slug in list.split(',').map(str::trim) {
+                    assert!(
+                        documentation(MODEL_RESOURCE_URI, Some(slug)).is_ok(),
+                        "{} names the section {slug:?}, which the contract does not have",
+                        tool.name
+                    );
+                    named.push(slug.to_owned());
+                }
+            }
+        }
+        assert!(
+            named.iter().any(|slug| slug == "attributes-and-tags"),
+            "{named:?}"
+        );
     }
 
     #[test]

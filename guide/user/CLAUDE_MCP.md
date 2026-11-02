@@ -46,7 +46,7 @@ reconnect with `/mcp`, to get the rebuilt one.
 ## Serve fewer tools
 
 The bridge serves every Koru tool by default, which costs an agent about
-5,500 tokens of its context at the start of every session. If it only needs
+5,400 tokens of its context at the start of every session. If it only needs
 some of them, add `--toolsets` with the groups it needs after `serve --stdio`:
 
 ```bat

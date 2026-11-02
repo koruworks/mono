@@ -247,8 +247,10 @@ to 20,375, under one budget last set at 20,500 bytes
 ([ADR-471](../../docs/decisions/ADR-471-mcpessentials.md),
 [ADR-473](../../docs/decisions/ADR-473-addimage.md)). It was 20,491 bytes
 when that budget was split into one per [toolset](#toolsets), and
-`update_task`, a 23rd tool, took it to 21,908. It cannot get under 8 KiB
-with 21 typed tools: the names, titles, safety hints and typed
+`update_task`, a 23rd tool, took it to 21,908. Trimming `edit_document`'s
+and `create_document`'s descriptions to what forms a valid call — the rest
+is in the sections they name — brought it back to 21,451. It cannot get
+under 8 KiB with 21 typed tools: the names, titles, safety hints and typed
 parameters alone come to about 9.6 KB before a word of description. That
 matters for Grok CLI 1.0.34, which can lose an 8,192-byte chunk of any longer
 line it reads from a stdio server — see the ADR for what was measured.
@@ -256,7 +258,7 @@ line it reads from a stdio server — see the ADR for what was measured.
 ### Toolsets
 
 Every agent reads the whole reply into its context when a session starts,
-about 5,500 tokens, whether it then touches one document or none. So the
+about 5,400 tokens, whether it then touches one document or none. So the
 tools are grouped into **toolsets**, and a bridge started with
 `--toolsets docs,tasks` lists only those and `core`
 (`crates/koru-mcp-server/src/toolsets.rs`). **Without the flag every toolset
@@ -266,12 +268,12 @@ group (maintainers, 2026-11-02).
 | Toolset | Tools | Bytes | ~Tokens | Budget |
 | --- | --- | ---: | ---: | ---: |
 | `core` — always on | `get_documentation`, `list_workspaces` | 697 | 175 | 770 |
-| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 12,396 | 3,099 | 13,650 |
+| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 11,939 | 2,985 | 13,130 |
 | `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
-| every toolset on | the whole reply, envelope included | 21,908 | 5,477 | 24,190 |
+| every toolset on | the whole reply, envelope included | 21,451 | 5,363 | 23,670 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
