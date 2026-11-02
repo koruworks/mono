@@ -83,9 +83,10 @@ Before asking Claude to edit, ask:
 > `{"uri":"koru://docs/essentials"}`. Summarise the node model and the supported
 > `edit_document` operations before making any changes.
 
-`koru://docs/essentials` is the short form, and `koru://docs/model` the whole
-contract, which the same tool also answers one section at a time
-(`{"uri":"koru://docs/model","section":"tasks"}`). Both are exposed as
+`koru://docs/essentials` is the short form, and what the tool answers with no
+arguments. `koru://docs/model` is the contract's table of contents, never the
+whole contract; the same tool answers one section at a time
+(`{"section":"tasks"}`), as does the resource `koru://docs/model/tasks`. Both are exposed as
 standard MCP resources. Some bridges, including versions of remote-device
 proxies, do not forward `resources/list` or `resources/read`;
 `get_documentation` returns the same text as a normal tool call and is the

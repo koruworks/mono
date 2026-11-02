@@ -21,18 +21,25 @@ packager copies it to the installed path (`RELEASE_DOCUMENT_SOURCES` in
 `crates/koru-release/src/package.rs`), and
 `every_runtime_document_is_explicit_and_present` fails if they disagree.
 
-The running server publishes this exact file as the standard MCP resource
-`koru://docs/model`, and its [Essentials](#essentials) section alone as
+The running server serves this file **one section at a time, never whole**:
+it is past 80 KB, and an agent that was handed it in one answer could not
+read it back (Claude Code stops a read at 25k tokens). Its
+[Essentials](#essentials) section alone is the standard MCP resource
 `koru://docs/essentials` — the short form an agent reads before its first
 mutation, served from this file so it cannot drift from the long one.
-Clients without MCP resource support retrieve the same text with
-`get_documentation({"uri":"koru://docs/essentials"})` or
-`{"uri":"koru://docs/model"}`, which also answers one section at a time:
-`{"uri":"koru://docs/model","section":"creating-a-complete-document"}`, the
-section named by its heading's slug, with its `###` children; an unknown
-section lists the sections it could have named. The tool answers the
-markdown itself as its text block and `{uri, mime_type, section?, text}` as
-structured content. Some desktop bridges and remote-device proxies forward
+`koru://docs/model` is the **table of contents**: each `##` section's slug,
+title, one-line summary (the section's first sentence) and approximate size
+in tokens, with the slugs of its `###` children. `koru://docs/model/<slug>`
+is one section, with its `###` children; a `###` slug answers that
+subsection alone. Clients without MCP resource support retrieve the same
+text with `get_documentation`: no arguments answer the essentials,
+`{"uri":"koru://docs/model"}` the contents, and `{"section":"creating-a-complete-document"}`
+(or the same with `"uri":"koru://docs/model"`) one section, named by its
+heading's slug; an unknown section lists the sections it could have named.
+The tool answers the markdown itself as its text block and `{uri,
+mime_type, section?, text}` as structured content, plus `sections` — the
+contents as `{slug, title, summary, tokens, subsections}` — for the table of
+contents. Some desktop bridges and remote-device proxies forward
 tools but omit `resources/list` and `resources/read`; an empty resource list
 therefore does not mean this contract is absent. `get_documentation` is the
 portable discovery path and must remain available even while the standard
@@ -41,11 +48,13 @@ resources exist.
 ## Essentials
 
 The short form of this contract — enough to find, read, create and edit
-correctly. It is served on its own as `koru://docs/essentials`. Every
-heading named below is a section of this file, and
-`get_documentation({"uri":"koru://docs/model","section":"<slug>"})` answers
-one section: the slug is the heading in lower case with spaces as `-`, so
-*Creating a complete document* is `creating-a-complete-document`.
+correctly. It is served on its own as `koru://docs/essentials`, and is what
+`get_documentation` answers with no arguments. Every heading named below is
+a section of this file; `koru://docs/model` lists them all with a summary and
+a size, and `get_documentation({"section":"<slug>"})` answers one: the slug
+is the heading in lower case with spaces as `-`, so *Creating a complete
+document* is `creating-a-complete-document`. The whole file is never one
+answer.
 
 **Finding things.** `list_workspaces` first; every other call names a
 `workspace_id`. `list_documents` is a workspace's document tree (`id`,
@@ -265,7 +274,7 @@ and as a test held them against real values. A failure is
 
 | Tool | Result |
 | --- | --- |
-| `get_documentation` | `{ uri, mime_type, section?, text }`; the text block is the markdown itself |
+| `get_documentation` | `{ uri, mime_type, section?, text }`, plus `sections: [{ slug, title, summary, tokens, subsections }]` for `koru://docs/model`'s table of contents; the text block is the markdown itself |
 | `list_workspaces` | `{ workspaces: [{ id, owner, name, created_at, last_opened_at?, icon?, color?, pinned, archived, deleted_at?, position }] }` |
 | `list_documents` | `{ documents: [{ id, parent?, ordinal, title, kind, trashed_at?, trashed_by? }] }` |
 | `search_documents` | `{ hits: [{ workspace, workspace_name, document, node?, document_kind, mime?, kind, field, title, breadcrumb, breadcrumb_spans, snippet, spans, lifecycle, trashed_at?, trashed_by?, score, observed_modified_at_ms?, workspace_last_used_at_ms? }], next_offset?, updating_workspaces, corrected_query? }`; a span is `{ start, end }` |
@@ -287,16 +296,16 @@ and as a test held them against real values. A failure is
 
 ## The boundary
 
+MCP exposes **Koru semantics**, never CRDT mechanics. A client asks to insert a
+paragraph, create a document reference, extract a block, compare versions, or
+restore one. The server translates that intent through `WorkspaceDoc` and
+publishes the resulting Loro operations through the normal durable Store path.
+
 **A chat's local agent reaches this bridge without any hand configuration**
 (AGENTUX, [ADR-430](../../docs/decisions/ADR-430-chatagentbridge.md)): the session
 host attaches `koru-mcp serve --stdio` to every session a chat creates, so
 Codex, Claude, OpenCode, Kimi, Grok and Antigravity in a chat call the same tools a
 hand-configured ChatGPT does, under the same local principal and policies.
-
-MCP exposes **Koru semantics**, never CRDT mechanics. A client asks to insert a
-paragraph, create a document reference, extract a block, compare versions, or
-restore one. The server translates that intent through `WorkspaceDoc` and
-publishes the resulting Loro operations through the normal durable Store path.
 
 Raw Loro updates, op ids, `TreeID`s, container keys, anchor characters, mark
 keys, snapshot bytes, and version-vector arithmetic are not MCP input. Standard
@@ -364,6 +373,9 @@ or AI worker is unavailable, the chat tool returns a structured error while the
 MCP bridge remains available for its other tools.
 
 ## Identities and document shape
+
+Every id that crosses the boundary is a UUID of one distinct type, and one
+Store document is one tree under its title node.
 
 - `ProfileId`, `WorkspaceId`, Store `DocumentId`, `NodeId`, and `AttrId` are
   distinct client-minted UUID types. Their strings may look alike; their
@@ -1099,6 +1111,10 @@ is clearer from a program; both work, and they combine.
 
 ## Files
 
+Workspace files are reached through their own tools — `list_files`,
+`search_files`, `get_file`, `read_file` and `ensure_file_note` — never through
+`list_documents`.
+
 `list_documents` returns page entries only. `list_files` returns first-class
 workspace file metadata: `file_id`, `name`, `mime`, `size`, `hash`,
 `root_node_id`, and `note_id`. `search_files` applies a case-insensitive
@@ -1188,6 +1204,9 @@ UTF-8 boundary and reports `truncated: true` when shortened; the result also
 reports the complete terminal-message count.
 
 ## Preconditions, history, and durability
+
+Every mutation is checked against what was read, applied atomically, durable
+before it answers, and bracketed in history.
 
 - Read immediately before writing and send its opaque base revision.
 - Operations whose placement or replacement depends on text also send the
@@ -1321,7 +1340,10 @@ For a new mutation or object, use this sequence:
     capability when an adapter depends on new Store support.
 
 This file is itself the runtime `koru://docs/model` resource (installed as
-`docs/mcp/README.md`). Development servers read this source from disk on
+`docs/mcp/README.md`), served as its table of contents and one section at a
+time. Keep each `##` section's first sentence a summary of the section — the
+contents list it — and each section under about 6k tokens: a test holds every
+answer to that. Development servers read this source from disk on
 every request, so this file is the
 quickest way to teach a restarted model a new contract without embedding prose
 in the binary.

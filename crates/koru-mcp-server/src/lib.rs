@@ -19,9 +19,9 @@ use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        Annotations, CallToolResult, ErrorData, ListResourcesResult, ReadResourceRequestParams,
-        ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role,
-        ServerCapabilities, ServerInfo,
+        Annotations, CallToolResult, ErrorData, ListResourceTemplatesResult, ListResourcesResult,
+        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+        ResourceContents, ResourceTemplate, Role, ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -218,10 +218,189 @@ fn section_slugs(markdown: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where one section of the contract is read as a resource:
+/// `koru://docs/model/<slug>`, the same answer as `get_documentation` with
+/// `section`.
+const MODEL_SECTION_URI_PREFIX: &str = "koru://docs/model/";
+
+/// The longest one-line summary the table of contents gives a section.
+const SUMMARY_CHARS: usize = 200;
+
+/// A text's size in tokens, roughly: English markdown runs about four bytes
+/// a token. Enough for an agent to judge what a section costs before asking.
+fn approximate_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+/// One `##` section as the table of contents lists it.
+struct TocEntry {
+    slug: String,
+    title: String,
+    summary: String,
+    tokens: usize,
+    /// The slugs of its `###` children, each answerable on its own.
+    subsections: Vec<String>,
+}
+
+/// The `##` sections of the contract, in order, each with the first sentence
+/// of its first paragraph as its summary.
+fn table_of_contents(markdown: &str) -> Vec<TocEntry> {
+    let mut entries: Vec<TocEntry> = Vec::new();
+    let mut in_fence = false;
+    for line in markdown.lines() {
+        match heading(line, &mut in_fence) {
+            Some((2, title)) => {
+                let slug = heading_slug(title);
+                let text = section_of(markdown, &slug).unwrap_or_default();
+                entries.push(TocEntry {
+                    summary: section_summary(&text),
+                    tokens: approximate_tokens(&text),
+                    title: title.trim().to_owned(),
+                    slug,
+                    subsections: Vec::new(),
+                });
+            }
+            Some((_, title)) => {
+                if let Some(entry) = entries.last_mut() {
+                    entry.subsections.push(heading_slug(title));
+                }
+            }
+            None => {}
+        }
+    }
+    entries
+}
+
+/// A section's one line: the first sentence of the paragraph under its
+/// heading, with the markdown that reads badly inline — bold, link targets —
+/// taken out, and cut at [`SUMMARY_CHARS`] on a word.
+fn section_summary(section: &str) -> String {
+    let paragraph: Vec<&str> = section
+        .lines()
+        .skip(1)
+        .skip_while(|line| line.trim().is_empty())
+        .take_while(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .collect();
+    let joined = paragraph.join(" ");
+    let plain = strip_inline_markdown(joined.trim_start_matches("- "));
+    let sentence = first_sentence(&plain).trim_end_matches(':').trim();
+    if sentence.chars().count() <= SUMMARY_CHARS {
+        return sentence.to_owned();
+    }
+    let cut: String = sentence.chars().take(SUMMARY_CHARS).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{}…", cut.trim_end_matches([',', ';', ':']))
+}
+
+/// `**bold**` loses its stars and `[label](target)` becomes `label`.
+fn strip_inline_markdown(text: &str) -> String {
+    let text = text.replace("**", "");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('[') {
+        let after = &rest[open + 1..];
+        let link = after.find("](").and_then(|close| {
+            after[close + 2..]
+                .find(')')
+                .map(|end| (close, close + 2 + end))
+        });
+        match link {
+            Some((close, end)) => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[..=open]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Up to and including the first `.`, `!` or `?` that ends a sentence:
+/// outside backticks, followed by a space or the end, and not `e.g.`/`i.e.`.
+fn first_sentence(text: &str) -> &str {
+    let mut in_code = false;
+    for (index, character) in text.char_indices() {
+        match character {
+            '`' => in_code = !in_code,
+            '.' | '!' | '?' if !in_code => {
+                let end = index + character.len_utf8();
+                let ends = text[end..].chars().next().is_none_or(char::is_whitespace);
+                let abbreviation = text[..end].ends_with("e.g.") || text[..end].ends_with("i.e.");
+                if ends && !abbreviation {
+                    return &text[..end];
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+/// What `koru://docs/model` answers with no section: every `##` section's
+/// slug, title, summary and rough size, as markdown for the text and as
+/// `sections` for a program. The whole contract is never one answer — it
+/// is past 80 KB, more than some agents can take back from one tool call.
+fn table_of_contents_answer(guide: &str) -> (String, Value) {
+    let entries = table_of_contents(guide);
+    let mut text = String::from(
+        "# Koru MCP contract: contents\n\n\
+         The contract is read one section at a time, never whole. Read `essentials` \
+         before the first mutation. Fetch any section by its slug: \
+         get_documentation({\"section\":\"<slug>\"}), or the resource \
+         koru://docs/model/<slug>. A `###` slug listed under a section answers \
+         on its own too. Sizes are approximate tokens.\n\n",
+    );
+    for entry in &entries {
+        text.push_str(&format!(
+            "- `{}` ({}, ~{} tokens): {}",
+            entry.slug, entry.title, entry.tokens, entry.summary
+        ));
+        if !entry.subsections.is_empty() {
+            let children: Vec<String> = entry
+                .subsections
+                .iter()
+                .map(|slug| format!("`{slug}`"))
+                .collect();
+            text.push_str(&format!(" Also: {}.", children.join(", ")));
+        }
+        text.push('\n');
+    }
+    let sections = entries
+        .iter()
+        .map(|entry| {
+            json!({
+                "slug": entry.slug,
+                "title": entry.title,
+                "summary": entry.summary,
+                "tokens": entry.tokens,
+                "subsections": entry.subsections,
+            })
+        })
+        .collect();
+    (text.trim_end().to_owned(), Value::Array(sections))
+}
+
 /// What `get_documentation` and `resources/read` answer: `{uri, mime_type,
-/// section?, text}`, the text being the whole contract, one section of it
-/// by slug, or the Essentials.
+/// section?, text}`, the text being the Essentials, one section of the
+/// contract by slug, or — for `koru://docs/model` with no section — its
+/// table of contents, which also carries `sections`. `koru://docs/model/<slug>`
+/// is the same as `koru://docs/model` with `section`.
 fn documentation(uri: &str, section: Option<&str>) -> Result<Value, ToolError> {
+    let (uri, section) = match uri.strip_prefix(MODEL_SECTION_URI_PREFIX) {
+        Some(slug) if section.is_some_and(|wanted| heading_slug(wanted) != heading_slug(slug)) => {
+            return Err(ToolError::invalid(format!(
+                "{uri} names a section already; send section only with koru://docs/model"
+            )));
+        }
+        Some(slug) => (MODEL_RESOURCE_URI, Some(slug)),
+        None => (uri, section),
+    };
     let guide = read_model_document()?;
     let (section, text) = match (uri, section) {
         (ESSENTIALS_RESOURCE_URI, None) => (
@@ -237,7 +416,16 @@ fn documentation(uri: &str, section: Option<&str>) -> Result<Value, ToolError> {
                 "koru://docs/essentials is one section already; section applies to koru://docs/model",
             ));
         }
-        (MODEL_RESOURCE_URI, None) => (None, guide),
+        (MODEL_RESOURCE_URI, None) => {
+            let (text, sections) = table_of_contents_answer(&guide);
+            return Ok(json!({
+                "uri": uri,
+                "mime_type": MODEL_DOCUMENT_MIME,
+                "section": null,
+                "text": text,
+                "sections": sections,
+            }));
+        }
         (MODEL_RESOURCE_URI, Some(wanted)) => {
             let slug = heading_slug(wanted);
             let text = section_of(&guide, &slug).ok_or_else(|| ToolError {
@@ -271,7 +459,7 @@ fn essentials_resource() -> Resource {
     Resource::new(ESSENTIALS_RESOURCE_URI, "koru-essentials")
         .with_title("Koru in brief: read, create and edit documents correctly")
         .with_description(
-            "The short form of the contract. Read before the first mutation; koru://docs/model has every rule.",
+            "The short form of the contract. Read before the first mutation; koru://docs/model lists every other section.",
         )
         .with_mime_type(MODEL_DOCUMENT_MIME)
         .with_annotations(
@@ -283,9 +471,9 @@ fn essentials_resource() -> Resource {
 
 fn model_resource() -> Resource {
     Resource::new(MODEL_RESOURCE_URI, "koru-model")
-        .with_title("Koru document model and editing contract")
+        .with_title("Koru document model and editing contract: contents")
         .with_description(
-            "Read before the first mutation. Defines Koru's typed tree, identities, ordering, inline objects, preconditions, history, and cross-document semantics.",
+            "The contract's table of contents: each section's slug, summary and size in tokens. Read a section as koru://docs/model/<slug>; the contract is never served whole. Covers Koru's typed tree, identities, ordering, inline objects, preconditions, history, and cross-document semantics.",
         )
         .with_mime_type(MODEL_DOCUMENT_MIME)
         .with_annotations(
@@ -293,6 +481,19 @@ fn model_resource() -> Resource {
                 .with_audience(vec![Role::Assistant])
                 .with_priority(1.0),
         )
+}
+
+/// One section of the contract by slug, as `koru://docs/model` lists them.
+fn model_section_template() -> ResourceTemplate {
+    ResourceTemplate::new(
+        format!("{MODEL_SECTION_URI_PREFIX}{{section}}"),
+        "koru-model-section",
+    )
+    .with_title("One section of the Koru document model contract")
+    .with_description(
+        "One section of the contract, by the slug koru://docs/model lists, with its ### children.",
+    )
+    .with_mime_type(MODEL_DOCUMENT_MIME)
 }
 
 #[derive(Clone, Debug)]
@@ -705,7 +906,7 @@ impl WorkspaceToolExecutor {
 
         let result = if tool == "get_documentation" {
             let request: DocumentationRequest = from(arguments)?;
-            documentation(&request.uri, request.section.as_deref())?
+            documentation(request.uri(), request.section.as_deref())?
         } else {
             self.backend.invoke(context, tool, arguments)?
         };
@@ -2397,12 +2598,30 @@ struct WorkspaceRequest {
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DocumentationRequest {
-    /// `koru://docs/essentials`, the short form, or `koru://docs/model`, the
-    /// whole contract.
-    uri: String,
-    /// With `koru://docs/model`: one `##` section by its heading's slug
-    /// (`creating-a-complete-document`), with its `###` children.
+    /// `koru://docs/essentials`, the short form; `koru://docs/model`, the
+    /// contract's table of contents (never the whole contract, which is more
+    /// than some agents can take back from one call); or
+    /// `koru://docs/model/<slug>`, one section. Absent means the essentials,
+    /// or the contract when `section` is given, so the cheapest call is the
+    /// right first one.
+    #[serde(default)]
+    uri: Option<String>,
+    /// With `koru://docs/model`: one `##` section by the slug its table of
+    /// contents lists (`creating-a-complete-document`), with its `###`
+    /// children; a `###` slug answers that subsection alone.
+    #[serde(default)]
     section: Option<String>,
+}
+
+impl DocumentationRequest {
+    /// The resource this asks for once the defaults are applied.
+    fn uri(&self) -> &str {
+        match (&self.uri, &self.section) {
+            (Some(uri), _) => uri,
+            (None, Some(_)) => MODEL_RESOURCE_URI,
+            (None, None) => ESSENTIALS_RESOURCE_URI,
+        }
+    }
 }
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -5242,7 +5461,7 @@ impl KoruMcp {
 impl KoruMcp {
     #[tool(
         title = "Read Koru model documentation",
-        description = "koru://docs/essentials is the short contract to read before the first mutation; koru://docs/model is the whole one, or one section by heading slug (section). For hosts that cannot read MCP resources; the markdown is the text block.",
+        description = "With no arguments: koru://docs/essentials, the short contract to read before the first mutation. uri koru://docs/model lists the contract's sections (slug, summary, tokens); section answers one by slug. Never the whole contract. For hosts that cannot read MCP resources; the markdown is the text block.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn get_documentation(&self, Parameters(a): Parameters<DocumentationRequest>) -> CallToolResult {
@@ -5543,7 +5762,7 @@ impl ServerHandler for KoruMcp {
                 .enable_resources()
                 .build(),
         )
-        .with_instructions("Read koru://docs/essentials before the first mutation; koru://docs/model is the full contract, whole or one section by heading slug. Both are standard MCP resources and the get_documentation compatibility tool. Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
+        .with_instructions("Read koru://docs/essentials before the first mutation; koru://docs/model lists the contract's sections, each read on its own as koru://docs/model/<slug>. Both are standard MCP resources and the get_documentation compatibility tool (no arguments: the essentials; section: one section). Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
     }
 
     fn list_resources(
@@ -5557,6 +5776,16 @@ impl ServerHandler for KoruMcp {
         ])))
     }
 
+    fn list_resource_templates(
+        &self,
+        _: Option<rmcp::model::PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(vec![
+            model_section_template(),
+        ])))
+    }
+
     fn read_resource(
         &self,
         request: ReadResourceRequestParams,
@@ -5564,8 +5793,10 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let result = if request.uri != MODEL_RESOURCE_URI && request.uri != ESSENTIALS_RESOURCE_URI
-        {
+        let known = request.uri == MODEL_RESOURCE_URI
+            || request.uri == ESSENTIALS_RESOURCE_URI
+            || request.uri.starts_with(MODEL_SECTION_URI_PREFIX);
+        let result = if !known {
             Err(ErrorData::resource_not_found(
                 "Koru documentation resource not found",
                 Some(json!({ "uri": request.uri })),
@@ -5580,8 +5811,16 @@ impl ServerHandler for KoruMcp {
                     ])
                     .into()
                 })
-                .map_err(|error| {
-                    ErrorData::internal_error(error.message, Some(json!({ "uri": request.uri })))
+                .map_err(|error| match error.code.as_str() {
+                    // A slug nobody wrote is the reader's to fix, and the
+                    // details list the slugs there are.
+                    "documentation_section_not_found" => {
+                        ErrorData::resource_not_found(error.message, error.details)
+                    }
+                    _ => ErrorData::internal_error(
+                        error.message,
+                        Some(json!({ "uri": request.uri })),
+                    ),
                 })
         };
         match &result {
@@ -6445,6 +6684,125 @@ mod tests {
     }
 
     #[test]
+    fn a_summary_is_the_first_sentence_of_the_first_paragraph_in_plain_text() {
+        let markdown = "## One\n\n**Bold** words and a [link](../x.md#y) end here. Then `a.b` more.\n\n## Two\n\n- `koru.due` is a list item, e.g. this one. Next.\n\n### Two A\n\nchild\n\n## Three\n\n`add_image` does it in one call:\n\n```\ncode\n```\n";
+        let entries = table_of_contents(markdown);
+        let summaries: Vec<&str> = entries.iter().map(|e| e.summary.as_str()).collect();
+        assert_eq!(
+            summaries,
+            [
+                "Bold words and a link end here.",
+                "`koru.due` is a list item, e.g. this one.",
+                "`add_image` does it in one call",
+            ]
+        );
+        assert_eq!(entries[1].subsections, ["two-a"]);
+        assert_eq!(entries[0].title, "One");
+
+        let long = format!("## Long\n\n{} end.\n", "word ".repeat(100));
+        let summary = &table_of_contents(&long)[0].summary;
+        assert!(summary.ends_with('…'), "{summary}");
+        assert!(summary.chars().count() <= SUMMARY_CHARS + 1, "{summary}");
+    }
+
+    /// What a Claude Code session hit on 2026-11-02: `koru://docs/model` with
+    /// no section answered the whole contract, about 84 KB and 33k tokens once
+    /// wrapped as JSON, which the agent spilled to a file it then could not
+    /// read back (its reader stops at 25k tokens). Every documentation answer
+    /// now fits in a budget well under that, and none is the whole file.
+    #[test]
+    fn the_contract_is_served_in_pieces_and_the_model_uri_answers_its_contents() {
+        /// What any one documentation answer may take, serialized: about 6k
+        /// tokens.
+        const ANSWER_BUDGET: usize = 24_000;
+        let guide = read_model_document().unwrap();
+
+        let contents = documentation(MODEL_RESOURCE_URI, None).unwrap();
+        assert_eq!(contents["section"], Value::Null);
+        let text = contents["text"].as_str().unwrap();
+        assert!(
+            text.contains("koru://docs/model/<slug>") && text.contains("\"section\""),
+            "the contents say how to fetch a section: {text}"
+        );
+        let listed: Vec<&str> = contents["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["slug"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, section_slugs(&guide), "every ## section, in order");
+        for entry in contents["sections"].as_array().unwrap() {
+            let slug = entry["slug"].as_str().unwrap();
+            assert!(text.contains(&format!("`{slug}`")), "{slug} in the text");
+            let summary = entry["summary"].as_str().unwrap();
+            assert!(
+                !summary.is_empty() && summary.chars().count() <= SUMMARY_CHARS + 1,
+                "{slug}: {summary:?}"
+            );
+            assert!(entry["tokens"].as_u64().unwrap() > 0, "{slug}");
+        }
+
+        // Every answer: the contents, the essentials, each section and each
+        // subsection it lists.
+        let mut answers = vec![
+            ("contents".to_owned(), contents.clone()),
+            (
+                "essentials".to_owned(),
+                documentation(ESSENTIALS_RESOURCE_URI, None).unwrap(),
+            ),
+        ];
+        for entry in contents["sections"].as_array().unwrap() {
+            let slugs = std::iter::once(&entry["slug"])
+                .chain(entry["subsections"].as_array().unwrap())
+                .map(|slug| slug.as_str().unwrap().to_owned());
+            for slug in slugs {
+                let answer = documentation(MODEL_RESOURCE_URI, Some(&slug)).unwrap();
+                answers.push((slug, answer));
+            }
+        }
+        for (name, answer) in &answers {
+            let bytes = serde_json::to_string(answer).unwrap().len();
+            assert!(
+                bytes < ANSWER_BUDGET,
+                "{name} is {bytes} bytes as JSON, over {ANSWER_BUDGET}"
+            );
+            let text = answer["text"].as_str().unwrap();
+            assert!(
+                text.len() * 2 < guide.len() && !text.contains("# MCP semantics"),
+                "{name} answers the whole contract"
+            );
+        }
+
+        // The resource form and the tool's defaults reach the same answers.
+        assert_eq!(
+            documentation("koru://docs/model/Diagrams", None).unwrap()["text"],
+            documentation(MODEL_RESOURCE_URI, Some("diagrams")).unwrap()["text"]
+        );
+        assert_eq!(
+            documentation("koru://docs/model/tasks", Some("searching"))
+                .unwrap_err()
+                .code,
+            "invalid_request"
+        );
+        assert_eq!(
+            documentation("koru://docs/model/no-such-thing", None)
+                .unwrap_err()
+                .code,
+            "documentation_section_not_found"
+        );
+        let request = |value: Value| from::<DocumentationRequest>(value).unwrap();
+        assert_eq!(request(json!({})).uri(), ESSENTIALS_RESOURCE_URI);
+        assert_eq!(
+            request(json!({"section": "tasks"})).uri(),
+            MODEL_RESOURCE_URI
+        );
+        assert_eq!(
+            request(json!({"uri": MODEL_RESOURCE_URI})).uri(),
+            MODEL_RESOURCE_URI
+        );
+    }
+
+    #[test]
     fn the_essentials_are_one_section_of_the_contract_and_the_tool_answers_them_as_text() {
         let essentials = documentation(ESSENTIALS_RESOURCE_URI, None).unwrap();
         let text = essentials["text"].as_str().unwrap();
@@ -6456,9 +6814,8 @@ mod tests {
             text.len()
         );
         assert_eq!(essentials["section"], Value::Null);
-
-        let whole = documentation(MODEL_RESOURCE_URI, None).unwrap();
-        assert!(whole["text"].as_str().unwrap().contains(text));
+        let guide = read_model_document().unwrap();
+        assert!(guide.contains(text), "the short form is the contract's own");
 
         let section =
             documentation(MODEL_RESOURCE_URI, Some("Creating a complete document")).unwrap();
@@ -6498,7 +6855,7 @@ mod tests {
         // written, and the structured copy keeps the published shape.
         let server = KoruMcp::new(Arc::new(Fake), RequestContext::local());
         let result = server.get_documentation(Parameters(DocumentationRequest {
-            uri: ESSENTIALS_RESOURCE_URI.into(),
+            uri: None,
             section: None,
         }));
         assert_eq!(result.is_error, Some(false));
@@ -10678,18 +11035,42 @@ mod tests {
         let resource_json = serde_json::to_value(resource.contents).expect("resource JSON");
         assert_eq!(resource_json[0]["uri"], MODEL_RESOURCE_URI);
         assert_eq!(resource_json[0]["mimeType"], MODEL_DOCUMENT_MIME);
-        assert!(
-            resource_json[0]["text"]
-                .as_str()
-                .is_some_and(|text| text.contains("# MCP semantics"))
+        // The model resource is the contents, never the whole contract.
+        let contents = resource_json[0]["text"].as_str().unwrap_or_default();
+        assert!(contents.contains("`diagrams`"), "{contents}");
+        assert!(!contents.contains("# MCP semantics"), "{contents}");
+
+        let templates = client
+            .peer()
+            .list_resource_templates(None)
+            .await
+            .expect("resources/templates/list over stdio");
+        assert_eq!(
+            templates.resource_templates[0].uri_template,
+            "koru://docs/model/{section}"
         );
         // The section an agent writing a diagram reads reaches it over the
         // wire, not only from the checked-out file.
+        let section = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new("koru://docs/model/diagrams"))
+            .await
+            .expect("one section over resources/read");
+        let section_json = serde_json::to_value(section.contents).expect("resource JSON");
+        assert_eq!(section_json[0]["uri"], "koru://docs/model/diagrams");
         assert!(
-            resource_json[0]["text"]
+            section_json[0]["text"]
                 .as_str()
-                .is_some_and(|text| text.contains("## Diagrams"))
+                .is_some_and(|text| text.starts_with("## Diagrams"))
         );
+        let unknown = client
+            .peer()
+            .read_resource(ReadResourceRequestParams::new(
+                "koru://docs/model/no-such-section",
+            ))
+            .await
+            .expect_err("an unknown section must fail");
+        assert!(unknown.to_string().contains("no section"), "{unknown}");
 
         let documentation = client
             .peer()
