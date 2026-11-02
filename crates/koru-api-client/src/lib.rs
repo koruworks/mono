@@ -824,6 +824,18 @@ impl AiClient<'_> {
         )
     }
 
+    pub fn update_chat_agent_settings(
+        &self,
+        chat: ChatId,
+        request: &koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> AiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        self.json(
+            reqwest::Method::PATCH,
+            format!("/v1/ai/chats/{chat}/agent-settings"),
+            Some(json_body(request)?),
+        )
+    }
+
     pub fn update_chat_folder(
         &self,
         chat: ChatId,

@@ -368,6 +368,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
                 kind: AttachmentKind::Image,
                 media_type: "image/png".into(),
             }],
+            mode: None,
         })
         .unwrap_err();
     assert_eq!(failure.code, ErrorCode::UnsupportedMedia);
@@ -405,6 +406,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
             kind: AttachmentKind::Image,
             media_type: "image/png".into(),
         }],
+        mode: None,
     };
     let first = control.submit(input.clone()).unwrap_err();
     assert_eq!(first.code, ErrorCode::ProviderUnavailable);
@@ -431,6 +433,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
             kind: AttachmentKind::File,
             media_type: "image/png".into(),
         }],
+        mode: None,
         ..input
     };
     let conflict = control.submit(changed_kind).unwrap_err();
@@ -762,11 +765,13 @@ fn offline_replay(
             kind: AttachmentKind::Image,
             media_type: "image/png".into(),
         }],
+        mode: None,
     };
     control.submit(input.clone()).unwrap();
     control.submit(input.clone()).unwrap();
     let conflicting = AgentInput {
         text: "different".into(),
+        mode: None,
         ..input
     };
     assert_eq!(
@@ -981,6 +986,7 @@ fn offline_replay(
             turn_id: cancelled,
             text: "cancel fixture".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     assert_eq!(
@@ -1222,6 +1228,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
                 kind: AttachmentKind::Image,
                 media_type: "image/png".into(),
             }],
+            mode: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1399,6 +1406,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: first,
             text: "first".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     let reports = drain_usage(&mut control);
@@ -1449,6 +1457,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: second,
             text: "second".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     control.cancel(second).unwrap();
@@ -1484,6 +1493,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             turn_id: attempt,
             text: "again".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     let reports = drain_usage(&mut fresh);
@@ -1577,6 +1587,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
             turn_id,
             text: "Reply with the single word OK.".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1901,6 +1912,7 @@ fn a_chosen_model_starts_the_thread_and_an_unlisted_one_is_refused() {
         Some(koru_session_protocol::LaunchSelection {
             model: Some(model.parse().unwrap()),
             reasoning: None,
+            mode: None,
         })
     };
     let state = Arc::new(Mutex::new(ReplayState::default()));
@@ -2216,6 +2228,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "start".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
 
@@ -2224,6 +2237,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "also this".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     let sent = state.lock().unwrap().sent.clone();
@@ -2242,6 +2256,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id: AgentTurnId::mint(),
             text: "x".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap_err();
     assert_eq!(stranger.code, ErrorCode::InvalidTransition);
@@ -2251,6 +2266,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             turn_id,
             text: "late".into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap_err();
     assert_eq!(finished.code, ErrorCode::InvalidTransition);
@@ -2264,5 +2280,97 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             .count(),
         1,
         "nothing was sent for either refusal"
+    );
+}
+
+/// **Codex's three modes** (koru-ai D7): the chat's mode starts the thread,
+/// and every turn carries its own — a turn with none is *Ask for approval*,
+/// Koru's default for Codex — overriding what `config.toml` says.
+#[test]
+fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
+    let mut frames = initialize_frames(false);
+    frames.push(json!({ "id": 4, "result": { "turn": { "id": "turn-a" } } }));
+    frames.push(json!({ "id": 5, "result": { "turn": { "id": "turn-b" } } }));
+    let state = Arc::new(Mutex::new(ReplayState::default()));
+    let transport = ReplayTransport {
+        inbound: frames.into_iter().collect(),
+        state: Arc::clone(&state),
+    };
+    let selection = koru_session_protocol::LaunchSelection {
+        mode: Some("auto-review".parse().unwrap()),
+        ..Default::default()
+    };
+    let mut control = CodexControl::with_transport(
+        config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+        Some(Box::new(transport)),
+    );
+    control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap();
+    let turn = |mode: Option<&str>| AgentInput {
+        turn_id: AgentTurnId::mint(),
+        text: "<prompt>".into(),
+        attachments: Vec::new(),
+        mode: mode.map(|mode| mode.parse().unwrap()),
+    };
+    control.submit(turn(Some("full-access"))).unwrap();
+    control.submit(turn(None)).unwrap();
+
+    let sent = state.lock().unwrap().sent.clone();
+    let thread = &sent[3]["params"];
+    assert_eq!(thread["approvalPolicy"], json!("on-request"));
+    assert_eq!(thread["sandbox"], json!("workspace-write"));
+    assert_eq!(thread["approvalsReviewer"], json!("auto_review"));
+    let turns: Vec<_> = sent
+        .iter()
+        .filter(|message| message["method"] == "turn/start")
+        .map(|message| &message["params"])
+        .collect();
+    assert_eq!(turns[0]["approvalPolicy"], json!("never"));
+    assert_eq!(
+        turns[0]["sandboxPolicy"],
+        json!({"type":"dangerFullAccess"})
+    );
+    assert_eq!(turns[0]["approvalsReviewer"], json!("user"));
+    assert_eq!(turns[1]["approvalPolicy"], json!("on-request"));
+    assert_eq!(turns[1]["sandboxPolicy"], json!({"type":"readOnly"}));
+    assert_eq!(turns[1]["approvalsReviewer"], json!("user"));
+}
+
+/// A mode Koru never gave Codex is refused, before any thread or turn.
+#[test]
+fn an_unknown_codex_mode_is_refused_rather_than_guessed() {
+    let state = Arc::new(Mutex::new(ReplayState::default()));
+    let transport = ReplayTransport {
+        inbound: initialize_frames(false).into_iter().collect(),
+        state: Arc::clone(&state),
+    };
+    let selection = koru_session_protocol::LaunchSelection {
+        mode: Some("bypassPermissions".parse().unwrap()),
+        ..Default::default()
+    };
+    let mut control = CodexControl::with_transport(
+        config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+        Some(Box::new(transport)),
+    );
+    let failure = control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap_err();
+    assert_eq!(failure.code, ErrorCode::InvalidRequest);
+    assert!(
+        !state
+            .lock()
+            .unwrap()
+            .sent
+            .iter()
+            .any(|message| message["method"] == "thread/start")
     );
 }

@@ -48,6 +48,7 @@ fn surface_with_reply() -> ChatSurface {
             },
             branched_from: None,
             agent_working_folder: None,
+            agent_mode: None,
             created_at: now,
             updated_at: now,
         },

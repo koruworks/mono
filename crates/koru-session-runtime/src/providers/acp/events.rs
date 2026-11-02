@@ -62,11 +62,27 @@ impl AcpControl {
             self.mark_unknown();
             return Ok(());
         }
+        let update = &params["update"];
+        // The agent's mode moves with or without a turn: Claude leaving plan
+        // mode once its plan is approved, or answering a set (koru-ai D7).
+        match update["sessionUpdate"].as_str() {
+            Some("current_mode_update") => {
+                let reported = update["currentModeId"]
+                    .as_str()
+                    .and_then(|id| id.parse().ok());
+                let moved = self.follow_mode(reported);
+                return self.report_mode(moved);
+            }
+            Some("config_option_update") => {
+                let moved = self.follow_mode(super::modes::current(update));
+                return self.report_mode(moved);
+            }
+            _ => {}
+        }
         let Some(turn_id) = self.active else {
             self.mark_unknown();
             return Ok(());
         };
-        let update = &params["update"];
         let kind = update["sessionUpdate"].as_str().ok_or_else(malformed)?;
         if !matches!(
             kind,

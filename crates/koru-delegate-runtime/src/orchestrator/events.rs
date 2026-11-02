@@ -448,6 +448,8 @@ impl Orchestrator {
             }
             // Mirrored by the session summary; nothing for the run.
             AgentEvent::ProviderState { .. } => {}
+            // A chat's approval mode (koru-ai D7); a delegated run sets none.
+            AgentEvent::ModeChanged { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

@@ -364,7 +364,7 @@ fn a_build_that_understands_only_schema_9_refuses_schema_10() {
         koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
         OpenError::SchemaTooNew {
             database: crate::DATABASE_FILE,
-            discovered: 10,
+            discovered: SCHEMA_VERSION,
             supported: 9,
         }
     );
@@ -498,9 +498,9 @@ fn a_real_database_is_wal_full_and_foreign_keyed() {
 }
 
 #[test]
-fn an_empty_database_opens_at_schema_10_with_the_text_offset_column() {
+fn an_empty_database_has_the_text_offset_column() {
     let connection = open_in_memory().unwrap();
-    assert_eq!(user_version(&connection).unwrap(), 10);
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
     let has_column: bool = connection
         .query_row(
             "SELECT EXISTS(
@@ -548,4 +548,88 @@ fn a_v9_database_keeps_its_tool_rows_with_no_text_offset() {
     assert_eq!(offset, None, "an earlier row folds its steps only");
     let refused = connection.execute("UPDATE tool_invocations SET text_offset = -1", []);
     assert!(refused.is_err(), "an offset is never negative");
+}
+
+#[test]
+fn a_build_that_understands_only_schema_10_refuses_schema_11() {
+    let mut connection = open_in_memory().unwrap();
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 10,
+        migrations: &MIGRATIONS[..10],
+    };
+    assert_eq!(
+        koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
+        OpenError::SchemaTooNew {
+            database: crate::DATABASE_FILE,
+            discovered: SCHEMA_VERSION,
+            supported: 10,
+        }
+    );
+}
+
+/// **Schema 11** (koru-ai D7, D11): an empty database opens with both of a
+/// chat's agent settings, null until a chat chooses.
+#[test]
+fn an_empty_database_opens_at_schema_11_with_the_agent_mode_columns() {
+    let connection = open_in_memory().unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 11);
+    for column in ["agent_mode", "agent_fast"] {
+        let has_column: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM pragma_table_info('chats') WHERE name = ?1
+                 )",
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_column, "schema 11 adds {column}");
+    }
+}
+
+/// A schema-10 database keeps its chats, each with no mode and no Fast
+/// choice — the agent's own defaults — and a mode is any token.
+#[test]
+fn a_v10_database_keeps_its_chats_with_no_agent_mode() {
+    const V10: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 10,
+        migrations: MIGRATIONS.split_at(10).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V10).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 10);
+    connection
+        .execute(
+            "INSERT INTO chats (
+                id, title, current_provider, current_model, created_at_ms, updated_at_ms
+             ) VALUES ('chat', 'kept', 'agent-claude', 'default', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let (title, mode, fast): (String, Option<String>, Option<bool>) = connection
+        .query_row(
+            "SELECT title, agent_mode, agent_fast FROM chats WHERE id = 'chat'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(title, "kept");
+    assert_eq!((mode, fast), (None, None));
+    connection
+        .execute(
+            "UPDATE chats SET agent_mode = 'acceptEdits', agent_fast = 1",
+            [],
+        )
+        .unwrap();
+    let refused = connection.execute("UPDATE chats SET agent_fast = 2", []);
+    assert!(refused.is_err(), "Fast is on or off");
+
+    // Reopened, it is already current and nothing runs again.
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
 }

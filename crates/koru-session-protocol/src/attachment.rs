@@ -143,6 +143,19 @@ pub struct PendingInput {
     pub text: String,
     /// Ordered by the person composing the input.
     pub attachment_ids: Vec<AttachmentId>,
+    /// v19 (koru-ai D7): the approval mode this turn runs in. The adapter
+    /// moves the session to it before the prompt when it is elsewhere, and
+    /// refuses the turn visibly when it cannot. `None` leaves the mode as
+    /// it is. Sent only to a v19 host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<crate::AgentModeId>,
+}
+
+impl PendingInput {
+    /// Whether only a v19 host can honor it.
+    pub fn needs_agent_modes(&self) -> bool {
+        self.mode.is_some()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -584,6 +584,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn update_chat_agent_settings(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::UpdateChatAgentSettings {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn update_chat_folder(
         &self,
         context: RequestContext,
@@ -1021,6 +1037,12 @@ enum WorkerCommand {
         request: koru_ai_wire::UpdateChatFolderRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatFolderResponse>>,
     },
+    UpdateChatAgentSettings {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse>>,
+    },
     ToolListChats {
         context: RequestContext,
         request: ListChatsToolRequest,
@@ -1178,6 +1200,7 @@ impl WorkerCommand {
             Self::UpdateChatModel { .. } => "update_chat_model",
             Self::UpdateChatPrivacy { .. } => "update_chat_privacy",
             Self::UpdateChatFolder { .. } => "update_chat_folder",
+            Self::UpdateChatAgentSettings { .. } => "update_chat_agent_settings",
             Self::ToolListChats { .. } => "tool_list_chats",
             Self::ToolSearchChats { .. } => "tool_search_chats",
             Self::ToolReadChat { .. } => "tool_read_chat",
@@ -1637,6 +1660,14 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.update_chat_folder(context, chat, request));
+            }
+            WorkerCommand::UpdateChatAgentSettings {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.update_chat_agent_settings(context, chat, request));
             }
             WorkerCommand::ToolListChats {
                 context,
@@ -2103,6 +2134,7 @@ impl WorkerState {
             current_model: request.model,
             branched_from: None,
             agent_working_folder: None,
+            agent_mode: None,
             created_at: now,
             updated_at: now,
         };
@@ -2433,6 +2465,47 @@ impl WorkerState {
         Ok(koru_ai_wire::UpdateChatFolderResponse { chat })
     }
 
+    /// A local agent chat's settings for its next message (koru-ai D7).
+    /// Accepted while a reply runs: that reply keeps the mode it was sent
+    /// in, and the chat's next message takes this one. Which modes exist is
+    /// the agent's to say; one it does not offer is refused when sent.
+    fn update_chat_agent_settings(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        authorize(&context, AiScope::Chat)?;
+        self.admit_chat_work(Some(chat_id))?;
+        let mut chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if !is_agent_provider(&chat.current_model.provider) {
+            return Err(failure(
+                "invalid_request",
+                "Only a chat with a local agent has an approval mode.",
+                false,
+            ));
+        }
+        if let Some(mode) = request.mode.as_deref() {
+            if mode.parse::<koru_session_protocol::AgentModeId>().is_err() {
+                return Err(failure(
+                    "invalid_request",
+                    "That is not an approval mode an agent offers.",
+                    false,
+                ));
+            }
+            chat = self
+                .repository
+                .set_chat_agent_mode(chat_id, Some(mode))
+                .map_err(ai_failure)?
+                .ok_or_else(not_found)?;
+        }
+        Ok(koru_ai_wire::UpdateChatAgentSettingsResponse { chat })
+    }
+
     fn tool_list_chats(
         &self,
         context: RequestContext,
@@ -2717,6 +2790,8 @@ impl WorkerState {
                 through_message_id: through.id,
             }),
             agent_working_folder: source.agent_working_folder.clone(),
+            // A branch is a new chat, and starts in the agent's default.
+            agent_mode: None,
             created_at: now,
             updated_at: now,
         };
@@ -3132,6 +3207,7 @@ impl WorkerState {
                 web_search: request.web_search,
                 chat_id: Some(chat.id),
                 working_folder: chat.agent_working_folder.clone(),
+                agent_mode: chat.agent_mode.clone(),
                 ..AiRequestOptions::default()
             },
         };
@@ -3331,6 +3407,7 @@ impl WorkerState {
                 web_search: request.web_search,
                 chat_id: Some(chat_id),
                 working_folder: chat.agent_working_folder.clone(),
+                agent_mode: chat.agent_mode.clone(),
                 ..AiRequestOptions::default()
             },
         };

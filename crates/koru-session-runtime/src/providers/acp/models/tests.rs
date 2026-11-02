@@ -229,6 +229,7 @@ fn model_is_applied_before_prompt_and_never_claimed_as_reported() {
             turn_id: AgentTurnId::mint(),
             text: "private-prompt-sentinel".into(),
             attachments: vec![],
+            mode: None,
         })
         .unwrap();
     let frames = sent.lock().unwrap();

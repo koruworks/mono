@@ -61,6 +61,7 @@ pub(crate) fn chat(n: u32, title: &str, ago_ms: i64) -> Chat {
         current_model: model("openai", "gpt-6-astra"),
         branched_from: None,
         agent_working_folder: None,
+        agent_mode: None,
         created_at: Timestamp::from_millis(NOW - ago_ms - 1_000),
         updated_at: Timestamp::from_millis(NOW - ago_ms),
     }

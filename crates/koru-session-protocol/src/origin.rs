@@ -29,7 +29,7 @@ use std::{fmt, str::FromStr};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatOriginId, ModelName, SessionSummary, TokenParseError};
+use crate::{AgentModeId, ChatOriginId, ModelName, SessionSummary, TokenParseError};
 
 /// What created a session. Defaulted to `Manual` on every peer that
 /// predates it, which is the truth: before v16 only windows created
@@ -141,7 +141,7 @@ impl FromStr for LaunchReasoning {
 
 /// An explicit model and effort a creator asks a managed session for.
 ///
-/// `None` in either field is "the provider's own default", which is never
+/// `None` in any field is "the provider's own default", which is never
 /// gated. A `Some` is acknowledged by the adapter before the first prompt
 /// or refused visibly; it is never silently replaced by the default.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -150,11 +150,20 @@ pub struct LaunchSelection {
     pub model: Option<ModelName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<LaunchReasoning>,
+    /// v19 (koru-ai D7): the approval mode the session starts in, one of
+    /// those the agent offers. Sent only to a v19 host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<AgentModeId>,
 }
 
 impl LaunchSelection {
     pub fn is_explicit(&self) -> bool {
-        self.model.is_some() || self.reasoning.is_some()
+        self.model.is_some() || self.reasoning.is_some() || self.mode.is_some()
+    }
+
+    /// Whether only a v19 host can honor it.
+    pub fn needs_agent_modes(&self) -> bool {
+        self.mode.is_some()
     }
 }
 

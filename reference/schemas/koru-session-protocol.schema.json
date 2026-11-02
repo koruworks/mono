@@ -1,6 +1,10 @@
 {
   "AgentEvent": {
     "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -649,6 +653,27 @@
           "state"
         ],
         "type": "object"
+      },
+      {
+        "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+        "properties": {
+          "kind": {
+            "const": "mode_changed",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "mode"
+        ],
+        "type": "object"
       }
     ],
     "title": "AgentEvent"
@@ -1045,8 +1070,33 @@
               "state"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+            "properties": {
+              "kind": {
+                "const": "mode_changed",
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/$defs/AgentModeId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "mode"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
       },
       "AgentTurnId": {
         "format": "uuid",
@@ -4002,6 +4052,10 @@
   },
   "LaunchSelection": {
     "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
       "LaunchReasoning": {
         "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
         "oneOf": [
@@ -4030,8 +4084,19 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in either field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
+    "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in any field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
     "properties": {
+      "mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v19 (koru-ai D7): the approval mode the session starts in, one of\nthose the agent offers. Sent only to a v19 host."
+      },
       "model": {
         "anyOf": [
           {
@@ -4792,6 +4857,10 @@
   },
   "PendingInput": {
     "$defs": {
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
       "AttachmentId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -4814,6 +4883,17 @@
       },
       "idempotency_key": {
         "$ref": "#/$defs/IdempotencyKey"
+      },
+      "mode": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AgentModeId"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v19 (koru-ai D7): the approval mode this turn runs in. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when it cannot. `None` leaves the mode as\nit is. Sent only to a v19 host."
       },
       "text": {
         "type": "string"
@@ -8612,8 +8692,33 @@
               "state"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+            "properties": {
+              "kind": {
+                "const": "mode_changed",
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/$defs/AgentModeId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "mode"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
       },
       "AgentTurnId": {
         "format": "uuid",

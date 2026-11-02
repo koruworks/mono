@@ -648,6 +648,15 @@ impl SessionClient {
         controller_lease: ControllerLeaseToken,
         input: PendingInput,
     ) -> Result<SendPendingInputResult, ClientError> {
+        // An approval mode is v19: an older host would send the turn in
+        // whatever mode the agent is in (koru-ai D7).
+        if input.needs_agent_modes()
+            && self.host.agreement.version < koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         match self.request(Request::SendPendingInput {
             session_id,
             controller_lease,
@@ -884,6 +893,17 @@ impl SessionClient {
             .as_ref()
             .is_some_and(koru_session_protocol::LaunchSelection::is_explicit)
             && !self.supports_launch_selection()
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        // An approval mode is v19: an older host would ignore it and start
+        // the agent in whatever mode it starts in (koru-ai D7).
+        if selection
+            .as_ref()
+            .is_some_and(koru_session_protocol::LaunchSelection::needs_agent_modes)
+            && self.host.agreement.version < koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION
         {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,

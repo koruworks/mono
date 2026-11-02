@@ -399,6 +399,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Local agents run on the desktop that installed them",
     },
     MobileUnavailableOperation {
+        id: "ai.update_chat_agent_settings",
+        client: "client.ai().update_chat_agent_settings",
+        http: "PATCH /v1/ai/chats/{chat}/agent-settings",
+        reason: "Local agents run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
         id: "ai.tool_list_chats",
         client: "client.ai().tool_list_chats",
         http: "POST /v1/ai/tools/chats/list",

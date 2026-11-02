@@ -120,6 +120,24 @@ pub struct UpdateChatFolderResponse {
     pub chat: Chat,
 }
 
+/// A local agent chat's settings for its next message (koru-ai D7). A field
+/// left out keeps what the chat has. Accepted on an `agent-*` chat at any
+/// time: a reply already running keeps the mode it was sent in.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateChatAgentSettingsRequest {
+    /// The approval mode, the agent's own id: one it lists in
+    /// [`AgentModelsResponse::modes`]. An agent refuses one it does not
+    /// offer when the message is sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UpdateChatAgentSettingsResponse {
+    pub chat: Chat,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ListChatsResponse {
     pub chats: Vec<Chat>,
@@ -789,6 +807,7 @@ mod tests {
                 },
                 branched_from: None,
                 agent_working_folder: None,
+                agent_mode: None,
                 created_at: Timestamp::from_millis(1),
                 updated_at: Timestamp::from_millis(1),
             },

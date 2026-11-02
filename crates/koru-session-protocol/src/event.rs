@@ -238,6 +238,14 @@ pub enum AgentEvent {
         provider: ProviderKind,
         state: crate::ManagedState,
     },
+    /// Protocol v19 (koru-ai D7). The agent moved its approval mode itself
+    /// during the turn — Claude leaving plan mode once a plan is approved,
+    /// or taking another mode when the one asked for is not offered by its
+    /// model. A new tag, so the host sends it only to a v19 peer.
+    ModeChanged {
+        turn_id: AgentTurnId,
+        mode: crate::AgentModeId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -276,6 +284,7 @@ impl std::fmt::Debug for AgentEvent {
             Self::TurnCancelled { turn_id, .. } => ("TurnCancelled", Some(turn_id)),
             Self::TurnFailed { turn_id, .. } => ("TurnFailed", Some(turn_id)),
             Self::ProviderState { .. } => ("ProviderState", None),
+            Self::ModeChanged { turn_id, .. } => ("ModeChanged", Some(turn_id)),
         };
         f.debug_struct(kind)
             .field("turn_id", &turn)

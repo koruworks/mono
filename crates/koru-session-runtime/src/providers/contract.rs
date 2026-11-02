@@ -265,6 +265,11 @@ pub struct AgentInput {
     pub turn_id: AgentTurnId,
     pub text: String,
     pub attachments: Vec<AgentAttachment>,
+    /// The approval mode the turn runs in (koru-ai D7): an adapter moves
+    /// the session to it before the prompt and refuses the turn when it
+    /// cannot. `None` leaves the session's mode as it is — except Codex's,
+    /// whose turns always carry Koru's default, *Ask for approval*.
+    pub mode: Option<koru_session_protocol::AgentModeId>,
 }
 
 impl AgentInput {
@@ -297,6 +302,7 @@ impl fmt::Debug for AgentInput {
             .field("turn_id", &self.turn_id)
             .field("text_bytes", &self.text.len())
             .field("attachment_count", &self.attachments.len())
+            .field("mode", &self.mode)
             .finish()
     }
 }

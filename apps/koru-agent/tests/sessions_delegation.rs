@@ -682,6 +682,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: "fixture turn".into(),
                 attachment_ids: Vec::new(),
+                mode: None,
             },
         )
         .unwrap();
@@ -719,6 +720,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: "second fixture turn".into(),
                 attachment_ids: Vec::new(),
+                mode: None,
             },
         )
         .unwrap();

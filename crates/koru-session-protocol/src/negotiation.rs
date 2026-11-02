@@ -63,7 +63,14 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// v18 adds what an agent says about each model it lists — its name,
 /// description, group name, legacy mark and reasoning levels — as optional
 /// fields on `ProviderModel`, and the `xhigh` reasoning token.
-pub const MAX_PROTOCOL_VERSION: u32 = 18;
+///
+/// v19 adds an agent's **approval mode** (koru-ai D7): the defaulted `mode`
+/// on a launch selection and on a turn's pending input, and the
+/// `mode_changed` agent event. The fields are readable by an older host,
+/// which is the hazard v16 names: it would ignore them and run the agent in
+/// whatever mode it starts in, so a client sends them only to a v19 host.
+/// The event is a new tag, so a host sends it only to a v19 peer.
+pub const MAX_PROTOCOL_VERSION: u32 = 19;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
 /// failed call's message (`ToolCompleted.detail`), what the call was asked
@@ -76,6 +83,9 @@ pub const TOOL_DETAIL_PROTOCOL_VERSION: u32 = 17;
 /// fields are optional and an older peer leaves them unread: no capability,
 /// the number alone. The token is not, so `xhigh` goes only to a v18 host.
 pub const PROVIDER_MODEL_FACTS_PROTOCOL_VERSION: u32 = 18;
+/// The first version whose launch selection and pending input may carry an
+/// approval mode, and whose agent events may carry `mode_changed`.
+pub const AGENT_MODES_PROTOCOL_VERSION: u32 = 19;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

@@ -590,6 +590,7 @@ async fn serve_connection(
         control_receive,
         subscription_receive,
         protocol.dynamic_approvals(),
+        protocol.version >= koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION,
     ));
     let resources = Arc::new(Mutex::new(ConnectionResources::default()));
 
@@ -2047,6 +2048,7 @@ async fn writer_loop(
     mut control: mpsc::Receiver<FromHost>,
     mut subscriptions: mpsc::Receiver<FromHost>,
     dynamic_approvals: bool,
+    agent_modes: bool,
 ) {
     loop {
         let next = tokio::select! {
@@ -2059,6 +2061,9 @@ async fn writer_loop(
         };
         if !dynamic_approvals {
             strip_dynamic_approvals(&mut frame);
+        }
+        if !agent_modes {
+            strip_agent_modes(&mut frame);
         }
         if write_frame(&mut writer, &frame).await.is_err() {
             break;
@@ -2296,6 +2301,42 @@ mod bridge_pages_tests {
                 "{provider} reads page one only or is unmeasured"
             );
         }
+    }
+}
+
+/// **An older peer is never sent `mode_changed`** (protocol v19), a tag it
+/// cannot read. It gets an empty message delta of the same turn in its
+/// place, which reads as nothing and keeps every sequence number where it
+/// was. Filtered here, like the approvals below, never in the history.
+fn strip_agent_modes(frame: &mut FromHost) {
+    fn strip(event: &mut koru_session_protocol::AgentEvent) {
+        if let koru_session_protocol::AgentEvent::ModeChanged { turn_id, .. } = event {
+            *event = koru_session_protocol::AgentEvent::MessageDelta {
+                turn_id: *turn_id,
+                text: String::new(),
+            };
+        }
+    }
+    match frame {
+        FromHost::Subscription {
+            frame:
+                SubscriptionFrame {
+                    update: SubscriptionUpdate::AgentEvent { event },
+                    ..
+                },
+        } => strip(&mut event.event),
+        FromHost::Response {
+            frame:
+                koru_session_wire::ResponseFrame {
+                    result: Ok(Response::AgentEventsObserved { observation }),
+                    ..
+                },
+        } => {
+            for event in &mut observation.events {
+                strip(&mut event.event);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -97,41 +97,107 @@ fn an_answer_without_modes_or_with_two_mode_options_offers_none() {
     assert!(read(&json!({"configOptions":[option.clone(), option]})).is_none());
 }
 
-/// An ACP peer that answers a start with a given `session/new` result.
+use crate::providers::process::{JsonRpcTransport, TransportReceive};
+use crate::providers::{AgentControl, AgentInput, AgentStart, ProviderFailure};
+use koru_session_protocol::{AgentEvent, AgentTurnId, LaunchSelection};
+use std::sync::{Arc, Mutex};
+
+/// What a [`ModePeer`] was sent, and what it is told to do.
+#[derive(Default)]
+struct Script {
+    sent: Vec<Value>,
+    /// The mode as the last set left it.
+    current: Option<String>,
+    /// `(asked, landed)`: a set of `asked` lands on `landed`, as Claude's
+    /// `auto` does on a model without it.
+    lands: Option<(String, String)>,
+    refuse: bool,
+    /// Notifications sent ahead of the prompt's answer.
+    during_turn: Vec<Value>,
+}
+
+/// An ACP peer that answers a start with a given `session/new` result, sets
+/// the mode option or `session/set_mode` as told, and ends each prompt.
 struct ModePeer {
     new_session: Value,
+    script: Arc<Mutex<Script>>,
     incoming: std::collections::VecDeque<Value>,
 }
 
-impl super::super::super::process::JsonRpcTransport for ModePeer {
-    fn send(&mut self, message: &Value) -> Result<(), super::super::ProviderFailure> {
+fn update(kind: &str, body: Value) -> Value {
+    let mut update = body;
+    update["sessionUpdate"] = json!(kind);
+    json!({"jsonrpc":"2.0","method":"session/update",
+        "params":{"sessionId":"s","update":update}})
+}
+
+impl JsonRpcTransport for ModePeer {
+    fn send(&mut self, message: &Value) -> Result<(), ProviderFailure> {
+        let mut script = self.script.lock().unwrap();
+        script.sent.push(message.clone());
+        let id = message["id"].clone();
+        let params = &message["params"];
         let result = match message["method"].as_str().unwrap_or_default() {
             "initialize" => json!({"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}),
             "session/new" => self.new_session.clone(),
+            "session/set_config_option" | "session/set_mode" if script.refuse => {
+                self.incoming.push_back(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":"Invalid Mode"}}));
+                return Ok(());
+            }
+            "session/set_config_option" => {
+                let asked = params["value"].as_str().unwrap().to_owned();
+                let landed = match &script.lands {
+                    Some((from, to)) if *from == asked => to.clone(),
+                    _ => asked,
+                };
+                script.current = Some(landed.clone());
+                // The wrapper says where it landed before it answers.
+                let mut moved = update("current_mode_update", json!({"currentModeId": landed}));
+                moved["params"]["sessionId"] = self.new_session["sessionId"].clone();
+                self.incoming.push_back(moved);
+                let mut options = self.new_session["configOptions"].clone();
+                for option in options.as_array_mut().unwrap() {
+                    if option["category"] == "mode" {
+                        option["currentValue"] = json!(landed);
+                    }
+                }
+                json!({"configOptions": options})
+            }
+            "session/set_mode" => {
+                script.current = params["modeId"].as_str().map(str::to_owned);
+                json!({})
+            }
+            "session/prompt" => {
+                for mut notification in std::mem::take(&mut script.during_turn) {
+                    notification["params"]["sessionId"] = self.new_session["sessionId"].clone();
+                    self.incoming.push_back(notification);
+                }
+                json!({"stopReason":"end_turn"})
+            }
             other => panic!("unexpected {other}"),
         };
         self.incoming
-            .push_back(json!({"jsonrpc":"2.0","id":message["id"],"result":result}));
+            .push_back(json!({"jsonrpc":"2.0","id":id,"result":result}));
         Ok(())
     }
-    fn receive(
-        &mut self,
-        _: std::time::Duration,
-    ) -> Result<super::super::super::process::TransportReceive, super::super::ProviderFailure> {
-        use super::super::super::process::TransportReceive;
+    fn receive(&mut self, _: std::time::Duration) -> Result<TransportReceive, ProviderFailure> {
         Ok(self
             .incoming
             .pop_front()
             .map_or(TransportReceive::Timeout, TransportReceive::Frame))
     }
-    fn shutdown(&mut self, _: std::time::Duration) -> Result<(), super::super::ProviderFailure> {
+    fn shutdown(&mut self, _: std::time::Duration) -> Result<(), ProviderFailure> {
         Ok(())
     }
 }
 
-fn started(new_session: Value) -> super::super::AcpControl {
+fn control(
+    new_session: Value,
+    mode: Option<&str>,
+) -> (super::super::AcpControl, Arc<Mutex<Script>>) {
     use super::super::{AcpConfig, AcpControl, AcpRoute};
-    use crate::providers::{AgentControl, AgentStart};
+    let script = Arc::new(Mutex::new(Script::default()));
     let config = AcpConfig::new(
         AcpRoute::opencode(),
         "fixture-opencode",
@@ -141,23 +207,79 @@ fn started(new_session: Value) -> super::super::AcpControl {
             "/project"
         }),
         "1.18.27".parse().unwrap(),
-        std::sync::Arc::new(crate::NoopAttachmentPathResolver),
+        Arc::new(crate::NoopAttachmentPathResolver),
     )
-    .unwrap();
-    let mut control = AcpControl::with_transport(
+    .unwrap()
+    .with_selection(mode.map(|mode| LaunchSelection {
+        mode: Some(mode.parse().unwrap()),
+        ..Default::default()
+    }));
+    let control = AcpControl::with_transport(
         config,
         Some(Box::new(ModePeer {
             new_session,
+            script: Arc::clone(&script),
             incoming: Default::default(),
         })),
     );
+    (control, script)
+}
+
+fn start(control: &mut super::super::AcpControl) -> Result<(), ProviderFailure> {
     control
         .start(AgentStart::fresh(
             koru_session_protocol::SessionId::mint(),
             None,
         ))
-        .unwrap();
+        .map(|_| ())
+}
+
+fn started(new_session: Value) -> super::super::AcpControl {
+    let (mut control, _) = control(new_session, None);
+    start(&mut control).unwrap();
     control
+}
+
+fn turn(mode: Option<&str>) -> AgentInput {
+    AgentInput {
+        turn_id: AgentTurnId::mint(),
+        text: "<prompt>".into(),
+        attachments: Vec::new(),
+        mode: mode.map(|mode| mode.parse().unwrap()),
+    }
+}
+
+/// Every event the adapter has for the running turn, to its end.
+fn events(control: &mut super::super::AcpControl) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+    while let Some(event) = control.next_event(std::time::Duration::ZERO).unwrap() {
+        let done = matches!(event, AgentEvent::TurnCompleted { .. });
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    events
+}
+
+fn modes_changed(events: &[AgentEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ModeChanged { mode, .. } => Some(mode.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn methods(script: &Arc<Mutex<Script>>) -> Vec<String> {
+    script
+        .lock()
+        .unwrap()
+        .sent
+        .iter()
+        .filter_map(|frame| frame["method"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// A session's start keeps what it advertised, for the probe to hand the
@@ -169,4 +291,116 @@ fn a_started_session_keeps_the_modes_it_advertised() {
     assert_eq!(modes.modes().len(), 5);
     assert_eq!(modes.current().map(AgentModeId::as_str), Some("default"));
     assert!(started(json!({"sessionId":"s"})).modes().is_none());
+}
+
+/// **A chosen mode is set at start through the mode option, and verified**
+/// from its answer; the session is in it before any prompt.
+#[test]
+fn a_chosen_mode_is_set_at_start_and_verified() {
+    let (mut control, script) = control(result(CLAUDE), Some("plan"));
+    start(&mut control).unwrap();
+    assert_eq!(
+        control.modes().unwrap().current().map(AgentModeId::as_str),
+        Some("plan")
+    );
+    let sent = script.lock().unwrap().sent.clone();
+    let set = sent
+        .iter()
+        .find(|frame| frame["method"] == "session/set_config_option")
+        .unwrap();
+    assert_eq!(set["params"]["configId"], "mode");
+    assert_eq!(set["params"]["value"], "plan");
+    // The set's own update is its answer, not news for the next turn.
+    control.submit(turn(None)).unwrap();
+    assert!(modes_changed(&events(&mut control)).is_empty());
+}
+
+/// The mode the session is already in costs no call; one it does not offer,
+/// or a refused set, fails the start before any prompt.
+#[test]
+fn a_mode_not_offered_or_refused_fails_the_start() {
+    let (mut started, script) = control(result(CLAUDE), Some("default"));
+    start(&mut started).unwrap();
+    assert!(!methods(&script).contains(&"session/set_config_option".to_owned()));
+
+    let (mut unknown, _) = control(result(OPENCODE), Some("acceptEdits"));
+    let error = start(&mut unknown).unwrap_err();
+    assert_eq!(error.code, koru_session_protocol::ErrorCode::InvalidRequest);
+
+    let (mut refused, script) = control(result(CLAUDE), Some("plan"));
+    script.lock().unwrap().refuse = true;
+    assert!(start(&mut refused).is_err());
+    assert!(!methods(&script).contains(&"session/prompt".to_owned()));
+}
+
+/// **A turn's mode is set before its prompt**, and a turn the agent cannot
+/// move to is refused without a prompt.
+#[test]
+fn a_turns_mode_is_set_before_its_prompt() {
+    let (mut control, script) = control(result(CLAUDE), None);
+    start(&mut control).unwrap();
+    control.submit(turn(Some("acceptEdits"))).unwrap();
+    events(&mut control);
+    let sent = methods(&script);
+    let set = sent
+        .iter()
+        .position(|method| method == "session/set_config_option")
+        .unwrap();
+    let prompt = sent
+        .iter()
+        .position(|method| method == "session/prompt")
+        .unwrap();
+    assert!(set < prompt);
+
+    script.lock().unwrap().refuse = true;
+    let prompts = || {
+        methods(&script)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count()
+    };
+    let before = prompts();
+    assert!(control.submit(turn(Some("plan"))).is_err());
+    assert_eq!(prompts(), before);
+}
+
+/// An agent with only ACP's `modes` object is moved with `session/set_mode`.
+#[test]
+fn an_agent_without_the_option_is_moved_with_set_mode() {
+    let session = json!({"sessionId":"s","modes":{"currentModeId":"ask","availableModes":[
+        {"id":"ask"},{"id":"code"}]}});
+    let (mut control, script) = control(session, Some("code"));
+    start(&mut control).unwrap();
+    assert!(methods(&script).contains(&"session/set_mode".to_owned()));
+    assert_eq!(script.lock().unwrap().current.as_deref(), Some("code"));
+    assert_eq!(
+        control.modes().unwrap().current().map(AgentModeId::as_str),
+        Some("code")
+    );
+}
+
+/// **The chip follows the agent**: a mode the agent lands on instead of the
+/// one asked is said with the next turn, and one it moves to during a turn
+/// — Claude leaving plan mode — is said on that turn.
+#[test]
+fn a_mode_the_agent_moves_to_itself_is_said_on_a_turn() {
+    let (mut landed, script) = control(result(CLAUDE), Some("auto"));
+    script.lock().unwrap().lands = Some(("auto".into(), "acceptEdits".into()));
+    start(&mut landed).unwrap();
+    landed.submit(turn(None)).unwrap();
+    assert_eq!(modes_changed(&events(&mut landed)), ["acceptEdits"]);
+
+    let (mut planning, script) = control(result(CLAUDE), Some("plan"));
+    start(&mut planning).unwrap();
+    script.lock().unwrap().during_turn = vec![update(
+        "config_option_update",
+        json!({"configOptions":[{"id":"mode","category":"mode","type":"select",
+            "currentValue":"default","options":[{"value":"default"},{"value":"plan"}]}]}),
+    )];
+    planning.submit(turn(None)).unwrap();
+    assert_eq!(modes_changed(&events(&mut planning)), ["default"]);
+    assert_eq!(
+        planning.modes().unwrap().current().map(AgentModeId::as_str),
+        Some("default")
+    );
 }

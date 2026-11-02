@@ -2628,3 +2628,149 @@ fn an_agent_models_levels_become_its_effort_control() {
         vec![("opus".to_owned(), control)]
     );
 }
+
+/// An agent that leaves plan mode during its reply (koru-ai D7).
+static STALE_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Clone)]
+struct ModeMovingProvider {
+    requests: std::sync::mpsc::SyncSender<AiRequest>,
+}
+
+impl AiProvider for ModeMovingProvider {
+    fn start(
+        &self,
+        request: AiRequest,
+        _cancellation: Cancellation,
+    ) -> Result<ProviderStream, AiError> {
+        let attempt_id = request.attempt_id;
+        // As if the person had chosen another mode after this was sent.
+        let started_in = if STALE_START.load(std::sync::atomic::Ordering::SeqCst) {
+            Some("plan".to_owned())
+        } else {
+            request.options.agent_mode.clone()
+        };
+        self.requests.send(request).unwrap();
+        Ok(Box::new(
+            vec![
+                AiEvent::Started {
+                    attempt_id,
+                    provider_response_id: None,
+                    request_payload_bytes: None,
+                    resolved_model: None,
+                    effective_reasoning: None,
+                    at: Timestamp::now(),
+                },
+                AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: koru_ai_core::AgentActivityEvent::ModeChanged {
+                        started_in,
+                        mode: "default".into(),
+                    },
+                    at: Timestamp::now(),
+                },
+                AiEvent::Completed {
+                    attempt_id,
+                    stop_reason: Some("stop".into()),
+                    at: Timestamp::now(),
+                },
+            ]
+            .into_iter(),
+        ))
+    }
+}
+
+fn agent_chat(client: &AiWorkerClient, provider: &str) -> ChatId {
+    let chat = ChatId::new();
+    client
+        .create_chat(
+            context(),
+            CreateChatRequest {
+                chat_id: chat,
+                title: "Agent chat".into(),
+                model: koru_ai_core::ModelSelection {
+                    provider: AiProviderId::parse(provider).unwrap(),
+                    requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
+                    default_reasoning: ReasoningChoice::Default,
+                },
+            },
+        )
+        .unwrap();
+    chat
+}
+
+/// **A chat's approval mode** (koru-ai D7) is kept on the chat, rides each
+/// message to its agent, and is only for an agent chat. The agent leaving a
+/// mode during the reply moves the chat with it — unless the person chose
+/// another mode meanwhile, which is the one the next message takes.
+#[test]
+fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
+    use koru_ai_wire::UpdateChatAgentSettingsRequest;
+    let directory = tempfile::tempdir().unwrap();
+    let (captured, requests) = sync_channel(8);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(DeterministicMockProvider::new("Answer.")),
+    );
+    providers.insert(
+        AiProviderId::parse("agent-claude").unwrap(),
+        Arc::new(ModeMovingProvider { requests: captured }),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let mode = |mode: &str| UpdateChatAgentSettingsRequest {
+        mode: Some(mode.into()),
+    };
+
+    let plain = create_chat(&client);
+    let refused = client
+        .update_chat_agent_settings(context(), plain, mode("plan"))
+        .unwrap_err();
+    assert_eq!(refused.code, "invalid_request");
+
+    let agent = agent_chat(&client, "agent-claude");
+    let bad = client
+        .update_chat_agent_settings(context(), agent, mode("two words"))
+        .unwrap_err();
+    assert_eq!(bad.code, "invalid_request");
+    let chosen = client
+        .update_chat_agent_settings(context(), agent, mode("plan"))
+        .unwrap();
+    assert_eq!(chosen.chat.agent_mode.as_deref(), Some("plan"));
+    // A request that names nothing changes nothing.
+    let kept = client
+        .update_chat_agent_settings(context(), agent, UpdateChatAgentSettingsRequest::default())
+        .unwrap();
+    assert_eq!(kept.chat.agent_mode.as_deref(), Some("plan"));
+
+    // The message carries the mode; the agent leaves plan mode, and the
+    // chat follows it.
+    let stream = send(&client, agent, Uuid::new_v4());
+    let request = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(request.options.agent_mode.as_deref(), Some("plan"));
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let after = client.read_chat(context(), agent).unwrap().chat;
+    assert_eq!(after.agent_mode.as_deref(), Some("default"));
+
+    // The person chose another mode while the agent moved — the reply was
+    // sent in plan mode, the chat is in Accept edits now: theirs is kept.
+    client
+        .update_chat_agent_settings(context(), agent, mode("acceptEdits"))
+        .unwrap();
+    STALE_START.store(true, std::sync::atomic::Ordering::SeqCst);
+    let stream = send(&client, agent, Uuid::new_v4());
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    wait_for_terminal(&client, stream.accepted.attempt_id);
+    let after = client.read_chat(context(), agent).unwrap().chat;
+    assert_eq!(after.agent_mode.as_deref(), Some("acceptEdits"));
+}

@@ -111,6 +111,7 @@ fn pending_input_preserves_attachment_order_and_unicode() {
         idempotency_key: super::idempotency_key(),
         text: "画像を確認 العربية".into(),
         attachment_ids: vec![first, second],
+        mode: None,
     };
     let json = serde_json::to_string(&input).unwrap();
     let back: PendingInput = serde_json::from_str(&json).unwrap();

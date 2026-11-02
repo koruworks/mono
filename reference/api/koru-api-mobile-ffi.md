@@ -64,6 +64,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.update_chat_model` | `client.ai().update_chat_model` | PATCH /v1/ai/chats/{chat}/model | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.update_chat_privacy` | `client.ai().update_chat_privacy` | PATCH /v1/ai/chats/{chat}/privacy | Per-chat AI privacy is not yet exposed by a mobile chat host |
 | `ai.update_chat_folder` | `client.ai().update_chat_folder` | PATCH /v1/ai/chats/{chat}/folder | Local agents run on the desktop that installed them |
+| `ai.update_chat_agent_settings` | `client.ai().update_chat_agent_settings` | PATCH /v1/ai/chats/{chat}/agent-settings | Local agents run on the desktop that installed them |
 | `ai.tool_list_chats` | `client.ai().tool_list_chats` | POST /v1/ai/tools/chats/list | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_search_chats` | `client.ai().tool_search_chats` | POST /v1/ai/tools/chats/search | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_read_chat` | `client.ai().tool_read_chat` | POST /v1/ai/tools/chats/read | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |

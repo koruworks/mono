@@ -305,6 +305,11 @@ pub struct AiRequestOptions {
     /// the API providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_folder: Option<String>,
+    /// The approval mode a local agent runs this message in (koru-ai D7),
+    /// the agent's own id; `None` leaves the agent's default. The API
+    /// providers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_mode: Option<String>,
 }
 
 impl Default for AiRequestOptions {
@@ -316,6 +321,7 @@ impl Default for AiRequestOptions {
             web_search: false,
             chat_id: None,
             working_folder: None,
+            agent_mode: None,
         }
     }
 }

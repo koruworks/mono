@@ -25,6 +25,12 @@ pub struct Chat {
     /// first message, and a branch copies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_working_folder: Option<String>,
+    /// The approval mode a local agent runs this chat's next message in
+    /// (koru-ai D7): the agent's own id, `None` for the agent's default.
+    /// Chosen at any time; a choice made during a reply applies to the next
+    /// message. A branch starts with none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_mode: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

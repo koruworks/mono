@@ -147,6 +147,16 @@ impl Client {
         self.server.update_chat_folder(context, chat, request)
     }
 
+    pub fn update_chat_agent_settings(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> Result<koru_ai_wire::UpdateChatAgentSettingsResponse> {
+        self.server
+            .update_chat_agent_settings(context, chat, request)
+    }
+
     pub fn tool_list_chats(
         &self,
         context: RequestContext,

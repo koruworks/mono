@@ -51,6 +51,9 @@ pub struct AcpControl {
     modes: Option<koru_session_protocol::AgentModes>,
     /// The `mode` config option's id, when the modes came with one.
     mode_config: Option<String>,
+    /// A mode the agent moved to between turns, said with the next turn
+    /// (`ModeChanged` belongs to a turn).
+    unreported_mode: Option<koru_session_protocol::AgentModeId>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
@@ -115,6 +118,7 @@ impl AcpControl {
             model_options: Vec::new(),
             modes: None,
             mode_config: None,
+            unreported_mode: None,
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
@@ -162,6 +166,94 @@ impl AcpControl {
         }
         self.modes = Some(modes.with_current(&reported)?);
         Some(reported)
+    }
+
+    /// Say a mode the agent moved to by itself: on the running turn, or
+    /// with the next one when none runs (D7).
+    pub(super) fn report_mode(
+        &mut self,
+        moved: Option<koru_session_protocol::AgentModeId>,
+    ) -> Result<(), ProviderFailure> {
+        let Some(mode) = moved else {
+            return Ok(());
+        };
+        match self.active {
+            Some(turn_id) if self.turns[&turn_id].cancelling.is_none() => {
+                self.unreported_mode = None;
+                self.queue(AgentEvent::ModeChanged { turn_id, mode })
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.unreported_mode = Some(mode);
+                Ok(())
+            }
+        }
+    }
+
+    /// **Move the session to `mode`** (D7), between turns. The mode must be
+    /// one the session offers; it is set through the `mode` config option
+    /// when the agent advertised one — the answer reports where the session
+    /// is — else through `session/set_mode`, whose answer is empty. An agent
+    /// may land on another of its modes than the one asked (Claude, asked
+    /// for `auto` on a model without it, takes `acceptEdits`): the session
+    /// follows it, and the next turn says so. A refused set, or one whose
+    /// answer names no mode it offers, refuses the start or the turn —
+    /// never runs it in a mode nobody chose.
+    fn apply_mode(
+        &mut self,
+        native_session: &str,
+        mode: &koru_session_protocol::AgentModeId,
+        stage: ProviderStage,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.mode.rejected", mode = %mode);
+            failure(
+                ErrorCode::InvalidRequest,
+                stage,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        let Some(modes) = &self.modes else {
+            return Err(rejected());
+        };
+        if !modes.contains(mode) {
+            return Err(rejected());
+        }
+        if modes.current() == Some(mode) {
+            return Ok(());
+        }
+        let reported = match self.mode_config.clone() {
+            Some(config_id) => {
+                let applied = self
+                    .call(
+                        "session/set_config_option",
+                        json!({"sessionId":native_session, "configId":config_id, "value":mode.as_str()}),
+                    )
+                    .map_err(|_| rejected())?;
+                modes::current(&applied).ok_or_else(rejected)?
+            }
+            None => {
+                self.call(
+                    "session/set_mode",
+                    json!({"sessionId":native_session, "modeId":mode.as_str()}),
+                )
+                .map_err(|_| rejected())?;
+                mode.clone()
+            }
+        };
+        if !self
+            .modes
+            .as_ref()
+            .is_some_and(|modes| modes.contains(&reported))
+        {
+            return Err(rejected());
+        }
+        self.follow_mode(Some(reported.clone()));
+        // What the agent said while setting it is the answer itself: only
+        // a landing elsewhere than asked is news for the next turn.
+        self.unreported_mode = (reported != *mode).then_some(reported.clone());
+        tracing::info!(target: "koru::acp", event = "acp.mode.selected", mode = %reported, asked = %mode);
+        Ok(())
     }
 
     fn ensure_transport(&mut self) -> Result<(), ProviderFailure> {
@@ -658,6 +750,9 @@ impl AcpControl {
             let options = latest.as_ref().unwrap_or(&session);
             self.apply_reasoning(&native_session, options, level, start.session_id)?;
         }
+        if let Some(mode) = self.config.requested_mode() {
+            self.apply_mode(&native_session, &mode, ProviderStage::Initialize)?;
+        }
         if self.config.route.is_claude() {
             self.await_wrapper_auth()?;
         }
@@ -764,6 +859,10 @@ impl AgentControl for AcpControl {
             ));
         }
         let prompt = self.prompt(&input)?;
+        // The turn's mode is set before its prompt, between turns (D7).
+        if let (Some(mode), Some(native_session)) = (&input.mode, self.native_session.clone()) {
+            self.apply_mode(&native_session, mode, ProviderStage::Submit)?;
+        }
         let params = json!({"sessionId":self.native_session,"prompt":prompt});
         let request_id = match self.send_request("session/prompt", params) {
             Ok(id) => id,
@@ -785,6 +884,12 @@ impl AgentControl for AcpControl {
         self.queue(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         })?;
+        if let Some(mode) = self.unreported_mode.take() {
+            self.queue(AgentEvent::ModeChanged {
+                turn_id: input.turn_id,
+                mode,
+            })?;
+        }
         for attachment in input.attachments {
             self.queue(AgentEvent::AttachmentAccepted {
                 turn_id: input.turn_id,

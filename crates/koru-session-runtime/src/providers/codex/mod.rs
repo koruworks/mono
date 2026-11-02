@@ -342,11 +342,34 @@ impl AgentControl for CodexControl {
                 ProviderDiagnostic::InvalidInput,
             )
         })?;
+        // The chat's approval mode (koru-ai D7), Koru's default when it
+        // chose none. It overrides the person's `config.toml` (decided).
+        let policy = modes::Policy::of(
+            self.config
+                .selection
+                .as_ref()
+                .and_then(|selection| selection.mode.as_ref()),
+        )
+        .ok_or_else(|| {
+            failure(
+                ErrorCode::InvalidRequest,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::InvalidInput,
+            )
+        })?;
         let thread = self.call(
             "thread/start",
-            json!({ "cwd": cwd, "ephemeral": true, "model": model.model }),
+            json!({
+                "cwd": cwd,
+                "ephemeral": true,
+                "model": model.model,
+                "approvalPolicy": policy.approval,
+                "sandbox": policy.sandbox,
+                "approvalsReviewer": policy.reviewer,
+            }),
             ProviderStage::Initialize,
         )?;
+        policy.observe_thread(&thread);
         let thread_id = thread
             .pointer("/thread/id")
             .and_then(Value::as_str)
@@ -418,6 +441,16 @@ impl AgentControl for CodexControl {
                 ErrorCode::ProviderFailed,
                 ProviderStage::Submit,
                 ProviderDiagnostic::InvalidState,
+            )
+        })?;
+        // Every turn carries its mode: "this turn and subsequent turns" on
+        // the app-server, so a turn with none goes back to *Ask for
+        // approval* rather than keeping a mode nobody chose for it (D7).
+        let policy = modes::Policy::of(input.mode.as_ref()).ok_or_else(|| {
+            failure(
+                ErrorCode::InvalidRequest,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidInput,
             )
         })?;
         let session_id = self.session_id.expect("started adapter has a session id");
@@ -503,7 +536,13 @@ impl AgentControl for CodexControl {
         );
         let response = self.call(
             "turn/start",
-            json!({ "threadId": thread_id, "input": provider_input }),
+            json!({
+                "threadId": thread_id,
+                "input": provider_input,
+                "approvalPolicy": policy.approval,
+                "sandboxPolicy": policy.sandbox_policy(),
+                "approvalsReviewer": policy.reviewer,
+            }),
             ProviderStage::Submit,
         )?;
         let native_id = response

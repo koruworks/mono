@@ -266,6 +266,15 @@ pub enum AgentActivityEvent {
     ApprovalExpired {
         invocation: ToolInvocationId,
     },
+    /// The agent moved its approval mode itself during the reply (koru-ai
+    /// D7): Claude leaving plan mode once its plan is approved, or landing
+    /// on another mode than the one asked. `started_in` is the mode the
+    /// reply was sent in, so a choice the person made meanwhile is kept.
+    ModeChanged {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_in: Option<String>,
+        mode: String,
+    },
 }
 
 /// Why a tool call did not succeed, in the host's closed vocabulary. The

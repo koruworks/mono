@@ -359,7 +359,11 @@ impl WorkerState {
         else {
             return;
         };
+        if let AgentActivityEvent::ModeChanged { started_in, mode } = activity {
+            return self.follow_agent_mode(chat_id, started_in, mode);
+        }
         let result = match activity {
+            AgentActivityEvent::ModeChanged { .. } => return,
             AgentActivityEvent::ToolStarted {
                 invocation,
                 label,
@@ -494,6 +498,35 @@ impl WorkerState {
                     "an agent activity could not be recorded"
                 );
             }
+        }
+    }
+
+    /// **The chat follows a mode the agent moved to itself** (koru-ai D7) —
+    /// Claude leaving plan mode once its plan is approved — so its next
+    /// message is sent in the mode the agent is in. Only while the chat is
+    /// still in the mode the reply was sent in: a mode the person chose
+    /// during the reply is theirs, and is the one the next message takes.
+    fn follow_agent_mode(&mut self, chat_id: ChatId, started_in: Option<String>, mode: String) {
+        let followed = self.repository.chat(chat_id).and_then(|chat| match chat {
+            Some(chat) if chat.agent_mode == started_in => self
+                .repository
+                .set_chat_agent_mode(chat_id, Some(&mode))
+                .map(|chat| chat.is_some()),
+            _ => Ok(false),
+        });
+        match followed {
+            Ok(followed) => tracing::info!(
+                target: "koru_ai::agent",
+                chat = %chat_id,
+                followed,
+                "the agent moved its approval mode"
+            ),
+            Err(error) => tracing::warn!(
+                target: "koru_ai::agent",
+                chat = %chat_id,
+                class = ?error.class,
+                "the agent's approval mode could not be recorded"
+            ),
         }
     }
 

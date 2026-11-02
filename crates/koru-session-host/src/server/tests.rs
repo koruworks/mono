@@ -120,7 +120,10 @@ async fn written_frames(dynamic: bool) -> Vec<serde_json::Value> {
         drop(subscription_send);
         frames
     };
-    let (_, frames) = tokio::join!(writer_loop(host, control, subscriptions, dynamic), read);
+    let (_, frames) = tokio::join!(
+        writer_loop(host, control, subscriptions, dynamic, true),
+        read
+    );
     // Per-reader projection must never erase the retained choices.
     assert!(
         matches!(&retained[0].event, AgentEvent::ApprovalRequired { choices, .. }
@@ -162,4 +165,52 @@ async fn negotiated_readers_keep_exact_choices_and_resolution_identity() {
         &frames[2]["frame"]["update"]["event"]["event"]["choice"],
         id
     );
+}
+
+/// **`mode_changed` reaches only a v19 reader** (koru-ai D7); an older one
+/// gets an empty delta of the same turn and sequence, which reads as nothing.
+#[tokio::test]
+async fn an_older_reader_gets_an_empty_delta_for_a_mode_change() {
+    async fn written(agent_modes: bool) -> serde_json::Value {
+        let (host, mut peer) = tokio::io::duplex(16384);
+        let (control_send, control) = mpsc::channel(4);
+        let (subscription_send, subscriptions) = mpsc::channel(4);
+        let turn_id = AgentTurnId::mint();
+        subscription_send
+            .send(FromHost::Subscription {
+                frame: SubscriptionFrame {
+                    subscription_id: SubscriptionId(1),
+                    update: SubscriptionUpdate::AgentEvent {
+                        event: SequencedAgentEvent {
+                            session_id: SessionId::mint(),
+                            sequence: StreamSequence::new(7).unwrap(),
+                            event: AgentEvent::ModeChanged {
+                                turn_id,
+                                mode: "acceptEdits".parse().unwrap(),
+                            },
+                        },
+                    },
+                },
+            })
+            .await
+            .unwrap();
+        let read = async move {
+            let (_, frame) = read_frame::<_, serde_json::Value>(&mut peer).await.unwrap();
+            drop(control_send);
+            drop(subscription_send);
+            frame
+        };
+        let (_, frame) = tokio::join!(
+            writer_loop(host, control, subscriptions, true, agent_modes),
+            read
+        );
+        frame["frame"]["update"]["event"].clone()
+    }
+    let current = written(true).await;
+    assert_eq!(current["event"]["kind"], "mode_changed");
+    assert_eq!(current["event"]["mode"], "acceptEdits");
+    let older = written(false).await;
+    assert_eq!(older["sequence"], 7);
+    assert_eq!(older["event"]["kind"], "message_delta");
+    assert_eq!(older["event"]["text"], "");
 }

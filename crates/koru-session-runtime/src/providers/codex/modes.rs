@@ -15,7 +15,8 @@
 //! 2026-11-02). The reviewer is a per-thread and per-turn setting of the
 //! app-server (`approvalsReviewer`, seen on 0.166.0), not a launch flag.
 
-use koru_session_protocol::{AgentMode, AgentModes, ModelLabel};
+use koru_session_protocol::{AgentMode, AgentModeId, AgentModes, ModelLabel};
+use serde_json::{Value, json};
 
 /// Codex reads; it asks before editing files or running commands.
 pub(super) const ASK: &str = "ask";
@@ -40,6 +41,76 @@ pub(super) fn offered() -> AgentModes {
         ASK.parse().ok(),
     )
     .expect("three static modes")
+}
+
+/// What one mode sends to the app-server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Policy {
+    /// `approvalPolicy`, on both `thread/start` and `turn/start`.
+    pub approval: &'static str,
+    /// `sandbox`, `thread/start`'s spelling.
+    pub sandbox: &'static str,
+    /// `approvalsReviewer`.
+    pub reviewer: &'static str,
+}
+
+impl Policy {
+    /// The mode's settings. `None` — no mode chosen — is *Ask for approval*,
+    /// Koru's default for Codex; an id that is not one of the three is
+    /// refused rather than guessed.
+    pub(super) fn of(mode: Option<&AgentModeId>) -> Option<Self> {
+        let ask = Self {
+            approval: "on-request",
+            sandbox: "read-only",
+            reviewer: "user",
+        };
+        match mode.map(AgentModeId::as_str) {
+            None | Some(ASK) => Some(ask),
+            Some(AUTO_REVIEW) => Some(Self {
+                sandbox: "workspace-write",
+                reviewer: "auto_review",
+                ..ask
+            }),
+            Some(FULL_ACCESS) => Some(Self {
+                approval: "never",
+                sandbox: "danger-full-access",
+                ..ask
+            }),
+            Some(_) => None,
+        }
+    }
+
+    /// What `thread/start` answered against what was asked. Not a refusal:
+    /// on Windows, without Codex's own sandbox set up, 0.166.0 answers a
+    /// `workspace-write` thread with a read-only sandbox, and an older
+    /// app-server ignores `approvalsReviewer` and keeps the person as the
+    /// reviewer. Both only ever ask more, never less, so the thread runs
+    /// and the difference is logged.
+    pub(super) fn observe_thread(&self, thread: &Value) {
+        let reviewer = thread["approvalsReviewer"].as_str();
+        let sandbox = thread.pointer("/sandbox/type").and_then(Value::as_str);
+        let expected = match self.sandbox {
+            "workspace-write" => "workspaceWrite",
+            "danger-full-access" => "dangerFullAccess",
+            _ => "readOnly",
+        };
+        if reviewer.is_some_and(|reviewer| reviewer != self.reviewer)
+            || sandbox.is_some_and(|sandbox| sandbox != expected)
+        {
+            tracing::warn!(target: "koru::codex", event = "codex.mode.narrowed",
+                asked_sandbox = self.sandbox, sandbox = sandbox.unwrap_or("unknown"),
+                asked_reviewer = self.reviewer, reviewer = reviewer.unwrap_or("unknown"));
+        }
+    }
+
+    /// `turn/start`'s `sandboxPolicy` for the same sandbox.
+    pub(super) fn sandbox_policy(&self) -> Value {
+        match self.sandbox {
+            "workspace-write" => json!({"type":"workspaceWrite"}),
+            "danger-full-access" => json!({"type":"dangerFullAccess"}),
+            _ => json!({"type":"readOnly"}),
+        }
+    }
 }
 
 #[cfg(test)]

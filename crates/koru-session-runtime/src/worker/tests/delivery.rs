@@ -333,6 +333,7 @@ fn quoted_path_submission_is_ordered_partial_retryable_and_idempotent() {
         idempotency_key: IdempotencyKey::mint(),
         text: "echo".into(),
         attachment_ids: vec![first, second],
+        mode: None,
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -419,6 +420,7 @@ fn unsupported_delivery_stays_pending_visible_and_does_not_write_binary() {
         idempotency_key: IdempotencyKey::mint(),
         text: String::new(),
         attachment_ids: vec![attachment_id],
+        mode: None,
     };
     let result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -457,6 +459,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
         idempotency_key: IdempotencyKey::mint(),
         text: "first".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, first.clone())
@@ -469,6 +472,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
                     idempotency_key: IdempotencyKey::mint(),
                     text: format!("next-{index}"),
                     attachment_ids: Vec::new(),
+                    mode: None,
                 },
             )
             .unwrap();
@@ -516,6 +520,7 @@ fn native_delivery_uses_only_an_advertised_adapter_and_retries_the_same_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "inspect these".into(),
         attachment_ids: vec![first, second],
+        mode: None,
     };
     let initial = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -582,6 +587,7 @@ fn native_profile_without_the_negotiated_capability_never_calls_the_adapter() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: String::new(),
                 attachment_ids: vec![attachment_id],
+                mode: None,
             },
         )
         .unwrap();
@@ -604,6 +610,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         idempotency_key: IdempotencyKey::mint(),
         text: "text fixture".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     let accepted = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -624,6 +631,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         idempotency_key: IdempotencyKey::mint(),
         text: "another input".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     assert_eq!(
         handle
@@ -675,6 +683,7 @@ fn managed_text_does_not_smuggle_unsupported_images_into_the_provider() {
                 idempotency_key: IdempotencyKey::mint(),
                 text: "text with an unsupported image".into(),
                 attachment_ids: vec![attachment],
+                mode: None,
             },
         )
         .unwrap();
@@ -700,6 +709,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "refused fixture".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     assert_eq!(
         handle
@@ -722,6 +732,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         idempotency_key: IdempotencyKey::mint(),
         text: "different turn".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     let first = handle
         .send_pending_input(attached.lease.token, other.clone())
@@ -785,6 +796,7 @@ fn an_accepted_managed_submission_survives_lease_loss_before_its_reply() {
         idempotency_key: IdempotencyKey::mint(),
         text: "accepted before lease loss".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     let sender = handle.clone();
     let submitted = input.clone();
@@ -827,6 +839,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
                 idempotency_key: IdempotencyKey::mint(),
                 text: "first".into(),
                 attachment_ids: Vec::new(),
+                mode: None,
             },
         )
         .unwrap();
@@ -835,6 +848,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
         idempotency_key: IdempotencyKey::mint(),
         text: "and also this".into(),
         attachment_ids: Vec::new(),
+        mode: None,
     };
     // A provider with no steer call says what it has always said.
     assert_eq!(

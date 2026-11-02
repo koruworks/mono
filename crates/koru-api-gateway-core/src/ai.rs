@@ -282,6 +282,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["chat"],
     },
     AiRoute {
+        operation_id: "ai_update_chat_agent_settings",
+        method: "PATCH",
+        path: "/v1/ai/chats/{chat}/agent-settings",
+        scope: AiScope::Chat,
+        summary: "Choose the approval mode a chat's local agent runs its next message in",
+        returns: "The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in.",
+        handler: || patch(update_chat_agent_settings),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::UpdateChatAgentSettingsRequest>()
+        }),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::UpdateChatAgentSettingsResponse>()
+        }),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
         operation_id: "ai_tool_list_chats",
         method: "POST",
         path: "/v1/ai/tools/chats/list",
@@ -975,6 +992,26 @@ async fn update_chat_privacy(
         Err(response) => return response,
     };
     answer(call(move || client.update_chat_privacy(context, chat, request)).await)
+}
+
+async fn update_chat_agent_settings(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    payload: Result<Json<koru_ai_wire::UpdateChatAgentSettingsRequest>, JsonRejection>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.update_chat_agent_settings(context, chat, request)).await)
 }
 
 async fn update_chat_folder(

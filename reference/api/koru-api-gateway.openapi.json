@@ -2505,6 +2505,11 @@
       },
       "Chat": {
         "properties": {
+          "agent_mode": {
+            "description": "The approval mode a local agent runs this chat's next message in\n(koru-ai D7): the agent's own id, `None` for the agent's default.\nChosen at any time; a choice made during a reply applies to the next\nmessage. A branch starts with none.",
+            "nullable": true,
+            "type": "string"
+          },
           "agent_working_folder": {
             "description": "The folder a local agent works in for this chat, absolute; `None` is\nthe person's home folder. Only an `agent-*` chat sets it, before its\nfirst message, and a branch copies it.",
             "nullable": true,
@@ -15328,6 +15333,29 @@
         ],
         "type": "object"
       },
+      "UpdateChatAgentSettingsRequest": {
+        "additionalProperties": false,
+        "description": "A local agent chat's settings for its next message (koru-ai D7). A field\nleft out keeps what the chat has. Accepted on an `agent-*` chat at any\ntime: a reply already running keeps the mode it was sent in.",
+        "properties": {
+          "mode": {
+            "description": "The approval mode, the agent's own id: one it lists in\n[`AgentModelsResponse::modes`]. An agent refuses one it does not\noffer when the message is sent.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateChatAgentSettingsResponse": {
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/Chat"
+          }
+        },
+        "required": [
+          "chat"
+        ],
+        "type": "object"
+      },
       "UpdateChatFolderRequest": {
         "additionalProperties": false,
         "description": "The folder a chat's local agent works in. `None` returns the chat to\nthe home-folder default. Accepted only on an `agent-*` chat with no\nmessage yet: the agent starts in the folder, so a later change would\nname a folder the conversation is not in.",
@@ -17084,6 +17112,103 @@
           }
         ],
         "summary": "Rename an AI chat"
+      }
+    },
+    "/v1/ai/chats/{chat}/agent-settings": {
+      "patch": {
+        "description": "The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in.",
+        "operationId": "ai_update_chat_agent_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChatAgentSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateChatAgentSettingsResponse"
+                }
+              }
+            },
+            "description": "The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Choose the approval mode a chat's local agent runs its next message in"
       }
     },
     "/v1/ai/chats/{chat}/attachments/{attachment}": {

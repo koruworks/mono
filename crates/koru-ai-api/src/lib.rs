@@ -160,6 +160,12 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
     ) -> Result<koru_ai_wire::UpdateChatFolderResponse>;
+    fn update_chat_agent_settings(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::UpdateChatAgentSettingsRequest,
+    ) -> Result<koru_ai_wire::UpdateChatAgentSettingsResponse>;
     fn tool_list_chats(
         &self,
         context: RequestContext,

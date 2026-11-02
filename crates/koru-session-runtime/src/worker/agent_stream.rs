@@ -197,6 +197,7 @@ fn event_bytes(event: &AgentEvent) -> usize {
                     .saturating_add(choice.label.len())
             }),
             AgentEvent::TurnFailed { error, .. } => error.message.len(),
+            AgentEvent::ModeChanged { mode, .. } => mode.as_str().len(),
             AgentEvent::TurnStarted { .. }
             | AgentEvent::ToolCompleted { .. }
             | AgentEvent::ApprovalResolved { .. }

@@ -89,6 +89,7 @@ fn logs_capture_lifecycle_counts_without_provider_content_and_coalesce_streams()
                 turn_id: turn,
                 text: "private-prompt-sentinel".into(),
                 attachments: vec![],
+                mode: None,
             })
             .unwrap();
         h.control

@@ -175,6 +175,14 @@ impl AcpConfig {
             })
     }
 
+    /// The approval mode this session was asked to start in; `None` leaves
+    /// the agent in the one it starts in (koru-ai D7).
+    pub(super) fn requested_mode(&self) -> Option<koru_session_protocol::AgentModeId> {
+        self.selection
+            .as_ref()
+            .and_then(|selection| selection.mode.clone())
+    }
+
     /// The reasoning level this session was asked to start at; `None`
     /// leaves the agent at its own default.
     pub(super) fn requested_reasoning(&self) -> Option<koru_session_protocol::LaunchReasoning> {

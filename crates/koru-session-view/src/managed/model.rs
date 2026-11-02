@@ -585,6 +585,9 @@ impl ManagedModel {
                     self.provider_item = Some(id);
                 }
             }
+            // A chat's approval mode (koru-ai D7): the AI chat shows it, a
+            // terminal session's transcript has nothing to draw for it.
+            AgentEvent::ModeChanged { .. } => {}
             AgentEvent::MessageDelta { .. } => unreachable!("handled above"),
         }
     }

@@ -371,6 +371,7 @@ impl Sessions for HostSessions {
                     idempotency_key: IdempotencyKey::mint(),
                     text,
                     attachment_ids: Vec::new(),
+                    mode: None,
                 },
             )
             .map_err(|error| session_error("submit", error))?;

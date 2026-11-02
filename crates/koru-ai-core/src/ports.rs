@@ -42,6 +42,14 @@ pub trait AiPersistence: Send {
         folder: Option<&str>,
         updated_at: Timestamp,
     ) -> Result<Option<Chat>, AiError>;
+    /// The approval mode a local agent runs the chat's next message in
+    /// (koru-ai D7); `None` is the agent's own default. Like a rename, it
+    /// leaves the chat where it is in the list.
+    fn set_chat_agent_mode(
+        &mut self,
+        chat: ChatId,
+        mode: Option<&str>,
+    ) -> Result<Option<Chat>, AiError>;
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError>;
     fn replace_chat_tool_policy(
         &mut self,

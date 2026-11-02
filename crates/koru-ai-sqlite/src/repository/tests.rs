@@ -36,6 +36,7 @@ fn chat(id: ChatId, offset: i64) -> Chat {
         current_model: model(),
         branched_from: None,
         agent_working_folder: None,
+        agent_mode: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -78,6 +79,40 @@ fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     assert!(
         repository
             .set_chat_working_folder(ChatId::new(), None, at(30))
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// **A chat's approval mode** (koru-ai D7) is durable, listed, and — like
+/// a rename — leaves the chat where it is in the list.
+#[test]
+fn a_chats_agent_mode_is_durable_listed_and_leaves_its_place() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    assert!(
+        repository
+            .chat(chat_id)
+            .unwrap()
+            .unwrap()
+            .agent_mode
+            .is_none()
+    );
+
+    let updated = repository
+        .set_chat_agent_mode(chat_id, Some("acceptEdits"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.agent_mode.as_deref(), Some("acceptEdits"));
+    assert_eq!(updated.updated_at, at(0), "the list order is untouched");
+    assert_eq!(
+        repository.chats().unwrap()[0].agent_mode.as_deref(),
+        Some("acceptEdits")
+    );
+    assert!(
+        repository
+            .set_chat_agent_mode(ChatId::new(), Some("plan"))
             .unwrap()
             .is_none()
     );
@@ -654,6 +689,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
             through_message_id: original.assistant_message.id,
         }),
         agent_working_folder: None,
+        agent_mode: None,
         created_at: at(4),
         updated_at: at(4),
     };

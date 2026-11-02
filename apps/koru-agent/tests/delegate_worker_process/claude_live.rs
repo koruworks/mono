@@ -103,6 +103,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
         turn_id:turn,
         text:"Call the koru_run MCP create tool exactly once with path fixture.txt, title Wrapper qualification, and mime text/plain. The fixture file is already staged. Use no other tools, no shell, no child agents. Then finish.".into(),
         attachments:Vec::new(),
+        mode: None,
     }).unwrap();
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut completed = false;
@@ -156,6 +157,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
             text: "Produce a long numbered explanation of arithmetic without using any tools."
                 .into(),
             attachments: Vec::new(),
+            mode: None,
         })
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(45);

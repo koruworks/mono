@@ -542,6 +542,12 @@ Choose the folder a chat's local agent works in
 
 Returns: The durable chat with its working folder; accepted only on an agent chat with no message yet.
 
+## PATCH `/v1/ai/chats/{chat}/agent-settings`
+
+Choose the approval mode a chat's local agent runs its next message in
+
+Returns: The durable chat with its agent settings; accepted on an agent chat at any time, a running reply keeping the mode it was sent in.
+
 ## POST `/v1/ai/tools/chats/list`
 
 List non-private AI chats for a trusted tool caller

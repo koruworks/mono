@@ -494,6 +494,7 @@ async fn send_pending(
                     idempotency_key: request.idempotency_key,
                     text: request.text,
                     attachment_ids: request.attachment_ids,
+                    mode: None,
                 },
             )
             .await,

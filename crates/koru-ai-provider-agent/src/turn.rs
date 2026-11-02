@@ -33,10 +33,10 @@ use koru_ai_core::{
 };
 use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
-    AgentEvent, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent, Attachment,
-    AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode, ErrorCode,
-    IdempotencyKey, LaunchReasoning, LaunchSelection, ModelName, PendingInput, SessionId,
-    ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
+    AgentEvent, AgentModeId, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
+    Attachment, AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode,
+    ErrorCode, IdempotencyKey, LaunchReasoning, LaunchSelection, ModelName, PendingInput,
+    SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
 };
 use koru_session_wire::SubscriptionUpdate;
 
@@ -69,7 +69,11 @@ pub(crate) fn start(
     // host checks the agent applied it (agent-models D18). *Default* sends
     // none: the agent decides.
     let reasoning = launch_reasoning(request.reasoning);
-    let selection = selection_for(&request.model, reasoning)?;
+    // The chat's approval mode (koru-ai D7): the session starts in it, and
+    // every message carries it, so a mode chosen after the start reaches
+    // the agent with the next message.
+    let mode = agent_mode(request.options.agent_mode.as_deref())?;
+    let selection = selection_for(&request.model, reasoning, mode.clone())?;
     let ensured = provider.sessions.ensure(
         origin,
         &provider.kind,
@@ -140,6 +144,7 @@ pub(crate) fn start(
                 idempotency_key: IdempotencyKey::mint(),
                 text: text.clone(),
                 attachment_ids,
+                mode: mode.clone(),
             },
         )
     };
@@ -220,8 +225,21 @@ pub(crate) fn start(
         approvals: HashMap::new(),
         usage: None,
         ingested: delivered.native,
+        started_in: request.options.agent_mode.clone(),
         done: false,
     }))
+}
+
+/// The chat's mode as the session protocol spells it. A token that is not a
+/// mode id never reaches the agent.
+fn agent_mode(mode: Option<&str>) -> Result<Option<AgentModeId>, AiError> {
+    mode.map(AgentModeId::from_str).transpose().map_err(|_| {
+        AiError::new(
+            AiErrorClass::Configuration,
+            "That approval mode is not one the agent offers.",
+            false,
+        )
+    })
 }
 
 /// What became of a message's pictures: the session copies that go
@@ -335,6 +353,7 @@ fn applied_choice(level: LaunchReasoning) -> Option<ReasoningChoice> {
 fn selection_for(
     model: &str,
     reasoning: Option<LaunchReasoning>,
+    mode: Option<AgentModeId>,
 ) -> Result<Option<LaunchSelection>, AiError> {
     let model = (model != AGENT_DEFAULT_MODEL && !model.trim().is_empty())
         .then(|| ModelName::from_str(model))
@@ -346,10 +365,14 @@ fn selection_for(
                 false,
             )
         })?;
-    if model.is_none() && reasoning.is_none() {
+    if model.is_none() && reasoning.is_none() && mode.is_none() {
         return Ok(None);
     }
-    Ok(Some(LaunchSelection { model, reasoning }))
+    Ok(Some(LaunchSelection {
+        model,
+        reasoning,
+        mode,
+    }))
 }
 
 fn reconcile(
@@ -527,6 +550,9 @@ struct TurnStream {
     usage: Option<AiUsage>,
     /// The session's copies of this turn's pictures, removed when it ends.
     ingested: Vec<AttachmentId>,
+    /// The chat's mode the message was sent in, for a move the agent makes
+    /// during it (D7).
+    started_in: Option<String>,
     done: bool,
 }
 
@@ -817,6 +843,16 @@ impl TurnStream {
                 };
                 self.queue_terminal(terminal);
             }
+            AgentEvent::ModeChanged { turn_id, mode } if turn_id == self.turn => {
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::ModeChanged {
+                        started_in: self.started_in.clone(),
+                        mode: mode.as_str().to_owned(),
+                    },
+                    at,
+                });
+            }
             // Another turn's events, provider state, attachments, children:
             // counted, never surfaced.
             _ => {}
@@ -951,10 +987,30 @@ mod tests {
 
     #[test]
     fn the_default_model_is_no_selection_and_a_model_is_the_agents_own_id() {
-        assert_eq!(selection_for(AGENT_DEFAULT_MODEL, None).unwrap(), None);
-        let selection = selection_for("deepseek/v4-pro", None).unwrap().unwrap();
+        assert_eq!(
+            selection_for(AGENT_DEFAULT_MODEL, None, None).unwrap(),
+            None
+        );
+        let selection = selection_for("deepseek/v4-pro", None, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(selection.model.unwrap().as_str(), "deepseek/v4-pro");
         assert!(selection.reasoning.is_none());
+    }
+
+    /// **A chat's mode starts the session** (koru-ai D7), even on the
+    /// agent's default model and level; a token that is no mode id is
+    /// refused before anything reaches the agent.
+    #[test]
+    fn a_chosen_mode_alone_is_a_selection() {
+        let mode = agent_mode(Some("acceptEdits")).unwrap();
+        let selection = selection_for(AGENT_DEFAULT_MODEL, None, mode)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selection.mode.unwrap().as_str(), "acceptEdits");
+        assert!(selection.model.is_none() && selection.reasoning.is_none());
+        assert_eq!(agent_mode(None).unwrap(), None);
+        assert!(agent_mode(Some("two words")).is_err());
     }
 
     /// **A chat's level rides the launch** (D18): *Default* is none, so the
@@ -969,7 +1025,9 @@ mod tests {
             launch_reasoning(ReasoningChoice::Level(ReasoningLevel::XHigh)),
             Some(LaunchReasoning::XHigh)
         );
-        let selection = selection_for(AGENT_DEFAULT_MODEL, high).unwrap().unwrap();
+        let selection = selection_for(AGENT_DEFAULT_MODEL, high, None)
+            .unwrap()
+            .unwrap();
         assert!(selection.model.is_none());
         assert_eq!(selection.reasoning, Some(LaunchReasoning::High));
         assert_eq!(
