@@ -6904,6 +6904,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "similar",
  "tempfile",
  "tracing",
  "windows-sys 0.59.0",
