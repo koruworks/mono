@@ -220,51 +220,33 @@ fn reopen_remembered_documents(workspace: &mut koru_workspace::Workspace, settin
     // and not necessarily one of these.
     let landed = workspace.active();
     let span = timing::Span::start("reopen documents");
-    let mut wanted = Vec::new();
     let showing_pin = settings
         .pinned_tab
         .and_then(|i| settings.pinned_tabs.get(i).map(|p| p.document));
+    let last = showing_pin.or(showing);
     let current = settings.workspace;
-    for pin in &settings.pinned_tabs {
-        wanted.push(pin.document);
-        if Some(pin.document) != showing_pin {
-            let _ = workspace.open_document_in(pin.workspace, pin.document);
-        }
-    }
-    for (which, _) in &settings.tabs {
-        if let crate::TabRef::Document {
-            id,
-            workspace: home,
-        } = which
+    // **Every column's documents**, not just the focused one's: `tabs` is the
+    // focused group's copy, and a document open beside a chat came back as
+    // Welcome when the chat had focus. See `Settings::remembered_documents`.
+    let wanted = settings.remembered_documents();
+    for (id, home) in &wanted {
+        if Some(*id) != last
+            && let Some(home) = home.or(current)
         {
-            wanted.push(*id);
-            if Some(*id) != showing
-                && let Some(home) = home.or(current)
-            {
-                let _ = workspace.open_document_in(home, *id);
-            }
+            let _ = workspace.open_document_in(home, *id);
         }
     }
-    if let Some(id) = showing_pin {
-        if let Some(pin) = settings.pinned_tabs.iter().find(|p| p.document == id) {
-            let _ = workspace.open_document_in(pin.workspace, id);
-        }
-    } else if let Some(id) = showing {
-        let home = settings
-            .tabs
-            .get(settings.tab)
-            .and_then(|(w, _)| match w {
-                crate::TabRef::Document { workspace, .. } => *workspace,
-                _ => None,
-            })
-            .or(current);
-        if let Some(home) = home {
-            let _ = workspace.open_document_in(home, id);
-        }
+    if let Some(id) = last
+        && let Some(home) = wanted
+            .iter()
+            .find(|(doc, _)| *doc == id)
+            .and_then(|(_, home)| home.or(current))
+    {
+        let _ = workspace.open_document_in(home, id);
     }
     // A document nothing is showing does not stay open. It is only reachable
     // here — no tab will ever ask for it, so no `CloseDocument` would ever come.
-    if let Some(landed) = landed.filter(|id| !wanted.contains(id)) {
+    if let Some(landed) = landed.filter(|id| !wanted.iter().any(|(doc, _)| doc == id)) {
         workspace.close_document(landed);
     }
     span.stop();

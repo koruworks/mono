@@ -1860,20 +1860,64 @@ impl Settings {
     /// No-op: switching workspace must not replace the open strip.
     pub fn adopt_tabs_of(&mut self, _workspace: WorkspaceId) {}
 
-    /// Every document still open in this window (Main + pinned), for parking
-    /// rooms across a workspace switch.
+    /// Every document still open in this window (Main + pinned, in every
+    /// column), for parking rooms across a workspace switch.
     pub fn open_document_ids(&self) -> Vec<DocumentId> {
-        let mut ids: Vec<DocumentId> = self
-            .tabs
-            .iter()
-            .filter_map(|(which, _)| which.document_id())
-            .collect();
-        for pin in &self.pinned_tabs {
-            if !ids.contains(&pin.document) {
-                ids.push(pin.document);
+        self.remembered_documents()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Every document a remembered tab is over, once each, with the workspace
+    /// it lives in when the entry names one.
+    ///
+    /// **Every group of [`pane_tree`](Self::pane_tree), not only `tabs`.**
+    /// `tabs` and `pinned_tabs` are the *focused* group's copy, kept for older
+    /// builds; a second column's documents are in the tree and nowhere else.
+    /// Reading only the flat lists meant a document in the column that did not
+    /// have focus was never opened before restore, so `restore_session` found
+    /// nothing to rebuild it from and the column came back as Welcome.
+    pub fn remembered_documents(&self) -> Vec<(DocumentId, Option<WorkspaceId>)> {
+        fn group_documents(node: &PaneNodeState, out: &mut Vec<(DocumentId, Option<WorkspaceId>)>) {
+            match node {
+                PaneNodeState::Group { main, pinned, .. } => {
+                    for pin in pinned {
+                        out.push((pin.document, Some(pin.workspace)));
+                    }
+                    for (which, _) in main {
+                        if let TabRef::Document { id, workspace } = which {
+                            out.push((*id, *workspace));
+                        }
+                    }
+                }
+                PaneNodeState::Split { left, right, .. } => {
+                    group_documents(left, out);
+                    group_documents(right, out);
+                }
             }
         }
-        ids
+        let mut all = Vec::new();
+        for (which, _) in &self.tabs {
+            if let TabRef::Document { id, workspace } = which {
+                all.push((*id, *workspace));
+            }
+        }
+        for pin in &self.pinned_tabs {
+            all.push((pin.document, Some(pin.workspace)));
+        }
+        if let Some(tree) = &self.pane_tree {
+            group_documents(&tree.root, &mut all);
+        }
+        let mut out: Vec<(DocumentId, Option<WorkspaceId>)> = Vec::new();
+        for (id, home) in all {
+            match out.iter_mut().find(|(seen, _)| *seen == id) {
+                // A later entry may know the home an earlier legacy one lacked.
+                Some(slot) => slot.1 = slot.1.or(home),
+                None => out.push((id, home)),
+            }
+        }
+        out
     }
 
     /// Forget every workspace not in `live`.
@@ -2933,6 +2977,53 @@ mod tests {
         before.remember_tabs_of(ws);
         let after = Settings::from_text(&before.profile_body());
         assert_eq!(after.pane_tree, before.pane_tree);
+    }
+
+    /// Two columns, a document in the left and a chat (which is not saved) in
+    /// the right, with the right focused: `tabs=` is the focused group's copy
+    /// and is empty, so the document is only in the tree. It must still be one
+    /// the shell reopens before restore — or the column comes back as Welcome,
+    /// which is what a restart did.
+    #[test]
+    fn a_document_in_the_unfocused_column_is_remembered() {
+        let ws = WorkspaceId::new();
+        let (left, pinned) = (DocumentId::new(), DocumentId::new());
+        let text = format!(
+            "workspace={ws}\ntabs=\ntab=0\n\
+             pane_tree=split(v;0.500;group(doc:{left}@{ws}:0;doc:{pinned}@{ws}:0:icon;m0);group(;;m0))|1\n\
+             pane_focused=1\n",
+            ws = ws.to_storage(),
+            left = left.to_storage(),
+            pinned = pinned.to_storage(),
+        );
+        let s = Settings::from_text(&text);
+        assert!(s.tabs.is_empty(), "the focused column held no document");
+        assert_eq!(
+            s.remembered_documents(),
+            vec![(pinned, Some(ws)), (left, Some(ws))]
+        );
+        assert_eq!(s.open_document_ids(), vec![pinned, left]);
+    }
+
+    /// The focused group's documents are in both `tabs` and the tree; each is
+    /// reopened once, and a legacy entry with no home takes the tree's.
+    #[test]
+    fn a_document_in_both_the_flat_list_and_the_tree_is_remembered_once() {
+        let ws = WorkspaceId::new();
+        let doc = DocumentId::new();
+        let s = Settings {
+            tabs: vec![(TabRef::document(doc, None), 0.0)],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Group {
+                    main: vec![(TabRef::document(doc, Some(ws)), 0.0)],
+                    pinned: vec![],
+                    active: GroupActiveState::Main(0),
+                },
+                focused: vec![],
+            }),
+            ..Settings::default()
+        };
+        assert_eq!(s.remembered_documents(), vec![(doc, Some(ws))]);
     }
 
     /// A ratio that is not a number is a corrupt row, not a geometry: NaN
