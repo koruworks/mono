@@ -20,6 +20,7 @@ use koru_i18n::{Key, Lang, fill, t};
 use crate::agents::{agent_row_detail, agent_row_outcome};
 
 mod command;
+mod diff;
 pub(crate) mod layout;
 
 /// The color a piece of a detail is drawn in, resolved at draw time.
@@ -28,6 +29,8 @@ pub(crate) enum Ink {
     Dim,
     Text,
     Error,
+    Added,
+    Removed,
     Link,
 }
 
@@ -120,6 +123,7 @@ pub(crate) fn pieces(
     let call = Call::of(activity);
     let rendered = match Shape::of(activity) {
         Shape::Command => command::render(&call, lang, expanded),
+        Shape::Edit => diff::render(&call, lang, expanded),
         Shape::Other => None,
     }
     .unwrap_or_else(|| text(&call, lang, expanded));
@@ -139,6 +143,7 @@ pub(crate) fn pieces(
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
     Command,
+    Edit,
     Other,
 }
 
@@ -146,6 +151,7 @@ impl Shape {
     pub fn of(activity: &ToolActivity) -> Self {
         match AgentToolKind::parse(&activity.tool_name) {
             Some(AgentToolKind::Command) => Self::Command,
+            Some(AgentToolKind::FileChange) => Self::Edit,
             _ => Self::Other,
         }
     }
@@ -230,11 +236,39 @@ fn text(call: &Call<'_>, lang: Lang, expanded: bool) -> Rendered {
     }
     error_block(call, expanded, lang, &mut pieces);
     if let Some(output) = call.output {
-        pieces.push(Piece::Markdown(strip_ansi(output)));
+        markdown(&strip_ansi(output), expanded, lang, &mut pieces);
     }
     Rendered {
         pieces,
         notes: Vec::new(),
+    }
+}
+
+/// Markdown as the chat draws it, except that a `diff` block is drawn as
+/// a diff: green and red, with line numbers.
+fn markdown(text: &str, expanded: bool, lang: Lang, pieces: &mut Vec<Piece>) {
+    let mut prose = String::new();
+    for block in koru_ai_core::cut_markdown(text) {
+        let files = (block.kind == koru_ai_core::MessageBlockKind::Code)
+            .then(|| unfence(&block.markdown))
+            .filter(|(info, _)| info.is_some_and(|info| info.eq_ignore_ascii_case("diff")))
+            .and_then(|(_, inner)| diff::parse(inner));
+        let Some(files) = files else {
+            if !prose.is_empty() {
+                prose.push_str("\n\n");
+            }
+            prose.push_str(&block.markdown);
+            continue;
+        };
+        if !prose.is_empty() {
+            pieces.push(Piece::Markdown(std::mem::take(&mut prose)));
+        }
+        for file in files {
+            pieces.extend(diff::file_pieces(file.path, &file.lines, expanded, lang));
+        }
+    }
+    if !prose.is_empty() {
+        pieces.push(Piece::Markdown(prose));
     }
 }
 

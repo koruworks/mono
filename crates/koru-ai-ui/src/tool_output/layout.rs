@@ -41,7 +41,8 @@ pub(crate) fn color(ink: Ink) -> Color {
     match ink {
         Ink::Dim => p.text_dim,
         Ink::Text => p.text,
-        Ink::Error => terminal.ansi[1],
+        Ink::Error | Ink::Removed => terminal.ansi[1],
+        Ink::Added => terminal.ansi[2],
         Ink::Link => p.accent,
     }
 }
@@ -52,7 +53,7 @@ pub(crate) fn fingerprint(pieces: &[Piece], width: f32) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     pieces.hash(&mut hasher);
     width.to_bits().hash(&mut hasher);
-    for color in [color(Ink::Text), color(Ink::Dim), color(Ink::Error)] {
+    for color in [color(Ink::Text), color(Ink::Dim), color(Ink::Added)] {
         color.to_rgba8().to_u32().hash(&mut hasher);
     }
     theme::code_stack().hash(&mut hasher);

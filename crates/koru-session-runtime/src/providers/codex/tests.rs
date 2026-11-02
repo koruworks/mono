@@ -1709,6 +1709,12 @@ fn a_commands_exit_code_and_a_searchs_query_are_kept() {
     let ran = json!({"type":"commandExecution","id":"c","status":"completed",
         "command":"ls","aggregatedOutput":"a.txt","exitCode":0});
     assert_eq!(normalize::item_output(&ran).as_deref(), Some("a.txt"));
+    let change = json!({"type":"fileChange","id":"f","status":"completed",
+        "changes":[{"path":"a.rs","diff":"@@ -1 +1 @@\n-a\n+b"},{"path":"b.rs","diff":"@@ -2 +2 @@\n-c\n+d"}]});
+    assert_eq!(
+        normalize::item_output(&change).as_deref(),
+        Some("--- a.rs\n+++ a.rs\n@@ -1 +1 @@\n-a\n+b\n--- b.rs\n+++ b.rs\n@@ -2 +2 @@\n-c\n+d")
+    );
     let search = json!({"type":"webSearch","id":"w","query":"koru notes"});
     assert_eq!(
         normalize::item_input(&search).as_deref(),

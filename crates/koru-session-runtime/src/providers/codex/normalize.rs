@@ -273,11 +273,21 @@ pub(super) fn item_output(item: &Value) -> Option<String> {
                 None => output?.to_owned(),
             }
         }
+        // Each file's diff under its path, so the chat can tell the files
+        // of one change apart (D17).
         "fileChange" => item
             .get("changes")?
             .as_array()?
             .iter()
-            .filter_map(|change| change.get("diff").and_then(Value::as_str))
+            .filter_map(|change| {
+                let diff = change.get("diff").and_then(Value::as_str)?;
+                Some(match change.get("path").and_then(Value::as_str) {
+                    Some(path) if !diff.starts_with("--- ") && !diff.starts_with("diff --git") => {
+                        format!("--- {path}\n+++ {path}\n{diff}")
+                    }
+                    _ => diff.to_owned(),
+                })
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         "mcpToolCall" => match item.get("result")? {

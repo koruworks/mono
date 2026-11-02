@@ -1146,7 +1146,7 @@ fn a_failed_tool_carries_its_own_message_bounded() {
     assert_eq!(details[2], (true, None, Some("a result".into())));
 }
 
-/// UC17: a diff block crosses as its path over its new text, an update's
+/// UC17: a diff block crosses as a unified diff (D17), an update's
 /// content accumulates until the completion, and everything is bounded.
 #[test]
 fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
@@ -1186,7 +1186,10 @@ fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
             _ => None,
         })
         .collect();
-    assert_eq!(outputs[0].as_deref(), Some("README.md\nnew words"));
+    assert_eq!(
+        outputs[0].as_deref(),
+        Some("--- README.md\n+++ README.md\n@@\n-old\n+new words")
+    );
     assert_eq!(
         outputs[1].as_deref().map(str::len),
         Some(koru_session_protocol::TOOL_CONTENT_CHARS)
@@ -1317,6 +1320,42 @@ fn an_edits_diff_outlives_the_completions_raw_output() {
     let output = outputs(&events).remove(0).unwrap();
     assert!(output.contains("a.txt"), "{output}");
     assert!(!output.contains("has been updated"), "{output}");
+}
+
+/// D17: the hook's report of an edit (claude-agent-acp's
+/// `toolUpdateFromDiffToolResponse`) is one diff block per hunk, with the
+/// hunk's first line in `locations`: the row keeps it as a unified diff
+/// numbered where the hunk is in the file. A new file is all additions.
+#[test]
+fn an_acp_diff_becomes_a_numbered_unified_diff() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"e","title":"Edit src/a.rs","kind":"edit","status":"in_progress","rawInput":{"file_path":"src/a.rs"}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e",
+                "content":[{"type":"diff","path":"src/a.rs","oldText":"fn a() {\n    old();\n}","newText":"fn a() {\n    new();\n}"}],
+                "locations":[{"path":"src/a.rs","line":40}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","status":"completed"}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"w","title":"Write b.txt","kind":"edit","status":"in_progress","rawInput":{"file_path":"b.txt"},
+                "content":[{"type":"diff","path":"b.txt","oldText":null,"newText":"one\ntwo"}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"w","status":"completed"}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(
+        outputs(&events),
+        vec![
+            Some(
+                "--- src/a.rs\n+++ src/a.rs\n@@ -40,3 +40,3 @@\n fn a() {\n-    old();\n+    new();\n }"
+                    .into()
+            ),
+            Some("--- /dev/null\n+++ b.txt\n@@\n+one\n+two".into()),
+        ]
+    );
 }
 
 /// A session that offers models and, on the one it starts on, levels.

@@ -370,3 +370,104 @@ fn a_command_that_said_nothing_is_its_status_alone() {
         ["Done · 1s · Just now"]
     );
 }
+
+// ----- diffs --------------------------------------------------------------
+
+/// What Koru's ACP adapter keeps for an edit that arrived as ACP `diff`
+/// content (`acp::events::diff_text`, tested there from the content).
+const EDIT: &str =
+    "--- src/a.rs\n+++ src/a.rs\n@@ -40,3 +40,3 @@\n fn a() {\n-    old();\n+    new();\n }";
+
+#[test]
+fn a_unified_diff_parses_to_numbered_lines() {
+    let files = diff::parse(EDIT).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path.as_deref(), Some("src/a.rs"));
+    let lines = files[0]
+        .lines
+        .iter()
+        .map(|line| (line.kind, line.number, line.text.as_str()))
+        .collect::<Vec<_>>();
+    use diff::DiffKind::*;
+    assert_eq!(
+        lines,
+        [
+            (Hunk, None, "@@ -40,3 +40,3 @@"),
+            (Context, Some(40), "fn a() {"),
+            (Removed, Some(41), "    old();"),
+            (Added, Some(41), "    new();"),
+            (Context, Some(42), "}"),
+        ]
+    );
+    assert!(diff::parse("just text\n+ not a diff").is_none());
+}
+
+/// An edit reads as its path, then green and red lines with their numbers.
+#[test]
+fn an_edit_from_acp_diff_content_reads_as_a_diff() {
+    let edit = done(
+        "agent.file_change",
+        "Edit src/a.rs",
+        Some(r#"{"file_path":"src/a.rs","old_string":"old();","new_string":"new();"}"#),
+        EDIT,
+    );
+    let pieces = pieces(&edit, Lang::En, NOW, false);
+    assert_eq!(
+        pieces[0],
+        Piece::Header {
+            text: "src/a.rs".into(),
+            mono: false
+        }
+    );
+    let Piece::Code(lines) = &pieces[1] else {
+        panic!("{pieces:?}")
+    };
+    let shown = lines
+        .iter()
+        .map(|line| (line.gutter.as_str(), line.text.as_str(), line.ink))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shown,
+        [
+            ("40", "  fn a() {", Ink::Text),
+            ("41", "-     old();", Ink::Removed),
+            ("41", "+     new();", Ink::Added),
+            ("42", "  }", Ink::Text),
+        ]
+    );
+}
+
+/// A `diff` fence in any tool's output is drawn the same way; the prose
+/// around it stays Markdown.
+#[test]
+fn a_diff_fence_in_text_output_renders_as_a_diff() {
+    let output = format!("Applied:\n\n```diff\n{EDIT}\n```\n\nDone.");
+    let pieces = pieces(
+        &done("agent.other", "apply_patch", None, &output),
+        Lang::En,
+        NOW,
+        false,
+    );
+    assert_eq!(pieces[0], Piece::Markdown("Applied:".into()));
+    assert!(matches!(&pieces[1], Piece::Header { text, .. } if text == "src/a.rs"));
+    assert!(
+        matches!(&pieces[2], Piece::Code(lines) if lines.iter().any(|line| line.ink == Ink::Added))
+    );
+    assert_eq!(pieces[3], Piece::Markdown("Done.".into()));
+}
+
+/// A row from before Koru kept a diff (`path` over the new text) reads as
+/// its path over that text, not as a diff it is not.
+#[test]
+fn an_edit_from_before_diffs_reads_as_its_path_and_text() {
+    let edit = done(
+        "agent.file_change",
+        "Edit README.md",
+        None,
+        "README.md\nnew words",
+    );
+    assert_eq!(
+        words(&pieces(&edit, Lang::En, NOW, false)),
+        ["README.md", "new words", "Done · 1s · Just now"]
+    );
+}

@@ -406,7 +406,7 @@ fn refine_tool(tool: &mut Tool, update: &Value) {
         tool.input = Some(text);
     }
     if let Some(blocks) = update["content"].as_array() {
-        if let Some(diff) = diff_text(blocks) {
+        if let Some(diff) = diff_text(blocks, update["locations"].as_array()) {
             tool.diff = Some(diff);
         }
         if update.get("rawInput").is_none()
@@ -447,21 +447,93 @@ fn content_text(blocks: &[Value]) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-/// A content array's diff blocks, as their path over their new text.
-fn diff_text(blocks: &[Value]) -> Option<String> {
-    let text = blocks
+/// A content array's diff blocks, as one unified diff. Claude's edit
+/// arrives twice: first built from the call's input (`old_string`,
+/// `new_string`), then — from the hook that ran after the edit — once per
+/// hunk, with the hunk's first line in the update's `locations`, in the
+/// same order. A hunk whose first line is not known has a bare `@@` header
+/// and no line numbers.
+fn diff_text(blocks: &[Value], locations: Option<&Vec<Value>>) -> Option<String> {
+    let diffs = blocks
         .iter()
         .filter(|block| block["type"] == "diff")
-        .filter_map(|block| {
-            let new_text = block["newText"].as_str()?;
-            Some(format!(
-                "{}\n{new_text}",
-                block["path"].as_str().unwrap_or_default()
-            ))
+        .collect::<Vec<_>>();
+    let lines = locations
+        .filter(|locations| locations.len() == diffs.len())
+        .map(|locations| {
+            locations
+                .iter()
+                .map(|location| location["line"].as_u64())
+                .collect::<Vec<_>>()
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .unwrap_or_else(|| vec![None; diffs.len()]);
+    let mut text = String::new();
+    let mut path = None;
+    for (block, first_line) in diffs.into_iter().zip(lines) {
+        let Some(new_text) = block["newText"].as_str() else {
+            continue;
+        };
+        let block_path = block["path"].as_str().unwrap_or_default();
+        let old_text = block["oldText"].as_str();
+        // The hunks of one file share its header.
+        if path != Some(block_path) {
+            let from = if old_text.is_some() {
+                block_path
+            } else {
+                "/dev/null"
+            };
+            text.push_str(&format!("--- {from}\n+++ {block_path}\n"));
+            path = Some(block_path);
+        }
+        unified_hunks(
+            old_text.unwrap_or_default(),
+            new_text,
+            first_line,
+            &mut text,
+        );
+    }
     (!text.is_empty()).then_some(text)
+}
+
+/// The hunks between `old` and `new`, with three lines of context, as a
+/// unified diff's body. `first_line` is where `old` and `new` start in the
+/// file, when known.
+fn unified_hunks(old: &str, new: &str, first_line: Option<u64>, text: &mut String) {
+    use similar::{ChangeTag, TextDiff};
+    let diff = TextDiff::from_lines(old, new);
+    for group in diff.grouped_ops(3) {
+        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+            continue;
+        };
+        match first_line {
+            Some(line) => {
+                let offset = line.saturating_sub(1) as usize;
+                let range = |start: usize, end: usize| {
+                    let count = end - start;
+                    // An empty side is numbered by the line before it.
+                    let start = if count == 0 { start } else { start + 1 } + offset;
+                    format!("{start},{count}")
+                };
+                text.push_str(&format!(
+                    "@@ -{} +{} @@\n",
+                    range(first.old_range().start, last.old_range().end),
+                    range(first.new_range().start, last.new_range().end),
+                ));
+            }
+            None => text.push_str("@@\n"),
+        }
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                text.push(match change.tag() {
+                    ChangeTag::Equal => ' ',
+                    ChangeTag::Delete => '-',
+                    ChangeTag::Insert => '+',
+                });
+                text.push_str(change.value().trim_end_matches(['\n', '\r']));
+                text.push('\n');
+            }
+        }
+    }
 }
 
 /// A string as it is; anything else as compact JSON; nothing for null.
