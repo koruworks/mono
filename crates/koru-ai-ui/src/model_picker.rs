@@ -43,8 +43,12 @@ const RAIL_DIVIDER: f32 = 9.0;
 /// The search row, with ↻ at its end.
 pub(crate) const SEARCH_H: f32 = 40.0;
 pub(crate) const ROW_H: f32 = 30.0;
-/// The most rows the list shows before it scrolls (raised from 8).
-pub(crate) const VISIBLE_ROWS: usize = 9;
+/// **The picker's one size** (D13): the search row, six rows of the list
+/// and the footer — the size the person chose. The list scrolls inside it
+/// when there are more, and a short list leaves room under it rather than
+/// shrinking the picker, so the picker keeps its size from agent to agent.
+/// A model with no footer gives the room to the list.
+pub(crate) const LIST_ROWS: usize = 6;
 /// The footer: the level's word and ↺ on one line, the slider under it.
 pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
 const PAD: f32 = 4.0;
@@ -204,14 +208,12 @@ impl Geometry {
 }
 
 /// The picker's width and height: as wide as the composer up to
-/// [`MAX_W`]; as tall as the search row, the rows up to
-/// [`VISIBLE_ROWS`] (never shorter than the rail needs), and the footer.
-pub(crate) fn size(composer_w: f32, rows: usize, rail_h: f32, footer: bool) -> (f32, f32) {
+/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows and the
+/// footer, whatever the list holds — never shorter than the rail needs.
+pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
     let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
-    let list = rows.clamp(1, VISIBLE_ROWS) as f32 * ROW_H;
-    let body = (SEARCH_H + list).max(rail_h);
-    let footer = if footer { FOOTER_H } else { 0.0 };
-    (width, body + footer + PAD * 2.0)
+    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H;
+    (width, height.max(rail_h))
 }
 
 /// The picker's parts inside `panel`.
@@ -765,12 +767,7 @@ impl crate::ChatSurface {
         let rail = self.picker_rail();
         let rail_h = rail_height(rail.len(), self.rail_has_divider(&rail));
         let footer = self.effort_control().is_some();
-        let (w, h) = size(
-            self.composer_hit_rect.w,
-            self.picker_rows().len(),
-            rail_h,
-            footer,
-        );
+        let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
         let panel = if self.fits_above_composer(h) {
             self.above_composer(chip.x + chip.w - w, w, h)
@@ -821,7 +818,7 @@ impl crate::ChatSurface {
         };
         let visible = self
             .picker_geometry()
-            .map_or(VISIBLE_ROWS, |geometry| geometry.visible_rows());
+            .map_or(LIST_ROWS, |geometry| geometry.visible_rows());
         self.picker.offset = scroll_into_view(index, self.picker.offset, visible);
     }
 
@@ -1109,7 +1106,7 @@ impl crate::ChatSurface {
         let previous = self.picker.offset;
         let visible = self
             .picker_geometry()
-            .map_or(VISIBLE_ROWS, |geometry| geometry.visible_rows());
+            .map_or(LIST_ROWS, |geometry| geometry.visible_rows());
         let max = self.picker_rows().len().saturating_sub(visible);
         if dy > 0.0 {
             self.picker.offset = self.picker.offset.saturating_sub(dy.ceil() as usize);

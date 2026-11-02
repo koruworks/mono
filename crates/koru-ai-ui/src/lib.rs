@@ -9289,7 +9289,7 @@ mod tests {
         surface
             .agent_status
             .insert(claude.clone(), AgentStatus::Ready);
-        let models = (0..model_picker::VISIBLE_ROWS + 3)
+        let models = (0..model_picker::LIST_ROWS + 6)
             .map(|n| koru_ai_wire::AgentModelView {
                 id: format!("model-{n}"),
                 group: "claude".into(),
@@ -9305,7 +9305,7 @@ mod tests {
             .insert(claude, agents::AgentModels::Listed(models));
         surface.composer_rect();
         assert!(surface.open_model_picker());
-        assert!(surface.picker_rows().len() > model_picker::VISIBLE_ROWS);
+        assert!(surface.picker_rows().len() > model_picker::LIST_ROWS);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, -1.0)));
         assert_eq!(surface.picker.offset, 1);
         assert!(surface.scroll_by(MouseScrollDelta::LineDelta(0.0, 1.0)));

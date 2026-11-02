@@ -115,7 +115,7 @@ fn on_agent(surface: &mut ChatSurface, id: &str, model: &str, reasoning: Reasoni
 #[test]
 fn the_geometry_fits_narrow_wide_and_middling_composers() {
     for composer in [280.0, 360.0, 1000.0] {
-        let (w, h) = size(composer, 4, rail_height(2, false), true);
+        let (w, h) = size(composer, rail_height(2, false));
         assert!(w <= MAX_W && w <= composer.max(RAIL_W + 160.0));
         let geometry = geometry(Rect::new(10.0, 20.0, w, h), true);
         assert_eq!(geometry.rail.w, RAIL_W);
@@ -123,16 +123,39 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
         assert!(geometry.refresh.x + geometry.refresh.w <= geometry.search.x + geometry.search.w);
         let footer = geometry.footer.unwrap();
         assert!(geometry.list.y + geometry.list.h <= footer.y + 0.5);
-        assert_eq!(geometry.visible_rows(), 4);
+        assert_eq!(geometry.visible_rows(), LIST_ROWS);
         assert!(geometry.reset().unwrap().x + 24.0 <= footer.x + footer.w);
     }
-    assert_eq!(size(1000.0, 40, 0.0, false).0, MAX_W);
-    // The list never shows more than nine rows, and never fewer than the
-    // rail needs room for.
-    let (_, tall) = size(360.0, 40, 0.0, false);
-    assert!((tall - (SEARCH_H + VISIBLE_ROWS as f32 * ROW_H + PAD * 2.0)).abs() < 0.5);
-    let (_, rail_bound) = size(360.0, 1, rail_height(8, true), false);
+    assert_eq!(size(1000.0, 0.0).0, MAX_W);
+    // Never shorter than the rail needs room for.
+    let (_, rail_bound) = size(360.0, rail_height(8, true));
     assert!(rail_bound >= rail_height(8, true));
+}
+
+/// D13: one size — search, six rows, the footer — whatever the agent
+/// lists: a short list leaves room, a long one scrolls, and a model with
+/// no footer gives its room to the list.
+#[test]
+fn the_picker_keeps_one_height_from_agent_to_agent() {
+    let (_, h) = size(360.0, rail_height(2, false));
+    assert!((h - (PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H)).abs() < 0.5);
+
+    let mut surface = surface();
+    let mut heights = Vec::new();
+    for (id, model) in [
+        ("agent-claude", "sonnet"),
+        ("agent-opencode", "deepseek/v4-pro"),
+    ] {
+        on_agent(&mut surface, id, model, ReasoningChoice::Default);
+        open(&mut surface);
+        heights.push(surface.picker_geometry().unwrap().panel.h);
+        surface.close_picker();
+    }
+    assert_eq!(heights[0], heights[1], "lists of different lengths");
+    assert_eq!(heights[0], h);
+
+    let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false);
+    assert!(bare.visible_rows() > LIST_ROWS, "no footer: more rows");
 }
 
 /// D12: the picker opens upward, above the composer and end-aligned with
