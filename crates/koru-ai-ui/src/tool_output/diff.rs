@@ -316,7 +316,7 @@ fn code_line(line: &DiffLine) -> CodeLine {
 
 /// The path a change names in its input: Claude's `file_path`, or the
 /// first of Codex's paths.
-fn input_path(call: &Call<'_>) -> Option<String> {
+pub(crate) fn input_path(call: &Call<'_>) -> Option<String> {
     let input = call.input?;
     match serde_json::from_str::<serde_json::Value>(input) {
         Ok(value) => {

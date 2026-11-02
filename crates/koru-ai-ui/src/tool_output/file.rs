@@ -70,7 +70,7 @@ pub(super) fn render(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<Rend
 
 /// The file a read names, and the lines it asked for: from its input,
 /// else from its title (*Read src/a.rs (40 - 89)*).
-fn target(call: &Call<'_>) -> (Option<String>, Option<(u32, u32)>) {
+pub(crate) fn target(call: &Call<'_>) -> (Option<String>, Option<(u32, u32)>) {
     let input = call
         .input
         .and_then(|input| serde_json::from_str::<serde_json::Value>(input).ok());

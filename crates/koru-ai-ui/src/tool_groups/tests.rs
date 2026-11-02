@@ -100,7 +100,64 @@ fn a_failure_is_counted_on_its_line_and_a_running_call_says_what_it_is_doing() {
         ToolActivityStatus::Running,
         None,
     );
-    assert_eq!(lines(&[&ok, &running]), ["Ran a command", "Reading…"]);
+    assert_eq!(
+        lines(&[&ok, &running]),
+        ["Ran a command", "Reading… big.log"]
+    );
+}
+
+/// D17: an answered permission is a note on the call it was asked for —
+/// the call whose label its summary repeats — not a line between steps;
+/// the calls on either side of it read as one step again.
+#[test]
+fn an_answered_permission_is_a_note_on_its_call() {
+    let first = row("agent.command", Some("cargo test"), DONE, Some(0));
+    let mut asked = row("agent.approval", None, DONE, Some(0));
+    asked.approval = ToolApproval::Approved;
+    asked.agent_summary = Some("cargo test".into());
+    let second = row("agent.command", Some("git status"), DONE, Some(0));
+    let rows = [&first, &asked, &second];
+    assert_eq!(lines(&rows), ["Ran 2 commands · asked"]);
+    let groups = group_steps(&rows, stored);
+    assert_eq!(
+        step_call_line(&groups[0], &first, Lang::En),
+        "cargo test · asked"
+    );
+    assert_eq!(step_call_line(&groups[0], &second, Lang::En), "git status");
+
+    // Refused, it says so.
+    let mut refused = asked.clone();
+    refused.status = ToolActivityStatus::Denied;
+    refused.approval = ToolApproval::Denied;
+    assert_eq!(lines(&[&first, &refused]), ["Ran a command · refused"]);
+
+    // A permission no call answers to keeps its own line.
+    let mut stray = asked.clone();
+    stray.agent_summary = Some("permissions".into());
+    assert_eq!(
+        lines(&[&first, &stray, &second]),
+        ["Ran a command", "Asked permission", "Ran a command"]
+    );
+}
+
+/// A call titled only by its kind — Codex's `command_execution`, Claude's
+/// *Terminal* from before its input arrived — says what it did from its
+/// input instead.
+#[test]
+fn a_call_line_says_what_the_call_did() {
+    let mut codex = row("agent.command", Some("command_execution"), DONE, None);
+    codex.agent_input = Some("cargo test --workspace".into());
+    assert_eq!(call_line(&codex, Lang::En), "cargo test --workspace");
+    let mut claude = row("agent.command", Some("Terminal"), DONE, None);
+    claude.agent_input = Some(r#"{"command":"git status","description":"Status"}"#.into());
+    assert_eq!(call_line(&claude, Lang::En), "git status");
+    let mut search = row("agent.search", Some("web_search"), DONE, None);
+    search.agent_input = Some("koru notes".into());
+    assert_eq!(call_line(&search, Lang::En), "\u{201C}koru notes\u{201D}");
+    // With nothing to go on, the kind's word stays.
+    let mut bare = row("agent.command", Some("Terminal"), DONE, None);
+    bare.agent_input = Some("{}".into());
+    assert_eq!(call_line(&bare, Lang::En), "Terminal");
 }
 
 #[test]

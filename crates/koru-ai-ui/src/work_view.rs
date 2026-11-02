@@ -208,7 +208,7 @@ pub(crate) fn build(
                     for row in &group.rows {
                         let call_open = opened.calls.contains(&row.id);
                         let line = engine.elided(
-                            &tool_groups::call_line(row, lang),
+                            &tool_groups::step_call_line(group, row, lang),
                             role::ui(),
                             (width - NEST - CARET - 4.0).max(1.0),
                         );

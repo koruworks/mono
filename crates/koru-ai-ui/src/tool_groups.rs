@@ -7,6 +7,8 @@
 //! kind are one line (*Read 4 files*, *Ran 2 commands*), a failure is a count
 //! on its line (*· 1 failed*), plumbing a person has no use for is not shown,
 //! and a pending permission request is never a line at all — it stays a card.
+//! An answered one is a note on the call it was asked for (*· asked*), when
+//! its row names that call, and a line of its own only when it does not.
 //!
 //! Where each call began in the reply's text (`ToolActivity::text_offset`,
 //! schema 10) splits the reply: the text before the last call is the agent's
@@ -15,7 +17,10 @@
 //! before schema 10, or by Koru's own tools — folds its steps and keeps all
 //! of its text as the answer.
 
-use koru_ai_core::{AgentToolKind, CallShape, MessageId, ToolActivity, ToolActivityStatus};
+use koru_ai_core::{
+    AgentToolKind, CallShape, MessageId, ToolActivity, ToolActivityStatus, ToolApproval,
+    ToolInvocationId,
+};
 use koru_i18n::{Key, Lang, fill, t};
 
 use crate::agents::is_agent_row;
@@ -81,6 +86,90 @@ pub(crate) struct StepGroup<'a> {
     pub rows: Vec<&'a ToolActivity>,
     /// Where in the reply the group's first call began, in bytes.
     pub offset: Option<usize>,
+    /// The permissions asked for its calls, answered, by call.
+    pub asked: Vec<(ToolInvocationId, Asked)>,
+}
+
+impl StepGroup<'_> {
+    pub fn asked_for(&self, call: ToolInvocationId) -> Option<Asked> {
+        self.asked
+            .iter()
+            .find_map(|(id, asked)| (*id == call).then_some(*asked))
+    }
+}
+
+/// How a permission asked for a call was answered.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Asked {
+    Allowed,
+    Refused,
+}
+
+impl Asked {
+    fn of(permission: &ToolActivity) -> Self {
+        if permission.approval == ToolApproval::Approved
+            || permission.status == ToolActivityStatus::Complete
+        {
+            Self::Allowed
+        } else {
+            Self::Refused
+        }
+    }
+
+    fn note(self, lang: Lang) -> &'static str {
+        t(
+            lang,
+            match self {
+                Self::Allowed => Key::AiStepAsked,
+                Self::Refused => Key::AiStepRefused,
+            },
+        )
+    }
+}
+
+/// The answered permissions the rows name a call for, as notes on those
+/// calls: a permission whose summary is a call's label — the agent's own
+/// title for the call, which Claude and Codex both repeat when they ask —
+/// the nearest such call. A permission no call answers to is left alone.
+fn fold_permissions(rows: &[&ToolActivity]) -> Vec<(ToolInvocationId, ToolInvocationId, Asked)> {
+    /// The longest label the ACP adapter keeps; a longer title is cut.
+    const LABEL_CHARS: usize = 160;
+    let mut folded = Vec::new();
+    for (at, permission) in rows.iter().enumerate() {
+        if step_kind(permission) != Some(StepKind::Permission) {
+            continue;
+        }
+        let Some(summary) = permission
+            .agent_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+        else {
+            continue;
+        };
+        let names = |call: &ToolActivity| {
+            call.assistant_message_id == permission.assistant_message_id
+                && step_kind(call).is_some_and(|kind| kind != StepKind::Permission)
+                && call
+                    .agent_label
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|label| {
+                        label == summary
+                            || (label.chars().count() >= LABEL_CHARS && summary.starts_with(label))
+                    })
+        };
+        if let Some(call) = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| names(call))
+            .min_by_key(|(index, _)| index.abs_diff(at))
+            .map(|(_, call)| call)
+        {
+            folded.push((permission.id, call.id, Asked::of(permission)));
+        }
+    }
+    folded
 }
 
 /// A reply's steps, grouped in the order they happened. `offset` is where a
@@ -89,20 +178,40 @@ pub(crate) fn group_steps<'a>(
     rows: &[&'a ToolActivity],
     offset: impl Fn(&ToolActivity) -> Option<usize>,
 ) -> Vec<StepGroup<'a>> {
+    let folded = fold_permissions(rows);
     let mut groups: Vec<StepGroup<'a>> = Vec::new();
     for row in rows {
         let Some(kind) = step_kind(row) else {
             continue;
         };
-        let at = offset(row);
-        match groups.last_mut() {
-            Some(last) if last.kind == kind && last.offset == at => last.rows.push(row),
-            _ => groups.push(StepGroup {
-                kind,
-                rows: vec![row],
-                offset: at,
-            }),
+        if folded
+            .iter()
+            .any(|(permission, _, _)| *permission == row.id)
+        {
+            continue;
         }
+        let at = offset(row);
+        let group = match groups.last_mut() {
+            Some(last) if last.kind == kind && last.offset == at => {
+                last.rows.push(row);
+                last
+            }
+            _ => {
+                groups.push(StepGroup {
+                    kind,
+                    rows: vec![row],
+                    offset: at,
+                    asked: Vec::new(),
+                });
+                groups.last_mut().unwrap()
+            }
+        };
+        group.asked.extend(
+            folded
+                .iter()
+                .filter(|(_, call, _)| *call == row.id)
+                .map(|(_, call, asked)| (*call, *asked)),
+        );
     }
     groups
 }
@@ -110,10 +219,10 @@ pub(crate) fn group_steps<'a>(
 /// A group's line: what it did and how often, or — while a call in it is
 /// still running — what it is doing; a failure is counted after a dot.
 pub(crate) fn group_line(group: &StepGroup<'_>, lang: Lang) -> String {
-    let live = group.rows.iter().any(|row| !row.status.is_terminal());
+    let running = group.rows.iter().find(|row| !row.status.is_terminal());
     let count = group.rows.len();
-    let text = if live {
-        t(
+    let text = if let Some(running) = running {
+        let doing = t(
             lang,
             match group.kind {
                 StepKind::Read => Key::AiStepReading,
@@ -125,8 +234,12 @@ pub(crate) fn group_line(group: &StepGroup<'_>, lang: Lang) -> String {
                 StepKind::Tool => Key::AiStepUsingTool,
                 StepKind::Permission => Key::AiStepWaitingPermission,
             },
-        )
-        .to_owned()
+        );
+        // What it is doing: *Running… cargo test*.
+        match crate::tool_output::subject(running) {
+            Some(subject) => format!("{doing} {subject}"),
+            None => doing.to_owned(),
+        }
     } else {
         let (one, many) = match group.kind {
             StepKind::Read => (Key::AiStepReadOne, Key::AiStepReadMany),
@@ -149,32 +262,81 @@ pub(crate) fn group_line(group: &StepGroup<'_>, lang: Lang) -> String {
         .iter()
         .filter(|row| row.status == ToolActivityStatus::Failed)
         .count();
-    if failed == 0 {
+    let mut text = if failed == 0 {
         text
     } else {
         format!(
             "{text} · {}",
             fill(t(lang, Key::AiStepFailed), &[&failed.to_string()])
         )
+    };
+    for asked in [Asked::Allowed, Asked::Refused] {
+        if group.asked.iter().any(|(_, note)| *note == asked) {
+            text = format!("{text} · {}", asked.note(lang));
+        }
+    }
+    text
+}
+
+/// A call's line inside its opened group, with the permission asked for
+/// it, when there was one: *cargo test · asked*.
+pub(crate) fn step_call_line(group: &StepGroup<'_>, activity: &ToolActivity, lang: Lang) -> String {
+    let line = call_line(activity, lang);
+    match group.asked_for(activity.id) {
+        Some(asked) => format!("{line} · {}", asked.note(lang)),
+        None => line,
     }
 }
 
-/// One call's line inside an opened group: what the agent called it (its
-/// first line), one of Koru's tools by its friendly name, or its kind.
+/// Titles that say only what kind of call it was: a kind's token, or the
+/// placeholder an agent titles a call with before its input is written.
+const GENERIC_LABELS: [&str; 20] = [
+    "command_execution",
+    "file_change",
+    "mcp_tool",
+    "dynamic_tool",
+    "web_search",
+    "image_generation",
+    "other",
+    "Terminal",
+    "Bash",
+    "Read",
+    "Read File",
+    "Edit",
+    "Write",
+    "Preparing file\u{2026}",
+    "Fetch",
+    "Web search",
+    "Find",
+    "grep",
+    "Task",
+    "Unknown Tool",
+];
+
+/// One call's line inside an opened group: what it did — what the agent
+/// called it (its first line), or, when that is only the call's kind, the
+/// command, file or query its input names — one of Koru's tools by its
+/// friendly name, or its kind.
 pub(crate) fn call_line(activity: &ToolActivity, lang: Lang) -> String {
     if !is_agent_row(activity) {
         return koru_tool_line(&activity.tool_name, lang);
     }
-    if let Some(label) = activity
+    let label = activity
         .agent_label
         .as_deref()
         .map(str::trim)
-        .filter(|label| !label.is_empty())
-    {
-        if let Some(CallShape::Koru(tool)) = CallShape::of(label) {
-            return koru_tool_line(&tool, lang);
-        }
+        .filter(|label| !label.is_empty());
+    if let Some(CallShape::Koru(tool)) = label.and_then(CallShape::of) {
+        return koru_tool_line(&tool, lang);
+    }
+    if let Some(label) = label.filter(|label| !GENERIC_LABELS.contains(label)) {
         return label.lines().next().unwrap_or(label).to_owned();
+    }
+    if let Some(subject) = crate::tool_output::subject(activity) {
+        return subject;
+    }
+    if let Some(label) = label {
+        return label.to_owned();
     }
     if let Some(summary) = activity.agent_summary.as_deref() {
         return summary.lines().next().unwrap_or(summary).to_owned();
@@ -184,6 +346,7 @@ pub(crate) fn call_line(activity: &ToolActivity, lang: Lang) -> String {
         kind,
         rows: vec![activity],
         offset: None,
+        asked: Vec::new(),
     };
     group_line(&group, lang)
 }

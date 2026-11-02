@@ -130,14 +130,7 @@ pub(crate) fn pieces(
     expanded: bool,
 ) -> Vec<Piece> {
     let call = Call::of(activity);
-    let shape = if structured::koru_tool(&call).is_some() {
-        Shape::Koru
-    } else if structured::is_mcp(&call) {
-        Shape::Mcp
-    } else {
-        Shape::of(activity)
-    };
-    let rendered = match shape {
+    let rendered = match shape(&call) {
         Shape::Command => command::render(&call, lang, expanded),
         Shape::Edit => diff::render(&call, lang, expanded),
         Shape::Read => file::render(&call, lang, expanded),
@@ -157,6 +150,32 @@ pub(crate) fn pieces(
         now_ms,
     )));
     pieces
+}
+
+/// What a call did, in a few words, for its line in an opened step: the
+/// command it ran, the file it read or changed, the query it searched.
+/// `None` when its row does not say.
+pub(crate) fn subject(activity: &ToolActivity) -> Option<String> {
+    let call = Call::of(activity);
+    let text = match shape(&call) {
+        Shape::Command => command::command(&call),
+        Shape::Edit => diff::input_path(&call),
+        Shape::Read => file::target(&call).0,
+        Shape::Web => search::query(&call).map(|query| format!("\u{201C}{query}\u{201D}")),
+        Shape::Matches | Shape::Koru | Shape::Mcp | Shape::Other => None,
+    }?;
+    let line = text.lines().next()?.trim();
+    (!line.is_empty()).then(|| line.to_owned())
+}
+
+fn shape(call: &Call<'_>) -> Shape {
+    if structured::koru_tool(call).is_some() {
+        Shape::Koru
+    } else if structured::is_mcp(call) {
+        Shape::Mcp
+    } else {
+        Shape::of(call.activity)
+    }
 }
 
 /// What a call is, for drawing it: by the kind it was filed under, and

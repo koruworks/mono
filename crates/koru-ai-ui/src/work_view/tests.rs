@@ -262,7 +262,75 @@ fn a_running_reply_shows_what_it_said_and_the_call_it_is_making() {
         &[&surface.transcript.as_ref().unwrap().tool_activities[0]],
         |_| None,
     );
-    assert_eq!(tool_groups::group_line(&group[0], Lang::En), "Reading…");
+    assert_eq!(
+        tool_groups::group_line(&group[0], Lang::En),
+        "Reading… big.log"
+    );
+}
+
+/// D17: while a reply runs, every step is one line — what it did or is
+/// doing — and nothing opens on its own, however many calls come; a call
+/// the person opens shows its detail, live, and the rest stay shut.
+#[test]
+fn live_steps_stay_one_line_until_opened() {
+    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let transcript = transcript();
+    let chat = transcript.chat.id;
+    surface.transcript = Some(transcript);
+    let reply = MessageId::new();
+    surface.pending_user = Some("Does it build?".into());
+    surface.pending_assistant_message_id = Some(reply);
+    surface.live_turn_started_ms = Some(Timestamp::now().millis());
+    surface.draft = "Checking.".into();
+    let mut calls = Vec::new();
+    for (status, label) in [
+        (ToolActivityStatus::Complete, "cargo build"),
+        (ToolActivityStatus::Complete, "cargo clippy"),
+        (ToolActivityStatus::Running, "cargo test"),
+    ] {
+        let mut call = row(chat, reply, "agent.command", Some(label), status, None);
+        call.agent_output = Some("```console\nok\n```".into());
+        calls.push(call.id);
+        surface.upsert_tool_activity(call);
+    }
+    rebuild(&mut surface);
+    let work = &surface.work_layouts[0];
+    assert!(work.live);
+    assert_eq!(work.lines.len(), 2, "what it said, then one step line");
+    assert_eq!(work.lines[1].hit, Some(WorkHit::Group(reply, 0)));
+    assert_eq!(work.lines[1].caret, Some(false));
+    assert!(
+        work.lines.iter().all(|line| line.ink.is_none()),
+        "no detail"
+    );
+
+    // Opening is the person's: the group, then one call.
+    surface.toggle_work(WorkHit::Group(reply, 0));
+    surface.toggle_work(WorkHit::Call(calls[2]));
+    rebuild(&mut surface);
+    let work = &surface.work_layouts[0];
+    let call_lines = work
+        .lines
+        .iter()
+        .filter(|line| matches!(line.hit, Some(WorkHit::Call(_))))
+        .count();
+    assert_eq!(call_lines, 3);
+    let details = work.lines.iter().filter(|line| line.ink.is_some()).count();
+    assert!(details > 0, "the opened call shows its detail");
+    // Laid out once: the same rebuild reuses the same layout.
+    let first = Rc::clone(&work.lines.iter().find(|line| line.panel).unwrap().layout);
+    surface.draft.push_str(" Still checking.");
+    rebuild(&mut surface);
+    let again = &surface.work_layouts[0]
+        .lines
+        .iter()
+        .find(|line| line.panel)
+        .unwrap()
+        .layout;
+    assert!(
+        Rc::ptr_eq(&first, again),
+        "the detail is not laid out again"
+    );
 }
 
 fn event(event: PublicAiEvent) -> Update {
