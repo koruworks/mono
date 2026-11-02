@@ -94,21 +94,27 @@ fn a_tool_whose_toolset_is_off_is_refused_with_its_toolset_and_the_flag() {
     assert!(docs.refusal("edit_document").is_none());
     assert!(docs.refusal("get_documentation").is_none(), "core is on");
     assert!(docs.refusal("no_such_tool").is_none(), "the router answers");
-    let refusal = docs.refusal("list_tasks").expect("tasks is off");
-    assert_eq!(refusal.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-    assert!(
-        refusal.message.contains("tasks toolset"),
-        "{}",
-        refusal.message
+    let refusal = docs.refusal("update_task").expect("tasks is off");
+    assert_eq!(
+        refusal.is_error,
+        Some(true),
+        "a tool result, marked an error"
     );
-    assert!(
-        refusal.message.contains("--toolsets docs,tasks"),
-        "{}",
-        refusal.message
-    );
-    let data = refusal.data.expect("details");
-    assert_eq!(data["toolset"], "tasks");
-    assert_eq!(data["enabled_toolsets"], json!(["core", "docs"]));
+    let error = refusal.structured_content.expect("the error object");
+    assert_eq!(error["code"], "toolset_disabled");
+    let message = error["message"].as_str().expect("a message");
+    assert!(message.contains("update_task"), "{message}");
+    assert!(message.contains("tasks toolset"), "{message}");
+    assert!(message.contains("toolsets on: core, docs"), "{message}");
+    assert!(message.contains("--toolsets docs,tasks"), "{message}");
+    let details = &error["details"];
+    assert_eq!(details["tool"], "update_task");
+    assert_eq!(details["toolset"], "tasks");
+    assert_eq!(details["enabled_toolsets"], json!(["core", "docs"]));
+    assert_eq!(details["toolsets_flag"], "docs,tasks");
+    // The text block a client without structured content reads says it too.
+    let text = serde_json::to_string(&refusal.content).expect("content JSON");
+    assert!(text.contains("--toolsets docs,tasks"), "{text}");
 }
 
 #[test]

@@ -57,8 +57,9 @@ The toolsets are `docs` (documents: find, read, create, edit, images,
 extraction), `files`, `versions` (saved versions), `tasks` (list tasks, and
 complete, reopen, re-date or re-prioritise one — on its own, without `docs`)
 and `chat`; the documentation and the workspace list are always on. A tool from a group that
-is left out is not listed, and if the agent calls it anyway the error names
-the group to add. `koru.bat mcp-add` registers every toolset; the table of
+is left out is not listed, and if the agent calls it anyway the call comes
+back as an error result the agent reads, naming the group and the
+`--toolsets` value that would serve it. `koru.bat mcp-add` registers every toolset; the table of
 sizes and the rules are under *Toolsets* in
 [MCP.md](../../crates/koru-mcp-server/MCP.md#toolsets).
 

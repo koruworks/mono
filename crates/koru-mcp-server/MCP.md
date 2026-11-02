@@ -283,9 +283,14 @@ decision recorded here.
 - **Every tool is in exactly one toolset**, and `core` is in every bridge:
   nothing else can be called without the documentation and a workspace id.
 - **A tool whose toolset is off is not listed, and a call to it is refused**
-  with a JSON-RPC `invalid_params` error (-32602) that names the tool, its
-  toolset, the toolsets that are on, and the `--toolsets` value that would
-  serve it — never the router's bare "tool not found".
+  with a tool result marked `isError: true` — not a JSON-RPC error, because
+  an agent acts on a tool result as the answer to its call, where a protocol
+  error is more often shown as a failure of the bridge. The result is the
+  ordinary failure shape, `{code: "toolset_disabled", message, details}`: the
+  message names the tool, its toolset, the toolsets that are on and the
+  `--toolsets` value that would serve it, and `details` carries `tool`,
+  `toolset`, `enabled_toolsets` and that value as `toolsets_flag`. A name that
+  is no tool at all is still the router's own "tool not found" error.
 - **The bridge says which toolsets are on** when some are off: the server
   instructions and the table of contents (`koru://docs/model`, and
   `get_documentation` with that uri) end with one sentence naming them. A

@@ -12,15 +12,15 @@
 //! no other tool can be called without them. Every tool is in exactly one
 //! toolset; `every_published_tool_is_in_exactly_one_toolset` holds the table
 //! below to the router. A tool from a toolset that is off is not listed, and a
-//! call to it is an `invalid_params` error that names its toolset and the flag
-//! that turns it on, rather than rmcp's bare "tool not found".
+//! call to it answers a tool result with `isError` that names its toolset and
+//! the flag that turns it on, rather than rmcp's bare "tool not found".
 //!
 //! Koru AI reads [`crate::workspace_tool_catalog`], not this bridge, and always
 //! sees every tool.
 
 use std::fmt;
 
-use rmcp::model::ErrorData;
+use rmcp::model::CallToolResult;
 use serde_json::json;
 
 use crate::CHAT_TOOL_NAMES;
@@ -187,10 +187,14 @@ impl Toolsets {
             .filter(move |set| !self.contains(*set))
     }
 
-    /// Why `tool` is not served, when its toolset is off. `None` for a tool
-    /// this bridge serves and for a name that is no tool at all, which the
+    /// Why `tool` is not served, when its toolset is off: a tool result with
+    /// `isError`, in the `{code, message, details}` shape every other tool
+    /// failure has. A result rather than a JSON-RPC error, because an agent
+    /// reads a result as the answer to its call and acts on it, where a
+    /// protocol error is more often shown as a crash or dropped. `None` for a
+    /// tool this bridge serves and for a name that is no tool at all, which the
     /// router answers as it always has.
-    pub fn refusal(self, tool: &str) -> Option<ErrorData> {
+    pub fn refusal(self, tool: &str) -> Option<CallToolResult> {
         let set = Toolset::of(tool).filter(|set| !self.contains(*set))?;
         let mut wanted: Vec<&str> = self
             .enabled()
@@ -198,19 +202,21 @@ impl Toolsets {
             .map(Toolset::name)
             .collect();
         wanted.push(set.name());
-        Some(ErrorData::invalid_params(
-            format!(
+        let wanted = wanted.join(",");
+        Some(CallToolResult::structured_error(json!({
+            "code": "toolset_disabled",
+            "message": format!(
                 "{tool} is in the {set} toolset, which this Koru bridge was started without \
-                 (toolsets on: {self}). Start it with --toolsets {}, or without --toolsets for \
-                 every toolset.",
-                wanted.join(",")
+                 (toolsets on: {self}). Start it with --toolsets {wanted}, or without \
+                 --toolsets for every toolset."
             ),
-            Some(json!({
+            "details": {
                 "tool": tool,
                 "toolset": set.name(),
                 "enabled_toolsets": self.enabled().map(Toolset::name).collect::<Vec<_>>(),
-            })),
-        ))
+                "toolsets_flag": wanted,
+            },
+        })))
     }
 
     /// What the server instructions and the contract's table of contents add

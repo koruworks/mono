@@ -6054,8 +6054,9 @@ const SERVER_INSTRUCTIONS: &str = "Read koru://docs/essentials before the first 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for KoruMcp {
     /// What rmcp's generated `call_tool` does, after refusing a tool whose
-    /// toolset is off by name: the router alone would answer "tool not found",
-    /// which tells an agent nothing about the flag that would serve it.
+    /// toolset is off by name, as an `isError` tool result: the router alone
+    /// would answer a "tool not found" protocol error, which tells an agent
+    /// nothing about the flag that would serve it.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
@@ -6067,7 +6068,7 @@ impl ServerHandler for KoruMcp {
                 toolsets = %self.toolsets,
                 "tool call refused: its toolset is off"
             );
-            return Err(refusal);
+            return Ok(rmcp::model::CallToolResponse::Complete(refusal));
         }
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(call).await
@@ -6895,23 +6896,29 @@ mod tests {
             .collect();
         assert_eq!(listed, expected);
 
+        // A tool result the agent reads, not a protocol error: the call
+        // succeeds at the JSON-RPC level and the result is marked an error.
         let refused = client
             .peer()
             .call_tool(rmcp::model::CallToolRequestParams::new("list_tasks"))
             .await
-            .expect_err("a tasks tool on a docs bridge");
-        match refused {
-            rmcp::ServiceError::McpError(data) => {
-                assert_eq!(data.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-                assert!(data.message.contains("tasks toolset"), "{}", data.message);
-                assert!(
-                    data.message.contains("--toolsets docs,tasks"),
-                    "{}",
-                    data.message
-                );
-            }
-            other => panic!("{other:?}"),
-        }
+            .expect("a refusal is a tool result, not a JSON-RPC error");
+        assert_eq!(refused.is_error, Some(true), "{refused:?}");
+        let error = refused.structured_content.as_ref().expect("the error");
+        assert_eq!(error["code"], "toolset_disabled");
+        let message = error["message"].as_str().unwrap_or_default();
+        assert!(message.contains("tasks toolset"), "{message}");
+        assert!(message.contains("--toolsets docs,tasks"), "{message}");
+        assert_eq!(error["details"]["toolsets_flag"], "docs,tasks");
+        // A name that is no tool at all is still the router's own answer.
+        assert!(
+            client
+                .peer()
+                .call_tool(rmcp::model::CallToolRequestParams::new("no_such_tool"))
+                .await
+                .is_err(),
+            "an unknown tool is not a toolset question"
+        );
 
         let instructions = client
             .peer()
