@@ -116,6 +116,7 @@ fn clis_without_a_per_process_form_and_shells_get_nothing() {
         ProfileLabel::Kimi,
         ProfileLabel::Antigravity,
         ProfileLabel::Muse,
+        ProfileLabel::Devin,
         ProfileLabel::Gemini,
         ProfileLabel::PlatformShell,
         ProfileLabel::PowerShell,

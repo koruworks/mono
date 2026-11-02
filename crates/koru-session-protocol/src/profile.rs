@@ -142,6 +142,9 @@ pub mod built_in_profile {
     pub const ANTIGRAVITY: &str = "antigravity";
     /// Meta's Muse Code CLI (`muse`) as a raw profile. No managed route yet.
     pub const MUSE: &str = "muse";
+    /// Cognition's Devin CLI (`devin`) as a raw profile, and `devin acp` as
+    /// the managed route.
+    pub const DEVIN: &str = "devin";
 
     pub const ALL: &[&str] = &[
         PLATFORM_SHELL,
@@ -158,5 +161,6 @@ pub mod built_in_profile {
         QWEN,
         ANTIGRAVITY,
         MUSE,
+        DEVIN,
     ];
 }

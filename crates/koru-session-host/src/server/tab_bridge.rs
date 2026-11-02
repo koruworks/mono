@@ -22,8 +22,9 @@
 //!   the app-server launch already renders;
 //! - **OpenCode** `OPENCODE_CONFIG_CONTENT`: an inline `opencode.json`.
 //!
-//! Grok, Kimi, Antigravity and Muse have no per-process form (their `mcp`
-//! verbs write the person's configuration), so their tabs are unchanged.
+//! Grok, Kimi, Antigravity, Muse and Devin have no per-process form (their
+//! `mcp` verbs write the person's configuration), so their tabs are
+//! unchanged.
 //!
 //! The files are written once, when the host starts, under the sessions
 //! directory; their content is a pure function ([`config_file`]), so the
@@ -66,6 +67,7 @@ pub(super) fn program(label: ProfileLabel) -> Option<&'static str> {
         | ProfileLabel::Gemini
         | ProfileLabel::Antigravity
         | ProfileLabel::Muse
+        | ProfileLabel::Devin
         | ProfileLabel::Custom => return None,
     })
 }

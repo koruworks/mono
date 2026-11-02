@@ -553,6 +553,7 @@ fn ordinary_raw_policy_profiles_launch_as_raw_ptys() {
             "qwen",
             "antigravity",
             "muse",
+            "devin",
         ]
     );
     for profile in profiles {

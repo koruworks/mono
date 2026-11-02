@@ -37,6 +37,7 @@ pub enum ProfileLabel {
     QwenCode,
     Antigravity,
     Muse,
+    Devin,
     Custom,
 }
 
@@ -59,6 +60,7 @@ impl ProfileLabel {
             Self::QwenCode => "Qwen Code",
             Self::Antigravity => "Antigravity",
             Self::Muse => "Muse",
+            Self::Devin => "Devin",
             Self::Custom => "Custom profile",
         }
     }
@@ -99,6 +101,7 @@ impl ProfileLabel {
             Self::QwenCode => Some("Qwen Code"),
             Self::Antigravity => Some("Antigravity"),
             Self::Muse => Some("Muse"),
+            Self::Devin => Some("Devin"),
             Self::PlatformShell | Self::Custom => None,
         }
     }
@@ -123,6 +126,7 @@ impl ProfileLabel {
             Self::QwenCode => Some("qwen"),
             Self::Antigravity => Some("antigravity"),
             Self::Muse => Some("muse"),
+            Self::Devin => Some("devin"),
             Self::PlatformShell | Self::PowerShell | Self::Bash | Self::Custom => None,
         }
     }
@@ -328,6 +332,11 @@ pub fn built_in_profiles() -> Vec<LaunchProfile> {
         // Meta's Muse Code installs itself as `muse` (a `muse.cmd` launcher on
         // Windows). Raw only: its structured `muse serve` (MSP) has no adapter.
         raw_agent(built_in_profile::MUSE, ProfileLabel::Muse, "muse"),
+        // Cognition's Devin CLI installs itself as `devin`, usually off PATH:
+        // `resolve_executable` also looks where its installers put it
+        // (`known_locations`). The tab runs it raw; a chat runs `devin acp`,
+        // `DEVIN_REGISTRATION`.
+        raw_agent(built_in_profile::DEVIN, ProfileLabel::Devin, "devin"),
     ]
     .into_iter()
     .collect()
@@ -405,7 +414,84 @@ pub fn probe(profiles: Vec<LaunchProfile>) -> Vec<ProfileRow> {
 /// Resolve the same concrete executable candidate used by presence probing.
 /// The session host calls this only after selecting an authored profile; it is
 /// not root discovery and never searches for user content.
+///
+/// `PATH` first; then, for the few CLIs whose installers leave them off it,
+/// the places those installers put them ([`known_locations`]), so a tab and
+/// a chat find the same program the person installed.
 pub fn resolve_executable(program: &str) -> Option<PathBuf> {
+    resolve_on_path(program).or_else(|| installed_copies(program).next())
+}
+
+/// **Every copy of `program` this machine has**, in the order
+/// [`resolve_executable`] prefers them: the `PATH` hit, then each known
+/// install location that holds the file, without repeats. The first is what
+/// `resolve_executable` returns. A managed route that admits only some
+/// releases picks among these by version (Devin's standalone CLI updates
+/// itself, while the copy inside its desktop app moves with the app); this
+/// crate never runs one to ask.
+pub fn resolve_executable_candidates(program: &str) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = resolve_on_path(program).into_iter().collect();
+    for candidate in installed_copies(program) {
+        if !found.contains(&candidate) {
+            found.push(candidate);
+        }
+    }
+    found
+}
+
+fn installed_copies(program: &str) -> impl Iterator<Item = PathBuf> {
+    known_locations(program, |name| std::env::var_os(name))
+        .into_iter()
+        .filter(|candidate| candidate.is_file())
+        .filter_map(|candidate| absolute(&candidate))
+}
+
+/// **Where a CLI's own installers put it when they leave it off `PATH`**, in
+/// preference order, read from the environment through `var`. Only Devin
+/// has any: its Windows installer (`install.ps1`) and its desktop app both
+/// install `devin.exe` under `%LOCALAPPDATA%` without touching `PATH`. The
+/// standalone CLI comes first because it updates itself; the copy bundled
+/// with the desktop app is the fallback. Elsewhere the installer's
+/// documented `~/.local/bin/devin` is the one location (its troubleshooting
+/// page). Every other program is found on `PATH` or not at all.
+pub fn known_locations(program: &str, var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    if program != "devin" {
+        return Vec::new();
+    }
+    let under = |root: Option<OsString>, segments: &[&[&str]]| -> Vec<PathBuf> {
+        let Some(root) = root.filter(|root| !root.is_empty()).map(PathBuf::from) else {
+            return Vec::new();
+        };
+        segments
+            .iter()
+            .map(|path| path.iter().fold(root.clone(), |path, part| path.join(part)))
+            .collect()
+    };
+    if cfg!(windows) {
+        under(
+            var("LOCALAPPDATA"),
+            &[
+                &["devin", "cli", "bin", "devin.exe"],
+                &["devin", "bin", "devin.exe"],
+                &[
+                    "Programs",
+                    "Devin",
+                    "resources",
+                    "app",
+                    "extensions",
+                    "windsurf",
+                    "devin",
+                    "bin",
+                    "devin.exe",
+                ],
+            ],
+        )
+    } else {
+        under(var("HOME"), &[&[".local", "bin", "devin"]])
+    }
+}
+
+fn resolve_on_path(program: &str) -> Option<PathBuf> {
     let path = Path::new(program);
     if path.is_absolute() || path.components().count() > 1 {
         return path.is_file().then(|| absolute(path)).flatten();
@@ -451,7 +537,10 @@ pub fn resume_arguments(label: ProfileLabel) -> Option<&'static [&'static str]> 
         | ProfileLabel::Copilot
         | ProfileLabel::Kimi
         | ProfileLabel::Grok
-        | ProfileLabel::Antigravity => Some(&["--continue"]),
+        | ProfileLabel::Antigravity
+        // `devin --continue` (`-c`): "Resume the most recent session in the
+        // current directory", its command reference (3000.10.48's docs).
+        | ProfileLabel::Devin => Some(&["--continue"]),
         // Codex's continue is a subcommand, not a flag.
         ProfileLabel::CodexEmbedded | ProfileLabel::CodexCli => Some(&["resume", "--last"]),
         ProfileLabel::PlatformShell
@@ -705,7 +794,7 @@ mod tests {
     }
 
     /// **The coding agents a person turns on and off**: the *Agents ›* menu's
-    /// nine, in its order, each keyed by the managed kind a chat uses — both
+    /// ten, in its order, each keyed by the managed kind a chat uses — both
     /// Codex rows are one agent, and *Codex (Embedded)* is not listed.
     #[test]
     fn coding_agents_are_the_agents_menus_rows_keyed_by_kind() {
@@ -725,7 +814,8 @@ mod tests {
                 "GitHub Copilot",
                 "Qwen Code",
                 "Antigravity",
-                "Muse"
+                "Muse",
+                "Devin"
             ]
         );
         let keys: Vec<&str> = agents
@@ -743,7 +833,8 @@ mod tests {
                 "copilot",
                 "qwen",
                 "antigravity",
-                "muse"
+                "muse",
+                "devin"
             ]
         );
         for registration in MANAGED_PROVIDER_REGISTRATIONS {
@@ -759,6 +850,49 @@ mod tests {
         }
         assert_eq!(ProfileLabel::CodexEmbedded.agent_key(), Some("codex"));
         assert_eq!(ProfileLabel::PowerShell.agent_key(), None);
+    }
+
+    /// **Devin is looked for where its installers put it**, standalone CLI
+    /// first and the desktop app's copy last, read from the environment
+    /// given — and no other program gets a location off `PATH`.
+    #[test]
+    fn only_devin_has_known_locations_standalone_first() {
+        let var = |name: &str| match name {
+            "LOCALAPPDATA" => Some(OsString::from(if cfg!(windows) {
+                r"C:\Users\x\AppData\Local"
+            } else {
+                "/unused"
+            })),
+            "HOME" => Some(OsString::from("/home/x")),
+            _ => None,
+        };
+        let found = known_locations("devin", var);
+        if cfg!(windows) {
+            let local = PathBuf::from(r"C:\Users\x\AppData\Local");
+            assert_eq!(
+                found,
+                [
+                    local.join(r"devin\cli\bin\devin.exe"),
+                    local.join(r"devin\bin\devin.exe"),
+                    local.join(
+                        r"Programs\Devin\resources\app\extensions\windsurf\devin\bin\devin.exe"
+                    ),
+                ]
+            );
+        } else {
+            assert_eq!(found, [PathBuf::from("/home/x/.local/bin/devin")]);
+        }
+        for program in ["claude", "grok", "Devin", "devin.exe", "bash"] {
+            assert!(known_locations(program, var).is_empty(), "{program}");
+        }
+        assert!(
+            known_locations("devin", |_| None).is_empty(),
+            "no root, no guess"
+        );
+        assert!(
+            known_locations("devin", |_| Some(OsString::new())).is_empty(),
+            "an empty root is no root"
+        );
     }
 
     #[test]
