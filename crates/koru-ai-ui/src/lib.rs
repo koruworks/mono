@@ -3267,6 +3267,8 @@ impl ChatSurface {
                 transcript.chat.current_model = request.model;
                 if provider_changed {
                     transcript.reasoning_control = None;
+                    // Fast mode belongs to the model it was chosen on.
+                    transcript.chat.agent_fast = None;
                     // Another agent: the mode it was last used in (D7).
                     let agent = transcript.chat.current_model.provider.clone();
                     let mode = self.remembered_approval_mode(&agent);
@@ -3278,6 +3280,9 @@ impl ChatSurface {
             Command::UpdateAgentSettings(chat, request) if chat == unmade => {
                 if let Some(mode) = request.mode {
                     transcript.chat.agent_mode = Some(mode);
+                }
+                if let Some(fast) = request.fast {
+                    transcript.chat.agent_fast = Some(fast);
                 }
             }
             Command::UpdatePrivacy(chat, request) if chat == unmade => {
@@ -3325,10 +3330,13 @@ impl ChatSurface {
             self.unmade_chat = Some(chat);
             return false;
         }
-        if let Some(mode) = stand_in.chat.agent_mode.clone() {
+        if stand_in.chat.agent_mode.is_some() || stand_in.chat.agent_fast.is_some() {
             self.queue_command(Command::UpdateAgentSettings(
                 chat,
-                koru_ai_wire::UpdateChatAgentSettingsRequest { mode: Some(mode) },
+                koru_ai_wire::UpdateChatAgentSettingsRequest {
+                    mode: stand_in.chat.agent_mode.clone(),
+                    fast: stand_in.chat.agent_fast,
+                },
             ));
         }
         if let Some(folder) = stand_in.chat.agent_working_folder.clone() {
@@ -8183,6 +8191,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
             branched_from: None,
             agent_working_folder: None,
             agent_mode: None,
+            agent_fast: None,
             created_at: now,
             updated_at: now,
         },
@@ -8393,6 +8402,7 @@ mod tests {
                 branched_from: None,
                 agent_working_folder: None,
                 agent_mode: None,
+                agent_fast: None,
                 created_at: now,
                 updated_at: now,
             },
@@ -9286,6 +9296,7 @@ mod tests {
                 legacy: false,
                 reasoning: None,
                 context: None,
+                fast: None,
             })
             .collect();
         surface
@@ -10836,6 +10847,7 @@ mod tests {
             legacy: false,
             reasoning: None,
             context: None,
+            fast: None,
         }];
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: claude.clone(),
@@ -10942,6 +10954,7 @@ mod tests {
             legacy: false,
             reasoning,
             context: None,
+            fast: None,
         };
         surface.apply_update(Update::AgentModels(koru_ai_wire::AgentModelsResponse {
             provider: AiProviderId::parse("agent-claude").unwrap(),

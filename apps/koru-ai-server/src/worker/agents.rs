@@ -816,6 +816,9 @@ pub(super) fn agent_models(
                         id: context.id.as_str().to_owned(),
                         tokens: context.tokens,
                     }),
+                fast: model.fast.map(|fast| koru_ai_wire::AgentModelFast {
+                    on_by_default: fast.on_by_default,
+                }),
             })
             .collect(),
     })

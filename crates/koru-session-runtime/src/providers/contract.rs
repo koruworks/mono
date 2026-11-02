@@ -270,6 +270,10 @@ pub struct AgentInput {
     /// cannot. `None` leaves the session's mode as it is — except Codex's,
     /// whose turns always carry Koru's default, *Ask for approval*.
     pub mode: Option<koru_session_protocol::AgentModeId>,
+    /// The model's Fast mode for this turn (koru-ai D11): set before the
+    /// prompt when the model offers it, ignored when it does not. `None`
+    /// leaves it as it is.
+    pub fast: Option<bool>,
 }
 
 impl AgentInput {
@@ -303,6 +307,7 @@ impl fmt::Debug for AgentInput {
             .field("text_bytes", &self.text.len())
             .field("attachment_count", &self.attachments.len())
             .field("mode", &self.mode)
+            .field("fast", &self.fast)
             .finish()
     }
 }

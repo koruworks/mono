@@ -567,6 +567,7 @@ fn contract_covers_idempotency_cancellation_races_approval_children_and_exit() {
         text: "review".into(),
         attachments: Vec::new(),
         mode: None,
+        fast: None,
     };
     control.submit(input.clone()).unwrap();
     control.submit(input).unwrap();
@@ -724,6 +725,7 @@ fn sensitive_inputs_and_probe_material_are_redacted_from_debug() {
             media_type: format!("image/png;{SECRET}"),
         }],
         mode: None,
+        fast: None,
     };
     assert!(!format!("{input:?}").contains(SECRET));
 

@@ -750,7 +750,7 @@ impl ProviderCatalogCache {
                 .filter_map(|(kind, entry)| {
                     Some((
                         kind.as_str().to_owned(),
-                        serde_json::to_value(&entry.stored).ok()?,
+                        serde_json::to_value(written(&entry.stored)).ok()?,
                     ))
                 })
                 .collect();
@@ -818,12 +818,12 @@ fn keep_walked_levels(captured: ProviderModels, walked: &ProviderModels) -> Prov
         .iter()
         .map(|model| {
             let mut model = model.clone();
+            let walked = walked.models().iter().find(|walked| walked.id == model.id);
             if model.reasoning.is_none() {
-                model.reasoning = walked
-                    .models()
-                    .iter()
-                    .find(|walked| walked.id == model.id)
-                    .and_then(|walked| walked.reasoning.clone());
+                model.reasoning = walked.and_then(|walked| walked.reasoning.clone());
+            }
+            if model.fast.is_none() {
+                model.fast = walked.and_then(|walked| walked.fast);
             }
             model
         })
@@ -841,11 +841,40 @@ fn walked_levels(captured: &ProviderModels, walked: &ProviderModels) -> Provider
             let mut model = model.clone();
             if let Some(walked) = walked.models().iter().find(|walked| walked.id == model.id) {
                 model.reasoning = walked.reasoning.clone();
+                model.fast = walked.fast;
             }
             model
         })
         .collect();
     ProviderModels::try_from(models).unwrap_or_else(|_| captured.clone())
+}
+
+/// **An entry as the file keeps it**: without each model's Fast mode
+/// (koru-ai D11), so the file keeps the format and content it has. Fast mode
+/// is read again by every probe of the agent's start model and by the levels
+/// walk, and kept in memory for the host's run.
+fn written(stored: &Stored) -> std::borrow::Cow<'_, Stored> {
+    if stored
+        .models
+        .models()
+        .iter()
+        .all(|model| model.fast.is_none())
+    {
+        return std::borrow::Cow::Borrowed(stored);
+    }
+    let models: Vec<_> = stored
+        .models
+        .models()
+        .iter()
+        .map(|model| {
+            let mut model = model.clone();
+            model.fast = None;
+            model
+        })
+        .collect();
+    let mut written = stored.clone();
+    written.models = ProviderModels::try_from(models).unwrap_or_else(|_| stored.models.clone());
+    std::borrow::Cow::Owned(written)
 }
 
 fn captured_event(kind: &ProviderKind, stored: &Stored) {

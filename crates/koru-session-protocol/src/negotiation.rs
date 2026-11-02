@@ -64,9 +64,11 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// description, group name, legacy mark and reasoning levels — as optional
 /// fields on `ProviderModel`, and the `xhigh` reasoning token.
 ///
-/// v19 adds an agent's **approval mode** (koru-ai D7): the defaulted `mode`
-/// on a launch selection and on a turn's pending input, and the
-/// `mode_changed` agent event. The fields are readable by an older host,
+/// v19 adds an agent's **approval mode** (koru-ai D7) and **Fast mode**
+/// (D11): the defaulted `mode` and `fast` on a launch selection and on a
+/// turn's pending input, and the `mode_changed` agent event — and, needing
+/// no version of its own, `ProviderModel::fast`. The fields are readable by
+/// an older host,
 /// which is the hazard v16 names: it would ignore them and run the agent in
 /// whatever mode it starts in, so a client sends them only to a v19 host.
 /// The event is a new tag, so a host sends it only to a v19 peer.

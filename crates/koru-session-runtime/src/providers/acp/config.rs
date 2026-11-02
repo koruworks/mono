@@ -183,6 +183,12 @@ impl AcpConfig {
             .and_then(|selection| selection.mode.clone())
     }
 
+    /// Whether this session was asked to start with Fast mode on or off
+    /// (koru-ai D11); `None` leaves the model's own default.
+    pub(super) fn requested_fast(&self) -> Option<bool> {
+        self.selection.as_ref().and_then(|selection| selection.fast)
+    }
+
     /// The reasoning level this session was asked to start at; `None`
     /// leaves the agent at its own default.
     pub(super) fn requested_reasoning(&self) -> Option<koru_session_protocol::LaunchReasoning> {

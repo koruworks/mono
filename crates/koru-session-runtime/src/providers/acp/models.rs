@@ -4,7 +4,8 @@
 use super::*;
 use crate::AttachmentPathResolver;
 use koru_session_protocol::{
-    LaunchReasoning, ModelLabel, ModelName, ModelReasoning, ProviderModel, ProviderModels,
+    LaunchReasoning, ModelFast, ModelLabel, ModelName, ModelReasoning, ProviderModel,
+    ProviderModels,
 };
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
@@ -209,6 +210,66 @@ pub(super) fn thought_level(response: &Value) -> Option<ThoughtLevel> {
     })
 }
 
+/// **Claude Code's Fast mode option** (koru-ai D11): the config option whose
+/// id is `fast` (category `model_config`). The wrapper offers it only for a
+/// model that supports fast mode, as a `select` of `on` and `off` to a
+/// client that, like Koru, does not advertise boolean config options, and as
+/// a `boolean` to one that does; both are read.
+pub(super) struct FastOption {
+    pub id: String,
+    pub on: bool,
+    boolean: bool,
+}
+
+impl FastOption {
+    /// The value `session/set_config_option` takes for `on`.
+    pub fn value(&self, on: bool) -> Value {
+        match (self.boolean, on) {
+            (true, on) => json!(on),
+            (false, true) => json!("on"),
+            (false, false) => json!("off"),
+        }
+    }
+}
+
+/// The `fast` option of an answer or a `config_option_update`, or `None`
+/// when it carries none — the session's model has no Fast mode.
+pub(super) fn fast_option(response: &Value) -> Option<FastOption> {
+    let options = response.get("configOptions")?.as_array()?;
+    let option = options.iter().find(|option| option["id"] == "fast")?;
+    let id = option["id"].as_str()?.to_owned();
+    match option["type"].as_str()? {
+        "boolean" => Some(FastOption {
+            id,
+            on: option["currentValue"].as_bool()?,
+            boolean: true,
+        }),
+        "select" => {
+            let values: Vec<&str> = option["options"]
+                .as_array()?
+                .iter()
+                .filter_map(|entry| entry["value"].as_str())
+                .collect();
+            if !(values.contains(&"on") && values.contains(&"off")) {
+                return None;
+            }
+            Some(FastOption {
+                id,
+                on: option["currentValue"].as_str()? == "on",
+                boolean: false,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The model's Fast mode as the catalog carries it.
+pub(super) fn model_fast(response: &Value) -> Option<ModelFast> {
+    fast_option(response).map(|option| ModelFast {
+        on_by_default: option.on,
+    })
+}
+
 /// A count of agent level values Koru has no word for, as the catalog's
 /// event says it; none is ever shown.
 pub(super) fn levels_dropped(provider: &str, count: usize) {
@@ -228,17 +289,21 @@ pub(super) fn levels_dropped(provider: &str, count: usize) {
 /// them (D16).
 pub(super) fn config_models(session: &Value, fallback_group: &str) -> Vec<ProviderModel> {
     let mut models = config_model_list(session, fallback_group);
-    if let Some(level) = thought_level(session) {
-        levels_dropped(fallback_group, level.dropped);
-        let current = option(session)
-            .ok()
-            .and_then(|option| option["currentValue"].as_str());
-        if let Some(model) = models
-            .iter_mut()
-            .find(|model| Some(model.id.as_str()) == current)
-        {
+    let current = option(session)
+        .ok()
+        .and_then(|option| option["currentValue"].as_str());
+    let current_model = models
+        .iter_mut()
+        .find(|model| Some(model.id.as_str()) == current);
+    if let Some(model) = current_model {
+        // Fast mode, like the levels, is said of the current model (D11).
+        model.fast = model_fast(session);
+        if let Some(level) = thought_level(session) {
+            levels_dropped(fallback_group, level.dropped);
             model.reasoning = level.reasoning;
         }
+    } else if let Some(level) = thought_level(session) {
+        levels_dropped(fallback_group, level.dropped);
     }
     models
 }

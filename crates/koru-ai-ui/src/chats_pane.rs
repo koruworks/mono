@@ -692,6 +692,7 @@ mod tests {
             branched_from: None,
             agent_working_folder: None,
             agent_mode: None,
+            agent_fast: None,
             created_at: Timestamp::from_millis(1),
             updated_at: Timestamp::from_millis(1),
         }

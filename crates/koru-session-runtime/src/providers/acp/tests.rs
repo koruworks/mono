@@ -111,6 +111,7 @@ fn input(turn_id: AgentTurnId) -> AgentInput {
         text: "<prompt>".into(),
         attachments: Vec::new(),
         mode: None,
+        fast: None,
     }
 }
 fn drain(control: &mut AcpControl) -> Vec<AgentEvent> {
@@ -1227,6 +1228,7 @@ fn select(
         model: model.map(|model| model.parse().unwrap()),
         reasoning,
         mode: None,
+        fast: None,
     })
 }
 

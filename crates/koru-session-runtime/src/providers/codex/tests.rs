@@ -369,6 +369,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
                 media_type: "image/png".into(),
             }],
             mode: None,
+            fast: None,
         })
         .unwrap_err();
     assert_eq!(failure.code, ErrorCode::UnsupportedMedia);
@@ -407,6 +408,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
             media_type: "image/png".into(),
         }],
         mode: None,
+        fast: None,
     };
     let first = control.submit(input.clone()).unwrap_err();
     assert_eq!(first.code, ErrorCode::ProviderUnavailable);
@@ -434,6 +436,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
             media_type: "image/png".into(),
         }],
         mode: None,
+        fast: None,
         ..input
     };
     let conflict = control.submit(changed_kind).unwrap_err();
@@ -766,12 +769,14 @@ fn offline_replay(
             media_type: "image/png".into(),
         }],
         mode: None,
+        fast: None,
     };
     control.submit(input.clone()).unwrap();
     control.submit(input.clone()).unwrap();
     let conflicting = AgentInput {
         text: "different".into(),
         mode: None,
+        fast: None,
         ..input
     };
     assert_eq!(
@@ -987,6 +992,7 @@ fn offline_replay(
             text: "cancel fixture".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     assert_eq!(
@@ -1229,6 +1235,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
                 media_type: "image/png".into(),
             }],
             mode: None,
+            fast: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1407,6 +1414,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             text: "first".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     let reports = drain_usage(&mut control);
@@ -1458,6 +1466,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             text: "second".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     control.cancel(second).unwrap();
@@ -1494,6 +1503,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             text: "again".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     let reports = drain_usage(&mut fresh);
@@ -1588,6 +1598,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
             text: "Reply with the single word OK.".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1913,6 +1924,7 @@ fn a_chosen_model_starts_the_thread_and_an_unlisted_one_is_refused() {
             model: Some(model.parse().unwrap()),
             reasoning: None,
             mode: None,
+            fast: None,
         })
     };
     let state = Arc::new(Mutex::new(ReplayState::default()));
@@ -2229,6 +2241,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             text: "start".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
 
@@ -2238,6 +2251,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             text: "also this".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap();
     let sent = state.lock().unwrap().sent.clone();
@@ -2257,6 +2271,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             text: "x".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap_err();
     assert_eq!(stranger.code, ErrorCode::InvalidTransition);
@@ -2267,6 +2282,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             text: "late".into(),
             attachments: Vec::new(),
             mode: None,
+            fast: None,
         })
         .unwrap_err();
     assert_eq!(finished.code, ErrorCode::InvalidTransition);
@@ -2298,6 +2314,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
     };
     let selection = koru_session_protocol::LaunchSelection {
         mode: Some("auto-review".parse().unwrap()),
+        fast: None,
         ..Default::default()
     };
     let mut control = CodexControl::with_transport(
@@ -2316,6 +2333,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
         text: "<prompt>".into(),
         attachments: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
+        fast: None,
     };
     control.submit(turn(Some("full-access"))).unwrap();
     control.submit(turn(None)).unwrap();
@@ -2351,6 +2369,7 @@ fn an_unknown_codex_mode_is_refused_rather_than_guessed() {
     };
     let selection = koru_session_protocol::LaunchSelection {
         mode: Some("bypassPermissions".parse().unwrap()),
+        fast: None,
         ..Default::default()
     };
     let mut control = CodexControl::with_transport(
@@ -2373,4 +2392,89 @@ fn an_unknown_codex_mode_is_refused_rather_than_guessed() {
             .iter()
             .any(|message| message["method"] == "thread/start")
     );
+}
+
+/// **Codex's Fast mode is its Fast service tier** (koru-ai D11): the catalog
+/// marks a model that lists one, and whether it runs in it by default; a
+/// chat's choice starts the thread on the tier (or on `default`), and each
+/// turn carries its own — a turn with none leaves the thread's tier alone.
+#[test]
+fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
+    let model_list = json!({
+        "id": 2,
+        "result": {
+            "data": [
+                { "isDefault": true, "model": "fixture-fast", "inputModalities": ["text"],
+                  "serviceTiers": [{ "id": "priority", "name": "Fast", "description": "1.5x speed" }],
+                  "defaultServiceTier": "priority" },
+                { "isDefault": false, "model": "fixture-plain", "inputModalities": ["text"] }
+            ],
+            "nextCursor": null
+        }
+    });
+    let page = normalize::model_page(&model_list["result"]).unwrap();
+    assert_eq!(
+        page.models[0].fast,
+        Some(normalize::FastTier {
+            id: "priority".into(),
+            on_by_default: true
+        })
+    );
+    assert_eq!(page.models[1].fast, None);
+
+    let run = |model: &str, fast: Option<bool>, turns: &[Option<bool>]| {
+        let mut frames = initialize_frames(false);
+        frames[1] = model_list.clone();
+        for (index, _) in turns.iter().enumerate() {
+            frames.push(
+                json!({ "id": 4 + index, "result": { "turn": { "id": format!("turn-{index}") } } }),
+            );
+        }
+        let state = Arc::new(Mutex::new(ReplayState::default()));
+        let transport = ReplayTransport {
+            inbound: frames.into_iter().collect(),
+            state: Arc::clone(&state),
+        };
+        let selection = koru_session_protocol::LaunchSelection {
+            model: Some(model.parse().unwrap()),
+            fast,
+            ..Default::default()
+        };
+        let mut control = CodexControl::with_transport(
+            config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+            Some(Box::new(transport)),
+        );
+        control
+            .start(AgentStart {
+                session_id: SessionId::mint(),
+                parent_session_id: None,
+                resume: None,
+            })
+            .unwrap();
+        for fast in turns {
+            control
+                .submit(AgentInput {
+                    turn_id: AgentTurnId::mint(),
+                    text: "<prompt>".into(),
+                    attachments: Vec::new(),
+                    mode: None,
+                    fast: *fast,
+                })
+                .unwrap();
+        }
+        let sent = state.lock().unwrap().sent.clone();
+        let tier = |method: &str| -> Vec<Value> {
+            sent.iter()
+                .filter(|message| message["method"] == method)
+                .map(|message| message["params"]["serviceTier"].clone())
+                .collect()
+        };
+        (tier("thread/start"), tier("turn/start"))
+    };
+    let (thread, turns) = run("fixture-fast", Some(true), &[Some(false), None]);
+    assert_eq!(thread, [json!("priority")]);
+    assert_eq!(turns, [json!("default"), Value::Null]);
+    let (thread, turns) = run("fixture-plain", Some(true), &[Some(true)]);
+    assert_eq!(thread, [Value::Null], "a model with no Fast tier");
+    assert_eq!(turns, [Value::Null]);
 }

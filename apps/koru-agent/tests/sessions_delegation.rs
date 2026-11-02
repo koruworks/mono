@@ -683,6 +683,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 text: "fixture turn".into(),
                 attachment_ids: Vec::new(),
                 mode: None,
+                fast: None,
             },
         )
         .unwrap();
@@ -721,6 +722,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 text: "second fixture turn".into(),
                 attachment_ids: Vec::new(),
                 mode: None,
+                fast: None,
             },
         )
         .unwrap();

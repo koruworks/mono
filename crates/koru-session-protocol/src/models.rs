@@ -48,6 +48,20 @@ pub struct ProviderModel {
     /// model as before, so it needs no protocol version of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ModelContext>,
+    /// The model offers the agent's **Fast mode** (koru-ai D11): Claude
+    /// Code's `fast` option, Codex's *Fast* service tier. Optional and
+    /// defaulted, like `context`: an older peer leaves it unread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<ModelFast>,
+}
+
+/// **A model's Fast mode** (koru-ai D11), and whether the agent runs the
+/// model in it when a chat says nothing. Codex's catalog runs some of its
+/// models fast by default; Claude Code reports its own state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelFast {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_by_default: bool,
 }
 
 /// **A model's longer context window** (koru-ai D10): the id that runs the
@@ -73,6 +87,7 @@ impl ProviderModel {
             legacy: false,
             reasoning: None,
             context: None,
+            fast: None,
         }
     }
 

@@ -422,6 +422,7 @@ mod tests {
             legacy: false,
             reasoning: None,
             context: None,
+            fast: None,
         }
     }
 

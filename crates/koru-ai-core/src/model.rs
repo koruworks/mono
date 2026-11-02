@@ -31,6 +31,11 @@ pub struct Chat {
     /// message. A branch starts with none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_mode: Option<String>,
+    /// Whether a local agent runs this chat's next message in its model's
+    /// Fast mode (koru-ai D11); `None` is the model's own default. Like the
+    /// mode, chosen at any time and applied from the next message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_fast: Option<bool>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

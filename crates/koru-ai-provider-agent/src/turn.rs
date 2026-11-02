@@ -73,7 +73,17 @@ pub(crate) fn start(
     // every message carries it, so a mode chosen after the start reaches
     // the agent with the next message.
     let mode = agent_mode(request.options.agent_mode.as_deref())?;
-    let selection = selection_for(&request.model, reasoning, mode.clone())?;
+    // Fast mode (D11) rides the same way: the start, and every message.
+    let fast = request.options.agent_fast;
+    let selection = selection_for(&request.model, reasoning, mode.clone())?
+        .map(|selection| LaunchSelection { fast, ..selection });
+    let selection = match (selection, fast) {
+        (None, Some(fast)) => Some(LaunchSelection {
+            fast: Some(fast),
+            ..LaunchSelection::default()
+        }),
+        (selection, _) => selection,
+    };
     let ensured = provider.sessions.ensure(
         origin,
         &provider.kind,
@@ -145,6 +155,7 @@ pub(crate) fn start(
                 text: text.clone(),
                 attachment_ids,
                 mode: mode.clone(),
+                fast,
             },
         )
     };
@@ -372,6 +383,7 @@ fn selection_for(
         model,
         reasoning,
         mode,
+        fast: None,
     }))
 }
 

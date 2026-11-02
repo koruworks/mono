@@ -25,6 +25,7 @@ fn agent_transcript(provider: &str) -> ChatTranscript {
             branched_from: None,
             agent_working_folder: None,
             agent_mode: None,
+            agent_fast: None,
             created_at: now,
             updated_at: now,
         },

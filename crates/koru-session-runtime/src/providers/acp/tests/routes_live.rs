@@ -217,6 +217,7 @@ fn live_antigravity_route_starts_lists_models_and_leaves_no_process_when_opted_i
         model: Some(chosen),
         reasoning: None,
         mode: None,
+        fast: None,
     }));
     if bridge.is_file() {
         config = config.with_mcp_servers(vec![crate::providers::McpServerLaunch {

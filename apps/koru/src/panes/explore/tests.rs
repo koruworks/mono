@@ -6317,6 +6317,7 @@ fn a_chat(n: u128, title: &str, updated_ms: i64) -> koru_ai_core::Chat {
         branched_from: None,
         agent_working_folder: None,
         agent_mode: None,
+        agent_fast: None,
         created_at: koru_ai_core::Timestamp::from_millis(updated_ms),
         updated_at: koru_ai_core::Timestamp::from_millis(updated_ms),
     }

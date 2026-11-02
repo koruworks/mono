@@ -149,12 +149,16 @@ pub struct PendingInput {
     /// it is. Sent only to a v19 host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<crate::AgentModeId>,
+    /// v19 (koru-ai D11): this turn runs with the model's Fast mode on or
+    /// off. `None` leaves it as it is; a model without one ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
 }
 
 impl PendingInput {
     /// Whether only a v19 host can honor it.
     pub fn needs_agent_modes(&self) -> bool {
-        self.mode.is_some()
+        self.mode.is_some() || self.fast.is_some()
     }
 }
 

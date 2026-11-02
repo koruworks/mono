@@ -2135,6 +2135,7 @@ impl WorkerState {
             branched_from: None,
             agent_working_folder: None,
             agent_mode: None,
+            agent_fast: None,
             created_at: now,
             updated_at: now,
         };
@@ -2503,6 +2504,13 @@ impl WorkerState {
                 .map_err(ai_failure)?
                 .ok_or_else(not_found)?;
         }
+        if let Some(fast) = request.fast {
+            chat = self
+                .repository
+                .set_chat_agent_fast(chat_id, Some(fast))
+                .map_err(ai_failure)?
+                .ok_or_else(not_found)?;
+        }
         Ok(koru_ai_wire::UpdateChatAgentSettingsResponse { chat })
     }
 
@@ -2790,8 +2798,9 @@ impl WorkerState {
                 through_message_id: through.id,
             }),
             agent_working_folder: source.agent_working_folder.clone(),
-            // A branch is a new chat, and starts in the agent's default.
+            // A branch is a new chat, and starts in the agent's defaults.
             agent_mode: None,
+            agent_fast: None,
             created_at: now,
             updated_at: now,
         };
@@ -3208,6 +3217,7 @@ impl WorkerState {
                 chat_id: Some(chat.id),
                 working_folder: chat.agent_working_folder.clone(),
                 agent_mode: chat.agent_mode.clone(),
+                agent_fast: chat.agent_fast,
                 ..AiRequestOptions::default()
             },
         };
@@ -3408,6 +3418,7 @@ impl WorkerState {
                 chat_id: Some(chat_id),
                 working_folder: chat.agent_working_folder.clone(),
                 agent_mode: chat.agent_mode.clone(),
+                agent_fast: chat.agent_fast,
                 ..AiRequestOptions::default()
             },
         };

@@ -2610,6 +2610,7 @@ fn an_agent_models_levels_become_its_effort_control() {
                 legacy: false,
                 reasoning: Some(control.clone()),
                 context: None,
+                fast: None,
             },
             koru_ai_wire::AgentModelView {
                 id: "haiku".into(),
@@ -2620,6 +2621,7 @@ fn an_agent_models_levels_become_its_effort_control() {
                 legacy: false,
                 reasoning: None,
                 context: None,
+                fast: None,
             },
         ],
     };
@@ -2727,6 +2729,7 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
     let client = worker.client();
     let mode = |mode: &str| UpdateChatAgentSettingsRequest {
         mode: Some(mode.into()),
+        fast: None,
     };
 
     let plain = create_chat(&client);
@@ -2750,11 +2753,26 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
         .unwrap();
     assert_eq!(kept.chat.agent_mode.as_deref(), Some("plan"));
 
-    // The message carries the mode; the agent leaves plan mode, and the
-    // chat follows it.
+    // Fast mode (D11) beside it, kept with the mode.
+    let fast = client
+        .update_chat_agent_settings(
+            context(),
+            agent,
+            UpdateChatAgentSettingsRequest {
+                mode: None,
+                fast: Some(true),
+            },
+        )
+        .unwrap();
+    assert_eq!(fast.chat.agent_fast, Some(true));
+    assert_eq!(fast.chat.agent_mode.as_deref(), Some("plan"));
+
+    // The message carries the mode and Fast mode; the agent leaves plan
+    // mode, and the chat follows it.
     let stream = send(&client, agent, Uuid::new_v4());
     let request = requests.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(request.options.agent_mode.as_deref(), Some("plan"));
+    assert_eq!(request.options.agent_fast, Some(true));
     assert_eq!(
         wait_for_terminal(&client, stream.accepted.attempt_id),
         AttemptStatus::Complete

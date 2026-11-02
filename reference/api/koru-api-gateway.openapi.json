@@ -307,6 +307,15 @@
         ],
         "type": "object"
       },
+      "AgentModelFast": {
+        "description": "A model's Fast mode: whether the agent runs the model in it when a chat\nhas not chosen.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "AgentModelView": {
         "properties": {
           "context": {
@@ -327,6 +336,20 @@
             "description": "The agent's own description of the model.",
             "nullable": true,
             "type": "string"
+          },
+          "fast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentModelFast"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The model offers the agent's Fast mode (koru-ai D11), and whether it\nruns in it by default. Absent for a model without one: a client\nshows no Fast control."
           },
           "group": {
             "description": "The agent's grouping of it — OpenCode's provider, Codex's one group.",
@@ -2505,6 +2528,11 @@
       },
       "Chat": {
         "properties": {
+          "agent_fast": {
+            "description": "Whether a local agent runs this chat's next message in its model's\nFast mode (koru-ai D11); `None` is the model's own default. Like the\nmode, chosen at any time and applied from the next message.",
+            "nullable": true,
+            "type": "boolean"
+          },
           "agent_mode": {
             "description": "The approval mode a local agent runs this chat's next message in\n(koru-ai D7): the agent's own id, `None` for the agent's default.\nChosen at any time; a choice made during a reply applies to the next\nmessage. A branch starts with none.",
             "nullable": true,
@@ -15337,6 +15365,11 @@
         "additionalProperties": false,
         "description": "A local agent chat's settings for its next message (koru-ai D7). A field\nleft out keeps what the chat has. Accepted on an `agent-*` chat at any\ntime: a reply already running keeps the mode it was sent in.",
         "properties": {
+          "fast": {
+            "description": "Fast mode on or off for the chat's model (koru-ai D11), where the\nmodel offers it ([`AgentModelView::fast`]). Applied from the next\nmessage, like the mode.",
+            "nullable": true,
+            "type": "boolean"
+          },
           "mode": {
             "description": "The approval mode, the agent's own id: one it lists in\n[`AgentModelsResponse::modes`]. An agent refuses one it does not\noffer when the message is sent.",
             "nullable": true,

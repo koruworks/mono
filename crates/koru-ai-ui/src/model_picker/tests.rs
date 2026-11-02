@@ -42,6 +42,7 @@ fn model(id: &str, group: &str, name: Option<&str>, description: Option<&str>) -
         legacy: false,
         reasoning: None,
         context: None,
+        fast: None,
     }
 }
 
@@ -118,7 +119,7 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     for composer in [280.0, 360.0, 1000.0] {
         let (w, h) = size(composer, rail_height(2, false));
         assert!(w <= MAX_W && w <= composer.max(RAIL_W + 160.0));
-        let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true);
+        let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true, false);
         assert_eq!(geometry.rail.w, RAIL_W);
         assert!(geometry.search.x >= geometry.rail.x + RAIL_W);
         assert!(geometry.refresh.x + geometry.refresh.w <= geometry.search.x + geometry.search.w);
@@ -161,9 +162,9 @@ fn the_picker_keeps_one_height_from_agent_to_agent() {
     assert_eq!(heights[0], heights[1], "lists of different lengths");
     assert_eq!(heights[0], h);
 
-    let levels = geometry(Rect::new(0.0, 0.0, 360.0, h), true, false);
+    let levels = geometry(Rect::new(0.0, 0.0, 360.0, h), true, false, false);
     assert!(levels.visible_rows() >= LIST_ROWS, "no Context row");
-    let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false, false);
+    let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false, false, false);
     assert!(bare.visible_rows() > LIST_ROWS, "neither row: more rows");
 }
 
@@ -806,4 +807,76 @@ fn the_legacy_flyout_flips_left_at_the_viewport_edge() {
     assert!(flipped.panel((800.0, 600.0)).x + flipped.panel((800.0, 600.0)).w <= parent.x + 0.5);
     let roomy = Menu::as_submenu(&mut engine, parent, items, (1600.0, 600.0));
     assert!(roomy.panel((1600.0, 600.0)).x >= parent.x + parent.w - 0.5);
+}
+
+/// D11: a model that offers Fast mode shows a Fast row — *Off* and *On* —
+/// reading the model's default until the chat chooses; choosing sets the
+/// chat's Fast mode for its next message, also once the chat has begun. A
+/// model without Fast mode shows no row, and both rows fit with the list.
+#[test]
+fn the_fast_row_shows_only_when_the_model_offers_it_and_stays_changeable() {
+    let mut surface = surface();
+    let (reader, commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    with_opus_context(&mut surface);
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[1].fast = Some(koru_ai_wire::AgentModelFast {
+            on_by_default: false,
+        });
+    }
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert!(surface.picker_fast().is_none());
+    assert!(surface.picker_geometry().unwrap().fast.is_none());
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    surface.unmade_chat = None;
+    let geometry = surface.picker_geometry().unwrap();
+    let (fast, context) = (geometry.fast.unwrap(), geometry.context.unwrap());
+    assert!(fast.y + fast.h <= context.y, "Fast sits above Context");
+    assert!(geometry.list.y + geometry.list.h <= fast.y);
+    assert!(!surface.picker_fast().unwrap().on, "the model's default");
+
+    // The chat has begun: Fast mode still changes, for the next message.
+    let transcript = surface.transcript.as_mut().unwrap();
+    let chat = transcript.chat.id;
+    transcript.messages.push(koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: chat,
+        ordinal: 0,
+        role: koru_ai_core::ChatRole::User,
+        state: koru_ai_core::MessageState::Complete,
+        markdown: "Go".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+        completed_at: None,
+    });
+    while commands.try_recv().is_ok() {}
+    assert!(surface.choose_fast(true));
+    assert!(surface.picker_fast().unwrap().on);
+    assert!(matches!(
+        commands.recv_timeout(std::time::Duration::from_millis(50)).unwrap(),
+        crate::reader::Command::UpdateAgentSettings(_, request)
+            if request.fast == Some(true) && request.mode.is_none()
+    ));
+    // Right and Left on the focused row choose On and Off.
+    surface.picker.focus = PickerFocus::Fast;
+    assert!(press(&mut surface, NamedKey::ArrowLeft));
+    assert!(!surface.picker_fast().unwrap().on);
 }

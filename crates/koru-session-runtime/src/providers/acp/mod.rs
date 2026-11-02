@@ -54,6 +54,9 @@ pub struct AcpControl {
     /// A mode the agent moved to between turns, said with the next turn
     /// (`ModeChanged` belongs to a turn).
     unreported_mode: Option<koru_session_protocol::AgentModeId>,
+    /// The session's model's Fast mode option, as the latest answer or
+    /// update carried it; `None` for a model without one (D11).
+    fast: Option<models::FastOption>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
@@ -119,6 +122,7 @@ impl AcpControl {
             modes: None,
             mode_config: None,
             unreported_mode: None,
+            fast: None,
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
@@ -188,6 +192,48 @@ impl AcpControl {
                 Ok(())
             }
         }
+    }
+
+    /// **Turn the model's Fast mode on or off** (koru-ai D11), between turns:
+    /// through its `fast` option, verified from the answer like a level. A
+    /// model with no Fast mode ignores the choice — it is offered only where
+    /// the model has one. Claude's wrapper takes it live, so it may change
+    /// with any message.
+    fn apply_fast(
+        &mut self,
+        native_session: &str,
+        on: bool,
+        stage: ProviderStage,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.fast.rejected", on);
+            failure(
+                ErrorCode::InvalidRequest,
+                stage,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        let Some(option) = &self.fast else {
+            if on {
+                tracing::info!(target: "koru::acp", event = "acp.fast.not_offered");
+            }
+            return Ok(());
+        };
+        if option.on == on {
+            return Ok(());
+        }
+        let params =
+            json!({"sessionId":native_session, "configId":option.id, "value":option.value(on)});
+        let applied = self
+            .call("session/set_config_option", params)
+            .map_err(|_| rejected())?;
+        let reported = models::fast_option(&applied).ok_or_else(rejected)?;
+        if reported.on != on {
+            return Err(rejected());
+        }
+        self.fast = Some(reported);
+        tracing::info!(target: "koru::acp", event = "acp.fast.selected", on);
+        Ok(())
     }
 
     /// **Move the session to `mode`** (D7), between turns. The mode must be
@@ -575,6 +621,8 @@ impl AcpControl {
             let level = models::thought_level(&answer);
             dropped += level.as_ref().map_or(0, |level| level.dropped);
             model.reasoning = level.and_then(|level| level.reasoning);
+            // The answer that set the model says whether it has Fast mode.
+            model.fast = models::model_fast(&answer);
         }
         models::levels_dropped(self.config.route.provider.as_str(), dropped);
         models
@@ -718,6 +766,7 @@ impl AcpControl {
             self.modes = Some(read.modes);
             self.mode_config = read.config_id;
         }
+        self.fast = models::fast_option(&session);
         if self.config.route.is_claude() {
             self.model_options =
                 claude::fold_context_siblings(std::mem::take(&mut self.model_options));
@@ -742,8 +791,10 @@ impl AcpControl {
             models::validate_applied(&selected, model)?;
             tracing::info!(target: "koru::acp", event = "acp.model.selected", session_id = %start.session_id, selected = true);
             // A model may not offer a mode the session was in (Claude's
-            // `auto`), and the agent moves it; the answer says where.
+            // `auto`), and the agent moves it; the answer says where. Its
+            // Fast mode is the new model's (D11).
             self.follow_mode(modes::current(&selected));
+            self.fast = models::fast_option(&selected);
             latest = Some(selected);
         }
         if let Some(level) = self.config.requested_reasoning() {
@@ -752,6 +803,9 @@ impl AcpControl {
         }
         if let Some(mode) = self.config.requested_mode() {
             self.apply_mode(&native_session, &mode, ProviderStage::Initialize)?;
+        }
+        if let Some(on) = self.config.requested_fast() {
+            self.apply_fast(&native_session, on, ProviderStage::Initialize)?;
         }
         if self.config.route.is_claude() {
             self.await_wrapper_auth()?;
@@ -862,6 +916,9 @@ impl AgentControl for AcpControl {
         // The turn's mode is set before its prompt, between turns (D7).
         if let (Some(mode), Some(native_session)) = (&input.mode, self.native_session.clone()) {
             self.apply_mode(&native_session, mode, ProviderStage::Submit)?;
+        }
+        if let (Some(on), Some(native_session)) = (input.fast, self.native_session.clone()) {
+            self.apply_fast(&native_session, on, ProviderStage::Submit)?;
         }
         let params = json!({"sessionId":self.native_session,"prompt":prompt});
         let request_id = match self.send_request("session/prompt", params) {

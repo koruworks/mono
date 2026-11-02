@@ -112,6 +112,8 @@ struct Script {
     /// `auto` does on a model without it.
     lands: Option<(String, String)>,
     refuse: bool,
+    /// A Fast mode set is answered with the option left as it was.
+    refuse_fast: bool,
     /// Notifications sent ahead of the prompt's answer.
     during_turn: Vec<Value>,
 }
@@ -144,6 +146,16 @@ impl JsonRpcTransport for ModePeer {
                 self.incoming.push_back(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":"Invalid Mode"}}));
                 return Ok(());
+            }
+            "session/set_config_option" if params["configId"] == "fast" => {
+                let mut options = self.new_session["configOptions"].clone();
+                for option in options.as_array_mut().unwrap() {
+                    if option["id"] == "fast" && !script.refuse_fast {
+                        option["currentValue"] = params["value"].clone();
+                    }
+                }
+                self.new_session["configOptions"] = options.clone();
+                json!({"configOptions": options})
             }
             "session/set_config_option" => {
                 let asked = params["value"].as_str().unwrap().to_owned();
@@ -212,6 +224,7 @@ fn control(
     .unwrap()
     .with_selection(mode.map(|mode| LaunchSelection {
         mode: Some(mode.parse().unwrap()),
+        fast: None,
         ..Default::default()
     }));
     let control = AcpControl::with_transport(
@@ -246,6 +259,7 @@ fn turn(mode: Option<&str>) -> AgentInput {
         text: "<prompt>".into(),
         attachments: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
+        fast: None,
     }
 }
 
@@ -403,4 +417,67 @@ fn a_mode_the_agent_moves_to_itself_is_said_on_a_turn() {
         planning.modes().unwrap().current().map(AgentModeId::as_str),
         Some("default")
     );
+}
+
+fn fast_control(fast: Option<bool>) -> (super::super::AcpControl, Arc<Mutex<Script>>) {
+    let (mut control, script) = control(result(CLAUDE), None);
+    if let Some(on) = fast {
+        control.config.selection = Some(LaunchSelection {
+            fast: Some(on),
+            ..Default::default()
+        });
+    }
+    (control, script)
+}
+
+fn fast_sets(script: &Arc<Mutex<Script>>) -> Vec<Value> {
+    script
+        .lock()
+        .unwrap()
+        .sent
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session/set_config_option" && frame["params"]["configId"] == "fast"
+        })
+        .map(|frame| frame["params"]["value"].clone())
+        .collect()
+}
+
+/// **Fast mode at start and per turn** (koru-ai D11): Claude's `fast`
+/// select is set to `on` at start and verified, set back to `off` before a
+/// turn's prompt, and a turn that leaves it alone sends nothing.
+#[test]
+fn fast_mode_is_set_at_start_and_per_turn_through_its_option() {
+    let (mut control, script) = fast_control(Some(true));
+    start(&mut control).unwrap();
+    assert_eq!(fast_sets(&script), [json!("on")]);
+    let mut off = turn(None);
+    off.fast = Some(false);
+    control.submit(off).unwrap();
+    events(&mut control);
+    assert_eq!(fast_sets(&script), [json!("on"), json!("off")]);
+    control.submit(turn(None)).unwrap();
+    events(&mut control);
+    assert_eq!(fast_sets(&script).len(), 2, "no choice, no call");
+}
+
+/// A model with no Fast mode ignores the choice; a refused set refuses the
+/// turn before its prompt.
+#[test]
+fn fast_mode_is_ignored_without_the_option_and_a_refusal_refuses_the_turn() {
+    let (mut control, script) = control(result(OPENCODE), None);
+    control.config.selection = Some(LaunchSelection {
+        fast: Some(true),
+        ..Default::default()
+    });
+    start(&mut control).unwrap();
+    assert!(fast_sets(&script).is_empty());
+
+    let (mut control, script) = fast_control(None);
+    start(&mut control).unwrap();
+    script.lock().unwrap().refuse_fast = true;
+    let mut on = turn(None);
+    on.fast = Some(true);
+    assert!(control.submit(on).is_err());
+    assert!(!methods(&script).contains(&"session/prompt".to_owned()));
 }

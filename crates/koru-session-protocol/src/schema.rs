@@ -134,6 +134,7 @@ define_catalogue!(
     ModelLabel,
     ModelReasoning,
     ModelContext,
+    ModelFast,
     AgentModeId,
     AgentMode,
     AgentModes,

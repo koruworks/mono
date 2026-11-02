@@ -230,6 +230,7 @@ fn model_is_applied_before_prompt_and_never_claimed_as_reported() {
             text: "private-prompt-sentinel".into(),
             attachments: vec![],
             mode: None,
+            fast: None,
         })
         .unwrap();
     let frames = sent.lock().unwrap();
@@ -464,4 +465,38 @@ fn claudes_one_million_siblings_fold_into_their_base_as_its_context() {
             .all(|model| model.context.is_none())
     );
     assert!(ProviderModels::try_from(models).is_ok());
+}
+
+/// **Claude's Fast mode option** (koru-ai D11): the `fast` select Koru gets
+/// (it advertises no boolean options) and the boolean another client gets
+/// are both read; the session's current model carries it in the catalog.
+#[test]
+fn the_fast_option_is_read_as_select_or_boolean_and_marks_the_current_model() {
+    let session: Value = serde_json::from_str::<Value>(include_str!(
+        "../tests/fixtures/claude-0.76.0/new-session.sanitized.json"
+    ))
+    .unwrap()["result"]
+        .clone();
+    let fast = fast_option(&session).unwrap();
+    assert!(!fast.on);
+    assert_eq!(fast.value(true), json!("on"));
+    let models = config_models(&session, "claude");
+    assert_eq!(
+        models[0].fast,
+        Some(ModelFast {
+            on_by_default: false
+        }),
+        "the session's model, `default`, offers it"
+    );
+    assert!(models[1..].iter().all(|model| model.fast.is_none()));
+
+    let boolean = json!({"configOptions":[{"id":"fast","category":"model_config",
+        "type":"boolean","currentValue":true}]});
+    let fast = fast_option(&boolean).unwrap();
+    assert!(fast.on);
+    assert_eq!(fast.value(false), json!(false));
+    assert!(fast_option(&json!({"configOptions":[]})).is_none());
+    let odd = json!({"configOptions":[{"id":"fast","type":"select","currentValue":"x",
+        "options":[{"value":"x"}]}]});
+    assert!(fast_option(&odd).is_none(), "a select without on and off");
 }

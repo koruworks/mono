@@ -4086,6 +4086,13 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in any field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
     "properties": {
+      "fast": {
+        "description": "v19 (koru-ai D11): the session starts with the model's Fast mode on\nor off. Ignored by an adapter whose model offers no Fast mode.",
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "mode": {
         "anyOf": [
           {
@@ -4193,6 +4200,17 @@
       "tokens"
     ],
     "title": "ModelContext",
+    "type": "object"
+  },
+  "ModelFast": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+    "properties": {
+      "on_by_default": {
+        "type": "boolean"
+      }
+    },
+    "title": "ModelFast",
     "type": "object"
   },
   "ModelIdentity": {
@@ -4881,6 +4899,13 @@
         },
         "type": "array"
       },
+      "fast": {
+        "description": "v19 (koru-ai D11): this turn runs with the model's Fast mode on or\noff. `None` leaves it as it is; a model without one ignores it.",
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "idempotency_key": {
         "$ref": "#/$defs/IdempotencyKey"
       },
@@ -5356,6 +5381,15 @@
         ],
         "type": "object"
       },
+      "ModelFast": {
+        "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ModelLabel": {
         "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
         "type": "string"
@@ -5418,6 +5452,17 @@
             "type": "null"
           }
         ]
+      },
+      "fast": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelFast"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The model offers the agent's **Fast mode** (koru-ai D11): Claude\nCode's `fast` option, Codex's *Fast* service tier. Optional and\ndefaulted, like `context`: an older peer leaves it unread."
       },
       "group": {
         "$ref": "#/$defs/ModelName"
@@ -5513,6 +5558,15 @@
         ],
         "type": "object"
       },
+      "ModelFast": {
+        "description": "**A model's Fast mode** (koru-ai D11), and whether the agent runs the\nmodel in it when a chat says nothing. Codex's catalog runs some of its\nmodels fast by default; Claude Code reports its own state.",
+        "properties": {
+          "on_by_default": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ModelLabel": {
         "description": "Text an agent sends about a model — its name, its group's name, its\ndescription — for a person to read.\n\nUntrusted: trimmed, never empty, free of control characters and bounded.\nIts `Debug` is redacted; the text never reaches a log.",
         "type": "string"
@@ -5574,6 +5628,17 @@
                 "type": "null"
               }
             ]
+          },
+          "fast": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ModelFast"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model offers the agent's **Fast mode** (koru-ai D11): Claude\nCode's `fast` option, Codex's *Fast* service tier. Optional and\ndefaulted, like `context`: an older peer leaves it unread."
           },
           "group": {
             "$ref": "#/$defs/ModelName"

@@ -351,6 +351,7 @@ impl crate::ChatSurface {
                 chat,
                 UpdateChatAgentSettingsRequest {
                     mode: Some(id.to_owned()),
+                    fast: None,
                 },
             ));
         }

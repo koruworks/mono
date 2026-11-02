@@ -37,6 +37,7 @@ fn chat(id: ChatId, offset: i64) -> Chat {
         branched_from: None,
         agent_working_folder: None,
         agent_mode: None,
+        agent_fast: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -116,6 +117,18 @@ fn a_chats_agent_mode_is_durable_listed_and_leaves_its_place() {
             .unwrap()
             .is_none()
     );
+
+    // Fast mode (D11) beside it: on, then off, and listed.
+    let fast = repository
+        .set_chat_agent_fast(chat_id, Some(true))
+        .unwrap()
+        .unwrap();
+    assert_eq!(fast.agent_fast, Some(true));
+    assert_eq!(fast.agent_mode.as_deref(), Some("acceptEdits"));
+    repository
+        .set_chat_agent_fast(chat_id, Some(false))
+        .unwrap();
+    assert_eq!(repository.chats().unwrap()[0].agent_fast, Some(false));
 }
 
 #[test]
@@ -690,6 +703,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
         }),
         agent_working_folder: None,
         agent_mode: None,
+        agent_fast: None,
         created_at: at(4),
         updated_at: at(4),
     };

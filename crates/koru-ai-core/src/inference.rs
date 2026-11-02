@@ -310,6 +310,10 @@ pub struct AiRequestOptions {
     /// providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_mode: Option<String>,
+    /// Whether a local agent runs this message in its model's Fast mode
+    /// (koru-ai D11); `None` leaves the model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_fast: Option<bool>,
 }
 
 impl Default for AiRequestOptions {
@@ -322,6 +326,7 @@ impl Default for AiRequestOptions {
             chat_id: None,
             working_folder: None,
             agent_mode: None,
+            agent_fast: None,
         }
     }
 }

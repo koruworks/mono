@@ -69,6 +69,8 @@ pub struct CodexControl {
     thread_model: Option<ModelName>,
     /// Turns the provider rerouted to another model (`model/rerouted`).
     rerouted_models: BTreeMap<AgentTurnId, ModelName>,
+    /// The thread's model's *Fast* service tier, when it lists one (D11).
+    fast_tier: Option<String>,
     shut_down: bool,
 }
 
@@ -141,6 +143,7 @@ impl CodexControl {
             usage_baselines: BTreeMap::new(),
             thread_model: None,
             rerouted_models: BTreeMap::new(),
+            fast_tier: None,
             shut_down: false,
         }
     }
@@ -291,6 +294,18 @@ impl CodexControl {
         }
     }
 
+    /// **Fast mode as Codex takes it** (koru-ai D11): the model's *Fast*
+    /// service tier when on, `default` — standard speed — when off, and
+    /// nothing at all when the chat said nothing or the model has no Fast
+    /// tier, so the thread keeps what it has.
+    fn service_tier(&self, fast: Option<bool>) -> Option<Value> {
+        let tier = self.fast_tier.as_ref()?;
+        Some(match fast? {
+            true => json!(tier),
+            false => json!("default"),
+        })
+    }
+
     fn notify(&mut self, method: &str, params: Value) -> Result<(), ProviderFailure> {
         self.transport()?
             .send(&json!({ "method": method, "params": params }))
@@ -335,6 +350,7 @@ impl AgentControl for CodexControl {
             .as_ref()
             .and_then(|selection| selection.model.clone());
         let model = self.select_model(requested.as_ref())?;
+        self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
         let cwd = self.config.working_directory.to_str().ok_or_else(|| {
             failure(
                 ErrorCode::InvalidRequest,
@@ -357,18 +373,23 @@ impl AgentControl for CodexControl {
                 ProviderDiagnostic::InvalidInput,
             )
         })?;
-        let thread = self.call(
-            "thread/start",
-            json!({
-                "cwd": cwd,
-                "ephemeral": true,
-                "model": model.model,
-                "approvalPolicy": policy.approval,
-                "sandbox": policy.sandbox,
-                "approvalsReviewer": policy.reviewer,
-            }),
-            ProviderStage::Initialize,
-        )?;
+        let mut params = json!({
+            "cwd": cwd,
+            "ephemeral": true,
+            "model": model.model,
+            "approvalPolicy": policy.approval,
+            "sandbox": policy.sandbox,
+            "approvalsReviewer": policy.reviewer,
+        });
+        let fast = self
+            .config
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.fast);
+        if let Some(tier) = self.service_tier(fast) {
+            params["serviceTier"] = tier;
+        }
+        let thread = self.call("thread/start", params, ProviderStage::Initialize)?;
         policy.observe_thread(&thread);
         let thread_id = thread
             .pointer("/thread/id")
@@ -534,17 +555,17 @@ impl AgentControl for CodexControl {
                 .into_iter()
                 .map(|(path, attachment_id)| ((input.turn_id, path), attachment_id)),
         );
-        let response = self.call(
-            "turn/start",
-            json!({
-                "threadId": thread_id,
-                "input": provider_input,
-                "approvalPolicy": policy.approval,
-                "sandboxPolicy": policy.sandbox_policy(),
-                "approvalsReviewer": policy.reviewer,
-            }),
-            ProviderStage::Submit,
-        )?;
+        let mut params = json!({
+            "threadId": thread_id,
+            "input": provider_input,
+            "approvalPolicy": policy.approval,
+            "sandboxPolicy": policy.sandbox_policy(),
+            "approvalsReviewer": policy.reviewer,
+        });
+        if let Some(tier) = self.service_tier(input.fast) {
+            params["serviceTier"] = tier;
+        }
+        let response = self.call("turn/start", params, ProviderStage::Submit)?;
         let native_id = response
             .pointer("/turn/id")
             .and_then(Value::as_str)

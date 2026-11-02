@@ -83,6 +83,9 @@ impl CodexControl {
                 listed.description = model.description;
                 listed.reasoning = model.reasoning;
                 listed.legacy = model.legacy;
+                listed.fast = model.fast.map(|tier| koru_session_protocol::ModelFast {
+                    on_by_default: tier.on_by_default,
+                });
                 Some(listed)
             })
             .collect();

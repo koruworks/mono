@@ -745,3 +745,30 @@ fn an_agent_without_modes_of_its_own_is_served_its_factorys() {
         Some(modes(&["ask", "full-access"], "ask"))
     );
 }
+
+/// **Fast mode is served, never written** (koru-ai D11): a model's Fast mode
+/// rides the served list and a walk's survives a fresh capture, while the
+/// file keeps the format and content it has.
+#[test]
+fn a_models_fast_mode_is_served_and_kept_out_of_the_file() {
+    let world = World::new(true);
+    let store = Arc::new(MemoryCatalogStore::default());
+    let cache = world.cache(store.clone(), false);
+    let mut fast = catalog(&["default", "opus"]);
+    let mut models: Vec<_> = fast.models().to_vec();
+    models[1].fast = Some(koru_session_protocol::ModelFast {
+        on_by_default: false,
+    });
+    fast = models.try_into().unwrap();
+    observe(&cache, &available("claude", "0.76.0"), Some(fast.clone()));
+    assert_eq!(cache.serve(&kind("claude")).unwrap(), fast);
+    let written = String::from_utf8(store.bytes().unwrap()).unwrap();
+    assert!(written.contains("\"opus\""));
+    assert!(!written.contains("fast"), "the file keeps its format");
+
+    let kept = keep_walked_levels(catalog(&["default", "opus"]), &fast);
+    assert!(
+        kept.models()[1].fast.is_some(),
+        "a walk's Fast mode is kept"
+    );
+}

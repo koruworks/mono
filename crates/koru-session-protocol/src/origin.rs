@@ -154,16 +154,23 @@ pub struct LaunchSelection {
     /// those the agent offers. Sent only to a v19 host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<AgentModeId>,
+    /// v19 (koru-ai D11): the session starts with the model's Fast mode on
+    /// or off. Ignored by an adapter whose model offers no Fast mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
 }
 
 impl LaunchSelection {
     pub fn is_explicit(&self) -> bool {
-        self.model.is_some() || self.reasoning.is_some() || self.mode.is_some()
+        self.model.is_some()
+            || self.reasoning.is_some()
+            || self.mode.is_some()
+            || self.fast.is_some()
     }
 
     /// Whether only a v19 host can honor it.
     pub fn needs_agent_modes(&self) -> bool {
-        self.mode.is_some()
+        self.mode.is_some() || self.fast.is_some()
     }
 }
 

@@ -36,7 +36,9 @@ use crate::agents::{
 use crate::effort;
 
 mod context;
+mod fast;
 pub(crate) use context::CONTEXT_H;
+pub(crate) use fast::FAST_H;
 
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
@@ -90,6 +92,8 @@ pub(crate) enum PickerFocus {
     Search,
     Rail,
     List,
+    /// The Fast row's two choices (koru-ai D11).
+    Fast,
     /// The Context row's two choices (koru-ai D10).
     Context,
     Reset,
@@ -182,6 +186,8 @@ pub(crate) struct Geometry {
     pub(crate) footer: Option<Rect>,
     /// The Context row, above the level's section (koru-ai D10).
     pub(crate) context: Option<Rect>,
+    /// The Fast row, above the Context row (koru-ai D11).
+    pub(crate) fast: Option<Rect>,
 }
 
 impl Geometry {
@@ -228,9 +234,10 @@ pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
 }
 
 /// The picker's parts inside `panel`: the level's footer at the foot when
-/// `levels`, the Context row above it when `context`, and the list in what
-/// is left.
-pub(crate) fn geometry(panel: Rect, levels: bool, context: bool) -> Geometry {
+/// `levels`, the Context row above it when `context`, the Fast row above
+/// that when `fast`, and the list in what is left — so a model with both
+/// rows gives a list row of the fixed height to the second.
+pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
     let inner_x = panel.x + RAIL_W;
     let inner_w = (panel.w - RAIL_W - PAD).max(1.0);
     let mut bottom = panel.y + panel.h - PAD;
@@ -241,6 +248,10 @@ pub(crate) fn geometry(panel: Rect, levels: bool, context: bool) -> Geometry {
     let context_rect = context.then(|| {
         bottom -= CONTEXT_H;
         Rect::new(inner_x, bottom, inner_w, CONTEXT_H)
+    });
+    let fast_rect = fast.then(|| {
+        bottom -= FAST_H;
+        Rect::new(inner_x, bottom, inner_w, FAST_H)
     });
     let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
     let refresh = Rect::new(
@@ -259,6 +270,7 @@ pub(crate) fn geometry(panel: Rect, levels: bool, context: bool) -> Geometry {
         list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
         footer: footer_rect,
         context: context_rect,
+        fast: fast_rect,
     }
 }
 
@@ -795,6 +807,7 @@ impl crate::ChatSurface {
         let rail_h = rail_height(rail.len(), self.rail_has_divider(&rail));
         let levels = self.effort_control().is_some();
         let context = self.picker_context().is_some();
+        let fast = self.picker_fast().is_some();
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
         let panel = if self.fits_above_composer(h) {
@@ -802,7 +815,7 @@ impl crate::ChatSurface {
         } else {
             PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
         };
-        Some(geometry(panel, levels, context))
+        Some(geometry(panel, levels, context, fast))
     }
 
     pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {
@@ -976,6 +989,9 @@ impl crate::ChatSurface {
             return Some(self.reset_level());
         }
         if let Some(handled) = self.context_mouse_down(&geometry, x, y) {
+            return Some(handled);
+        }
+        if let Some(handled) = self.fast_mouse_down(&geometry, x, y) {
             return Some(handled);
         }
         if let (Some(section), Some(control)) =
@@ -1174,6 +1190,7 @@ impl crate::ChatSurface {
         }
         let footer = self.effort_control().is_some();
         let context = self.picker_context().is_some();
+        let fast = self.picker_fast().is_some();
         // The flyout first: Up and Down walk it, Enter chooses, Left and
         // Esc close it.
         if let Some(menu) = &mut self.picker.legacy {
@@ -1210,6 +1227,9 @@ impl crate::ChatSurface {
             }
             WinitKey::Named(NamedKey::Tab) => {
                 let mut order = vec![PickerFocus::Search, PickerFocus::Rail, PickerFocus::List];
+                if fast {
+                    order.push(PickerFocus::Fast);
+                }
                 if context {
                     order.push(PickerFocus::Context);
                 }
@@ -1263,6 +1283,14 @@ impl crate::ChatSurface {
                     key
                 {
                     return Some(self.step_level(*direction == NamedKey::ArrowRight));
+                }
+            }
+            // Left is Off, Right is On.
+            PickerFocus::Fast => {
+                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
+                    key
+                {
+                    return Some(self.choose_fast(*direction == NamedKey::ArrowRight));
                 }
             }
             // Left is Auto, Right the longer window.
@@ -1539,7 +1567,8 @@ impl crate::ChatSurface {
             scrollbar::draw(canvas, root, scrollbar, active);
         }
 
-        // The Context row, above the level's.
+        // The Fast row, then the Context row, above the level's.
+        self.draw_fast_row(canvas, root, &geometry);
         self.draw_context_row(canvas, root, &geometry);
 
         // The footer: the level's word, ↺, and the slider.

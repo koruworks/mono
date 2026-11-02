@@ -90,6 +90,7 @@ fn logs_capture_lifecycle_counts_without_provider_content_and_coalesce_streams()
                 text: "private-prompt-sentinel".into(),
                 attachments: vec![],
                 mode: None,
+                fast: None,
             })
             .unwrap();
         h.control

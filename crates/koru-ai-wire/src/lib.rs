@@ -131,6 +131,11 @@ pub struct UpdateChatAgentSettingsRequest {
     /// offer when the message is sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Fast mode on or off for the chat's model (koru-ai D11), where the
+    /// model offers it ([`AgentModelView::fast`]). Applied from the next
+    /// message, like the mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -688,6 +693,19 @@ pub struct AgentModelView {
     /// Absent for a model with no such choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<AgentModelContext>,
+    /// The model offers the agent's Fast mode (koru-ai D11), and whether it
+    /// runs in it by default. Absent for a model without one: a client
+    /// shows no Fast control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<AgentModelFast>,
+}
+
+/// A model's Fast mode: whether the agent runs the model in it when a chat
+/// has not chosen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentModelFast {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on_by_default: bool,
 }
 
 /// A model's longer context window: the id that runs the model with it,
@@ -808,6 +826,7 @@ mod tests {
                 branched_from: None,
                 agent_working_folder: None,
                 agent_mode: None,
+                agent_fast: None,
                 created_at: Timestamp::from_millis(1),
                 updated_at: Timestamp::from_millis(1),
             },

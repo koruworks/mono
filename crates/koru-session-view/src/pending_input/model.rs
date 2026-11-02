@@ -275,6 +275,7 @@ impl PendingInputModel {
                 .map(|item| item.id)
                 .collect(),
             mode: None,
+            fast: None,
         };
         self.submitting = true;
         self.last_submission = Some(input.clone());

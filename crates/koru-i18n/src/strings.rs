@@ -325,6 +325,9 @@ pub enum Key {
     AiAgentModeBuildHelp,
     AiAgentModeOpenCodePlanHelp,
     AiAgentModeNextMessage,
+    AiModelFast,
+    AiModelFastOff,
+    AiModelFastOn,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2733,7 +2736,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1888] = [
+    pub const ALL: [Key; 1891] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2952,6 +2955,9 @@ impl Key {
         Key::AiAgentModeBuildHelp,
         Key::AiAgentModeOpenCodePlanHelp,
         Key::AiAgentModeNextMessage,
+        Key::AiModelFast,
+        Key::AiModelFastOff,
+        Key::AiModelFastOn,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiDocumentLinkUntitled,
@@ -7110,6 +7116,42 @@ pub const ROWS: &[Row] = &[
         ar: "{} · يُطبَّق على رسالتك التالية",
         zh_hans: "{} · 将用于你的下一条消息",
         ja: "{} · 次のメッセージから適用されます",
+    },
+    // The model picker's footer: the row that turns the model's Fast mode on or off (koru-ai D11).
+    Row {
+        key: Key::AiModelFast,
+        en: "Fast",
+        es: "Rápido",
+        pt_br: "Rápido",
+        de: "Schnell",
+        fr: "Rapide",
+        ar: "سريع",
+        zh_hans: "快速",
+        ja: "高速",
+    },
+    // The Fast row's first choice: the model at its usual speed.
+    Row {
+        key: Key::AiModelFastOff,
+        en: "Off",
+        es: "No",
+        pt_br: "Não",
+        de: "Aus",
+        fr: "Non",
+        ar: "إيقاف",
+        zh_hans: "关",
+        ja: "オフ",
+    },
+    // The Fast row's second choice: the model's Fast mode.
+    Row {
+        key: Key::AiModelFastOn,
+        en: "On",
+        es: "Sí",
+        pt_br: "Sim",
+        de: "An",
+        fr: "Oui",
+        ar: "تشغيل",
+        zh_hans: "开",
+        ja: "オン",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

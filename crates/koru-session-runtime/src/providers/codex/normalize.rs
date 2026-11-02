@@ -20,6 +20,17 @@ pub(super) struct CodexModel {
     /// Codex names a newer model to move to (`upgrade` is set): its own mark
     /// for an older one (D11).
     pub legacy: bool,
+    /// The model's *Fast* service tier (koru-ai D11), when it lists one.
+    pub fast: Option<FastTier>,
+}
+
+/// **Codex's Fast mode**: the service tier its catalog names *Fast* (seen as
+/// `priority` on 0.166.0), and whether the model runs in it by default
+/// (`defaultServiceTier`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FastTier {
+    pub id: String,
+    pub on_by_default: bool,
 }
 
 pub(super) struct ModelPage {
@@ -80,6 +91,22 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
     let legacy = model
         .get("upgrade")
         .is_some_and(|upgrade| !upgrade.is_null());
+    let fast = model
+        .get("serviceTiers")
+        .and_then(Value::as_array)
+        .and_then(|tiers| {
+            tiers.iter().find(|tier| {
+                tier.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case("fast"))
+            })
+        })
+        .and_then(|tier| tier.get("id")?.as_str())
+        .filter(|id| valid_token(id, 64))
+        .map(|id| FastTier {
+            id: id.to_owned(),
+            on_by_default: label("defaultServiceTier") == Some(id),
+        });
     let model = model.get("model")?.as_str()?;
     if !valid_token(model, 128) {
         return None;
@@ -87,6 +114,7 @@ fn text_model(model: &Value, is_default: bool) -> Option<CodexModel> {
     Some(CodexModel {
         reasoning,
         legacy,
+        fast,
         model: model.to_owned(),
         image: modalities
             .iter()

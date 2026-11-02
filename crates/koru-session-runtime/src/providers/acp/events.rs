@@ -74,6 +74,10 @@ impl AcpControl {
                 return self.report_mode(moved);
             }
             Some("config_option_update") => {
+                // Claude's SDK may turn Fast mode off itself (D11).
+                if update.get("configOptions").is_some() {
+                    self.fast = super::models::fast_option(update);
+                }
                 let moved = self.follow_mode(super::modes::current(update));
                 return self.report_mode(moved);
             }

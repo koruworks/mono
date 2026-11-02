@@ -50,6 +50,14 @@ pub trait AiPersistence: Send {
         chat: ChatId,
         mode: Option<&str>,
     ) -> Result<Option<Chat>, AiError>;
+    /// Whether a local agent runs the chat's next message in Fast mode
+    /// (koru-ai D11); `None` is the model's own default. Leaves the chat
+    /// where it is in the list.
+    fn set_chat_agent_fast(
+        &mut self,
+        chat: ChatId,
+        fast: Option<bool>,
+    ) -> Result<Option<Chat>, AiError>;
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError>;
     fn replace_chat_tool_policy(
         &mut self,

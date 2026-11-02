@@ -155,8 +155,8 @@ impl AiPersistence for Repository {
                 "INSERT INTO chats (
                     id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    private, agent_working_folder, agent_mode, agent_fast
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     chat.id.to_storage(),
                     chat.title,
@@ -170,6 +170,7 @@ impl AiPersistence for Repository {
                     chat.private,
                     chat.agent_working_folder,
                     chat.agent_mode,
+                    chat.agent_fast,
                 ],
             )
             .map_err(storage_failed)?;
@@ -274,6 +275,24 @@ impl AiPersistence for Repository {
         query_chat(&self.connection, chat)
     }
 
+    fn set_chat_agent_fast(
+        &mut self,
+        chat: ChatId,
+        fast: Option<bool>,
+    ) -> Result<Option<Chat>, AiError> {
+        let updated = self
+            .connection
+            .execute(
+                "UPDATE chats SET agent_fast = ?2 WHERE id = ?1",
+                params![chat.to_storage(), fast],
+            )
+            .map_err(storage_failed)?;
+        if updated == 0 {
+            return Ok(None);
+        }
+        query_chat(&self.connection, chat)
+    }
+
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError> {
         query_chat_tool_policy(&self.connection, chat)
     }
@@ -339,7 +358,8 @@ impl AiPersistence for Repository {
             .prepare(
                 "SELECT id, title, current_provider, current_model, current_reasoning,
                         branched_from_chat_id, branched_from_message_id,
-                        created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode
+                        created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode,
+                        agent_fast
                    FROM chats
                   ORDER BY updated_at_ms DESC, id",
             )
@@ -1746,7 +1766,7 @@ fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiErr
         .query_row(
             "SELECT id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode
+                    private, agent_working_folder, agent_mode, agent_fast
                FROM chats WHERE id = ?1",
             [id.to_storage()],
             chat_from_row,
@@ -1826,8 +1846,8 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
             "INSERT INTO chats (
             id, title, current_provider, current_model, current_reasoning,
             branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms, private,
-            agent_working_folder, agent_mode
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            agent_working_folder, agent_mode, agent_fast
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 chat.id.to_storage(),
                 chat.title,
@@ -1841,6 +1861,7 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
                 chat.private,
                 chat.agent_working_folder,
                 chat.agent_mode,
+                chat.agent_fast,
             ],
         )
         .map_err(storage_failed)?;
@@ -2173,6 +2194,7 @@ fn chat_from_row(row: &Row<'_>) -> rusqlite::Result<Chat> {
         branched_from,
         agent_working_folder: row.get(10)?,
         agent_mode: row.get(11)?,
+        agent_fast: row.get(12)?,
         created_at: Timestamp::from_millis(row.get(7)?),
         updated_at: Timestamp::from_millis(row.get(8)?),
     })

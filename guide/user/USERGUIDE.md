@@ -1257,10 +1257,14 @@ models instead, at the top of the rail. Along the bottom is the model's
 reasoning level, for models that have levels: its name, ↺ to go back to the
 model's own default, and a slider with one stop per level. A local agent
 starts at the level you choose before the first message; after that the level
-is shown but cannot change for that chat. The picker works from the keyboard
+is shown but cannot change for that chat. A local agent's model that has a
+**Fast** mode (Claude Code's on the models that support it, Codex's *Fast*
+service tier) adds a **Fast** row, **Off** or **On**, which reads the model's
+own default until you choose; unlike the level it can change at any time, and
+applies from your next message. The picker works from the keyboard
 too: type to search, Up and Down to pick, Enter to choose, Tab to move between
-the search box, the agents, the list and the level, Left and Right to move the
-level, Esc to clear the search or close. Picking a model only sets it: the chip
+the search box, the agents, the list, the Fast and Context rows and the level,
+Left and Right to move the level or choose in a row, Esc to clear the search or close. Picking a model only sets it: the chip
 names it, and you can still choose the working folder or change your mind.
 The chat is made when you send its first message, which then goes into it —
 so a new chat you leave without writing anything never appears in **Chats**.

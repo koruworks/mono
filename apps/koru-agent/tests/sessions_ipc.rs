@@ -444,6 +444,7 @@ fn pending_input_uses_the_host_rooted_path_once() {
         text: "printf '%s\\n'".into(),
         attachment_ids: vec![attachment_id],
         mode: None,
+        fast: None,
     };
     let sent = client
         .send_pending_input(session.id, lease.token, input.clone())
@@ -635,6 +636,7 @@ fn managed_codex_crosses_real_ipc_for_image_events_approval_cancel_and_reattach(
                 text: "inspect the fixture image".into(),
                 attachment_ids: vec![attachment_id],
                 mode: None,
+                fast: None,
             },
         )
         .unwrap();
@@ -838,6 +840,7 @@ fn attachment_commands_require_protocol_four_and_the_negotiated_capability() {
                 text: "echo legacy".into(),
                 attachment_ids: Vec::new(),
                 mode: None,
+                fast: None,
             },
         )
         .unwrap_err();
