@@ -50,8 +50,9 @@ pub use authority::{PatchError, SettingsAuthority, SettingsEventSink, StartOnLog
 pub use paths::{RUNS_FOLDER, SettingsPaths, delegate_temporary_base};
 pub use registry::{Backing, EXEMPTIONS, REGISTRY, SettingSpec, ValueKind, settings_in};
 pub use sections::{
-    AiPatch, AiSettings, GlobalPatch, GlobalSettings, Invalid, OllamaSection, OpenAiSection,
-    RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch, TerminalSettings,
+    AiPatch, AiSettings, FavoriteModel, GlobalPatch, GlobalSettings, Invalid, OllamaSection,
+    OpenAiSection, RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch,
+    TerminalSettings,
 };
 pub use values::{
     AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,

@@ -101,6 +101,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "view_mode",
     "canvas_bg",
     "emoji_skin_tone",
+    "favorite_models",
 ];
 
 /// What a read of `preferences.conf` recovered, plus what it must carry back.
@@ -183,6 +184,7 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             "view_mode" => into.default_view_mode = ViewModeChoice::parse(value),
             "canvas_bg" => into.default_canvas_background = CanvasBackground::parse(value),
             "emoji_skin_tone" => into.emoji_skin_tone = value.to_owned(),
+            "favorite_models" => into.favorite_models = parse_favorites(value),
             // Somebody else's. `emoji_recents`, `last_export_dir`, `opened.*`,
             // `docpref.*`, `hide_completed`, `show_archived` all land here and
             // survive every write this crate makes.
@@ -267,11 +269,49 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     line("view_mode", settings.default_view_mode.token());
     line("canvas_bg", &settings.default_canvas_background.token());
     line("emoji_skin_tone", &settings.emoji_skin_tone);
+    // Written only while there is a favorite: absent is none, which is also
+    // what a build without this key reads — and carries through its writes.
+    if !settings.favorite_models.is_empty() {
+        line(
+            "favorite_models",
+            &render_favorites(&settings.favorite_models),
+        );
+    }
 
     for (key, value) in &file.carried {
         line(key, value);
     }
     out
+}
+
+/// **`favorite_models=`** is a JSON list of `agent:model` strings on one
+/// line: `["claude:opus","opencode:anthropic/claude-sonnet-4"]`. JSON because
+/// a model id is the agent's to spell — it may hold `/`, `:` or `,` — and
+/// JSON quotes whatever it holds; the first `:` splits it, because an agent
+/// key never holds one.
+fn render_favorites(favorites: &[crate::FavoriteModel]) -> String {
+    let pairs: Vec<String> = favorites
+        .iter()
+        .map(|favorite| format!("{}:{}", favorite.agent, favorite.model))
+        .collect();
+    serde_json::to_string(&pairs).expect("a list of strings serializes")
+}
+
+/// Read `favorite_models=` tolerantly: a value that is not a JSON list of
+/// strings is no favorites, and an entry that is not `agent:model` in the
+/// shapes a patch takes is skipped rather than failing the rest.
+fn parse_favorites(value: &str) -> Vec<crate::FavoriteModel> {
+    let Ok(pairs) = serde_json::from_str::<Vec<String>>(value) else {
+        return Vec::new();
+    };
+    crate::sections::ordered_favorites(
+        pairs
+            .iter()
+            .filter_map(|pair| pair.split_once(':'))
+            .map(|(agent, model)| crate::FavoriteModel::new(agent, model))
+            .filter(crate::sections::is_valid_favorite)
+            .collect(),
+    )
 }
 
 // -------------------------------------------------------- desktop-v1.json

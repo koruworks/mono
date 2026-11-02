@@ -353,6 +353,51 @@ fn the_agent_order_patch_is_whole_deduplicated_and_validated() {
     assert!(bad.validate().is_err());
 }
 
+/// **The favorites are written whole and roam**: each pair once at its first
+/// place, an empty list clears them, and an entry that is not an agent key
+/// and a model name is refused before anything is staged.
+#[test]
+fn the_favorite_models_patch_is_whole_roaming_and_validated() {
+    let mut section = GlobalSettings::default();
+    let patch: GlobalPatch = serde_json::from_str(
+        r#"{"favorite_models":[{"agent":"claude","model":"opus"},
+            {"agent":"codex","model":"gpt-5"},{"agent":"claude","model":"opus"}]}"#,
+    )
+    .unwrap();
+    assert!(patch.touches_roaming() && !patch.touches_device());
+    assert!(patch.validate().is_ok());
+    patch.apply(&mut section);
+    assert_eq!(
+        section.favorite_models,
+        [
+            crate::FavoriteModel::new("claude", "opus"),
+            crate::FavoriteModel::new("codex", "gpt-5"),
+        ]
+    );
+    GlobalPatch {
+        favorite_models: Some(Vec::new()),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut section);
+    assert!(section.favorite_models.is_empty(), "cleared");
+    for (agent, model) in [("Claude", "opus"), ("claude", ""), ("claude", "a\nb")] {
+        let bad = GlobalPatch {
+            favorite_models: Some(vec![crate::FavoriteModel::new(agent, model)]),
+            ..GlobalPatch::default()
+        };
+        assert!(bad.validate().is_err(), "{agent:?} {model:?}");
+    }
+    let too_many = GlobalPatch {
+        favorite_models: Some(
+            (0..257)
+                .map(|n| crate::FavoriteModel::new("claude", format!("m{n}")))
+                .collect(),
+        ),
+        ..GlobalPatch::default()
+    };
+    assert!(too_many.validate().is_err());
+}
+
 /// **The default agent is set by key and cleared to Auto with `null`**; a
 /// value that is not an agent key is refused before anything is staged.
 #[test]

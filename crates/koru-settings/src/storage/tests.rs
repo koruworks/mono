@@ -247,6 +247,8 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         default_agent: Some("codex".into()),
         // The order is written only once moved.
         agent_order: vec!["codex".into(), "claude".into()],
+        // Favorites are written only while there is one.
+        favorite_models: vec![crate::FavoriteModel::new("claude", "opus")],
         ..GlobalSettings::default()
     };
     let written = render_preferences(&settings, &PreferencesFile::default());
@@ -488,6 +490,49 @@ fn the_agent_order_round_trips_and_the_built_in_order_writes_no_key() {
         let mut read = GlobalSettings::default();
         apply_desktop(odd, &mut read);
         assert!(read.agent_order.is_empty());
+    }
+}
+
+/// **The picker's favorite models** (D46): roaming, so in `preferences.conf`;
+/// none writes no key, a list is written and read back with each pair once —
+/// a model id holding `/`, `:` or `,` intact — anything that is not a JSON
+/// list reads as none, and an entry that is not `agent:model` is skipped.
+#[test]
+fn the_favorite_models_round_trip_through_the_roaming_file() {
+    let none = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!none.contains("favorite_models"));
+
+    let favorites = vec![
+        crate::FavoriteModel::new("claude", "opus"),
+        crate::FavoriteModel::new("opencode", "anthropic/claude-sonnet-4"),
+        crate::FavoriteModel::new("qwen", "qwen3:32b,fast"),
+    ];
+    let settings = GlobalSettings {
+        favorite_models: favorites.clone(),
+        ..GlobalSettings::default()
+    };
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    assert!(written.contains(
+        r#"favorite_models=["claude:opus","opencode:anthropic/claude-sonnet-4","qwen:qwen3:32b,fast"]"#
+    ));
+    let mut again = GlobalSettings::default();
+    let file = apply_preferences(&written, &mut again);
+    assert_eq!(again.favorite_models, favorites);
+    assert!(file.carried.is_empty(), "the key is owned, not carried");
+
+    let mut twice = GlobalSettings::default();
+    apply_preferences(
+        "favorite_models=[\"claude:opus\",\"Claude:opus\",\"claude:opus\",\"nomodel\",\"codex:\"]\n",
+        &mut twice,
+    );
+    assert_eq!(
+        twice.favorite_models,
+        [crate::FavoriteModel::new("claude", "opus")]
+    );
+    for odd in ["favorite_models=claude:opus\n", "favorite_models={}\n"] {
+        let mut read = GlobalSettings::default();
+        apply_preferences(odd, &mut read);
+        assert!(read.favorite_models.is_empty(), "{odd:?}");
     }
 }
 

@@ -315,6 +315,21 @@ pub const REGISTRY: &[SettingSpec] = &[
               never resolves it: the closed set of dictionaries is the \
               consumer's.",
     },
+    SettingSpec {
+        field: "favorite_models",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The models starred in the chat's model picker, as `{agent, model}` pairs: \
+              an agent key (`claude`, `codex`, …) and the model id it takes, in the \
+              order they were starred. The picker lists them under *Favorites* at the \
+              top of its agent rail. Written whole; an empty list clears them. Written \
+              as `favorite_models=[\"agent:model\", …]`, and only while there is one; a \
+              build without the key carries it through its writes. Roaming: a favorite \
+              follows the person. An agent turned off on a machine keeps its favorites \
+              and the picker hides them there.",
+    },
     // ------------------------------ Global, device-local: desktop-v1.json
     SettingSpec {
         field: "close_behavior",

@@ -458,3 +458,45 @@ fn manage_and_the_pickers_plus_open_agent_providers() {
     assert!(view.open_agent_settings_from_chat());
     assert!(showing_agent_providers(&view));
 }
+
+/// **The picker's favorites are stored roaming and reach every chat**
+/// (D46): a star pressed in a chat is one Global patch through the
+/// window's link — the roaming half, `preferences.conf` — and the stored
+/// list is handed to the chat pane, so a chat on this window and the next
+/// show the same stars. *Restore defaults* on Agent providers leaves them,
+/// as they are not that page's.
+#[test]
+fn the_favorite_models_are_stored_roaming_and_reach_the_chats() {
+    let mut view = MainView::new();
+    assert!(
+        !view.save_favorite_models_from_chat(),
+        "no star pressed: nothing stored"
+    );
+    let favorites = vec![
+        koru_settings::FavoriteModel::new("claude", "opus"),
+        koru_settings::FavoriteModel::new("codex", "gpt-5"),
+    ];
+    let patch = koru_settings::GlobalPatch {
+        favorite_models: Some(favorites.clone()),
+        ..koru_settings::GlobalPatch::default()
+    };
+    assert!(patch.touches_roaming() && !patch.touches_device());
+    view.save_agent_settings(patch);
+    assert_eq!(
+        view.delegate_folder.authoritative().favorite_models,
+        favorites
+    );
+    let shown = chat_favorites(&favorites);
+    assert_eq!(view.favorite_models(), shown);
+    assert!(
+        !view.ai_chat.set_favorite_models(shown.clone()),
+        "the chat pane already has them"
+    );
+
+    view.perform_settings_request(koru_settings_ui::Request::RestoreAgentDefaults);
+    assert_eq!(
+        view.delegate_folder.authoritative().favorite_models,
+        favorites,
+        "not Agent providers' to restore"
+    );
+}

@@ -117,7 +117,7 @@ fn on_agent(surface: &mut ChatSurface, id: &str, model: &str, reasoning: Reasoni
 #[test]
 fn the_geometry_fits_narrow_wide_and_middling_composers() {
     for composer in [280.0, 360.0, 1000.0] {
-        let (w, h) = size(composer, rail_height(2, false));
+        let (w, h) = size(composer, rail_height(2, 0));
         assert!(w <= MAX_W && w <= composer.max(RAIL_W + 160.0));
         let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true, false);
         assert_eq!(geometry.rail.w, RAIL_W);
@@ -135,8 +135,8 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     }
     assert_eq!(size(1000.0, 0.0).0, MAX_W);
     // Never shorter than the rail needs room for.
-    let (_, rail_bound) = size(360.0, rail_height(8, true));
-    assert!(rail_bound >= rail_height(8, true));
+    let (_, rail_bound) = size(360.0, rail_height(8, 1));
+    assert!(rail_bound >= rail_height(8, 1));
 }
 
 /// D13: one size — search, six rows, the Context row and the level's
@@ -144,7 +144,7 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
 /// scrolls, and a model without either row gives its room to the list.
 #[test]
 fn the_picker_keeps_one_height_from_agent_to_agent() {
-    let (_, h) = size(360.0, rail_height(2, false));
+    let (_, h) = size(360.0, rail_height(2, 0));
     let rows = LIST_ROWS as f32 * ROW_H;
     assert!((h - (PAD * 2.0 + SEARCH_H + rows + CONTEXT_H + FOOTER_H)).abs() < 0.5);
 
@@ -343,8 +343,8 @@ fn the_picker_opens_above_the_composer_unless_there_is_no_room() {
 #[test]
 fn the_rail_stacks_its_marks_with_a_divider_after_a_built_in_provider() {
     let rail = Rect::new(0.0, 0.0, RAIL_W, 400.0);
-    let plain = rail_rects(rail, 3, false);
-    let divided = rail_rects(rail, 3, true);
+    let plain = rail_rects(rail, 3, &[]);
+    let divided = rail_rects(rail, 3, &[0]);
     assert_eq!(plain[0], divided[0]);
     assert!(divided[1].y - plain[1].y >= RAIL_DIVIDER - 0.5);
     assert!(plain.iter().all(|rect| rect.w == RAIL_BUTTON));
@@ -872,7 +872,7 @@ fn a_model_row_raises_no_tooltip_and_a_rail_mark_keeps_its_name() {
         );
     }
     let rail = surface.picker_rail();
-    let mark = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail))[0];
+    let mark = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))[0];
     assert!(
         surface
             .picker_tooltip_at(&geometry, mark.x + mark.w * 0.5, mark.y + mark.h * 0.5)
@@ -1304,7 +1304,7 @@ fn the_rails_plus_asks_the_host_for_agent_providers() {
         .picker_manage_rect(&geometry)
         .expect("the + is drawn");
     let rail = surface.picker_rail();
-    let marks = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail));
+    let marks = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail));
     let last = marks.last().unwrap();
     assert!(plus.y > last.y + last.h - 0.5, "after the last mark");
     assert!(geometry.rail.contains(plus.x + 1.0, plus.y + plus.h - 1.0));
@@ -1357,7 +1357,7 @@ fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
         );
     }
     let rail = surface.picker_rail();
-    let mark = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail))[0];
+    let mark = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))[0];
     assert_eq!(
         at(&mut surface, mark.x + 4.0, mark.y + 4.0),
         CursorIcon::Default
@@ -1410,4 +1410,220 @@ fn the_rail_is_the_colour_of_the_windows_rail() {
     assert_eq!(geometry.rail.x, geometry.panel.x);
     assert_eq!(geometry.rail.h, geometry.panel.h);
     assert!(geometry.rail.x + geometry.rail.w <= geometry.list.x + 0.5);
+}
+
+/// The primary modifier and D: the picker's favorite chord (D47).
+fn favorite_key(surface: &mut ChatSurface) -> bool {
+    let primary = if cfg!(target_os = "macos") {
+        ModifiersState::SUPER
+    } else {
+        ModifiersState::CONTROL
+    };
+    surface
+        .picker_key(&WinitKey::Character("d".into()), Some("d"), primary)
+        .unwrap()
+}
+
+/// **A ☆ stars a model, and a second press takes the star away** (D46): a
+/// press on the row's ☆ stars it without choosing it, the whole list is
+/// handed to the host to store, and the host's answer is what the picker
+/// then shows. The agent's *Default* and a built-in provider's models have
+/// no ☆.
+#[test]
+fn a_press_on_the_star_toggles_the_favorite_and_asks_the_host_to_store_it() {
+    let mut surface = surface();
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let geometry = surface.picker_geometry().unwrap();
+    let entry = surface.picker_entry().unwrap();
+    assert_eq!(surface.row_favorite(&entry, &Row::Default), None);
+    assert_eq!(
+        surface.row_favorite(
+            &RailEntry::Provider(agent("openai")),
+            &Row::Model("gpt".into())
+        ),
+        None
+    );
+
+    let sonnet = surface.picker_row_rect(&geometry, 2).unwrap();
+    let star = star_rect(sonnet);
+    let (x, y) = (star.x + star.w * 0.5, star.y + star.h * 0.5);
+    assert!(sonnet.contains(x, y));
+    assert_eq!(surface.picker_mouse_down(x, y), Some(true));
+    assert!(surface.chat_model_open, "the star does not choose the row");
+    assert!(surface.is_favorite(&agent("agent-claude"), "sonnet"));
+    let asked = surface
+        .take_favorite_models_request()
+        .expect("the host is asked");
+    assert_eq!(asked, [FavoriteModel::new("claude", "sonnet")]);
+    assert_eq!(surface.take_favorite_models_request(), None, "asked once");
+
+    // The host stores it and hands it back: nothing moves.
+    assert!(!surface.set_favorite_models(asked));
+    surface.picker_mouse_down(x, y);
+    assert!(!surface.is_favorite(&agent("agent-claude"), "sonnet"));
+    assert_eq!(surface.take_favorite_models_request(), Some(Vec::new()));
+}
+
+/// **The keyboard stars the row it is on** (D47) — from the search field
+/// or the list, before the query could take the key; a row with no ☆ is
+/// left alone and the query is untouched.
+#[test]
+fn the_favorite_chord_toggles_the_highlighted_row() {
+    let entry = koru_keys::registry::get(koru_keys::ShortcutId::FavoriteModel);
+    assert_eq!(entry.layer, koru_keys::Layer::Chat);
+    assert_eq!(
+        entry.shares_chord_with,
+        Some(koru_keys::ShortcutId::DeleteRows)
+    );
+
+    let mut surface = surface();
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    surface.picker.focus = PickerFocus::Search;
+    surface.picker.highlight = Some(1);
+    assert!(favorite_key(&mut surface));
+    assert!(surface.is_favorite(&agent("agent-claude"), "opus"));
+    assert_eq!(surface.picker.query.raw_text(), "", "not typed");
+    surface.picker.focus = PickerFocus::List;
+    assert!(favorite_key(&mut surface));
+    assert!(!surface.is_favorite(&agent("agent-claude"), "opus"));
+
+    surface.take_favorite_models_request();
+    surface.picker.highlight = Some(0);
+    assert!(
+        favorite_key(&mut surface),
+        "the Default row: nothing to star"
+    );
+    assert_eq!(surface.take_favorite_models_request(), None);
+}
+
+/// **Favorites leads the rail and lists every agent's starred models**
+/// (D46), in the rail's agent order, each with its own agent; choosing one
+/// makes that agent and model the chat's. Searching finds one by its
+/// agent's name too.
+#[test]
+fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
+    let mut surface = surface();
+    assert!(
+        !surface.picker_rail().contains(&RailEntry::Favorites),
+        "no favorite: no entry"
+    );
+    surface.set_favorite_models(vec![
+        FavoriteModel::new("opencode", "deepseek/v4-pro"),
+        FavoriteModel::new("claude", "sonnet"),
+        FavoriteModel::new("claude", "opus"),
+    ]);
+    let rail = surface.picker_rail();
+    assert_eq!(rail[0], RailEntry::Favorites);
+    assert_eq!(rail_dividers(&rail), [0], "set off from the agents");
+
+    open(&mut surface);
+    assert_ne!(
+        surface.picker_entry(),
+        Some(RailEntry::Favorites),
+        "it is not where the picker opens"
+    );
+    surface.select_rail_entry(RailEntry::Favorites);
+    assert_eq!(
+        surface.picker_rows(),
+        [
+            Row::Favorite(agent("agent-claude"), "sonnet".into()),
+            Row::Favorite(agent("agent-claude"), "opus".into()),
+            Row::Favorite(agent("agent-opencode"), "deepseek/v4-pro".into()),
+        ]
+    );
+    let entry = RailEntry::Favorites;
+    let first = Row::Favorite(agent("agent-claude"), "sonnet".into());
+    assert_eq!(surface.picker_row_label(&entry, &first), "Sonnet 4.6");
+    assert_eq!(
+        surface.picker_row_description(&entry, &first).as_deref(),
+        Some("Fast and able")
+    );
+    assert_eq!(
+        surface.row_favorite(&entry, &first),
+        Some((agent("agent-claude"), "sonnet".to_owned())),
+        "its star takes it off"
+    );
+
+    type_query(&mut surface, "opencode");
+    assert_eq!(
+        surface.picker_rows(),
+        [Row::Favorite(
+            agent("agent-opencode"),
+            "deepseek/v4-pro".into()
+        )]
+    );
+    press(&mut surface, NamedKey::Enter);
+    assert!(!surface.chat_model_open);
+    let model = &surface.transcript.as_ref().unwrap().chat.current_model;
+    assert_eq!(model.provider, agent("agent-opencode"));
+    assert_eq!(model.requested_model, "deepseek/v4-pro");
+
+    // Opened again, the favorite reads as the chat's.
+    open(&mut surface);
+    surface.select_rail_entry(RailEntry::Favorites);
+    let rows = surface.picker_rows();
+    assert!(surface.picker_row_current(&RailEntry::Favorites, &rows[2]));
+    assert!(!surface.picker_row_current(&RailEntry::Favorites, &rows[0]));
+}
+
+/// **A turned-off agent's favorites are hidden, not lost** (D46): they
+/// leave *Favorites* — and the last one takes the entry off the rail —
+/// while the list the host stores keeps them, so turning the agent back on
+/// brings them back.
+#[test]
+fn a_turned_off_agents_favorite_is_hidden_and_kept() {
+    let mut surface = surface();
+    let favorites = vec![
+        FavoriteModel::new("claude", "opus"),
+        FavoriteModel::new("opencode", "opencode/beam-free"),
+    ];
+    surface.set_favorite_models(favorites.clone());
+    surface.set_hidden_agents(["opencode".to_owned()]);
+    assert_eq!(
+        surface.picker_favorites(),
+        [(agent("agent-claude"), "opus".to_owned())]
+    );
+    surface.set_hidden_agents(["opencode".to_owned(), "claude".to_owned()]);
+    assert!(surface.picker_favorites().is_empty());
+    assert!(!surface.picker_rail().contains(&RailEntry::Favorites));
+    assert_eq!(surface.favorite_models, favorites, "kept");
+    // Starring another model keeps the hidden ones in what is stored.
+    surface.set_hidden_agents(["opencode".to_owned()]);
+    surface.toggle_favorite(&agent("agent-claude"), "sonnet");
+    let stored = surface.take_favorite_models_request().unwrap();
+    assert!(stored.contains(&FavoriteModel::new("opencode", "opencode/beam-free")));
+    surface.set_hidden_agents(Vec::new());
+    assert_eq!(surface.picker_favorites().len(), 3);
+}
+
+/// **Unstarring the last favorite under *Favorites* leaves the picker on
+/// an agent** (D46): the entry is gone, and the keyboard is on a row that
+/// is there.
+#[test]
+fn unstarring_the_last_favorite_leaves_favorites_gracefully() {
+    let mut surface = surface();
+    surface.set_favorite_models(vec![FavoriteModel::new("claude", "opus")]);
+    open(&mut surface);
+    surface.select_rail_entry(RailEntry::Favorites);
+    surface.picker.focus = PickerFocus::List;
+    assert_eq!(surface.picker.highlight, Some(0));
+    assert!(favorite_key(&mut surface));
+    assert!(!surface.picker_rail().contains(&RailEntry::Favorites));
+    assert!(matches!(surface.picker_entry(), Some(RailEntry::Agent(_))));
+    let rows = surface.picker_rows();
+    let highlight = surface.picker.highlight.expect("on a row");
+    assert!(highlight < rows.len() && rows[highlight].choosable());
+}
+
+/// One press adds a favorite at the end, the next takes it out where it
+/// was.
+#[test]
+fn a_star_toggles_into_and_out_of_the_list_in_place() {
+    let opus = FavoriteModel::new("claude", "opus");
+    let sonnet = FavoriteModel::new("claude", "sonnet");
+    let both = toggled(std::slice::from_ref(&opus), sonnet.clone());
+    assert_eq!(both, [opus.clone(), sonnet.clone()], "added at the end");
+    assert_eq!(toggled(&both, opus), [sonnet], "taken out where it was");
 }

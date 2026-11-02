@@ -4775,6 +4775,24 @@
         ],
         "type": "object"
       },
+      "FavoriteModel": {
+        "description": "**One favorite model** in the chat's model picker: an agent, by its key\n(`claude`, `codex`, …), and the model id that agent takes.\n\nKeyed by the agent rather than by a provider id so that a favorite follows\nthe person to a machine where the same agent is installed under the same\nkey, which is what *roaming* is for.",
+        "properties": {
+          "agent": {
+            "description": "The agent's key: lowercase ASCII letters, digits and `-`.",
+            "type": "string"
+          },
+          "model": {
+            "description": "The model id the agent takes, as its model list names it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "model"
+        ],
+        "type": "object"
+      },
       "FederatedSearchHit": {
         "oneOf": [
           {
@@ -5520,6 +5538,14 @@
             "nullable": true,
             "type": "string"
           },
+          "favorite_models": {
+            "description": "The whole favorites list, written whole on every star: an empty list\nclears them. Absent leaves the stored list alone.",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteModel"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "global_dictation_enabled": {
             "nullable": true,
             "type": "boolean"
@@ -5798,6 +5824,14 @@
           },
           "emoji_skin_tone": {
             "type": "string"
+          },
+          "favorite_models": {
+            "default": [],
+            "description": "**The models starred in the chat's model picker**, by agent key and\nmodel id, in the order they were starred; each pair once. Roaming,\nlike the rest of how Koru looks to this person: a favorite made on\none computer is a favorite on the next. An agent turned off on a\nmachine keeps its favorites; the picker hides them there.\n`#[serde(default)]` so a section from a build without it still reads.",
+            "items": {
+              "$ref": "#/components/schemas/FavoriteModel"
+            },
+            "type": "array"
           },
           "global_dictation_enabled": {
             "description": "Whether Agent may open a global microphone session and insert into an\nexternal application. Off until the person accepts the Voice notice.\n`None` means the first-use notice has never been accepted; `Some`\nremembers onboarding independently of the current enabled value.",

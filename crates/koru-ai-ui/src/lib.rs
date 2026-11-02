@@ -81,6 +81,7 @@ pub use agents::{AgentDefaults, agent_key, provider_mark};
 pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
+pub use model_picker::FavoriteModel;
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
@@ -514,6 +515,12 @@ pub struct ChatSurface {
     agent_settings_offered: bool,
     /// The **+** was pressed: the host opens Settings on Agent providers.
     agent_settings_request: bool,
+    /// The models starred in the picker (D46), by agent key and model id,
+    /// as the host's roaming setting holds them.
+    favorite_models: Vec<FavoriteModel>,
+    /// A star was pressed: the whole list, for the host to store. A star
+    /// shows at once; the host's answer settles it.
+    favorite_models_request: Option<Vec<FavoriteModel>>,
     openai_models: Vec<String>,
     ollama_models: Vec<String>,
     /// Each local agent's readiness, from its validation answer.
@@ -808,6 +815,8 @@ impl ChatSurface {
             agent_order: Vec::new(),
             agent_settings_offered: false,
             agent_settings_request: false,
+            favorite_models: Vec::new(),
+            favorite_models_request: None,
             openai_models: Vec::new(),
             ollama_models: Vec::new(),
             agent_status: HashMap::new(),

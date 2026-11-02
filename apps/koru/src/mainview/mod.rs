@@ -14017,6 +14017,9 @@ impl View for MainView {
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
         let agent_settings_opened = self.open_agent_settings_from_chat();
+        // A star pressed in a chat's model picker: stored, roaming, and
+        // handed to every other chat.
+        let favorites_saved = self.save_favorite_models_from_chat();
         self.ask_pending_ai_chat_folder();
         // The level meter's tick. `false` the moment the session ends, because
         // there is no `Listening` left to ask.
@@ -14169,6 +14172,7 @@ impl View for MainView {
             || delegate_folder
             || agent_rows_changed
             || agent_settings_opened
+            || favorites_saved
             || fonts_arrived
             || delegation_requested
             || delegation_answered

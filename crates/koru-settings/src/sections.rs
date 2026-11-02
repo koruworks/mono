@@ -98,6 +98,29 @@ pub struct RecordingPrefs {
     pub folder: Option<String>,
 }
 
+/// **One favorite model** in the chat's model picker: an agent, by its key
+/// (`claude`, `codex`, …), and the model id that agent takes.
+///
+/// Keyed by the agent rather than by a provider id so that a favorite follows
+/// the person to a machine where the same agent is installed under the same
+/// key, which is what *roaming* is for.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FavoriteModel {
+    /// The agent's key: lowercase ASCII letters, digits and `-`.
+    pub agent: String,
+    /// The model id the agent takes, as its model list names it.
+    pub model: String,
+}
+
+impl FavoriteModel {
+    pub fn new(agent: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            model: model.into(),
+        }
+    }
+}
+
 /// Everything that applies to Koru as a whole, whoever is consuming it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +163,14 @@ pub struct GlobalSettings {
     pub dictation_input: DictationInput,
     pub spellcheck_enabled: bool,
     pub spellcheck_language: LanguageChoice,
+    /// **The models starred in the chat's model picker**, by agent key and
+    /// model id, in the order they were starred; each pair once. Roaming,
+    /// like the rest of how Koru looks to this person: a favorite made on
+    /// one computer is a favorite on the next. An agent turned off on a
+    /// machine keeps its favorites; the picker hides them there.
+    /// `#[serde(default)]` so a section from a build without it still reads.
+    #[serde(default)]
+    pub favorite_models: Vec<FavoriteModel>,
     // Device-local — `desktop-v1.json`.
     pub close_behavior: CloseBehaviorChoice,
     pub global_shortcut: GlobalShortcut,
@@ -241,6 +272,8 @@ impl Default for GlobalSettings {
             // degrades to quietly-off at the consumer rather than here.
             spellcheck_enabled: true,
             spellcheck_language: LanguageChoice::Automatic,
+            // No favorites until one is starred.
+            favorite_models: Vec::new(),
             close_behavior: CloseBehaviorChoice::default(),
             global_shortcut: GlobalShortcut::default(),
             global_dictation_enabled: None,
@@ -330,6 +363,10 @@ pub struct GlobalPatch {
     pub spellcheck_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spellcheck_language: Option<LanguageChoice>,
+    /// The whole favorites list, written whole on every star: an empty list
+    /// clears them. Absent leaves the stored list alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub favorite_models: Option<Vec<FavoriteModel>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_behavior: Option<CloseBehaviorChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -406,6 +443,7 @@ impl GlobalPatch {
             || self.dictation_input.is_some()
             || self.spellcheck_enabled.is_some()
             || self.spellcheck_language.is_some()
+            || self.favorite_models.is_some()
     }
 
     /// Whether this patch touches anything in `desktop-v1.json`.
@@ -457,6 +495,17 @@ impl GlobalPatch {
             return Err(Invalid::new(
                 "agent_order",
                 "an agent is named by its lowercase key, and at most 64 are listed",
+            ));
+        }
+        // A favorite is an agent key and a model name in the shape a model
+        // setting already takes; the list is bounded so a hand-edit cannot
+        // grow the roaming file without end.
+        if let Some(favorites) = &self.favorite_models
+            && (favorites.len() > MAX_FAVORITE_MODELS || !favorites.iter().all(is_valid_favorite))
+        {
+            return Err(Invalid::new(
+                "favorite_models",
+                "a favorite is an agent's lowercase key and a model name, and at most 256 are kept",
             ));
         }
         if let Field::Set(key) = &self.default_agent
@@ -623,8 +672,28 @@ impl GlobalPatch {
         if let Some(order) = self.agent_order {
             current.agent_order = ordered_agents(order);
         }
+        if let Some(favorites) = self.favorite_models {
+            current.favorite_models = ordered_favorites(favorites);
+        }
     }
 }
+
+/// Favorites as they are kept: each pair once, at its first place.
+pub(crate) fn ordered_favorites(favorites: Vec<FavoriteModel>) -> Vec<FavoriteModel> {
+    let mut seen = std::collections::HashSet::new();
+    favorites
+        .into_iter()
+        .filter(|favorite| seen.insert(favorite.clone()))
+        .collect()
+}
+
+/// Whether a favorite read from a file is one a patch could have written.
+pub(crate) fn is_valid_favorite(favorite: &FavoriteModel) -> bool {
+    is_agent_key(&favorite.agent) && validate_model(&favorite.model).is_ok()
+}
+
+/// The most favorites the list holds.
+const MAX_FAVORITE_MODELS: usize = 256;
 
 /// An order as it is kept: each key once, at its first place.
 pub(crate) fn ordered_agents(order: Vec<String>) -> Vec<String> {

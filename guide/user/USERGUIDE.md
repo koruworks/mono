@@ -1248,13 +1248,18 @@ chips, workspace access, approval mode, the model chip and send. Until a
 model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
-left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex and
-Antigravity, in the order set on Agent providers and less any you have
-turned off — and a **+** at the foot of that
+left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex,
+Antigravity and Devin, in the order set on Agent providers and less any you have
+turned off — on the same colour as the window's own left rail, and a **+** at
+the foot of that
 column, which opens **Settings → Coding → Agent providers**; the selected
 agent's models sit beside them under
-their own names, and a **Search models…** box above the list (typing narrows
-it; every word must match). The ↻ at the end of the search box asks the agent
+their own names, each with the agent's short description of it on a second,
+smaller line when the agent gives one, and a **Search models…** box above the
+list (typing narrows
+it; every word must match). The pointer is the usual arrow everywhere in the
+picker except the search box. The list keeps the picker's size and scrolls
+when there is more than fits. The ↻ at the end of the search box asks the agent
 for its list again — after you connect a new provider in OpenCode, say. A
 chat that has begun on Koru AI, OpenAI or Ollama lists that provider's
 models instead, at the top of the rail. Along the bottom is the model's
@@ -1268,7 +1273,19 @@ own default until you choose; unlike the level it can change at any time, and
 applies from your next message. The picker works from the keyboard
 too: type to search, Up and Down to pick, Enter to choose, Tab to move between
 the search box, the agents, the list, the Fast and Context rows and the level,
-Left and Right to move the level or choose in a row, Esc to clear the search or close. Picking a model only sets it: the chip
+Left and Right to move the level or choose in a row, `Ctrl+D` (`⌘D` on a Mac)
+to make the highlighted model a favorite, Esc to clear the search or close.
+
+**Favorite models.** Hover a model and a ☆ appears at the end of its row;
+click it to make the model a favorite (★, shown whether or not you hover),
+and click again to take it away. With at least one favorite, a **★
+Favorites** entry heads the picker's left column: it lists your favorites
+from every agent, each beside its agent's icon, and choosing one switches the
+chat to that agent and model. Favorites follow you to your other computers,
+like your theme. An agent you turn off on Agent providers keeps its
+favorites, hidden until you turn it back on.
+
+Picking a model only sets it: the chip
 names it, and you can still choose the working folder or change your mind.
 The chat is made when you send its first message, which then goes into it —
 so a new chat you leave without writing anything never appears in **Chats**.
@@ -3298,8 +3315,8 @@ an update always closes properly.
 
 **Choose which coding agents Koru shows** on **Settings → Coding → Agent
 providers**. Under **Enabled agents** is one row per agent Koru supports —
-Claude, OpenCode, Grok, Kimi, Codex, GitHub Copilot, Qwen Code, Antigravity
-and Muse — each with its mark, its name, a switch, a **Setup guide ↗** link to
+Claude, OpenCode, Grok, Kimi, Codex, GitHub Copilot, Qwen Code, Antigravity,
+Muse and Devin — each with its mark, its name, a switch, a **Setup guide ↗** link to
 the agent's own install page, and its status in plain words: **Ready**;
 **Not installed**, naming the program that is not on your `PATH` (*`grok`
 isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
@@ -5997,7 +6014,7 @@ restart.
 
 Press **New chat** and open the model chip. Under **Local agents** are the
 coding agents installed on this computer — Codex, OpenCode, Claude, Kimi,
-Grok, Antigravity — each with a word when it is not ready (*Not installed*,
+Grok, Antigravity, Devin — each with a word when it is not ready (*Not installed*,
 *Signed out*, *Needs a supported version*). Pick one and the chip reads its
 name. Codex, OpenCode and Antigravity can also list their models: the small
 arrow at the end of the row expands them (OpenCode groups them by provider),
@@ -6011,6 +6028,16 @@ download from the `agy` command (Windows only). Run
 account in the browser, and restart Koru. Its first message takes about
 twenty seconds to start. The **+** menu's Antigravity tab still opens `agy`
 itself.
+
+**Devin** is Cognition's Devin CLI, the same `devin` command in a tab and in
+a chat. Its installers leave it off your `PATH`, so Koru also looks where
+they put it: the standalone CLI first, then the copy inside the Devin desktop
+app. A chat needs Devin 3000.10.48 or newer and uses the first copy that is;
+if your standalone CLI is older, run `devin update` and restart Koru. Sign in
+with `devin auth login` (Koru never asks for or reads your Devin
+credentials). A Devin chat starts in Devin's own *Code* mode, which makes
+file edits in the folder without asking and still asks before running a
+command.
 
 The agent answers in the chat, as Markdown. While it works, each tool it uses
 is a row inside the turn with the agent's own words — *Working — Read

@@ -49,6 +49,7 @@ impl AiChatView {
         surface.set_hidden_agents(hidden_agents());
         surface.set_agent_defaults(agent_defaults());
         surface.set_agent_order(agent_order());
+        surface.set_favorite_models(favorite_models());
         // Koru has a Settings tab: the picker's + opens *Agent providers*.
         surface.offer_agent_settings(true);
         Self {
@@ -228,6 +229,17 @@ impl AiChatView {
     pub fn take_agent_settings_request(&mut self) -> bool {
         self.surface.take_agent_settings_request()
     }
+
+    /// The models starred in the picker (D46), as the roaming setting holds
+    /// them.
+    pub fn set_favorite_models(&mut self, favorites: Vec<koru_ai_ui::FavoriteModel>) -> bool {
+        self.surface.set_favorite_models(favorites)
+    }
+
+    /// A star was pressed in this chat's picker: the whole list to store.
+    pub fn take_favorite_models_request(&mut self) -> Option<Vec<koru_ai_ui::FavoriteModel>> {
+        self.surface.take_favorite_models_request()
+    }
 }
 
 /// **The agents turned off on this machine, for chat tabs opened later.**
@@ -280,6 +292,25 @@ pub(crate) fn set_agent_order(keys: Vec<String>) {
 
 fn agent_order() -> Vec<String> {
     AGENT_ORDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
+/// **The picker's favorites, for chat tabs opened later** — the same
+/// arrangement again; one list per process, because the setting is one per
+/// person.
+static FAVORITE_MODELS: std::sync::Mutex<Vec<koru_ai_ui::FavoriteModel>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn set_favorite_models(favorites: Vec<koru_ai_ui::FavoriteModel>) {
+    *FAVORITE_MODELS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = favorites;
+}
+
+fn favorite_models() -> Vec<koru_ai_ui::FavoriteModel> {
+    FAVORITE_MODELS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clone()

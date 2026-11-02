@@ -34,6 +34,11 @@
 //! rail, the terminal's *Agents ›* menu, the *Default agent* chips (the
 //! page's own rows) and the delegate dialog. [`agent_order`] is the one
 //! place the stored order meets the built-in one.
+//!
+//! **The models starred in the chat's picker** (`favorite_models`, D46)
+//! travel on the same link and to the same surfaces, though they are not
+//! this page's and not this machine's: they roam, in `preferences.conf`. A
+//! star pressed in any chat is stored from here and handed to every other.
 
 use koru_session_profiles::{LaunchProfile, managed_provider};
 use koru_session_protocol::{ExecutableAvailability, ProviderReadiness};
@@ -165,6 +170,16 @@ pub(crate) fn default_agent_note(agent: Option<&str>, rows: &[AgentProviderRow])
     Some(koru_i18n::fill(koru_i18n::t(lang, words), &[&row.name]))
 }
 
+/// The stored favorites in the chat surface's words.
+pub(crate) fn chat_favorites(
+    stored: &[koru_settings::FavoriteModel],
+) -> Vec<koru_ai_ui::FavoriteModel> {
+    stored
+        .iter()
+        .map(|favorite| koru_ai_ui::FavoriteModel::new(&favorite.agent, &favorite.model))
+        .collect()
+}
+
 /// A stored permission in the chat surface's words.
 pub(crate) fn new_chat_permission(permission: AgentPermission) -> koru_ai_ui::NewChatPermission {
     match permission {
@@ -207,16 +222,57 @@ impl MainView {
     }
 
     /// Everything a chat surface is handed from *Agent providers*: the
-    /// agents turned off, and where a new chat starts. What
+    /// agents turned off, where a new chat starts, the order — and the
+    /// picker's favorites, which ride the same link. What
     /// `maintain_delegate_folder` compares to tell whether to hand it on.
     pub(super) fn agent_settings_snapshot(
         &self,
-    ) -> (Vec<String>, koru_ai_ui::AgentDefaults, Vec<String>) {
+    ) -> (
+        Vec<String>,
+        koru_ai_ui::AgentDefaults,
+        Vec<String>,
+        Vec<koru_ai_ui::FavoriteModel>,
+    ) {
         (
             self.disabled_agents().to_vec(),
             self.chat_agent_defaults(),
             self.agent_order(),
+            self.favorite_models(),
         )
+    }
+
+    /// The models starred in the chat's picker, as the Global link last read
+    /// (or was just told) them.
+    pub(super) fn favorite_models(&self) -> Vec<koru_ai_ui::FavoriteModel> {
+        chat_favorites(&self.delegate_folder.authoritative().favorite_models)
+    }
+
+    /// **A star was pressed in a chat's picker** — the pane's or any chat
+    /// tab's: store the whole list (roaming) and hand it to every other
+    /// chat. The last list asked for wins, as the last press does.
+    pub(super) fn save_favorite_models_from_chat(&mut self) -> bool {
+        let mut asked = self.ai_chat.take_favorite_models_request();
+        self.each_tab_mut(|tab| {
+            if let TabView::AiChat(view) = &mut tab.view
+                && let Some(list) = view.take_favorite_models_request()
+            {
+                asked = Some(list);
+            }
+            false
+        });
+        let Some(list) = asked else {
+            return false;
+        };
+        self.save_agent_settings(koru_settings::GlobalPatch {
+            favorite_models: Some(
+                list.into_iter()
+                    .map(|favorite| {
+                        koru_settings::FavoriteModel::new(favorite.agent, favorite.model)
+                    })
+                    .collect(),
+            ),
+            ..koru_settings::GlobalPatch::default()
+        })
     }
 
     /// The order the agents are listed in, every agent named.
@@ -269,9 +325,11 @@ impl MainView {
         let keys = self.disabled_agents().to_vec();
         let defaults = self.chat_agent_defaults();
         let order = self.agent_order();
+        let favorites = self.favorite_models();
         crate::ai_chat_view::set_hidden_agents(keys.clone());
         crate::ai_chat_view::set_agent_defaults(defaults.clone());
         crate::ai_chat_view::set_agent_order(order.clone());
+        crate::ai_chat_view::set_favorite_models(favorites.clone());
         context_menu::set_hidden_agents(keys.clone());
         context_menu::set_agent_order(order.clone());
         // A canvas's agent menu and a new node's default (D42).
@@ -281,11 +339,13 @@ impl MainView {
         changed |= self.ai_chat.set_hidden_agents(keys.clone());
         changed |= self.ai_chat.set_agent_defaults(defaults.clone());
         changed |= self.ai_chat.set_agent_order(order.clone());
+        changed |= self.ai_chat.set_favorite_models(favorites.clone());
         changed |= self.each_tab_mut(|tab| match &mut tab.view {
             TabView::AiChat(view) => {
                 let hidden = view.set_hidden_agents(keys.clone());
                 let defaults = view.set_agent_defaults(defaults.clone());
-                view.set_agent_order(order.clone()) || hidden || defaults
+                let favorites = view.set_favorite_models(favorites.clone());
+                view.set_agent_order(order.clone()) || hidden || defaults || favorites
             }
             _ => false,
         });

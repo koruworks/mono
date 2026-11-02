@@ -2574,6 +2574,9 @@ pub enum Key {
     SettingsAgentSetupGuide,
     MenuManageAgents,
     AiPickerManageAgents,
+    AiPickerFavorites,
+    AiModelFavoriteAdd,
+    AiModelFavoriteRemove,
     SettingsDefaultPermission,
     SettingsDefaultPermissionHint,
     SettingsSupportedAgents,
@@ -2782,7 +2785,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1936] = [
+    pub const ALL: [Key; 1939] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4577,6 +4580,9 @@ impl Key {
         Key::SettingsAgentSetupGuide,
         Key::MenuManageAgents,
         Key::AiPickerManageAgents,
+        Key::AiPickerFavorites,
+        Key::AiModelFavoriteAdd,
+        Key::AiModelFavoriteRemove,
         Key::SettingsDefaultPermission,
         Key::SettingsDefaultPermissionHint,
         Key::SettingsSupportedAgents,
@@ -14725,6 +14731,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsAgentSetupGuide, en: "Setup guide ↗", es: "Guía de instalación ↗", pt_br: "Guia de instalação ↗", de: "Einrichtungsanleitung ↗", fr: "Guide d'installation ↗", ar: "دليل الإعداد ↗", zh_hans: "设置指南 ↗", ja: "セットアップガイド ↗" },
     Row { key: Key::MenuManageAgents, en: "Manage…", es: "Administrar…", pt_br: "Gerenciar…", de: "Verwalten…", fr: "Gérer…", ar: "إدارة…", zh_hans: "管理…", ja: "管理…" },
     Row { key: Key::AiPickerManageAgents, en: "Manage agent providers", es: "Administrar proveedores de agentes", pt_br: "Gerenciar provedores de agentes", de: "Agent-Anbieter verwalten", fr: "Gérer les fournisseurs d'agents", ar: "إدارة موفري الوكلاء", zh_hans: "管理智能体提供方", ja: "エージェントの提供元を管理" },
+    Row { key: Key::AiPickerFavorites, en: "Favorites", es: "Favoritos", pt_br: "Favoritos", de: "Favoriten", fr: "Favoris", ar: "المفضلة", zh_hans: "收藏", ja: "お気に入り" },
+    Row { key: Key::AiModelFavoriteAdd, en: "Add to favorites", es: "Añadir a favoritos", pt_br: "Adicionar aos favoritos", de: "Zu Favoriten hinzufügen", fr: "Ajouter aux favoris", ar: "إضافة إلى المفضلة", zh_hans: "添加到收藏", ja: "お気に入りに追加" },
+    Row { key: Key::AiModelFavoriteRemove, en: "Remove from favorites", es: "Quitar de favoritos", pt_br: "Remover dos favoritos", de: "Aus Favoriten entfernen", fr: "Retirer des favoris", ar: "إزالة من المفضلة", zh_hans: "从收藏中移除", ja: "お気に入りから削除" },
     // Agent providers: the permission a new chat starts in (D39).
     Row { key: Key::SettingsDefaultPermission, en: "Default permission for new chats", es: "Permiso predeterminado para chats nuevos", pt_br: "Permissão padrão para novos chats", de: "Standardberechtigung für neue Chats", fr: "Autorisation par défaut des nouvelles discussions", ar: "الإذن الافتراضي للمحادثات الجديدة", zh_hans: "新聊天的默认权限", ja: "新しいチャットの既定の権限" },
     Row { key: Key::SettingsDefaultPermissionHint, en: "New chats start in this mode. Manual asks before the agent acts. Auto lets it approve safe actions on its own. Yolo means the agent runs everything without asking. A change inside a chat applies to that chat only.", es: "Los chats nuevos empiezan en este modo. Manual pregunta antes de que el agente actúe. Auto le deja aprobar por sí mismo las acciones seguras. Yolo significa que el agente lo ejecuta todo sin preguntar. Un cambio dentro de un chat solo se aplica a ese chat.", pt_br: "Novos chats começam neste modo. Manual pergunta antes de o agente agir. Auto deixa que ele aprove sozinho as ações seguras. Yolo significa que o agente executa tudo sem perguntar. Uma mudança dentro de um chat vale só para aquele chat.", de: "Neue Chats beginnen in diesem Modus. Manuell fragt, bevor der Agent handelt. Auto lässt ihn sichere Aktionen selbst genehmigen. Yolo bedeutet, dass der Agent alles ausführt, ohne zu fragen. Eine Änderung in einem Chat gilt nur für diesen Chat.", fr: "Les nouvelles discussions démarrent dans ce mode. Manuel demande avant que l'agent agisse. Auto le laisse approuver seul les actions sûres. Yolo signifie que l'agent exécute tout sans demander. Un changement dans une discussion ne s'applique qu'à elle.", ar: "تبدأ المحادثات الجديدة بهذا الوضع. يدوي يسأل قبل أن يتصرف الوكيل. تلقائي يتيح له الموافقة على الإجراءات الآمنة بنفسه. Yolo يعني أن الوكيل ينفّذ كل شيء دون أن يسأل. التغيير داخل محادثة ينطبق على تلك المحادثة فقط.", zh_hans: "新聊天会以此模式开始。手动：智能体行动前先询问。自动：让它自行批准安全的操作。Yolo：智能体不经询问执行一切。在聊天中所做的更改只适用于该聊天。", ja: "新しいチャットはこのモードで始まります。手動はエージェントが動く前に確認します。自動は安全な操作をエージェント自身に承認させます。Yolo はエージェントが確認なしですべてを実行します。チャット内での変更はそのチャットにだけ適用されます。" },

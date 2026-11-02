@@ -10,7 +10,10 @@
 //! no room above — and it is driven fully from the keyboard.
 //!
 //! A model row reads its description on a second, smaller line when the
-//! agent gives one (D43).
+//! agent gives one (D43), and a ☆ at its end stars it (D46): the rail then
+//! leads with *Favorites*, the starred models of every agent turned on,
+//! each beside its agent's mark. The primary modifier and D stars the row
+//! the keyboard is on (D47).
 //!
 //! The geometry, the rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
@@ -33,8 +36,8 @@ use vello::kurbo::{Affine, RoundedRect, RoundedRectRadii};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::agents::{
-    AgentModels, AgentStatus, default_model_label, fallback_label, find_listed, group_label,
-    is_agent_provider, listed_models, model_groups, model_label, provider_mark,
+    AgentModels, AgentStatus, agent_key, default_model_label, fallback_label, find_listed,
+    group_label, is_agent_provider, listed_models, model_groups, model_label, provider_mark,
 };
 use crate::effort;
 
@@ -67,6 +70,13 @@ pub(crate) const TALL_ROW_H: f32 = 46.0;
 /// taller, so fewer of them fit and the list scrolls by whole rows of
 /// either height; the picker does not grow to keep six two-line rows.
 pub(crate) const LIST_ROWS: usize = 6;
+/// The ☆ at a model row's end (D46): its square, and how far its right edge
+/// keeps from the list's, clear of the scrollbar's lane.
+const STAR: f32 = 22.0;
+const STAR_INSET: f32 = 12.0;
+/// A favorite's agent mark at its row's start, and the room it takes.
+const ROW_MARK: f32 = 16.0;
+const ROW_MARK_ROOM: f32 = ROW_MARK + 8.0;
 /// The footer: the level's word and ↺ on one line, the slider under it.
 pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
 const PAD: f32 = 4.0;
@@ -81,18 +91,41 @@ const TOOLTIP_RESET: u64 = 0x5049_1001;
 const TOOLTIP_LOCKED: u64 = 0x5049_1002;
 const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
 
-/// One mark on the rail: a local agent, or — first, and only on a chat that
-/// has begun on one — Koru AI, OpenAI or Ollama (S1).
+/// **One favorite model** (D46): an agent, by its key (`claude`, `codex`,
+/// …), and the model id that agent takes — what the host's roaming
+/// `favorite_models` setting holds, in the order they were starred.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FavoriteModel {
+    pub agent: String,
+    pub model: String,
+}
+
+impl FavoriteModel {
+    pub fn new(agent: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            model: model.into(),
+        }
+    }
+}
+
+/// One mark on the rail: *Favorites*, first, while there is one (D46); a
+/// local agent; or — first after it, and only on a chat that has begun on
+/// one — Koru AI, OpenAI or Ollama (S1).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RailEntry {
+    Favorites,
     Provider(AiProviderId),
     Agent(AiProviderId),
 }
 
 impl RailEntry {
-    pub(crate) fn provider(&self) -> &AiProviderId {
+    /// Whose models the entry lists; `None` for *Favorites*, which lists
+    /// several agents' — each row says whose.
+    pub(crate) fn provider(&self) -> Option<&AiProviderId> {
         match self {
-            Self::Provider(provider) | Self::Agent(provider) => provider,
+            Self::Favorites => None,
+            Self::Provider(provider) | Self::Agent(provider) => Some(provider),
         }
     }
 }
@@ -172,6 +205,9 @@ pub(crate) enum Row {
     Default,
     /// A model, by the id the agent (or provider) takes.
     Model(String),
+    /// A favorite under *Favorites* (D46): an agent's model, beside the
+    /// agent's mark.
+    Favorite(AiProviderId, String),
     /// A word in place of models: listing, checking, failed, no match.
     Note(String),
     /// *Legacy models ›*, at the foot: the models the agent marks as older,
@@ -182,7 +218,10 @@ pub(crate) enum Row {
 
 impl Row {
     fn choosable(&self) -> bool {
-        matches!(self, Self::Default | Self::Model(_) | Self::LegacyMore)
+        matches!(
+            self,
+            Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyMore
+        )
     }
 }
 
@@ -271,16 +310,17 @@ pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> 
     }
 }
 
-/// The rail's marks, top to bottom; a divider follows the first when the
-/// chat's own built-in provider leads (S1).
-pub(crate) fn rail_rects(rail: Rect, count: usize, divider: bool) -> Vec<Rect> {
+/// The rail's marks, top to bottom; a divider follows each mark whose index
+/// is in `dividers` — *Favorites*, and the chat's own built-in provider
+/// (S1), each set off from the agents after it.
+pub(crate) fn rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Rect> {
     let x = rail.x + (rail.w - RAIL_BUTTON) * 0.5;
     let mut y = rail.y + PAD + 4.0;
     (0..count)
         .map(|index| {
             let rect = Rect::new(x, y, RAIL_BUTTON, RAIL_BUTTON);
             y += RAIL_BUTTON + RAIL_GAP;
-            if divider && index == 0 {
+            if dividers.contains(&index) {
                 y += RAIL_DIVIDER;
             }
             rect
@@ -288,12 +328,36 @@ pub(crate) fn rail_rects(rail: Rect, count: usize, divider: bool) -> Vec<Rect> {
         .collect()
 }
 
-/// The height the rail's marks need.
-pub(crate) fn rail_height(count: usize, divider: bool) -> f32 {
-    PAD * 2.0
-        + 8.0
-        + count as f32 * (RAIL_BUTTON + RAIL_GAP)
-        + if divider { RAIL_DIVIDER } else { 0.0 }
+/// The height the rail's marks need, with `dividers` dividers among them.
+pub(crate) fn rail_height(count: usize, dividers: usize) -> f32 {
+    PAD * 2.0 + 8.0 + count as f32 * (RAIL_BUTTON + RAIL_GAP) + dividers as f32 * RAIL_DIVIDER
+}
+
+/// The ☆ of a model row drawn at `row` (D46): a square at its end, in the
+/// middle of the row whatever its height.
+pub(crate) fn star_rect(row: Rect) -> Rect {
+    Rect::new(
+        row.x + row.w - STAR_INSET - STAR,
+        row.y + (row.h - STAR) * 0.5,
+        STAR,
+        STAR,
+    )
+}
+
+/// `favorites` with `favorite` added at the end, or taken out where it was
+/// — what one press of a ☆ makes of the list.
+pub(crate) fn toggled(favorites: &[FavoriteModel], favorite: FavoriteModel) -> Vec<FavoriteModel> {
+    if favorites.contains(&favorite) {
+        favorites
+            .iter()
+            .filter(|known| **known != favorite)
+            .cloned()
+            .collect()
+    } else {
+        let mut next = favorites.to_vec();
+        next.push(favorite);
+        next
+    }
 }
 
 /// **Search** (§9.4): case-insensitive, and every whitespace-separated term
@@ -452,9 +516,126 @@ impl crate::ChatSurface {
             return None;
         }
         let rail = self.picker_rail();
-        rail_rects(geometry.rail, rail.len() + 1, self.rail_has_divider(&rail))
+        rail_rects(geometry.rail, rail.len() + 1, &rail_dividers(&rail))
             .last()
             .copied()
+    }
+
+    /// **The favorite models** (D46), as the host's roaming setting holds
+    /// them. Answers whether anything moved; a star pressed here and not
+    /// yet stored is settled by this.
+    pub fn set_favorite_models(&mut self, favorites: Vec<FavoriteModel>) -> bool {
+        let moved = self.favorite_models != favorites;
+        self.favorite_models = favorites;
+        if moved {
+            self.settle_picker_highlight();
+        }
+        moved
+    }
+
+    /// A ☆ was pressed since the last ask: the whole list, for the host to
+    /// store (roaming) and hand to every other chat.
+    pub fn take_favorite_models_request(&mut self) -> Option<Vec<FavoriteModel>> {
+        self.favorite_models_request.take()
+    }
+
+    /// The favorites the picker lists (D46): those of every agent the
+    /// service offers and this machine has turned on, in the rail's agent
+    /// order and, within an agent, the order they were starred. A turned-off
+    /// agent's are kept in the setting and only hidden here.
+    pub(crate) fn picker_favorites(&self) -> Vec<(AiProviderId, String)> {
+        let mut shown = Vec::new();
+        for agent in self.ordered_agents() {
+            let Some(key) = agent_key(&agent.id) else {
+                continue;
+            };
+            if !self.agent_shown(&agent.id) {
+                continue;
+            }
+            shown.extend(
+                self.favorite_models
+                    .iter()
+                    .filter(|favorite| favorite.agent == key)
+                    .map(|favorite| (agent.id.clone(), favorite.model.clone())),
+            );
+        }
+        shown
+    }
+
+    /// Whether `agent`'s model `model` is starred.
+    pub(crate) fn is_favorite(&self, agent: &AiProviderId, model: &str) -> bool {
+        agent_key(agent).is_some_and(|key| {
+            self.favorite_models
+                .iter()
+                .any(|favorite| favorite.agent == key && favorite.model == model)
+        })
+    }
+
+    /// The model a row would star: an agent's listed model, or a favorite.
+    /// The agent's *Default* is no model of its own, and a built-in
+    /// provider's models are not an agent's, so neither has a ☆.
+    pub(crate) fn row_favorite(
+        &self,
+        entry: &RailEntry,
+        row: &Row,
+    ) -> Option<(AiProviderId, String)> {
+        match (entry, row) {
+            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
+                agent_key(agent)
+                    .is_some()
+                    .then(|| (agent.clone(), id.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// **Star or unstar** `agent`'s `model` (D46): shown at once, and the
+    /// whole list handed to the host to store.
+    pub(crate) fn toggle_favorite(&mut self, agent: &AiProviderId, model: &str) -> bool {
+        let Some(key) = agent_key(agent) else {
+            return false;
+        };
+        let next = toggled(&self.favorite_models, FavoriteModel::new(key, model));
+        self.favorite_models = next.clone();
+        self.favorite_models_request = Some(next);
+        self.settle_picker_highlight();
+        true
+    }
+
+    /// Keep the keyboard on a row that is still there after the list
+    /// changed under it — an unstarred favorite leaves *Favorites*, and the
+    /// last one takes *Favorites* off the rail.
+    fn settle_picker_highlight(&mut self) {
+        if !self.chat_model_open {
+            return;
+        }
+        // An entry that left the rail is replaced by the one shown in its
+        // place, so a later star does not bring it back under the pointer.
+        if self
+            .picker
+            .rail
+            .as_ref()
+            .is_some_and(|entry| !self.picker_rail().contains(entry))
+        {
+            self.picker.rail = self.picker_entry();
+        }
+        let rows = self.picker_rows();
+        let choosable = self.picker_choosable(&rows);
+        let fine = self
+            .picker
+            .highlight
+            .is_some_and(|index| choosable.get(index).copied().unwrap_or(false));
+        if !fine {
+            let from = self.picker.highlight.map(|index| index.min(rows.len()));
+            self.picker.highlight = step_highlight(&choosable, from, -1)
+                .or_else(|| step_highlight(&choosable, None, 1));
+        }
+        let room = self
+            .picker_geometry()
+            .map_or(LIST_ROWS as f32 * ROW_H, |geometry| geometry.list.h);
+        let heights = self.picker_row_heights(&rows);
+        self.picker.offset = self.picker.offset.min(max_offset(&heights, room));
+        self.scroll_highlight_into_view();
     }
 
     /// What the **+** is called for a screen reader and the inspector — it
@@ -477,6 +658,9 @@ impl crate::ChatSurface {
             .as_ref()
             .map(|transcript| &transcript.chat.current_model.provider);
         let mut rail = Vec::new();
+        if !self.picker_favorites().is_empty() {
+            rail.push(RailEntry::Favorites);
+        }
         if let Some(transcript) = &self.transcript
             && !transcript.messages.is_empty()
             && !is_agent_provider(&transcript.chat.current_model.provider)
@@ -492,10 +676,6 @@ impl crate::ChatSurface {
                 .map(|agent| RailEntry::Agent(agent.id.clone())),
         );
         rail
-    }
-
-    fn rail_has_divider(&self, rail: &[RailEntry]) -> bool {
-        matches!(rail.first(), Some(RailEntry::Provider(_))) && rail.len() > 1
     }
 
     /// **The rail's entry on open** (§9.1): the chat's own provider; else
@@ -514,17 +694,25 @@ impl crate::ChatSurface {
                 .and_then(|settings| settings.selected_provider.clone())
         });
         let ready = |entry: &&RailEntry| {
-            self.agent_status.get(entry.provider()).copied() == Some(AgentStatus::Ready)
+            entry.provider().is_some_and(|provider| {
+                self.agent_status.get(provider).copied() == Some(AgentStatus::Ready)
+            })
         };
-        rail.iter()
-            .find(|entry| Some(entry.provider()) == current.as_ref())
+        // *Favorites* is never where the picker opens: it opens on whose
+        // models the chat is on.
+        let providers = || {
+            rail.iter()
+                .filter(|entry| !matches!(entry, RailEntry::Favorites))
+        };
+        providers()
+            .find(|entry| entry.provider() == current.as_ref())
             .or_else(|| {
-                rail.iter().find(|entry| {
-                    matches!(entry, RailEntry::Agent(_))
-                        && Some(entry.provider()) == selected.as_ref()
+                providers().find(|entry| {
+                    matches!(entry, RailEntry::Agent(_)) && entry.provider() == selected.as_ref()
                 })
             })
-            .or_else(|| rail.iter().find(ready))
+            .or_else(|| providers().find(ready))
+            .or_else(|| providers().next())
             .or_else(|| rail.first())
             .cloned()
     }
@@ -545,10 +733,11 @@ impl crate::ChatSurface {
 
     /// Whether a row of `entry` can be chosen now: an agent while the chat
     /// has no message and the agent is ready; the chat's own built-in
-    /// provider's models always, as today.
+    /// provider's models always, as today. *Favorites* answers row by row,
+    /// by each favorite's agent.
     fn entry_choosable(&self, entry: &RailEntry) -> bool {
         match entry {
-            RailEntry::Provider(_) => true,
+            RailEntry::Favorites | RailEntry::Provider(_) => true,
             RailEntry::Agent(agent) => {
                 self.agent_status.get(agent).copied() == Some(AgentStatus::Ready)
                     && self
@@ -582,6 +771,34 @@ impl crate::ChatSurface {
             })
     }
 
+    /// Whether the query finds a favorite: in its model's name, id, group
+    /// and description, or its agent's name.
+    fn favorite_matches(&self, agent: &AiProviderId, id: &str, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let agents = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.agents.as_slice())
+            .unwrap_or_default();
+        let name = crate::agents::agent_label(agents, agent);
+        let models = self.listed_agent_models(agent);
+        match models.iter().find(|model| model.id == id) {
+            Some(model) => matches(
+                query,
+                &[
+                    &model_label(model),
+                    &model.id,
+                    &group_label(models, &model.group),
+                    model.description.as_deref().unwrap_or_default(),
+                    &name,
+                ],
+            ),
+            None => matches(query, &[id, &name]),
+        }
+    }
+
     /// **The list for the selected entry** (§9.2): the agent's *Default*,
     /// then its models — by group with a heading when it has more than one
     /// — the query applied; or the one word its state calls for.
@@ -592,6 +809,21 @@ impl crate::ChatSurface {
         let query = self.picker_query();
         let note = |key: Key| Row::Note(t(self.lang, key).to_owned());
         match &entry {
+            // Every agent's starred models, each found by its own words
+            // and by its agent's name.
+            RailEntry::Favorites => {
+                let rows: Vec<Row> = self
+                    .picker_favorites()
+                    .into_iter()
+                    .filter(|(agent, id)| self.favorite_matches(agent, id, &query))
+                    .map(|(agent, id)| Row::Favorite(agent, id))
+                    .collect();
+                if rows.is_empty() {
+                    vec![note(Key::AiModelsNoMatch)]
+                } else {
+                    rows
+                }
+            }
             RailEntry::Provider(provider) => {
                 let models = if provider.as_str() == AiProviderId::KORU {
                     vec![AiProviderId::KORU_HOSTED_MODEL.to_owned()]
@@ -838,13 +1070,17 @@ impl crate::ChatSurface {
         }
     }
 
-    /// Which rows can be chosen now.
+    /// Which rows can be chosen now. A favorite can be when its own agent's
+    /// rows could be.
     fn picker_choosable(&self, rows: &[Row]) -> Vec<bool> {
         let entry_choosable = self
             .picker_entry()
             .is_some_and(|entry| self.entry_choosable(&entry));
         rows.iter()
-            .map(|row| entry_choosable && row.choosable())
+            .map(|row| match row {
+                Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
+                _ => entry_choosable && row.choosable(),
+            })
             .collect()
     }
 
@@ -856,12 +1092,14 @@ impl crate::ChatSurface {
         match (entry, row) {
             (_, Row::Heading(text) | Row::Note(text)) => text.clone(),
             (RailEntry::Provider(_), Row::Model(id)) => self.provider_model_label(id),
-            (RailEntry::Provider(_), Row::Default) => String::new(),
+            (RailEntry::Provider(_) | RailEntry::Favorites, Row::Default | Row::Model(_)) => {
+                String::new()
+            }
             (_, Row::LegacyMore) => t(self.lang, Key::AiModelsLegacy).to_owned(),
             (RailEntry::Agent(agent), Row::Default) => {
                 default_model_label(self.listed_agent_models(agent), self.lang)
             }
-            (RailEntry::Agent(agent), Row::Model(id)) => {
+            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
                 let models = self.listed_agent_models(agent);
                 match models.iter().find(|model| &model.id == id) {
                     Some(model) => model_label(model),
@@ -876,12 +1114,12 @@ impl crate::ChatSurface {
     /// every other row, and for a model with no description, which stays
     /// one line.
     pub(crate) fn picker_row_description(&self, entry: &RailEntry, row: &Row) -> Option<String> {
-        let (RailEntry::Agent(agent), Row::Default | Row::Model(_)) = (entry, row) else {
-            return None;
-        };
-        let id = match row {
-            Row::Model(id) => id.as_str(),
-            _ => AGENT_DEFAULT_MODEL,
+        let (agent, id) = match (entry, row) {
+            (RailEntry::Agent(agent), Row::Default) => (agent, AGENT_DEFAULT_MODEL),
+            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
+                (agent, id.as_str())
+            }
+            _ => return None,
         };
         self.listed_agent_models(agent)
             .iter()
@@ -940,21 +1178,24 @@ impl crate::ChatSurface {
         else {
             return false;
         };
-        if &model.provider != entry.provider() {
+        // Whose row it is: the entry's, or a favorite's own agent.
+        let (provider, id) = match (row, entry.provider()) {
+            (Row::Favorite(agent, id), _) => (agent, Some(id)),
+            (Row::Default, Some(provider)) => (provider, None),
+            (Row::Model(id), Some(provider)) => (provider, Some(id)),
+            _ => return false,
+        };
+        if &model.provider != provider {
             return false;
         }
-        match row {
-            Row::Default => model.requested_model == AGENT_DEFAULT_MODEL,
+        match id {
+            None => model.requested_model == AGENT_DEFAULT_MODEL,
             // A chat on a model's longer context is on that model.
-            Row::Model(id) => {
+            Some(id) => {
                 &model.requested_model == id
-                    || find_listed(
-                        self.listed_agent_models(entry.provider()),
-                        &model.requested_model,
-                    )
-                    .is_some_and(|(listed, _)| &listed.id == id)
+                    || find_listed(self.listed_agent_models(provider), &model.requested_model)
+                        .is_some_and(|(listed, _)| &listed.id == id)
             }
-            _ => false,
         }
     }
 
@@ -967,7 +1208,7 @@ impl crate::ChatSurface {
         }
         let rail = self.picker_rail();
         let marks = rail.len() + usize::from(self.agent_settings_offered);
-        let rail_h = rail_height(marks, self.rail_has_divider(&rail));
+        let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let levels = self.effort_control().is_some();
         let context = self.picker_context().is_some();
         let fast = self.picker_fast().is_some();
@@ -1040,10 +1281,21 @@ impl crate::ChatSurface {
 
     fn select_rail_entry(&mut self, entry: RailEntry) {
         self.picker.legacy = None;
-        if let RailEntry::Agent(agent) = &entry
-            && !matches!(self.agent_models.get(agent), Some(AgentModels::Listed(_)))
-        {
-            self.ask_agent_models(agent.clone());
+        // The lists the entry's rows are named from: the agent's, or under
+        // *Favorites* every favorite's agent's.
+        let agents: Vec<AiProviderId> = match &entry {
+            RailEntry::Agent(agent) => vec![agent.clone()],
+            RailEntry::Favorites => self
+                .picker_favorites()
+                .into_iter()
+                .map(|(agent, _)| agent)
+                .collect(),
+            RailEntry::Provider(_) => Vec::new(),
+        };
+        for agent in agents {
+            if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
+                self.ask_agent_models(agent);
+            }
         }
         self.picker.rail = Some(entry);
         self.picker.offset = 0;
@@ -1051,8 +1303,9 @@ impl crate::ChatSurface {
     }
 
     /// **Choose row `index`**: an agent's model makes the agent and model
-    /// the chat's (the level kept when it is offered, D18); a built-in
-    /// provider's model is the chat's next model. The picker closes.
+    /// the chat's (the level kept when it is offered, D18) — a favorite
+    /// too, with its own agent (D46); a built-in provider's model is the
+    /// chat's next model. The picker closes.
     pub(crate) fn choose_picker_row(&mut self, index: usize) -> bool {
         let rows = self.picker_rows();
         let choosable = self.picker_choosable(&rows);
@@ -1071,10 +1324,28 @@ impl crate::ChatSurface {
             (RailEntry::Agent(agent), Row::Default) => {
                 self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
             }
-            (RailEntry::Agent(agent), Row::Model(id)) => self.choose_agent_model(agent, id),
+            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
+                self.choose_agent_model(agent, id)
+            }
             (RailEntry::Provider(_), Row::Model(id)) => self.change_chat_model(id),
             _ => true,
         }
+    }
+
+    /// **Star the row the keyboard is on** (D47), or take its star away;
+    /// `false` when that row has no ☆.
+    fn toggle_highlighted_favorite(&mut self) -> bool {
+        let (Some(entry), Some(index)) = (self.picker_entry(), self.picker.highlight) else {
+            return false;
+        };
+        let rows = self.picker_rows();
+        let Some((agent, model)) = rows
+            .get(index)
+            .and_then(|row| self.row_favorite(&entry, row))
+        else {
+            return false;
+        };
+        self.toggle_favorite(&agent, &model)
     }
 
     /// **↻** (D13): the selected agent's list rebuilt now. *Checking…*
@@ -1138,8 +1409,7 @@ impl crate::ChatSurface {
             return Some(true);
         }
         let rail = self.picker_rail();
-        let divider = self.rail_has_divider(&rail);
-        if let Some(index) = rail_rects(geometry.rail, rail.len(), divider)
+        if let Some(index) = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
             .iter()
             .position(|rect| rect.contains(x, y))
         {
@@ -1191,6 +1461,19 @@ impl crate::ChatSurface {
         if geometry.list.contains(x, y) {
             self.picker.focus = PickerFocus::List;
             if let Some(index) = self.picker_row_at(&geometry, y) {
+                // The ☆ stars the row rather than choosing it (D46), and
+                // whether or not the row can be chosen now.
+                if let (Some(entry), Some(rect)) =
+                    (self.picker_entry(), self.picker_row_rect(&geometry, index))
+                    && star_rect(rect).contains(x, y)
+                    && let Some((agent, model)) = self
+                        .picker_rows()
+                        .get(index)
+                        .and_then(|row| self.row_favorite(&entry, row))
+                {
+                    self.picker.highlight = Some(index);
+                    return Some(self.toggle_favorite(&agent, &model));
+                }
                 return Some(self.choose_picker_row(index));
             }
         }
@@ -1248,25 +1531,25 @@ impl crate::ChatSurface {
             return None;
         }
         let rail = self.picker_rail();
-        let divider = self.rail_has_divider(&rail);
         let agents = self
             .settings
             .as_ref()
             .map(|settings| settings.agents.as_slice())
             .unwrap_or_default();
-        for (index, rect) in rail_rects(geometry.rail, rail.len(), divider)
+        for (index, rect) in rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
             .into_iter()
             .enumerate()
         {
             if rect.contains(x, y) {
                 let entry = &rail[index];
                 let name = match entry {
+                    RailEntry::Favorites => t(self.lang, Key::AiPickerFavorites).to_owned(),
                     RailEntry::Agent(agent) => crate::agents::agent_label(agents, agent),
                     RailEntry::Provider(provider) => provider_name(provider),
                 };
-                let word = self
-                    .agent_status
-                    .get(entry.provider())
+                let word = entry
+                    .provider()
+                    .and_then(|provider| self.agent_status.get(provider))
                     .and_then(|status| status.word(self.lang))
                     .filter(|_| matches!(entry, RailEntry::Agent(_)));
                 let label = match word {
@@ -1373,7 +1656,8 @@ impl crate::ChatSurface {
     /// typing edits the query wherever the focus is; Up and Down move the
     /// highlighted row, or the rail's entry from the rail; Enter chooses;
     /// Left and Right move the slider a stop; Tab and Shift+Tab move between
-    /// search, rail, list, ↺ and the slider; Esc clears the query, else
+    /// search, rail, list, ↺ and the slider; the primary modifier and D
+    /// stars the highlighted model (D47); Esc clears the query, else
     /// closes. `None` when the picker is closed.
     pub(crate) fn picker_key(
         &mut self,
@@ -1410,6 +1694,17 @@ impl crate::ChatSurface {
                 }
                 _ => {}
             }
+        }
+        // **The primary modifier and D stars the row the keyboard is on**
+        // (D47; `koru_keys`' `FavoriteModel`), from the search field or the
+        // list — before the query, which would otherwise take the key.
+        if matches!(self.picker.focus, PickerFocus::Search | PickerFocus::List)
+            && koru_keys::registry::get(koru_keys::ShortcutId::FavoriteModel)
+                .chord
+                .matches(key, text, mods)
+        {
+            self.toggle_highlighted_favorite();
+            return Some(true);
         }
         match key {
             WinitKey::Named(NamedKey::Escape) => {
@@ -1605,10 +1900,10 @@ impl crate::ChatSurface {
             ),
         );
         let rail = self.picker_rail();
-        let divider = self.rail_has_divider(&rail);
+        let dividers = rail_dividers(&rail);
         let selected = self.picker_entry();
         let query = self.picker_query();
-        let rects = rail_rects(geometry.rail, rail.len(), divider);
+        let rects = rail_rects(geometry.rail, rail.len(), &dividers);
         for (entry, rect) in rail.iter().zip(&rects) {
             let chosen = selected.as_ref() == Some(entry);
             let hovered = rect.contains(self.pointer.0, self.pointer.1);
@@ -1635,7 +1930,7 @@ impl crate::ChatSurface {
                     self.agent_status.get(agent).copied() != Some(AgentStatus::Ready)
                         || !self.agent_matches_query(agent, &query)
                 }
-                RailEntry::Provider(_) => false,
+                RailEntry::Favorites | RailEntry::Provider(_) => false,
             };
             let colour = if dim { p.text_dim } else { p.text };
             draw_mark(canvas, root, &mut self.engine, entry, *rect, colour);
@@ -1667,13 +1962,13 @@ impl crate::ChatSurface {
                 Some(if hovered { p.text } else { p.text_dim }),
             );
         }
-        if divider && let Some(first) = rects.first() {
-            let y = first.y + first.h + RAIL_GAP + RAIL_DIVIDER * 0.5 - 0.5;
+        for after in dividers.iter().filter_map(|index| rects.get(*index)) {
+            let y = after.y + after.h + RAIL_GAP + RAIL_DIVIDER * 0.5 - 0.5;
             scene::fill(
                 canvas,
                 root,
                 p.panel_border,
-                &scene::rrect(first.x + 4.0, y, first.w - 8.0, 1.0, 0.5),
+                &scene::rrect(after.x + 4.0, y, after.w - 8.0, 1.0, 0.5),
             );
         }
 
@@ -1740,15 +2035,45 @@ impl crate::ChatSurface {
                     _ => (
                         theme::role::row(),
                         if can || current { p.text } else { p.text_dim },
-                        8.0,
+                        // A favorite's agent mark comes first (D46).
+                        if matches!(row, Row::Favorite(..)) {
+                            8.0 + ROW_MARK_ROOM
+                        } else {
+                            8.0
+                        },
                     ),
                 };
-                // What sits at the row's end: the flyout's caret, an older
-                // model's tag while searching, the current one's check.
+                // What sits at the row's end, from the end: the ☆ of a
+                // model that can be starred (D46), the current one's check,
+                // the flyout's caret, an older model's tag while searching.
+                // The ☆'s room is kept whether or not it shows, so a name
+                // does not shorten under the pointer.
+                let star = self
+                    .row_favorite(entry, row)
+                    .map(|(agent, model)| (star_rect(rect), self.is_favorite(&agent, &model)));
                 let legacy_tag = self
                     .row_is_legacy(entry, row)
                     .then(|| t(self.lang, Key::AiModelsLegacyTag).to_owned());
-                let mut end = rect.x + rect.w - 8.0;
+                let mut end = star.map_or(rect.x + rect.w - 8.0, |(star, _)| star.x - 2.0);
+                if let Some((star, starred)) = star {
+                    let under = rect.contains(self.pointer.0, self.pointer.1);
+                    if starred || under {
+                        self.draw_star(canvas, root, star, starred);
+                    }
+                }
+                if current {
+                    let check = self.engine.icon_layout(icons::CHECK, 13.0);
+                    end -= check.width();
+                    scene::draw_layout(
+                        canvas,
+                        root,
+                        &check,
+                        end,
+                        rect.y + (rect.h - check.height()) * 0.5,
+                        Some(p.text_dim),
+                    );
+                    end -= 9.0;
+                }
                 if *row == Row::LegacyMore {
                     let caret = self.engine.icon_layout(icons::CARET_RIGHT, 12.0);
                     end -= caret.width();
@@ -1764,7 +2089,7 @@ impl crate::ChatSurface {
                 }
                 if let Some(tag) = &legacy_tag {
                     let tag = self.engine.simple_layout(tag, theme::role::meta());
-                    let tag_x = end - tag.width() - if current { 22.0 } else { 0.0 };
+                    let tag_x = end - tag.width();
                     scene::draw_layout_first_line(
                         canvas,
                         root,
@@ -1773,10 +2098,9 @@ impl crate::ChatSurface {
                         rect.y + (rect.h - tag.height()) * 0.5,
                         Some(p.text_dim),
                     );
-                    end = tag_x - 6.0 + if current { 22.0 } else { 0.0 };
+                    end = tag_x - 6.0;
                 }
-                let check_w = if current { 22.0 } else { 0.0 };
-                let room = (end - rect.x - indent - check_w).max(1.0);
+                let room = (end - rect.x - indent).max(1.0);
                 let shown = self.engine.elided(&label, style, room);
                 let line = self.engine.simple_layout(&shown, style);
                 // One line sits in the row's middle; a name with its
@@ -1809,16 +2133,16 @@ impl crate::ChatSurface {
                         Some(p.text_dim),
                     );
                 }
-                if current {
-                    let check = self.engine.icon_layout(icons::CHECK, 13.0);
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &check,
-                        rect.x + rect.w - 8.0 - check.width(),
-                        rect.y + (rect.h - check.height()) * 0.5,
-                        Some(p.text_dim),
+                // A favorite's agent, by its mark, level with the name.
+                if let Row::Favorite(agent, _) = row {
+                    let mark = Rect::new(
+                        rect.x + 8.0,
+                        name_y + (line.height() - ROW_MARK) * 0.5,
+                        ROW_MARK,
+                        ROW_MARK,
                     );
+                    let tone = if can { p.text } else { p.text_dim };
+                    draw_provider_mark(canvas, root, &mut self.engine, agent, true, mark, tone);
                 }
             }
         }
@@ -1896,6 +2220,46 @@ impl crate::ChatSurface {
             self.picker.focus == PickerFocus::Slider,
         );
     }
+
+    /// A row's ☆ (D46): outlined, brighter under the pointer, while it is
+    /// not a favorite; filled in the accent once it is. Named for a screen
+    /// reader and the inspector by what a press does — it raises no
+    /// tooltip, as the rows raise none (D25).
+    fn draw_star(&mut self, canvas: &mut Scene, root: Affine, star: Rect, starred: bool) {
+        let p = theme::p();
+        let name = t(
+            self.lang,
+            if starred {
+                Key::AiModelFavoriteRemove
+            } else {
+                Key::AiModelFavoriteAdd
+            },
+        );
+        let _star = koru_draw::inspect::scope(
+            name,
+            "button",
+            root,
+            scene::rect(star.x, star.y, star.w, star.h),
+            |r| r.property("accessible name", name, "caller label"),
+        );
+        let hovered = star.contains(self.pointer.0, self.pointer.1);
+        let (layout, colour) = if starred {
+            (self.engine.icon_layout_filled(icons::STAR, 14.0), p.accent)
+        } else {
+            (
+                self.engine.icon_layout(icons::STAR, 14.0),
+                if hovered { p.text } else { p.text_dim },
+            )
+        };
+        scene::draw_layout(
+            canvas,
+            root,
+            &layout,
+            star.x + (star.w - layout.width()) * 0.5,
+            star.y + (star.h - layout.height()) * 0.5,
+            Some(colour),
+        );
+    }
 }
 
 /// **The rail's ground** (D45): the colour of the window's own left rail —
@@ -1905,6 +2269,18 @@ impl crate::ChatSurface {
 /// the app's, light or dark.
 pub(crate) fn rail_fill() -> vello::peniko::Color {
     theme::base_fill()
+}
+
+/// Where the rail's dividers fall: after *Favorites* and after the chat's
+/// own built-in provider, each while an entry follows it.
+pub(crate) fn rail_dividers(rail: &[RailEntry]) -> Vec<usize> {
+    rail.iter()
+        .enumerate()
+        .filter(|(index, entry)| {
+            matches!(entry, RailEntry::Favorites | RailEntry::Provider(_)) && index + 1 < rail.len()
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// The search field itself: the search row short of ↻ at its end.
@@ -1927,9 +2303,8 @@ fn provider_name(provider: &AiProviderId) -> String {
     }
 }
 
-/// An entry's mark: the agent's brand by its kind (`agent-claude` wears
-/// Claude's), OpenAI's for OpenAI, a glyph where there is no brand —
-/// [`provider_mark`], which a chat tab wears too.
+/// An entry's mark on the rail: *Favorites*' filled star (D46), else its
+/// provider's mark ([`draw_provider_mark`]).
 fn draw_mark(
     canvas: &mut Scene,
     root: Affine,
@@ -1938,28 +2313,60 @@ fn draw_mark(
     rect: Rect,
     colour: vello::peniko::Color,
 ) {
-    let mark = provider_mark(entry.provider().as_str()).unwrap_or(brand::ProfileMark::Glyph(
-        match entry {
-            RailEntry::Provider(provider) if provider.as_str() == AiProviderId::OLLAMA => {
-                icons::DESKTOP
-            }
-            RailEntry::Provider(_) => icons::SPARKLE,
-            RailEntry::Agent(_) => icons::ROBOT,
-        },
-    ));
     let inner = Rect::new(rect.x + 7.0, rect.y + 7.0, rect.w - 14.0, rect.h - 14.0);
-    match mark {
-        brand::ProfileMark::Brand(icon) => {
-            scene::draw_brand_icon(canvas, root, inner, colour, icon)
-        }
-        brand::ProfileMark::Glyph(glyph) => {
-            let layout = engine.icon_layout(glyph, 18.0);
+    match entry {
+        RailEntry::Favorites => {
+            let layout = engine.icon_layout_filled(icons::STAR, 18.0);
             scene::draw_layout(
                 canvas,
                 root,
                 &layout,
                 rect.x + (rect.w - layout.width()) * 0.5,
                 rect.y + (rect.h - layout.height()) * 0.5,
+                Some(colour),
+            );
+        }
+        RailEntry::Provider(provider) => {
+            draw_provider_mark(canvas, root, engine, provider, false, inner, colour)
+        }
+        RailEntry::Agent(agent) => {
+            draw_provider_mark(canvas, root, engine, agent, true, inner, colour)
+        }
+    }
+}
+
+/// A provider's mark in `inner`: the agent's brand by its kind
+/// (`agent-claude` wears Claude's), OpenAI's for OpenAI, a glyph where there
+/// is no brand — [`provider_mark`], which a chat tab wears too. The rail
+/// draws it, and so does a favorite's row, at its start.
+fn draw_provider_mark(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    provider: &AiProviderId,
+    agent: bool,
+    inner: Rect,
+    colour: vello::peniko::Color,
+) {
+    let glyph = if agent {
+        icons::ROBOT
+    } else if provider.as_str() == AiProviderId::OLLAMA {
+        icons::DESKTOP
+    } else {
+        icons::SPARKLE
+    };
+    match provider_mark(provider.as_str()).unwrap_or(brand::ProfileMark::Glyph(glyph)) {
+        brand::ProfileMark::Brand(icon) => {
+            scene::draw_brand_icon(canvas, root, inner, colour, icon)
+        }
+        brand::ProfileMark::Glyph(glyph) => {
+            let layout = engine.icon_layout(glyph, inner.h + 2.0);
+            scene::draw_layout(
+                canvas,
+                root,
+                &layout,
+                inner.x + (inner.w - layout.width()) * 0.5,
+                inner.y + (inner.h - layout.height()) * 0.5,
                 Some(colour),
             );
         }
