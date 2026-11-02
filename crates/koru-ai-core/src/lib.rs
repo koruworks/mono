@@ -22,7 +22,7 @@ pub use attachments::{
     AttachmentInput, AttachmentKind, AttachmentRecord, AttachmentSource, ChatAttachment,
     WorkspaceFileOrigin,
 };
-pub use blocks::finalize_markdown;
+pub use blocks::{BlockCut, cut_markdown, finalize_markdown};
 pub use chat_tools::*;
 pub use conversion::{ConvertedChat, ConvertedMessage};
 pub use ids::{

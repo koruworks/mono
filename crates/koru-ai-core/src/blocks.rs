@@ -1,78 +1,183 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Finalizing streamed Markdown into immutable deep-link and search units.
+//!
+//! There is one cut. `finalize_markdown` turns a finished reply into the
+//! blocks it is stored as; `cut_markdown` is the same cut over a reply still
+//! arriving, saying of each block whether it is closed — whether any text
+//! appended later could still change it. A surface renders a closed block
+//! as Markdown while the reply streams, knowing the finished reply cuts it
+//! the same way.
 
 use crate::{MessageBlock, MessageBlockId, MessageBlockKind, MessageId};
 use pulldown_cmark::{Event, Parser};
 
 pub fn finalize_markdown(message_id: MessageId, markdown: &str) -> Vec<MessageBlock> {
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut blocks = Vec::new();
+    let lines = texts(&split_lines(markdown));
+    spans(&lines)
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, span)| MessageBlock {
+            id: MessageBlockId::new(),
+            message_id,
+            ordinal: ordinal as u32,
+            kind: span.kind,
+            markdown: lines[span.start..span.end].join("\n"),
+            plain_text: plain_text(&lines, &span),
+        })
+        .collect()
+}
+
+/// One block of Markdown that may still be arriving, cut as
+/// `finalize_markdown` cuts it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockCut {
+    pub kind: MessageBlockKind,
+    /// The block as `finalize_markdown` stores it.
+    pub markdown: String,
+    /// The byte just past the block's last line and its line ending.
+    pub end: usize,
+    /// Nothing appended to the text can change this block any more: its
+    /// last line has ended, a paragraph has a finished line after it (a
+    /// blank one, or the start of another block), and a fenced block has
+    /// its closing fence.
+    pub closed: bool,
+}
+
+/// `markdown` cut into the blocks `finalize_markdown` would make of it,
+/// each saying whether it is closed. Only the last can be open.
+pub fn cut_markdown(markdown: &str) -> Vec<BlockCut> {
+    let lines = split_lines(markdown);
+    let texts = texts(&lines);
+    spans(&texts)
+        .into_iter()
+        .map(|span| {
+            let last = &lines[span.end - 1];
+            let closed = last.terminated
+                && match span.kind {
+                    MessageBlockKind::Code => {
+                        span.end > span.start + 1
+                            && closes_fence(texts[span.start], texts[span.end - 1])
+                    }
+                    MessageBlockKind::Paragraph => {
+                        lines.get(span.end).is_some_and(|next| next.terminated)
+                    }
+                    _ => true,
+                };
+            BlockCut {
+                kind: span.kind,
+                markdown: texts[span.start..span.end].join("\n"),
+                end: last.end,
+                closed,
+            }
+        })
+        .collect()
+}
+
+/// A line of the text, without its line ending — as `str::lines` gives it.
+struct Line<'a> {
+    text: &'a str,
+    /// The byte just past the line and its ending.
+    end: usize,
+    /// Whether the line has ended: no text appended later joins it.
+    terminated: bool,
+}
+
+/// `str::lines`, keeping where each line ends and whether it has.
+fn split_lines(markdown: &str) -> Vec<Line<'_>> {
+    let mut end = 0;
+    markdown
+        .split_inclusive('\n')
+        .map(|piece| {
+            end += piece.len();
+            match piece.strip_suffix('\n') {
+                Some(line) => Line {
+                    text: line.strip_suffix('\r').unwrap_or(line),
+                    end,
+                    terminated: true,
+                },
+                None => Line {
+                    text: piece,
+                    end,
+                    terminated: false,
+                },
+            }
+        })
+        .collect()
+}
+
+fn texts<'a>(lines: &[Line<'a>]) -> Vec<&'a str> {
+    lines.iter().map(|line| line.text).collect()
+}
+
+/// A block, as the lines `start..end` it spans.
+struct Span {
+    kind: MessageBlockKind,
+    start: usize,
+    end: usize,
+}
+
+fn spans(lines: &[&str]) -> Vec<Span> {
+    let mut spans = Vec::new();
     let mut index = 0;
     while index < lines.len() {
-        if lines[index].trim().is_empty() {
+        let line = lines[index];
+        if line.trim().is_empty() {
             index += 1;
             continue;
         }
-
-        let (kind, block_markdown, plain_text, next) = if is_fence(lines[index]) {
-            fenced_block(&lines, index)
-        } else if let Some(plain) = heading_text(lines[index]) {
-            (
-                MessageBlockKind::Heading,
-                lines[index].to_owned(),
-                inline_plain_text(plain),
-                index + 1,
-            )
-        } else if let Some(plain) = list_text(lines[index]) {
-            (
-                MessageBlockKind::ListItem,
-                lines[index].to_owned(),
-                inline_plain_text(plain),
-                index + 1,
-            )
-        } else if let Some(plain) = lines[index].strip_prefix('>') {
-            (
-                MessageBlockKind::Quote,
-                lines[index].to_owned(),
-                inline_plain_text(plain.trim_start()),
-                index + 1,
-            )
-        } else if is_rule(lines[index]) {
-            (
-                MessageBlockKind::Rule,
-                lines[index].to_owned(),
-                String::new(),
-                index + 1,
-            )
+        let (kind, end) = if is_fence(line) {
+            (MessageBlockKind::Code, fence_end(lines, index))
+        } else if heading_text(line).is_some() {
+            (MessageBlockKind::Heading, index + 1)
+        } else if list_text(line).is_some() {
+            (MessageBlockKind::ListItem, index + 1)
+        } else if line.starts_with('>') {
+            (MessageBlockKind::Quote, index + 1)
+        } else if is_rule(line) {
+            (MessageBlockKind::Rule, index + 1)
         } else {
-            paragraph(&lines, index)
+            (MessageBlockKind::Paragraph, paragraph_end(lines, index))
         };
-
-        blocks.push(MessageBlock {
-            id: MessageBlockId::new(),
-            message_id,
-            ordinal: blocks.len() as u32,
+        spans.push(Span {
             kind,
-            markdown: block_markdown,
-            plain_text,
+            start: index,
+            end,
         });
-        index = next;
+        index = end;
     }
-    blocks
+    spans
 }
 
-fn paragraph(lines: &[&str], start: usize) -> (MessageBlockKind, String, String, usize) {
+fn plain_text(lines: &[&str], span: &Span) -> String {
+    let first = lines[span.start];
+    match span.kind {
+        MessageBlockKind::Code => {
+            let plain_end = if span.end > span.start + 1 && is_fence(lines[span.end - 1]) {
+                span.end - 1
+            } else {
+                span.end
+            };
+            lines[span.start + 1..plain_end].join("\n")
+        }
+        MessageBlockKind::Heading => inline_plain_text(heading_text(first).unwrap_or_default()),
+        MessageBlockKind::ListItem => inline_plain_text(list_text(first).unwrap_or_default()),
+        MessageBlockKind::Quote => {
+            inline_plain_text(first.strip_prefix('>').unwrap_or(first).trim_start())
+        }
+        MessageBlockKind::Rule => String::new(),
+        MessageBlockKind::Paragraph | MessageBlockKind::Other => {
+            inline_plain_text(&lines[span.start..span.end].join("\n"))
+        }
+    }
+}
+
+fn paragraph_end(lines: &[&str], start: usize) -> usize {
     let mut end = start + 1;
     while end < lines.len() && !lines[end].trim().is_empty() && !is_structural_start(lines[end]) {
         end += 1;
     }
-    (
-        MessageBlockKind::Paragraph,
-        lines[start..end].join("\n"),
-        inline_plain_text(&lines[start..end].join("\n")),
-        end,
-    )
+    end
 }
 
 fn inline_plain_text(markdown: &str) -> String {
@@ -87,31 +192,24 @@ fn inline_plain_text(markdown: &str) -> String {
     plain
 }
 
-fn fenced_block(lines: &[&str], start: usize) -> (MessageBlockKind, String, String, usize) {
-    let marker = lines[start].trim_start();
-    let fence_char = marker.chars().next().unwrap_or('`');
+/// Where a fenced block opened at `start` ends: past its closing fence, or
+/// at the end of the text when it has none yet.
+fn fence_end(lines: &[&str], start: usize) -> usize {
     let mut end = start + 1;
     while end < lines.len() {
-        if lines[end]
-            .trim_start()
-            .starts_with(&fence_char.to_string().repeat(3))
-        {
-            end += 1;
+        end += 1;
+        if closes_fence(lines[start], lines[end - 1]) {
             break;
         }
-        end += 1;
     }
-    let plain_end = if end > start + 1 && is_fence(lines[end - 1]) {
-        end - 1
-    } else {
-        end
-    };
-    (
-        MessageBlockKind::Code,
-        lines[start..end].join("\n"),
-        lines[start + 1..plain_end].join("\n"),
-        end,
-    )
+    end
+}
+
+/// Whether `line` closes the fence `opening` opened.
+fn closes_fence(opening: &str, line: &str) -> bool {
+    let fence_char = opening.trim_start().chars().next().unwrap_or('`');
+    line.trim_start()
+        .starts_with(&fence_char.to_string().repeat(3))
 }
 
 fn is_structural_start(line: &str) -> bool {
@@ -191,5 +289,76 @@ mod tests {
     #[test]
     fn empty_markdown_has_no_finalized_blocks() {
         assert!(finalize_markdown(MessageId::new(), "\n\n").is_empty());
+    }
+
+    #[test]
+    fn an_unclosed_fence_runs_to_the_end_and_keeps_its_text() {
+        let blocks = finalize_markdown(MessageId::new(), "```\nlet x = 1;\nlet y = 2;");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, MessageBlockKind::Code);
+        assert_eq!(blocks[0].plain_text, "let x = 1;\nlet y = 2;");
+    }
+
+    /// The cut of a finished text is the stored cut, block for block.
+    #[test]
+    fn the_cut_is_the_finalized_cut() {
+        let markdown = "# Top US News\r\n\r\n**1. Election eve**\nmore\n> quoted\n- one\n2. two\n---\n~~~\ncode\n~~~\n\ntail";
+        let cut = cut_markdown(markdown);
+        let blocks = finalize_markdown(MessageId::new(), markdown);
+        assert_eq!(
+            cut.iter()
+                .map(|block| (block.kind, block.markdown.as_str()))
+                .collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|block| (block.kind, block.markdown.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(cut.last().unwrap().end, markdown.len());
+    }
+
+    #[test]
+    fn a_block_is_closed_once_nothing_appended_can_change_it() {
+        let closed = |markdown: &str| {
+            cut_markdown(markdown)
+                .iter()
+                .map(|block| block.closed)
+                .collect::<Vec<_>>()
+        };
+        // A line still being written is open, whatever it is.
+        assert_eq!(closed("# Top"), [false]);
+        assert_eq!(closed("# Top\n"), [true]);
+        assert_eq!(closed("- item\n"), [true]);
+        // A paragraph waits for a finished line after it.
+        assert_eq!(closed("Para\n"), [false]);
+        assert_eq!(closed("Para\n  "), [false]);
+        assert_eq!(closed("Para\n\n"), [true]);
+        assert_eq!(closed("Para\n---"), [false, false]);
+        assert_eq!(closed("Para\n# Next\n"), [true, true]);
+        // A fence waits for its closing line.
+        assert_eq!(closed("```rust\nlet x = 1;\n"), [false]);
+        assert_eq!(closed("```rust\nlet x = 1;\n```"), [false]);
+        assert_eq!(closed("```rust\nlet x = 1;\n```\n"), [true]);
+        assert_eq!(closed("~~~\n```\n"), [false]);
+    }
+
+    /// Cutting the rest of a text after a closed block gives the blocks the
+    /// whole text has there — what lets a stream be cut only at its tail.
+    #[test]
+    fn the_cut_after_a_closed_block_is_the_cut_of_the_whole() {
+        let markdown = "# Top\n\nOne\ntwo\n\n```\nx\n```\n- a\n- b\n\nlast";
+        let whole = cut_markdown(markdown);
+        for (index, block) in whole.iter().enumerate().filter(|(_, block)| block.closed) {
+            let rest = cut_markdown(&markdown[block.end..]);
+            assert_eq!(
+                rest.iter()
+                    .map(|cut| (cut.kind, cut.markdown.as_str(), cut.end + block.end))
+                    .collect::<Vec<_>>(),
+                whole[index + 1..]
+                    .iter()
+                    .map(|cut| (cut.kind, cut.markdown.as_str(), cut.end))
+                    .collect::<Vec<_>>(),
+            );
+        }
     }
 }

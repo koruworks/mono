@@ -109,6 +109,15 @@ pub(crate) struct RebuildStats {
     pub blocks_laid_out: usize,
 }
 
+impl std::ops::AddAssign for RebuildStats {
+    fn add_assign(&mut self, other: Self) {
+        self.messages_reused += other.messages_reused;
+        self.messages_laid_out += other.messages_laid_out;
+        self.blocks_reused += other.blocks_reused;
+        self.blocks_laid_out += other.blocks_laid_out;
+    }
+}
+
 pub(crate) fn reconcile(
     engine: &mut TextEngine,
     old: Vec<MessageLayout>,
@@ -161,6 +170,13 @@ pub(crate) fn reconcile(
             .as_ref()
             .map(|text| engine.simple_layout_wrapped(text, theme::role::hint(), input.wrap_width));
         let sources = sources::layout_sources(engine, &input.sources, input.wrap_width);
+        // A streaming answer is drawn from its blocks; laying all of its
+        // text out again on every delta is what the blocks spare.
+        let layout = if input.state == MessageState::Pending && !input.blocks.is_empty() {
+            engine.simple_layout_wrapped("", theme::role::ui(), input.wrap_width)
+        } else {
+            display_layout(engine, &input.display, &input.links, input.wrap_width)
+        };
         output.push(MessageLayout {
             id: Some(input.id),
             top: 0.0,
@@ -168,7 +184,7 @@ pub(crate) fn reconcile(
             state: input.state,
             markdown: input.markdown,
             display: input.display.clone(),
-            layout: display_layout(engine, &input.display, &input.links, input.wrap_width),
+            layout,
             links: input.links,
             wrap_width: input.wrap_width,
             usage_text: input.usage_text,

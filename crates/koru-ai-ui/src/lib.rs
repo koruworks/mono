@@ -64,6 +64,7 @@ mod composer;
 mod doc_links;
 mod effort;
 mod layout_cache;
+mod live_markdown;
 mod model_picker;
 mod privacy;
 mod quote_pills;
@@ -435,6 +436,9 @@ pub struct ChatSurface {
     /// Where each call of the running reply began in its draft, noted as
     /// its row arrived, for a row whose stored offset has not come yet.
     live_offsets: HashMap<ToolInvocationId, u32>,
+    /// The running answer's closed blocks, drawn as Markdown while it
+    /// streams.
+    live_answer: live_markdown::LiveAnswer,
     /// When the running reply was accepted, for *Working for 6s*.
     live_turn_started_ms: Option<i64>,
     /// When a live work header last ticked.
@@ -725,6 +729,7 @@ impl ChatSurface {
             opened_calls: HashSet::new(),
             work_hover: None,
             live_offsets: HashMap::new(),
+            live_answer: live_markdown::LiveAnswer::default(),
             live_turn_started_ms: None,
             work_ticked_at: None,
             message_width: 0.0,
@@ -5518,7 +5523,9 @@ impl ChatSurface {
         let offset = |activity: &ToolActivity| effective_offset(activity, live_offsets);
         let running = self.running_reply();
         let mut inputs = Vec::new();
-        let mut pending_answer: Option<String> = None;
+        // Where the running reply's answer starts in its draft, once a
+        // call has cut what came before it away.
+        let mut pending_answer: Option<usize> = None;
         if let Some(transcript) = &self.transcript {
             let usage_by_message = transcript
                 .usage
@@ -5626,7 +5633,8 @@ impl ChatSurface {
                 if let Some(cut) =
                     tool_groups::cut_reply::<MessageBlockId>(&self.draft, &rows, offset, &[])
                 {
-                    pending_answer = Some(self.draft[cut.answer_start..].trim_start().to_owned());
+                    let answer = &self.draft[cut.answer_start..];
+                    pending_answer = Some(self.draft.len() - answer.trim_start().len());
                     worked.insert(message);
                     self.work_layouts.push(work_view::build(
                         &mut self.engine,
@@ -5724,7 +5732,16 @@ impl ChatSurface {
                 });
             }
         }
-        let old = std::mem::take(&mut self.message_layouts);
+        let mut old = std::mem::take(&mut self.message_layouts);
+        // The running reply's last layout, whose closed blocks it keeps.
+        let old_live = running
+            .filter(|id| !inputs.iter().any(|input| input.id == *id))
+            .and_then(|id| {
+                old.iter().position(|message| {
+                    message.id == Some(id) && message.state == MessageState::Pending
+                })
+            })
+            .map(|index| old.swap_remove(index));
         let (mut messages, stats) =
             layout_cache::reconcile(&mut self.engine, old, inputs, render_chat_block);
         self.last_rebuild_stats = stats;
@@ -5784,38 +5801,75 @@ impl ChatSurface {
                 .and_then(|usage| usage_line(usage, self.lang));
             // Once the agent has called a tool, what it said before the
             // call is in the work view above; the card shows what follows.
-            let answer = pending_answer.unwrap_or_else(|| self.draft.clone());
+            let start = pending_answer.unwrap_or(0);
+            let answer = &self.draft[start..];
             let display = if self.draft.is_empty() && !self.open_searches.is_empty() {
                 "Searching the web…".to_owned()
             } else {
-                answer
+                answer.to_owned()
             };
-            // Under the running reply's id, so its work is placed above it.
-            messages.push(MessageLayout {
-                id: running,
-                top: 0.0,
-                role: ChatRole::Assistant,
-                state: MessageState::Pending,
-                markdown: self.draft.clone(),
-                links: Vec::new(),
-                wrap_width: assistant_width,
-                layout: self
-                    .engine
-                    .simple_layout_wrapped(&display, role::ui(), assistant_width),
-                display,
-                usage: usage_text.as_ref().map(|line| {
-                    self.engine
-                        .simple_layout_wrapped(line, role::hint(), assistant_width)
-                }),
-                usage_text,
-                sources: sources::layout_sources(
+            // Its closed blocks as Markdown, laid out once each; only the
+            // open block at the end is laid out again, as plain text.
+            let live = running.and_then(|id| {
+                let blocks = self.live_answer.blocks(id, start, answer);
+                let tail = self.live_answer.tail_id();
+                let (mut laid, live_stats) = layout_cache::reconcile(
                     &mut self.engine,
-                    &self.live_sources,
-                    assistant_width,
-                ),
-                blocks: Vec::new(),
-                attachments: Vec::new(),
+                    old_live.into_iter().collect(),
+                    vec![MessageInput {
+                        id,
+                        role: ChatRole::Assistant,
+                        state: MessageState::Pending,
+                        markdown: self.draft.clone(),
+                        display: display.clone(),
+                        links: Vec::new(),
+                        wrap_width: assistant_width,
+                        usage_text: usage_text.clone(),
+                        sources: self.live_sources.clone(),
+                        blocks,
+                        attachments: Vec::new(),
+                    }],
+                    |engine, block, markdown, width| {
+                        if block == tail {
+                            live_markdown::plain_block(engine, block, markdown, width)
+                        } else {
+                            render_chat_block(engine, block, markdown, width)
+                        }
+                    },
+                );
+                self.last_rebuild_stats += live_stats;
+                laid.pop()
             });
+            // Under the running reply's id, so its work is placed above it.
+            messages.push(live.unwrap_or_else(|| {
+                MessageLayout {
+                    id: running,
+                    top: 0.0,
+                    role: ChatRole::Assistant,
+                    state: MessageState::Pending,
+                    markdown: self.draft.clone(),
+                    links: Vec::new(),
+                    wrap_width: assistant_width,
+                    layout: self.engine.simple_layout_wrapped(
+                        &display,
+                        role::ui(),
+                        assistant_width,
+                    ),
+                    display,
+                    usage: usage_text.as_ref().map(|line| {
+                        self.engine
+                            .simple_layout_wrapped(line, role::hint(), assistant_width)
+                    }),
+                    usage_text,
+                    sources: sources::layout_sources(
+                        &mut self.engine,
+                        &self.live_sources,
+                        assistant_width,
+                    ),
+                    blocks: Vec::new(),
+                    attachments: Vec::new(),
+                }
+            }));
         }
         self.message_layouts = messages;
         self.position_conversation_items();
