@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -72,6 +73,7 @@ mod quote_pills;
 mod reader;
 mod sources;
 mod tool_groups;
+mod tool_output;
 mod usage;
 mod work_view;
 
@@ -437,6 +439,11 @@ pub struct ChatSurface {
     opened_step_groups: HashSet<(MessageId, usize)>,
     /// The calls opened to their detail.
     opened_calls: HashSet<ToolInvocationId>,
+    /// The calls whose long output is shown in full rather than folded.
+    expanded_outputs: HashSet<ToolInvocationId>,
+    /// Each opened call's detail as last laid out, under a fingerprint of
+    /// what it showed (`tool_output::layout::fingerprint`).
+    call_details: HashMap<ToolInvocationId, (u64, Rc<Vec<tool_output::layout::DetailLine>>)>,
     work_hover: Option<work_view::WorkHit>,
     /// Where each call of the running reply began in its draft, noted as
     /// its row arrived, for a row whose stored offset has not come yet.
@@ -750,6 +757,8 @@ impl ChatSurface {
             opened_work: HashSet::new(),
             opened_step_groups: HashSet::new(),
             opened_calls: HashSet::new(),
+            expanded_outputs: HashSet::new(),
+            call_details: HashMap::new(),
             work_hover: None,
             live_offsets: HashMap::new(),
             live_answer: live_markdown::LiveAnswer::default(),
@@ -5607,6 +5616,31 @@ impl ChatSurface {
                 tool_activity_detail(activity)
             }
         };
+        // An opened call's detail is laid out once and kept until what it
+        // shows changes: a rebuild runs on every streamed delta.
+        let opened_calls = &self.opened_calls;
+        self.call_details.retain(|id, _| opened_calls.contains(id));
+        let expanded = &self.expanded_outputs;
+        let cache = &mut self.call_details;
+        let mut call_detail = |engine: &mut TextEngine, activity: &ToolActivity, width: f32| {
+            let pieces = if is_agent_row(activity) {
+                tool_output::pieces(activity, lang, now_ms, expanded.contains(&activity.id))
+            } else {
+                tool_activity_detail(activity)
+                    .lines()
+                    .map(|line| tool_output::Piece::Meta(line.to_owned()))
+                    .collect()
+            };
+            let key = tool_output::layout::fingerprint(&pieces, width);
+            if let Some((cached, lines)) = cache.get(&activity.id)
+                && *cached == key
+            {
+                return Rc::clone(lines);
+            }
+            let lines = Rc::new(tool_output::layout::lay_out(engine, &pieces, width));
+            cache.insert(activity.id, (key, Rc::clone(&lines)));
+            lines
+        };
         let opened = work_view::Opened {
             replies: &self.opened_work,
             groups: &self.opened_step_groups,
@@ -5688,7 +5722,7 @@ impl ChatSurface {
                                 groups: cut.groups,
                             },
                             &opened,
-                            detail,
+                            &mut call_detail,
                         ));
                     }
                     inputs.push(MessageInput {
@@ -5742,7 +5776,7 @@ impl ChatSurface {
                             groups: cut.groups,
                         },
                         &opened,
-                        detail,
+                        &mut call_detail,
                     ));
                 }
             }
@@ -5782,7 +5816,7 @@ impl ChatSurface {
                             groups: cut.groups,
                         },
                         &opened,
-                        detail,
+                        &mut call_detail,
                     ));
                 }
             }
@@ -6560,6 +6594,7 @@ impl ChatSurface {
                 flip(&mut self.opened_step_groups, (message, index));
             }
             work_view::WorkHit::Call(call) => flip(&mut self.opened_calls, call),
+            work_view::WorkHit::Toggle(call) => flip(&mut self.expanded_outputs, call),
         }
         self.messages_dirty = true;
         true

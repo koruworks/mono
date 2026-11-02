@@ -336,7 +336,10 @@ pub(crate) fn agent_row_body(activity: &ToolActivity, lang: Lang, now_ms: i64) -
         (Key::AiToolInput, activity.agent_input.as_deref()),
         (Key::AiToolOutput, activity.agent_output.as_deref()),
     ] {
-        let Some(content) = content.map(str::trim).filter(|content| !content.is_empty()) else {
+        let Some(content) = content
+            .map(str::trim)
+            .filter(|content| !crate::tool_output::says_nothing(content))
+        else {
             continue;
         };
         lines.push(format!("{}:", t(lang, key)));
@@ -350,7 +353,7 @@ pub(crate) fn agent_row_body(activity: &ToolActivity, lang: Lang, now_ms: i64) -
     lines.join("\n")
 }
 
-fn agent_row_outcome(activity: &ToolActivity, lang: Lang) -> String {
+pub(crate) fn agent_row_outcome(activity: &ToolActivity, lang: Lang) -> String {
     let key = match (activity.status, activity.approval) {
         (ToolActivityStatus::ApprovalRequired, _) => Key::AiAgentOutcomeWaiting,
         (ToolActivityStatus::Running | ToolActivityStatus::Proposed, _) => {

@@ -15,6 +15,7 @@
 //! The summaries are `crate::tool_groups`'.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use koru_ai_core::{MessageId, ToolActivity, ToolInvocationId};
 use koru_draw::geometry::Rect;
@@ -28,11 +29,18 @@ use vello::Scene;
 use vello::kurbo::Affine;
 
 use crate::tool_groups::{self, StepGroup, WorkItem};
+use crate::tool_output::Ink;
+use crate::tool_output::layout::{DetailHit, DetailLine, color};
 
 /// The header's height; its hairline sits at the bottom.
 pub(crate) const HEADER_H: f32 = 30.0;
 /// The space between lines, and below the last one.
 const LINE_GAP: f32 = 6.0;
+/// The space between the lines of a call's detail, and below a block on
+/// the code background, which reaches `PANEL_PAD` past its text.
+const DETAIL_GAP: f32 = 4.0;
+const PANEL_GAP: f32 = 10.0;
+const PANEL_PAD: f32 = 4.0;
 /// How far a call line, and a call's detail, sit in from their group.
 const NEST: f32 = 16.0;
 const CARET: f32 = 12.0;
@@ -43,18 +51,24 @@ pub(crate) enum WorkHit {
     Header(MessageId),
     Group(MessageId, usize),
     Call(ToolInvocationId),
+    /// A call's folded block: show all of it, or fold it again.
+    Toggle(ToolInvocationId),
 }
 
 pub(crate) struct WorkLine {
     /// From the top of the view.
     pub y: f32,
     pub indent: f32,
-    pub layout: Layout<Brush>,
+    pub layout: Rc<Layout<Brush>>,
     /// The agent's own words are in the text color; everything else is grey.
     pub said: bool,
     pub hit: Option<WorkHit>,
     /// Whether the line's caret points down (opened) or right.
     pub caret: Option<bool>,
+    /// A call's detail line: its own ink (`None` inside: the layout's
+    /// colors), and whether it sits on the code background.
+    pub ink: Option<Option<Ink>>,
+    pub panel: bool,
 }
 
 pub(crate) struct WorkLayout {
@@ -88,48 +102,80 @@ pub(crate) struct Opened<'a> {
     pub calls: &'a HashSet<ToolInvocationId>,
 }
 
+impl WorkLine {
+    fn plain(
+        layout: Layout<Brush>,
+        indent: f32,
+        hit: Option<WorkHit>,
+        caret: Option<bool>,
+    ) -> Self {
+        Self {
+            y: 0.0,
+            indent,
+            layout: Rc::new(layout),
+            said: false,
+            hit,
+            caret,
+            ink: None,
+            panel: false,
+        }
+    }
+
+    fn said(self) -> Self {
+        Self { said: true, ..self }
+    }
+}
+
+/// Lines stacked down the view, each `gap` above the next.
+struct Stack {
+    lines: Vec<WorkLine>,
+    y: f32,
+}
+
+impl Stack {
+    fn push(&mut self, line: WorkLine, gap: f32) {
+        let height = line.layout.height();
+        self.lines.push(WorkLine { y: self.y, ..line });
+        self.y += height + gap;
+    }
+}
+
+/// A call's detail, laid out `width` wide: `crate::tool_output`'s lines,
+/// which the surface keeps until the call changes.
+pub(crate) type Detail<'a> =
+    dyn FnMut(&mut TextEngine, &ToolActivity, f32) -> Rc<Vec<DetailLine>> + 'a;
+
 pub(crate) fn build(
     engine: &mut TextEngine,
     lang: Lang,
     width: f32,
     input: WorkInput<'_>,
     opened: &Opened<'_>,
-    detail: impl Fn(&ToolActivity) -> String,
+    detail: &mut Detail<'_>,
 ) -> WorkLayout {
     let open = input.live || opened.replies.contains(&input.message);
     let header = engine.simple_layout(
         &tool_groups::header(false, input.worked_ms, lang),
         role::ui(),
     );
-    let mut lines = Vec::new();
-    let mut y = HEADER_H + LINE_GAP;
+    let mut stack = Stack {
+        lines: Vec::new(),
+        y: HEADER_H + LINE_GAP,
+    };
     if open {
-        let mut push = |layout: Layout<Brush>,
-                        indent: f32,
-                        said: bool,
-                        hit: Option<WorkHit>,
-                        caret: Option<bool>| {
-            let height = layout.height();
-            lines.push(WorkLine {
-                y,
-                indent,
-                layout,
-                said,
-                hit,
-                caret,
-            });
-            y += height + LINE_GAP;
-        };
         for item in &input.items {
             match item {
                 WorkItem::Text(text) => {
                     let plain = tool_groups::plain_text(text);
-                    push(
-                        engine.simple_layout_wrapped(&plain, role::ui(), width.max(1.0)),
-                        0.0,
-                        true,
-                        None,
-                        None,
+                    stack.push(
+                        WorkLine::plain(
+                            engine.simple_layout_wrapped(&plain, role::ui(), width.max(1.0)),
+                            0.0,
+                            None,
+                            None,
+                        )
+                        .said(),
+                        LINE_GAP,
                     );
                 }
                 WorkItem::Group(index) => {
@@ -142,12 +188,14 @@ pub(crate) fn build(
                         role::ui(),
                         (width - CARET - 4.0).max(1.0),
                     );
-                    push(
-                        engine.simple_layout(&line, role::ui()),
-                        0.0,
-                        false,
-                        Some(WorkHit::Group(input.message, *index)),
-                        Some(group_open),
+                    stack.push(
+                        WorkLine::plain(
+                            engine.simple_layout(&line, role::ui()),
+                            0.0,
+                            Some(WorkHit::Group(input.message, *index)),
+                            Some(group_open),
+                        ),
+                        LINE_GAP,
                     );
                     if !group_open {
                         continue;
@@ -159,31 +207,47 @@ pub(crate) fn build(
                             role::ui(),
                             (width - NEST - CARET - 4.0).max(1.0),
                         );
-                        push(
-                            engine.simple_layout(&line, role::ui()),
-                            NEST,
-                            false,
-                            Some(WorkHit::Call(row.id)),
-                            Some(call_open),
+                        stack.push(
+                            WorkLine::plain(
+                                engine.simple_layout(&line, role::ui()),
+                                NEST,
+                                Some(WorkHit::Call(row.id)),
+                                Some(call_open),
+                            ),
+                            LINE_GAP,
                         );
                         if call_open {
-                            push(
-                                engine.simple_layout_wrapped(
-                                    &detail(row),
-                                    role::meta(),
-                                    (width - NEST * 2.0).max(1.0),
-                                ),
-                                NEST * 2.0,
-                                false,
-                                None,
-                                None,
-                            );
+                            let detail = detail(engine, row, (width - NEST * 2.0).max(1.0));
+                            for (index, line) in detail.iter().enumerate() {
+                                let hit = line.hit.map(|hit| match hit {
+                                    DetailHit::Toggle => WorkHit::Toggle(row.id),
+                                });
+                                let gap = match detail.get(index + 1) {
+                                    None => LINE_GAP + line.panel as u8 as f32 * PANEL_PAD,
+                                    Some(next) if line.panel || next.panel => PANEL_GAP,
+                                    Some(_) => DETAIL_GAP,
+                                };
+                                stack.push(
+                                    WorkLine {
+                                        y: 0.0,
+                                        indent: NEST * 2.0,
+                                        layout: Rc::clone(&line.layout),
+                                        said: false,
+                                        hit,
+                                        caret: None,
+                                        ink: Some(line.ink),
+                                        panel: line.panel,
+                                    },
+                                    gap,
+                                );
+                            }
                         }
                     }
                 }
             }
         }
     }
+    let Stack { lines, y } = stack;
     let height = if lines.is_empty() { HEADER_H + 4.0 } else { y };
     WorkLayout {
         message: input.message,
@@ -272,19 +336,29 @@ pub(crate) fn draw(
         &scene::rect(x, y + HEADER_H - 1.0, w, theme::BORDER_W as f32),
     );
     for line in &work.lines {
-        let color = if line.said || (line.hit.is_some() && hover == line.hit) {
-            p.text
-        } else {
-            p.text_dim
+        if line.panel {
+            scene::fill(
+                canvas,
+                root,
+                p.code_bg,
+                &scene::rrect(
+                    x + line.indent - PANEL_PAD * 2.0,
+                    y + line.y - PANEL_PAD,
+                    (w - line.indent + PANEL_PAD * 2.0).max(1.0),
+                    line.layout.height() + PANEL_PAD * 2.0,
+                    5.0,
+                ),
+            );
+        }
+        let hovered = line.hit.is_some() && hover == line.hit;
+        let ink = match line.ink {
+            // A call's detail: its own ink, or the layout's colors.
+            Some(Some(Ink::Link)) if hovered => Some(p.text),
+            Some(ink) => ink.map(color),
+            None if line.said || hovered => Some(p.text),
+            None => Some(p.text_dim),
         };
-        scene::draw_layout(
-            canvas,
-            root,
-            &line.layout,
-            x + line.indent,
-            y + line.y,
-            Some(color),
-        );
+        scene::draw_layout(canvas, root, &line.layout, x + line.indent, y + line.y, ink);
         if let Some(open) = line.caret {
             let caret = engine.icon_layout(
                 if open {
