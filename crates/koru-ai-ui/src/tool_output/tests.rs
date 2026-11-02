@@ -471,3 +471,61 @@ fn an_edit_from_before_diffs_reads_as_its_path_and_text() {
         ["README.md", "new words", "Done · 1s · Just now"]
     );
 }
+
+// ----- file reads ---------------------------------------------------------
+
+/// Claude's read: the lines it asked for in its input, the file's lines
+/// numbered `N<tab>` inside a fence (claude-agent-acp's `markdownEscape`).
+#[test]
+fn a_ranged_read_reads_as_its_path_lines_and_numbers() {
+    let read = done(
+        "agent.read",
+        "Read src/a.rs (40 - 42)",
+        Some(r#"{"file_path":"src/a.rs","offset":40,"limit":3}"#),
+        "```\n40\tfn a() {\n41\t    new();\n42\t}\n```",
+    );
+    let pieces = pieces(&read, Lang::En, NOW, false);
+    assert_eq!(
+        pieces[0],
+        Piece::Header {
+            text: "src/a.rs · lines 40–42".into(),
+            mono: false
+        }
+    );
+    let Piece::Code(lines) = &pieces[1] else {
+        panic!("{pieces:?}")
+    };
+    assert_eq!(
+        lines
+            .iter()
+            .map(|line| (line.gutter.as_str(), line.text.as_str()))
+            .collect::<Vec<_>>(),
+        [("40", "fn a() {"), ("41", "    new();"), ("42", "}")]
+    );
+}
+
+/// A whole file is not *ranged*; a read from before Step 0, with no input,
+/// still finds its path in its title; the older `→` numbering reads too.
+#[test]
+fn a_whole_read_has_no_range_and_its_title_names_it() {
+    let read = done(
+        "agent.other",
+        "Read README.md",
+        Some("{}"),
+        "     1\u{2192}# Koru\n     2\u{2192}A workspace.",
+    );
+    let pieces = pieces(&read, Lang::En, NOW, false);
+    assert_eq!(
+        words(&pieces),
+        [
+            "README.md",
+            "1# Koru\n2A workspace.",
+            "Done · 1s · Just now"
+        ]
+    );
+    // A file whose lines are not numbered keeps them as they are.
+    assert_eq!(
+        file::numbered("plain\ntext"),
+        [(None, "plain".to_owned()), (None, "text".to_owned())]
+    );
+}

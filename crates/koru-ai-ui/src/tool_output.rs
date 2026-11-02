@@ -14,13 +14,14 @@
 //! color; an input that says nothing (`{}`) is not shown; and the outcome
 //! and the time sit on one quiet line under it all.
 
-use koru_ai_core::{AgentToolKind, ToolActivity, ToolActivityStatus};
+use koru_ai_core::{AgentToolKind, CallShape, ToolActivity, ToolActivityStatus};
 use koru_i18n::{Key, Lang, fill, t};
 
 use crate::agents::{agent_row_detail, agent_row_outcome};
 
 mod command;
 mod diff;
+mod file;
 pub(crate) mod layout;
 
 /// The color a piece of a detail is drawn in, resolved at draw time.
@@ -124,6 +125,7 @@ pub(crate) fn pieces(
     let rendered = match Shape::of(activity) {
         Shape::Command => command::render(&call, lang, expanded),
         Shape::Edit => diff::render(&call, lang, expanded),
+        Shape::Read => file::render(&call, lang, expanded),
         Shape::Other => None,
     }
     .unwrap_or_else(|| text(&call, lang, expanded));
@@ -144,6 +146,7 @@ pub(crate) fn pieces(
 pub(crate) enum Shape {
     Command,
     Edit,
+    Read,
     Other,
 }
 
@@ -152,7 +155,11 @@ impl Shape {
         match AgentToolKind::parse(&activity.tool_name) {
             Some(AgentToolKind::Command) => Self::Command,
             Some(AgentToolKind::FileChange) => Self::Edit,
-            _ => Self::Other,
+            Some(AgentToolKind::Read) => Self::Read,
+            _ => match activity.agent_label.as_deref().and_then(CallShape::of) {
+                Some(CallShape::Read) => Self::Read,
+                _ => Self::Other,
+            },
         }
     }
 }
