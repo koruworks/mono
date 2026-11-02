@@ -3004,20 +3004,14 @@ impl ChatSurface {
             return;
         }
         let should_auto_approve = should_auto_approve && !is_agent_row(&activity);
-        // Where a call of the running reply began, as far as the draft has
-        // come; the stored offset replaces it once the row carries one.
-        if activity.text_offset.is_none()
-            && Some(activity.assistant_message_id) == self.pending_assistant_message_id
-            && !transcript
-                .tool_activities
-                .iter()
-                .any(|existing| existing.id == activity.id)
-        {
-            self.live_offsets.insert(
-                activity.id,
-                u32::try_from(self.draft.len()).unwrap_or(u32::MAX),
-            );
-        }
+        let (reply, unplaced) = (
+            activity.assistant_message_id,
+            activity.text_offset.is_none()
+                && !transcript
+                    .tool_activities
+                    .iter()
+                    .any(|existing| existing.id == activity.id),
+        );
         if let Some(existing) = transcript
             .tool_activities
             .iter_mut()
@@ -3033,10 +3027,41 @@ impl ChatSurface {
                 .tool_activities
                 .sort_by_key(|activity| activity.proposed_at);
         }
+        // Where a call of the running reply began, as far as the draft has
+        // come; the stored offset replaces it once the row carries one.
+        if unplaced && self.running_reply() == Some(reply) {
+            self.live_offsets.insert(
+                activity_id,
+                u32::try_from(self.draft.len()).unwrap_or(u32::MAX),
+            );
+        }
         self.messages_dirty = true;
         if should_auto_approve {
             self.send_command(Command::ApproveTool(activity_id));
         }
+    }
+
+    /// The reply this surface is streaming: the one the service accepted
+    /// the turn with. Should that id be gone while the question still
+    /// waits for its answer — a command failing alongside the turn clears
+    /// it, and the stream runs on — it is the reply whose steps are here
+    /// and whose message is not yet.
+    fn running_reply(&self) -> Option<MessageId> {
+        if self.pending_assistant_message_id.is_some() || self.pending_user.is_none() {
+            return self.pending_assistant_message_id;
+        }
+        let transcript = self.transcript.as_ref()?;
+        transcript
+            .tool_activities
+            .iter()
+            .rev()
+            .map(|activity| activity.assistant_message_id)
+            .find(|reply| {
+                !transcript
+                    .messages
+                    .iter()
+                    .any(|message| message.id == *reply)
+            })
     }
 
     fn toggle_session_auto_approve(&mut self) -> bool {
@@ -5491,6 +5516,7 @@ impl ChatSurface {
         };
         let live_offsets = &self.live_offsets;
         let offset = |activity: &ToolActivity| effective_offset(activity, live_offsets);
+        let running = self.running_reply();
         let mut inputs = Vec::new();
         let mut pending_answer: Option<String> = None;
         if let Some(transcript) = &self.transcript {
@@ -5593,7 +5619,7 @@ impl ChatSurface {
             // The running reply: its draft is cut the same way, at the
             // offsets its rows carry or the surface noted as they came.
             if self.pending_user.is_some()
-                && let Some(message) = self.pending_assistant_message_id
+                && let Some(message) = running
                 && !worked.contains(&message)
             {
                 let rows = reply_rows(transcript, message);
@@ -5633,7 +5659,10 @@ impl ChatSurface {
                 let rows = reply_rows(transcript, message);
                 if let Some(cut) = tool_groups::cut_reply::<MessageBlockId>("", &rows, offset, &[])
                 {
-                    let live = rows.iter().any(|row| !row.status.is_terminal());
+                    // Done only once the reply is: a running reply whose
+                    // calls have all ended is still working.
+                    let live = Some(message) == running
+                        || rows.iter().any(|row| !row.status.is_terminal());
                     let started_ms = rows
                         .iter()
                         .map(|row| row.proposed_at.millis())
@@ -5761,8 +5790,9 @@ impl ChatSurface {
             } else {
                 answer
             };
+            // Under the running reply's id, so its work is placed above it.
             messages.push(MessageLayout {
-                id: self.pending_assistant_message_id,
+                id: running,
                 top: 0.0,
                 role: ChatRole::Assistant,
                 state: MessageState::Pending,

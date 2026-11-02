@@ -4,10 +4,13 @@ use koru_ai_core::{
     AiProviderId, Chat, ChatId, ChatRole, InferenceAttemptId, Message, MessageState,
     ModelSelection, ReasoningChoice, Timestamp, ToolActivity, ToolActivityStatus, ToolApproval,
 };
-use koru_ai_wire::ChatTranscript;
+use koru_ai_wire::{
+    AI_STREAM_VERSION, ChatTranscript, PublicAiEvent, SendTurnAccepted, StreamEvent,
+};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::*;
+use crate::reader::Update;
 use crate::{ChatSurface, Focus, SurfaceMode};
 
 const COMMENTARY: &str = "I'll look at the file.";
@@ -258,6 +261,95 @@ fn a_running_reply_shows_what_it_said_and_the_call_it_is_making() {
         |_| None,
     );
     assert_eq!(tool_groups::group_line(&group[0], Lang::En), "Reading…");
+}
+
+fn event(event: PublicAiEvent) -> Update {
+    Update::Event(StreamEvent {
+        version: AI_STREAM_VERSION,
+        sequence: 1,
+        event,
+    })
+}
+
+const SAID: &str = "I'll search for today's top US news.";
+const BETWEEN: &str = "Three wires have it. Reading them.";
+const NEWS: &str = "# Top US News\n\n**1. Election eve**";
+
+/// A reply streamed as the service sends it: words, a search, more words,
+/// a read, then the answer — every call over before the answer starts.
+/// With `lose_id`, a command failing alongside the turn clears the id the
+/// turn was accepted with halfway through, and the stream runs on.
+fn stream_news(surface: &mut ChatSurface, lose_id: bool) -> MessageId {
+    let transcript = transcript();
+    let chat = transcript.chat.id;
+    surface.transcript = Some(transcript);
+    surface.pending_user = Some("Today's top US news?".into());
+    let reply = MessageId::new();
+    let attempt_id = InferenceAttemptId::new();
+    surface.apply_update(Update::Accepted(SendTurnAccepted {
+        attempt_id,
+        user_message_id: MessageId::new(),
+        assistant_message_id: reply,
+        replayed: false,
+    }));
+    let say = |surface: &mut ChatSurface, text: &str| {
+        surface.apply_update(event(PublicAiEvent::TextDelta {
+            attempt_id,
+            text: text.into(),
+            at: Timestamp::from_millis(2_000),
+        }));
+    };
+    let call = |surface: &mut ChatSurface, tool: &str, label: &str| {
+        let running = row(
+            chat,
+            reply,
+            tool,
+            Some(label),
+            ToolActivityStatus::Running,
+            None,
+        );
+        let mut done = running.clone();
+        done.status = ToolActivityStatus::Complete;
+        done.completed_at = Some(Timestamp::from_millis(3_000));
+        for activity in [running, done] {
+            surface.apply_update(event(PublicAiEvent::ToolActivity {
+                attempt_id,
+                activity,
+            }));
+        }
+    };
+    say(surface, SAID);
+    call(surface, "agent.search", "Search the web");
+    if lose_id {
+        surface.apply_update(Update::Failure("Could not rename the chat.".into()));
+    }
+    say(surface, BETWEEN);
+    call(surface, "agent.read", "Read the wire");
+    say(surface, NEWS);
+    rebuild(surface);
+    reply
+}
+
+#[test]
+fn a_running_reply_with_its_calls_done_is_still_working_above_its_answer() {
+    for lose_id in [false, true] {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let reply = stream_news(&mut surface, lose_id);
+
+        assert_eq!(surface.work_layouts.len(), 1, "lose_id: {lose_id}");
+        let work = &surface.work_layouts[0];
+        assert_eq!(work.message, reply);
+        // Every call has ended, the reply has not: still *Working for …*.
+        assert!(work.live, "lose_id: {lose_id}");
+        assert!(tool_groups::header(work.live, 27_000, Lang::En).starts_with("Working for"));
+        let answer = layout_of(&surface, reply);
+        assert!(work.top + work.height <= answer.top, "lose_id: {lose_id}");
+        // What it said before and between its calls is the work's; what
+        // followed the last call is the answer.
+        let said = work.lines.iter().filter(|line| line.said).count();
+        assert_eq!(said, 2, "lose_id: {lose_id}");
+        assert_eq!(answer.display, NEWS, "lose_id: {lose_id}");
+    }
 }
 
 #[test]
