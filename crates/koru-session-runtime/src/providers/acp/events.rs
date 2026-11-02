@@ -120,43 +120,36 @@ impl AcpControl {
         }
     }
 
+    /// A `tool_call` or `tool_call_update`. **What a call does often comes
+    /// after the call**: Claude announces a tool as soon as the model starts
+    /// writing its input — titled *Terminal*, *Read File* or *Edit*, with
+    /// `rawInput: {}` — and sends the command, the path and the real title
+    /// in an update once the input is complete. The start is held until an
+    /// update says what the call does (any update carrying `rawInput`, a
+    /// non-empty input, or a status past *pending*), or until anything else
+    /// has to be queued, so the row is written once with what it did.
     fn tool(&mut self, turn_id: AgentTurnId, update: &Value) -> Result<(), ProviderFailure> {
-        /// A title is a line, not a transcript.
-        const TOOL_LABEL_CHARS: usize = 160;
         let native_id = update["toolCallId"]
             .as_str()
             .filter(|value| valid_native_id(value))
             .ok_or_else(malformed)?;
-        let kind = match update["kind"].as_str() {
-            Some("execute") => ToolKind::CommandExecution,
-            Some("edit" | "delete" | "move") => ToolKind::FileChange,
-            _ => ToolKind::Other,
-        };
+        let kind = tool_kind(update);
         if !self.tools.contains_key(native_id) {
-            let id = ToolCallId::mint();
             self.tools.insert(
                 native_id.to_owned(),
                 Tool {
-                    id,
+                    id: ToolCallId::mint(),
                     kind,
                     completed: false,
-                    output: None,
+                    ready: false,
+                    title: None,
+                    input: None,
+                    diff: None,
+                    text: None,
+                    raw_output: None,
                 },
             );
-            // The agent's own title for the call (*Read README.md*, *Bash git
-            // status*), bounded, and the kind's token when it gave none — a
-            // label is what a person reads on the row while the turn is live.
-            let title = update["title"]
-                .as_str()
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-                .map(|title| title.chars().take(TOOL_LABEL_CHARS).collect::<String>());
-            self.queue(AgentEvent::ToolStarted {
-                turn_id,
-                tool_call_id: id,
-                label: title.unwrap_or_else(|| kind.as_str().to_owned()),
-                input: tool_input(update),
-            })?;
+            self.unstarted.push(native_id.to_owned());
         }
         let tool = self.tools.get_mut(native_id).unwrap();
         if tool.completed {
@@ -165,16 +158,31 @@ impl AcpControl {
         if update.get("kind").is_some() {
             tool.kind = kind;
         }
-        if let Some(output) = tool_output(update) {
-            tool.output = Some(output);
-        }
+        refine_tool(tool, update);
         let status = update["status"].as_str();
+        // An update that carries an input says what the call does, even an
+        // empty one (a tool that takes no arguments); so does a status past
+        // pending. The very first `tool_call` says it only with a real input.
+        let says_what = match update.get("rawInput") {
+            Some(Value::Null) | None => false,
+            Some(input) => update["sessionUpdate"] == "tool_call_update" || !empty_input(input),
+        } || matches!(status, Some("in_progress" | "completed" | "failed"));
+        tool.ready |= says_what;
+        // Ready calls start once every call announced before them has, so
+        // the rows keep the order the agent made them in.
+        let ready = self
+            .unstarted
+            .iter()
+            .take_while(|id| self.tools.get(*id).is_some_and(|tool| tool.ready))
+            .count();
+        self.flush_starts(ready)?;
+        let tool = self.tools.get_mut(native_id).unwrap();
         if matches!(status, Some("completed" | "failed")) {
             tool.completed = true;
             let id = tool.id;
             let kind = tool.kind;
             let failed = status == Some("failed");
-            let output = tool.output.take();
+            let output = tool_output(tool);
             self.queue(AgentEvent::ToolCompleted {
                 turn_id,
                 tool_call_id: id,
@@ -270,6 +278,14 @@ impl AcpControl {
             // fact, and cancelling owns its response and reserved event slot.
             return self.cancel_active(turn_id, true);
         }
+        // The request names the call it is for, with its title and input:
+        // a call still held back starts with them, just before the request.
+        if let Some(tool) = params["toolCall"]["toolCallId"]
+            .as_str()
+            .and_then(|native_id| self.tools.get_mut(native_id))
+        {
+            refine_tool(tool, &params["toolCall"]);
+        }
         self.queue(AgentEvent::ApprovalRequired {
             turn_id,
             approval_id,
@@ -340,37 +356,112 @@ fn failure_detail(update: &Value) -> Option<String> {
     from_content.or_else(from_raw).and_then(bound_tool_detail)
 }
 
-/// What the agent asked the tool to do (UC17): the call's `rawInput`, the
-/// string itself when it is one, compact JSON when it is an object.
-/// Bounded by the protocol's `TOOL_CONTENT_CHARS`.
-fn tool_input(update: &Value) -> Option<String> {
-    bound_tool_content(&value_text(update.get("rawInput")?)?)
+/// The kind Koru files a call under, from ACP's `kind`: a command, a change
+/// to files, a reach to the web; everything else is read from the title
+/// later (`AgentToolKind::refined`).
+fn tool_kind(update: &Value) -> ToolKind {
+    match update["kind"].as_str() {
+        Some("execute") => ToolKind::CommandExecution,
+        Some("edit" | "delete" | "move") => ToolKind::FileChange,
+        Some("fetch") => ToolKind::WebSearch,
+        _ => ToolKind::Other,
+    }
 }
 
-/// What the tool produced (UC17), from the update's content blocks — a
-/// text block as it is, a diff as its path over its new text — else the
-/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`.
-fn tool_output(update: &Value) -> Option<String> {
-    let mut text = String::new();
-    for block in update["content"].as_array().into_iter().flatten() {
-        let piece = match block["type"].as_str() {
-            Some("content") => block["content"]["text"].as_str().map(str::to_owned),
-            Some("diff") => block["newText"].as_str().map(|new_text| {
-                format!("{}\n{new_text}", block["path"].as_str().unwrap_or_default())
-            }),
-            _ => None,
-        };
-        if let Some(piece) = piece {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&piece);
+/// Whether a `rawInput` says nothing: `{}`, `[]`, `""`.
+fn empty_input(input: &Value) -> bool {
+    match input {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::String(text) => text.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Take what a `tool_call`, a `tool_call_update` or a permission request's
+/// `toolCall` says about the call: its latest title and input (UC17), and
+/// what it produced so far.
+///
+/// **Content that comes with an input describes the call, not its result**:
+/// Claude's update carrying a command also carries the command's
+/// description as text, and an edit's carries the edit as a diff. So text
+/// is taken only from updates without an input (a result, a hook's report),
+/// and diffs from any update, the latest winning. `rawOutput` is kept apart:
+/// it is the result as the model saw it, and an edit's says only *The file
+/// was updated*, which must not replace the diff.
+fn refine_tool(tool: &mut Tool, update: &Value) {
+    /// A title is a line, not a transcript.
+    const TOOL_LABEL_CHARS: usize = 160;
+    if let Some(title) = update["title"]
+        .as_str()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        tool.title = Some(title.chars().take(TOOL_LABEL_CHARS).collect());
+    }
+    if let Some(input) = update.get("rawInput").filter(|input| !empty_input(input))
+        && let Some(text) = value_text(input).and_then(|text| bound_tool_content(&text))
+    {
+        tool.input = Some(text);
+    }
+    if let Some(blocks) = update["content"].as_array() {
+        if let Some(diff) = diff_text(blocks) {
+            tool.diff = Some(diff);
+        }
+        if update.get("rawInput").is_none()
+            && let Some(text) = content_text(blocks)
+        {
+            tool.text = Some(text);
         }
     }
-    if text.is_empty() {
-        text = value_text(update.get("rawOutput")?)?;
+    if let Some(raw) = update.get("rawOutput").and_then(value_text) {
+        tool.raw_output = Some(raw);
     }
+}
+
+/// What the tool produced (UC17): its diffs and its result text, else its
+/// `rawOutput`. Bounded by the protocol's `TOOL_CONTENT_CHARS`.
+fn tool_output(tool: &mut Tool) -> Option<String> {
+    let produced = [tool.diff.take(), tool.text.take()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if produced.trim().is_empty() {
+        tool.raw_output.take()?
+    } else {
+        produced
+    };
     bound_tool_content(&text)
+}
+
+/// A content array's text blocks, joined; `None` when it has none.
+fn content_text(blocks: &[Value]) -> Option<String> {
+    let text = blocks
+        .iter()
+        .filter(|block| block["type"] == "content")
+        .filter_map(|block| block["content"]["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// A content array's diff blocks, as their path over their new text.
+fn diff_text(blocks: &[Value]) -> Option<String> {
+    let text = blocks
+        .iter()
+        .filter(|block| block["type"] == "diff")
+        .filter_map(|block| {
+            let new_text = block["newText"].as_str()?;
+            Some(format!(
+                "{}\n{new_text}",
+                block["path"].as_str().unwrap_or_default()
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
 }
 
 /// A string as it is; anything else as compact JSON; nothing for null.

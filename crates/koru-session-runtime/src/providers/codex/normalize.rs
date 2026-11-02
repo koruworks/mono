@@ -248,6 +248,8 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
                 .unwrap_or_default();
             format!("{server}: {tool} {arguments}")
         }
+        // The query a web search ran, so its row says what it looked for.
+        "webSearch" => item.get("query")?.as_str()?.to_owned(),
         _ => return None,
     };
     koru_session_protocol::bound_tool_content(&text)

@@ -61,6 +61,8 @@ pub struct AcpControl {
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
     tools: BTreeMap<String, Tool>,
+    /// The native ids of calls whose start is held back, oldest first.
+    unstarted: Vec<String>,
     approvals: BTreeMap<ApprovalId, PendingApproval>,
     events: VecDeque<AgentEvent>,
     diagnostics: ProviderDiagnostics,
@@ -90,9 +92,22 @@ struct Tool {
     id: ToolCallId,
     kind: ToolKind,
     completed: bool,
-    /// The latest of what the tool produced, as its updates carried it;
-    /// the completion takes it (UC17).
-    output: Option<String>,
+    /// Whether an update has said what the call does. A call that arrives
+    /// with nothing to say it — Claude announces a tool the moment the model
+    /// starts writing its input, as *Terminal* with `rawInput: {}` — is held
+    /// in `unstarted` until one does; a ready call starts once every call
+    /// announced before it is ready too (`AcpControl::flush_starts`).
+    ready: bool,
+    /// The agent's latest title for the call, bounded.
+    title: Option<String>,
+    /// The latest of what the call was asked to do (`rawInput`), bounded.
+    input: Option<String>,
+    /// What the tool produced, as its updates carried it (UC17): the latest
+    /// diff blocks, the latest result text, and the latest `rawOutput`. The
+    /// completion takes the diff and the text, else the raw output.
+    diff: Option<String>,
+    text: Option<String>,
+    raw_output: Option<String>,
 }
 
 #[derive(Clone)]
@@ -127,6 +142,7 @@ impl AcpControl {
             turns: BTreeMap::new(),
             active: None,
             tools: BTreeMap::new(),
+            unstarted: Vec::new(),
             approvals: BTreeMap::new(),
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
@@ -406,7 +422,45 @@ impl AcpControl {
         Ok(())
     }
 
+    /// Queue `event`, after every call start still held back: nothing that
+    /// follows a call in the stream may reach the chat before it, or the
+    /// call's place in the reply's text and its order among the rows move.
     fn queue(&mut self, event: AgentEvent) -> Result<(), ProviderFailure> {
+        self.flush_starts(usize::MAX)?;
+        self.push_event(event)
+    }
+
+    /// Queue the held-back starts: all of them up to `upto` of the oldest,
+    /// each with the title and input its updates have brought so far.
+    fn flush_starts(&mut self, upto: usize) -> Result<(), ProviderFailure> {
+        let count = upto.min(self.unstarted.len());
+        for native_id in self.unstarted.drain(..count).collect::<Vec<_>>() {
+            let Some(turn_id) = self.active else {
+                break;
+            };
+            let Some(tool) = self.tools.get(&native_id) else {
+                continue;
+            };
+            let event = AgentEvent::ToolStarted {
+                turn_id,
+                tool_call_id: tool.id,
+                label: tool
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| tool.kind.as_str().to_owned()),
+                input: tool.input.clone(),
+            };
+            self.push_event(event)?;
+        }
+        Ok(())
+    }
+
+    fn clear_tools(&mut self) {
+        self.tools.clear();
+        self.unstarted.clear();
+    }
+
+    fn push_event(&mut self, event: AgentEvent) -> Result<(), ProviderFailure> {
         if self.events.len() + self.approvals.len() >= self.config.event_capacity {
             return Err(failure(
                 ErrorCode::Backpressure,
@@ -464,7 +518,7 @@ impl AcpControl {
         self.log.cancel_deadline();
         self.turns.get_mut(&turn_id).unwrap().terminal = true;
         self.active = None;
-        self.tools.clear();
+        self.clear_tools();
         self.approvals.clear();
         self.events.retain(|event| {
             !matches!(
@@ -517,7 +571,7 @@ impl AcpControl {
                     | AgentEvent::ProviderState { .. }
             )
         });
-        self.tools.clear();
+        self.clear_tools();
         for (approval_id, pending) in std::mem::take(&mut self.approvals) {
             let event = AgentEvent::ApprovalExpired {
                 turn_id: pending.turn_id,
@@ -555,7 +609,7 @@ impl AcpControl {
         self.queue(event)?;
         self.turns.get_mut(&turn_id).unwrap().terminal = true;
         self.active = None;
-        self.tools.clear();
+        self.clear_tools();
         Ok(())
     }
 

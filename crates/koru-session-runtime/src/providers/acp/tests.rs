@@ -1193,6 +1193,132 @@ fn a_tools_output_is_its_text_or_its_diff_and_is_bounded() {
     );
 }
 
+fn inject_updates(h: &mut Harness, updates: impl IntoIterator<Item = Value>) {
+    for update in updates {
+        h.injected.lock().unwrap().push_back(json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":SESSION,"update":update}}));
+    }
+}
+
+fn starts(events: &[AgentEvent]) -> Vec<(String, Option<String>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolStarted { label, input, .. } => Some((label.clone(), input.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn outputs(events: &[AgentEvent]) -> Vec<Option<String>> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::ToolCompleted { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// D17: Claude (claude-agent-acp 0.76.0, `toolCallNotification`) announces
+/// a call as *Terminal* with `rawInput: {}` while the model is still writing
+/// it, then refines it in an update with the command, its real title and
+/// the command's description as text. The row starts once, with the
+/// command; the description is not the output; the result is.
+#[test]
+fn a_call_announced_before_its_input_starts_with_what_it_does() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"bash-1","title":"Terminal","kind":"execute","status":"pending","rawInput":{},"content":[]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"bash-1","title":"git status","kind":"execute",
+                "rawInput":{"command":"git status","description":"Show the tree's status"},
+                "content":[{"type":"content","content":{"type":"text","text":"Show the tree's status"}}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"bash-1","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"```console\nOn branch main\n```"}}],
+                "rawOutput":"On branch main"}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(
+        starts(&events),
+        vec![(
+            "git status".to_owned(),
+            Some(r#"{"command":"git status","description":"Show the tree's status"}"#.into())
+        )]
+    );
+    assert_eq!(
+        outputs(&events),
+        vec![Some("```console\nOn branch main\n```".into())]
+    );
+}
+
+/// Calls announced together start in the order they were announced, each
+/// once it says what it does; text that follows a held call releases it
+/// first, so the call keeps its place in the reply.
+#[test]
+fn held_calls_start_in_order_and_before_what_follows_them() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"a","title":"Read File","kind":"read","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"b","title":"Read File","kind":"read","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"b","title":"Read b.rs","rawInput":{"file_path":"b.rs"}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"a","title":"Read a.rs","rawInput":{"file_path":"a.rs"}}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"c","title":"Terminal","kind":"execute","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"and then"}}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    let labels = starts(&events)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["Read a.rs", "Read b.rs", "Terminal"]);
+    let held = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::ToolStarted { label, .. } if label == "Terminal"))
+        .unwrap();
+    let said = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::MessageDelta { .. }))
+        .unwrap();
+    assert!(held < said, "a held call starts before the text after it");
+}
+
+/// An edit's diff is its output even when the completion's `rawOutput`
+/// says only that the file was updated.
+#[test]
+fn an_edits_diff_outlives_the_completions_raw_output() {
+    let mut h = harness(FakeAcpConfig::default(), None, None);
+    start(&mut h.control);
+    let id = AgentTurnId::mint();
+    h.control.submit(input(id)).unwrap();
+    inject_updates(
+        &mut h,
+        [
+            json!({"sessionUpdate":"tool_call","toolCallId":"e","title":"Edit","kind":"edit","status":"pending","rawInput":{}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","title":"Edit a.txt",
+                "rawInput":{"file_path":"a.txt","old_string":"old","new_string":"new"},
+                "content":[{"type":"diff","path":"a.txt","oldText":"old","newText":"new"}]}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"e","status":"completed",
+                "rawOutput":"The file a.txt has been updated."}),
+        ],
+    );
+    let events = drain(&mut h.control);
+    assert_eq!(starts(&events)[0].0, "Edit a.txt");
+    let output = outputs(&events).remove(0).unwrap();
+    assert!(output.contains("a.txt"), "{output}");
+    assert!(!output.contains("has been updated"), "{output}");
+}
+
 /// A session that offers models and, on the one it starts on, levels.
 fn leveled_peer() -> FakeAcpConfig {
     let effort = |current: &str, values: &[&str]| {

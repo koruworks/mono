@@ -123,8 +123,14 @@ impl CallShape {
             return Some(Self::Koru(tool));
         }
         let first = label.split_whitespace().next()?;
+        let rest = label[first.len()..].trim_start();
         Some(match first {
             "ToolSearch" => Self::ToolDiscovery,
+            // Claude titles a web search *Search "the query"*: a quoted
+            // query is the web's, a pattern the files'.
+            "Search" if rest.len() > 2 && rest.starts_with('"') && rest.ends_with('"') => {
+                Self::Fetch
+            }
             "Read" => Self::Read,
             "Find" | "Glob" | "grep" | "Grep" | "List" | "Search" => Self::Search,
             "Fetch" => Self::Fetch,
@@ -354,6 +360,14 @@ mod tests {
             Some(CallShape::Fetch)
         );
         assert_eq!(CallShape::of("\"koru notes app\""), Some(CallShape::Fetch));
+        assert_eq!(
+            CallShape::of("Search \"koru notes app\""),
+            Some(CallShape::Fetch)
+        );
+        assert_eq!(
+            CallShape::of("Search src for todo"),
+            Some(CallShape::Search)
+        );
         assert_eq!(CallShape::of("ToolSearch"), Some(CallShape::ToolDiscovery));
         assert_eq!(
             CallShape::of("mcp__koru__read_document"),
