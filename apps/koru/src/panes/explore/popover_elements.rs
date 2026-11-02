@@ -323,7 +323,9 @@ impl ExploreView {
     }
 
     /// The host's pointer and keyboard state, by element key, while the
-    /// page takes input.
+    /// page takes input. Read by the tests' frames; the app's own paint and
+    /// input lay the page out through their own paths.
+    #[cfg(test)]
     pub(crate) fn popover_interaction(&self) -> Interaction {
         let Some(popover) = self.live() else {
             return Interaction::default();
@@ -336,7 +338,9 @@ impl ExploreView {
 
     /// The Workspaces page laid out where its input is measured — the
     /// settled panel — and only while it takes input: `None` while another
-    /// page shows or the popover is closing.
+    /// page shows or the popover is closing. Test-only, like
+    /// [`Self::popover_interaction`].
+    #[cfg(test)]
     pub(crate) fn workspaces_frame(
         &self,
         area: Rect,

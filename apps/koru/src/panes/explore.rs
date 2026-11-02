@@ -445,7 +445,10 @@ impl PopoverRow {
         !matches!(self, Self::WorkspacesHeading | Self::ProfilesHeading)
     }
 
-    /// The buttons a fixed row carries, leading to trailing.
+    /// The buttons a fixed row carries, leading to trailing. The tests'
+    /// statement of the foot's order; the foot itself is laid out by
+    /// `popover_elements::profiles`.
+    #[cfg(test)]
     fn head_buttons(self) -> &'static [HeadButton] {
         match self {
             Self::ProfilesFooter => &[HeadButton::Status, HeadButton::Devices, HeadButton::New],
@@ -7814,7 +7817,9 @@ impl ExploreView {
 
 /// The trailing lane of a popover row: the tick, the gear, a caret.
 /// The same lane a Profile row's trailing caret has, so every row's control
-/// lines up.
+/// lines up. Where the tests aim a press at a row's gear; the app's rows
+/// take theirs from their element layout.
+#[cfg(test)]
 pub(crate) fn trailing_lane(r: Rect) -> Rect {
     koru_ui::profile_picker::row_parts(r).trailing
 }
