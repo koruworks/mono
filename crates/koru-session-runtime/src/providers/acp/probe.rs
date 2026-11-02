@@ -97,6 +97,45 @@ impl AcpFactory {
             attachment_paths,
         }
     }
+
+    /// **The installed copy this route runs.** `executable` as resolved,
+    /// unless the route chooses by version (Devin) and `executable` is one
+    /// of several copies of its program — then the first, in
+    /// `resolve_executable`'s order, whose `--version` the route admits. A
+    /// machine with Devin's self-updating CLI behind its desktop app's copy
+    /// gets the app's. None qualifying keeps `executable`, whose version
+    /// stage then says why; a path that is not one of the copies is kept.
+    fn choose_executable(&self, executable: OsString) -> OsString {
+        let Some(registration) = self.route.dialect.registration() else {
+            return executable;
+        };
+        if !self.route.dialect.chooses_by_version() {
+            return executable;
+        }
+        let candidates =
+            koru_session_profiles::resolve_executable_candidates(registration.executable);
+        if candidates.len() < 2
+            || !candidates
+                .iter()
+                .any(|candidate| candidate.as_os_str() == executable)
+        {
+            return executable;
+        }
+        candidates
+            .into_iter()
+            .map(PathBuf::into_os_string)
+            .find(|candidate| {
+                AcpCompatibilityProbe::new(
+                    self.route.clone(),
+                    candidate.clone(),
+                    PathBuf::new(),
+                    Arc::clone(&self.attachment_paths),
+                )
+                .read_version(ProbeLimits::default())
+                .is_ok()
+            })
+            .unwrap_or(executable)
+    }
 }
 
 impl ManagedProviderFactory for AcpFactory {
@@ -109,6 +148,11 @@ impl ManagedProviderFactory for AcpFactory {
         executable: OsString,
         working_directory: PathBuf,
     ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
+        // An unresolved name is passed on as it came, so discovery reports
+        // the missing program itself.
+        let executable = crate::providers::resolve_probe_executable(&executable)
+            .map(|resolved| self.choose_executable(resolved))
+            .unwrap_or(executable);
         models::discover(
             &self.route,
             executable,
@@ -132,7 +176,8 @@ impl ManagedProviderFactory for AcpFactory {
         executable: OsString,
         working_directory: PathBuf,
     ) -> Result<koru_session_protocol::ProviderModels, ProviderFailure> {
-        let executable = crate::providers::resolve_probe_executable(&executable)?;
+        let executable =
+            self.choose_executable(crate::providers::resolve_probe_executable(&executable)?);
         let probe = AcpCompatibilityProbe::new(
             self.route.clone(),
             executable,
@@ -157,7 +202,8 @@ impl ManagedProviderFactory for AcpFactory {
         executable: OsString,
         working_directory: PathBuf,
     ) -> Result<Box<dyn CompatibilityProbe>, ProviderFailure> {
-        let executable = crate::providers::resolve_probe_executable(&executable)?;
+        let executable =
+            self.choose_executable(crate::providers::resolve_probe_executable(&executable)?);
         Ok(Box::new(AcpCompatibilityProbe::new(
             self.route.clone(),
             executable,
@@ -192,16 +238,17 @@ impl ManagedProviderFactory for AcpFactory {
                 ProviderDiagnostic::VersionRejected,
             ));
         }
+        let executable = self.choose_executable(request.executable);
         let probe = AcpCompatibilityProbe::new(
             self.route.clone(),
-            request.executable.clone(),
+            executable.clone(),
             request.working_directory.clone(),
             self.attachment_paths.clone(),
         );
         let version = probe.version(ProbeLimits::default())?;
         let config = AcpConfig::new(
             self.route.clone(),
-            request.executable,
+            executable,
             request.working_directory,
             version,
             self.attachment_paths.clone(),

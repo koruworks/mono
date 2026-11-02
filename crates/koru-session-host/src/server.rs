@@ -294,6 +294,7 @@ pub async fn serve(
             koru_session_profiles::ANTIGRAVITY_REGISTRATION,
             AcpRoute::antigravity(),
         ),
+        (koru_session_profiles::DEVIN_REGISTRATION, AcpRoute::devin()),
     ] {
         managed_providers
             .register(
@@ -2144,8 +2145,9 @@ fn chat_bridge(
 
 /// The agents measured to follow `tools/list`'s `nextCursor` through the
 /// bridge (ADR-433, amended 2026-09-26). Kimi 2.0.0 and Codex 0.156.1 read
-/// page one only and Antigravity is unmeasured, so they get the whole list
-/// in one reply. Paging is what makes Grok 1.0.34 read the list reliably.
+/// page one only and Antigravity and Devin are unmeasured, so they get the
+/// whole list in one reply. Paging is what makes Grok 1.0.34 read the list
+/// reliably.
 const PAGED_BRIDGE_PROVIDERS: &[&str] = &["claude", "grok", "opencode"];
 
 /// The bridge as `program`'s session starts it — a chat's provider kind or a
@@ -2259,6 +2261,7 @@ mod resume_tests {
             ProfileLabel::Grok,
             ProfileLabel::Kimi,
             ProfileLabel::Antigravity,
+            ProfileLabel::Devin,
         ] {
             assert!(resume_arguments(label).is_some(), "{label:?}");
         }
@@ -2293,7 +2296,7 @@ mod bridge_pages_tests {
             let args = bridge_for(&bridge, provider).args;
             assert_eq!(&args[2..], &["--tool-pages", "on"], "{provider}");
         }
-        for provider in ["kimi", "codex", "antigravity"] {
+        for provider in ["kimi", "codex", "antigravity", "devin"] {
             let args = bridge_for(&bridge, provider).args;
             assert_eq!(
                 args.len(),

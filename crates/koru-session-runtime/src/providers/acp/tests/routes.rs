@@ -13,6 +13,7 @@ fn routes() -> Vec<(AcpRoute, &'static str)> {
             AcpRoute::antigravity(),
             "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
         ),
+        (AcpRoute::devin(), "devin 3000.10.48 (fcf7ba39)"),
     ]
 }
 
@@ -133,6 +134,35 @@ fn a_release_above_the_pin_is_admitted_and_one_below_it_is_not() {
         "not grok's print"
     );
     assert!(AcpRoute::antigravity().parse_version("1.2.2").is_err());
+    // Devin's own print, `devin <version> (<commit>)`. The standalone CLI
+    // this machine had, 3000.10.21, is below the pin.
+    assert_eq!(
+        AcpRoute::devin()
+            .parse_version("devin 3000.11.234 (0123abcd)\r\n")
+            .unwrap()
+            .as_str(),
+        "3000.11.234"
+    );
+    assert_eq!(
+        AcpRoute::devin()
+            .parse_version("devin 3000.10.48 (other)")
+            .unwrap()
+            .as_str(),
+        "3000.10.48",
+        "the commit is not the version"
+    );
+    for refused in [
+        "devin 3000.10.21 (611c1cba)",
+        "3000.11.234",
+        "devin 3000.11.234",
+        "grok 3000.11.234 (0123abcd)",
+        "devin 3000.11.234 (0123abcd) [stable]",
+    ] {
+        assert!(
+            AcpRoute::devin().parse_version(refused).is_err(),
+            "{refused}"
+        );
+    }
     let route = AcpRoute::kimi();
     assert!(route.supports(&ProviderVersion::from_str("2.0.0").unwrap()));
     assert!(route.supports(&ProviderVersion::from_str("3.0").unwrap()));
@@ -319,6 +349,13 @@ fn recorded_routes() -> Vec<(
             include_str!("fixtures/antigravity-1.2.1/initialize.json"),
             include_str!("fixtures/antigravity-1.2.1/new-session.json"),
             include_str!("fixtures/antigravity-1.2.1/auth-required.json"),
+        ),
+        (
+            AcpRoute::devin(),
+            include_str!("fixtures/devin-3000.10.48/version.txt"),
+            include_str!("fixtures/devin-3000.10.48/initialize.json"),
+            include_str!("fixtures/devin-3000.10.48/new-session.json"),
+            include_str!("fixtures/devin-3000.10.48/auth-required.json"),
         ),
     ]
 }

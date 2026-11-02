@@ -1089,6 +1089,8 @@ mod approvals;
 
 mod claude;
 
+mod devin;
+
 mod routes;
 
 mod routes_live;

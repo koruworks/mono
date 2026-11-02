@@ -30,7 +30,8 @@ fn registry_keeps_codex_launch_and_raw_profiles_unchanged() {
             OPENCODE_REGISTRATION,
             KIMI_REGISTRATION,
             GROK_REGISTRATION,
-            ANTIGRAVITY_REGISTRATION
+            ANTIGRAVITY_REGISTRATION,
+            DEVIN_REGISTRATION
         ]
     );
     assert_eq!(CODEX_REGISTRATION.arguments, ["app-server", "--stdio"]);
@@ -97,6 +98,39 @@ fn antigravity_server_registration_does_not_replace_the_raw_agy_profile() {
         .unwrap();
     assert_eq!(raw.argv, vec!["agy".to_owned()]);
     // An ordinary tab keeps launching the raw CLI.
+    assert_eq!(
+        managed_launch_mode(
+            &raw,
+            LaunchIntent::Ordinary,
+            MANAGED_PROVIDER_REGISTRATIONS,
+            None
+        ),
+        Ok(SessionMode::RawPty)
+    );
+}
+
+/// **A Devin tab stays the raw CLI**; a chat runs the same program as
+/// `devin acp`, and an ordinary launch never prefers it.
+#[test]
+fn devin_registration_runs_the_raw_programs_acp_subcommand() {
+    assert_eq!(DEVIN_REGISTRATION.kind, "devin");
+    assert_eq!(DEVIN_REGISTRATION.executable, "devin");
+    assert_eq!(DEVIN_REGISTRATION.arguments, ["acp"]);
+    assert_eq!(DEVIN_REGISTRATION.launch_policy, ManagedLaunchPolicy::Raw);
+    let raw = crate::built_in_profiles()
+        .into_iter()
+        .find(|p| {
+            p.provider
+                .as_ref()
+                .is_some_and(|kind| kind.as_str() == "devin")
+        })
+        .unwrap();
+    assert_eq!(raw.label, crate::ProfileLabel::Devin);
+    assert_eq!(raw.argv, vec!["devin".to_owned()]);
+    assert_eq!(
+        crate::resume_arguments(raw.label),
+        Some(&["--continue"][..])
+    );
     assert_eq!(
         managed_launch_mode(
             &raw,

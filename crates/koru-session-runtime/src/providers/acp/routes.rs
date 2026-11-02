@@ -15,6 +15,7 @@ pub(super) enum AcpDialect {
     Kimi,
     Grok,
     Antigravity,
+    Devin,
 }
 
 impl AcpDialect {
@@ -26,6 +27,7 @@ impl AcpDialect {
             Self::Kimi => profiles::KIMI_REGISTRATION,
             Self::Grok => profiles::GROK_REGISTRATION,
             Self::Antigravity => profiles::ANTIGRAVITY_REGISTRATION,
+            Self::Devin => profiles::DEVIN_REGISTRATION,
         })
     }
 
@@ -46,7 +48,9 @@ impl AcpDialect {
         match self {
             Self::OpenCode => CatalogSource::Listing,
             Self::Generic => CatalogSource::OnDemand,
-            Self::Claude | Self::Kimi | Self::Grok | Self::Antigravity => CatalogSource::Probe,
+            Self::Claude | Self::Kimi | Self::Grok | Self::Antigravity | Self::Devin => {
+                CatalogSource::Probe
+            }
         }
     }
 
@@ -91,6 +95,13 @@ impl AcpDialect {
         match self {
             Self::Generic | Self::Antigravity => None,
             Self::Claude | Self::OpenCode | Self::Kimi => bare(printed),
+            // `devin <version> (<commit>)`, that shape and no other.
+            Self::Devin => match printed.split_ascii_whitespace().collect::<Vec<_>>()[..] {
+                ["devin", version, build] if build.starts_with('(') && build.ends_with(')') => {
+                    bare(version)
+                }
+                _ => None,
+            },
             // `grok <version> (<build>) [<channel>]`, that shape and no
             // other: an adorned print is still refused.
             Self::Grok => {
@@ -116,8 +127,16 @@ impl AcpDialect {
     pub(super) fn admits_newer_releases(self) -> bool {
         matches!(
             self,
-            Self::Claude | Self::OpenCode | Self::Kimi | Self::Grok
+            Self::Claude | Self::OpenCode | Self::Kimi | Self::Grok | Self::Devin
         )
+    }
+
+    /// Whether the route picks among every installed copy of its program by
+    /// version. Devin's standalone CLI updates itself, while the copy inside
+    /// its desktop app moves with the app, so a machine can hold one below
+    /// the pin and one at it; the first that qualifies is the one run.
+    pub(super) fn chooses_by_version(self) -> bool {
+        self == Self::Devin
     }
 
     /// The qualified pin: the first accepted version, which the probe logs
@@ -160,6 +179,9 @@ impl AcpDialect {
                 "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
                 "1.2.1",
             )],
+            // The copy in Devin's desktop app on 2026-11-02, the first build
+            // whose no-prompt handshake was recorded (`devin-3000.10.48`).
+            Self::Devin => &[("devin 3000.10.48 (fcf7ba39)", "3000.10.48")],
         }
     }
 }
@@ -216,6 +238,16 @@ impl AcpRoute {
     /// the route out of delegation; a chat does not delegate.
     pub fn antigravity() -> Self {
         Self::named(AcpDialect::Antigravity)
+    }
+
+    /// Cognition's Devin CLI as `devin acp`. No `authenticate` call: its one
+    /// advertised method (`devin-browser`) opens a browser, and the server
+    /// already falls back to `WINDSURF_API_KEY` or the sign-in `devin auth
+    /// login` stored, which Koru never reads. Child sessions stay
+    /// uncontrolled — Devin has subagents and Koru has no switch for them —
+    /// which keeps the route out of delegation; a chat does not delegate.
+    pub fn devin() -> Self {
+        Self::named(AcpDialect::Devin)
     }
 
     pub(super) fn is_antigravity(&self) -> bool {

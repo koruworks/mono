@@ -6,6 +6,7 @@ use serde_json::json;
 const CLAUDE: &str = include_str!("../tests/fixtures/claude-0.76.0/new-session.sanitized.json");
 const OPENCODE: &str = include_str!("../tests/fixtures/opencode-1.19.5/new-session.json");
 const ANTIGRAVITY: &str = include_str!("../tests/fixtures/antigravity-1.2.1/new-session.json");
+const DEVIN: &str = include_str!("../tests/fixtures/devin-3000.10.48/new-session.json");
 
 fn result(fixture: &str) -> Value {
     serde_json::from_str::<Value>(fixture).unwrap()["result"].clone()
@@ -75,6 +76,30 @@ fn the_modes_object_alone_is_read_and_has_no_config_id() {
     assert_eq!(
         read_ids(ANTIGRAVITY).unwrap(),
         ["<mode-1>", "<mode-2>", "<mode-3>"]
+    );
+}
+
+/// Devin 3000.10.48 sends both, with the same five ids; the option's
+/// descriptions come through. It has no ask-before-editing mode over ACP:
+/// it starts in `accept-edits` (its *Code*), and `ask` is a read-only agent
+/// that answers questions, not an approval setting.
+#[test]
+fn devin_advertises_five_modes_starting_in_accept_edits() {
+    let read = read(&result(DEVIN)).unwrap();
+    assert_eq!(
+        ids(&read.modes),
+        ["accept-edits", "smart", "ask", "plan", "bypass"]
+    );
+    assert_eq!(read.config_id.as_deref(), Some("mode"));
+    assert_eq!(
+        read.modes.current().map(AgentModeId::as_str),
+        Some("accept-edits")
+    );
+    let ask = &read.modes.modes()[2];
+    assert_eq!(ask.name.as_ref().map(ModelLabel::as_str), Some("Ask"));
+    assert_eq!(
+        ask.description.as_ref().map(ModelLabel::as_str),
+        Some("Answer questions without code changes")
     );
 }
 

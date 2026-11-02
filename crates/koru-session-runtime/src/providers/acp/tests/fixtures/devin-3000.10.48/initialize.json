@@ -1,0 +1,37 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": 1,
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": true,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "delete": {},
+        "additionalDirectories": {}
+      },
+      "auth": {}
+    },
+    "authMethods": [
+      {
+        "id": "devin-browser",
+        "name": "<login>",
+        "description": "<login-description>"
+      }
+    ],
+    "agentInfo": {
+      "name": "affogato",
+      "title": "<title>",
+      "version": "0.0.0-dev"
+    }
+  }
+}

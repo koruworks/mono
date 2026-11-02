@@ -2,7 +2,7 @@
 
 //! A local coding agent as a Koru AI chat provider.
 //!
-//! Codex, Claude Code, OpenCode, Kimi, Grok and Antigravity run as **managed
+//! Codex, Claude Code, OpenCode, Kimi, Grok, Antigravity and Devin run as **managed
 //! sessions** the desktop's session host owns (`koru-agent.exe --worker
 //! sessions`), speaking their own protocols behind one neutral
 //! `AgentEvent`. This crate is the AI worker's side of that wire: an

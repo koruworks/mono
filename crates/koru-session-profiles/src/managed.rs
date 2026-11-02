@@ -74,6 +74,18 @@ pub const ANTIGRAVITY_REGISTRATION: ManagedProviderRegistration = ManagedProvide
     minimum_host_capability: capability::MANAGED_SESSIONS,
 };
 
+/// Cognition's Devin CLI as an ACP server over stdio (`devin acp`). The same
+/// program the raw tab runs, found on `PATH` or where its installers put it
+/// (`resolve_executable`'s known locations). Devin signs itself in; Koru
+/// never reads its credentials.
+pub const DEVIN_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
+    kind: "devin",
+    executable: "devin",
+    arguments: &["acp"],
+    launch_policy: ManagedLaunchPolicy::Raw,
+    minimum_host_capability: capability::MANAGED_SESSIONS,
+};
+
 /// Registration grants neither managed readiness nor delegation's live verdict.
 pub const MANAGED_PROVIDER_REGISTRATIONS: &[ManagedProviderRegistration] = &[
     CODEX_REGISTRATION,
@@ -82,6 +94,7 @@ pub const MANAGED_PROVIDER_REGISTRATIONS: &[ManagedProviderRegistration] = &[
     KIMI_REGISTRATION,
     GROK_REGISTRATION,
     ANTIGRAVITY_REGISTRATION,
+    DEVIN_REGISTRATION,
 ];
 
 pub fn managed_provider(kind: &ProviderKind) -> Option<&'static ManagedProviderRegistration> {
