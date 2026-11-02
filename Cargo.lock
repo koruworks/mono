@@ -4853,6 +4853,7 @@ dependencies = [
  "reqwest 0.12.28",
  "tempfile",
  "tracing",
+ "unicode-segmentation",
  "uuid",
  "vello",
  "windows 0.62.2",

@@ -334,7 +334,14 @@ impl TabView {
             Self::Reminders(_) => Some(koru_draw::icons::BELL),
             Self::Feedback(_) => Some(koru_draw::icons::USER_SOUND),
             Self::Diff(_) => Some(crate::diff::tab_icon()),
-            Self::AiChat(_) => Some(koru_draw::icons::CHATS_CIRCLE),
+            // A chat tab wears its agent once the chat has started (D22),
+            // the way a session tab wears its program: a vector brand mark
+            // through [`brand`], a glyph mark here, and the chats glyph for a
+            // new chat and for Koru's own providers.
+            Self::AiChat(a) => Some(match a.mark() {
+                Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => glyph,
+                _ => koru_draw::icons::CHATS_CIRCLE,
+            }),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
             // glyph: the label names it, and the glyph says it is not a page.
@@ -355,7 +362,8 @@ impl TabView {
     }
 
     /// The vector product mark a session tab wears when its launch profile is
-    /// a branded product — Claude, Codex, PowerShell and the rest. Beside
+    /// a branded product — Claude, Codex, PowerShell and the rest — and an AI
+    /// chat tab once its chat has started with an agent (D22). Beside
     /// [`icon`](Self::icon) rather than inside it because a brand mark is
     /// path data the strip draws through `TabIcon::Brand`, not a `char` the
     /// icon font can shape. The strip asks for this first and falls back to
@@ -363,6 +371,10 @@ impl TabView {
     pub fn brand(&self) -> Option<&'static koru_draw::brand::BrandIcon> {
         match self {
             Self::Session(s) => match session_mark(s) {
+                Some(koru_draw::brand::ProfileMark::Brand(brand)) => Some(brand),
+                _ => None,
+            },
+            Self::AiChat(a) => match a.mark() {
                 Some(koru_draw::brand::ProfileMark::Brand(brand)) => Some(brand),
                 _ => None,
             },
@@ -1158,17 +1170,15 @@ impl Tab {
         Self::ai_chat_view(AiChatView::existing(id))
     }
 
-    fn ai_chat_view(view: AiChatView) -> Self {
-        let (icon, label) = view
-            .title()
-            .map(tab_title)
-            .unwrap_or_else(|| (None, "AI Chat".to_string()));
+    fn ai_chat_view(mut view: AiChatView) -> Self {
+        view.refresh_face();
+        let label = ai_chat_label(crate::format::lang(), view.started_title());
         Self {
             id: mint_tab_id(),
             view: TabView::AiChat(view),
             document: None,
             label,
-            icon,
+            icon: None,
             sized: None,
             draft: None,
             whats_new: None,
@@ -1176,6 +1186,24 @@ impl Tab {
             pinned: None,
             show_title: false,
         }
+    }
+
+    /// **An AI chat tab's label follows its chat** (D22): it starts, takes
+    /// its automatic title, is renamed, or the tab is reseated onto another
+    /// chat. `true` when the label or the mark moved and the strip is owed a
+    /// remeasure. A comparison and nothing more while nothing has.
+    ///
+    /// The mark is read from the view each draw ([`TabView::brand`]); only
+    /// the label is cached here, as every tab's is.
+    pub fn refresh_ai_chat_face(&mut self) -> bool {
+        let TabView::AiChat(view) = &mut self.view else {
+            return false;
+        };
+        if !view.refresh_face() {
+            return false;
+        }
+        self.label = ai_chat_label(crate::format::lang(), view.started_title());
+        true
     }
 
     /// A session tab: a shell or agent running as an ordinary tab. `label` is
@@ -1630,6 +1658,36 @@ impl Tab {
     }
 }
 
+/// The longest an AI chat tab's title runs, in grapheme clusters, before it
+/// is cut with an ellipsis (D22, the user's twenty).
+pub(crate) const AI_CHAT_TITLE_MAX: usize = 20;
+
+/// What an AI chat tab is called: *AI Chat* before its chat has started (and
+/// for the moment before its automatic title lands), the chat's title once it
+/// has one — cut at [`AI_CHAT_TITLE_MAX`] graphemes — and the Chats view's
+/// *Untitled chat* for a title that is blank.
+pub(crate) fn ai_chat_label(lang: koru_i18n::Lang, started: Option<&str>) -> String {
+    let Some(title) = started else {
+        return koru_i18n::t(lang, koru_i18n::Key::ChatsTabNew).to_owned();
+    };
+    match title.trim() {
+        "" => koru_i18n::t(lang, koru_i18n::Key::ChatsUntitled).to_owned(),
+        title => cap_graphemes(title, AI_CHAT_TITLE_MAX),
+    }
+}
+
+/// `text` kept to `max` grapheme clusters — never bytes, never half a flag
+/// or a family emoji — with a trailing `…` in place of what was cut. The
+/// ellipsis is counted in `max`, so the result is never wider than asked.
+pub(crate) fn cap_graphemes(text: &str, max: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    if text.graphemes(true).nth(max).is_none() {
+        return text.to_owned();
+    }
+    let keep: String = text.graphemes(true).take(max.saturating_sub(1)).collect();
+    format!("{}\u{2026}", keep.trim_end())
+}
+
 /// The mark for a session tab's launch profile: the shared
 /// `koru_draw::brand::for_profile` projection over the session's frozen
 /// wire key — the same mapping the `+` menu's profile rows draw from, so the
@@ -1662,6 +1720,61 @@ mod tests {
         let (icon, label) = tab_title("Notes");
         assert_eq!(icon, None);
         assert_eq!(label, "Notes");
+    }
+
+    /// D22: twenty graphemes stand as they are; one more is cut to nineteen
+    /// and an ellipsis — counted in graphemes, so a flag or a family emoji is
+    /// one and is never split.
+    #[test]
+    fn a_chat_title_is_capped_at_twenty_graphemes() {
+        let twenty = "Plan the launch week";
+        assert_eq!(twenty.chars().count(), 20);
+        assert_eq!(cap_graphemes(twenty, 20), twenty);
+        assert_eq!(
+            cap_graphemes("Plan the launch weeks", 20),
+            "Plan the launch wee\u{2026}"
+        );
+        // Nineteen letters, then a family emoji of seven scalars: twenty
+        // graphemes, and far more bytes than twenty.
+        let family =
+            "abcdefghijklmnopqrs\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        assert_eq!(cap_graphemes(family, 20), family, "one grapheme, kept");
+        let flags = "\u{1F1EF}\u{1F1F5}".repeat(25);
+        let cut = cap_graphemes(&flags, 20);
+        assert_eq!(cut, format!("{}\u{2026}", "\u{1F1EF}\u{1F1F5}".repeat(19)));
+        // A space before the cut is not left hanging before the ellipsis.
+        assert_eq!(
+            cap_graphemes("Eighteen letters a b c", 20),
+            "Eighteen letters a\u{2026}"
+        );
+    }
+
+    /// D22: *AI Chat* before the chat starts; its title once it has, capped;
+    /// *Untitled chat* for a started chat with none.
+    #[test]
+    fn a_chat_tab_is_named_ai_chat_until_its_chat_starts() {
+        let lang = koru_i18n::Lang::En;
+        assert_eq!(ai_chat_label(lang, None), "AI Chat");
+        assert_eq!(
+            ai_chat_label(koru_i18n::Lang::De, None),
+            "KI-Chat",
+            "localized"
+        );
+        assert_eq!(ai_chat_label(lang, Some("Launch plan")), "Launch plan");
+        assert_eq!(
+            ai_chat_label(lang, Some("A title well past twenty characters")),
+            "A title well past t\u{2026}"
+        );
+        assert_eq!(ai_chat_label(lang, Some("  ")), "Untitled chat");
+    }
+
+    /// A chat tab that has not started wears the chats glyph and no brand,
+    /// whatever its agent will be.
+    #[test]
+    fn a_new_chat_tab_wears_the_chats_glyph() {
+        let tab = Tab::ai_chat();
+        assert_eq!(tab.view.icon(), Some(koru_draw::icons::CHATS_CIRCLE));
+        assert!(tab.view.brand().is_none());
     }
 
     #[test]

@@ -31,7 +31,7 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::agents::{
     AgentModels, AgentStatus, default_model_label, fallback_label, find_listed, group_label,
-    is_agent_provider, listed_models, model_groups, model_label,
+    is_agent_provider, listed_models, model_groups, model_label, provider_mark,
 };
 use crate::effort;
 
@@ -1626,7 +1626,8 @@ fn provider_name(provider: &AiProviderId) -> String {
 }
 
 /// An entry's mark: the agent's brand by its kind (`agent-claude` wears
-/// Claude's), OpenAI's for OpenAI, a glyph where there is no brand.
+/// Claude's), OpenAI's for OpenAI, a glyph where there is no brand —
+/// [`provider_mark`], which a chat tab wears too.
 fn draw_mark(
     canvas: &mut Scene,
     root: Affine,
@@ -1635,20 +1636,15 @@ fn draw_mark(
     rect: Rect,
     colour: vello::peniko::Color,
 ) {
-    let key = match entry {
-        RailEntry::Agent(agent) => agent.as_str().strip_prefix("agent-").unwrap_or_default(),
-        RailEntry::Provider(provider) => match provider.as_str() {
-            AiProviderId::OPENAI => "codex",
-            _ => "",
+    let mark = provider_mark(entry.provider().as_str()).unwrap_or(brand::ProfileMark::Glyph(
+        match entry {
+            RailEntry::Provider(provider) if provider.as_str() == AiProviderId::OLLAMA => {
+                icons::DESKTOP
+            }
+            RailEntry::Provider(_) => icons::SPARKLE,
+            RailEntry::Agent(_) => icons::ROBOT,
         },
-    };
-    let mark = brand::for_profile(key).unwrap_or(brand::ProfileMark::Glyph(match entry {
-        RailEntry::Provider(provider) if provider.as_str() == AiProviderId::OLLAMA => {
-            icons::DESKTOP
-        }
-        RailEntry::Provider(_) => icons::SPARKLE,
-        RailEntry::Agent(_) => icons::ROBOT,
-    }));
+    ));
     let inner = Rect::new(rect.x + 7.0, rect.y + 7.0, rect.w - 14.0, rect.h - 14.0);
     match mark {
         brand::ProfileMark::Brand(icon) => {

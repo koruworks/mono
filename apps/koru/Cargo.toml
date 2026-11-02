@@ -163,6 +163,9 @@ parley.workspace = true
 chrono.workspace = true
 qrcode.workspace = true
 reqwest.workspace = true
+# An AI chat tab's title is capped at twenty graphemes (D22): a flag or a
+# family emoji is one character to the reader, and never cut in half.
+unicode-segmentation.workspace = true
 zip.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 

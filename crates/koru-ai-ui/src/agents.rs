@@ -371,6 +371,29 @@ mod tests {
     use koru_ai_core::{ChatId, InferenceAttemptId, MessageId, Timestamp, ToolInvocationId};
     use koru_ai_wire::Failure;
 
+    /// An agent wears its product's mark, OpenAI wears Codex's, and Koru's
+    /// own providers — and an agent this build has no mark for — wear none,
+    /// so the caller's own glyph stands (D22).
+    #[test]
+    fn a_provider_wears_its_agents_mark_or_none() {
+        use koru_draw::brand::{self, ProfileMark};
+        assert_eq!(
+            provider_mark("agent-claude"),
+            Some(ProfileMark::Brand(&brand::CLAUDE))
+        );
+        assert_eq!(
+            provider_mark("agent-codex"),
+            Some(ProfileMark::Brand(&brand::OPENAI))
+        );
+        assert_eq!(
+            provider_mark(AiProviderId::OPENAI),
+            Some(ProfileMark::Brand(&brand::OPENAI))
+        );
+        assert_eq!(provider_mark(AiProviderId::KORU), None);
+        assert_eq!(provider_mark(AiProviderId::OLLAMA), None);
+        assert_eq!(provider_mark("agent-someday"), None);
+    }
+
     fn validation(
         status: ProviderValidationStatus,
         code: Option<&str>,
@@ -709,6 +732,23 @@ mod failure_words {
 
 pub(crate) fn is_agent_provider_str(provider: &str) -> bool {
     provider.starts_with("agent-")
+}
+
+/// **The mark a provider wears**, by its id: an agent's brand by its kind
+/// (`agent-claude` wears Claude's), OpenAI's for OpenAI — Codex's face, one
+/// product — and `None` for Koru's own providers and an agent this build has
+/// no mark for, where the caller keeps its own glyph.
+///
+/// The one mapping, so the model picker's rail and a chat tab (D22) cannot
+/// give one agent two faces. It is `koru_draw::brand::for_profile` over the
+/// session layer's profile key, which an agent's id carries after `agent-`.
+pub fn provider_mark(provider: &str) -> Option<koru_draw::brand::ProfileMark> {
+    let key = match provider.strip_prefix("agent-") {
+        Some(kind) => kind,
+        None if provider == AiProviderId::OPENAI => "codex",
+        None => return None,
+    };
+    koru_draw::brand::for_profile(key)
 }
 
 /// How often a running check is asked about while it is in view.

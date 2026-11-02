@@ -5790,8 +5790,15 @@ impl MainView {
             .ai_chat
             .take_wants_chats_view()
             .then(|| self.ai_chat.current_chat_id());
+        let mut relabeled = false;
         for (_, group) in self.panes.iter_groups_mut() {
+            let mut group_relabeled = false;
             for tab in group.tabs_mut().iter_mut() {
+                // **A chat tab wears its chat** (D22): the label and mark
+                // follow a start, an automatic title, a rename and a reseat.
+                // Read here, on the pass every chat's news already arrives
+                // on, and a comparison of a few strings until one moves.
+                group_relabeled |= tab.refresh_ai_chat_face();
                 if let TabView::AiChat(view) = &mut tab.view {
                     list_changed |= view.take_chat_list_changed();
                     if view.take_wants_chats_view() {
@@ -5799,8 +5806,14 @@ impl MainView {
                     }
                 }
             }
+            // Its own strip, whichever column it is in: the window-level
+            // `mark_tab_widths_stale` reaches only the focused one.
+            if group_relabeled {
+                group.mark_widths_stale();
+                relabeled = true;
+            }
         }
-        let mut changed = false;
+        let mut changed = relabeled;
         if let Some(chat) = wants_view {
             changed |= self.show_chats_on(chat);
         }

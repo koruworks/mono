@@ -75,6 +75,7 @@ mod tool_groups;
 mod usage;
 mod work_view;
 
+pub use agents::provider_mark;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 
@@ -951,6 +952,30 @@ impl ChatSurface {
     pub fn current_chat_id(&self) -> Option<ChatId> {
         // A chat not made yet has no id the service, or a host, can use.
         self.shown_chat_id().filter(|_| !self.chat_unmade())
+    }
+
+    /// Whether the chat on screen is made: the service holds it, because its
+    /// first message was sent or it was opened from the list. `false` with
+    /// nothing on screen yet, and for a new chat not sent — which a host
+    /// shows as a new chat rather than by its title and agent (D22).
+    pub fn current_chat_made(&self) -> bool {
+        self.transcript.is_some() && !self.chat_unmade()
+    }
+
+    /// The chat's title once it has one of its own: `None` while it still
+    /// carries the placeholder a chat is made with, before its automatic
+    /// title lands — a stored English word a host should not show as a name.
+    pub fn current_chat_own_title(&self) -> Option<&str> {
+        self.current_chat_title()
+            .filter(|title| *title != DEFAULT_CHAT_TITLE)
+    }
+
+    /// Who answers the chat on screen, by provider id — `agent-claude`,
+    /// `openai`, `koru`. [`provider_mark`] is the face that goes with it.
+    pub fn current_chat_provider(&self) -> Option<&str> {
+        self.transcript
+            .as_ref()
+            .map(|t| t.chat.current_model.provider.as_str())
     }
 
     /// The chat on screen, a stand-in not made yet included, or the one a
@@ -8965,6 +8990,36 @@ mod tests {
         assert_eq!(surface.current_chat_id(), None, "no chat a host can name");
         assert!(surface.chats.is_empty(), "nothing in the Chats list");
         assert!(!surface.showing_setup());
+    }
+
+    /// **What a chat tab wears is read here** (D22): a new chat is not made
+    /// until its first message, so its tab stays *AI Chat*; once sent, the
+    /// chat is made and names who answers it, and the agent's id maps to its
+    /// brand through the one mapping the model picker draws with.
+    #[test]
+    fn a_chat_is_made_by_its_first_message_and_names_its_agent() {
+        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        assert!(!surface.current_chat_made(), "not sent, not made");
+        assert_eq!(surface.current_chat_provider(), Some("agent-claude"));
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        while commands.try_recv().is_ok() {}
+        assert!(surface.current_chat_made(), "the first message made it");
+        assert_eq!(
+            surface.current_chat_own_title(),
+            None,
+            "the placeholder is not a name; the automatic title is on its way"
+        );
+        if let Some(transcript) = surface.transcript.as_mut() {
+            transcript.chat.title = "Plan the launch".into();
+        }
+        assert_eq!(surface.current_chat_own_title(), Some("Plan the launch"));
+        assert_eq!(
+            surface.current_chat_provider().and_then(provider_mark),
+            Some(koru_draw::brand::ProfileMark::Brand(
+                &koru_draw::brand::CLAUDE
+            ))
+        );
     }
 
     /// **The first message makes the chat**, then goes into it: the create is

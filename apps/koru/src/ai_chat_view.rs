@@ -22,9 +22,31 @@ use winit::window::CursorIcon;
 
 pub struct AiChatView {
     surface: ChatSurface,
+    /// What the tab strip last read off the chat (D22), kept so the
+    /// container's pass is a comparison and nothing more until it changes.
+    face: ChatFace,
+}
+
+/// The few facts a chat tab is drawn from: whether the chat has started, its
+/// own title and who answers it. Empty while the chat has not started, which
+/// is the face of a new chat — *AI Chat* and the chats glyph.
+#[derive(Default)]
+struct ChatFace {
+    made: bool,
+    /// `None` until the chat has a title of its own: not started, or started
+    /// and its automatic title not landed yet.
+    title: Option<String>,
+    provider: String,
 }
 
 impl AiChatView {
+    fn over(surface: ChatSurface) -> Self {
+        Self {
+            surface,
+            face: ChatFace::default(),
+        }
+    }
+
     pub fn new() -> Self {
         let mut surface = ChatSurface::new_at(
             SurfaceMode::ContextPane,
@@ -32,11 +54,52 @@ impl AiChatView {
         );
         surface.activate();
         surface.start_new_chat();
-        Self { surface }
+        Self::over(surface)
     }
 
-    pub fn title(&self) -> Option<&str> {
-        self.surface.current_chat_title()
+    /// Take the chat's face again if it moved — started, renamed, given its
+    /// automatic title, reseated onto another chat. `true` when it did, and
+    /// the tab's label is owed a refresh. Two string comparisons otherwise.
+    pub fn refresh_face(&mut self) -> bool {
+        let made = self.surface.current_chat_made();
+        let (title, provider) = if made {
+            (
+                self.surface.current_chat_own_title(),
+                self.surface.current_chat_provider().unwrap_or_default(),
+            )
+        } else {
+            (None, "")
+        };
+        if made == self.face.made
+            && title == self.face.title.as_deref()
+            && provider == self.face.provider
+        {
+            return false;
+        }
+        self.face = ChatFace {
+            made,
+            title: title.map(str::to_owned),
+            provider: provider.to_owned(),
+        };
+        true
+    }
+
+    /// The chat's full title once it has started and has one of its own;
+    /// `None` before. The tab's label is this cut short; a screen reader is
+    /// given all of it.
+    pub fn started_title(&self) -> Option<&str> {
+        self.face.title.as_deref()
+    }
+
+    /// The mark the tab wears once the chat has started: its agent's brand
+    /// (Claude, Codex, …) through the one mapping the model picker draws
+    /// with. `None` before the chat starts and for Koru's own providers,
+    /// which keep the chats glyph.
+    pub fn mark(&self) -> Option<koru_draw::brand::ProfileMark> {
+        self.face
+            .made
+            .then(|| koru_ai_ui::provider_mark(&self.face.provider))
+            .flatten()
     }
 
     pub fn chat_id(&self) -> Option<ChatId> {
@@ -89,7 +152,7 @@ impl AiChatView {
         );
         surface.activate();
         surface.open_link(id, None);
-        Self { surface }
+        Self::over(surface)
     }
 
     /// Whether this tab's chat surface changed the chat list since the last

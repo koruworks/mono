@@ -170,6 +170,13 @@ impl MainView {
 /// back — a screen reader has no icon slot, and a tab that reads as its bare
 /// title loses the mark a person chose to tell it apart by.
 fn tab_label(tab: &crate::mainview::tab::Tab, cx: &Shell) -> String {
+    // A chat tab draws its title cut at twenty characters (D22); a screen
+    // reader is given all of it, as it is given a document's whole name.
+    if let crate::mainview::tab::TabView::AiChat(chat) = &tab.view
+        && let Some(title) = chat.started_title().filter(|t| !t.trim().is_empty())
+    {
+        return title.trim().to_owned();
+    }
     match (&tab.icon, tab.label.is_empty()) {
         (Some(icon), false) => format!("{icon} {}", tab.label),
         (Some(icon), true) => icon.clone(),

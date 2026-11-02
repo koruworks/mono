@@ -1528,6 +1528,8 @@ pub enum Key {
     ChatsLocalAgent,
     /// A chat whose title is empty.
     ChatsUntitled,
+    /// An AI chat tab's name before its chat has started — no message sent yet. Once one is, the tab takes the chat's title (D22).
+    ChatsTabNew,
     /// A row, as a screen reader names it: the title, who answered, and when. The separators are the language's own list punctuation.
     ChatsRowName,
     /// The same, for a private chat.
@@ -2736,7 +2738,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1891] = [
+    pub const ALL: [Key; 1892] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3832,6 +3834,7 @@ impl Key {
         Key::ChatsPrivate,
         Key::ChatsLocalAgent,
         Key::ChatsUntitled,
+        Key::ChatsTabNew,
         Key::ChatsRowName,
         Key::ChatsRowNamePrivate,
         Key::ChatsDelete,
@@ -12840,6 +12843,17 @@ pub const ROWS: &[Row] = &[
         ar: "محادثة بلا عنوان",
         zh_hans: "未命名对话",
         ja: "無題のチャット",
+    },
+    Row {
+        key: Key::ChatsTabNew,
+        en: "AI Chat",
+        es: "Chat de IA",
+        pt_br: "Chat de IA",
+        de: "KI-Chat",
+        fr: "Discussion IA",
+        ar: "محادثة ذكاء اصطناعي",
+        zh_hans: "AI 对话",
+        ja: "AI チャット",
     },
     Row {
         key: Key::ChatsRowName,
