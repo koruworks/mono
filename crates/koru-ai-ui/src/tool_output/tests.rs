@@ -618,3 +618,65 @@ fn a_local_search_reads_as_path_line_and_text_rows() {
     );
     assert!(search::matches("I looked everywhere and found nothing").is_none());
 }
+
+// ----- MCP tools ----------------------------------------------------------
+
+/// One of Koru's own tools, called by Claude: one friendly line from the
+/// step lines' table, with the JSON behind it one click away.
+#[test]
+fn a_koru_tool_reads_as_one_friendly_line() {
+    let result = r#"{"document_id":"d","root_node_id":"r","nodes":[
+        {"node_id":"r","kind":"document","content":{"type":"text","text":"Trip to Portugal"}},
+        {"node_id":"a","kind":"paragraph","content":{"type":"text","text":"Lisbon"}},
+        {"node_id":"b","kind":"paragraph","content":{"type":"text","text":"Porto"}}]}"#;
+    let read = done(
+        "agent.other",
+        "mcp__koru__read_document",
+        Some(r#"{"workspace_id":"w","document_id":"d"}"#),
+        result,
+    );
+    let folded = pieces(&read, Lang::En, NOW, false);
+    assert_eq!(
+        folded[0],
+        Piece::Header {
+            text: "Read a document · Trip to Portugal · 2 blocks".into(),
+            mono: false
+        }
+    );
+    assert!(matches!(&folded[1], Piece::Toggle(text) if text.starts_with("Show all")));
+    let open = pieces(&read, Lang::En, NOW, true);
+    assert!(
+        matches!(&open[1], Piece::Code(lines) if lines.iter().any(|line| line.text.contains("Porto")))
+    );
+    assert_eq!(open[2], Piece::Toggle("Show fewer lines".into()));
+}
+
+/// Another MCP server's tool (Codex's `mcpToolCall` result) is its JSON,
+/// pretty; a result cut off by the row's bound reads as text.
+#[test]
+fn another_mcp_tools_result_is_pretty_json_or_text() {
+    let call = done(
+        "agent.mcp",
+        "mcp_tool",
+        Some(r#"github: search_issues {"q":"bug"}"#),
+        r#"{"content":[{"type":"text","text":"{\"total\":2}"}]}"#,
+    );
+    assert_eq!(
+        words(&pieces(&call, Lang::En, NOW, false)),
+        [
+            "github · search_issues",
+            "{\n  \"total\": 2\n}",
+            "Done · 1s · Just now"
+        ]
+    );
+    let cut = done(
+        "agent.mcp",
+        "mcp__github__get",
+        None,
+        r#"{"items":[{"a":1},{"#,
+    );
+    assert_eq!(
+        words(&pieces(&cut, Lang::En, NOW, false)),
+        [r#"{"items":[{"a":1},{"#, "Done · 1s · Just now"]
+    );
+}

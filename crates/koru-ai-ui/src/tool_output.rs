@@ -24,6 +24,7 @@ mod diff;
 mod file;
 pub(crate) mod layout;
 mod search;
+mod structured;
 
 /// The color a piece of a detail is drawn in, resolved at draw time.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -129,12 +130,21 @@ pub(crate) fn pieces(
     expanded: bool,
 ) -> Vec<Piece> {
     let call = Call::of(activity);
-    let rendered = match Shape::of(activity) {
+    let shape = if structured::koru_tool(&call).is_some() {
+        Shape::Koru
+    } else if structured::is_mcp(&call) {
+        Shape::Mcp
+    } else {
+        Shape::of(activity)
+    };
+    let rendered = match shape {
         Shape::Command => command::render(&call, lang, expanded),
         Shape::Edit => diff::render(&call, lang, expanded),
         Shape::Read => file::render(&call, lang, expanded),
         Shape::Web => search::render_web(&call, lang, expanded),
         Shape::Matches => search::render_matches(&call, lang, expanded),
+        Shape::Koru => structured::render_koru(&call, lang, expanded),
+        Shape::Mcp => structured::render_mcp(&call, lang, expanded),
         Shape::Other => None,
     }
     .unwrap_or_else(|| text(&call, lang, expanded));
@@ -160,6 +170,10 @@ pub(crate) enum Shape {
     Web,
     /// A search of local files: grep, glob.
     Matches,
+    /// One of Koru's own tools, reached through its MCP server.
+    Koru,
+    /// Any other MCP server's tool.
+    Mcp,
     Other,
 }
 
