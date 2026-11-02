@@ -120,3 +120,9 @@ Chords are shown as this platform writes them.
 | `Shift+Tab` | Outdent |
 | `Ctrl+Shift+↑` | Move line up |
 | `Ctrl+Shift+↓` | Move line down |
+
+## AI chat
+
+| | |
+| --- | --- |
+| `Shift+Tab` | Next approval mode |

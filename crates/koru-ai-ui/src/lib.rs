@@ -58,6 +58,7 @@ pub(crate) fn chat_line_height() -> f32 {
 }
 
 mod agents;
+mod approval_modes;
 mod attachments;
 mod chats_pane;
 mod composer;
@@ -482,6 +483,14 @@ pub struct ChatSurface {
     picker_tooltip: Tooltip,
     tool_access_open: bool,
     tool_mode_open: bool,
+    /// The approval-mode list of an agent chat is open (koru-ai D7).
+    approval_mode_open: bool,
+    /// The row the keyboard is on in the open approval-mode list.
+    approval_mode_focus: Option<usize>,
+    /// The approval-mode chip's width as last drawn: its icon, name and caret.
+    approval_mode_chip_w: f32,
+    /// Each agent's approval modes, from the same listing as its models.
+    agent_modes: HashMap<AiProviderId, approval_modes::ListedModes>,
     openai_models: Vec<String>,
     ollama_models: Vec<String>,
     /// Each local agent's readiness, from its validation answer.
@@ -598,6 +607,7 @@ impl ChatSurface {
         self.chat_model_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
+        self.approval_mode_open = false;
         self.history_open = false;
         self.setup_open = true;
         self.focus = Focus::None;
@@ -764,6 +774,10 @@ impl ChatSurface {
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
             tool_mode_open: false,
+            approval_mode_open: false,
+            approval_mode_focus: None,
+            approval_mode_chip_w: 0.0,
+            agent_modes: HashMap::new(),
             openai_models: Vec::new(),
             ollama_models: Vec::new(),
             agent_status: HashMap::new(),
@@ -1341,6 +1355,18 @@ impl ChatSurface {
         if self.composer.picker_open() {
             return self.composer_key(key, text, mods);
         }
+        // The open approval-mode list takes Up, Down, Enter and Escape.
+        if let Some(handled) = self.approval_modes_key(key, mods) {
+            return handled;
+        }
+        // **Shift+Tab steps the approval mode** (koru-ai D7) — after the
+        // composer: an outdent wins wherever there is one to make.
+        if koru_keys::registry::get(koru_keys::ShortcutId::CycleAgentMode)
+            .chord
+            .matches(key, text, mods)
+        {
+            return self.composer_key(key, text, mods) || self.cycle_approval_mode();
+        }
         if matches!(key, Key::Named(NamedKey::Escape))
             && let Some(attempt) = self.attempt
         {
@@ -1412,8 +1438,13 @@ impl ChatSurface {
     /// person leaves whatever they were doing. An open workspace or mode
     /// popover takes the press first, so Escape closes it, not the turn.
     fn escape_during_turn(&mut self, attempt: InferenceAttemptId, now: Instant) -> bool {
-        if self.tool_mode_open || self.tool_access_open || self.destination_open.is_some() {
+        if self.tool_mode_open
+            || self.tool_access_open
+            || self.approval_mode_open
+            || self.destination_open.is_some()
+        {
             self.tool_mode_open = false;
+            self.approval_mode_open = false;
             self.tool_access_open = false;
             self.destination_open = None;
             return true;
@@ -1614,6 +1645,9 @@ impl ChatSurface {
             && let Some(chat) = self.current_chat_id()
         {
             return self.open_tile(chat, &tile);
+        }
+        if let Some(handled) = self.approval_mode_mouse_down(x, y) {
+            return handled;
         }
         if self
             .privacy_button()
@@ -2527,6 +2561,18 @@ impl ChatSurface {
                     });
                 }
             }
+            Update::AgentSettingsUpdated(chat) => {
+                self.waiting = self.message_on_its_way();
+                // Not promoted: a mode is no activity, and the list keeps
+                // its order (the service leaves `updated_at` alone too).
+                self.remember_chat(&chat, false);
+                if let Some(transcript) = &mut self.transcript
+                    && transcript.chat.id == chat.id
+                {
+                    transcript.chat = chat.clone();
+                }
+                self.status = None;
+            }
             Update::FolderUpdated(chat) => {
                 self.waiting = self.message_on_its_way();
                 self.remember_chat(&chat, true);
@@ -2768,6 +2814,18 @@ impl ChatSurface {
             Update::AgentModels(response) => {
                 self.agent_models_asked.remove(&response.provider);
                 self.agent_models_answered(&response.provider);
+                // The agent's approval modes come with its models (D7).
+                if response.modes.is_empty() {
+                    self.agent_modes.remove(&response.provider);
+                } else {
+                    self.agent_modes.insert(
+                        response.provider.clone(),
+                        approval_modes::ListedModes {
+                            modes: response.modes.clone(),
+                            default: response.default_mode.clone(),
+                        },
+                    );
+                }
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
@@ -3161,7 +3219,11 @@ impl ChatSurface {
     /// ([`Self::apply_to_unmade_chat`]); its first message makes the chat
     /// ([`Self::make_unmade_chat`]). Leaving it unsent leaves nothing behind.
     fn begin_unmade_chat(&mut self, model: ModelSelection) {
-        let chat = unmade_transcript(model);
+        let mut chat = unmade_transcript(model);
+        // A new chat with an agent starts in the mode the agent was last
+        // used in — never Full access (D7).
+        chat.chat.agent_mode = self.remembered_approval_mode(&chat.chat.current_model.provider);
+        self.approval_mode_open = false;
         let id = chat.chat.id;
         self.fresh_chat_wanted = false;
         self.forget_input_walk();
@@ -3205,6 +3267,17 @@ impl ChatSurface {
                 transcript.chat.current_model = request.model;
                 if provider_changed {
                     transcript.reasoning_control = None;
+                    // Another agent: the mode it was last used in (D7).
+                    let agent = transcript.chat.current_model.provider.clone();
+                    let mode = self.remembered_approval_mode(&agent);
+                    if let Some(transcript) = self.transcript.as_mut() {
+                        transcript.chat.agent_mode = mode;
+                    }
+                }
+            }
+            Command::UpdateAgentSettings(chat, request) if chat == unmade => {
+                if let Some(mode) = request.mode {
+                    transcript.chat.agent_mode = Some(mode);
                 }
             }
             Command::UpdatePrivacy(chat, request) if chat == unmade => {
@@ -3251,6 +3324,12 @@ impl ChatSurface {
         })) {
             self.unmade_chat = Some(chat);
             return false;
+        }
+        if let Some(mode) = stand_in.chat.agent_mode.clone() {
+            self.queue_command(Command::UpdateAgentSettings(
+                chat,
+                koru_ai_wire::UpdateChatAgentSettingsRequest { mode: Some(mode) },
+            ));
         }
         if let Some(folder) = stand_in.chat.agent_working_folder.clone() {
             self.queue_command(Command::UpdateFolder(
@@ -3312,6 +3391,7 @@ impl ChatSurface {
         self.history_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
+        self.approval_mode_open = false;
         self.chat_model_open = true;
         self.refresh_agent_status();
         self.prefetch_agent_models();
@@ -4706,10 +4786,11 @@ impl ChatSurface {
 
     fn tool_access_button(&self) -> Rect {
         let toolbar = self.composer_toolbar_rect();
-        // The chip to its right: the mode chip, or the model chip where
-        // there is no mode chip.
+        // The chip to its right: the mode chip — Manual/Automatic, or an
+        // agent's approval mode — or the model chip where there is neither.
         let next_x = self
             .tool_mode_button()
+            .or_else(|| self.approval_mode_button())
             .unwrap_or_else(|| self.chat_model_button())
             .x;
         let x = self
@@ -5092,6 +5173,9 @@ impl ChatSurface {
             {
                 return Some((5, 9));
             }
+            if let Some(part) = self.approval_mode_hover_at(x, y) {
+                return Some(part);
+            }
             if self.tool_mode_open {
                 if let Some(modes) = self.tool_mode_buttons() {
                     for (index, rect) in modes.into_iter().enumerate() {
@@ -5310,6 +5394,7 @@ impl ChatSurface {
                 access_button,
                 access_button.contains(self.pointer.0, self.pointer.1),
             );
+            self.draw_approval_mode_chip(canvas, root);
             if let Some(mode_button) = self.tool_mode_button() {
                 ActionButton::new(
                     self.tool_mode_label(),
@@ -5413,6 +5498,7 @@ impl ChatSurface {
         self.draw_model_picker(canvas, root);
         self.draw_legacy_menu(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
+        self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
         self.web_search_tooltip.draw(
             canvas,

@@ -1350,9 +1350,27 @@ again.
 The approval control is independent and sits immediately left of the model
 control. **Manual approval** lets reads proceed but pauses every proposed
 change for an explicit decision. **Automatic** allows both reads and changes
-within the selected workspaces. A chat with a local agent has no approval
-control: the agent asks for permission with its own choices, on a card in the
-reply. A proposed change waits on a card with **Approve** and **Deny**. The
+within the selected workspaces. A chat with a local agent has the agent's own
+**approval modes** there instead: the chip shows the current mode's icon and
+name, and opens a list upward of every mode the agent offers, each with a line
+saying what it does and a check on the current one. Claude Code offers **Ask
+first** (its default: it asks before every change), **Accept edits** (it edits
+files without asking, and still asks before commands), **Plan** (it reads and
+plans, and changes nothing until you approve the plan), **Auto** (Claude
+decides which actions need you) and **Full access** (it runs everything without
+asking). Codex offers **Ask for approval** (the default), **Approve for me**
+(Codex edits in the chat's folder and its reviewer decides anything that needs
+more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
+**Plan**. Full access is shown in the warning color. `Shift+Tab` in the
+composer steps to the next mode and says which beside the chip; it never steps
+to Full access, which you choose only from the list. The mode is the chat's: a
+new chat with the same agent starts in the mode you last used with it, except
+Full access, which it never starts in. A mode chosen while a reply is running
+applies to your next message, and the note beside the chip says so. When the
+agent leaves a mode by itself — Claude after you approve its plan — the chip
+follows. Whatever the mode, the agent asks for permission with its own choices,
+on a card in the reply. A proposed change waits on a card with **Approve** and
+**Deny**. The
 composer footer keeps the
 incognito, globe and workspace controls against its left edge and approval plus
 model controls against its right edge. The send action is an arrow inside the

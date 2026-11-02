@@ -60,6 +60,9 @@ pub enum Layer {
     View = 3,
     /// `koru-editor`'s `input::keymap` — text, marks, structure.
     Editor = 4,
+    /// The AI chat's composer (`koru-ai-ui`), asked **after** its editor:
+    /// a key the editor declines falls through to the chat.
+    Chat = 5,
 }
 
 impl Layer {
@@ -70,6 +73,7 @@ impl Layer {
             Self::Container => "Tabs and columns",
             Self::View => "Document",
             Self::Editor => "Editing",
+            Self::Chat => "AI chat",
         }
     }
 }
@@ -345,6 +349,17 @@ pub enum ShortcutId {
     Outdent,
     MoveRowUp,
     MoveRowDown,
+    // ----------------------------------------------------------- the AI chat
+    /// **The next approval mode** of a local agent's chat (koru-ai D7):
+    /// Shift+Tab in the composer steps the chat to the agent's next mode and
+    /// says which. It skips *Full access*, which only a press chooses.
+    ///
+    /// The same chord as the editor's [`Outdent`](Self::Outdent), and said
+    /// so: the chat asks its composer first, so an outdent wins wherever
+    /// there is something to outdent. The composer's policy refuses lists
+    /// and tables, so in a message there never is, and the key falls
+    /// through to the chat.
+    CycleAgentMode,
 }
 
 /// One row of the table.
@@ -1036,6 +1051,15 @@ pub const REGISTRY: &[Shortcut] = &[
         "Move line down",
         Chord::new(named(NamedKey::ArrowDown), PRIMARY_SHIFT),
     ),
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::Outdent),
+        ..s(
+            ShortcutId::CycleAgentMode,
+            Layer::Chat,
+            "Next approval mode",
+            Chord::new(named(NamedKey::Tab), SHIFT),
+        )
+    },
 ];
 
 impl ShortcutId {
@@ -1051,7 +1075,9 @@ impl ShortcutId {
     pub fn shown_in_product(self) -> bool {
         match self {
             Self::ShowTasks => koru_features::tasks(),
-            Self::ShowChats | Self::ToggleAiPane | Self::Delegate => koru_features::ai(),
+            Self::ShowChats | Self::ToggleAiPane | Self::Delegate | Self::CycleAgentMode => {
+                koru_features::ai()
+            }
             Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),
@@ -1099,6 +1125,7 @@ pub fn markdown() -> String {
         Layer::Container,
         Layer::View,
         Layer::Editor,
+        Layer::Chat,
     ] {
         out.push_str(&format!("\n## {}\n\n| | |\n| --- | --- |\n", layer.name()));
         for entry in of_layer(layer) {

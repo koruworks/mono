@@ -36,6 +36,8 @@ pub(crate) enum Command {
     UpdatePrivacy(ChatId, UpdateChatPrivacyRequest),
     /// The folder the chat's local agent works in.
     UpdateFolder(ChatId, koru_ai_wire::UpdateChatFolderRequest),
+    /// The approval mode the chat's local agent runs its next message in.
+    UpdateAgentSettings(ChatId, koru_ai_wire::UpdateChatAgentSettingsRequest),
     UpdateToolPolicy(ChatId, UpdateChatToolPolicyRequest),
     ApproveTool(ToolInvocationId),
     DenyTool(ToolInvocationId),
@@ -76,6 +78,7 @@ impl Command {
             Self::UpdateModel(_, _) => "update_model",
             Self::UpdatePrivacy(_, _) => "update_privacy",
             Self::UpdateFolder(_, _) => "update_folder",
+            Self::UpdateAgentSettings(_, _) => "update_agent_settings",
             Self::UpdateToolPolicy(_, _) => "update_tool_policy",
             Self::ApproveTool(_) => "approve_tool",
             Self::DenyTool(_) => "deny_tool",
@@ -124,6 +127,7 @@ pub(crate) enum Update {
     ModelUpdated(koru_ai_core::Chat, Option<koru_ai_core::ReasoningControl>),
     PrivacyUpdated(koru_ai_core::Chat),
     FolderUpdated(koru_ai_core::Chat),
+    AgentSettingsUpdated(koru_ai_core::Chat),
     ToolPolicy(koru_ai_core::ChatToolPolicy),
     ToolActivity(koru_ai_core::ToolActivity),
     Usage(UsageReport),
@@ -414,6 +418,15 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             Command::UpdatePrivacy(chat, request) => {
                 let update = match client.ai().update_chat_privacy(chat, &request) {
                     Ok(response) => Update::PrivacyUpdated(response.chat),
+                    Err(error) => Update::Failure(error.message),
+                };
+                if updates.send(update).is_err() {
+                    return;
+                }
+            }
+            Command::UpdateAgentSettings(chat, request) => {
+                let update = match client.ai().update_chat_agent_settings(chat, &request) {
+                    Ok(response) => Update::AgentSettingsUpdated(response.chat),
                     Err(error) => Update::Failure(error.message),
                 };
                 if updates.send(update).is_err() {
