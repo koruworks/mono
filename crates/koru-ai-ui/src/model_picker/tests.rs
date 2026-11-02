@@ -1326,3 +1326,67 @@ fn the_rails_plus_asks_the_host_for_agent_providers() {
     assert!(surface.take_agent_settings_request());
     assert!(!surface.take_agent_settings_request(), "asked once");
 }
+
+/// **The arrow over the picker, the I-beam only in its search** (D44): the
+/// picker lies over the conversation, whose text gave its I-beam to the
+/// rows. Rows, the rail, ↻, the panel's foot and the *Legacy models ›*
+/// flyout show the arrow; the search field shows the I-beam.
+#[test]
+fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
+    use winit::window::CursorIcon;
+    let mut surface = surface();
+    with_legacy(&mut surface);
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let geometry = surface.picker_geometry().unwrap();
+    let at = |surface: &mut ChatSurface, x: f32, y: f32| {
+        surface.pointer = (x, y);
+        surface.cursor_icon()
+    };
+    let field = search_field(&geometry);
+    assert_eq!(
+        at(&mut surface, field.x + 12.0, field.y + field.h * 0.5),
+        CursorIcon::Text
+    );
+    for index in 0..3 {
+        let row = surface.picker_row_rect(&geometry, index).unwrap();
+        assert_eq!(
+            at(&mut surface, row.x + 20.0, row.y + row.h * 0.5),
+            CursorIcon::Default,
+            "row {index}"
+        );
+    }
+    let rail = surface.picker_rail();
+    let mark = rail_rects(geometry.rail, rail.len(), surface.rail_has_divider(&rail))[0];
+    assert_eq!(
+        at(&mut surface, mark.x + 4.0, mark.y + 4.0),
+        CursorIcon::Default
+    );
+    let refresh = geometry.refresh;
+    assert_eq!(
+        at(&mut surface, refresh.x + 4.0, refresh.y + 4.0),
+        CursorIcon::Default
+    );
+    let panel = geometry.panel;
+    assert_eq!(
+        at(
+            &mut surface,
+            panel.x + panel.w * 0.5,
+            panel.y + panel.h - 3.0
+        ),
+        CursorIcon::Default,
+        "the foot"
+    );
+    assert!(surface.open_legacy_menu(3));
+    let flyout = surface
+        .picker
+        .legacy
+        .as_ref()
+        .unwrap()
+        .panel(surface.menu_viewport());
+    assert_eq!(
+        at(&mut surface, flyout.x + 8.0, flyout.y + 8.0),
+        CursorIcon::Default,
+        "the flyout"
+    );
+}

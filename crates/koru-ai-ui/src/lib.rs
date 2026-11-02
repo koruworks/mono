@@ -1256,6 +1256,11 @@ impl ChatSurface {
             return CursorIcon::Default;
         }
         let p = self.pointer;
+        // The open model picker lies over the conversation, whose text
+        // would otherwise give its I-beam to the rows (D44).
+        if let Some(cursor) = self.picker_cursor(p.0, p.1) {
+            return cursor;
+        }
         if self
             .composer
             .picker_rect()

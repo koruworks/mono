@@ -1325,6 +1325,35 @@ impl crate::ChatSurface {
         None
     }
 
+    /// **The pointer over the open picker** (D44): the I-beam over its
+    /// search field, the one place in it that takes typing, and the arrow
+    /// everywhere else — the rows, the rail, ↻, the footer and the
+    /// *Legacy models ›* flyout. A scrollbar drag keeps its resize arrows.
+    /// `None` when the picker is closed or the pointer is outside it.
+    pub(crate) fn picker_cursor(&self, x: f32, y: f32) -> Option<winit::window::CursorIcon> {
+        use winit::window::CursorIcon;
+        let geometry = self.picker_geometry()?;
+        if self.picker.scroll_drag.is_some() {
+            return Some(CursorIcon::NsResize);
+        }
+        if self
+            .picker
+            .legacy
+            .as_ref()
+            .is_some_and(|menu| menu.panel(self.menu_viewport()).contains(x, y))
+        {
+            return Some(CursorIcon::Default);
+        }
+        if !geometry.panel.contains(x, y) {
+            return None;
+        }
+        Some(if search_field(&geometry).contains(x, y) {
+            CursorIcon::Text
+        } else {
+            CursorIcon::Default
+        })
+    }
+
     /// The wheel over the open picker scrolls its list, a row a notch.
     pub(crate) fn picker_scroll(&mut self, dy: f32) -> bool {
         let previous = self.picker.offset;
@@ -1632,12 +1661,7 @@ impl crate::ChatSurface {
         }
 
         // The search field and ↻.
-        let search = Rect::new(
-            geometry.search.x,
-            geometry.search.y,
-            (geometry.search.w - geometry.refresh.w - 4.0).max(1.0),
-            geometry.search.h,
-        );
+        let search = search_field(&geometry);
         let placeholder = t(self.lang, Key::AiModelSearch).to_owned();
         self.picker.query.draw(
             canvas,
@@ -1855,6 +1879,16 @@ impl crate::ChatSurface {
             self.picker.focus == PickerFocus::Slider,
         );
     }
+}
+
+/// The search field itself: the search row short of ↻ at its end.
+fn search_field(geometry: &Geometry) -> Rect {
+    Rect::new(
+        geometry.search.x,
+        geometry.search.y,
+        (geometry.search.w - geometry.refresh.w - 4.0).max(1.0),
+        geometry.search.h,
+    )
 }
 
 /// Koru AI, OpenAI and Ollama by name, for the rail's tooltip.
