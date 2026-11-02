@@ -21,7 +21,12 @@ use winit::keyboard::{Key, ModifiersState};
 use winit::window::CursorIcon;
 
 pub struct AiChatView {
-    surface: ChatSurface,
+    /// **Boxed.** A chat surface is about 41 KB, and a tab is moved by value
+    /// through the restore path and the pane tree: unboxed, every [`TabView`]
+    /// was the surface's size, and rebuilding a saved chat tab at startup
+    /// stacked enough copies to overflow the window thread's 1 MB stack
+    /// (2026-11-02). One pointer here keeps every tab small.
+    surface: Box<ChatSurface>,
     /// What the tab strip last read off the chat (D22), kept so the
     /// container's pass is a comparison and nothing more until it changes.
     face: ChatFace,
@@ -40,7 +45,7 @@ struct ChatFace {
 }
 
 impl AiChatView {
-    fn over(mut surface: ChatSurface) -> Self {
+    fn over(mut surface: Box<ChatSurface>) -> Self {
         surface.set_hidden_agents(hidden_agents());
         // Koru has a Settings tab: the picker's + opens *Agent providers*.
         surface.offer_agent_settings(true);
@@ -51,10 +56,10 @@ impl AiChatView {
     }
 
     pub fn new() -> Self {
-        let mut surface = ChatSurface::new_at(
+        let mut surface = Box::new(ChatSurface::new_at(
             SurfaceMode::ContextPane,
             koru_workspace_host::cli::root_from_args(),
-        );
+        ));
         surface.activate();
         surface.start_new_chat();
         Self::over(surface)
@@ -149,10 +154,10 @@ impl AiChatView {
 
     /// Open an existing chat in this tab instead of starting a fresh one.
     pub fn existing(id: ChatId) -> Self {
-        let mut surface = ChatSurface::new_at(
+        let mut surface = Box::new(ChatSurface::new_at(
             SurfaceMode::ContextPane,
             koru_workspace_host::cli::root_from_args(),
-        );
+        ));
         surface.activate();
         surface.open_link(id, None);
         Self::over(surface)

@@ -1708,6 +1708,21 @@ fn session_mark(view: &crate::session_tab::SessionView) -> Option<koru_draw::bra
 mod tests {
     use super::*;
 
+    /// **A tab stays small.** Every [`TabView`] is as large as its largest
+    /// arm, and tabs are moved by value through restore and the pane tree on
+    /// the window thread, whose stack is 1 MB on Windows. With the AI chat
+    /// surface (~41 KB) unboxed, a saved chat tab overflowed that stack at
+    /// startup (2026-11-02); a view that big is boxed inside its arm.
+    #[test]
+    fn a_tab_stays_small_enough_to_move_on_the_window_thread() {
+        assert!(std::mem::size_of::<AiChatView>() <= 256);
+        assert!(
+            std::mem::size_of::<Tab>() <= 32 * 1024,
+            "a Tab is {} bytes: box the arm that grew",
+            std::mem::size_of::<Tab>()
+        );
+    }
+
     #[test]
     fn tab_title_peels_a_leading_emoji() {
         let (icon, label) = tab_title("🚀 Ship");
