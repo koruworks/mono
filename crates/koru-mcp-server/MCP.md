@@ -196,6 +196,9 @@ The current tool surface is:
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats.
 
+A bridge serves every one of them unless it was started with `--toolsets`,
+which narrows it to named groups — see [Toolsets](#toolsets).
+
 A **delegated run** reaches a different server — six artifact tools at
 `/v1/runs/<RunId>/mcp`, never the bridge above — described under
 [The run endpoint](#the-run-endpoint).
@@ -237,14 +240,65 @@ This file is the long form; the reply points here.
 
 The reply was 57,071 bytes before this and 17,137 bytes after it; `set_mark`
 in both operation unions took it to 17,973, `add_image`, a 22nd tool, to
-19,005, and `set_heading` with `set_highlight` to 19,428, under a 19,500-byte
-budget
+19,005, `set_heading` with `set_highlight` to 19,428, and `set_callout_look`
+to 20,375, under one budget last set at 20,500 bytes
 ([ADR-471](../../docs/decisions/ADR-471-mcpessentials.md),
-[ADR-473](../../docs/decisions/ADR-473-addimage.md)). It cannot get
+[ADR-473](../../docs/decisions/ADR-473-addimage.md)). It was 20,491 bytes
+when that budget was split into one per [toolset](#toolsets). It cannot get
 under 8 KiB with 21 typed tools: the names, titles, safety hints and typed
 parameters alone come to about 9.6 KB before a word of description. That
 matters for Grok CLI 1.0.34, which can lose an 8,192-byte chunk of any longer
 line it reads from a stdio server — see the ADR for what was measured.
+
+### Toolsets
+
+Every agent reads the whole reply into its context when a session starts,
+about 5,000 tokens, whether it then touches one document or none. So the
+tools are grouped into **toolsets**, and a bridge started with
+`--toolsets docs,tasks` lists only those and `core`
+(`crates/koru-mcp-server/src/toolsets.rs`). **Without the flag every toolset
+is on**; the flag only narrows. It is one server either way, not one per
+group (maintainers, 2026-11-02).
+
+| Toolset | Tools | Bytes | ~Tokens | Budget |
+| --- | --- | ---: | ---: | ---: |
+| `core` — always on | `get_documentation`, `list_workspaces` | 697 | 175 | 770 |
+| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `add_image`, `extract_to_document` | 12,396 | 3,099 | 13,650 |
+| `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
+| `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
+| `tasks` | `list_tasks` | 1,682 | 421 | 1,860 |
+| `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
+| every toolset on | the whole reply, envelope included | 20,491 | 5,123 | 22,640 |
+
+A toolset's bytes are its tools as published, one separator each; the reply
+adds about 45 bytes of envelope. Tokens are bytes over four. Measured
+2026-11-02; each budget is that size plus about 10%, held by
+`each_toolset_is_within_its_budget`, and the total by
+`the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
+decision recorded here.
+
+- **Every tool is in exactly one toolset**, and `core` is in every bridge:
+  nothing else can be called without the documentation and a workspace id.
+- **A tool whose toolset is off is not listed, and a call to it is refused**
+  with a JSON-RPC `invalid_params` error (-32602) that names the tool, its
+  toolset, the toolsets that are on, and the `--toolsets` value that would
+  serve it — never the router's bare "tool not found".
+- **The bridge says which toolsets are on** when some are off: the server
+  instructions and the table of contents (`koru://docs/model`, and
+  `get_documentation` with that uri) end with one sentence naming them. A
+  section about a tool that is off is still served; the sentence says those
+  tools are not. With every toolset on, neither changes.
+- **The toolsets do not depend on each other**, which leaves two gaps a
+  narrower bridge opens deliberately: a task is changed with `edit_document`,
+  so `tasks` without `docs` lists tasks but cannot complete one, and a file's
+  note is read and edited through `docs`.
+- `--toolsets` takes comma-separated names, spaces around them allowed;
+  `core` may be named and changes nothing. An unknown or empty name stops the
+  bridge with the list of names, rather than starting it without the tools
+  someone asked for.
+- **Koru AI's own providers** read `workspace_tool_catalog` and always see
+  every tool, as they do with paging. A chat's bridge, which the session host
+  starts for the chat's agent, is started without `--toolsets` today.
 
 ### Pages, off by default
 
@@ -1366,8 +1420,11 @@ For a new mutation or object, use this sequence:
    `destructiveHint` and `idempotentHint` on a tool that writes), and no
    `outputSchema`. A new tool adds a sample of each new operation to
    `every_operation_fits_the_published_input_schema` when it adds a tagged
-   union, and keeps `the_published_tool_list_is_compact_and_within_its_budget`
-   green — raising that budget is a decision to record, not a number to bump.
+   union, joins exactly one [toolset](#toolsets) (`toolsets.rs`), and keeps
+   `each_toolset_is_within_its_budget` and
+   `the_published_tool_list_is_compact_and_within_its_budget` green — raising
+   a toolset's budget is a decision to record in that table, not a number to
+   bump.
 6. **Authorize, then resolve routes in the adapter.** The shared executor maps
    each tool to its required Koru scope and workspace target before Store is
    touched. `InlineContext` turns public references

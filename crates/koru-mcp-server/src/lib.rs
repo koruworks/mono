@@ -58,6 +58,8 @@ mod local_ids;
 mod published_schema;
 pub mod tasks;
 mod tool_pages;
+mod toolsets;
+pub use toolsets::{Toolset, Toolsets};
 
 pub const MODEL_RESOURCE_URI: &str = "koru://docs/model";
 /// The short form: the contract's *Essentials* section on its own, what an
@@ -5407,6 +5409,9 @@ pub struct KoruMcp {
     // Whether `tools/list` answers in pages under `tool_pages::PAGE_BYTES`
     // or in one reply (ADR-433-compacttools).
     paged_tools: bool,
+    // The toolsets this bridge serves; the router has every other tool
+    // disabled, so it is neither listed nor called.
+    toolsets: Toolsets,
 }
 impl KoruMcp {
     pub fn new(backend: Arc<dyn Backend>, context: RequestContext) -> Self {
@@ -5417,6 +5422,7 @@ impl KoruMcp {
             context,
             tool_router,
             paged_tools: PAGED_TOOLS_BY_DEFAULT,
+            toolsets: Toolsets::all(),
         }
     }
 
@@ -5424,6 +5430,33 @@ impl KoruMcp {
     pub fn with_paged_tools(mut self, paged: bool) -> Self {
         self.paged_tools = paged;
         self
+    }
+
+    /// Serve only `toolsets`' tools: the others are not listed, and a call to
+    /// one is refused with the toolset that holds it.
+    pub fn with_toolsets(mut self, toolsets: Toolsets) -> Self {
+        for set in Toolset::ALL {
+            for tool in set.tools() {
+                if toolsets.contains(set) {
+                    self.tool_router.enable_route(tool);
+                } else {
+                    self.tool_router.disable_route(*tool);
+                }
+            }
+        }
+        self.toolsets = toolsets;
+        self
+    }
+
+    /// The contract's table of contents, with which toolsets are on when
+    /// some are off. Every other documentation answer is unchanged.
+    fn with_toolsets_note(&self, mut answer: Value) -> Value {
+        if let (Some(note), Some(_)) = (self.toolsets.note(), answer.get("sections"))
+            && let Some(text) = answer["text"].as_str()
+        {
+            answer["text"] = Value::String(format!("{text}\n\n{note}"));
+        }
+        answer
     }
     fn call<T: serde::Serialize>(&self, name: &str, value: T) -> CallToolResult {
         let started = Instant::now();
@@ -5499,6 +5532,9 @@ impl KoruMcp {
     )]
     fn get_documentation(&self, Parameters(a): Parameters<DocumentationRequest>) -> CallToolResult {
         let mut result = self.call("get_documentation", a);
+        if let Some(answer) = result.structured_content.take() {
+            result.structured_content = Some(self.with_toolsets_note(answer));
+        }
         // The markdown itself is the text block, not a JSON line with the
         // markdown escaped inside it, so an agent reads it as written instead
         // of unescaping it first. The structured copy keeps the published
@@ -5741,8 +5777,32 @@ impl KoruMcp {
 /// back, so paging would hide 17 of 21 tools from both (ADR-433-compacttools).
 pub const PAGED_TOOLS_BY_DEFAULT: bool = false;
 
+/// What every client is told at `initialize`. A bridge started with some
+/// toolsets off adds which are on ([`Toolsets::note`]).
+const SERVER_INSTRUCTIONS: &str = "Read koru://docs/essentials before the first mutation; koru://docs/model lists the contract's sections, each read on its own as koru://docs/model/<slug>. Both are standard MCP resources and the get_documentation compatibility tool (no arguments: the essentials; section: one section). Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.";
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for KoruMcp {
+    /// What rmcp's generated `call_tool` does, after refusing a tool whose
+    /// toolset is off by name: the router alone would answer "tool not found",
+    /// which tells an agent nothing about the flag that would serve it.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        if let Some(refusal) = self.toolsets.refusal(&request.name) {
+            tracing::warn!(
+                tool = %request.name,
+                toolsets = %self.toolsets,
+                "tool call refused: its toolset is off"
+            );
+            return Err(refusal);
+        }
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(call).await
+    }
+
     async fn list_tools(
         &self,
         request: Option<rmcp::model::PaginatedRequestParams>,
@@ -5789,13 +5849,18 @@ impl ServerHandler for KoruMcp {
     }
 
     fn get_info(&self) -> ServerInfo {
+        let mut instructions = String::from(SERVER_INSTRUCTIONS);
+        if let Some(note) = self.toolsets.note() {
+            instructions.push(' ');
+            instructions.push_str(&note);
+        }
         ServerInfo::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .build(),
         )
-        .with_instructions("Read koru://docs/essentials before the first mutation; koru://docs/model lists the contract's sections, each read on its own as koru://docs/model/<slug>. Both are standard MCP resources and the get_documentation compatibility tool (no arguments: the essentials; section: one section). Read and edit Koru's typed node model, never raw CRDT operations. Always read a fresh revision before mutation; use node ids and after_node_id, never numeric remote positions. On stale_node, reread the document, remap the intended block, and retry. Use insert_inline for /document references and extract_to_document for a cross-document move; never insert kind=document into a body.")
+        .with_instructions(instructions)
     }
 
     fn list_resources(
@@ -5837,6 +5902,7 @@ impl ServerHandler for KoruMcp {
         } else {
             documentation(&request.uri, None)
                 .map(|answer| {
+                    let answer = self.with_toolsets_note(answer);
                     let text = answer["text"].as_str().unwrap_or_default().to_owned();
                     ReadResourceResult::new(vec![
                         ResourceContents::text(text, request.uri.clone())
@@ -6303,18 +6369,14 @@ mod tests {
         }
     }
 
-    /// The bytes the `tools/list` reply may take, newline excluded. Grok CLI
-    /// 1.0.34 can lose an 8,192-byte chunk of any longer line
-    /// (ADR-433-compacttools); 21 typed tools cannot fit under that, so this
-    /// holds what was reached and makes growth a decision rather than a drift.
-    /// Raised from 17,500 for `set_mark`'s schema in both operation unions
-    /// (ADR-471-mcpessentials, 17,973 bytes measured), to 19,100 for
-    /// `add_image`, a 22nd tool (ADR-473-addimage, 19,005 bytes measured),
-    /// and to 19,500 for `set_heading` and `set_highlight` on `edit_document`
-    /// (19,428 bytes measured), and to 20,000 for `set_align` and the link
-    /// inline (ADR-473-addimage), and to 20,500 for `set_callout_look`, one edit
-    /// operation and one seed operation (ADR-468-callout; 20,375 bytes measured).
-    const TOOLS_LIST_BUDGET: usize = 20_500;
+    /// The bytes the `tools/list` reply may take with every toolset on,
+    /// newline excluded. Grok CLI 1.0.34 can lose an 8,192-byte chunk of any
+    /// longer line (ADR-433-compacttools); 22 typed tools cannot fit under
+    /// that. Until 2026-11-02 this was one number, last raised to 20,500 for
+    /// `set_callout_look` (ADR-468-callout; 20,375 bytes measured, 20,491 at
+    /// the split). It is now the sum of each toolset's budget and the reply's
+    /// envelope (`toolsets::BUDGETS`), so growth is decided per toolset.
+    const TOOLS_LIST_BUDGET: usize = toolsets::total_budget();
 
     /// What crosses the wire is compact: no prose inside a schema except the
     /// generated union summaries, no `$ref`, `$defs`, `$schema`, `title` or
@@ -6358,6 +6420,7 @@ mod tests {
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
+        println!("tools/list with every toolset on: {} bytes", line.len());
         assert!(
             line.len() < TOOLS_LIST_BUDGET,
             "tools/list is {} bytes, over its {TOOLS_LIST_BUDGET}-byte budget",
@@ -6527,6 +6590,110 @@ mod tests {
             }
             server_task.abort();
         }
+    }
+
+    /// A bridge started with `--toolsets docs` lists core's and docs' tools
+    /// only, refuses a tasks tool by its toolset and the flag that serves it,
+    /// and says which toolsets are on in its instructions and its contents —
+    /// while a bridge started without the flag says nothing new.
+    #[tokio::test]
+    async fn a_narrowed_bridge_lists_refuses_and_explains_by_toolset() {
+        use rmcp::ServiceExt;
+
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server = KoruMcp::new(Arc::new(Fake), RequestContext::local())
+            .with_toolsets(Toolsets::parse("docs").expect("docs"));
+        let server_task = tokio::spawn(async move {
+            if let Ok(running) = server.serve(server_transport).await {
+                let _ = running.waiting().await;
+            }
+        });
+        let client = ().serve(client_transport).await.expect("MCP initialize handshake");
+
+        let listed: HashSet<String> = client
+            .peer()
+            .list_all_tools()
+            .await
+            .expect("tools/list")
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        let expected: HashSet<String> = [Toolset::Core, Toolset::Docs]
+            .into_iter()
+            .flat_map(|set| set.tools().iter().map(|tool| tool.to_string()))
+            .collect();
+        assert_eq!(listed, expected);
+
+        let refused = client
+            .peer()
+            .call_tool(rmcp::model::CallToolRequestParams::new("list_tasks"))
+            .await
+            .expect_err("a tasks tool on a docs bridge");
+        match refused {
+            rmcp::ServiceError::McpError(data) => {
+                assert_eq!(data.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+                assert!(data.message.contains("tasks toolset"), "{}", data.message);
+                assert!(
+                    data.message.contains("--toolsets docs,tasks"),
+                    "{}",
+                    data.message
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let instructions = client
+            .peer()
+            .peer_info()
+            .and_then(|info| info.instructions.clone())
+            .unwrap_or_default();
+        assert!(
+            instructions.starts_with(SERVER_INSTRUCTIONS)
+                && instructions.contains("toolsets core, docs"),
+            "{instructions}"
+        );
+
+        let contents = client
+            .peer()
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("get_documentation").with_arguments(
+                    serde_json::from_value(json!({ "uri": MODEL_RESOURCE_URI }))
+                        .expect("arguments object"),
+                ),
+            )
+            .await
+            .expect("contents on a docs bridge");
+        let text = contents
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["text"].as_str())
+            .unwrap_or_default();
+        assert!(text.contains("toolsets core, docs"), "{text}");
+        let essentials = client
+            .peer()
+            .call_tool(rmcp::model::CallToolRequestParams::new("get_documentation"))
+            .await
+            .expect("essentials on a docs bridge");
+        let text = essentials
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["text"].as_str())
+            .unwrap_or_default();
+        assert!(!text.contains("This bridge serves"), "essentials unchanged");
+        client.cancel().await.expect("close MCP client");
+        server_task.abort();
+
+        let (every, every_task) = paged_client(false).await;
+        assert_eq!(
+            every
+                .peer()
+                .peer_info()
+                .and_then(|info| info.instructions.clone())
+                .as_deref(),
+            Some(SERVER_INSTRUCTIONS),
+            "no flag, no note"
+        );
+        every_task.abort();
     }
 
     /// Koru AI reads the catalog, not `tools/list`: paging never hides a tool
