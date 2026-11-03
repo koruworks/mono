@@ -1463,8 +1463,8 @@ the composer. Each queued message has three buttons: **Edit** puts it back in
 the composer (anything you were typing takes its place in the queue),
 **Remove ×** drops it, and **Steer** sends it into the running reply right now.
 With Codex and Claude, Steer hands your text to the agent mid-reply and the
-reply carries on with it; your message appears after the reply in the
-conversation. With every other agent — and for a message with attachments or
+reply carries on with it; your message moves up under your question, above the
+reply's work and answer, and stays there when you reopen the chat. With every other agent — and for a message with attachments or
 document chips, which a reply cannot take mid-way — Steer *stops the reply,
 then sends* the message, without pausing the rest of the queue. The queue
 belongs to its chat, so another chat shows its own, and it lives only in this
@@ -1514,8 +1514,11 @@ the switch off outside a trusted development session.
 A new chat opens on a short greeting with the composer in the middle; once the
 first message is sent the composer moves to the bottom and stays there. In the
 composer, `Up` on its first line brings back the messages you sent in this chat,
-newest first, with the documents they mentioned still chips, and `Down` on its
-last line walks forward again, back to whatever you were typing. `Enter` sends
+newest first; keep pressing `Up` to go further back. Each comes back with the
+caret at its start and with its document chips and quotes. `Down` on its last
+line walks forward again, back to whatever you were typing, and `Esc` takes you
+straight back to it. A message you steered into a reply is in the list; one
+still waiting in the queue is not. `Enter` sends
 and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
 grows to eight lines and then scrolls inside itself, independently of the
 conversation. Embedded questions include the active document by stable
