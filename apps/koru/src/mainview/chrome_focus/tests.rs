@@ -304,3 +304,79 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
         assert_eq!(v.explore.rail_modes(), before);
     });
 }
+
+/// **Enter on the rail's foot does what a press on it does**, on each of the
+/// three, and on the control the ring is drawn on: Help opens the help
+/// popover beside its `?`, Settings the Settings tab, the profile square its
+/// Profiles page. Enter and the ring read the foot from one place
+/// (`rail_focus`); Enter used to read a copy that still counted *Manage
+/// apps* first, so Enter on Help did nothing and on the profile square
+/// opened Help (found in D96).
+#[test]
+fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
+    use crate::mainview::context_menu::MenuSubject;
+    use crate::mainview::tab::TabView;
+    koru_features::testing::with(koru_features::Features::ALL_OFF, || {
+        let (mut v, mut workspace) = container();
+        assert!(v.key(
+            &mut workspace.ws,
+            &Key::Character("e".into()),
+            Some("e"),
+            PRIMARY_SHIFT
+        ));
+        // Lane, then the rail, on the active view.
+        press(&mut v, &mut workspace.ws, NamedKey::F6);
+        press(&mut v, &mut workspace.ws, NamedKey::F6);
+        let apps = v.explore.rail_modes().len();
+        let onto = |v: &mut MainView, ws: &mut WorkspaceDoc, foot: usize| {
+            for _ in 0..apps + 3 {
+                if v.chrome_focus == Some(ChromeStop::Apps(apps + foot)) {
+                    return;
+                }
+                press(v, ws, NamedKey::ArrowDown);
+            }
+            panic!("never reached the foot's {foot}: {:?}", v.chrome_focus);
+        };
+
+        onto(&mut v, &mut workspace.ws, 0);
+        assert_eq!(
+            v.explore_chrome_focus(),
+            Some(ExploreChromeFocus::RailHelp),
+            "the ring is on Help"
+        );
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert_eq!(
+            v.menu.as_ref().map(|m| m.subject.clone()),
+            Some(MenuSubject::Help),
+            "Enter on Help opens the help popover"
+        );
+        v.menu = None;
+
+        onto(&mut v, &mut workspace.ws, 1);
+        assert_eq!(
+            v.explore_chrome_focus(),
+            Some(ExploreChromeFocus::RailSettings),
+            "the ring is on Settings"
+        );
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert!(
+            matches!(v.tabs().active_tab().view, TabView::Settings(_)),
+            "Enter on Settings opens the Settings tab"
+        );
+        assert!(v.menu.is_none(), "and not the help popover");
+
+        onto(&mut v, &mut workspace.ws, 2);
+        assert_eq!(
+            v.explore_chrome_focus(),
+            Some(ExploreChromeFocus::RailProfile),
+            "the ring is on the profile square"
+        );
+        assert!(!v.explore.popover_open());
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert!(
+            v.explore.popover_open(),
+            "Enter on the profile square opens its page"
+        );
+        assert!(v.menu.is_none(), "and not the help popover");
+    });
+}

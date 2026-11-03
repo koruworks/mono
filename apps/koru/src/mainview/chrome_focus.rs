@@ -38,8 +38,9 @@ const RAIL_FOOT: usize = 3;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ChromeStop {
     Lane(LaneControl),
-    /// An index down the rail: the shown apps in order, then *Manage apps*
-    /// at `visible.len()`, then Help, Settings and the profile square.
+    /// An index down the rail: the shown apps in order, then Help, Settings
+    /// and the profile square. `MainView::rail_focus` is the one reading of
+    /// it, for the ring and for Enter alike.
     Apps(usize),
     Floor(FloorControl),
 }
@@ -257,25 +258,28 @@ impl MainView {
                 let square = self.settled_lane_controls().new;
                 self.open_new_tab_menu_at(square);
             }
-            ChromeStop::Apps(i) => {
-                let apps = self.explore.rail_modes();
-                if let Some(mode) = apps.get(i).copied() {
-                    self.show_navigator(mode);
-                } else {
-                    match i - apps.len() {
-                        // *Manage apps*, inert until the manager lands
-                        // (PLAN.final P11).
-                        0 => {}
-                        1 => {
-                            self.open_settings_tab();
-                        }
-                        2 => {
-                            self.open_help_beside();
-                        }
-                        _ => self.explore.toggle_profile_popover(),
+            // The control the ring is on, read the way the ring reads it:
+            // Help, Settings and the profile square each do what a press on
+            // them does (`ExploreView::apps_rail_mouse_down`). This read its
+            // own copy of the foot once, with *Manage apps* still first in
+            // it, so Enter on Help did nothing and on the profile square
+            // opened Help (found in D96).
+            ChromeStop::Apps(i) => match self.rail_focus(i) {
+                ExploreChromeFocus::App(i) => {
+                    if let Some(mode) = self.explore.rail_mode_at(i) {
+                        self.show_navigator(mode);
                     }
                 }
-            }
+                ExploreChromeFocus::RailHelp => {
+                    self.open_help_beside();
+                }
+                ExploreChromeFocus::RailSettings => {
+                    self.explore.close_popover();
+                    self.open_settings_tab();
+                }
+                ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
+                ExploreChromeFocus::FloorChip => {}
+            },
             ChromeStop::Floor(FloorControl::Chip) => {
                 if self.explore.popover_open() {
                     self.explore.close_popover();
@@ -291,20 +295,25 @@ impl MainView {
     /// a floor control. The lane's ring is the window's.
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
-            ChromeStop::Apps(i) => {
-                let apps = self.explore.rail_modes().len();
-                Some(if i < apps {
-                    ExploreChromeFocus::App(i)
-                } else {
-                    match i - apps {
-                        0 => ExploreChromeFocus::RailHelp,
-                        1 => ExploreChromeFocus::RailSettings,
-                        _ => ExploreChromeFocus::RailProfile,
-                    }
-                })
-            }
+            ChromeStop::Apps(i) => Some(self.rail_focus(i)),
             ChromeStop::Floor(FloorControl::Chip) => Some(ExploreChromeFocus::FloorChip),
             ChromeStop::Lane(_) => None,
+        }
+    }
+
+    /// Which control index `i` down the rail is: the shown views in order,
+    /// then the foot top to bottom — Help, Settings, the profile square, as
+    /// `apps_rail::solve` stacks them. **The one reading**, for the ring the
+    /// explore column draws and for what Enter does.
+    pub(super) fn rail_focus(&self, i: usize) -> ExploreChromeFocus {
+        let apps = self.explore.rail_modes().len();
+        if i < apps {
+            return ExploreChromeFocus::App(i);
+        }
+        match i - apps {
+            0 => ExploreChromeFocus::RailHelp,
+            1 => ExploreChromeFocus::RailSettings,
+            _ => ExploreChromeFocus::RailProfile,
         }
     }
 
