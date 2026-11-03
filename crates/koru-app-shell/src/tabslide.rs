@@ -22,6 +22,15 @@
 //! release: [`settle`](TabSlides::settle) takes it over from the pointer and
 //! drops it into its slot rather than teleporting it there.
 //!
+//! ## Not only tabs
+//!
+//! Nothing here knows which way the strip runs: a position is a number on
+//! whatever axis the caller lays out on. The apps rail down the sidebar's
+//! left edge rides this same slide on the vertical axis, with the same
+//! duration and easing, so a view dragged up the rail moves the way a tab
+//! dragged along the strip does. Where the carried item may go and when it
+//! changes places is `koru_shell_chrome::reorder`, which the two share too.
+//!
 //! ## Why a deadline rather than a per-frame step
 //!
 //! The same reason as [`Panel`](crate::Panel): `View::animating` must

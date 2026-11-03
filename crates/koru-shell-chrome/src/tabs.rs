@@ -247,31 +247,23 @@ pub fn new_tab(strip: Rect, widths: &[f32], scroll_x: f32) -> Rect {
 /// as tabs are added, and a drag limit that moved with it would let a tab be
 /// carried further the more tabs there were. The left bound is slot zero's
 /// left edge, one [`TAB_GAP`](theme::TAB_GAP) in — where the tab will actually
-/// rest.
+/// rest. The clamp itself is [`reorder::carry`](crate::reorder::carry), which
+/// the apps rail shares.
 pub fn carry_x(strip: Rect, w: f32, x: f32) -> f32 {
     let lane = lane(strip);
-    let right = (lane.x + lane.w - w).max(strip.x + theme::TAB_GAP);
-    x.clamp(strip.x + theme::TAB_GAP, right)
+    crate::reorder::carry(x, strip.x + theme::TAB_GAP, lane.x + lane.w, w)
 }
 
 /// Which index a tab being dragged should land at, given its centre `x`.
+///
+/// [`reorder::drop_index`](crate::reorder::drop_index) over the tabs' bodies:
+/// the half-way rule is written once, and the apps rail reads it too.
 pub fn drop_index(strip: Rect, widths: &[f32], scroll_x: f32, from: usize, x: f32) -> usize {
-    let rects = layout(strip, widths, scroll_x);
-    let (Some(first), Some(last)) = (rects.first(), rects.last()) else {
-        return 0;
-    };
-    if x <= first.body.x {
-        return first.index;
-    }
-    if x >= last.body.x + last.body.w {
-        return last.index;
-    }
-    for t in &rects {
-        if x >= t.body.x && x <= t.body.x + t.body.w {
-            return t.index;
-        }
-    }
-    from.min(last.index)
+    let slots: Vec<(f32, f32)> = layout(strip, widths, scroll_x)
+        .iter()
+        .map(|t| (t.body.x, t.body.w))
+        .collect();
+    crate::reorder::drop_index(&slots, from, x)
 }
 
 /// Horizontal scrollbar track under the strip when content overflows.
