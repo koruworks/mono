@@ -674,6 +674,27 @@
           "mode"
         ],
         "type": "object"
+      },
+      {
+        "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+        "properties": {
+          "kind": {
+            "const": "notice",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "text"
+        ],
+        "type": "object"
       }
     ],
     "title": "AgentEvent"
@@ -1089,6 +1110,27 @@
               "kind",
               "turn_id",
               "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+            "properties": {
+              "kind": {
+                "const": "notice",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
             ],
             "type": "object"
           }
@@ -4888,6 +4930,28 @@
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "type": "string"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4919,6 +4983,17 @@
           }
         ],
         "description": "v19 (koru-ai D7): the approval mode this turn runs in. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when it cannot. `None` leaves the mode as\nit is. Sent only to a v19 host."
+      },
+      "reasoning": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LaunchReasoning"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v20 (koru-ai D70): the reasoning level this turn runs at. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when the agent cannot take it. `None` leaves\nthe level as it is. Sent only to a v20 host: a v19 host would read\nand ignore it, and run the turn at the old level."
       },
       "text": {
         "type": "string"
@@ -8776,6 +8851,27 @@
               "kind",
               "turn_id",
               "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+            "properties": {
+              "kind": {
+                "const": "notice",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
             ],
             "type": "object"
           }
