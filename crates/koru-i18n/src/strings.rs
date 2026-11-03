@@ -358,6 +358,10 @@ pub enum Key {
     AiLinkCopied,
     AiTooManyDocuments,
     AiOpenDocumentFailed,
+    // Voice input in the composer (koru-ai D103).
+    AiDictate,
+    AiDictationCancel,
+    AiDictationStop,
     // Esc twice to stop a turn, and the empty chat's greetings.
     AiPressEscAgainToStop,
     AiGreeting01,
@@ -2838,7 +2842,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1976] = [
+    pub const ALL: [Key; 1979] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3087,6 +3091,9 @@ impl Key {
         Key::AiLinkCopied,
         Key::AiTooManyDocuments,
         Key::AiOpenDocumentFailed,
+        Key::AiDictate,
+        Key::AiDictationCancel,
+        Key::AiDictationStop,
         Key::AiPressEscAgainToStop,
         Key::AiGreeting01,
         Key::AiGreeting02,
@@ -7650,6 +7657,41 @@ pub const ROWS: &[Row] = &[
         ar: "تعذّر على Koru فتح هذا المستند.",
         zh_hans: "Koru 无法打开该文档。",
         ja: "Koru はそのドキュメントを開けませんでした。",
+    },
+    // Voice input in the composer (koru-ai D103): the microphone, and the
+    // recording row's two buttons.
+    Row {
+        key: Key::AiDictate,
+        en: "Dictate",
+        es: "Dictar",
+        pt_br: "Ditar",
+        de: "Diktieren",
+        fr: "Dicter",
+        ar: "إملاء",
+        zh_hans: "听写",
+        ja: "音声入力",
+    },
+    Row {
+        key: Key::AiDictationCancel,
+        en: "Cancel dictation",
+        es: "Cancelar dictado",
+        pt_br: "Cancelar ditado",
+        de: "Diktat abbrechen",
+        fr: "Annuler la dictée",
+        ar: "إلغاء الإملاء",
+        zh_hans: "取消听写",
+        ja: "音声入力をキャンセル",
+    },
+    Row {
+        key: Key::AiDictationStop,
+        en: "Stop dictation",
+        es: "Detener dictado",
+        pt_br: "Parar ditado",
+        de: "Diktat beenden",
+        fr: "Arrêter la dictée",
+        ar: "إيقاف الإملاء",
+        zh_hans: "停止听写",
+        ja: "音声入力を停止",
     },
     // Esc twice to stop a turn, and the empty chat's greetings.
     Row {
