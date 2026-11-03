@@ -32,6 +32,7 @@ const PLATE: StateRecipe = StateRecipe {
         bg: None,
         ink: Some(Ink::Hint),
     },
+    focus: None,
 };
 
 fn state(hovered: bool, pressed: bool, selected: bool, disabled: bool) -> ElState {

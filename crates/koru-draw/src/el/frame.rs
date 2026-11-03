@@ -15,7 +15,9 @@ use parley::Layout;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::{Action, Axis, El, ElState, FrameCx, Key, Kind, Look, Name, Role, TextEl, TextMode};
+use super::{
+    Action, Axis, El, ElState, FrameCx, Key, Kind, Look, Name, Ring, Role, TextEl, TextMode,
+};
 use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::{Brush, Contrast, TextStyle};
@@ -45,6 +47,8 @@ pub struct Node {
     /// What its state recipe painted, and the rule that won.
     pub look: Look,
     pub rule: &'static str,
+    /// The focus ring its recipe draws while it is focused.
+    pub ring: Option<Ring>,
     /// Where a pointer reaches it, before clipping; `None` for a node that
     /// is not a target.
     pub hit: Option<Rect>,
@@ -300,6 +304,18 @@ impl Frame {
                 scene,
                 transform,
                 surface.of(palette),
+                &scene::rrect(r.x, r.y, r.w, r.h, radius),
+            );
+        }
+        // Focus is decoration (§3.7): one hairline at the element's corners,
+        // over its fill and under its content.
+        if let Some(ring) = node.ring {
+            let radius = el.radius.px(cx.profile, r.w, r.h);
+            scene::stroke(
+                scene,
+                transform,
+                ring.of(palette),
+                crate::theme::BORDER_W,
                 &scene::rrect(r.x, r.y, r.w, r.h, radius),
             );
         }

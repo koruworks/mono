@@ -10,6 +10,7 @@ use koru_ai_core::{AiProviderId, ReasoningChoice, ReasoningControl};
 use koru_draw::el::{ElState, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_draw::theme::Surface;
 use koru_draw::{icons, inspect, scene, theme};
 use koru_i18n::{Key, Lang, t};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
@@ -136,14 +137,8 @@ impl crate::ChatSurface {
                     }
                     RailEntry::Favorites | RailEntry::Provider(_) => false,
                 };
-                painter(move |canvas, root, engine, at, state| {
-                    paint_mark(canvas, root, engine, &entry, at, state, dim)
-                })
-            }
-            Part::Manage => {
-                let name = self.picker_manage_name();
-                painter(move |canvas, root, engine, at, state| {
-                    paint_manage(canvas, root, engine, name, at, state.hovered)
+                painter(move |canvas, root, engine, at, _| {
+                    paint_mark(canvas, root, engine, &entry, at, dim)
                 })
             }
             Part::Search => {
@@ -310,78 +305,21 @@ fn paint_rail_ground(canvas: &mut Scene, root: Affine, rail: Rect, radius: f32) 
     );
 }
 
-/// A rail mark: the selected entry's plate, the hovered one's, the
-/// keyboard's ring, and the agent's mark — dimmed while it is not ready or
-/// the search finds nothing of it.
+/// A rail mark's glyph — the agent's mark, *Favorites*' star — dimmed
+/// while the agent is not ready or the search finds nothing of it. The
+/// plate and the keyboard's ring are the mark's own states
+/// ([`elements::RAIL_MARK_STATES`]).
 fn paint_mark(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
     entry: &RailEntry,
     at: Rect,
-    state: ElState,
     dim: bool,
 ) {
     let p = theme::p();
-    if state.selected || state.hovered {
-        scene::fill(
-            canvas,
-            root,
-            if state.selected {
-                p.row_selected
-            } else {
-                p.hover_tint
-            },
-            &scene::rrect(at.x, at.y, at.w, at.h, 6.0),
-        );
-    }
-    if state.focused {
-        scene::stroke(
-            canvas,
-            root,
-            p.accent,
-            1.0,
-            &scene::rrect(at.x, at.y, at.w, at.h, 6.0),
-        );
-    }
     let colour = if dim { p.text_dim } else { p.text };
     draw_mark(canvas, root, engine, entry, at, colour);
-}
-
-/// The **+** at the rail's end (D29).
-fn paint_manage(
-    canvas: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    name: &'static str,
-    at: Rect,
-    hovered: bool,
-) {
-    let p = theme::p();
-    let _manage = inspect::scope(
-        name,
-        "button",
-        root,
-        scene::rect(at.x, at.y, at.w, at.h),
-        |r| r.property("accessible name", name, "caller label"),
-    );
-    if hovered {
-        scene::fill(
-            canvas,
-            root,
-            p.hover_tint,
-            &scene::rrect(at.x, at.y, at.w, at.h, 6.0),
-        );
-    }
-    let layout = engine.icon_layout(icons::PLUS, 16.0);
-    scene::draw_layout(
-        canvas,
-        root,
-        &layout,
-        at.x + (at.w - layout.width()) * 0.5,
-        at.y + (at.h - layout.height()) * 0.5,
-        Some(if hovered { p.text } else { p.text_dim }),
-    );
 }
 
 /// One row of the list as it is drawn.
@@ -432,9 +370,9 @@ fn paint_list(
                 canvas,
                 root,
                 if row.current {
-                    p.row_selected
+                    Surface::Selected.of(p)
                 } else {
-                    p.hover_tint
+                    Surface::Hover.of(p)
                 },
                 &scene::rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
             );

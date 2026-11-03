@@ -87,6 +87,7 @@ pub(crate) static PROFILE_ROW_STATES: StateRecipe = StateRecipe {
     selected_hover: Look::NONE,
     selected_pressed: Look::NONE,
     disabled: Look::NONE,
+    focus: None,
 };
 
 /// The status words: brighter while their item is lit.
@@ -102,6 +103,7 @@ static STATUS_WORDS: StateRecipe = StateRecipe {
     selected_hover: Look::NONE,
     selected_pressed: Look::NONE,
     disabled: Look::NONE,
+    focus: None,
 };
 
 /// A Profile's tile: its picture when it is the open Profile and one is

@@ -389,6 +389,10 @@ colour_roles! {
         Chip => chip_bg,
         /// The lit plate under a hovered or keyboard-lit control.
         Hover => hover_tint,
+        /// The plate under the selected or current item: the rail's chosen
+        /// entry, the list's current model. Verified in every registered
+        /// theme (the user approved it on 2026-11-03, QUESTIONS M3).
+        Selected => row_selected,
     }
 }
 

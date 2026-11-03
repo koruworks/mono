@@ -30,12 +30,13 @@
 use std::cell::RefCell;
 
 use koru_draw::el::{
-    Action, Align, El, ElState, Frame, FrameCx, Key, Leaf, Role, TextCache, boxed, col, divider,
-    leaf, row,
+    Action, Align, El, ElState, Frame, FrameCx, Key, Leaf, Look, Ring, Role, StateRecipe,
+    TextCache, boxed, col, divider, icon, leaf, row,
 };
 use koru_draw::geometry::Rect;
+use koru_draw::icons;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{Line, Metric, Space, Tagged};
+use koru_draw::theme::{Accent, IconSize, Ink, Line, Metric, Radius, Space, Surface, Tagged};
 use vello::Scene;
 use vello::kurbo::Affine;
 
@@ -77,6 +78,7 @@ pub(crate) const PICKER: &str = "Model picker";
 pub(crate) const RAIL: &str = "Agent rail";
 pub(crate) const CONTENT: &str = "Picker content";
 pub(crate) const MARK: &str = "Rail mark";
+pub(crate) const MARK_GLYPH: &str = "Rail mark glyph";
 pub(crate) const MANAGE_NAME: &str = "Manage agent providers";
 pub(crate) const SEARCH_ROW: &str = "Search row";
 pub(crate) const SEARCH_BOX: &str = "Search box";
@@ -153,7 +155,6 @@ pub(crate) struct Spec {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     Mark(usize),
-    Manage,
     Search,
     Refresh,
     List,
@@ -220,45 +221,112 @@ pub(crate) fn rail_column(slots: impl IntoIterator<Item = (El, bool)>) -> El {
     rail
 }
 
+/// **A rail mark's states** (QUESTIONS M3, approved by the user 2026-11-03):
+/// the entry whose list shows sits on the selected plate, a hovered one on
+/// the hover plate, and the one the keyboard is on wears the accent ring.
+/// The selected plate stays under the pointer.
+pub(crate) static RAIL_MARK_STATES: StateRecipe = StateRecipe {
+    name: "rail mark",
+    base: Look::NONE,
+    selected: Look::bg(Surface::Selected),
+    hover: Look::bg(Surface::Hover),
+    pressed: Look::NONE,
+    selected_hover: Look::bg(Surface::Selected),
+    selected_pressed: Look::NONE,
+    disabled: Look::NONE,
+    focus: Some(Ring::Accent(Accent::Base)),
+};
+
+/// The **+**'s plate: lit under the pointer.
+pub(crate) static MANAGE_STATES: StateRecipe = StateRecipe {
+    name: "manage agents",
+    base: Look::NONE,
+    selected: Look::NONE,
+    hover: Look::bg(Surface::Hover),
+    pressed: Look::NONE,
+    selected_hover: Look::NONE,
+    selected_pressed: Look::NONE,
+    disabled: Look::NONE,
+    focus: None,
+};
+
+/// A glyph that brightens while its control is lit: the **+**.
+pub(crate) static LIT_INK: StateRecipe = StateRecipe {
+    name: "lit glyph",
+    base: Look {
+        bg: None,
+        ink: Some(Ink::Secondary),
+    },
+    selected: Look::NONE,
+    hover: Look {
+        bg: None,
+        ink: Some(Ink::Primary),
+    },
+    pressed: Look::NONE,
+    selected_hover: Look::NONE,
+    selected_pressed: Look::NONE,
+    disabled: Look::NONE,
+    focus: None,
+};
+
 /// A mark's square with no paint and no declarations: the geometry of a
 /// rail of `count` marks.
 pub(crate) fn placeholder_mark() -> El {
-    leaf(MARK, HostLeaf::new((RAIL_BUTTON, RAIL_BUTTON), None)).decorative()
+    boxed(MARK).w(RAIL_MARK).h(RAIL_MARK)
+}
+
+/// **A rail mark**: the square its plate and ring are drawn in, a button of
+/// its own, and inside it the entry's glyph.
+fn mark(spec: &MarkSpec, glyph: El) -> El {
+    let el = boxed(MARK)
+        .w(RAIL_MARK)
+        .h(RAIL_MARK)
+        .radius(Radius::M)
+        .states(&RAIL_MARK_STATES)
+        .id(spec.key)
+        .hit()
+        .action(Action::Click)
+        .semantics(Role::Button)
+        .selected(spec.selected)
+        .child(glyph);
+    match &spec.name {
+        MarkName::Key(key) => el.name(*key),
+        MarkName::Content(text) => el.name_text(text.clone()),
+    }
 }
 
 /// **The picker as one tree.** `paint` hands each leaf its painter; a tree
 /// laid out only for its geometry hands none.
 pub(crate) fn tree(spec: &Spec, paint: &mut dyn FnMut(Part) -> Option<Paint>) -> El {
     let mut slots = Vec::with_capacity(spec.marks.len() + 1);
-    for (index, mark) in spec.marks.iter().enumerate() {
-        let el = leaf(
-            MARK,
+    for (index, spec) in spec.marks.iter().enumerate() {
+        let glyph = leaf(
+            MARK_GLYPH,
             HostLeaf::new((RAIL_BUTTON, RAIL_BUTTON), paint(Part::Mark(index))),
         )
-        .semantic()
-        .id(mark.key)
-        .hit()
-        .action(Action::Click)
-        .semantics(Role::Button)
-        .selected(mark.selected);
-        let el = match &mark.name {
-            MarkName::Key(key) => el.name(*key),
-            MarkName::Content(text) => el.name_text(text.clone()),
-        };
-        slots.push((el, mark.divider_after));
+        .decorative()
+        .fill();
+        slots.push((mark(spec, glyph), spec.divider_after));
     }
     if spec.manage {
         // No tooltip (D25): it is named for a screen reader instead.
-        let plus = leaf(
-            MANAGE_NAME,
-            HostLeaf::new((RAIL_BUTTON, RAIL_BUTTON), paint(Part::Manage)),
-        )
-        .semantic()
-        .id(MANAGE_KEY)
-        .hit()
-        .action(Action::Click)
-        .semantics(Role::Button)
-        .name(koru_i18n::Key::AiPickerManageAgents);
+        let plus = boxed(MANAGE_NAME)
+            .w(RAIL_MARK)
+            .h(RAIL_MARK)
+            .radius(Radius::M)
+            .states(&MANAGE_STATES)
+            .id(MANAGE_KEY)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::Button)
+            .name(koru_i18n::Key::AiPickerManageAgents)
+            .child(
+                icon(icons::PLUS, IconSize::M)
+                    .decorative()
+                    .fill()
+                    .activity([MANAGE_KEY])
+                    .states(&LIT_INK),
+            );
         slots.push((plus, false));
     }
 

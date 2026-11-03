@@ -110,6 +110,13 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
     if el.states.is_some() || node.key.is_some() {
         record.property("state", state_text(node), "Interaction");
     }
+    if let Some(ring) = node.ring {
+        record.property(
+            "focus ring",
+            format!("{} -> {}", ring.name(), inspect::color(ring.of(palette))),
+            "StateRecipe::focus",
+        );
+    }
     if let Some(surface) = node.look.bg {
         let origin = if el.states.is_some() && el.bg != Some(surface) {
             "state rule"

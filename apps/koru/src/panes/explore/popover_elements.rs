@@ -92,6 +92,7 @@ pub(crate) static WORKSPACE_ROW_STATES: StateRecipe = StateRecipe {
     selected_hover: Look::NONE,
     selected_pressed: Look::NONE,
     disabled: Look::NONE,
+    focus: None,
 };
 
 /// A workspace's tile, painted in the theme of the subtree it is in.

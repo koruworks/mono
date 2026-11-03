@@ -35,8 +35,8 @@ use crate::geometry::Rect;
 use crate::text::TextEngine;
 use crate::theme::themes::{self, Contrast, Theme};
 use crate::theme::{
-    FontWeight, IconSize, Ink, Line, Metric, Palette, Profile, Radius, Space, Surface, Tagged,
-    TextRole, roles,
+    Accent, FontWeight, IconSize, Ink, Line, Metric, Palette, Profile, Radius, Space, Surface,
+    Tagged, TextRole, roles,
 };
 
 mod frame;
@@ -148,10 +148,38 @@ impl Look {
     }
 }
 
+/// A focus ring's colour: a hairline drawn round a focused control, at its
+/// corners, over its fill and under its content (§3.7: paint only, it never
+/// changes the allocation).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Ring {
+    /// A line role: `Line::Focus` is the shared focus colour.
+    Line(Line),
+    /// The product accent: the chat's model picker has always ringed its
+    /// keyboard's rail mark in it.
+    Accent(Accent),
+}
+
+impl Ring {
+    pub fn of(self, palette: &Palette) -> peniko::Color {
+        match self {
+            Self::Line(line) => line.of(palette),
+            Self::Accent(accent) => accent.of(palette),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Line(line) => line.name(),
+            Self::Accent(accent) => accent.name(),
+        }
+    }
+}
+
 /// A control's state table (§3.7). Base, then selected, hover and pressed
 /// over it in that order, pressed winning; the explicit selected+hover and
 /// selected+pressed rules over those; disabled alone suppresses hover and
-/// press. Focus is decoration and changes nothing here.
+/// press. Focus changes nothing here: it is decoration, the `focus` ring.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct StateRecipe {
     pub name: &'static str,
@@ -162,6 +190,8 @@ pub struct StateRecipe {
     pub selected_hover: Look,
     pub selected_pressed: Look,
     pub disabled: Look,
+    /// The ring drawn while the control is focused; `None` draws none.
+    pub focus: Option<Ring>,
 }
 
 impl StateRecipe {
@@ -914,5 +944,7 @@ impl El {
 
 #[cfg(test)]
 mod contract_tests;
+#[cfg(test)]
+mod picker_tests;
 #[cfg(test)]
 mod tests;

@@ -407,6 +407,10 @@ impl Solver<'_> {
             state,
             look,
             rule,
+            ring: el
+                .states
+                .and_then(|recipe| recipe.focus)
+                .filter(|_| state.focused && !el.decorative),
             hit,
             hit_key,
             role: if el.decorative { None } else { el.role },

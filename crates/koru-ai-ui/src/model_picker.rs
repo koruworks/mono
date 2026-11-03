@@ -646,6 +646,8 @@ impl crate::ChatSurface {
     /// What the **+** is called for a screen reader and the inspector — it
     /// raises no tooltip (D25: the picker's rows show none; the rail's marks
     /// keep theirs because they are named nowhere else, and this one is).
+    /// The element names it by its key; this is its words, for the tests.
+    #[cfg(test)]
     pub(crate) fn picker_manage_name(&self) -> &'static str {
         t(self.lang, Key::AiPickerManageAgents)
     }
