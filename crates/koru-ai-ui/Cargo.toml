@@ -18,6 +18,9 @@ no-client = [
     "koru-search-ui/no-reader",
     "koru-editor/no-browser",
 ]
+# A host's tests arm a state only the service could otherwise put a surface
+# in — a reply running — rather than asserting around it.
+test-support = []
 
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }

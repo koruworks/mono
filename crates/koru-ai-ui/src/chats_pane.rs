@@ -498,6 +498,9 @@ impl ChatSurface {
     fn drain_chats_pane(&mut self) -> bool {
         let mut changed = false;
         if let Some(chat) = self.chats_pane.take_wants_open() {
+            if self.shown_chat_id() != Some(chat) {
+                self.leave_chat_in_place();
+            }
             self.close_chats_pane();
             // The old popover's read, unchanged: the chat opens at its end.
             self.scroll_loaded_chat_to_bottom = true;
@@ -505,6 +508,7 @@ impl ChatSurface {
             changed = true;
         }
         if self.chats_pane.take_wants_new() {
+            self.leave_chat_in_place();
             self.close_chats_pane();
             self.create_chat();
             changed = true;
@@ -660,6 +664,7 @@ impl ChatSurface {
         };
         koru_chats_ui::sort_for_list(&mut chats);
         if let Some(chat) = step.from(&chats, current) {
+            self.leave_chat_in_place();
             self.close_chats_pane();
             self.scroll_loaded_chat_to_bottom = true;
             self.send_command(Command::Read(chat));

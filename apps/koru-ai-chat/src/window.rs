@@ -719,6 +719,12 @@ impl WindowApp for ChatApp {
         self.view.surface.mouse_up()
     }
 
+    /// The mouse's thumb buttons: back and forward over the chats this
+    /// window read in place (D102).
+    fn navigate_history(&mut self, delta: i32) -> bool {
+        self.view.navigate_history(delta)
+    }
+
     fn set_maximised(&mut self, maximised: bool) -> bool {
         let changed = self.view.maximized != maximised;
         self.view.maximized = maximised;
@@ -748,6 +754,18 @@ impl WindowApp for ChatApp {
     fn draw(&mut self, canvas: &mut vello::Scene, engine: &mut TextEngine, _w: f32, _h: f32) {
         self.view
             .draw(canvas, engine, Affine::scale(self.zoom() as f64));
+    }
+}
+
+/// The step `HistoryBack` or `HistoryForward` asks for, if the key is one.
+fn history_chord(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<i32> {
+    let is = |id| koru_keys::registry::get(id).chord.matches(key, text, mods);
+    if is(koru_keys::ShortcutId::HistoryBack) {
+        Some(-1)
+    } else if is(koru_keys::ShortcutId::HistoryForward) {
+        Some(1)
+    } else {
+        None
     }
 }
 
@@ -1039,8 +1057,29 @@ impl ChatView {
             }
             return settings.key(key, text, mods);
         }
+        // **Back and forward, before the chat sees the key** (D102) — from
+        // the composer too. The registry's chord is the workspace window's:
+        // `Alt`+←/→, which types nothing in a text field off macOS, and
+        // `⌘[`/`⌘]` on macOS, where `⌥`+←/→ is word motion and stays the
+        // composer's. Taken even with nowhere to go, as the workspace
+        // window takes it, so it never reaches the text as something else.
+        if let Some(delta) = history_chord(key, text, mods) {
+            self.navigate_history(delta);
+            return true;
+        }
         let changed = self.surface.key(key, text, mods);
         self.save_pending_credential() || changed
+    }
+
+    /// Back (`-1`) or forward (`+1`) through the chats this window read
+    /// into its place. Nothing while Settings or a picture covers the chat:
+    /// the chat underneath must not change unseen.
+    fn navigate_history(&mut self, delta: i32) -> bool {
+        if self.settings.is_some() || self.surface.viewer_open() {
+            return false;
+        }
+        self.window_menu = None;
+        self.surface.step_chat_history(delta)
     }
 
     /// Whether the chat's picture viewer is up. It covers the whole window,
@@ -1357,6 +1396,49 @@ mod tests {
         assert!(!settings.links().holds_terminal());
         view.toggle_settings();
         assert!(view.settings.is_none(), "and the same row closes it");
+    }
+
+    /// **The history chord is the window's, from the composer too** (D102):
+    /// `Alt`+←/→ (`⌘[`/`⌘]` on macOS) is taken before the chat, so it never
+    /// moves the caret or types, and a plain arrow still reaches the text.
+    #[test]
+    fn the_history_chord_is_taken_before_the_composer() {
+        let mut view = ChatView::new(None, None, (900.0, 700.0), false, false);
+        for letter in ["h", "i"] {
+            view.key(
+                &Key::Character(letter.into()),
+                Some(letter),
+                ModifiersState::empty(),
+            );
+        }
+        let typed = view.surface.dictation_composer().text();
+        assert_eq!(typed, "hi", "the composer has the keyboard");
+        for id in [
+            koru_keys::ShortcutId::HistoryBack,
+            koru_keys::ShortcutId::HistoryForward,
+        ] {
+            let chord = koru_keys::registry::get(id).chord;
+            let (key, text) = match chord.on {
+                koru_keys::On::Named(named) => (Key::Named(named), None),
+                koru_keys::On::Letter(letter) => (Key::Character(letter.to_string().into()), None),
+            };
+            assert!(view.key(&key, text, chord.mods), "{id:?} is taken");
+            assert!(history_chord(&key, text, chord.mods).is_some());
+        }
+        assert_eq!(
+            view.surface.dictation_composer().text(),
+            typed,
+            "nothing moved into the message"
+        );
+        assert_eq!(
+            history_chord(
+                &Key::Named(NamedKey::ArrowLeft),
+                None,
+                ModifiersState::empty()
+            ),
+            None,
+            "a plain arrow is the composer's"
+        );
     }
 
     /// Escape closes Settings rather than reaching the chat underneath it.

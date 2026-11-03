@@ -63,6 +63,7 @@ pub(crate) fn chat_line_height() -> f32 {
 mod agents;
 mod approval_modes;
 mod attachments;
+mod chat_history;
 mod chat_status;
 mod chats_pane;
 mod composer;
@@ -718,6 +719,9 @@ pub struct ChatSurface {
     /// `Ctrl+Shift+↑`/`↓` asked for the chat above or below in the Chats
     /// list, where a host with a navigator answers it (D87).
     wants_chat_step: Option<koru_chats_ui::ChatStep>,
+    /// Back and forward over the chats read into this surface's place, and
+    /// the scroll owed to a chat coming back (D102, `chat_history`).
+    chat_history: chat_history::ChatHistory,
     /// A NEW divider above the first message the person has not seen, and
     /// the chat opened there (D84). Set by the host as the chat comes into
     /// view.
@@ -1002,6 +1006,7 @@ impl ChatSurface {
             activity: 0,
             activity_reported: 0,
             wants_chat_step: None,
+            chat_history: chat_history::ChatHistory::default(),
             new_divider: None,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
@@ -1044,6 +1049,9 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        if self.reader.is_some() && self.shown_chat_id() != Some(chat) {
+            self.leave_chat_in_place();
+        }
         self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
@@ -2191,6 +2199,7 @@ impl ChatSurface {
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
+            self.leave_chat_in_place();
             return self.create_chat();
         }
         if self.tool_mode_open || self.tool_access_open {
@@ -6971,6 +6980,13 @@ impl ChatSurface {
             // **An unread chat opens on its NEW divider** (D84), not at its
             // end: once, the first layout that finds the message.
             if let Some(scroll) = self.take_new_divider_scroll() {
+                self.follow_tail = false;
+                self.scroll_loaded_chat_to_bottom = false;
+                self.conversation_scroll = scroll.min((self.conversation_extent - area.h).max(0.0));
+            }
+            // **A chat coming back opens where it was left** (D102): Back or
+            // Forward to it, or a host reopening it, wins over both above.
+            if let Some(scroll) = self.take_restored_scroll() {
                 self.follow_tail = false;
                 self.scroll_loaded_chat_to_bottom = false;
                 self.conversation_scroll = scroll.min((self.conversation_extent - area.h).max(0.0));
