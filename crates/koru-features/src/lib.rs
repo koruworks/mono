@@ -287,9 +287,23 @@ pub fn socials() -> bool {
 /// other views keep their `Alt+digit`.
 pub const HOME_SHOWN: bool = false;
 
+/// **The composer's private-chat button** — the detective mask at the left
+/// of the Koru AI composer's footer, which makes the chat being written
+/// private, or public again. Hidden (the user, 2026-11-03): no chat is made
+/// private from the composer. It has no shortcut. A chat that is already
+/// private stays private, works as before and still wears its mark in the
+/// Chats list; the footer's other controls start where the mask did.
+pub const PRIVATE_CHAT_BUTTON_SHOWN: bool = false;
+
 /// Whether Home is shown ([`HOME_SHOWN`]).
 pub fn home() -> bool {
     HOME_SHOWN
+}
+
+/// Whether the composer offers its private-chat button
+/// ([`PRIVATE_CHAT_BUTTON_SHOWN`]).
+pub fn private_chat_button() -> bool {
+    PRIVATE_CHAT_BUTTON_SHOWN
 }
 
 /// `koru_env::switch_value`, as a `const fn` so a baked value is a constant:

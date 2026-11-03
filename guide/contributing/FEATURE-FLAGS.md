@@ -263,6 +263,7 @@ part comes back with it. The code behind it stays built.
 | Constant | Hides | Since |
 | --- | --- | --- |
 | `HOME_SHOWN` | Home: the house at the top of the left rail, its nav (Inbox, Today, Upcoming, Recent), the Home tab and `Alt+H`. The rail starts at Documents, `Alt+H` resolves to nothing and no hint teaches it (the other views keep their `Alt+digit`), a window that last showed Home reopens on Documents. The recent documents Home listed stay under **+ → Documents** and the Windows Jump List | 2026-11-03 |
+| `PRIVATE_CHAT_BUTTON_SHOWN` | The Koru AI composer's private-chat button — the detective mask at the left of its footer. No chat is made private from the composer (the button has no shortcut); a chat already private stays private and keeps its mark in the Chats list. The globe and the workspace chip start where the mask did | 2026-11-03 |
 
 Unlike a flag, a constant is off in the test suites too, so a test that
 assumed the part is updated rather than run under an override.

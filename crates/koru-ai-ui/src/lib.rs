@@ -5310,7 +5310,14 @@ impl ChatSurface {
     /// and connected assistants may read this chat. It sat left of the
     /// title; with the title gone it is the only door to the setting, so it
     /// moved here, where both hosts show it.
+    /// The private mark at the toolbar's left — `None` while it is hidden
+    /// for now (`koru_features::PRIVATE_CHAT_BUTTON_SHOWN`), and then every
+    /// control laid out after it starts at the toolbar's left instead, and
+    /// nothing draws, hits or names it.
     fn privacy_button(&self) -> Option<Rect> {
+        if !koru_features::private_chat_button() {
+            return None;
+        }
         self.transcript.as_ref()?;
         let toolbar = self.composer_toolbar_rect();
         Some(Rect::new(toolbar.x, toolbar.y, toolbar.h, toolbar.h))
@@ -11030,13 +11037,15 @@ mod tests {
             .tool_mode_button()
             .expect("a Koru-run chat has the mode chip");
         let model = surface.chat_model_button();
-        let privacy = surface.privacy_button().expect("a chat can be private");
+        // The private mark is hidden for now
+        // (`koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the globe takes its
+        // place at the toolbar's left edge.
+        assert_eq!(surface.privacy_button(), None);
         let search = surface
             .web_search_button()
             .expect("gpt-5.5 supports search");
 
-        assert_eq!(privacy.x, toolbar.x);
-        assert!(privacy.x + privacy.w < search.x);
+        assert_eq!(search.x, toolbar.x);
         assert!((model.x + model.w - toolbar.x - toolbar.w).abs() < 0.01);
         assert!(search.x + search.w < workspace.x);
         assert!(workspace.x + workspace.w < approval.x);
@@ -12794,32 +12803,39 @@ mod tests {
         );
     }
 
+    /// **The private mark is hidden for now** (the user, 2026-11-03:
+    /// `koru_features::PRIVATE_CHAT_BUTTON_SHOWN`): the composer's toolbar
+    /// has none, a press where it sat makes nothing private, and the globe
+    /// starts at the toolbar's left. A chat that is already private still
+    /// takes the service's answer and stays private.
     #[test]
-    fn private_chat_toggle_uses_the_bounded_client_and_updates_visible_state() {
+    fn the_private_mark_is_hidden_and_a_private_chat_stays_private() {
+        assert!(!koru_features::PRIVATE_CHAT_BUTTON_SHOWN);
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
         let (reader, commands, _updates) = Reader::test_pair();
-        let transcript = transcript();
-        let chat_id = transcript.chat.id;
+        let mut transcript = transcript();
+        transcript.chat.current_model.requested_model = "gpt-5.5".into();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
 
         surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
-        let privacy = surface
-            .privacy_button()
-            .expect("the private mark is on the composer's toolbar");
-        assert!(surface.composer_hit_rect.contains(privacy.x, privacy.y));
+        assert_eq!(surface.privacy_button(), None);
+        let toolbar = surface.composer_toolbar_rect();
+        let first = surface
+            .web_search_button()
+            .expect("gpt-5.5 supports search");
+        assert_eq!(first.x, toolbar.x, "the globe keeps the left edge");
+        // Where the mask sat is the globe now: a press there arms search
+        // and makes nothing private.
+        surface.mouse_down(toolbar.x + 2.0, toolbar.y + toolbar.h * 0.5);
         assert!(
-            !surface.mouse_double_click(privacy.x + privacy.w * 0.5, privacy.y + privacy.h * 0.5,)
+            !matches!(
+                commands.recv_timeout(Duration::from_millis(50)),
+                Ok(Command::UpdatePrivacy(..))
+            ),
+            "nothing is made private from the composer"
         );
-        assert!(surface.mouse_down(privacy.x + privacy.w * 0.5, privacy.y + privacy.h * 0.5,));
-        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::UpdatePrivacy(actual, request) => {
-                assert_eq!(actual, chat_id);
-                assert!(request.private);
-            }
-            _ => panic!("privacy toggle must use the background API client"),
-        }
 
         let mut chat = surface.transcript.as_ref().unwrap().chat.clone();
         chat.private = true;

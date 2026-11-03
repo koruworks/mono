@@ -34,6 +34,8 @@ koru-env = { path = "../koru-env" }
 koru-draw = { path = "../koru-draw" }
 koru-markdown = { path = "../koru-markdown" }
 koru-keys = { path = "../koru-keys" }
+# What this build hides for now: the composer's private-chat button.
+koru-features = { path = "../koru-features" }
 koru-ui = { path = "../koru-ui" }
 koru-window = { path = "../koru-window" }
 # **The chip composer** (AGENTUX I6, X1): the composer is a Koru document in a
