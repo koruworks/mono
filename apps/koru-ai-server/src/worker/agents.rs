@@ -25,11 +25,12 @@ use koru_ai_core::{
     ToolInvocationId, bound_agent_content,
 };
 use koru_ai_provider_agent::{
-    AgentSessions, AnswerError, EndOutcome, agent_kind_of, is_agent_provider,
+    AgentSessions, AnswerError, EndOutcome, SteerError, agent_kind_of, is_agent_provider,
 };
 use koru_ai_wire::{
     AgentModelView, AgentModelsResponse, ClearHistoryResponse, DeleteChatResponse,
-    ProviderValidationResponse, ProviderValidationStatus,
+    ProviderValidationResponse, ProviderValidationStatus, SteerAttemptRequest,
+    SteerAttemptResponse,
 };
 use koru_session_protocol::ExecutableAvailability;
 
@@ -638,6 +639,206 @@ impl WorkerState {
         activity.live = self.agent_live.get(&activity.id).cloned();
         Ok(ToolDecisionResponse { activity })
     }
+
+    // ----- steering ---------------------------------------------------
+
+    /// **Steer a running agent reply**: the person's text goes into the turn
+    /// that is running. The dispatcher only checks and hands it over — the
+    /// turn's own thread sends it on its lease, and reports back as an
+    /// envelope ([`Self::on_steer_delivered`]); the reply is held meanwhile.
+    /// Only once the agent took it is the message recorded, after the
+    /// running reply, so the transcript never shows a steer the agent did
+    /// not get.
+    pub(super) fn begin_steer_attempt(
+        &mut self,
+        context: RequestContext,
+        attempt_id: InferenceAttemptId,
+        request: SteerAttemptRequest,
+        reply: SyncSender<ApiResult<SteerAttemptResponse>>,
+    ) {
+        match self.admit_steer(context, attempt_id, &request) {
+            Ok(Admitted::Replayed(response)) => {
+                let _ = reply.send(Ok(response));
+            }
+            Ok(Admitted::Ready { chat, agents }) => {
+                let operation = request.operation_id;
+                let output = self.output.clone();
+                let markdown = request.markdown.clone();
+                // The turn answers through `done`; a refusal before the
+                // hand-over is answered here, on this copy.
+                let refused = reply.clone();
+                let handed = agents.live().steer(
+                    attempt_id,
+                    &operation.hyphenated().to_string(),
+                    request.markdown.clone(),
+                    Box::new(move |outcome| {
+                        let _ = output.send(Envelope::SteerDelivered(Box::new(SteerDelivery {
+                            attempt: attempt_id,
+                            chat,
+                            operation,
+                            markdown,
+                            outcome,
+                            reply,
+                        })));
+                    }),
+                );
+                match handed {
+                    Ok(()) => {
+                        self.steering.insert(operation);
+                    }
+                    Err(error) => {
+                        tracing::info!(
+                            target: "koru_ai::agent",
+                            attempt = %attempt_id,
+                            error = ?error,
+                            "a steer could not be handed to its turn"
+                        );
+                        let _ = refused.send(Err(steer_unavailable()));
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+
+    /// The checks a steer passes before it is handed over: a live agent
+    /// turn of a chat that is not closing, and text to send. A steer already
+    /// recorded answers as it did.
+    fn admit_steer(
+        &mut self,
+        context: RequestContext,
+        attempt_id: InferenceAttemptId,
+        request: &SteerAttemptRequest,
+    ) -> ApiResult<Admitted> {
+        authorize(&context, AiScope::Chat)?;
+        let recorded = self
+            .repository
+            .message(MessageId::from_uuid(request.operation_id))
+            .map_err(ai_failure)?;
+        if let Some(message) = recorded {
+            return Ok(Admitted::Replayed(SteerAttemptResponse {
+                attempt_id,
+                user_message_id: message.id,
+                replayed: true,
+            }));
+        }
+        if self.steering.contains(&request.operation_id) {
+            return Err(failure(
+                "idempotency_conflict",
+                "This message is already being sent into the reply.",
+                true,
+            ));
+        }
+        if request.markdown.trim().is_empty() {
+            return Err(failure("invalid_request", "A message is required.", false));
+        }
+        let attempt = self
+            .repository
+            .attempt(attempt_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        let chat = attempt.chat_id.ok_or_else(steer_unavailable)?;
+        self.admit_chat_work(Some(chat))?;
+        if attempt.status.is_terminal() || !is_agent_provider(&attempt.provider) {
+            return Err(steer_unavailable());
+        }
+        let Some(agents) = self.agents.clone() else {
+            return Err(steer_unavailable());
+        };
+        if !agents.live().is_live(attempt_id) {
+            return Err(steer_unavailable());
+        }
+        Ok(Admitted::Ready { chat, agents })
+    }
+
+    /// The turn's thread reported on a steer: the message is recorded after
+    /// the running reply and answered, or the refusal is.
+    pub(super) fn on_steer_delivered(&mut self, delivery: SteerDelivery) {
+        self.steering.remove(&delivery.operation);
+        let answer = match delivery.outcome {
+            Ok(()) => {
+                let now = Timestamp::now();
+                let message = Message {
+                    id: MessageId::from_uuid(delivery.operation),
+                    chat_id: delivery.chat,
+                    ordinal: 0,
+                    role: ChatRole::User,
+                    state: MessageState::Complete,
+                    markdown: delivery.markdown,
+                    origin_message_id: None,
+                    provider: None,
+                    requested_model: None,
+                    resolved_model: None,
+                    error_class: None,
+                    created_at: now,
+                    completed_at: Some(now),
+                };
+                self.repository
+                    .append_user_message(&message)
+                    .map(|stored| {
+                        tracing::info!(
+                            target: "koru_ai::agent",
+                            attempt = %delivery.attempt,
+                            "a running agent reply was steered"
+                        );
+                        SteerAttemptResponse {
+                            attempt_id: delivery.attempt,
+                            user_message_id: stored.id,
+                            replayed: false,
+                        }
+                    })
+                    .map_err(ai_failure)
+            }
+            Err(error) => {
+                tracing::info!(
+                    target: "koru_ai::agent",
+                    attempt = %delivery.attempt,
+                    error = ?error,
+                    "a steer did not reach its turn"
+                );
+                Err(match error {
+                    SteerError::Failed => failure(
+                        "steer_failed",
+                        "The message could not be sent into the reply.",
+                        true,
+                    ),
+                    SteerError::NotLive
+                    | SteerError::Busy
+                    | SteerError::Refused
+                    | SteerError::Closed => steer_unavailable(),
+                })
+            }
+        };
+        let _ = delivery.reply.send(answer);
+    }
+}
+
+/// What a steer came to on the turn's thread, back on the dispatcher.
+pub(super) struct SteerDelivery {
+    attempt: InferenceAttemptId,
+    chat: ChatId,
+    operation: Uuid,
+    markdown: String,
+    outcome: Result<(), SteerError>,
+    reply: SyncSender<ApiResult<SteerAttemptResponse>>,
+}
+
+enum Admitted {
+    Replayed(SteerAttemptResponse),
+    Ready { chat: ChatId, agents: AgentSessions },
+}
+
+/// The reply cannot take text now: it ended, it is not an agent's, or the
+/// agent has no mid-turn input. The client sends the message after the
+/// reply instead.
+fn steer_unavailable() -> Failure {
+    failure(
+        "steer_unavailable",
+        "This reply cannot take a message now; it will be sent when the reply ends.",
+        true,
+    )
 }
 
 fn agent_row(

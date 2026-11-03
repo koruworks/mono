@@ -150,7 +150,75 @@ pub(crate) struct PendingApproval {
 pub(crate) struct LiveTurn {
     pub(crate) chat: ChatId,
     answers: SyncSender<ApprovalAnswer>,
+    steers: SyncSender<SteerInput>,
     pub(crate) pending: HashMap<ToolInvocationId, PendingApproval>,
+}
+
+/// **Text the person sends into the running turn** (a steer), dropped into
+/// the turn's channel by the dispatcher and sent by the turn's own thread on
+/// its own lease — as `SendPendingInput`, which the session runtime hands to
+/// the agent's `AgentControl::steer` while a turn runs.
+pub(crate) struct SteerInput {
+    pub(crate) text: String,
+    /// The same operation steered twice is sent once: the session runtime
+    /// answers a repeated key without sending it again.
+    pub(crate) key: koru_session_protocol::IdempotencyKey,
+    pub(crate) reply: SteerReply,
+}
+
+/// What a steer came to, called once from the turn's thread.
+pub type SteerDone = Box<dyn FnOnce(Result<(), SteerError>) + Send>;
+
+/// The answer owed to a steer's caller. A steer dropped unanswered — its
+/// turn ended with it still in the channel — answers `Closed`, so nobody
+/// waits on a reply that will never come.
+pub(crate) struct SteerReply(Option<SteerDone>);
+
+impl SteerReply {
+    pub(crate) fn send(mut self, outcome: Result<(), SteerError>) {
+        if let Some(done) = self.0.take() {
+            done(outcome);
+        }
+    }
+
+    /// Never answer: the caller has been told some other way.
+    fn disarm(&mut self) -> Option<SteerDone> {
+        self.0.take()
+    }
+}
+
+impl Drop for SteerReply {
+    fn drop(&mut self) {
+        if let Some(done) = self.0.take() {
+            done(Err(SteerError::Closed));
+        }
+    }
+}
+
+/// Why a steer did not reach the running turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SteerError {
+    /// No agent turn is live for this attempt.
+    NotLive,
+    /// The turn has more steers waiting than it takes at once.
+    Busy,
+    /// The agent took no text just then — it has no mid-turn input, or its
+    /// turn had already settled (Claude's `promptRequired`).
+    Refused,
+    /// The session would not carry it: the connection or the host failed.
+    Failed,
+    /// The turn ended before the steer was sent.
+    Closed,
+}
+
+/// **Whether an agent kind takes text into a running turn** — the fixed fact
+/// a client labels its Steer by. Codex does, through the app-server's
+/// `turn/steer`; Claude does, through its wrapper's `_session/steering`, when
+/// the wrapper advertised it at initialize — which the pinned 0.76.0 does,
+/// and which the adapter checks again at the moment. Every other agent is
+/// steered by stopping the reply and sending.
+pub fn steers_natively(kind: &AgentProviderKind) -> bool {
+    matches!(kind.kind.as_str(), "codex" | "claude")
 }
 
 /// Why an approval could not be answered.
@@ -183,15 +251,52 @@ impl LiveTurns {
         attempt: InferenceAttemptId,
         chat: ChatId,
         answers: SyncSender<ApprovalAnswer>,
+        steers: SyncSender<SteerInput>,
     ) {
         self.lock().insert(
             attempt,
             LiveTurn {
                 chat,
                 answers,
+                steers,
                 pending: HashMap::new(),
             },
         );
+    }
+
+    /// **Steer the running turn**: hand `text` to the turn's thread, which
+    /// sends it on its lease and calls `done` with what came of it. The
+    /// dispatcher never waits; `Err` is answered here, before anything was
+    /// handed over, and `done` is then not called. `operation` is the
+    /// caller's operation id, a v4 UUID, which becomes the input's
+    /// idempotency key.
+    pub fn steer(
+        &self,
+        attempt: InferenceAttemptId,
+        operation: &str,
+        text: String,
+        done: SteerDone,
+    ) -> Result<(), SteerError> {
+        let turns = self.lock();
+        let turn = turns.get(&attempt).ok_or(SteerError::NotLive)?;
+        let key = koru_session_protocol::IdempotencyKey::from_str(operation)
+            .unwrap_or_else(|_| koru_session_protocol::IdempotencyKey::mint());
+        let input = SteerInput {
+            text,
+            key,
+            reply: SteerReply(Some(done)),
+        };
+        match turn.steers.try_send(input) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(mut input)) => {
+                input.reply.disarm();
+                Err(SteerError::Busy)
+            }
+            Err(TrySendError::Disconnected(mut input)) => {
+                input.reply.disarm();
+                Err(SteerError::Closed)
+            }
+        }
     }
 
     pub(crate) fn unregister(&self, attempt: InferenceAttemptId) {
@@ -400,7 +505,8 @@ mod tests {
             live.answer(attempt, invocation, None, true),
             Err(AnswerError::NotLive)
         );
-        live.register(attempt, ChatId::new(), answers);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
         assert_eq!(
             live.answer(attempt, invocation, None, true),
             Err(AnswerError::NoSuchApproval)
@@ -456,7 +562,8 @@ mod tests {
         let attempt = InferenceAttemptId::new();
         let invocation = ToolInvocationId::new();
         let (answers, received) = std::sync::mpsc::sync_channel(4);
-        live.register(attempt, ChatId::new(), answers);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
         let approval = ApprovalId::mint();
         live.offer(
             attempt,
@@ -470,5 +577,65 @@ mod tests {
         let sent = received.try_recv().unwrap();
         assert_eq!(sent.decision, ApprovalDecision::Reject);
         assert_eq!(sent.choice, None);
+    }
+
+    /// **A steer goes into the live turn's channel**, keyed by its
+    /// operation, and its caller always hears back: from the turn's thread,
+    /// or `Closed` when the turn ends with it unsent. A turn that is not
+    /// live, or has its steers full, refuses it at once without calling.
+    #[test]
+    fn a_steer_reaches_the_live_turn_and_always_answers() {
+        use std::sync::mpsc::sync_channel;
+        let live = LiveTurns::default();
+        let attempt = InferenceAttemptId::new();
+        let (answered, outcomes) = sync_channel(8);
+        let done = |answered: &std::sync::mpsc::SyncSender<Result<(), SteerError>>| -> SteerDone {
+            let answered = answered.clone();
+            Box::new(move |outcome| {
+                let _ = answered.send(outcome);
+            })
+        };
+        let operation = "6f1c6b0e-2a7b-4c1e-9d3a-4b2f8e1a7c55";
+        assert_eq!(
+            live.steer(attempt, operation, "x".into(), done(&answered)),
+            Err(SteerError::NotLive)
+        );
+        assert!(outcomes.try_recv().is_err(), "refused here, not called");
+
+        let (answers, _answers) = sync_channel(1);
+        let (steers, steered) = sync_channel(1);
+        live.register(attempt, ChatId::new(), answers, steers);
+        live.steer(attempt, operation, "also this".into(), done(&answered))
+            .unwrap();
+        assert_eq!(
+            live.steer(attempt, operation, "again".into(), done(&answered)),
+            Err(SteerError::Busy)
+        );
+        let input = steered.try_recv().unwrap();
+        assert_eq!(input.text, "also this");
+        assert_eq!(input.key.to_string(), operation, "the operation is the key");
+        input.reply.send(Ok(()));
+        assert_eq!(outcomes.try_recv().unwrap(), Ok(()));
+
+        // A steer still waiting when its turn ends answers Closed.
+        live.steer(attempt, operation, "late".into(), done(&answered))
+            .unwrap();
+        live.unregister(attempt);
+        drop(steered);
+        assert_eq!(outcomes.try_recv().unwrap(), Err(SteerError::Closed));
+    }
+
+    /// Codex and Claude take text mid-turn; every other agent is steered by
+    /// stopping the reply.
+    #[test]
+    fn only_codex_and_claude_steer_natively() {
+        for kind in agent_provider_kinds() {
+            assert_eq!(
+                steers_natively(&kind),
+                matches!(kind.kind.as_str(), "codex" | "claude"),
+                "{}",
+                kind.kind
+            );
+        }
     }
 }

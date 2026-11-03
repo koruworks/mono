@@ -809,6 +809,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn steer_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+    ) -> ApiResult<koru_ai_wire::SteerAttemptResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::SteerAttempt {
+            context,
+            attempt,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn approve_tool_call(
         &self,
         context: RequestContext,
@@ -946,6 +962,8 @@ enum Envelope {
         chat: ChatId,
         outcome: EndOutcome,
     },
+    /// A running agent turn's thread sent (or could not send) a steer.
+    SteerDelivered(Box<agents::SteerDelivery>),
     /// The cleanup thread copied (or could not copy) a branch's attachment
     /// folders; the branch is committed or dropped on this.
     BranchCopied {
@@ -1119,6 +1137,12 @@ enum WorkerCommand {
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<CancelAttemptResponse>>,
     },
+    SteerAttempt {
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::SteerAttemptResponse>>,
+    },
     ApproveToolCall {
         context: RequestContext,
         tool: ToolInvocationId,
@@ -1216,6 +1240,7 @@ impl WorkerCommand {
             Self::SendTurn { .. } => "send_turn",
             Self::ReadAttempt { .. } => "read_attempt",
             Self::CancelAttempt { .. } => "cancel_attempt",
+            Self::SteerAttempt { .. } => "steer_attempt",
             Self::ApproveToolCall { .. } => "approve_tool_call",
             Self::DenyToolCall { .. } => "deny_tool_call",
             Self::RetryTurn { .. } => "retry_turn",
@@ -1283,6 +1308,8 @@ struct WorkerState {
     cleanup: Cleanup,
     /// Branches whose attachment folders are being copied.
     branching: HashSet<ChatId>,
+    /// Steers handed to a running turn and not answered yet, by operation.
+    steering: HashSet<Uuid>,
 }
 
 fn run_worker(
@@ -1348,6 +1375,7 @@ fn run_worker(
                     .map(|kind| koru_ai_wire::AgentProviderView {
                         id: kind.id.clone(),
                         label: koru_ai_provider_agent::brand_label(kind),
+                        steers: koru_ai_provider_agent::steers_natively(kind),
                     })
                     .collect();
                 Some(agents)
@@ -1464,6 +1492,7 @@ fn run_worker(
         attachments,
         cleanup,
         branching: HashSet::new(),
+        steering: HashSet::new(),
     };
     while !shutdown.load(Ordering::Acquire) {
         match receiver.recv_timeout(LOOP_INTERVAL) {
@@ -1495,6 +1524,7 @@ fn run_worker(
             Ok(Envelope::ChatSessionsEnded { chat, outcome }) => {
                 state.on_chat_sessions_ended(chat, outcome)
             }
+            Ok(Envelope::SteerDelivered(delivery)) => state.on_steer_delivered(*delivery),
             Ok(Envelope::BranchCopied {
                 context,
                 copy,
@@ -1764,6 +1794,12 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.cancel_attempt(context, attempt));
             }
+            WorkerCommand::SteerAttempt {
+                context,
+                attempt,
+                request,
+                reply,
+            } => self.begin_steer_attempt(context, attempt, request, reply),
             WorkerCommand::ApproveToolCall {
                 context,
                 tool,

@@ -152,6 +152,7 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/ai/chats/{chat}/turns` — Commit and stream an AI turn (Public)
 - GET `/v1/ai/attempts/{attempt}` — Read authoritative AI attempt state (Public)
 - POST `/v1/ai/attempts/{attempt}/cancel` — Cancel an AI attempt (Public)
+- POST `/v1/ai/attempts/{attempt}/steer` — Send a message into a running agent reply (Public)
 - POST `/v1/ai/tool-calls/{tool}/approve` — Approve a pending workspace-tool call (Public)
 - POST `/v1/ai/tool-calls/{tool}/deny` — Deny a pending workspace-tool call (Public)
 - PUT `/v1/ai/chats/{chat}/attachments/{attachment}` — Store a picture or file for a local agent chat's next message (Public)

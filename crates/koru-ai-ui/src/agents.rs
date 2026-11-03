@@ -544,10 +544,12 @@ mod tests {
             AgentProviderView {
                 id: AiProviderId::parse("agent-opencode").unwrap(),
                 label: "OpenCode".into(),
+                steers: false,
             },
             AgentProviderView {
                 id: AiProviderId::parse("agent-claude").unwrap(),
                 label: "Claude Code".into(),
+                steers: false,
             },
         ];
         let opencode = AiProviderId::parse("agent-opencode").unwrap();

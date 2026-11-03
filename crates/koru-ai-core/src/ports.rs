@@ -104,6 +104,11 @@ pub trait AiPersistence: Send {
     /// Atomically insert the user message, pending assistant, and attempt.
     fn begin_turn(&mut self, turn: &PendingTurn) -> Result<InferenceAttempt, AiError>;
     fn begin_retry(&mut self, retry: &PendingRetry) -> Result<InferenceAttempt, AiError>;
+    /// Record a message the person steered into a running reply: a
+    /// complete user message after every message the chat has — the
+    /// running reply's pending one included — its ordinal assigned here.
+    /// Idempotent by id: a message already recorded is answered as it was.
+    fn append_user_message(&mut self, message: &Message) -> Result<Message, AiError>;
     fn create_branch(&mut self, branch: &BranchCopy) -> Result<(), AiError>;
     fn begin_export(&mut self, export: &DocumentExport) -> Result<DocumentExport, AiError>;
     fn export(&self, id: DocumentExportId) -> Result<Option<DocumentExport>, AiError>;

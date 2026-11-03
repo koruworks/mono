@@ -989,6 +989,50 @@ impl AiPersistence for Repository {
         Ok(turn.attempt.clone())
     }
 
+    fn append_user_message(&mut self, message: &Message) -> Result<Message, AiError> {
+        if message.role != ChatRole::User || message.state != MessageState::Complete {
+            return Err(invariant_failed());
+        }
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let existing = transaction
+            .query_row(
+                "SELECT id, chat_id, ordinal, role, state, markdown, origin_message_id,
+                    provider, requested_model, resolved_model, error_class,
+                    created_at_ms, completed_at_ms
+               FROM messages WHERE id = ?1",
+                [message.id.to_storage()],
+                message_from_row,
+            )
+            .optional()
+            .map_err(storage_failed)?;
+        if let Some(existing) = existing {
+            return if existing.chat_id == message.chat_id {
+                Ok(existing)
+            } else {
+                Err(invariant_failed())
+            };
+        }
+        // After every message the chat has, the running reply's included.
+        let next: i64 = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(ordinal) + 1, 0) FROM messages WHERE chat_id = ?1",
+                [message.chat_id.to_storage()],
+                |row| row.get(0),
+            )
+            .map_err(storage_failed)?;
+        let mut stored = message.clone();
+        stored.ordinal = u32::try_from(next).map_err(|_| invariant_failed())?;
+        insert_message(&transaction, &stored)?;
+        transaction
+            .execute(
+                "UPDATE chats SET updated_at_ms = max(updated_at_ms, ?2) WHERE id = ?1",
+                params![stored.chat_id.to_storage(), stored.created_at.millis()],
+            )
+            .map_err(storage_failed)?;
+        transaction.commit().map_err(storage_failed)?;
+        Ok(stored)
+    }
+
     fn begin_retry(&mut self, retry: &PendingRetry) -> Result<InferenceAttempt, AiError> {
         if retry.assistant_message.role != ChatRole::Assistant
             || retry.assistant_message.state != MessageState::Pending

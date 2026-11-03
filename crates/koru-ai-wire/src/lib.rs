@@ -384,6 +384,27 @@ pub struct CancelAttemptResponse {
     pub status: AttemptStatus,
 }
 
+/// **Steer a running agent reply**: text the person sends into the turn
+/// that is running, instead of waiting for it to end. Only a local agent
+/// that takes text mid-turn accepts it (`AgentProviderView::steers`); the
+/// message is recorded as the person's, after the running reply.
+/// `operation_id` makes a retry an idempotent read of the first answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SteerAttemptRequest {
+    pub operation_id: Uuid,
+    pub markdown: String,
+}
+
+/// The steer reached the running turn: the person's message as recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SteerAttemptResponse {
+    pub attempt_id: InferenceAttemptId,
+    pub user_message_id: MessageId,
+    /// The same `operation_id` was answered before; nothing was sent again.
+    pub replayed: bool,
+}
+
 /// One normalized event on the public SSE stream.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StreamEvent {
@@ -623,6 +644,13 @@ pub struct ProviderSettingsResponse {
 pub struct AgentProviderView {
     pub id: AiProviderId,
     pub label: String,
+    /// The agent takes text into a running turn, so a client offers a native
+    /// *Steer* (`POST /v1/ai/attempts/{attempt}/steer`); without it a client
+    /// steers by stopping the reply and sending. A fixed fact of the agent's
+    /// kind; the agent itself still decides at the moment, and a steer it
+    /// cannot take is answered `steer_unavailable`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub steers: bool,
 }
 
 /// The models one local agent lists, in the agent's own ids. Empty when the

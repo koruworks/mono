@@ -264,6 +264,15 @@ impl Client {
         self.server.cancel_attempt(context, attempt)
     }
 
+    pub fn steer_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+    ) -> Result<koru_ai_wire::SteerAttemptResponse> {
+        self.server.steer_attempt(context, attempt, request)
+    }
+
     pub fn approve_tool_call(
         &self,
         context: RequestContext,

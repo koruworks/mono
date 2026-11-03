@@ -2792,3 +2792,58 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
     let after = client.read_chat(context(), agent).unwrap().chat;
     assert_eq!(after.agent_mode.as_deref(), Some("acceptEdits"));
 }
+
+/// **A steer reaches only a live local agent turn.** A reply that is not an
+/// agent's, an attempt that is not running, or a steer with no text is
+/// refused before anything is handed over or recorded — `steer_unavailable`
+/// tells the client to send the message after the reply instead.
+#[test]
+fn a_steer_is_refused_unless_a_local_agent_turn_is_running() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(
+            DeterministicMockProvider::new("a reply that streams for a while")
+                .with_chunk_delay(Duration::from_millis(200)),
+        ),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat_id = create_chat(&client);
+    let stream = send(&client, chat_id, Uuid::new_v4());
+    let attempt_id = stream.accepted.attempt_id;
+    let steer = |markdown: &str| koru_ai_wire::SteerAttemptRequest {
+        operation_id: Uuid::new_v4(),
+        markdown: markdown.into(),
+    };
+
+    let not_an_agent = client
+        .steer_attempt(context(), attempt_id, steer("also this"))
+        .unwrap_err();
+    assert_eq!(not_an_agent.code, "steer_unavailable");
+    let empty = client
+        .steer_attempt(context(), attempt_id, steer("  "))
+        .unwrap_err();
+    assert_eq!(empty.code, "invalid_request");
+    let unknown = client
+        .steer_attempt(context(), InferenceAttemptId::new(), steer("x"))
+        .unwrap_err();
+    assert_eq!(unknown.code, "not_found");
+    let messages = client.read_chat(context(), chat_id).unwrap().messages;
+    assert_eq!(messages.len(), 2, "nothing was recorded");
+
+    client.cancel_attempt(context(), attempt_id).unwrap();
+    let ended = client
+        .steer_attempt(context(), attempt_id, steer("too late"))
+        .unwrap_err();
+    assert_eq!(ended.code, "steer_unavailable");
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}

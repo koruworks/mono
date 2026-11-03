@@ -1032,6 +1032,21 @@ impl AiClient<'_> {
         )
     }
 
+    /// Send text into a running local agent reply (a steer). Answered once
+    /// the agent took it; `steer_unavailable` when the reply cannot take
+    /// text now, and the caller sends the message after the reply instead.
+    pub fn steer_attempt(
+        &self,
+        attempt: InferenceAttemptId,
+        request: &koru_ai_wire::SteerAttemptRequest,
+    ) -> AiResult<koru_ai_wire::SteerAttemptResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/attempts/{attempt}/steer"),
+            Some(json_body(request)?),
+        )
+    }
+
     /// Approve a pending tool call. `choice` is the id of the option a local
     /// agent offered for its permission request; a workspace tool takes none.
     pub fn approve_tool_call(

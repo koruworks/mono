@@ -1785,3 +1785,50 @@ fn a_branch_carries_its_copied_attachments_under_new_ids() {
     // The source keeps its own row.
     assert_eq!(repository.attachments_for_chat(chat_id).unwrap().len(), 1);
 }
+
+/// **A message steered into a running reply is recorded after it**: after
+/// every message the chat has, the pending reply included, with no schema
+/// change; recording it again answers what was recorded.
+#[test]
+fn a_steered_message_is_recorded_after_the_running_reply() {
+    let (mut repository, chat_id) = repository_with_chat();
+    let pending = turn(chat_id, Uuid::new_v4(), 10);
+    repository.begin_turn(&pending).unwrap();
+    let steered = Message {
+        id: MessageId::new(),
+        chat_id,
+        ordinal: 0,
+        role: ChatRole::User,
+        state: MessageState::Complete,
+        markdown: "Also check the tests".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: at(20),
+        completed_at: Some(at(20)),
+    };
+    let stored = repository.append_user_message(&steered).unwrap();
+    assert_eq!(stored.ordinal, 2, "after the pending reply's ordinal 1");
+    let messages = repository.messages(chat_id).unwrap();
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| (message.role, message.state))
+            .collect::<Vec<_>>(),
+        [
+            (ChatRole::User, MessageState::Complete),
+            (ChatRole::Assistant, MessageState::Pending),
+            (ChatRole::User, MessageState::Complete),
+        ]
+    );
+    let again = repository.append_user_message(&steered).unwrap();
+    assert_eq!(again, stored, "idempotent by id");
+    assert_eq!(repository.messages(chat_id).unwrap().len(), 3);
+    // Only the person's complete message is recorded this way.
+    let mut reply = steered.clone();
+    reply.id = MessageId::new();
+    reply.role = ChatRole::Assistant;
+    assert!(repository.append_user_message(&reply).is_err());
+}

@@ -43,13 +43,16 @@ use koru_session_wire::SubscriptionUpdate;
 use crate::control::{offer, session_error};
 use crate::{
     AGENT_DEFAULT_MODEL, AgentProvider, ApprovalAnswer, CANCEL_DEADLINE, COLUMNS, LiveTurns,
-    PREFIX_BYTES, PRODUCT, PendingApproval, READ_INTERVAL, chat_origin,
+    PREFIX_BYTES, PRODUCT, PendingApproval, READ_INTERVAL, SteerError, SteerInput, chat_origin,
 };
 
 /// How long the turn waits for a turn it found already running to end
 /// after cancelling it, before submitting its own.
 const RECONCILE_DEADLINE: Duration = Duration::from_secs(10);
 const ANSWER_CAPACITY: usize = 8;
+/// Steers waiting for the turn's thread at once; a person steers one
+/// message at a time, so a few is plenty.
+const STEER_CAPACITY: usize = 4;
 
 pub(crate) fn start(
     provider: &AgentProvider,
@@ -182,7 +185,8 @@ pub(crate) fn start(
     };
 
     let (answers_tx, answers) = sync_channel(ANSWER_CAPACITY);
-    provider.live.register(attempt, chat, answers_tx);
+    let (steers_tx, steers) = sync_channel(STEER_CAPACITY);
+    provider.live.register(attempt, chat, answers_tx, steers_tx);
     let mut queued = VecDeque::new();
     if ensured.fresh && had_history {
         queued.push_back(AiEvent::Notice {
@@ -228,6 +232,7 @@ pub(crate) fn start(
         client: Arc::new(client),
         events,
         answers,
+        steers,
         live: Arc::clone(&provider.live),
         cancellation,
         cancelling: None,
@@ -553,6 +558,8 @@ struct TurnStream {
     client: Arc<SessionClient>,
     events: Subscription,
     answers: Receiver<ApprovalAnswer>,
+    /// Text the person sends into this turn (a steer), sent on its lease.
+    steers: Receiver<SteerInput>,
     live: Arc<LiveTurns>,
     cancellation: Cancellation,
     cancelling: Option<Instant>,
@@ -583,6 +590,7 @@ impl Iterator for TurnStream {
                 return None;
             }
             self.drain_answers();
+            self.drain_steers();
             if self.cancellation.is_cancelled() && self.cancelling.is_none() {
                 self.cancelling = Some(Instant::now());
                 if let Err(error) = self.client.cancel_turn_for(
@@ -663,6 +671,69 @@ impl TurnStream {
             ) {
                 tracing::debug!(target: "koru_ai::agent", error = %error, "agent approval answer failed");
             }
+        }
+    }
+
+    /// **Send each waiting steer into the running turn**, on this turn's
+    /// lease. While a turn runs, the session runtime hands the input to the
+    /// agent's `AgentControl::steer` and answers with the running turn's id.
+    /// An agent with no mid-turn input refuses it, and the person's message
+    /// is sent after the reply instead. A turn the host had already ended
+    /// would take the input as a new turn this stream does not follow: that
+    /// turn is cancelled at once and the steer is refused, so nothing runs
+    /// unrecorded.
+    fn drain_steers(&mut self) {
+        while let Ok(steer) = self.steers.try_recv() {
+            if self.cancelling.is_some() || self.done {
+                steer.reply.send(Err(SteerError::Closed));
+                continue;
+            }
+            let sent = self.client.send_pending_input(
+                self.session,
+                self.lease,
+                PendingInput {
+                    idempotency_key: steer.key,
+                    text: steer.text,
+                    attachment_ids: Vec::new(),
+                    mode: None,
+                    fast: None,
+                },
+            );
+            let outcome = match sent {
+                Ok(sent) if sent.turn_id == self.turn => {
+                    tracing::info!(target: "koru_ai::agent", "agent turn steered");
+                    Ok(())
+                }
+                Ok(sent) => {
+                    tracing::info!(
+                        target: "koru_ai::agent",
+                        "a steer reached an agent between turns; its turn is cancelled"
+                    );
+                    if let Err(error) = self.client.cancel_turn_for(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        sent.turn_id,
+                        CancelReason::Run,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "stray steer turn cancel failed");
+                    }
+                    Err(SteerError::Refused)
+                }
+                Err(ClientError::Session(failure))
+                    if matches!(
+                        failure.code,
+                        ErrorCode::InvalidTransition | ErrorCode::DeliveryUnsupported
+                    ) =>
+                {
+                    Err(SteerError::Refused)
+                }
+                Err(error) => {
+                    tracing::debug!(target: "koru_ai::agent", error = %error, "agent steer failed");
+                    Err(SteerError::Failed)
+                }
+            };
+            steer.reply.send(outcome);
         }
     }
 
@@ -877,6 +948,10 @@ impl TurnStream {
         }
         self.done = true;
         self.live.unregister(self.attempt);
+        // A steer still waiting is answered now, not when the stream drops.
+        while let Ok(steer) = self.steers.try_recv() {
+            steer.reply.send(Err(SteerError::Closed));
+        }
         for id in std::mem::take(&mut self.ingested) {
             remove_session_copy(&self.client, self.session, self.lease, id);
         }

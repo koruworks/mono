@@ -441,6 +441,10 @@
           },
           "label": {
             "type": "string"
+          },
+          "steers": {
+            "description": "The agent takes text into a running turn, so a client offers a native\n*Steer* (`POST /v1/ai/attempts/{attempt}/steer`); without it a client\nsteers by stopping the reply and sending. A fixed fact of the agent's\nkind; the agent itself still decides at the moment, and a steer it\ncannot take is answered `steer_unavailable`.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -12873,6 +12877,45 @@
         ],
         "type": "object"
       },
+      "SteerAttemptRequest": {
+        "additionalProperties": false,
+        "description": "**Steer a running agent reply**: text the person sends into the turn\nthat is running, instead of waiting for it to end. Only a local agent\nthat takes text mid-turn accepts it (`AgentProviderView::steers`); the\nmessage is recorded as the person's, after the running reply.\n`operation_id` makes a retry an idempotent read of the first answer.",
+        "properties": {
+          "markdown": {
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "markdown"
+        ],
+        "type": "object"
+      },
+      "SteerAttemptResponse": {
+        "description": "The steer reached the running turn: the person's message as recorded.",
+        "properties": {
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "replayed": {
+            "description": "The same `operation_id` was answered before; nothing was sent again.",
+            "type": "boolean"
+          },
+          "user_message_id": {
+            "$ref": "#/components/schemas/MessageId"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "user_message_id",
+          "replayed"
+        ],
+        "type": "object"
+      },
       "StepKind": {
         "description": "What a step is. A closed enum mirroring §7.5's rows plus control\nhandover (§7.4), artifact registration, recovery and the honest gap\n(§7.1: replay never invents what it did not receive). Counts ride the\nvariant that needs them, bounded by type.",
         "oneOf": [
@@ -16779,6 +16822,103 @@
           }
         ],
         "summary": "Cancel an AI attempt"
+      }
+    },
+    "/v1/ai/attempts/{attempt}/steer": {
+      "post": {
+        "description": "The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.",
+        "operationId": "ai_steer_attempt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SteerAttemptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SteerAttemptResponse"
+                }
+              }
+            },
+            "description": "The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Send a message into a running agent reply"
       }
     },
     "/v1/ai/chats": {

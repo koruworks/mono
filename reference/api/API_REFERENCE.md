@@ -662,6 +662,12 @@ Cancel an AI attempt
 
 Returns: The current terminal state; cancelling an already-terminal attempt is a successful no-op.
 
+## POST `/v1/ai/attempts/{attempt}/steer`
+
+Send a message into a running agent reply
+
+Returns: The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.
+
 ## POST `/v1/ai/tool-calls/{tool}/approve`
 
 Approve a pending workspace-tool call

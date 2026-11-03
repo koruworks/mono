@@ -8928,6 +8928,7 @@ mod tests {
                 .map(|id| koru_ai_wire::AgentProviderView {
                     id: AiProviderId::parse(*id).unwrap(),
                     label: "Claude".into(),
+                    steers: false,
                 })
                 .collect(),
         }
@@ -10951,6 +10952,7 @@ mod tests {
             agents: vec![koru_ai_wire::AgentProviderView {
                 id: AiProviderId::parse("agent-claude").unwrap(),
                 label: "Claude".into(),
+                steers: false,
             }],
         });
         let claude = AiProviderId::parse("agent-claude").unwrap();
@@ -11007,6 +11009,7 @@ mod tests {
             agents: vec![koru_ai_wire::AgentProviderView {
                 id: claude.clone(),
                 label: "Claude".into(),
+                steers: false,
             }],
         };
         let discover = |commands: &std::sync::mpsc::Receiver<Command>| {

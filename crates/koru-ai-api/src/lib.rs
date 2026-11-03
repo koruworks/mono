@@ -225,6 +225,15 @@ pub trait AiServerPort: Send + Sync {
         context: RequestContext,
         attempt: InferenceAttemptId,
     ) -> Result<CancelAttemptResponse>;
+    /// Send text into a running local agent reply (a steer). Answered once
+    /// the agent took it, with the person's message as recorded after the
+    /// reply; `steer_unavailable` when the reply cannot take text now.
+    fn steer_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+        request: koru_ai_wire::SteerAttemptRequest,
+    ) -> Result<koru_ai_wire::SteerAttemptResponse>;
     fn approve_tool_call(
         &self,
         context: RequestContext,

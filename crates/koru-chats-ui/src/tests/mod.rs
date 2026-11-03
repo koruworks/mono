@@ -72,6 +72,7 @@ pub(crate) fn opencode() -> AgentProviderView {
     AgentProviderView {
         id: AiProviderId::parse("agent-opencode").unwrap(),
         label: "OpenCode".into(),
+        steers: false,
     }
 }
 

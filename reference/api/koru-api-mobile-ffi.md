@@ -79,6 +79,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.send_turn` | `client.ai().send_turn` | POST /v1/ai/chats/{chat}/turns | Mobile SSE/stream projection is not yet implemented |
 | `ai.read_attempt` | `client.ai().read_attempt` | GET /v1/ai/attempts/{attempt} | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.cancel_attempt` | `client.ai().cancel_attempt` | POST /v1/ai/attempts/{attempt}/cancel | Phase 1 ships desktop chat before a mobile chat host |
+| `ai.steer_attempt` | `client.ai().steer_attempt` | POST /v1/ai/attempts/{attempt}/steer | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.approve_tool_call` | `client.ai().approve_tool_call` | POST /v1/ai/tool-calls/{tool}/approve | Workspace-tool approval is not yet exposed by a mobile chat host |
 | `ai.deny_tool_call` | `client.ai().deny_tool_call` | POST /v1/ai/tool-calls/{tool}/deny | Workspace-tool approval is not yet exposed by a mobile chat host |
 | `ai.delete_chat` | `client.ai().delete_chat` | DELETE /v1/ai/chats/{chat} | Phase 1 ships desktop history management before a mobile chat host |

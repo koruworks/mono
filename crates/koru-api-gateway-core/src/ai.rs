@@ -546,6 +546,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["attempt"],
     },
     AiRoute {
+        operation_id: "ai_steer_attempt",
+        method: "POST",
+        path: "/v1/ai/attempts/{attempt}/steer",
+        scope: AiScope::Chat,
+        summary: "Send a message into a running agent reply",
+        returns: "The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.",
+        handler: || post(steer_attempt),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::SteerAttemptRequest>()
+        }),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::SteerAttemptResponse>()
+        }),
+        stream: false,
+        path_parameters: &["attempt"],
+    },
+    AiRoute {
         operation_id: "ai_approve_tool_call",
         method: "POST",
         path: "/v1/ai/tool-calls/{tool}/approve",
@@ -1358,6 +1375,26 @@ async fn cancel_attempt(
     answer(call(move || client.cancel_attempt(context, attempt)).await)
 }
 
+async fn steer_attempt(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(attempt): Path<String>,
+    payload: Result<Json<koru_ai_wire::SteerAttemptRequest>, JsonRejection>,
+) -> Response {
+    let Some(attempt) = InferenceAttemptId::parse(&attempt) else {
+        return invalid_identity("attempt");
+    };
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.steer_attempt(context, attempt, request)).await)
+}
+
 async fn approve_tool_call(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,
@@ -1795,13 +1832,16 @@ fn status_for(failure: &Failure) -> StatusCode {
         | attachment::UNSUPPORTED
         | attachment::WORKSPACE_FILE_UNAVAILABLE => StatusCode::CONFLICT,
         attachment::STORAGE => StatusCode::INSUFFICIENT_STORAGE,
-        "chat_busy" | "idempotency_conflict" | "model_pull_active" => StatusCode::CONFLICT,
+        "chat_busy" | "idempotency_conflict" | "model_pull_active" | "steer_unavailable" => {
+            StatusCode::CONFLICT
+        }
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,
         "ai_worker_saturated"
         | "ai_unavailable"
         | "ai_context_unavailable"
         | "ai_provider_management_unavailable"
-        | "agent_models_listing" => StatusCode::SERVICE_UNAVAILABLE,
+        | "agent_models_listing"
+        | "steer_failed" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

@@ -27,6 +27,7 @@ fn settings(agents: &[(&str, &str)], selected: Option<&str>) -> ProviderSettings
             .map(|(id, label)| AgentProviderView {
                 id: agent(id),
                 label: (*label).into(),
+                steers: false,
             })
             .collect(),
     }

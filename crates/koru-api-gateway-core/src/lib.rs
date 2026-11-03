@@ -489,6 +489,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Phase 1 ships desktop chat before a mobile chat host",
     },
     MobileUnavailableOperation {
+        id: "ai.steer_attempt",
+        client: "client.ai().steer_attempt",
+        http: "POST /v1/ai/attempts/{attempt}/steer",
+        reason: "Phase 1 ships desktop chat before a mobile chat host",
+    },
+    MobileUnavailableOperation {
         id: "ai.approve_tool_call",
         client: "client.ai().approve_tool_call",
         http: "POST /v1/ai/tool-calls/{tool}/approve",
