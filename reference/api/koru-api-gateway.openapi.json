@@ -425,6 +425,51 @@
         ],
         "type": "object"
       },
+      "AgentNotice": {
+        "description": "**A short status line a local agent said during a reply that is not\npart of the reply** (koru-ai D69, AI schema 12): Devin's *Hook failed:\n…* about a hook on the person's machine. Kept with the reply it came\nwith, in the order it came, and where in the reply it came.",
+        "properties": {
+          "assistant_message_id": {
+            "$ref": "#/components/schemas/MessageId"
+          },
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/AgentNoticeId"
+          },
+          "text": {
+            "description": "The agent's words, bounded to 500 characters by the session host\nbefore they reach the chat.",
+            "type": "string"
+          },
+          "text_offset": {
+            "description": "How much of the reply's Markdown, in bytes, had arrived when the\nnotice came; `None` until the store has written it.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "attempt_id",
+          "chat_id",
+          "assistant_message_id",
+          "text",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AgentNoticeId": {
+        "description": "AgentNoticeId — a client-minted UUID v4, never derived from content or location.",
+        "format": "uuid",
+        "type": "string"
+      },
       "AgentPermission": {
         "description": "**The permission a new agent chat starts in** (Settings → Coding →\nAgent providers), in `desktop-v1.json`. Each agent's own modes are\nwhat a chat runs in; this names which of them a new chat starts from\n(`koru-ai-ui`'s `approval_modes` does the mapping): *Manual* is the\nagent's asking mode, *Auto* the mode that approves safe actions on its\nown, *Yolo* the one that runs everything without asking. An agent that\noffers no such mode starts in *Manual*.",
         "enum": [
@@ -2929,6 +2974,13 @@
           "messages": {
             "items": {
               "$ref": "#/components/schemas/Message"
+            },
+            "type": "array"
+          },
+          "notices": {
+            "description": "A local agent's status lines beside its replies, in the order they\ncame (koru-ai D69).",
+            "items": {
+              "$ref": "#/components/schemas/AgentNotice"
             },
             "type": "array"
           },
@@ -8570,6 +8622,29 @@
               "type",
               "attempt_id",
               "activity"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A local agent's status line beside its reply, as the chat keeps it\n(koru-ai D69): not part of the reply's text.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "notice": {
+                "$ref": "#/components/schemas/AgentNotice"
+              },
+              "type": {
+                "enum": [
+                  "agent_notice"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "notice"
             ],
             "type": "object"
           },

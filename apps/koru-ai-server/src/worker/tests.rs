@@ -2793,6 +2793,104 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
     assert_eq!(after.agent_mode.as_deref(), Some("acceptEdits"));
 }
 
+/// An agent that says a status line before its reply and one within it
+/// (koru-ai D69).
+struct NoticeProvider;
+
+impl AiProvider for NoticeProvider {
+    fn start(
+        &self,
+        request: AiRequest,
+        _cancellation: Cancellation,
+    ) -> Result<ProviderStream, AiError> {
+        let attempt_id = request.attempt_id;
+        let notice = |text: &str| AiEvent::AgentActivity {
+            attempt_id,
+            activity: koru_ai_core::AgentActivityEvent::Notice { text: text.into() },
+            at: Timestamp::now(),
+        };
+        Ok(Box::new(
+            vec![
+                AiEvent::Started {
+                    attempt_id,
+                    provider_response_id: None,
+                    request_payload_bytes: None,
+                    resolved_model: None,
+                    effective_reasoning: None,
+                    at: Timestamp::now(),
+                },
+                notice("Hook failed: exited with code 127"),
+                AiEvent::TextDelta {
+                    attempt_id,
+                    text: "Hello.".into(),
+                    at: Timestamp::now(),
+                },
+                notice("Indexing"),
+                AiEvent::Completed {
+                    attempt_id,
+                    stop_reason: Some("stop".into()),
+                    at: Timestamp::now(),
+                },
+            ]
+            .into_iter(),
+        ))
+    }
+}
+
+/// **An agent's notice is kept beside its reply, not in it** (koru-ai
+/// D69): published as it comes, read back with the transcript in the order
+/// it came and where the reply stood, and the reply's text is the reply's.
+#[test]
+fn an_agent_notice_is_kept_beside_its_reply() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-devin").unwrap(),
+        Arc::new(NoticeProvider),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = agent_chat(&client, "agent-devin");
+    let stream = send(&client, chat, Uuid::new_v4());
+    let mut live = Vec::new();
+    loop {
+        let public = stream.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        match public.event {
+            PublicAiEvent::AgentNotice { notice, .. } => live.push(notice.text),
+            event if event.is_terminal() => break,
+            _ => {}
+        }
+    }
+    assert_eq!(live, ["Hook failed: exited with code 127", "Indexing"]);
+    let transcript = client.read_chat(context(), chat).unwrap();
+    let reply = transcript.messages.last().unwrap();
+    assert_eq!(reply.markdown, "Hello.");
+    let kept: Vec<_> = transcript
+        .notices
+        .iter()
+        .map(|notice| {
+            (
+                notice.text.as_str(),
+                notice.text_offset,
+                notice.assistant_message_id,
+            )
+        })
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("Hook failed: exited with code 127", Some(0), reply.id),
+            ("Indexing", Some("Hello.".len() as u32), reply.id),
+        ]
+    );
+}
+
 /// **A steer reaches only a live local agent turn.** A reply that is not an
 /// agent's, an attempt that is not running, or a steer with no text is
 /// refused before anything is handed over or recorded — `steer_unavailable`

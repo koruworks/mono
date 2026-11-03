@@ -60,6 +60,7 @@ fn surface_with_reply() -> ChatSurface {
             workspace_ids: Vec::new(),
         },
         tool_activities: Vec::new(),
+        notices: Vec::new(),
         blocks: koru_ai_core::finalize_markdown(reply, &markdown),
         messages: vec![Message {
             id: reply,

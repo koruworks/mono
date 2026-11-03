@@ -36,6 +36,7 @@ fn agent_transcript(provider: &str) -> ChatTranscript {
             workspace_ids: Vec::new(),
         },
         tool_activities: Vec::new(),
+        notices: Vec::new(),
         messages: Vec::new(),
         blocks: Vec::new(),
         pinned_documents: Vec::new(),

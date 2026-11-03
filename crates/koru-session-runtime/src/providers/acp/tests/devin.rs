@@ -9,6 +9,9 @@ use super::*;
 const VERSION: &str = include_str!("fixtures/devin-3000.10.48/version.txt");
 const INITIALIZE: &str = include_str!("fixtures/devin-3000.10.48/initialize.json");
 const NEW_SESSION: &str = include_str!("fixtures/devin-3000.10.48/new-session.json");
+/// Synthetic: the shape of the status line seen live on a later build (see
+/// the fixture's README), its path placeholdered.
+const DISPLAY_MESSAGE: &str = include_str!("fixtures/devin-3000.10.48/display-message.json");
 
 fn notification(method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","method":method,"params":params})
@@ -235,4 +238,84 @@ fn no_models_from_another_agent_is_not_signed_out() {
         assert!(route.signed_in_by_models(&[]).is_ok());
     }
     assert!(AcpRoute::devin().dialect.no_models_means_signed_out());
+}
+
+/// **Devin's status line is a notice, not reply text** (koru-ai D69): the
+/// `agent_message_chunk` it marks with `_meta` `cognition.ai/displayMessage`
+/// — a failed hook said while the session starts, before any prompt — is
+/// said first in the next turn; one marked on its content during a turn is
+/// said in place; unmarked text stays the reply.
+#[test]
+fn a_marked_message_chunk_is_a_notice_said_with_the_next_turn() {
+    let mut h = devin_harness();
+    let display: Value = serde_json::from_str(DISPLAY_MESSAGE).unwrap();
+    {
+        let mut frames = h.injected.lock().unwrap();
+        // Before `session/new`'s answer, as the session starts.
+        let at = frames
+            .iter()
+            .position(|frame| frame["id"] == 2)
+            .expect("the session/new answer");
+        frames.insert(at, display.clone());
+    }
+    start(&mut h.control);
+    assert!(drain(&mut h.control).iter().all(|event| !matches!(
+        event,
+        AgentEvent::Notice { .. } | AgentEvent::MessageDelta { .. }
+    )));
+    let turn_id = AgentTurnId::mint();
+    h.control.submit(input(turn_id)).unwrap();
+    {
+        let mut frames = h.injected.lock().unwrap();
+        frames.push_back(notification(
+            "session/update",
+            json!({"sessionId":"<private-session>","update":{
+                "sessionUpdate":"agent_message_chunk",
+                "content":{"type":"text","text":"Indexing the workspace",
+                    "_meta":{"cognition.ai/displayMessage":true}}}}),
+        ));
+        frames.push_back(notification(
+            "session/update",
+            json!({"sessionId":"<private-session>","update":{
+                "sessionUpdate":"agent_message_chunk",
+                "content":{"type":"text","text":"Hello."}}}),
+        ));
+        frames.push_back(json!({"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}));
+    }
+    let events = drain(&mut h.control);
+    let said: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnStarted { .. } => Some("start".to_owned()),
+            AgentEvent::Notice { turn_id: id, text } if *id == turn_id => {
+                Some(format!("notice: {text}"))
+            }
+            AgentEvent::MessageDelta { text, .. } => Some(format!("reply: {text}")),
+            AgentEvent::TurnCompleted { .. } => Some("end".to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "start".to_owned(),
+            format!(
+                "notice: {}",
+                display["params"]["update"]["content"]["text"]
+                    .as_str()
+                    .unwrap()
+            ),
+            "notice: Indexing the workspace".to_owned(),
+            "reply: Hello.".to_owned(),
+            "end".to_owned(),
+        ]
+    );
+    // Said once: the next turn starts with nothing left over.
+    let next = AgentTurnId::mint();
+    h.control.submit(input(next)).unwrap();
+    assert!(
+        !drain(&mut h.control)
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Notice { .. }))
+    );
 }

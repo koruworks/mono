@@ -18,6 +18,11 @@ sent.** The frames were reduced in memory to these fields.
   `mode` select with Devin's five ids and own names, and the `model` select.
   The session id is replaced; the account's one model is replaced by a
   placeholder. The option-level `_meta` (icon names) is dropped.
+- `display-message.json` is **synthetic**: the shape of the status line
+  the maintainer saw read as reply text (koru-ai D69, 2026-11-02) — an
+  `agent_message_chunk` whose `_meta` carries `cognition.ai/displayMessage`,
+  sent as the session starts — with the hook's path placeholdered. No frame
+  of it was kept; the adapter also reads the mark on the chunk's content.
 - `auth-required.json` is **synthetic**, the standard ACP `-32000` shape the
   other routes replay. It was not observed: signed out (an isolated profile
   with no credential and no `WINDSURF_API_KEY`), 3000.10.48 answers

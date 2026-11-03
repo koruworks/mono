@@ -4,6 +4,29 @@ use super::*;
 use crate::providers::tool_output::bound_tool_output;
 use koru_session_protocol::{ToolFailure, bound_tool_content, bound_tool_detail};
 
+/// The `_meta` key an agent marks a message chunk with when the text is a
+/// status line for the person rather than part of its reply (Devin's).
+const DISPLAY_MESSAGE_META: &str = "cognition.ai/displayMessage";
+
+/// How many notices said before any turn are kept for the next one.
+const UNSAID_NOTICES: usize = 8;
+
+/// The text of an `agent_message_chunk` marked as a status line, on the
+/// update or on its content; `None` for reply text.
+fn display_message(update: &Value) -> Option<&str> {
+    let marked = |meta: &Value| {
+        meta.get(DISPLAY_MESSAGE_META)
+            .is_some_and(|value| !value.is_null() && *value != Value::Bool(false))
+    };
+    if !(marked(&update["_meta"]) || marked(&update["content"]["_meta"])) {
+        return None;
+    }
+    if update["content"]["type"].as_str() != Some("text") {
+        return None;
+    }
+    update["content"]["text"].as_str()
+}
+
 impl AcpControl {
     pub(super) fn handle_frame(&mut self, frame: Value) -> Result<(), ProviderFailure> {
         if frame.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
@@ -82,6 +105,13 @@ impl AcpControl {
                 let moved = self.follow_mode(super::modes::current(update));
                 return self.report_mode(moved);
             }
+            // A status line, not reply text (koru-ai D69), with or without
+            // a turn: Devin says a failed hook as the session starts.
+            Some("agent_message_chunk") if display_message(update).is_some() => {
+                decode::<acp::SessionNotification>(params)?;
+                let text = display_message(update).unwrap_or_default().to_owned();
+                return self.notice(&text);
+            }
             _ => {}
         }
         let Some(turn_id) = self.active else {
@@ -118,6 +148,34 @@ impl AcpControl {
             }
             "tool_call" | "tool_call_update" => self.tool(turn_id, update),
             _ => unreachable!(),
+        }
+    }
+
+    /// **An agent's notice** (koru-ai D69): said on the running turn, or
+    /// kept for the next one when none runs — Devin says a failed hook while
+    /// the session starts, before any prompt. A few are kept; more are
+    /// counted and dropped. One that comes while a turn is being stopped is
+    /// dropped like the turn's late text.
+    fn notice(&mut self, text: &str) -> Result<(), ProviderFailure> {
+        let Some(text) = koru_session_protocol::bound_agent_notice(text) else {
+            return Ok(());
+        };
+        match self.active {
+            Some(turn_id) if self.turns[&turn_id].cancelling.is_none() => {
+                self.queue(AgentEvent::Notice { turn_id, text })
+            }
+            Some(_) => {
+                self.mark_unknown();
+                Ok(())
+            }
+            None if self.unsaid_notices.len() < UNSAID_NOTICES => {
+                self.unsaid_notices.push(text);
+                Ok(())
+            }
+            None => {
+                self.mark_unknown();
+                Ok(())
+            }
         }
     }
 

@@ -938,6 +938,14 @@ impl TurnStream {
                     at,
                 });
             }
+            // A status line, not the reply (D69): kept beside it.
+            AgentEvent::Notice { turn_id, text } if turn_id == self.turn => {
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::Notice { text },
+                    at,
+                });
+            }
             // Another turn's events, provider state, attachments, children:
             // counted, never surfaced.
             _ => {}

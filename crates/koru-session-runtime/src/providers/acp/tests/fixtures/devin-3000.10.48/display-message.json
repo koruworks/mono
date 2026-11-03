@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "<private-session>",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": {
+        "type": "text",
+        "text": "Hook failed: C:\\Users\\<user>\\.devin\\hooks\\devin-hook.cmd: Command exited with code 127"
+      },
+      "_meta": {
+        "cognition.ai/displayMessage": true
+      }
+    }
+  }
+}

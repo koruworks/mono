@@ -99,6 +99,8 @@ const HEADER_H: f32 = 46.0;
 const FIELD_H: f32 = 36.0;
 const BUTTON_H: f32 = ActionButton::H;
 const CARD_GAP: f32 = 10.0;
+/// The space under an agent's notice line (D69), as under a work line.
+const NOTICE_GAP: f32 = 6.0;
 const COMPOSER_GAP: f32 = 8.0;
 const COMPOSER_MIN_LINES: usize = 1;
 const COMPOSER_MAX_LINES: usize = 8;
@@ -289,6 +291,17 @@ struct ToolActivityLayout {
     expanded_height: f32,
 }
 
+/// **A local agent's notice** (koru-ai D69): a status line it said that is
+/// not part of its reply — a hook that failed on the person's machine —
+/// drawn as one grey 12 px line (wrapped when longer than the column) in
+/// front of the reply it came with. Nothing to press.
+struct NoticeLayout {
+    message: MessageId,
+    /// From the top of the conversation; NaN while it is being placed.
+    top: f32,
+    layout: Layout<Brush>,
+}
+
 #[derive(Clone)]
 struct ImageSpec {
     url: String,
@@ -462,6 +475,9 @@ pub struct ChatSurface {
     tool_activity_layouts: Vec<ToolActivityLayout>,
     /// Each reply's work view, in the order the replies happened.
     work_layouts: Vec<work_view::WorkLayout>,
+    /// A local agent's notices, each a grey line in front of its reply
+    /// (koru-ai D69), in the order they came.
+    notice_layouts: Vec<NoticeLayout>,
     /// The finished replies whose work is opened; every other one is
     /// folded to *Worked for …*. In memory only.
     opened_work: HashSet<MessageId>,
@@ -834,6 +850,7 @@ impl ChatSurface {
             message_layouts: Vec::new(),
             tool_activity_layouts: Vec::new(),
             work_layouts: Vec::new(),
+            notice_layouts: Vec::new(),
             opened_work: HashSet::new(),
             opened_step_groups: HashSet::new(),
             opened_calls: HashSet::new(),
@@ -3046,6 +3063,9 @@ impl ChatSurface {
                     PublicAiEvent::ToolActivity { activity, .. } => {
                         self.upsert_tool_activity(activity.clone());
                     }
+                    PublicAiEvent::AgentNotice { notice, .. } => {
+                        self.upsert_agent_notice(notice.clone());
+                    }
                     PublicAiEvent::Notice { notice, .. } => {
                         self.status = Some(match notice {
                             koru_ai_core::AttemptNotice::FreshStart => {
@@ -3471,6 +3491,24 @@ impl ChatSurface {
         } else {
             self.chats.push(chat.clone());
         }
+    }
+
+    /// A local agent's notice as it comes (koru-ai D69): kept with the
+    /// transcript, once, and laid out in front of its reply.
+    fn upsert_agent_notice(&mut self, notice: koru_ai_core::AgentNotice) {
+        let Some(transcript) = &mut self.transcript else {
+            return;
+        };
+        if transcript.chat.id != notice.chat_id
+            || transcript
+                .notices
+                .iter()
+                .any(|existing| existing.id == notice.id)
+        {
+            return;
+        }
+        transcript.notices.push(notice);
+        self.messages_dirty = true;
     }
 
     fn upsert_tool_activity(&mut self, mut activity: ToolActivity) {
@@ -6000,6 +6038,7 @@ impl ChatSurface {
         let started = Instant::now();
         self.tool_activity_layouts.clear();
         self.work_layouts.clear();
+        self.notice_layouts.clear();
         self.request_document_titles();
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let lang = self.lang;
@@ -6074,6 +6113,19 @@ impl ChatSurface {
                 .iter()
                 .map(|entry| (entry.message_id, &entry.usage))
                 .collect::<HashMap<_, _>>();
+            // An agent's notices (D69): one grey line each, 12 px, wrapped
+            // to the column, in front of the reply they came with.
+            for notice in &transcript.notices {
+                self.notice_layouts.push(NoticeLayout {
+                    message: notice.assistant_message_id,
+                    top: 0.0,
+                    layout: self.engine.simple_layout_wrapped(
+                        &notice.text,
+                        role::meta(),
+                        work_width,
+                    ),
+                });
+            }
             let mut worked: HashSet<MessageId> = HashSet::new();
             for message in &transcript.messages {
                 if !message.markdown.is_empty() || message.state != MessageState::Pending {
@@ -6473,6 +6525,10 @@ impl ChatSurface {
         let mut top = 0.0;
         let mut placed_work = vec![false; self.work_layouts.len()];
         let mut placed_cards = vec![false; self.tool_activity_layouts.len()];
+        // A notice whose reply is not (yet) a message here follows them.
+        for notice in &mut self.notice_layouts {
+            notice.top = f32::NAN;
+        }
         for message_index in 0..self.message_layouts.len() {
             if let Some(message_id) = self.message_layouts[message_index].id {
                 top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
@@ -6494,6 +6550,12 @@ impl ChatSurface {
                 top += card.expanded_height + 6.0;
             }
         }
+        for notice in &mut self.notice_layouts {
+            if notice.top.is_nan() {
+                notice.top = top;
+                top += notice.layout.height() + NOTICE_GAP;
+            }
+        }
         top
     }
 
@@ -6505,6 +6567,14 @@ impl ChatSurface {
         placed_work: &mut [bool],
         placed_cards: &mut [bool],
     ) -> f32 {
+        // What the agent said beside the reply, first: Devin's notice comes
+        // as the session starts, before anything the reply does.
+        for notice in &mut self.notice_layouts {
+            if notice.top.is_nan() && notice.message == message {
+                notice.top = top;
+                top += notice.layout.height() + NOTICE_GAP;
+            }
+        }
         for (index, work) in self.work_layouts.iter_mut().enumerate() {
             if !placed_work[index] && work.message == message {
                 placed_work[index] = true;
@@ -6535,7 +6605,15 @@ impl ChatSurface {
             .work_layouts
             .iter()
             .map(|work| work.top + work.height + 6.0);
-        messages.chain(cards).chain(work).fold(0.0, f32::max)
+        let notices = self
+            .notice_layouts
+            .iter()
+            .map(|notice| notice.top + notice.layout.height() + NOTICE_GAP);
+        messages
+            .chain(cards)
+            .chain(work)
+            .chain(notices)
+            .fold(0.0, f32::max)
     }
 
     fn draw_messages(&mut self, canvas: &mut Scene, root: Affine) {
@@ -6818,6 +6896,20 @@ impl ChatSurface {
                 draw_image_fitted(canvas, root, loaded, rect);
             }
         };
+        for notice in &self.notice_layouts {
+            let y = area.y - self.conversation_scroll + notice.top;
+            if y + notice.layout.height() < area.y || y > area.y + area.h {
+                continue;
+            }
+            scene::draw_layout(
+                canvas,
+                root,
+                &notice.layout,
+                area.x + PAD,
+                y,
+                Some(p.text_dim),
+            );
+        }
         for work in &self.work_layouts {
             let origin = Rect::new(
                 area.x + PAD,
@@ -8832,6 +8924,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
             workspace_ids: Vec::new(),
         },
         tool_activities: Vec::new(),
+        notices: Vec::new(),
         messages: Vec::new(),
         blocks: Vec::new(),
         pinned_documents: Vec::new(),
@@ -9044,6 +9137,7 @@ mod tests {
                 workspace_ids: Vec::new(),
             },
             tool_activities: Vec::new(),
+            notices: Vec::new(),
             messages: Vec::new(),
             blocks: Vec::new(),
             pinned_documents: Vec::new(),
@@ -11958,6 +12052,83 @@ mod tests {
             !std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::UpdateModel(..)))
         );
+    }
+
+    /// **An agent's notice is a grey line in front of its reply** (koru-ai
+    /// D69): between the question and the answer, never in the answer's
+    /// text; one that comes live is kept once.
+    #[test]
+    fn an_agent_notice_is_a_line_in_front_of_its_reply() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        let mut chat = transcript();
+        let message = |ordinal: u32, role: ChatRole, markdown: &str| koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: chat.chat.id,
+            ordinal,
+            role,
+            state: MessageState::Complete,
+            markdown: markdown.into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+        };
+        let question = message(0, ChatRole::User, "hi");
+        let reply = message(1, ChatRole::Assistant, "Hello.");
+        let notice = |text: &str| koru_ai_core::AgentNotice {
+            id: koru_ai_core::AgentNoticeId::new(),
+            attempt_id: InferenceAttemptId::new(),
+            chat_id: chat.chat.id,
+            assistant_message_id: reply.id,
+            text: text.into(),
+            text_offset: Some(0),
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+        };
+        chat.notices
+            .push(notice("Hook failed: exited with code 127"));
+        let live = notice("Indexing");
+        chat.messages = vec![question.clone(), reply.clone()];
+        surface.transcript = Some(chat);
+        surface.rebuild_messages(600.0);
+        let top_of = |surface: &ChatSurface, id: MessageId| {
+            surface
+                .message_layouts
+                .iter()
+                .find(|layout| layout.id == Some(id))
+                .unwrap()
+                .top
+        };
+        assert_eq!(surface.notice_layouts.len(), 1);
+        let line = surface.notice_layouts[0].top;
+        assert!(top_of(&surface, question.id) < line);
+        assert!(line < top_of(&surface, reply.id));
+        assert!(
+            !surface
+                .message_layouts
+                .iter()
+                .any(|layout| layout.display.contains("Hook"))
+        );
+
+        for _ in 0..2 {
+            surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+                version: 1,
+                sequence: 1,
+                event: PublicAiEvent::AgentNotice {
+                    attempt_id: live.attempt_id,
+                    notice: live.clone(),
+                },
+            }));
+        }
+        assert_eq!(surface.transcript.as_ref().unwrap().notices.len(), 2);
+        surface.rebuild_messages(600.0);
+        let tops: Vec<f32> = surface.notice_layouts.iter().map(|line| line.top).collect();
+        assert_eq!(tops.len(), 2);
+        assert!(tops[0] < tops[1], "in the order they came");
+        assert!(tops[1] < top_of(&surface, reply.id));
     }
 
     /// **D19: a refused level is said in the person's language.**

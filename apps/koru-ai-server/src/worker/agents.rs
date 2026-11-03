@@ -530,7 +530,7 @@ impl WorkerState {
             created_at: at,
         };
         match self.repository.create_agent_notice(&notice) {
-            Ok(_) => {}
+            Ok(notice) => self.publish_agent_notice(notice),
             Err(error) => tracing::warn!(
                 target: "koru_ai::agent",
                 attempt = %attempt.id,

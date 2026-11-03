@@ -377,6 +377,12 @@ pub enum AiEvent {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
     },
+    /// A local agent's status line beside its reply, as kept (koru-ai
+    /// D69). The worker publishes it once the row is written.
+    AgentNotice {
+        attempt_id: InferenceAttemptId,
+        notice: crate::AgentNotice,
+    },
     /// Worker-internal, like `ToolCalls`: a local agent's tool or permission
     /// fact, which the worker turns into a durable row write and a public
     /// `ToolActivity` event. It never reaches the public stream itself.
@@ -428,6 +434,7 @@ impl AiEvent {
             | Self::Usage { attempt_id, .. }
             | Self::ToolCalls { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
+            | Self::AgentNotice { attempt_id, .. }
             | Self::AgentActivity { attempt_id, .. }
             | Self::Notice { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }

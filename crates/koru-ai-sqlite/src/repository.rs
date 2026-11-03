@@ -1590,6 +1590,7 @@ impl AiPersistence for Repository {
             }
             AiEvent::ToolActivity { .. }
             | AiEvent::AgentActivity { .. }
+            | AiEvent::AgentNotice { .. }
             | AiEvent::Notice { .. } => {}
             AiEvent::WebSearch { phase, at, .. } => {
                 transaction
@@ -1786,6 +1787,7 @@ fn ai_event_transaction_name(event: &AiEvent) -> &'static str {
         AiEvent::ToolCalls { .. } => "apply_tool_calls",
         AiEvent::ToolActivity { .. } => "apply_tool_activity",
         AiEvent::AgentActivity { .. } => "apply_agent_activity",
+        AiEvent::AgentNotice { .. } => "apply_agent_notice",
         AiEvent::Notice { .. } => "apply_notice",
         AiEvent::WebSearch { .. } => "apply_web_search",
         AiEvent::Citation { .. } => "apply_citation",

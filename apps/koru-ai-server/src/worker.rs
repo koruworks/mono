@@ -2233,6 +2233,7 @@ impl WorkerState {
                 self.decorate_live(&mut activities);
                 activities
             },
+            notices: self.repository.agent_notices(chat_id).map_err(ai_failure)?,
             messages,
             blocks: self.repository.blocks(chat_id).map_err(ai_failure)?,
             pinned_documents: self
@@ -4096,6 +4097,13 @@ impl WorkerState {
         self.publish(AiEvent::ToolActivity {
             attempt_id: activity.attempt_id,
             activity,
+        });
+    }
+
+    fn publish_agent_notice(&mut self, notice: koru_ai_core::AgentNotice) {
+        self.publish(AiEvent::AgentNotice {
+            attempt_id: notice.attempt_id,
+            notice,
         });
     }
 
@@ -6158,6 +6166,7 @@ fn ai_event_name(event: &AiEvent) -> &'static str {
         AiEvent::ToolCalls { .. } => "tool_calls",
         AiEvent::ToolActivity { .. } => "tool_activity",
         AiEvent::AgentActivity { .. } => "agent_activity",
+        AiEvent::AgentNotice { .. } => "agent_notice",
         AiEvent::Notice { .. } => "notice",
         AiEvent::WebSearch { .. } => "web_search",
         AiEvent::Citation { .. } => "citation",

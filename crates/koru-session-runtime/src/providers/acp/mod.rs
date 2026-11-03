@@ -62,6 +62,9 @@ pub struct AcpControl {
     /// The session's model's Fast mode option, as the latest answer or
     /// update carried it; `None` for a model without one (D11).
     fast: Option<models::FastOption>,
+    /// Notices the agent said while no turn ran, said with the next turn
+    /// (koru-ai D69; `Notice` belongs to a turn).
+    unsaid_notices: Vec<String>,
     next_request_id: u64,
     turns: BTreeMap<AgentTurnId, Turn>,
     active: Option<AgentTurnId>,
@@ -144,6 +147,7 @@ impl AcpControl {
             mode_config: None,
             unreported_mode: None,
             fast: None,
+            unsaid_notices: Vec::new(),
             next_request_id: 1,
             turns: BTreeMap::new(),
             active: None,
@@ -965,8 +969,11 @@ impl AgentControl for AcpControl {
         if self.capabilities.is_none() || self.active.is_some() {
             return Err(invalid_state(ProviderStage::Submit));
         }
-        // Reserve the start and attachment acknowledgements before accepting.
-        if self.events.len() + 1 + input.attachments.len() > self.config.event_capacity {
+        // Reserve the start, the notices said before it and the attachment
+        // acknowledgements before accepting.
+        if self.events.len() + 1 + self.unsaid_notices.len() + input.attachments.len()
+            > self.config.event_capacity
+        {
             return Err(failure(
                 ErrorCode::Backpressure,
                 ProviderStage::Submit,
@@ -1006,6 +1013,13 @@ impl AgentControl for AcpControl {
             self.queue(AgentEvent::ModeChanged {
                 turn_id: input.turn_id,
                 mode,
+            })?;
+        }
+        // What the agent said before the turn is said first in it (D69).
+        for text in std::mem::take(&mut self.unsaid_notices) {
+            self.queue(AgentEvent::Notice {
+                turn_id: input.turn_id,
+                text,
             })?;
         }
         for attachment in input.attachments {

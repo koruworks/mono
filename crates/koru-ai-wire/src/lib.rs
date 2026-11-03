@@ -166,6 +166,10 @@ pub struct ChatTranscript {
     pub tool_policy: ChatToolPolicy,
     #[serde(default)]
     pub tool_activities: Vec<ToolActivity>,
+    /// A local agent's status lines beside its replies, in the order they
+    /// came (koru-ai D69).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<koru_ai_core::AgentNotice>,
     pub messages: Vec<Message>,
     pub blocks: Vec<MessageBlock>,
     pub pinned_documents: Vec<PinnedDocument>,
@@ -449,6 +453,12 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         activity: ToolActivity,
     },
+    /// A local agent's status line beside its reply, as the chat keeps it
+    /// (koru-ai D69): not part of the reply's text.
+    AgentNotice {
+        attempt_id: InferenceAttemptId,
+        notice: koru_ai_core::AgentNotice,
+    },
     /// A one-line fact about the attempt the surface shows and nothing
     /// stores: a local agent could not be reattached and a replacement was
     /// started with the conversation so far.
@@ -493,6 +503,7 @@ impl PublicAiEvent {
             | Self::ReasoningDelta { attempt_id, .. }
             | Self::Usage { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
+            | Self::AgentNotice { attempt_id, .. }
             | Self::WebSearch { attempt_id, .. }
             | Self::Citation { attempt_id, .. }
             | Self::Completed { attempt_id, .. }
@@ -555,6 +566,7 @@ impl TryFrom<AiEvent> for PublicAiEvent {
                 attempt_id,
                 activity,
             },
+            AiEvent::AgentNotice { attempt_id, notice } => Self::AgentNotice { attempt_id, notice },
             AiEvent::WebSearch {
                 attempt_id,
                 call_id,
@@ -865,6 +877,7 @@ mod tests {
                 workspace_ids: Vec::new(),
             },
             tool_activities: Vec::new(),
+            notices: Vec::new(),
             messages: Vec::new(),
             blocks: Vec::new(),
             pinned_documents: Vec::new(),
