@@ -1437,7 +1437,7 @@ picture — a PNG, JPEG, GIF, WebP or BMP file — open that step to see the
 picture itself under the file's name; Koru shows it straight from the file,
 so if the file has since been moved or deleted the step shows just its name. The
 composer footer keeps the
-incognito, globe and workspace controls against its left edge and approval plus
+globe and workspace controls against its left edge and approval plus
 model controls against its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
 during an active response. Pressing `Esc` twice does the same as the stop
@@ -1466,12 +1466,12 @@ then sends* the message, without pausing the rest of the queue. The queue
 belongs to its chat, so another chat shows its own, and it lives only in this
 window: closing or reloading the window empties it.
 
-The incognito button at the left end of the composer footer controls
-**Private chat**. Turn it on to keep agents and connected assistants from
-listing, searching, or reading that conversation.
+**Private chat** keeps agents and connected assistants from listing,
+searching, or reading a conversation. For now a new private chat cannot be
+started from the composer; a chat that is already private stays private.
 You still see it everywhere in Koru, including ordinary search, and the chat's
 own agent can still read the conversation it is answering. An incognito marker
-in the history row and the lit footer button show that the chat is private.
+in the history row shows that the chat is private.
 New chats are public to tools until you turn this setting on; a branch starts
 with its source chat's current setting and can then be changed independently.
 A pending change offers the same session-only action beside **Approve** and
@@ -1570,8 +1570,8 @@ for confirmation, with Cancel selected initially.
 Assistant response text selects like ordinary text across wrapped lines and
 Markdown blocks. Hold `Shift` with any arrow key to extend that selection;
 right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
-with its `Ctrl+L` hint. `Ctrl+L` adds the selection only while your typing
-cursor isn't in the message box.
+with its `Ctrl+L` hint. `Ctrl+L` adds the selection whenever the **Add to
+chat** button is showing, even while you are typing in the message box.
 Completed responses also offer icon actions for **Copy** (the exact Markdown),
 toggleable **Good** and **Bad**, **Branch**, **Store**, and **Link**. Branch opens a new durable chat
 containing the conversation through that response. Store asks for a
@@ -6142,7 +6142,8 @@ it the default for new chats.
 Every chat is kept, and **Chats** in the left column (`Alt+4`, the sparkle
 icon right of Tasks) lists them all: chats you pinned first, under **Pinned**,
 then the rest by their latest message, so a chat moves up when you send in it
-and again when its reply arrives. Each row says the chat's
+and again when its reply arrives; changing a chat's model, privacy, folder or
+tools doesn't move it. Each row says the chat's
 title, who answered it — an agent by its name, and the model under it when you
 picked one; the model for OpenAI and Ollama; *Qwen3 8B* for Koru — and how long
 ago it last moved. A private chat wears the detective mark.
@@ -6152,8 +6153,8 @@ works, an amber dot when it is waiting for your answer, and a blue dot when a
 reply arrived that you haven't seen; unread chats have bold titles until you
 open them. Opening a chat with something new takes you to the first message
 you haven't read, under a **NEW** line. Which chats you have seen is
-remembered on this device only. Hover a row, or move to it with the keyboard,
-to show **⋯** (Rename…, Pin, Delete) and the pin; click the pin to pin or
+remembered on this device only. Point at a row to show **⋯** (Rename…, Pin,
+Delete) and the pin; click the pin to pin or
 unpin the chat at once. In a chat, `Ctrl+Shift+↑` and `Ctrl+Shift+↓` (`⌘` on
 macOS) move to the chat above or below in the list, as long as your message
 box is empty.
@@ -6161,7 +6162,8 @@ box is empty.
 Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
 keyboard too: Up and Down move, Home and End jump to either end, Enter opens,
-**Delete asks** before deleting, and Escape hands the keyboard back. Right-click
+**Delete asks** before deleting, the Menu key or `Shift+F10` opens the row's
+menu, and Escape hands the keyboard back. Right-click
 a row, or click its **⋯**, for **Rename…**, **Pin** and **Delete chat**. If the chat's agent could not be
 stopped, the chat stays and says so — delete it again.
 
