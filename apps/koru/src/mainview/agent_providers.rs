@@ -64,6 +64,7 @@ pub(crate) fn setup_guide(key: &str) -> Option<&'static str> {
         "qwen" => "https://github.com/QwenLM/qwen-code",
         "antigravity" => "https://antigravity.google/docs",
         "muse" => "https://dev.meta.ai/products/muse-code",
+        "devin" => "https://docs.devin.ai/cli",
         _ => return None,
     })
 }

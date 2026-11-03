@@ -74,88 +74,128 @@ pub(crate) struct ModeRow {
     pub full_access: bool,
 }
 
-/// The modes Koru words: the agent's kind, the mode's id, its title, its
-/// line, its icon, and its [`Role`].
-const KNOWN: &[(&str, &str, Words, Words, char, Role)] = &[
+/// The modes Koru knows: the agent's kind, the mode's id, its title, its
+/// line, its icon, and its [`Role`]. A title or line that is `None` stays
+/// the agent's own — a mode can need Koru's role without Koru's words.
+const KNOWN: &[(&str, &str, Option<Words>, Option<Words>, char, Role)] = &[
     (
         "agent-claude",
         "default",
-        Words::AiAgentModeAskFirst,
-        Words::AiAgentModeAskFirstHelp,
+        Some(Words::AiAgentModeAskFirst),
+        Some(Words::AiAgentModeAskFirstHelp),
         icons::QUESTION,
         Role::Ask,
     ),
     (
         "agent-claude",
         "acceptEdits",
-        Words::AiAgentModeAcceptEdits,
-        Words::AiAgentModeAcceptEditsHelp,
+        Some(Words::AiAgentModeAcceptEdits),
+        Some(Words::AiAgentModeAcceptEditsHelp),
         icons::PENCIL,
         Role::Other,
     ),
     (
         "agent-claude",
         "plan",
-        Words::AiAgentModePlan,
-        Words::AiAgentModePlanHelp,
+        Some(Words::AiAgentModePlan),
+        Some(Words::AiAgentModePlanHelp),
         icons::LIST_CHECKS,
         Role::Other,
     ),
     (
         "agent-claude",
         "auto",
-        Words::AiAgentModeAuto,
-        Words::AiAgentModeAutoHelp,
+        Some(Words::AiAgentModeAuto),
+        Some(Words::AiAgentModeAutoHelp),
         icons::SPARKLE,
         Role::Auto,
     ),
     (
         "agent-claude",
         "bypassPermissions",
-        Words::AiAgentModeFullAccess,
-        Words::AiAgentModeFullAccessHelp,
+        Some(Words::AiAgentModeFullAccess),
+        Some(Words::AiAgentModeFullAccessHelp),
         icons::WARNING,
         Role::Full,
     ),
     (
         "agent-codex",
         "ask",
-        Words::AiAgentModeAskApproval,
-        Words::AiAgentModeAskApprovalHelp,
+        Some(Words::AiAgentModeAskApproval),
+        Some(Words::AiAgentModeAskApprovalHelp),
         icons::QUESTION,
         Role::Ask,
     ),
     (
         "agent-codex",
         "auto-review",
-        Words::AiAgentModeApproveForMe,
-        Words::AiAgentModeApproveForMeHelp,
+        Some(Words::AiAgentModeApproveForMe),
+        Some(Words::AiAgentModeApproveForMeHelp),
         icons::ROBOT,
         Role::Auto,
     ),
     (
         "agent-codex",
         "full-access",
-        Words::AiAgentModeFullAccess,
-        Words::AiAgentModeCodexFullAccessHelp,
+        Some(Words::AiAgentModeFullAccess),
+        Some(Words::AiAgentModeCodexFullAccessHelp),
         icons::WARNING,
         Role::Full,
     ),
     (
         "agent-opencode",
         "build",
-        Words::AiAgentModeBuild,
-        Words::AiAgentModeBuildHelp,
+        Some(Words::AiAgentModeBuild),
+        Some(Words::AiAgentModeBuildHelp),
         icons::WRENCH,
         Role::Ask,
     ),
     (
         "agent-opencode",
         "plan",
-        Words::AiAgentModePlan,
-        Words::AiAgentModeOpenCodePlanHelp,
+        Some(Words::AiAgentModePlan),
+        Some(Words::AiAgentModeOpenCodePlanHelp),
         icons::LIST_CHECKS,
         Role::Other,
+    ),
+    // Devin over ACP (`devin acp`, D51). It has no mode that asks before
+    // an edit: *Code* (`accept-edits`) is what it starts in and what
+    // *Manual* means for it. Its `ask` only answers questions and never
+    // edits, so it is not *Ask first*: it keeps Devin's own name and line.
+    // Koru names the rest and Devin's own line explains them, but for
+    // `bypass`, whose *Runs everything without asking.* is exactly it.
+    (
+        "agent-devin",
+        "accept-edits",
+        Some(Words::AiAgentModeAcceptEdits),
+        None,
+        icons::PENCIL,
+        Role::Other,
+    ),
+    (
+        "agent-devin",
+        "smart",
+        Some(Words::AiAgentModeAuto),
+        None,
+        icons::SPARKLE,
+        Role::Auto,
+    ),
+    ("agent-devin", "ask", None, None, icons::FADERS, Role::Other),
+    (
+        "agent-devin",
+        "plan",
+        Some(Words::AiAgentModePlan),
+        None,
+        icons::LIST_CHECKS,
+        Role::Other,
+    ),
+    (
+        "agent-devin",
+        "bypass",
+        Some(Words::AiAgentModeFullAccess),
+        Some(Words::AiAgentModeFullAccessHelp),
+        icons::WARNING,
+        Role::Full,
     ),
 ];
 
@@ -325,10 +365,17 @@ pub(crate) fn rows(
                 .iter()
                 .find(|known| known.0 == agent.as_str() && known.1 == mode.id)
             {
+                // Koru's words where it has them, the agent's own where it
+                // does not (Devin's, D51); the role is Koru's either way.
                 Some((_, _, title, help, icon, role)) => ModeRow {
                     id: mode.id.clone(),
-                    title: t(lang, *title).to_owned(),
-                    help: Some(t(lang, *help).to_owned()),
+                    title: title.map_or_else(
+                        || mode.name.clone().unwrap_or_else(|| mode.id.clone()),
+                        |title| t(lang, title).to_owned(),
+                    ),
+                    help: help
+                        .map(|help| t(lang, help).to_owned())
+                        .or_else(|| mode.description.clone()),
                     icon: *icon,
                     full_access: *role == Role::Full,
                 },

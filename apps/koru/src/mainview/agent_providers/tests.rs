@@ -98,7 +98,7 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
 }
 
 /// **The page lists every coding agent Koru supports** — the *Agents ›*
-/// menu's nine, in its order — each with a setup guide and on by default.
+/// menu's ten, in its order — each with a setup guide and on by default.
 #[test]
 fn the_page_lists_every_coding_agent_with_a_guide() {
     let mut view = MainView::new();
@@ -115,7 +115,8 @@ fn the_page_lists_every_coding_agent_with_a_guide() {
             "GitHub Copilot",
             "Qwen Code",
             "Antigravity",
-            "Muse"
+            "Muse",
+            "Devin"
         ]
     );
     for row in &rows {

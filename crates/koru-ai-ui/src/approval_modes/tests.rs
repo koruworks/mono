@@ -489,3 +489,85 @@ fn the_registry_chord_is_shift_tab_in_the_chat_layer() {
         Some(koru_keys::ShortcutId::Outdent)
     );
 }
+
+/// Devin's five, as `devin acp` lists them (D51): *Code* is its default.
+fn devin_modes() -> ListedModes {
+    ListedModes {
+        modes: vec![
+            mode(
+                "accept-edits",
+                Some("Code"),
+                Some("Writes code and edits files"),
+            ),
+            mode("smart", Some("Smart"), Some("Approves what is safe")),
+            mode("ask", Some("Ask"), Some("Answers questions; never edits")),
+            mode("plan", Some("Plan"), Some("Plans before it acts")),
+            mode(
+                "bypass",
+                Some("Bypass Permissions"),
+                Some("Runs without asking"),
+            ),
+        ],
+        default: Some("accept-edits".into()),
+    }
+}
+
+/// **Devin's modes are read for what they are** (D51): its `ask` answers
+/// questions and never edits, so it is not *Ask first* and keeps Devin's
+/// own words; its `bypass` is *Full access* — warning colour, never a
+/// Shift+Tab stop; *Manual* starts it in `accept-edits`, as it has no mode
+/// that asks before an edit; *Auto* is `smart` and *Yolo* is `bypass`.
+#[test]
+fn devins_modes_map_ask_bypass_and_manual_correctly() {
+    use NewChatPermission::{Auto, Manual, Yolo};
+    let devin = agent("agent-devin");
+    let listed = devin_modes();
+    assert_ne!(role_of(&devin, "ask"), Role::Ask, "ask is not Manual");
+    assert_eq!(role_of(&devin, "ask"), Role::Other);
+    assert_eq!(role_of(&devin, "bypass"), Role::Full);
+    assert!(is_full_access(&devin, "bypass"));
+    assert_eq!(role_of(&devin, "smart"), Role::Auto);
+    assert!(has_auto_mode(&devin, &listed));
+
+    for other in [Manual, Auto, Yolo] {
+        assert_eq!(
+            default_mode(&devin, &listed, Manual, other).as_deref(),
+            Some("accept-edits"),
+            "Manual, whatever the other setting"
+        );
+    }
+    assert_eq!(
+        default_mode(&devin, &listed, Auto, Manual).as_deref(),
+        Some("smart")
+    );
+    assert_eq!(
+        default_mode(&devin, &listed, Yolo, Manual).as_deref(),
+        Some("bypass")
+    );
+
+    let rows = rows(Lang::En, &devin, &listed);
+    let titles: Vec<_> = rows.iter().map(|row| row.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Accept edits", "Auto", "Ask", "Plan", "Full access"]
+    );
+    assert_eq!(
+        rows[2].help.as_deref(),
+        Some("Answers questions; never edits"),
+        "Devin's own line"
+    );
+    assert_eq!(
+        rows[0].help.as_deref(),
+        Some("Writes code and edits files"),
+        "Koru's name, Devin's own explanation"
+    );
+    assert!(rows[4].full_access && rows[4].icon == icons::WARNING);
+    assert_eq!(rows.iter().filter(|row| row.full_access).count(), 1);
+    // Shift+Tab never steps onto it.
+    let mut at = Some("plan");
+    for _ in 0..rows.len() * 2 {
+        let next = next_mode(&rows, at).unwrap();
+        assert!(!next.full_access);
+        at = Some(next.id.as_str());
+    }
+}
