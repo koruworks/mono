@@ -22,25 +22,18 @@ pub trait AiPersistence: Send {
     /// The title only: a rename is not activity, so the chat keeps its place
     /// in a list ordered by recency.
     fn rename_chat(&mut self, chat: ChatId, title: &str) -> Result<bool, AiError>;
-    fn update_chat_model(
-        &mut self,
-        chat: ChatId,
-        model: &ModelSelection,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError>;
-    fn set_chat_private(
-        &mut self,
-        chat: ChatId,
-        private: bool,
-        updated_at: Timestamp,
-    ) -> Result<Option<Chat>, AiError>;
+    /// The chat's model. **Not activity** (koru-ai D85, the user's call
+    /// 2026-11-03): only a message sent and a reply ending move a chat in
+    /// the Chats list, so this leaves `updated_at` alone.
+    fn update_chat_model(&mut self, chat: ChatId, model: &ModelSelection) -> Result<bool, AiError>;
+    /// Private or not. Not activity, as the model is not.
+    fn set_chat_private(&mut self, chat: ChatId, private: bool) -> Result<Option<Chat>, AiError>;
     /// The folder a local agent works in for this chat; `None` returns the
-    /// chat to the home-folder default.
+    /// chat to the home-folder default. Not activity.
     fn set_chat_working_folder(
         &mut self,
         chat: ChatId,
         folder: Option<&str>,
-        updated_at: Timestamp,
     ) -> Result<Option<Chat>, AiError>;
     /// The approval mode a local agent runs the chat's next message in
     /// (koru-ai D7); `None` is the agent's own default. Like a rename, it
@@ -66,12 +59,14 @@ pub trait AiPersistence: Send {
         pinned_at: Option<Timestamp>,
     ) -> Result<Option<Chat>, AiError>;
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError>;
+    /// The chat's tools and the workspaces they may reach; `granted_at`
+    /// stamps the grants. Not activity: the chat keeps its place.
     fn replace_chat_tool_policy(
         &mut self,
         chat: ChatId,
         mode: ToolMode,
         workspace_ids: &[WorkspaceId],
-        updated_at: Timestamp,
+        granted_at: Timestamp,
     ) -> Result<Option<ChatToolPolicy>, AiError>;
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError>;
     fn chats(&self) -> Result<Vec<Chat>, AiError>;

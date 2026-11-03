@@ -29,8 +29,10 @@
 //! person's or the agent's — newest first ([`sort_for_list`], koru-ai D85).
 //! A chat moves when a message is sent in it and again when its reply
 //! arrives: the host says so ([`ChatsSurface::touch`]) and the next listing
-//! confirms it, because the service moves `updated_at` on both. A rename and
-//! a pin are not activity.
+//! confirms it, because the service moves `updated_at` on both — and on
+//! nothing else: only messages are activity (the user's call, 2026-11-03).
+//! A rename, a pin, and a change of model, privacy, folder or tools leave
+//! the chat where it is.
 //!
 //! ## Three rules it is built under
 //!
@@ -833,8 +835,8 @@ impl ChatStep {
 /// **The list's order** (D85), one function for every host and for the
 /// keys that step through it: the pinned chats first, the oldest pin
 /// first (D80), then the rest by their last activity — the newest message,
-/// the person's or the agent's — newest first. Pinning is not activity,
-/// and neither is a rename.
+/// the person's or the agent's — newest first. Only messages are
+/// activity: not a pin, a rename, or a change of the chat's settings.
 pub fn sort_for_list(chats: &mut [Chat]) {
     chats.sort_by(|a, b| match (a.pinned_at, b.pinned_at) {
         (Some(a_pin), Some(b_pin)) => a_pin

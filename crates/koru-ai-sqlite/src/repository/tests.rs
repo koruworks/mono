@@ -59,14 +59,14 @@ fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     );
 
     let updated = repository
-        .set_chat_working_folder(chat_id, Some("D:/work/koru"), at(10))
+        .set_chat_working_folder(chat_id, Some("D:/work/koru"))
         .unwrap()
         .unwrap();
     assert_eq!(
         updated.agent_working_folder.as_deref(),
         Some("D:/work/koru")
     );
-    assert_eq!(updated.updated_at, at(10));
+    assert_eq!(updated.updated_at, at(0), "not activity (D85)");
     let listed = repository.chats().unwrap();
     assert_eq!(
         listed[0].agent_working_folder.as_deref(),
@@ -74,13 +74,13 @@ fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     );
 
     let cleared = repository
-        .set_chat_working_folder(chat_id, None, at(20))
+        .set_chat_working_folder(chat_id, None)
         .unwrap()
         .unwrap();
     assert!(cleared.agent_working_folder.is_none());
     assert!(
         repository
-            .set_chat_working_folder(ChatId::new(), None, at(30))
+            .set_chat_working_folder(ChatId::new(), None)
             .unwrap()
             .is_none()
     );
@@ -139,12 +139,9 @@ fn chat_privacy_is_durable_and_visible_in_cheap_overviews() {
     repository.create_chat(&chat(chat_id, 0)).unwrap();
     assert!(!repository.chat(chat_id).unwrap().unwrap().private);
 
-    let updated = repository
-        .set_chat_private(chat_id, true, at(10))
-        .unwrap()
-        .unwrap();
+    let updated = repository.set_chat_private(chat_id, true).unwrap().unwrap();
     assert!(updated.private);
-    assert_eq!(updated.updated_at, at(10));
+    assert_eq!(updated.updated_at, at(0), "not activity (D85)");
     assert!(repository.chat(chat_id).unwrap().unwrap().private);
 
     let overviews = repository.chat_overviews().unwrap();
@@ -603,20 +600,66 @@ fn chat_model_update_is_durable_and_does_not_touch_the_title() {
         requested_model: "gpt-next".into(),
         default_reasoning: ReasoningChoice::Level(ReasoningLevel::High),
     };
-    assert!(
-        repository
-            .update_chat_model(chat_id, &selected, at(12))
-            .unwrap()
-    );
+    assert!(repository.update_chat_model(chat_id, &selected).unwrap());
     let updated = repository.chat(chat_id).unwrap().unwrap();
     assert_eq!(updated.title, chat(chat_id, 0).title);
     assert_eq!(updated.current_model, selected);
-    assert_eq!(updated.updated_at, at(12));
+    assert_eq!(
+        updated.updated_at,
+        chat(chat_id, 0).updated_at,
+        "not activity (D85)"
+    );
     assert!(
         !repository
-            .update_chat_model(ChatId::new(), &model(), at(13))
+            .update_chat_model(ChatId::new(), &model())
             .unwrap()
     );
+}
+
+/// **Only messages count as activity** (koru-ai D85, the user's call
+/// 2026-11-03): changing an older chat's model, privacy, folder or tools
+/// leaves it below the newer one; a message sent in it moves it up.
+#[test]
+fn only_a_message_moves_a_chat_in_the_list() {
+    let mut repository = Repository::in_memory().unwrap();
+    let older = ChatId::new();
+    let newer = ChatId::new();
+    repository.create_chat(&chat(older, 1)).unwrap();
+    repository.create_chat(&chat(newer, 2)).unwrap();
+    let order = |repository: &Repository| {
+        repository
+            .chats()
+            .unwrap()
+            .into_iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&repository), [newer, older]);
+
+    let other = ModelSelection {
+        provider: AiProviderId::parse(AiProviderId::OPENAI).unwrap(),
+        requested_model: "gpt-other".into(),
+        default_reasoning: ReasoningChoice::Default,
+    };
+    assert!(repository.update_chat_model(older, &other).unwrap());
+    repository.set_chat_private(older, true).unwrap().unwrap();
+    repository
+        .set_chat_working_folder(older, Some("D:/work"))
+        .unwrap()
+        .unwrap();
+    repository
+        .replace_chat_tool_policy(older, ToolMode::Auto, &[], at(50))
+        .unwrap()
+        .unwrap();
+    assert_eq!(order(&repository), [newer, older], "none of it is activity");
+    assert_eq!(
+        repository.chat(older).unwrap().unwrap().updated_at,
+        at(1),
+        "its *when* has not moved"
+    );
+
+    complete_turn(&mut repository, older, 0, "Moving up", 60);
+    assert_eq!(order(&repository), [older, newer], "a message is");
 }
 
 /// **A reply that ends is activity** (koru-ai D85): the chat's place in the
@@ -968,10 +1011,7 @@ fn context_measurements_and_provenance_commit_atomically_before_provider_work() 
             .markdown,
         "Reusable answer"
     );
-    repository
-        .set_chat_private(chat_id, true, at(6))
-        .unwrap()
-        .unwrap();
+    repository.set_chat_private(chat_id, true).unwrap().unwrap();
     assert!(
         repository
             .message_block_context(source_block)
@@ -1308,10 +1348,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             ],
         )
         .unwrap();
-    repository
-        .set_chat_private(chat_id, true, at(3))
-        .unwrap()
-        .unwrap();
+    repository.set_chat_private(chat_id, true).unwrap().unwrap();
 
     let page = repository
         .search(&AiSearchQuery {
@@ -1359,12 +1396,8 @@ fn chat_tools_apply_one_privacy_lens_to_list_search_and_read() {
         repository.create_chat(&value).unwrap();
         complete_turn(&mut repository, id, 0, "sharedneedle answer", offset + 1);
     }
-    repository
-        .set_chat_private(private_id, true, at(40))
-        .unwrap();
-    repository
-        .set_chat_private(calling_id, true, at(41))
-        .unwrap();
+    repository.set_chat_private(private_id, true).unwrap();
+    repository.set_chat_private(calling_id, true).unwrap();
 
     let lens = ChatAccessLens::ToolSurface {
         calling_chat: Some(calling_id),

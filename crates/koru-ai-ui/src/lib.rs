@@ -2968,8 +2968,10 @@ impl ChatSurface {
                 self.waiting = false;
                 // The picker stays open over a model chosen in it (D66): its
                 // footer becomes the landed model's, and the list is kept
-                // in range around the chosen row.
-                self.remember_chat(&chat, true);
+                // in range around the chosen row. Not promoted: only a
+                // message is activity (D85), and the service leaves
+                // `updated_at` alone.
+                self.remember_chat(&chat, false);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {
@@ -2983,7 +2985,8 @@ impl ChatSurface {
             }
             Update::PrivacyUpdated(chat) => {
                 self.waiting = self.message_on_its_way();
-                self.remember_chat(&chat, true);
+                // Not activity (D85): the chat keeps its place.
+                self.remember_chat(&chat, false);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {
@@ -3013,7 +3016,8 @@ impl ChatSurface {
             }
             Update::FolderUpdated(chat) => {
                 self.waiting = self.message_on_its_way();
-                self.remember_chat(&chat, true);
+                // Not activity (D85): the chat keeps its place.
+                self.remember_chat(&chat, false);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
                 {

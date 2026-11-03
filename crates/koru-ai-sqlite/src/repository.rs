@@ -190,45 +190,37 @@ impl AiPersistence for Repository {
             .map_err(storage_failed)
     }
 
-    fn update_chat_model(
-        &mut self,
-        chat: ChatId,
-        model: &ModelSelection,
-        updated_at: Timestamp,
-    ) -> Result<bool, AiError> {
+    // **Only messages move a chat** (koru-ai D85, the user's call
+    // 2026-11-03): `updated_at_ms` is the Chats list's order, its row's
+    // *when*, and what the unread mark compares, so a change of model,
+    // privacy, folder or tools leaves it alone — as a rename and a pin do.
+    // A message sent (`begin_turn`, `append_user_message`, `begin_retry`)
+    // and a reply ending (`apply_event`) are what move it.
+    fn update_chat_model(&mut self, chat: ChatId, model: &ModelSelection) -> Result<bool, AiError> {
         self.connection
             .execute(
                 "UPDATE chats
                     SET current_provider = ?2,
                         current_model = ?3,
-                        current_reasoning = ?4,
-                        updated_at_ms = max(updated_at_ms, ?5)
+                        current_reasoning = ?4
                   WHERE id = ?1",
                 params![
                     chat.to_storage(),
                     model.provider.as_str(),
                     model.requested_model,
                     model.default_reasoning.as_token(),
-                    updated_at.millis(),
                 ],
             )
             .map(|updated| updated != 0)
             .map_err(storage_failed)
     }
 
-    fn set_chat_private(
-        &mut self,
-        chat: ChatId,
-        private: bool,
-        updated_at: Timestamp,
-    ) -> Result<Option<Chat>, AiError> {
+    fn set_chat_private(&mut self, chat: ChatId, private: bool) -> Result<Option<Chat>, AiError> {
         let updated = self
             .connection
             .execute(
-                "UPDATE chats
-                    SET private = ?2, updated_at_ms = max(updated_at_ms, ?3)
-                  WHERE id = ?1",
-                params![chat.to_storage(), private, updated_at.millis()],
+                "UPDATE chats SET private = ?2 WHERE id = ?1",
+                params![chat.to_storage(), private],
             )
             .map_err(storage_failed)?;
         if updated == 0 {
@@ -241,15 +233,12 @@ impl AiPersistence for Repository {
         &mut self,
         chat: ChatId,
         folder: Option<&str>,
-        updated_at: Timestamp,
     ) -> Result<Option<Chat>, AiError> {
         let updated = self
             .connection
             .execute(
-                "UPDATE chats
-                    SET agent_working_folder = ?2, updated_at_ms = max(updated_at_ms, ?3)
-                  WHERE id = ?1",
-                params![chat.to_storage(), folder, updated_at.millis()],
+                "UPDATE chats SET agent_working_folder = ?2 WHERE id = ?1",
+                params![chat.to_storage(), folder],
             )
             .map_err(storage_failed)?;
         if updated == 0 {
@@ -321,7 +310,7 @@ impl AiPersistence for Repository {
         chat: ChatId,
         mode: ToolMode,
         workspace_ids: &[WorkspaceId],
-        updated_at: Timestamp,
+        granted_at: Timestamp,
     ) -> Result<Option<ChatToolPolicy>, AiError> {
         let mut workspace_ids = workspace_ids.to_vec();
         workspace_ids.sort_unstable();
@@ -329,14 +318,8 @@ impl AiPersistence for Repository {
         let transaction = self.connection.transaction().map_err(storage_failed)?;
         let updated = transaction
             .execute(
-                "UPDATE chats
-                    SET tool_mode = ?2, updated_at_ms = max(updated_at_ms, ?3)
-                  WHERE id = ?1",
-                params![
-                    chat.to_storage(),
-                    tool_mode_token(mode),
-                    updated_at.millis()
-                ],
+                "UPDATE chats SET tool_mode = ?2 WHERE id = ?1",
+                params![chat.to_storage(), tool_mode_token(mode)],
             )
             .map_err(storage_failed)?;
         if updated == 0 {
@@ -357,7 +340,7 @@ impl AiPersistence for Repository {
                     params![
                         chat.to_storage(),
                         workspace.to_storage(),
-                        updated_at.millis()
+                        granted_at.millis()
                     ],
                 )
                 .map_err(storage_failed)?;

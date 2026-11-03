@@ -941,6 +941,34 @@ mod tests {
         assert_eq!(titles, ["One", "Second"]);
     }
 
+    /// **Only messages are activity** (koru-ai D85, the user's call
+    /// 2026-11-03): a chat whose model, privacy or folder changed keeps its
+    /// place too.
+    #[test]
+    fn a_chats_settings_changing_keeps_its_place() {
+        let mut surface = ready(SurfaceMode::ContextPane);
+        let (one, two) = (chat("One"), chat("Two"));
+        surface.chats = vec![one.clone(), two.clone()];
+        let titles = |surface: &ChatSurface| {
+            surface
+                .chats
+                .iter()
+                .map(|c| c.title.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut changed = two.clone();
+        changed.current_model.requested_model = "gpt-other".into();
+        surface.apply_update(Update::ModelUpdated(changed.clone(), None));
+        assert_eq!(titles(&surface), ["One", "Two"], "a model is not activity");
+        changed.private = true;
+        surface.apply_update(Update::PrivacyUpdated(changed.clone()));
+        assert_eq!(titles(&surface), ["One", "Two"], "nor is privacy");
+        changed.agent_working_folder = Some("D:/work".into());
+        surface.apply_update(Update::FolderUpdated(changed));
+        assert_eq!(titles(&surface), ["One", "Two"], "nor a folder");
+        assert!(surface.chats[1].private, "the row still takes the change");
+    }
+
     /// **A pin goes through the pin command and lands in place** (AI
     /// schema 12): the chat keeps its place, and the list reads its pin
     /// time; unpinning clears it.

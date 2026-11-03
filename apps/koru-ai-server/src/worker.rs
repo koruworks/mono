@@ -2440,7 +2440,7 @@ impl WorkerState {
         }
         if !self
             .repository
-            .update_chat_model(chat_id, &model, Timestamp::now())
+            .update_chat_model(chat_id, &model)
             .map_err(ai_failure)?
         {
             return Err(not_found());
@@ -2466,7 +2466,7 @@ impl WorkerState {
         authorize(&context, AiScope::Chat)?;
         let chat = self
             .repository
-            .set_chat_private(chat_id, request.private, Timestamp::now())
+            .set_chat_private(chat_id, request.private)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(UpdateChatPrivacyResponse { chat })
@@ -2577,7 +2577,7 @@ impl WorkerState {
         };
         let chat = self
             .repository
-            .set_chat_working_folder(chat_id, folder, Timestamp::now())
+            .set_chat_working_folder(chat_id, folder)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(koru_ai_wire::UpdateChatFolderResponse { chat })
