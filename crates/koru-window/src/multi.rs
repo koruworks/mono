@@ -236,6 +236,13 @@ pub trait MultiWindowApp {
         self.right_click(key, engine, x, y)
     }
 
+    /// The mouse's Back (`-1`) or Forward (`+1`) button over window `key` —
+    /// [`WindowApp::navigate_history`](crate::WindowApp::navigate_history),
+    /// per window.
+    fn navigate_history(&mut self, _key: WindowKey, _delta: i32) -> bool {
+        false
+    }
+
     fn right_click(&mut self, _key: WindowKey, _engine: &mut TextEngine, _x: f32, _y: f32) -> bool {
         false
     }
@@ -469,6 +476,10 @@ impl<M: MultiWindowApp> DispatchApp for WindowTarget<'_, M> {
 
     fn context_menu(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
         self.app.context_menu(self.key, engine, x, y)
+    }
+
+    fn navigate_history(&mut self, delta: i32) -> bool {
+        self.app.navigate_history(self.key, delta)
     }
 
     fn physical_key_pressed(

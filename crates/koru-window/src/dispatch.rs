@@ -220,6 +220,7 @@ pub(crate) trait DispatchApp {
     fn scroll_by(&mut self, delta: f32, mods: ModifiersState) -> bool;
     fn rich_mouse(&mut self, engine: &mut TextEngine, event: RichMouseEvent) -> bool;
     fn context_menu(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool;
+    fn navigate_history(&mut self, delta: i32) -> bool;
 
     #[allow(clippy::too_many_arguments)]
     fn physical_key_pressed(
@@ -363,6 +364,10 @@ impl<A: crate::WindowApp> DispatchApp for Single<'_, A> {
 
     fn context_menu(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
         self.0.context_menu(engine, x, y)
+    }
+
+    fn navigate_history(&mut self, delta: i32) -> bool {
+        self.0.navigate_history(delta)
     }
 
     fn physical_key_pressed(
@@ -889,6 +894,20 @@ pub(crate) fn deliver<T: DispatchApp, H: WindowHandle>(
                 },
             );
             Aftermath::invalidate(changed)
+        }
+
+        // The two thumb buttons walk the app's history, as they do in every
+        // browser — a terminal opting into rich mouse included, since no
+        // terminal protocol reports them. They fell into the arm below and
+        // were dropped until the standalone Koru AI window had a history.
+        Input::Mouse {
+            state: ElementState::Pressed,
+            button: button @ (MouseButton::Back | MouseButton::Forward),
+        } => {
+            let delta = if button == MouseButton::Back { -1 } else { 1 };
+            let changed = app.navigate_history(delta);
+            perform_request(app, state, handle);
+            Aftermath::settled(changed)
         }
 
         Input::Mouse { .. } => Aftermath::nothing(),
