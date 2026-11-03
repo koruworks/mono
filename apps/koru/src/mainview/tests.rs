@@ -8670,6 +8670,51 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     assert_eq!(v.tooltip.label(), Some("Tasks"));
 }
 
+/// **No tooltip while a rail view is carried** (the user's screenshot,
+/// 2026-11-03: *Chats* hanging over the rail while a square was dragged).
+/// The press takes the one showing down, no move of the drag — over every
+/// square on the way — raises one, and neither does the release: the next
+/// is asked for by a move after it.
+#[test]
+fn no_tooltip_shows_while_a_rail_view_is_carried() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, mut w) = on_document();
+    v.toggle_sidebar();
+    v.sidebar.advance(Instant::now() + Duration::from_secs(5));
+    v.relayout();
+    let (x, y) = mode_icon(&v, NavigatorMode::Chats).centre();
+    View::mouse_move(&mut v, x, y);
+    assert_eq!(v.tooltip.label(), Some(NavigatorMode::Chats.label()));
+
+    v.mouse_down(&mut w.ws, x, y, false);
+    assert!(v.explore.rail_dragging());
+    assert!(!v.tooltip.is_present(), "the press takes it down");
+    // Up the rail to the top, a few pixels at a time, and back down past
+    // where it started: over every square the run has.
+    let top = mode_icon(&v, NavigatorMode::Documents).y;
+    let mut at = y;
+    while at > top {
+        at -= 3.0;
+        View::mouse_move(&mut v, x, at);
+        assert!(!v.tooltip.is_present(), "carried up, at {at}");
+    }
+    while at < y + 80.0 {
+        at += 3.0;
+        View::mouse_move(&mut v, x, at);
+        assert!(!v.tooltip.is_present(), "carried down, at {at}");
+    }
+    v.mouse_up(&mut w.ws);
+    assert!(!v.explore.rail_dragging());
+    assert!(!v.tooltip.is_present(), "the release asks for none");
+    let (fx, fy) = mode_icon(&v, NavigatorMode::Files).centre();
+    View::mouse_move(&mut v, fx, fy);
+    assert_eq!(
+        v.tooltip.label(),
+        Some(NavigatorMode::Files.label()),
+        "a move after the release asks again"
+    );
+}
+
 #[test]
 fn the_plus_tooltip_names_add_and_its_own_shortcut() {
     let (v, _workspace) = container();

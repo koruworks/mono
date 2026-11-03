@@ -1534,6 +1534,13 @@ impl MainView {
         &mut self.focused_group_mut().drag
     }
 
+    /// Whether the pointer is carrying something by the reorder gesture the
+    /// tab strip and the rail share: a tab along its strip or torn off it,
+    /// or a view's square down the rail. What keeps tooltips down.
+    fn carrying(&self) -> bool {
+        self.group_drag().is_some() || self.pane_drag.is_some() || self.explore.rail_dragging()
+    }
+
     /// Fold a bool-returning visit across every tab of every pane group. The
     /// bools OR together: any tab reporting a change is a change. This is the
     /// paned spelling of what a single strip used to do with
@@ -16282,7 +16289,7 @@ impl MainView {
     }
 
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
-        if self.group_drag().is_some() || self.sidebar.animating() {
+        if self.carrying() || self.sidebar.animating() {
             return None;
         }
         let cap = self.drawn_caption();
@@ -16362,7 +16369,7 @@ impl MainView {
     /// rail order, so the icon's index is its slot. Keys past the caption's
     /// and well short of the history rows' 100+.
     fn navigator_mode_tooltip(&self, x: f32, y: f32) -> Option<TooltipContent> {
-        if self.group_drag().is_some() || self.sidebar.animating() {
+        if self.carrying() || self.sidebar.animating() {
             return None;
         }
         self.explore
@@ -16435,6 +16442,15 @@ impl MainView {
         let thumb_tone = self.tab_scrollbar_active_at(self.pointer.0, self.pointer.1)
             != self.tab_scrollbar_active_at(x, y);
         self.pointer = (x, y);
+        // **Nothing is explained while something is carried** (the user's
+        // screenshot, 2026-11-03: *Chats* hanging over the rail while a
+        // view's square was dragged). The press dismissed whatever was
+        // showing; this keeps every move of a rail or tab drag from leaving
+        // one up, whatever raised it. None returns until the pointer is let
+        // go and moves again: the release itself asks nothing.
+        if self.carrying() {
+            self.tooltip.clear();
+        }
         if let Some(dialog) = self.error.as_mut() {
             return dialog.mouse_move(&mut self.engine, self.viewport, x, y);
         }
