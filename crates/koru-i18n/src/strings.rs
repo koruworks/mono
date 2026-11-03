@@ -352,6 +352,10 @@ pub enum Key {
     AiQueueRemove,
     AiQueueMore,
     AiDocumentLinkUntitled,
+    // A reply link's card (koru-ai D95): its two buttons, and what copy says.
+    AiLinkCopy,
+    AiLinkOpen,
+    AiLinkCopied,
     AiTooManyDocuments,
     AiOpenDocumentFailed,
     // Esc twice to stop a turn, and the empty chat's greetings.
@@ -2831,7 +2835,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1972] = [
+    pub const ALL: [Key; 1975] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3075,6 +3079,9 @@ impl Key {
         Key::AiQueueRemove,
         Key::AiQueueMore,
         Key::AiDocumentLinkUntitled,
+        Key::AiLinkCopy,
+        Key::AiLinkOpen,
+        Key::AiLinkCopied,
         Key::AiTooManyDocuments,
         Key::AiOpenDocumentFailed,
         Key::AiPressEscAgainToStop,
@@ -7584,6 +7591,39 @@ pub const ROWS: &[Row] = &[
         ar: "مستند",
         zh_hans: "文档",
         ja: "ドキュメント",
+    },
+    Row {
+        key: Key::AiLinkCopy,
+        en: "Copy link",
+        es: "Copiar enlace",
+        pt_br: "Copiar link",
+        de: "Link kopieren",
+        fr: "Copier le lien",
+        ar: "نسخ الرابط",
+        zh_hans: "复制链接",
+        ja: "リンクをコピー",
+    },
+    Row {
+        key: Key::AiLinkOpen,
+        en: "Open link",
+        es: "Abrir enlace",
+        pt_br: "Abrir link",
+        de: "Link öffnen",
+        fr: "Ouvrir le lien",
+        ar: "فتح الرابط",
+        zh_hans: "打开链接",
+        ja: "リンクを開く",
+    },
+    Row {
+        key: Key::AiLinkCopied,
+        en: "Link copied",
+        es: "Enlace copiado",
+        pt_br: "Link copiado",
+        de: "Link kopiert",
+        fr: "Lien copié",
+        ar: "تم نسخ الرابط",
+        zh_hans: "链接已复制",
+        ja: "リンクをコピーしました",
     },
     Row {
         key: Key::AiTooManyDocuments,
