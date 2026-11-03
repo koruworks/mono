@@ -150,7 +150,7 @@ pub(crate) fn mark_key(entry: &RailEntry) -> Key {
 
 /// FNV-1a over `text`, widened: the same id gives the same key in every
 /// frame and every run.
-fn stable_id(text: &str) -> u128 {
+pub(crate) fn stable_id(text: &str) -> u128 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in text.bytes() {
         hash ^= u64::from(byte);

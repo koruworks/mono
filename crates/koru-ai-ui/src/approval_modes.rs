@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::AiProviderId;
 use koru_ai_wire::{AgentModeView, UpdateChatAgentSettingsRequest};
+use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
 use koru_draw::{icons, scene, theme, theme::role};
 use koru_i18n::{Key as Words, fill, t};
@@ -51,6 +52,8 @@ use crate::reader::Command;
 pub(crate) const MODE_ROW_H: f32 = 46.0;
 /// The air around the rows inside the panel.
 const PANEL_PAD: f32 = 4.0;
+/// The panel's corners, as the composer's other panels have them.
+const PANEL_RADIUS: f32 = 8.0;
 /// How long the note beside the chip stays.
 const NOTE_HOLD: Duration = Duration::from_millis(2200);
 /// The note's tooltip key, apart from every hover tooltip's.
@@ -568,19 +571,47 @@ impl crate::ChatSurface {
         Some(self.above_composer(chip.x + chip.w - width, width, height))
     }
 
-    fn approval_mode_row_rect(&self, panel: Rect, index: usize) -> Rect {
-        Rect::new(
-            panel.x + PANEL_PAD,
-            panel.y + PANEL_PAD + index as f32 * MODE_ROW_H,
-            panel.w - PANEL_PAD * 2.0,
-            MODE_ROW_H,
-        )
+    /// What the open list's tree declares (D105): a row a mode, the
+    /// current one's ✓, the keyboard's row lit.
+    fn approval_mode_specs(&self) -> Vec<elements::ModeSpec> {
+        let current = self.current_approval_mode();
+        self.approval_mode_rows()
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| elements::ModeSpec {
+                key: elements::row_key(&row.id),
+                icon: row.icon,
+                current: current.as_deref() == Some(row.id.as_str()),
+                lit: self.approval_mode_focus == Some(index),
+                full_access: row.full_access,
+                title: row.title,
+                help: row.help,
+            })
+            .collect()
     }
 
-    fn approval_mode_row_at(&self, x: f32, y: f32) -> Option<usize> {
+    /// **The open list's frame** (D105): where a press lands and which row
+    /// it is — what is drawn, laid out without the pointer.
+    fn approval_mode_frame(&self) -> Option<(Vec<elements::ModeSpec>, Frame)> {
         let panel = self.approval_mode_panel()?;
-        (0..self.approval_mode_rows().len())
-            .find(|index| self.approval_mode_row_rect(panel, *index).contains(x, y))
+        let specs = self.approval_mode_specs();
+        let frame = elements::layout(&elements::tree(&specs), panel, FrameCx::root());
+        Some((specs, frame))
+    }
+
+    /// Row `index` where it is drawn.
+    #[cfg(test)]
+    pub(crate) fn approval_mode_row_rect(&self, index: usize) -> Option<Rect> {
+        let (_, frame) = self.approval_mode_frame()?;
+        Some(frame.named(elements::MODE_ROW).nth(index)?.rect)
+    }
+
+    /// The row a press or the pointer at `x`, `y` is on, from the frame's
+    /// targets.
+    fn approval_mode_row_at(&self, x: f32, y: f32) -> Option<usize> {
+        let (specs, frame) = self.approval_mode_frame()?;
+        let key = frame.hit_at(x, y)?;
+        specs.iter().position(|spec| spec.key == key)
     }
 
     /// The hover part for redraws: the chip, and each row of the open list.
@@ -787,78 +818,41 @@ impl crate::ChatSurface {
         );
     }
 
-    /// The open list: each mode's icon, title and line, a check on the
-    /// current one, *Full access* in the warning color.
+    /// **The open list** (D105): its element tree ([`elements`]) — each
+    /// mode's icon, title and line, the ✓ on the current one, *Full access*
+    /// in the notice ink — laid out with the pointer and the keyboard on it
+    /// and painted while the panel's `FloatingPanel` record is open, so
+    /// every row, icon, word and ✓ nests under the panel in the inspector.
     pub(crate) fn draw_approval_mode_picker(&mut self, canvas: &mut Scene, root: Affine) {
         let Some(panel) = self.approval_mode_panel() else {
             return;
         };
-        scene::floating_panel(
+        let tree = elements::tree(&self.approval_mode_specs());
+        // The host's pointer, by key: the frame's own target under it.
+        let hot =
+            elements::layout(&tree, panel, FrameCx::root()).hit_at(self.pointer.0, self.pointer.1);
+        let frame = elements::layout(
+            &tree,
+            panel,
+            FrameCx::root().with_interaction(Interaction {
+                hot,
+                ..Interaction::default()
+            }),
+        );
+        let _panel = scene::floating_panel_scope(
             canvas,
             root,
             panel.x,
             panel.y,
             panel.w,
             panel.h,
-            &scene::Panel::popover(8.0),
+            &scene::Panel::popover(PANEL_RADIUS),
         );
-        let p = theme::p();
-        let rows = self.approval_mode_rows();
-        let current = self.current_approval_mode();
-        let check = self
-            .engine
-            .icon_layout(icons::CHECK, ActionButton::ICON_SIZE);
-        for (index, row) in rows.iter().enumerate() {
-            let rect = self.approval_mode_row_rect(panel, index);
-            let focused = self.approval_mode_focus == Some(index);
-            if focused || rect.contains(self.pointer.0, self.pointer.1) {
-                scene::fill(
-                    canvas,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
-                );
-            }
-            let colour = if row.full_access { p.notice_fg } else { p.text };
-            let icon = self.engine.icon_layout(row.icon, ActionButton::ICON_SIZE);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                rect.x + 10.0,
-                rect.y + 8.0,
-                Some(colour),
-            );
-            let text_x = rect.x + 34.0;
-            let room = (rect.x + rect.w - 30.0 - text_x).max(1.0);
-            let title = self.engine.elided(&row.title, role::row(), room);
-            let title = self.engine.simple_layout(&title, role::row());
-            scene::draw_layout_first_line(canvas, root, &title, text_x, rect.y + 5.0, Some(colour));
-            if let Some(help) = &row.help {
-                let help = self.engine.elided(help, role::meta(), room);
-                let help = self.engine.simple_layout(&help, role::meta());
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &help,
-                    text_x,
-                    rect.y + 5.0 + title.height() + 2.0,
-                    Some(p.text_dim),
-                );
-            }
-            if current.as_ref() == Some(&row.id) {
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &check,
-                    rect.x + rect.w - 10.0 - check.width(),
-                    rect.y + (rect.h - check.height()) * 0.5,
-                    Some(p.accent),
-                );
-            }
-        }
+        frame.paint(&tree, canvas, root, &mut self.engine);
     }
 }
 
+mod elements;
 #[cfg(test)]
 mod tests;
+mod tokens;

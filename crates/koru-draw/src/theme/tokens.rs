@@ -428,6 +428,10 @@ colour_roles! {
         /// Words that are an offer: the Profiles page's *Subscribe to Koru
         /// Cloud*.
         Accent => accent,
+        /// Words and glyphs that warn: the chat's *Full access* approval
+        /// mode (koru-ai D7, D105). The status foreground §3.4 of
+        /// ELEMENTS.final names, verified in every registered theme.
+        Notice => notice_fg,
     }
 }
 

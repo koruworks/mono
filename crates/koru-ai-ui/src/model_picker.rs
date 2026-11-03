@@ -65,6 +65,12 @@ mod fast;
 mod paint;
 mod tokens;
 
+/// **The element layout the composer's panels share** (D64, D105): one
+/// engine and text cache per UI thread, and one way to key a row by its
+/// model's id — the approval-mode list and the workspace-access panel are
+/// laid out on them as the picker is.
+pub(crate) use elements::{layout as layout_elements, stable_id};
+
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
 /// **Air between the rail and the picker's content** — the search row, the

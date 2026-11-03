@@ -28,6 +28,9 @@ const MIGRATED: &[&str] = &[
     // in `model_picker/tokens.rs`.
     "crates/koru-ai-ui/src/model_picker/elements.rs",
     "crates/koru-ai-ui/src/model_picker/paint.rs",
+    // The composer's approval-mode list (koru-ai D7, D105): boxes, text and
+    // icons only; its tokens are beside it in `approval_modes/tokens.rs`.
+    "crates/koru-ai-ui/src/approval_modes/elements.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");
