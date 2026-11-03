@@ -1415,7 +1415,10 @@ plain text, JSON, TOML, YAML, Rust, TypeScript and the like — and otherwise
 shows it selected in Explorer or Finder, so a script or a program is never
 started by a click; a file that is gone since shows the nearest folder that is
 still there. A path the agent gave relative to its folder is found in the
-chat's working folder. The
+chat's working folder. When an agent opens a
+picture — a PNG, JPEG, GIF, WebP or BMP file — open that step to see the
+picture itself under the file's name; Koru shows it straight from the file,
+so if the file has since been moved or deleted the step shows just its name. The
 composer footer keeps the
 incognito, globe and workspace controls against its left edge and approval plus
 model controls against its right edge. The send action is an arrow inside the
