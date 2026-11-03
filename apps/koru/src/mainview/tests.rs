@@ -13398,11 +13398,10 @@ fn press_help(
 
 /// The rail's `?` opens the help popover beside the rail, its foot level with
 /// the `?`, as the CTO's artboard draws it (QUESTIONS.md E33): *WHAT'S NEW*
-/// over the release card, *Full changelog*, *Keyboard shortcuts* (dimmed,
-/// with its reason), *Send feedback* and *Report a problem*, and the strip of
-/// the website and the socials at the foot. With nothing on offer the card is
-/// this build: the shipped notes' first section for a title, the next two for
-/// its line, Download drawn dim.
+/// over the release card, *Full changelog*, *Send feedback* and *Star us on
+/// GitHub*, and the strip of the website and the socials at the foot. With
+/// nothing on offer the card is this build: the shipped notes' first section
+/// for a title, the next two for its line, Download drawn dim.
 #[test]
 fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
     use crate::mainview::context_menu::{self, MenuAction};
@@ -13428,6 +13427,7 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
             MenuAction::HelpFullChangelog,
             MenuAction::Divider,
             MenuAction::HelpSendFeedback,
+            MenuAction::HelpStarOnGitHub,
             MenuAction::Divider,
             MenuAction::HelpSocials,
         ]
@@ -13476,6 +13476,21 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
         MenuItem::trailing_icon(&MenuAction::HelpFullChangelog),
         Some(koru_draw::icons::POP_OUT)
     );
+    // So does the repository: the GitHub mark at its start, `↗` at its end,
+    // and its name is what a screen reader reads.
+    assert_eq!(
+        MenuItem::trailing_icon(&MenuAction::HelpStarOnGitHub),
+        Some(koru_draw::icons::POP_OUT)
+    );
+    assert_eq!(
+        MenuAction::HelpStarOnGitHub.icon(),
+        Some(koru_draw::icons::GITHUB)
+    );
+    assert_eq!(
+        MenuAction::HelpStarOnGitHub.label().as_ref(),
+        "Star us on GitHub"
+    );
+    assert!(MenuAction::HelpStarOnGitHub.selectable());
     // The strip: the globe, then the socials, each named for its tooltip.
     let strip = items
         .iter()
@@ -13517,6 +13532,7 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
         MenuAction::HelpRelease,
         MenuAction::HelpFullChangelog,
         MenuAction::HelpSendFeedback,
+        MenuAction::HelpStarOnGitHub,
     ] {
         assert!(enabled[at(row)], "{row:?}");
     }
@@ -13539,13 +13555,13 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
     assert_eq!(card.body, "Not shipped with this build");
 }
 
-/// Each row's destination: the changelog, the website and the socials open
-/// in the browser through the shell's URI port; feedback and a problem open
-/// the Feedback tab — the second on *Something isn't working*, turning an
+/// Each row's destination: the changelog, the repository, the website and
+/// the socials open in the browser through the shell's URI port; feedback
+/// and a problem open the Feedback tab — the second on *Something isn't working*, turning an
 /// open Feedback tab rather than doubling it; the card opens What's new.
 #[test]
 fn the_help_rows_open_their_destinations() {
-    use crate::mainview::context_menu::{MenuAction, MenuSubject, Social, WEBSITE_URL};
+    use crate::mainview::context_menu::{GITHUB_URL, MenuAction, MenuSubject, Social, WEBSITE_URL};
     use koru_workspace_host::{PaneRequest, View};
     let (mut v, _w) = container();
     while View::take_pane_request(&mut v).is_some() {}
@@ -13558,6 +13574,12 @@ fn the_help_rows_open_their_destinations() {
         crate::whatsnew::RELEASES_URL,
         "https://www.koru.do/en/releases"
     );
+    assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpStarOnGitHub));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::OpenUri(GITHUB_URL))
+    );
+    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
     assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpWebsite));
     assert_eq!(
         View::take_pane_request(&mut v),

@@ -4449,6 +4449,7 @@ impl MainView {
                     | MenuAction::HelpDownload
                     | MenuAction::HelpFullChangelog
                     | MenuAction::HelpSendFeedback
+                    | MenuAction::HelpStarOnGitHub
                     | MenuAction::HelpWebsite
                     | MenuAction::HelpSocial(_)
             ),
@@ -4967,6 +4968,10 @@ impl MainView {
                     true
                 }
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
+                MenuAction::HelpStarOnGitHub => {
+                    self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
+                    true
+                }
                 MenuAction::HelpWebsite => {
                     self.ask_pane(PaneRequest::OpenUri(context_menu::WEBSITE_URL));
                     true

@@ -218,6 +218,9 @@ impl Social {
 /// Where the strip's globe goes.
 pub const WEBSITE_URL: &str = "https://www.koru.do";
 
+/// Where the help popover's *Star us on GitHub* goes: Koru's repository.
+pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
+
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MenuAction {
@@ -622,6 +625,8 @@ pub enum MenuAction {
     /// The Feedback tab. **The only feedback row** (the CTO's note): *Report
     /// a problem* was a second door to the same tab and went.
     HelpSendFeedback,
+    /// Koru's repository on GitHub, in the browser, to star it.
+    HelpStarOnGitHub,
     /// The strip at the popover's foot: the website and the socials, each a
     /// control of this one row. **Not a row that is chosen**: its controls
     /// are, and what each does is [`HelpWebsite`](Self::HelpWebsite) or a
@@ -1355,6 +1360,9 @@ impl MenuAction {
             MenuAction::HelpSendFeedback => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::SendFeedback)
             }
+            MenuAction::HelpStarOnGitHub => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::StarOnGitHub)
+            }
             MenuAction::HelpSocials => "",
             MenuAction::HelpWebsite => "koru.do",
             MenuAction::HelpSocial(social) => social.name(),
@@ -1496,6 +1504,7 @@ impl MenuAction {
             MenuAction::HelpDownload => Some(koru_draw::icons::IMPORT),
             MenuAction::HelpFullChangelog => Some(koru_draw::icons::LIST),
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
+            MenuAction::HelpStarOnGitHub => Some(koru_draw::icons::GITHUB),
             MenuAction::HelpWebsite => Some(koru_draw::icons::GLOBE),
             MenuAction::HelpSocial(social) => Some(social.glyph()),
             MenuAction::PopOut | MenuAction::SessionMoveToNewWindow => {
@@ -1671,9 +1680,14 @@ impl koru_ui::MenuItem for MenuAction {
         matches!(self, MenuAction::HelpRelease).then(|| help_card().menu_card())
     }
 
-    /// The changelog leaves the app: an `↗` where its chord would be.
+    /// The changelog and the repository leave the app: an `↗` where their
+    /// chord would be.
     fn trailing_icon(&self) -> Option<char> {
-        matches!(self, MenuAction::HelpFullChangelog).then_some(koru_draw::icons::POP_OUT)
+        matches!(
+            self,
+            MenuAction::HelpFullChangelog | MenuAction::HelpStarOnGitHub
+        )
+        .then_some(koru_draw::icons::POP_OUT)
     }
 
     fn unread(&self) -> bool {
@@ -2502,10 +2516,9 @@ fn help_card() -> HelpCard {
 }
 
 /// The help popover's rows (the CTO's artboard, QUESTIONS.md E33): *WHAT'S
-/// NEW* over the release card, then *Full changelog*, then *Keyboard
-/// shortcuts* (dimmed until its page lands), then *Send feedback* and
-/// *Report a problem*, and the strip of the website and the socials at the
-/// foot. Support is not a row: it stays reachable through the Agent's own
+/// NEW* over the release card, then *Full changelog*, then *Send feedback*
+/// and *Star us on GitHub*, and the strip of the website and the socials at
+/// the foot. Support is not a row: it stays reachable through the Agent's own
 /// asks, and the CTO hid it here.
 pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
     HELP_CARD.with(|c| *c.borrow_mut() = card);
@@ -2516,6 +2529,7 @@ pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
         MenuAction::HelpFullChangelog,
         MenuAction::Divider,
         MenuAction::HelpSendFeedback,
+        MenuAction::HelpStarOnGitHub,
         MenuAction::Divider,
         MenuAction::HelpSocials,
     ]

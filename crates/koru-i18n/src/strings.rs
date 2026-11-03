@@ -2716,6 +2716,9 @@ pub enum Key {
     Workspaces,
     /// The help popover's rows and its card's button (the CTO's artboard).
     SendFeedback,
+    /// The help popover's row that opens Koru's repository. *GitHub* is a
+    /// brand name and stays as it is in every language.
+    StarOnGitHub,
     Download,
     /// The Chats view's *Delete chat* over a selection: the menu row, and
     /// the confirmation's sentence (the CTO's note).
@@ -2835,7 +2838,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1975] = [
+    pub const ALL: [Key; 1976] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4747,6 +4750,7 @@ impl Key {
         Key::ManageProfile,
         Key::Workspaces,
         Key::SendFeedback,
+        Key::StarOnGitHub,
         Key::Download,
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
@@ -15179,6 +15183,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ManageProfile, en: "Manage profile", es: "Gestionar perfil", pt_br: "Gerenciar perfil", de: "Profil verwalten", fr: "Gérer le profil", ar: "إدارة ملف التعريف", zh_hans: "管理配置文件", ja: "プロファイルを管理" },
     Row { key: Key::Workspaces, en: "Workspaces", es: "Espacios de trabajo", pt_br: "Espaços de trabalho", de: "Arbeitsbereiche", fr: "Espaces de travail", ar: "مساحات العمل", zh_hans: "工作区", ja: "ワークスペース" },
     Row { key: Key::SendFeedback, en: "Send feedback", es: "Enviar comentarios", pt_br: "Enviar feedback", de: "Feedback senden", fr: "Envoyer un commentaire", ar: "إرسال ملاحظات", zh_hans: "发送反馈", ja: "フィードバックを送信" },
+    Row { key: Key::StarOnGitHub, en: "Star us on GitHub", es: "Danos una estrella en GitHub", pt_br: "Dê uma estrela no GitHub", de: "Geben Sie uns einen Stern auf GitHub", fr: "Donnez-nous une étoile sur GitHub", ar: "امنحنا نجمة على GitHub", zh_hans: "在 GitHub 上为我们加星", ja: "GitHub でスターを付ける" },
     Row { key: Key::Download, en: "Download", es: "Descargar", pt_br: "Baixar", de: "Herunterladen", fr: "Télécharger", ar: "تنزيل", zh_hans: "下载", ja: "ダウンロード" },
     Row { key: Key::ChatsDeleteMany, en: "Delete {} chats", es: "Eliminar {} chats", pt_br: "Excluir {} chats", de: "{} Chats löschen", fr: "Supprimer {} discussions", ar: "حذف {} محادثات", zh_hans: "删除 {} 个聊天", ja: "{} 件のチャットを削除" },
     Row {

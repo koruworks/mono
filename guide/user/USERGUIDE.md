@@ -965,8 +965,9 @@ the order is remembered on this computer);
 then that app's own navigation; and on the floor one chip that says which
 workspace you are in and who you are, with a **?** beside it. The chip opens
 the workspace and account switcher; the **?** opens help: what is new in
-this build, feedback and support. Hide the sidebar and the lane's buttons
-fold into the title bar's left end; the chip goes with the pane, and
+this build, the full changelog, **Send feedback**, **Star us on GitHub**
+(Koru's repository, in your browser), and Koru's website and socials.
+Hide the sidebar and the lane's buttons fold into the title bar's left end; the chip goes with the pane, and
 `Ctrl+Alt+W` / `Ctrl+Alt+P` still open the switcher. `F6` walks the
 keyboard over the lane, the apps row and the floor; the arrows move within
 each, Enter presses, Escape returns to the page.
