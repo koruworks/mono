@@ -16,6 +16,7 @@
 
 use koru_ai_core::AiProviderId;
 use koru_draw::geometry::Rect;
+use koru_draw::text::TextEngine;
 use koru_draw::{scene, theme};
 use koru_i18n::{Key, Lang, fill, number, t};
 use koru_ui::Segmented;
@@ -97,19 +98,7 @@ impl crate::ChatSurface {
 
     /// The row's two words and its control, laid out at the row's end.
     pub(super) fn context_control(&mut self, row: Rect, tokens: u32) -> ([String; 2], Segmented) {
-        let labels = [
-            t(self.lang, Key::AiModelContextAuto).to_owned(),
-            window_label(self.lang, tokens),
-        ];
-        let words = [labels[0].as_str(), labels[1].as_str()];
-        let width = Segmented::width(&mut self.engine, &words);
-        let control = Segmented::layout(
-            &mut self.engine,
-            &words,
-            row.x + row.w - width - 4.0,
-            row.y + (row.h - Segmented::H) * 0.5,
-        );
-        (labels, control)
+        context_control(&mut self.engine, self.lang, row, tokens)
     }
 
     /// A press on the row: a choice is chosen. `None` when the press is
@@ -129,61 +118,90 @@ impl crate::ChatSurface {
             None => true,
         })
     }
+}
 
-    /// Draw the row: a rule above it, *Context*, and the two choices.
-    pub(crate) fn draw_context_row(
-        &mut self,
-        canvas: &mut Scene,
-        root: Affine,
-        geometry: &Geometry,
-    ) {
-        let (Some(row), Some(choice)) = (geometry.context, self.picker_context()) else {
-            return;
-        };
-        let p = theme::p();
-        let locked = self.effort_locked();
-        scene::fill(
+/// The row's two words and its control, laid out at the end of `row`.
+pub(super) fn context_control(
+    engine: &mut TextEngine,
+    lang: Lang,
+    row: Rect,
+    tokens: u32,
+) -> ([String; 2], Segmented) {
+    let labels = [
+        t(lang, Key::AiModelContextAuto).to_owned(),
+        window_label(lang, tokens),
+    ];
+    let words = [labels[0].as_str(), labels[1].as_str()];
+    let width = Segmented::width(engine, &words);
+    let control = Segmented::layout(
+        engine,
+        &words,
+        row.x + row.w - width - 4.0,
+        row.y + (row.h - Segmented::H) * 0.5,
+    );
+    (labels, control)
+}
+
+/// What the Context row shows: the longer window, which of the two the
+/// chat is on, whether it is read only, the pointer and the keyboard.
+pub(super) struct ContextPaint {
+    pub(super) lang: Lang,
+    pub(super) tokens: u32,
+    pub(super) chosen_long: bool,
+    pub(super) locked: bool,
+    pub(super) pointer: (f32, f32),
+    pub(super) focused: bool,
+}
+
+/// Paint the row in `row`, the allocation the picker's element frame gave
+/// it: a rule above it, *Context*, and the two choices.
+pub(super) fn paint_context_row(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    row: Rect,
+    context: &ContextPaint,
+) {
+    let p = theme::p();
+    scene::fill(
+        canvas,
+        root,
+        p.panel_border,
+        &scene::rrect(row.x, row.y, row.w, 1.0, 0.5),
+    );
+    let title = engine.simple_layout(t(context.lang, Key::AiModelContext), theme::role::row());
+    scene::draw_layout_first_line(
+        canvas,
+        root,
+        &title,
+        row.x + 8.0,
+        row.y + (row.h - title.height()) * 0.5,
+        Some(if context.locked { p.text_dim } else { p.text }),
+    );
+    let (labels, control) = context_control(engine, context.lang, row, context.tokens);
+    let words = [labels[0].as_str(), labels[1].as_str()];
+    let hovered = if context.locked {
+        None
+    } else {
+        control.segment_at(context.pointer.0, context.pointer.1)
+    };
+    control.draw(
+        canvas,
+        root,
+        engine,
+        &words,
+        Some(usize::from(context.chosen_long)),
+        hovered,
+        if context.locked { 0.5 } else { 1.0 },
+    );
+    if context.focused {
+        let bounds = control.bounds;
+        scene::stroke(
             canvas,
             root,
-            p.panel_border,
-            &scene::rrect(row.x, row.y, row.w, 1.0, 0.5),
+            p.accent,
+            1.0,
+            &scene::rrect(bounds.x, bounds.y, bounds.w, bounds.h, 7.0),
         );
-        let title = self
-            .engine
-            .simple_layout(t(self.lang, Key::AiModelContext), theme::role::row());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &title,
-            row.x + 8.0,
-            row.y + (row.h - title.height()) * 0.5,
-            Some(if locked { p.text_dim } else { p.text }),
-        );
-        let (labels, control) = self.context_control(row, choice.tokens);
-        let words = [labels[0].as_str(), labels[1].as_str()];
-        let hovered = if locked {
-            None
-        } else {
-            control.segment_at(self.pointer.0, self.pointer.1)
-        };
-        control.draw(
-            canvas,
-            root,
-            &mut self.engine,
-            &words,
-            Some(usize::from(choice.chosen_long)),
-            hovered,
-            if locked { 0.5 } else { 1.0 },
-        );
-        if self.picker.focus == PickerFocus::Context {
-            let bounds = control.bounds;
-            scene::stroke(
-                canvas,
-                root,
-                p.accent,
-                1.0,
-                &scene::rrect(bounds.x, bounds.y, bounds.w, bounds.h, 7.0),
-            );
-        }
     }
 }

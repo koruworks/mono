@@ -14,24 +14,30 @@
 //! agent turned on, each beside its agent's mark. Only a click stars a
 //! model: there is no key for it (D47, taken back by the user).
 //!
-//! The geometry, the rows, the search and the footer's words are pure
+//! **The chrome is an element tree** (D64, [`elements`]): the rail and the
+//! content column, the search row, the list and the rows under it are
+//! laid out by `koru_draw::el`, and [`Geometry`] is read back from that
+//! frame; drawn ([`paint`]), the same tree nests inside the *Popover
+//! surface* record. The rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
-//! ([`PickerState`]) and draws.
+//! ([`PickerState`]).
 
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice, ReasoningControl};
+use koru_draw::el::FrameCx;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{brand, icons, scene, theme};
 use koru_i18n::{Key, Lang, t};
-use koru_ui::icon_button::{IconButton, State as IconButtonState};
 use koru_ui::popover::{PopoverAlign, PopoverShell};
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
 use koru_ui::{Menu, MenuItem, Typed, scrollbar};
 use vello::Scene;
-use vello::kurbo::{Affine, RoundedRect, RoundedRectRadii};
+use vello::kurbo::Affine;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::agents::{
@@ -41,7 +47,9 @@ use crate::agents::{
 use crate::effort;
 
 mod context;
+mod elements;
 mod fast;
+mod paint;
 pub(crate) use context::CONTEXT_H;
 pub(crate) use fast::FAST_H;
 
@@ -148,7 +156,7 @@ pub(crate) enum PickerFocus {
 pub(crate) struct PickerState {
     /// The rail's selected entry: whose models the list shows.
     pub(crate) rail: Option<RailEntry>,
-    pub(crate) query: TextInput,
+    pub(crate) query: SharedInput,
     /// The row the keyboard is on, by index into the rows.
     pub(crate) highlight: Option<usize>,
     /// The first row shown.
@@ -183,7 +191,7 @@ impl PickerState {
     pub(crate) fn new(engine: &mut TextEngine) -> Self {
         Self {
             rail: None,
-            query: TextInput::new(engine, theme::role::row()),
+            query: SharedInput::new(engine),
             highlight: None,
             offset: 0,
             scroll_drag: None,
@@ -191,6 +199,66 @@ impl PickerState {
             refreshing: HashSet::new(),
             legacy: None,
         }
+    }
+}
+
+/// **The search field's input, shared with the leaf that draws it.** An
+/// element leaf owns what it paints (`koru_draw::el::Leaf` is `'static`)
+/// and the input is the picker's state, so the two hold one `TextInput`;
+/// nothing else keeps it.
+#[derive(Clone)]
+pub(crate) struct SharedInput(Rc<RefCell<TextInput>>);
+
+impl SharedInput {
+    fn new(engine: &mut TextEngine) -> Self {
+        Self(Rc::new(RefCell::new(TextInput::new(
+            engine,
+            theme::role::row(),
+        ))))
+    }
+
+    /// What is typed, unmasked.
+    pub(crate) fn raw_text(&self) -> String {
+        self.0.borrow().raw_text().to_owned()
+    }
+
+    pub(crate) fn set_text(&self, engine: &mut TextEngine, text: &str) {
+        self.0.borrow_mut().set_text(engine, text);
+    }
+
+    fn key(
+        &self,
+        engine: &mut TextEngine,
+        key: &WinitKey,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Typed {
+        self.0.borrow_mut().key(engine, key, text, mods)
+    }
+
+    fn click(&self, engine: &mut TextEngine, r: Rect, x: f32, y: f32) -> bool {
+        self.0.borrow_mut().click(engine, r, x, y)
+    }
+
+    /// The field in `r`, with its placeholder while it is empty.
+    fn draw(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        r: Rect,
+        placeholder: &str,
+        focused: bool,
+    ) {
+        self.0.borrow_mut().draw(
+            canvas,
+            root,
+            engine,
+            r,
+            InputStyle::search(),
+            Some(placeholder),
+            focused,
+        );
     }
 }
 
@@ -223,12 +291,15 @@ impl Row {
     }
 }
 
-/// The picker's parts, laid out from its panel.
+/// The picker's parts, read back from its element frame ([`elements`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Geometry {
     pub(crate) panel: Rect,
     pub(crate) rail: Rect,
+    /// The search row's box: the field and ↻ at its end.
     pub(crate) search: Rect,
+    /// The search field itself, short of ↻.
+    pub(crate) field: Rect,
     pub(crate) refresh: Rect,
     pub(crate) list: Rect,
     /// The level's section: its word, ↺ and the slider.
@@ -257,19 +328,18 @@ impl Geometry {
 
     /// ↺, at the footer line's end.
     pub(crate) fn reset(&self) -> Option<Rect> {
-        let footer = self.footer?;
-        Some(Rect::new(
-            footer.x + footer.w - 28.0,
-            footer.y + 2.0,
-            24.0,
-            24.0,
-        ))
+        self.footer.map(reset_in)
     }
 
     /// The slider's section, which [`effort::slider`] lays its stops on.
     pub(crate) fn slider_section(&self) -> Option<Rect> {
         self.footer
     }
+}
+
+/// ↺ inside the level's footer `footer`, at the end of its first line.
+pub(crate) fn reset_in(footer: Rect) -> Rect {
+    Rect::new(footer.x + footer.w - 28.0, footer.y + 2.0, 24.0, 24.0)
 }
 
 /// The picker's width and height: as wide as the composer up to
@@ -285,59 +355,30 @@ pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
 /// The picker's parts inside `panel`: the level's footer at the foot when
 /// `levels`, the Context row above it when `context`, the Fast row above
 /// that when `fast`, and the list in what is left — so a model with both
-/// rows gives a list row of the fixed height to the second.
+/// rows gives a list row of the fixed height to the second. Laid out by the
+/// picker's element tree ([`elements::tree`]), whose marks take no room of
+/// their own: the rail is as tall as the panel.
 pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
-    let inner_x = panel.x + RAIL_W + RAIL_CONTENT_GAP;
-    let inner_w = (panel.w - RAIL_W - RAIL_CONTENT_GAP - PAD).max(1.0);
-    let mut bottom = panel.y + panel.h - PAD;
-    let footer_rect = levels.then(|| {
-        bottom -= FOOTER_H;
-        Rect::new(inner_x, bottom, inner_w, FOOTER_H)
-    });
-    let context_rect = context.then(|| {
-        bottom -= CONTEXT_H;
-        Rect::new(inner_x, bottom, inner_w, CONTEXT_H)
-    });
-    let fast_rect = fast.then(|| {
-        bottom -= FAST_H;
-        Rect::new(inner_x, bottom, inner_w, FAST_H)
-    });
-    let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
-    let refresh = Rect::new(
-        search.x + search.w - 28.0,
-        search.y + 2.0,
-        26.0,
-        search.h - 4.0,
-    );
-    let list_top = panel.y + PAD + SEARCH_H;
-    let rows = ((bottom - list_top) / ROW_H).floor().max(0.0);
-    Geometry {
-        panel,
-        rail: Rect::new(panel.x, panel.y, RAIL_W, panel.h),
-        search,
-        refresh,
-        list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
-        footer: footer_rect,
-        context: context_rect,
-        fast: fast_rect,
-    }
+    let spec = elements::Spec {
+        levels,
+        context,
+        fast,
+        ..elements::Spec::default()
+    };
+    let tree = elements::tree(&spec, &mut |_| None);
+    elements::geometry_of(&elements::layout(&tree, panel, FrameCx::root()), panel)
 }
 
 /// The rail's marks, top to bottom; a divider follows each mark whose index
 /// is in `dividers` — *Favorites*, and the chat's own built-in provider
 /// (S1), each set off from the agents after it.
 pub(crate) fn rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Rect> {
-    let x = rail.x + (rail.w - RAIL_BUTTON) * 0.5;
-    let mut y = rail.y + PAD + 4.0;
-    (0..count)
-        .map(|index| {
-            let rect = Rect::new(x, y, RAIL_BUTTON, RAIL_BUTTON);
-            y += RAIL_BUTTON + RAIL_GAP;
-            if dividers.contains(&index) {
-                y += RAIL_DIVIDER;
-            }
-            rect
-        })
+    let column = elements::rail_column(
+        (0..count).map(|index| (elements::placeholder_mark(), dividers.contains(&index))),
+    );
+    elements::layout(&column, rail, FrameCx::root())
+        .named(elements::MARK)
+        .map(|node| node.rect)
         .collect()
 }
 
@@ -1737,374 +1778,6 @@ impl crate::ChatSurface {
             None => false,
         }
     }
-
-    /// Draw the open picker: the panel, the rail, the search with ↻, the
-    /// list, and the footer.
-    pub(crate) fn draw_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(geometry) = self.picker_geometry() else {
-            return;
-        };
-        let p = theme::p();
-        let radius = theme::overlay::popover().radius;
-        PopoverShell {
-            rect: geometry.panel,
-            radius,
-        }
-        .draw(canvas, root);
-
-        // The rail, on the window rail's ground (D45): inside the shell's
-        // hairline, rounded where the panel is.
-        let rail_rect = geometry.rail;
-        let inset = 1.0;
-        let corner = f64::from((radius - inset).max(0.0));
-        scene::fill(
-            canvas,
-            root,
-            rail_fill(),
-            &RoundedRect::new(
-                f64::from(rail_rect.x + inset),
-                f64::from(rail_rect.y + inset),
-                f64::from(rail_rect.x + rail_rect.w),
-                f64::from(rail_rect.y + rail_rect.h - inset),
-                RoundedRectRadii::new(corner, 0.0, 0.0, corner),
-            ),
-        );
-        let rail = self.picker_rail();
-        let dividers = rail_dividers(&rail);
-        let selected = self.picker_entry();
-        let query = self.picker_query();
-        let rects = rail_rects(geometry.rail, rail.len(), &dividers);
-        for (entry, rect) in rail.iter().zip(&rects) {
-            let chosen = selected.as_ref() == Some(entry);
-            let hovered = rect.contains(self.pointer.0, self.pointer.1);
-            let keyboard = chosen && self.picker.focus == PickerFocus::Rail;
-            if chosen || hovered {
-                scene::fill(
-                    canvas,
-                    root,
-                    if chosen { p.row_selected } else { p.hover_tint },
-                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
-                );
-            }
-            if keyboard {
-                scene::stroke(
-                    canvas,
-                    root,
-                    p.accent,
-                    1.0,
-                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
-                );
-            }
-            let dim = match entry {
-                RailEntry::Agent(agent) => {
-                    self.agent_status.get(agent).copied() != Some(AgentStatus::Ready)
-                        || !self.agent_matches_query(agent, &query)
-                }
-                RailEntry::Favorites | RailEntry::Provider(_) => false,
-            };
-            let colour = if dim { p.text_dim } else { p.text };
-            draw_mark(canvas, root, &mut self.engine, entry, *rect, colour);
-        }
-        if let Some(rect) = self.picker_manage_rect(&geometry) {
-            let hovered = rect.contains(self.pointer.0, self.pointer.1);
-            let _manage = koru_draw::inspect::scope(
-                self.picker_manage_name(),
-                "button",
-                root,
-                scene::rect(rect.x, rect.y, rect.w, rect.h),
-                |r| r.property("accessible name", self.picker_manage_name(), "caller label"),
-            );
-            if hovered {
-                scene::fill(
-                    canvas,
-                    root,
-                    p.hover_tint,
-                    &scene::rrect(rect.x, rect.y, rect.w, rect.h, 6.0),
-                );
-            }
-            let layout = self.engine.icon_layout(icons::PLUS, 16.0);
-            scene::draw_layout(
-                canvas,
-                root,
-                &layout,
-                rect.x + (rect.w - layout.width()) * 0.5,
-                rect.y + (rect.h - layout.height()) * 0.5,
-                Some(if hovered { p.text } else { p.text_dim }),
-            );
-        }
-        for after in dividers.iter().filter_map(|index| rects.get(*index)) {
-            let y = after.y + after.h + RAIL_GAP + RAIL_DIVIDER * 0.5 - 0.5;
-            scene::fill(
-                canvas,
-                root,
-                p.panel_border,
-                &scene::rrect(after.x + 4.0, y, after.w - 8.0, 1.0, 0.5),
-            );
-        }
-
-        // The search field and ↻.
-        let search = search_field(&geometry);
-        let placeholder = t(self.lang, Key::AiModelSearch).to_owned();
-        self.picker.query.draw(
-            canvas,
-            root,
-            &mut self.engine,
-            search,
-            InputStyle::search(),
-            Some(&placeholder),
-            self.picker.focus == PickerFocus::Search,
-        );
-        if let Some(RailEntry::Agent(agent)) = &selected {
-            let disabled = !self.refresh_enabled(agent);
-            IconButton::new(icons::ARROWS_CLOCKWISE, geometry.refresh)
-                .with_state(IconButtonState {
-                    hovered: geometry.refresh.contains(self.pointer.0, self.pointer.1),
-                    active: false,
-                    disabled,
-                })
-                .draw(canvas, root, &mut self.engine);
-        }
-
-        // The list.
-        let rows = self.picker_rows();
-        let choosable = self.picker_choosable(&rows);
-        let visible = geometry.visible_rows();
-        if let Some(entry) = &selected {
-            for (index, row) in rows
-                .iter()
-                .enumerate()
-                .skip(self.picker.offset)
-                .take(visible)
-            {
-                let rect = geometry.row(index - self.picker.offset);
-                let current = self.picker_row_current(entry, row);
-                let can = choosable[index];
-                let highlighted = self.picker.highlight == Some(index)
-                    && matches!(self.picker.focus, PickerFocus::Search | PickerFocus::List);
-                let hovered = can && rect.contains(self.pointer.0, self.pointer.1);
-                if current || highlighted || hovered {
-                    scene::fill(
-                        canvas,
-                        root,
-                        if current {
-                            p.row_selected
-                        } else {
-                            p.hover_tint
-                        },
-                        &scene::rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
-                    );
-                }
-                let label = self.picker_row_label(entry, row);
-                let (style, colour, indent) = match row {
-                    Row::Heading(_) => (theme::role::meta(), p.text_dim, 8.0),
-                    Row::Note(_) => (theme::role::meta(), p.text_dim, 8.0),
-                    _ => (
-                        theme::role::row(),
-                        if can || current { p.text } else { p.text_dim },
-                        // A favorite's agent mark comes first (D46).
-                        if matches!(row, Row::Favorite(..)) {
-                            8.0 + ROW_MARK_ROOM
-                        } else {
-                            8.0
-                        },
-                    ),
-                };
-                // What sits at the row's end, from the end: the ☆ of a
-                // model that can be starred (D46), the current one's check,
-                // the flyout's caret, an older model's tag while searching.
-                // The ☆'s room is kept whether or not it shows, so a name
-                // does not shorten under the pointer.
-                let star = self
-                    .row_favorite(entry, row)
-                    .map(|(agent, model)| (star_rect(rect), self.is_favorite(&agent, &model)));
-                let legacy_tag = self
-                    .row_is_legacy(entry, row)
-                    .then(|| t(self.lang, Key::AiModelsLegacyTag).to_owned());
-                let mut end = star.map_or(rect.x + rect.w - 8.0, |(star, _)| star.x - 2.0);
-                if let Some((star, starred)) = star {
-                    let under = rect.contains(self.pointer.0, self.pointer.1);
-                    if starred || under {
-                        self.draw_star(canvas, root, star, starred);
-                    }
-                }
-                if current {
-                    let check = self.engine.icon_layout(icons::CHECK, 13.0);
-                    end -= check.width();
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &check,
-                        end,
-                        rect.y + (rect.h - check.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                    end -= 9.0;
-                }
-                if *row == Row::LegacyMore {
-                    let caret = self.engine.icon_layout(icons::CARET_RIGHT, 12.0);
-                    end -= caret.width();
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &caret,
-                        end,
-                        rect.y + (rect.h - caret.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                    end -= 8.0;
-                }
-                if let Some(tag) = &legacy_tag {
-                    let tag = self.engine.simple_layout(tag, theme::role::meta());
-                    let tag_x = end - tag.width();
-                    scene::draw_layout_first_line(
-                        canvas,
-                        root,
-                        &tag,
-                        tag_x,
-                        rect.y + (rect.h - tag.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
-                    end = tag_x - 6.0;
-                }
-                let room = (end - rect.x - indent).max(1.0);
-                let shown = self.engine.elided(&label, style, room);
-                let line = self.engine.simple_layout(&shown, style);
-                let name_y = rect.y + (rect.h - line.height()) * 0.5;
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &line,
-                    rect.x + indent,
-                    name_y,
-                    Some(colour),
-                );
-                // A favorite's agent, by its mark, level with the name.
-                if let Row::Favorite(agent, _) = row {
-                    let mark = Rect::new(
-                        rect.x + 8.0,
-                        name_y + (line.height() - ROW_MARK) * 0.5,
-                        ROW_MARK,
-                        ROW_MARK,
-                    );
-                    let tone = if can { p.text } else { p.text_dim };
-                    draw_provider_mark(canvas, root, &mut self.engine, agent, true, mark, tone);
-                }
-            }
-        }
-        if let Some(scrollbar) = self.picker_scrollbar(&geometry) {
-            let active = self.picker.scroll_drag.is_some()
-                || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
-            scrollbar::draw(canvas, root, scrollbar, active);
-        }
-
-        // The Fast row, then the Context row, above the level's.
-        self.draw_fast_row(canvas, root, &geometry);
-        self.draw_context_row(canvas, root, &geometry);
-
-        // The footer: the level's word, ↺, and the slider.
-        let (Some(footer), Some(control), Some(shown)) = (
-            geometry.footer,
-            self.effort_control().cloned(),
-            self.effort_shown(),
-        ) else {
-            return;
-        };
-        let choice = self
-            .transcript
-            .as_ref()
-            .map_or(ReasoningChoice::Default, |transcript| {
-                transcript.chat.current_model.default_reasoning
-            });
-        let locked = self.effort_locked();
-        scene::fill(
-            canvas,
-            root,
-            p.panel_border,
-            &scene::rrect(footer.x, footer.y, footer.w, 1.0, 0.5),
-        );
-        let (word, suffix) = footer_words(&control, choice, self.lang);
-        let line = self.engine.simple_layout(&word, theme::role::row());
-        let label_y = footer.y + 6.0;
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &line,
-            footer.x + 8.0,
-            label_y,
-            Some(if locked { p.text_dim } else { p.text }),
-        );
-        if let Some(suffix) = suffix {
-            let dim = self.engine.simple_layout(&suffix, theme::role::meta());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &dim,
-                footer.x + 8.0 + line.width() + 6.0,
-                label_y + (line.height() - dim.height()) * 0.5,
-                Some(p.text_dim),
-            );
-        }
-        if let Some(reset) = geometry.reset() {
-            IconButton::new(icons::RESET, reset)
-                .with_state(IconButtonState {
-                    hovered: reset.contains(self.pointer.0, self.pointer.1),
-                    active: self.picker.focus == PickerFocus::Reset,
-                    disabled: locked || choice == ReasoningChoice::Default,
-                })
-                .draw(canvas, root, &mut self.engine);
-        }
-        effort::draw_track(
-            canvas,
-            root,
-            &mut self.engine,
-            self.lang,
-            footer,
-            &control,
-            shown,
-            if locked { (-1.0, -1.0) } else { self.pointer },
-            self.picker.focus == PickerFocus::Slider,
-        );
-    }
-
-    /// A row's ☆ (D46): outlined, brighter under the pointer, while it is
-    /// not a favorite; filled in the accent once it is. Named for a screen
-    /// reader and the inspector by what a press does — it raises no
-    /// tooltip, as the rows raise none (D25).
-    fn draw_star(&mut self, canvas: &mut Scene, root: Affine, star: Rect, starred: bool) {
-        let p = theme::p();
-        let name = t(
-            self.lang,
-            if starred {
-                Key::AiModelFavoriteRemove
-            } else {
-                Key::AiModelFavoriteAdd
-            },
-        );
-        let _star = koru_draw::inspect::scope(
-            name,
-            "button",
-            root,
-            scene::rect(star.x, star.y, star.w, star.h),
-            |r| r.property("accessible name", name, "caller label"),
-        );
-        let hovered = star.contains(self.pointer.0, self.pointer.1);
-        let (layout, colour) = if starred {
-            (self.engine.icon_layout_filled(icons::STAR, 14.0), p.accent)
-        } else {
-            (
-                self.engine.icon_layout(icons::STAR, 14.0),
-                if hovered { p.text } else { p.text_dim },
-            )
-        };
-        scene::draw_layout(
-            canvas,
-            root,
-            &layout,
-            star.x + (star.w - layout.width()) * 0.5,
-            star.y + (star.h - layout.height()) * 0.5,
-            Some(colour),
-        );
-    }
 }
 
 /// **The rail's ground** (D45): the colour of the window's own left rail —
@@ -2130,12 +1803,7 @@ pub(crate) fn rail_dividers(rail: &[RailEntry]) -> Vec<usize> {
 
 /// The search field itself: the search row short of ↻ at its end.
 fn search_field(geometry: &Geometry) -> Rect {
-    Rect::new(
-        geometry.search.x,
-        geometry.search.y,
-        (geometry.search.w - geometry.refresh.w - 4.0).max(1.0),
-        geometry.search.h,
-    )
+    geometry.field
 }
 
 /// Koru AI, OpenAI and Ollama by name, for the rail's tooltip.

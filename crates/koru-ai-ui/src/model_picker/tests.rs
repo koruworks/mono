@@ -1578,3 +1578,364 @@ fn a_star_toggles_into_and_out_of_the_list_in_place() {
     assert_eq!(both, [opus.clone(), sonnet.clone()], "added at the end");
     assert_eq!(toggled(&both, opus), [sonnet], "taken out where it was");
 }
+
+/// The picker's parts as they were placed before its chrome was an element
+/// tree: the arithmetic `geometry` and `rail_rects` held until D64, kept
+/// here as the record the frame is held to.
+fn arithmetic_geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
+    let inner_x = panel.x + RAIL_W + RAIL_CONTENT_GAP;
+    let inner_w = (panel.w - RAIL_W - RAIL_CONTENT_GAP - PAD).max(1.0);
+    let mut bottom = panel.y + panel.h - PAD;
+    let mut below = |on: bool, h: f32| {
+        on.then(|| {
+            bottom -= h;
+            Rect::new(inner_x, bottom, inner_w, h)
+        })
+    };
+    let footer = below(levels, FOOTER_H);
+    let context = below(context, CONTEXT_H);
+    let fast = below(fast, FAST_H);
+    let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
+    let refresh = Rect::new(
+        search.x + search.w - 28.0,
+        search.y + 2.0,
+        26.0,
+        search.h - 4.0,
+    );
+    let list_top = panel.y + PAD + SEARCH_H;
+    let rows = ((bottom - list_top) / ROW_H).floor().max(0.0);
+    Geometry {
+        panel,
+        rail: Rect::new(panel.x, panel.y, RAIL_W, panel.h),
+        search,
+        field: Rect::new(
+            search.x,
+            search.y,
+            (search.w - refresh.w - 4.0).max(1.0),
+            search.h,
+        ),
+        refresh,
+        list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
+        footer,
+        context,
+        fast,
+    }
+}
+
+fn arithmetic_rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Rect> {
+    let x = rail.x + (rail.w - RAIL_BUTTON) * 0.5;
+    let mut y = rail.y + PAD + 4.0;
+    (0..count)
+        .map(|index| {
+            let rect = Rect::new(x, y, RAIL_BUTTON, RAIL_BUTTON);
+            y += RAIL_BUTTON + RAIL_GAP;
+            if dividers.contains(&index) {
+                y += RAIL_DIVIDER;
+            }
+            rect
+        })
+        .collect()
+}
+
+fn assert_same_rect(found: Rect, expected: Rect, what: &str) {
+    for (a, b) in [
+        (found.x, expected.x),
+        (found.y, expected.y),
+        (found.w, expected.w),
+        (found.h, expected.h),
+    ] {
+        assert!((a - b).abs() < 0.01, "{what}: {found:?}, was {expected:?}");
+    }
+}
+
+/// **The element frame puts every part where the arithmetic did** (D64):
+/// rail, search box, field, ↻, list and the three rows under it, for narrow,
+/// middling and wide panels with every combination of rows — pixel for
+/// pixel.
+#[test]
+fn the_element_frame_places_the_picker_where_it_always_was() {
+    for composer in [280.0, 360.0, 1000.0] {
+        let (w, h) = size(composer, rail_height(3, 1));
+        for (x, y) in [(10.0, 20.0), (123.5, 401.25)] {
+            let panel = Rect::new(x, y, w, h);
+            for levels in [false, true] {
+                for context in [false, true] {
+                    for fast in [false, true] {
+                        let found = geometry(panel, levels, context, fast);
+                        let was = arithmetic_geometry(panel, levels, context, fast);
+                        let case = format!("{w}x{h} levels {levels} context {context} fast {fast}");
+                        assert_same_rect(found.panel, was.panel, &case);
+                        assert_same_rect(found.rail, was.rail, &format!("rail, {case}"));
+                        assert_same_rect(found.search, was.search, &format!("search, {case}"));
+                        assert_same_rect(found.field, was.field, &format!("field, {case}"));
+                        assert_same_rect(found.refresh, was.refresh, &format!("↻, {case}"));
+                        assert_same_rect(found.list, was.list, &format!("list, {case}"));
+                        for (part, a, b) in [
+                            ("footer", found.footer, was.footer),
+                            ("context", found.context, was.context),
+                            ("fast", found.fast, was.fast),
+                        ] {
+                            assert_eq!(a.is_some(), b.is_some(), "{part}, {case}");
+                            if let (Some(a), Some(b)) = (a, b) {
+                                assert_same_rect(a, b, &format!("{part}, {case}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The rail's marks and dividers sit where they always did, and the rail
+/// column's own height is the room [`rail_height`] asks the panel for.
+#[test]
+fn the_rail_column_places_its_marks_where_they_always_were() {
+    use koru_draw::el::col;
+    let rail = Rect::new(10.0, 20.0, RAIL_W, 600.0);
+    for (count, dividers) in [
+        (0, vec![]),
+        (1, vec![]),
+        (3, vec![]),
+        (4, vec![0]),
+        (5, vec![0, 1]),
+        (9, vec![0, 1]),
+    ] {
+        let found = rail_rects(rail, count, &dividers);
+        let was = arithmetic_rail_rects(rail, count, &dividers);
+        assert_eq!(found.len(), was.len());
+        for (index, (a, b)) in found.into_iter().zip(was).enumerate() {
+            assert_same_rect(
+                a,
+                b,
+                &format!("mark {index} of {count}, dividers {dividers:?}"),
+            );
+        }
+        let column = elements::rail_column(
+            (0..count).map(|index| (elements::placeholder_mark(), dividers.contains(&index))),
+        );
+        let frame = elements::layout(
+            &col("Probe").child(column),
+            Rect::new(0.0, 0.0, RAIL_W, 2_000.0),
+            koru_draw::el::FrameCx::root(),
+        );
+        let natural = frame.rect_of(elements::RAIL).unwrap().h;
+        assert!(
+            (natural - rail_height(count, dividers.len())).abs() < 0.01,
+            "{count} marks, {} dividers: {natural}",
+            dividers.len()
+        );
+    }
+    // The tokens say what the constants say.
+    let profile = koru_draw::theme::Profile::Desktop;
+    assert_eq!(elements::CONTENT_GAP.token.px(profile), RAIL_CONTENT_GAP);
+    assert_eq!(elements::PANEL_INSET.token.px(profile), PAD);
+    assert_eq!(elements::MARK_GAP.token.px(profile), RAIL_GAP);
+    assert_eq!(
+        elements::DIVIDER_INSET.token.px(profile) * 2.0 + koru_draw::theme::BORDER_W as f32,
+        RAIL_DIVIDER
+    );
+}
+
+/// The open picker with every part showing: *Favorites* and its divider,
+/// two agents, the **+**, the list with a favorite's row, and the Fast,
+/// Context and level rows under it.
+fn picker_with_everything() -> ChatSurface {
+    let mut surface = surface();
+    let (reader, _commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    with_opus_context(&mut surface);
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[1].fast = Some(koru_ai_wire::AgentModelFast {
+            on_by_default: false,
+        });
+        models[1].reasoning = Some(ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low, ReasoningLevel::High],
+            default: None,
+            supports_off: false,
+        });
+    }
+    surface.set_favorite_models(vec![FavoriteModel::new("claude", "sonnet")]);
+    surface.offer_agent_settings(true);
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
+    open(&mut surface);
+    surface
+}
+
+/// **Everything drawn inside the picker nests under its *Popover surface***
+/// (D64, the user: *all primitives that draw inside the popover models
+/// should be inside the popover surface*). Drawn with the inspector on, every
+/// record — fills, strokes, text lines, icons, the search field's
+/// `KoruTextInput`, the ☆ and the **+** — descends from the surface, through
+/// the element tree's rail column and content column.
+#[test]
+fn everything_drawn_inside_the_picker_nests_under_the_popover_surface() {
+    use koru_draw::inspect;
+    let mut surface = picker_with_everything();
+    let geometry = surface.picker_geometry().unwrap();
+    assert!(geometry.fast.is_some() && geometry.context.is_some() && geometry.footer.is_some());
+    // The pointer on *Opus*, so its ☆ and plate are drawn too.
+    let row = surface.picker_row_rect(&geometry, 1).unwrap();
+    surface.pointer = (row.x + 20.0, row.y + row.h * 0.5);
+
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
+    );
+    let mut scene = Scene::new();
+    surface.draw_model_picker(&mut scene, Affine::IDENTITY);
+    let snapshot = capture.finish();
+    let records = &snapshot.records;
+    let named = |name: &str| {
+        records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.name == name)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>()
+    };
+    let one = |name: &str| {
+        let found = named(name);
+        assert_eq!(found.len(), 1, "one {name}: {found:?}");
+        found[0]
+    };
+    let under = |mut index: usize, ancestor: usize| loop {
+        match records[index].parent {
+            Some(parent) if parent == ancestor => return true,
+            Some(parent) => index = parent,
+            None => return false,
+        }
+    };
+
+    let shell = one("Popover surface");
+    assert_eq!(records[shell].parent, None);
+    for (index, record) in records.iter().enumerate() {
+        if index != shell {
+            assert!(
+                under(index, shell),
+                "{} · {} lies outside the Popover surface",
+                record.name,
+                record.kind
+            );
+        }
+    }
+
+    // The tree: the picker, its rail column and its content column.
+    let picker = one(elements::PICKER);
+    let rail = one(elements::RAIL);
+    let content = one(elements::CONTENT);
+    assert_eq!(records[rail].parent, Some(picker));
+    assert_eq!(records[content].parent, Some(picker));
+    for mark in named(elements::MARK) {
+        assert_eq!(records[mark].parent, Some(rail), "a mark is in the rail");
+    }
+    assert_eq!(named(elements::MARK).len(), surface.picker_rail().len());
+    assert!(!named("Rail divider").is_empty(), "Favorites is set off");
+    let plus = named(elements::MANAGE_NAME);
+    assert!(!plus.is_empty() && plus.iter().all(|record| under(*record, rail)));
+    for part in [
+        elements::SEARCH_ROW,
+        elements::LIST,
+        elements::FAST_ROW,
+        elements::CONTEXT_ROW,
+        elements::EFFORT_FOOTER,
+    ] {
+        assert_eq!(records[one(part)].parent, Some(content), "{part}");
+    }
+    let field = one(elements::SEARCH_FIELD);
+    assert!(under(field, content));
+    assert!(
+        named("KoruTextInput")
+            .iter()
+            .any(|input| under(*input, field)),
+        "the search field draws its input inside its element"
+    );
+    // The leaves' own drawing sits inside them: the list's text and ☆.
+    let list = one(elements::LIST);
+    assert!(
+        records
+            .iter()
+            .enumerate()
+            .any(|(i, r)| r.kind == "primitive" && under(i, list)),
+        "the rows' paint is the list's"
+    );
+    // Every element record is where the frame put it.
+    let rail_record = &records[rail];
+    assert_eq!(
+        rail_record.bounds,
+        [
+            f64::from(geometry.rail.x),
+            f64::from(geometry.rail.y),
+            f64::from(geometry.rail.x + geometry.rail.w),
+            f64::from(geometry.rail.y + geometry.rail.h),
+        ]
+    );
+}
+
+/// The picker's tree is valid as composed (ELEMENTS.final §4): every mark,
+/// the **+** and ↻ a named button with a stable key, no key twice, and no
+/// layout diagnostic.
+#[test]
+fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
+    use koru_draw::el::{Name, Role};
+    let surface = picker_with_everything();
+    let geometry = surface.picker_geometry().unwrap();
+    let spec = surface.picker_spec();
+    let frame = elements::layout(
+        &elements::tree(&spec, &mut |_| None),
+        geometry.panel,
+        koru_draw::el::FrameCx::root(),
+    );
+    assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+    let buttons: Vec<_> = frame
+        .semantics()
+        .into_iter()
+        .filter(|node| node.role == Role::Button)
+        .collect();
+    // Favorites, Claude, OpenCode, the + and ↻.
+    assert_eq!(buttons.len(), surface.picker_rail().len() + 2);
+    assert_eq!(
+        buttons[0].name,
+        Some(Name::Key(koru_i18n::Key::AiPickerFavorites))
+    );
+    assert_eq!(buttons[1].name, Some(Name::Text("Claude".into())));
+    assert_eq!(buttons[1].selected, Some(true), "the chat's agent");
+    assert!(
+        buttons
+            .iter()
+            .any(|button| { button.name == Some(Name::Key(koru_i18n::Key::AiPickerManageAgents)) })
+    );
+    assert!(
+        buttons
+            .iter()
+            .any(|button| { button.name == Some(Name::Key(koru_i18n::Key::AiModelsRefresh)) })
+    );
+    // The marks are what the input reads: each one's rectangle is a rail
+    // rectangle, in the rail's order.
+    let rail = surface.picker_rail();
+    let rects = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail));
+    for (entry, rect) in rail.iter().zip(rects) {
+        let node = frame
+            .node(elements::mark_key(entry))
+            .expect("a mark per entry");
+        assert_same_rect(node.rect, rect, &format!("{entry:?}"));
+        assert_eq!(
+            frame.hit_at(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
+            Some(elements::mark_key(entry))
+        );
+    }
+    let plus = surface.picker_manage_rect(&geometry).unwrap();
+    assert_same_rect(
+        frame.node(elements::MANAGE_KEY).unwrap().rect,
+        plus,
+        "the +",
+    );
+}

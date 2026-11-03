@@ -15,8 +15,9 @@
 use koru_ai_core::AiProviderId;
 use koru_ai_wire::UpdateChatAgentSettingsRequest;
 use koru_draw::geometry::Rect;
+use koru_draw::text::TextEngine;
 use koru_draw::{scene, theme};
-use koru_i18n::{Key, t};
+use koru_i18n::{Key, Lang, t};
 use koru_ui::Segmented;
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -80,19 +81,7 @@ impl crate::ChatSurface {
 
     /// The row's two words and its control, laid out at the row's end.
     pub(super) fn fast_control(&mut self, row: Rect) -> ([String; 2], Segmented) {
-        let labels = [
-            t(self.lang, Key::AiModelFastOff).to_owned(),
-            t(self.lang, Key::AiModelFastOn).to_owned(),
-        ];
-        let words = [labels[0].as_str(), labels[1].as_str()];
-        let width = Segmented::width(&mut self.engine, &words);
-        let control = Segmented::layout(
-            &mut self.engine,
-            &words,
-            row.x + row.w - width - 4.0,
-            row.y + (row.h - Segmented::H) * 0.5,
-        );
-        (labels, control)
+        fast_control(&mut self.engine, self.lang, row)
     }
 
     /// A press on the row: Off or On is chosen. `None` when the press is
@@ -107,51 +96,83 @@ impl crate::ChatSurface {
             None => true,
         })
     }
+}
 
-    /// Draw the row: a rule above it, *Fast*, and Off | On.
-    pub(crate) fn draw_fast_row(&mut self, canvas: &mut Scene, root: Affine, geometry: &Geometry) {
-        let (Some(row), Some(choice)) = (geometry.fast, self.picker_fast()) else {
-            return;
-        };
-        let p = theme::p();
-        scene::fill(
+/// The row's two words and its control, laid out at the end of `row`.
+pub(super) fn fast_control(
+    engine: &mut TextEngine,
+    lang: Lang,
+    row: Rect,
+) -> ([String; 2], Segmented) {
+    let labels = [
+        t(lang, Key::AiModelFastOff).to_owned(),
+        t(lang, Key::AiModelFastOn).to_owned(),
+    ];
+    let words = [labels[0].as_str(), labels[1].as_str()];
+    let width = Segmented::width(engine, &words);
+    let control = Segmented::layout(
+        engine,
+        &words,
+        row.x + row.w - width - 4.0,
+        row.y + (row.h - Segmented::H) * 0.5,
+    );
+    (labels, control)
+}
+
+/// What the Fast row shows: whether Fast mode is on, where the pointer is
+/// and whether the keyboard is on the row.
+pub(super) struct FastPaint {
+    pub(super) lang: Lang,
+    pub(super) on: bool,
+    pub(super) pointer: (f32, f32),
+    pub(super) focused: bool,
+}
+
+/// Paint the row in `row`, the allocation the picker's element frame gave
+/// it: a rule above it, *Fast*, and Off | On.
+pub(super) fn paint_fast_row(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    row: Rect,
+    fast: &FastPaint,
+) {
+    let p = theme::p();
+    scene::fill(
+        canvas,
+        root,
+        p.panel_border,
+        &scene::rrect(row.x, row.y, row.w, 1.0, 0.5),
+    );
+    let title = engine.simple_layout(t(fast.lang, Key::AiModelFast), theme::role::row());
+    scene::draw_layout_first_line(
+        canvas,
+        root,
+        &title,
+        row.x + 8.0,
+        row.y + (row.h - title.height()) * 0.5,
+        Some(p.text),
+    );
+    let (labels, control) = fast_control(engine, fast.lang, row);
+    let words = [labels[0].as_str(), labels[1].as_str()];
+    let hovered = control.segment_at(fast.pointer.0, fast.pointer.1);
+    control.draw(
+        canvas,
+        root,
+        engine,
+        &words,
+        Some(usize::from(fast.on)),
+        hovered,
+        1.0,
+    );
+    if fast.focused {
+        let bounds = control.bounds;
+        scene::stroke(
             canvas,
             root,
-            p.panel_border,
-            &scene::rrect(row.x, row.y, row.w, 1.0, 0.5),
-        );
-        let title = self
-            .engine
-            .simple_layout(t(self.lang, Key::AiModelFast), theme::role::row());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &title,
-            row.x + 8.0,
-            row.y + (row.h - title.height()) * 0.5,
-            Some(p.text),
-        );
-        let (labels, control) = self.fast_control(row);
-        let words = [labels[0].as_str(), labels[1].as_str()];
-        let hovered = control.segment_at(self.pointer.0, self.pointer.1);
-        control.draw(
-            canvas,
-            root,
-            &mut self.engine,
-            &words,
-            Some(usize::from(choice.on)),
-            hovered,
+            p.accent,
             1.0,
+            &scene::rrect(bounds.x, bounds.y, bounds.w, bounds.h, 7.0),
         );
-        if self.picker.focus == PickerFocus::Fast {
-            let bounds = control.bounds;
-            scene::stroke(
-                canvas,
-                root,
-                p.accent,
-                1.0,
-                &scene::rrect(bounds.x, bounds.y, bounds.w, bounds.h, 7.0),
-            );
-        }
     }
 }
