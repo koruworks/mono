@@ -1822,6 +1822,20 @@ impl View for ManagerView {
         }
     }
 
+    fn dictation_cancel_hit(&self, x: f32, y: f32) -> bool {
+        match self {
+            Self::Container(v) => v.dictation_cancel_hit(x, y),
+            Self::Document(v) => v.dictation_cancel_hit(x, y),
+        }
+    }
+
+    fn dictation_records(&self) -> bool {
+        match self {
+            Self::Container(v) => v.dictation_records(),
+            Self::Document(v) => v.dictation_records(),
+        }
+    }
+
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {
         match self {
             Self::Container(v) => v.dictation_refused(refusal),

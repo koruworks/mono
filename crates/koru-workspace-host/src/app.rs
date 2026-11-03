@@ -701,6 +701,39 @@ fn finishes_commanded_dictation(commanded: bool, key: &Key, mods: ModifiersState
     commanded && mods.is_empty() && matches!(key, Key::Named(NamedKey::Enter))
 }
 
+/// What a key press does to a running dictation.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum DictationKey {
+    /// Nothing: no dictation, or a modifier alone during a recording.
+    Ignore,
+    /// Stop the recording and keep its words; `spent` when the key was
+    /// pressed in the window that records and goes no further.
+    Stop { spent: bool },
+    /// Throw the dictation away and let the key land — an ordinary local
+    /// event, the rule for every dictation that is not a recording.
+    Discard,
+}
+
+/// **What a key does to a running dictation**, as a value, so the input loop
+/// and its test read one description.
+///
+/// A recording — a chat composer's dictation, with its own Stop and Cancel
+/// (koru-ai D103) — stops on Escape and on every other key and keeps its
+/// words. In the window that records, the key is spent on the stop: the
+/// composer cannot take a key mid-composition, and Escape must not reach the
+/// chat and arm the stop of a running reply. A modifier pressed on its own is
+/// not typing — it is the start of a chord, the dictation chord included — so
+/// it stops nothing. Every other dictation keeps the settled rule: the key
+/// discards it and lands.
+fn dictation_key_outcome(live: bool, records: bool, in_pane: bool, modifier: bool) -> DictationKey {
+    match (live, records) {
+        (false, _) => DictationKey::Ignore,
+        (true, true) if modifier => DictationKey::Ignore,
+        (true, true) => DictationKey::Stop { spent: in_pane },
+        (true, false) => DictationKey::Discard,
+    }
+}
+
 /// Snap a zoom factor to the 0.1 grid and clamp to the bounds. Snapping stops
 /// float drift accumulating across many in/out cycles, so the indicator keeps
 /// reading 120% rather than drifting to 119.99999%.
@@ -15586,6 +15619,16 @@ impl<H: Host> App<H> {
         }
     }
 
+    /// Whether the running dictation is a recording that stops rather than
+    /// discards — see [`View::dictation_records`].
+    fn dictation_records(&self) -> bool {
+        self.dictation.is_live()
+            && self
+                .dictation_pane
+                .and_then(|pane| self.panes.get(&pane))
+                .is_some_and(|pane| pane.view.dictation_records())
+    }
+
     /// Throw an open dictation away. Every interruption ends here — a click, a
     /// keystroke, Escape, focus lost, the window closing, the machine
     /// sleeping.
@@ -16624,7 +16667,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         event.repeat,
                     ));
                     if !event.repeat && self.dictation_key.is_none() {
-                        self.dictation_press(id, event.physical_key);
+                        // A dictation the microphone or `/dictate` began has
+                        // no key to release; in either mode the chord ends
+                        // it, keeping its words (koru-ai D103).
+                        if self.dictation_commanded && self.dictation.is_live() {
+                            self.stop_dictation();
+                        } else {
+                            self.dictation_press(id, event.physical_key);
+                        }
                     }
                     return;
                 }
@@ -16646,13 +16696,32 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 // `koru_dictation`'s module note, which records both rejected
                 // alternatives. Deliberately no `return`: the key goes on to
                 // do what it was pressed for.
-                if self.dictation.is_live() {
-                    let why = if matches!(logical_key, Key::Named(NamedKey::Escape)) {
-                        Interruption::Escape
-                    } else {
-                        Interruption::LocalEvent
-                    };
-                    self.interrupt_dictation(why);
+                //
+                // **A recording is the exception** (koru-ai D103): a chat
+                // composer's dictation shows its own Stop and Cancel, so a
+                // key stops it and keeps its words — see
+                // [`dictation_key_outcome`].
+                match dictation_key_outcome(
+                    self.dictation.is_live(),
+                    self.dictation_records(),
+                    self.dictation_pane == Some(id),
+                    is_modifier_key(event.physical_key, &logical_key),
+                ) {
+                    DictationKey::Ignore => {}
+                    DictationKey::Stop { spent } => {
+                        self.stop_dictation();
+                        if spent {
+                            return;
+                        }
+                    }
+                    DictationKey::Discard => {
+                        let why = if matches!(logical_key, Key::Named(NamedKey::Escape)) {
+                            Interruption::Escape
+                        } else {
+                            Interruption::LocalEvent
+                        };
+                        self.interrupt_dictation(why);
+                    }
                 }
                 // Window-level chords are the app shell's business, not a
                 // view's: Ctrl+Alt+A needs the Window handle.
@@ -16998,6 +17067,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 // would throw away the sentence the button exists to keep; the
                 // press is consumed by the surface and reaches no view.
                 if state == ElementState::Pressed {
+                    // A recording's ✕ (koru-ai D103) is the one press that
+                    // throws the words away on purpose, and it is spent there.
+                    let on_cancel = self.dictation.is_live()
+                        && self.panes.get(&id).is_some_and(|pane| {
+                            pane.view.dictation_cancel_hit(
+                                pane.cursor.0 / self.zoom,
+                                pane.cursor.1 / self.zoom,
+                            )
+                        });
+                    if on_cancel {
+                        self.interrupt_dictation(Interruption::LocalEvent);
+                        return;
+                    }
                     let on_surface = self.dictation.is_live()
                         && self.panes.get(&id).is_some_and(|pane| {
                             pane.view
@@ -17007,7 +17089,14 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         self.stop_dictation();
                         return;
                     }
-                    self.interrupt_dictation(Interruption::LocalEvent);
+                    // Anywhere else a recording stops and keeps its words,
+                    // and the press still lands; any other dictation is
+                    // thrown away first, as a keystroke throws it away.
+                    if self.dictation_records() {
+                        self.stop_dictation();
+                    } else {
+                        self.interrupt_dictation(Interruption::LocalEvent);
+                    }
                 }
                 // ⌘-click on macOS, Ctrl+click elsewhere — both are the
                 // platform's "open this somewhere else" click.
@@ -17348,6 +17437,19 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 button: MouseButton::Right,
                 ..
             } => {
+                // A recording (koru-ai D103) stops and keeps its words; a
+                // right press on its composer is spent there, because the
+                // composer's menu cannot act on a composition still open.
+                if self.dictation_records() {
+                    let on_surface = self.panes.get(&id).is_some_and(|pane| {
+                        let (x, y) = (pane.cursor.0 / self.zoom, pane.cursor.1 / self.zoom);
+                        pane.view.dictation_hit(x, y) || pane.view.dictation_cancel_hit(x, y)
+                    });
+                    self.stop_dictation();
+                    if on_surface {
+                        return;
+                    }
+                }
                 let Some(pane) = self.panes.get_mut(&id) else {
                     return;
                 };
@@ -19298,6 +19400,30 @@ mod tests {
             &enter,
             ModifiersState::SHIFT
         ));
+    }
+
+    /// **A recording stops on a key and keeps its words** (koru-ai D103):
+    /// Escape or any other key in the window that records is spent on the
+    /// stop — it never reaches the chat to arm a reply's stop — a key in
+    /// another window stops it and lands, and a modifier alone stops
+    /// nothing. A document's dictation still discards and lets the key land.
+    #[test]
+    fn a_key_stops_a_recording_and_discards_any_other_dictation() {
+        use DictationKey::*;
+        // (live, records, in the recording window, a modifier alone)
+        assert_eq!(dictation_key_outcome(false, false, true, false), Ignore);
+        assert_eq!(dictation_key_outcome(false, true, true, false), Ignore);
+        assert_eq!(
+            dictation_key_outcome(true, true, true, false),
+            Stop { spent: true }
+        );
+        assert_eq!(
+            dictation_key_outcome(true, true, false, false),
+            Stop { spent: false }
+        );
+        assert_eq!(dictation_key_outcome(true, true, true, true), Ignore);
+        assert_eq!(dictation_key_outcome(true, false, true, false), Discard);
+        assert_eq!(dictation_key_outcome(true, false, true, true), Discard);
     }
 
     /// **Q44.** Two windows on one workspace, and the second one holds the

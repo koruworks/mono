@@ -1801,6 +1801,9 @@ impl MainView {
                 // Koru opens documents as tabs: a stored reply is followed
                 // by *Open* (D78).
                 chat.offer_open_stored_documents(true);
+                // The workspace shell dictates into the pane's composer: the
+                // microphone shows wherever voice is available (D103).
+                chat.offer_dictation(koru_dictation::available());
                 chat
             },
             ai_focused: false,
@@ -10235,6 +10238,14 @@ impl View for MainView {
         self.dictation_pressed(x, y)
     }
 
+    fn dictation_cancel_hit(&self, x: f32, y: f32) -> bool {
+        self.chat_dictation_press(x, y) == Some(koru_ai_ui::DictationPress::Cancel)
+    }
+
+    fn dictation_records(&self) -> bool {
+        self.chat_dictation().is_some()
+    }
+
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {
         // **The settings section is told as well as the toast.** A refusal that
         // says there is no worker is the one thing that page cannot ask for
@@ -13319,6 +13330,10 @@ impl View for MainView {
     /// pass and routed by [`View::dictate`], which asks where a typed character
     /// would go *now*.
     fn take_wants_dictation(&mut self) -> bool {
+        // A chat's microphone, in the pane or in a chat tab (D103).
+        if self.take_chat_wants_dictation() {
+            return true;
+        }
         match self.active_view() {
             TabView::Leaf(l) => View::take_wants_dictation(l),
             _ => false,

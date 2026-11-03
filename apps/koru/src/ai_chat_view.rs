@@ -62,6 +62,9 @@ impl AiChatView {
         // Koru opens documents as tabs: a stored reply is followed by
         // *Open* (D78).
         surface.offer_open_stored_documents(true);
+        // The workspace shell dictates into a chat tab's composer: the
+        // microphone shows wherever voice is available (D103).
+        surface.offer_dictation(koru_dictation::available());
         Self {
             surface,
             face: ChatFace::default(),
@@ -235,6 +238,16 @@ impl AiChatView {
         let mut view = Self::new();
         view.surface.attach_document(document, title);
         view
+    }
+
+    /// This tab's chat surface, for the container routing a dictation into
+    /// its composer and showing the recording there (D103).
+    pub fn dictation_surface(&self) -> &ChatSurface {
+        &self.surface
+    }
+
+    pub fn dictation_surface_mut(&mut self) -> &mut ChatSurface {
+        &mut self.surface
     }
 
     /// The message in the composer, chips in their `[[koru://doc/…]]`

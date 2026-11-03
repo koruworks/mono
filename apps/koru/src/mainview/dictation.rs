@@ -395,6 +395,11 @@ impl MainView {
     /// `maintenance_deadline` to its idle answer — the lifetime is one field's
     /// presence rather than a flag anybody has to remember to clear.
     pub(crate) fn set_dictation_status(&mut self, status: Option<Status>) -> bool {
+        // A chat's composer shows its own recording row, not this chip
+        // (koru-ai D103) — see [`chat`].
+        if let Some(changed) = self.show_chat_dictation(status) {
+            return changed;
+        }
         let Some(status) = status else {
             return self.listening.take().is_some();
         };
@@ -469,6 +474,9 @@ impl MainView {
     /// **Whether this press is the one click that does not discard.** See
     /// [`koru_workspace_host::View::dictation_hit`].
     pub(crate) fn dictation_pressed(&self, x: f32, y: f32) -> bool {
+        if self.chat_dictation().is_some() {
+            return self.chat_dictation_press(x, y) == Some(koru_ai_ui::DictationPress::Stop);
+        }
         self.dictation_geometry()
             .and_then(|g| g.hit(x, y))
             .is_some()
@@ -549,6 +557,8 @@ impl MainView {
         }
     }
 }
+
+mod chat;
 
 #[cfg(test)]
 mod tests;

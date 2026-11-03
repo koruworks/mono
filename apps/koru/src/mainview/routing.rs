@@ -312,6 +312,11 @@ pub(crate) struct LiveDictation {
     /// and addressed by index — otherwise a commit would land in whatever tab
     /// happened to be showing when the `Final` arrived.
     pub(crate) tab: usize,
+    /// **The composer of the chat tab at [`tab`](Self::tab)** (koru-ai
+    /// D103). A chat tab takes no typed character the container routes —
+    /// its surface owns its keys — so it has no [`EditableTarget`] of its
+    /// own, and the dictation is addressed here instead.
+    pub(crate) chat_tab: bool,
 }
 
 impl MainView {
@@ -334,15 +339,23 @@ impl MainView {
                 return false;
             }
             let target = self.editable_target();
-            if !Self::accepts_dictation(target) {
+            // A chat tab's composer, where nothing else takes the words.
+            let chat_tab = target == EditableTarget::None && self.chat_tab_takes_dictation();
+            if !chat_tab && !Self::accepts_dictation(target) {
                 return false;
             }
-            let opened = self.deliver_to(ws, target, self.tabs().active(), action);
+            let tab = self.tabs().active();
+            let opened = if chat_tab {
+                self.dictate_chat_tab(tab, action)
+            } else {
+                self.deliver_to(ws, target, tab, action)
+            };
             if opened {
                 self.dictation = Some(LiveDictation {
                     generation: *generation,
                     target,
-                    tab: self.tabs().active(),
+                    tab,
+                    chat_tab,
                 });
             }
             return opened;
@@ -353,9 +366,12 @@ impl MainView {
         if action.generation() != live.generation {
             return false;
         }
-        let (target, tab) = (live.target, live.tab);
+        let (target, tab, chat_tab) = (live.target, live.tab, live.chat_tab);
         if action.closes() {
             self.dictation = None;
+        }
+        if chat_tab {
+            return self.dictate_chat_tab(tab, action);
         }
         self.deliver_to(ws, target, tab, action)
     }

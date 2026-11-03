@@ -1946,6 +1946,25 @@ pub trait View {
         false
     }
 
+    /// **Whether this press landed on the listening surface's Cancel** — the
+    /// ✕ of a chat composer's recording row (koru-ai D103). It throws the
+    /// dictation away and is spent there, reaching no view. In window
+    /// coordinates, like [`dictation_hit`](Self::dictation_hit).
+    fn dictation_cancel_hit(&self, _x: f32, _y: f32) -> bool {
+        false
+    }
+
+    /// **Whether the live dictation is a recording that stops rather than
+    /// discards** — a chat composer's (koru-ai D103), which shows its own
+    /// Stop and Cancel. Then Escape and every other key stop it and keep its
+    /// words, the key spent on the stop in the window that records, and a
+    /// press anywhere but the surface stops it too and still lands: only
+    /// Cancel throws the words away. A document's dictation answers `false`
+    /// and keeps the rule that an ordinary local event discards.
+    fn dictation_records(&self) -> bool {
+        false
+    }
+
     /// **Say why a dictation will not run**, once.
     ///
     /// A [`koru_dictation::Refusal`] is a code and a flag, never a sentence:

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use koru_ai_provider::{CredentialStore, OsCredentialStore, SecretString};
-use koru_ai_ui::{ChatSurface, SurfaceMode};
+use koru_ai_ui::{ChatSurface, DictationPress, DictationShown, SurfaceMode};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
@@ -170,14 +170,18 @@ impl ChatApp {
                 .and_then(|consent| consent.granted().cloned());
             dictation.set_consent(consent);
         }
+        let mut view = ChatView::new(
+            link,
+            store_root,
+            viewport,
+            geometry.maximized(),
+            geometry.pinned(),
+        );
+        // This window owns a dictation controller of its own: the composer's
+        // microphone shows wherever voice is available (koru-ai D103).
+        view.surface.offer_dictation(koru_dictation::available());
         Self {
-            view: ChatView::new(
-                link,
-                store_root,
-                viewport,
-                geometry.maximized(),
-                geometry.pinned(),
-            ),
+            view,
             activation,
             geometry,
             appearance,
@@ -347,15 +351,48 @@ impl ChatApp {
         }
     }
 
-    fn begin_dictation(&mut self, physical: PhysicalKey) -> bool {
+    /// Begin a dictation into the composer: from the chord, held, or from
+    /// the composer's microphone (`physical` is `None`), which has no key to
+    /// release — ■, Escape, any key, Enter or the chord again ends that one.
+    fn begin_dictation(&mut self, physical: Option<PhysicalKey>) -> bool {
         self.sync_dictation_preferences();
         let Some(action) = self.dictation.press(Instant::now()) else {
             return self.service_dictation();
         };
         let accepted = self.route_dictation_action(&action);
         self.dictation.began(accepted);
-        self.dictation_key = accepted.then_some(physical);
+        self.dictation_key = physical.filter(|_| accepted);
         self.service_dictation() | accepted
+    }
+
+    /// **Stop, and keep the words** (koru-ai D103): ■, a press on the
+    /// composer, or a key while the composer records. A finish, not an
+    /// interruption — the composition stays provisional until the final
+    /// transcript commits it.
+    fn stop_dictation(&mut self) -> bool {
+        if !self.dictation.stop(Instant::now()) {
+            return false;
+        }
+        self.dictation_key = None;
+        self.service_dictation() | true
+    }
+
+    /// **A press while the composer records**: ✕ throws the recording away
+    /// and ■ — or any press on the composer — stops it, both spent there;
+    /// anywhere else it stops and the press still lands. Answers
+    /// `(spent, changed)`.
+    fn dictation_press(&mut self, x: f32, y: f32) -> (bool, bool) {
+        if !self.dictation.is_live() {
+            return (false, false);
+        }
+        match self.view.dictation_press_at(x, y) {
+            Some(DictationPress::Cancel) => (
+                true,
+                self.interrupt_dictation(koru_dictation::Interruption::LocalEvent),
+            ),
+            Some(DictationPress::Stop) => (true, self.stop_dictation() | true),
+            None => (false, self.stop_dictation()),
+        }
     }
 
     fn finish_dictation(&mut self, physical: PhysicalKey) -> bool {
@@ -392,11 +429,34 @@ impl ChatApp {
                 surface = refusal.surface,
                 "standalone AI dictation refused"
             );
+            // Said on the status line: this window has no voice set-up of its
+            // own, and the sentence for a missing model or consent names the
+            // workspace's (koru-ai D103).
+            let sentence = if refusal.surface {
+                koru_i18n::Key::VoiceErrorSurface
+            } else {
+                refusal.code.sentence_key()
+            };
+            changed |= self.view.surface.dictation_refused(sentence);
         }
         if !self.dictation.is_live() {
             self.dictation_key = None;
         }
+        // What the composer's recording row shows (D103), and `None` the pass
+        // the session ends.
+        changed |= self
+            .view
+            .surface
+            .show_dictation(self.dictation.status().map(shown), Instant::now());
         changed
+    }
+
+    /// The composer's microphone was pressed: begin, as the chord does.
+    fn begin_asked_dictation(&mut self) -> bool {
+        if !self.view.surface.take_wants_dictation() {
+            return false;
+        }
+        self.begin_dictation(None) | true
     }
 }
 
@@ -581,21 +641,30 @@ impl WindowApp for ChatApp {
     }
 
     fn click(&mut self, engine: &mut TextEngine, x: f32, y: f32, _ctrl: bool) -> bool {
-        let interrupted = self.interrupt_dictation(koru_dictation::Interruption::LocalEvent);
         let (x, y) = self.view_point(x, y);
-        interrupted | self.view.mouse_down(engine, x, y)
+        let (spent, changed) = self.dictation_press(x, y);
+        if spent {
+            return changed;
+        }
+        changed | self.view.mouse_down(engine, x, y) | self.begin_asked_dictation()
     }
 
     fn double_click(&mut self, _engine: &mut TextEngine, x: f32, y: f32) -> bool {
-        let interrupted = self.interrupt_dictation(koru_dictation::Interruption::LocalEvent);
         let (x, y) = self.view_point(x, y);
-        interrupted | self.view.mouse_double_click(x, y)
+        let (spent, changed) = self.dictation_press(x, y);
+        if spent {
+            return changed;
+        }
+        changed | self.view.mouse_double_click(x, y)
     }
 
     fn context_menu(&mut self, _engine: &mut TextEngine, x: f32, y: f32) -> bool {
-        let interrupted = self.interrupt_dictation(koru_dictation::Interruption::LocalEvent);
         let (x, y) = self.view_point(x, y);
-        interrupted | self.view.context_menu(x, y)
+        let (spent, changed) = self.dictation_press(x, y);
+        if spent {
+            return changed;
+        }
+        changed | self.view.context_menu(x, y)
     }
 
     fn drag(&mut self, _engine: &mut TextEngine, x: f32, y: f32) -> bool {
@@ -621,16 +690,13 @@ impl WindowApp for ChatApp {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
-        let interrupted = if self.dictation.is_live() {
-            let why = if matches!(key, Key::Named(NamedKey::Escape)) {
-                koru_dictation::Interruption::Escape
-            } else {
-                koru_dictation::Interruption::LocalEvent
-            };
-            self.interrupt_dictation(why)
-        } else {
-            false
-        };
+        // **A key while the composer records stops it and keeps its words**
+        // (koru-ai D103), and is spent on that: the composer cannot take a
+        // key mid-composition, and Escape must not reach the chat and arm
+        // the stop of a running reply. A modifier alone is not typing.
+        if self.dictation.is_live() && !is_modifier(key) {
+            return self.stop_dictation() | true;
+        }
         if (mods.control_key() || mods.super_key()) && !mods.alt_key() && !self.view.viewer_open() {
             let zoom = match key {
                 Key::Character(value) if value.as_str() == "+" || value.as_str() == "=" => {
@@ -641,10 +707,10 @@ impl WindowApp for ChatApp {
                 _ => None,
             };
             if let Some(zoom) = zoom {
-                return interrupted | self.rezoom(zoom);
+                return self.rezoom(zoom);
             }
         }
-        interrupted | self.view.key(key, text, mods)
+        self.view.key(key, text, mods)
     }
 
     fn physical_key_pressed(
@@ -661,7 +727,13 @@ impl WindowApp for ChatApp {
             return false;
         }
         if !repeat && self.dictation_key.is_none() {
-            self.begin_dictation(physical);
+            // A recording the microphone began has no key to release: the
+            // chord ends it, keeping its words (D103).
+            if self.dictation.is_live() {
+                self.stop_dictation();
+            } else {
+                self.begin_dictation(Some(physical));
+            }
         }
         true
     }
@@ -705,6 +777,7 @@ impl WindowApp for ChatApp {
         // event, and a section that landed during a keystroke should not wait
         // for the proxy round trip.
         self.view.surface.maintain(now)
+            | self.begin_asked_dictation()
             | self.service_dictation()
             | self.adopt_settings()
             | self.service_open_requests()
@@ -755,6 +828,35 @@ impl WindowApp for ChatApp {
         self.view
             .draw(canvas, engine, Affine::scale(self.zoom() as f64));
     }
+}
+
+/// **What the composer draws about a dictation** (koru-ai D103): its level,
+/// whether the microphone is open, and whether the last words are being
+/// finished — never the words. The workspace shell answers the same way
+/// (`apps/koru`'s `mainview::dictation::chat::shown`).
+fn shown(status: koru_dictation::Status) -> DictationShown {
+    use koru_dictation::{Stage, State};
+    DictationShown {
+        level: status.level.step(),
+        listening: status.stage == Stage::Live && status.worker == State::Listening,
+        finishing: status.stage == Stage::Finalising || status.worker == State::Finalising,
+    }
+}
+
+/// A modifier pressed on its own: the start of a chord, not typing.
+fn is_modifier(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Named(
+            NamedKey::Control
+                | NamedKey::Shift
+                | NamedKey::Alt
+                | NamedKey::AltGraph
+                | NamedKey::Super
+                | NamedKey::Meta
+                | NamedKey::Hyper
+        )
+    )
 }
 
 /// The step `HistoryBack` or `HistoryForward` asks for, if the key is one.
@@ -1096,6 +1198,20 @@ impl ChatView {
         let wheel = MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, delta as f64));
         let (x, y) = self.pointer;
         self.surface.viewer_zoom_wheel(wheel, x, y)
+    }
+
+    /// What a press means to the composer's recording (D103), where the
+    /// composer is what the press reaches: not over the caption, the window
+    /// menu, the Settings surface or an open picture.
+    fn dictation_press_at(&self, x: f32, y: f32) -> Option<DictationPress> {
+        if self.viewer_open()
+            || self.window_menu.is_some()
+            || self.settings.is_some()
+            || y <= theme::CAPTION_H
+        {
+            return None;
+        }
+        self.surface.dictation_press_at(x, y)
     }
 
     fn mouse_down(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
@@ -1512,6 +1628,174 @@ mod tests {
         app.physical_key_released(physical);
         assert_eq!(app.dictation.stage(), koru_dictation::Stage::Finalising);
         assert_eq!(app.dictation_key, None);
+    }
+
+    /// A window whose controller has been agreed with, its composer offering
+    /// the microphone, laid out once.
+    fn recording_app(engine: &mut TextEngine) -> ChatApp {
+        let mut app = ChatApp::new(
+            None,
+            None,
+            None,
+            None,
+            None,
+            Appearance::default(),
+            koru_api_client::GlobalLink::disabled(),
+        );
+        app.dictation
+            .set_consent(Some(koru_voice_consent::Granted::recorded(
+                koru_voice_consent::Terms {
+                    model: "nemotron".into(),
+                    version: "1".into(),
+                    licence: "NVIDIA".into(),
+                    attribution: "NVIDIA".into(),
+                    download_bytes: 1,
+                },
+                1,
+            )));
+        app.view.surface.offer_dictation(true);
+        app.draw(&mut vello::Scene::new(), engine, 900.0, 700.0);
+        app
+    }
+
+    fn centre(rect: Rect) -> (f32, f32) {
+        (rect.x + rect.w * 0.5, rect.y + rect.h * 0.5)
+    }
+
+    /// What the worker would say, for the session the controller runs.
+    fn say(
+        app: &mut ChatApp,
+        event: impl FnOnce(koru_dictation::SessionId, u64) -> koru_dictation::Event,
+    ) {
+        let session = app.dictation.session().expect("a session");
+        let generation = app.dictation.generation().expect("a generation");
+        app.dictation.observe(event(session, generation));
+        app.service_dictation();
+    }
+
+    /// **The microphone records into the composer, and Escape stops it**
+    /// (koru-ai D103): the press begins a dictation with no key to release,
+    /// the footer shows the recording, partial words are not the message,
+    /// Escape finishes them — spent, never reaching the chat — and the final
+    /// words land after what was typed.
+    #[test]
+    fn the_microphone_records_and_escape_stops_keeping_the_words() {
+        let mut engine = TextEngine::new();
+        let mut app = recording_app(&mut engine);
+        for letter in ["h", "i", " "] {
+            app.key(
+                &mut engine,
+                &Key::Character(letter.into()),
+                Some(letter),
+                ModifiersState::empty(),
+            );
+        }
+        let mic = app
+            .view
+            .surface
+            .microphone_for_host_test()
+            .expect("the footer has a microphone");
+        let (x, y) = centre(mic);
+        assert!(app.click(&mut engine, x, y, false));
+        assert!(app.dictation.is_live(), "the press began a dictation");
+        assert_eq!(app.dictation_key, None, "with no key to release");
+        say(&mut app, |session, generation| {
+            koru_dictation::Event::State {
+                session,
+                generation,
+                state: koru_dictation::State::Listening,
+            }
+        });
+        assert!(app.view.surface.dictating(), "the footer records");
+        say(&mut app, |session, generation| {
+            koru_dictation::Event::Partial {
+                session,
+                generation,
+                text: koru_dictation::Transcript::new("hello"),
+            }
+        });
+        assert_eq!(app.view.surface.dictation_composer().text(), "hi ");
+
+        assert!(app.key(
+            &mut engine,
+            &Key::Named(NamedKey::Escape),
+            None,
+            ModifiersState::empty()
+        ));
+        assert_eq!(
+            app.dictation.stage(),
+            koru_dictation::Stage::Finalising,
+            "Escape stops, and keeps the words"
+        );
+        say(&mut app, |session, generation| {
+            koru_dictation::Event::Final {
+                session,
+                generation,
+                text: koru_dictation::Transcript::new("hello there"),
+            }
+        });
+        say(&mut app, |session, generation| {
+            koru_dictation::Event::Ended {
+                session,
+                generation,
+                reason: koru_dictation::EndReason::Completed,
+            }
+        });
+        assert_eq!(
+            app.view.surface.dictation_composer().text(),
+            "hi hello there"
+        );
+        assert!(!app.view.surface.dictating(), "the footer is back");
+    }
+
+    /// **✕ throws away only the recording's words**, and the chord ends a
+    /// recording the microphone began.
+    #[test]
+    fn cancel_discards_the_recording_and_the_chord_stops_one() {
+        let mut engine = TextEngine::new();
+        let mut app = recording_app(&mut engine);
+        app.key(
+            &mut engine,
+            &Key::Character("a".into()),
+            Some("a"),
+            ModifiersState::empty(),
+        );
+        let (x, y) = centre(app.view.surface.microphone_for_host_test().unwrap());
+        app.click(&mut engine, x, y, false);
+        say(&mut app, |session, generation| {
+            koru_dictation::Event::Partial {
+                session,
+                generation,
+                text: koru_dictation::Transcript::new("spoken"),
+            }
+        });
+        app.draw(&mut vello::Scene::new(), &mut engine, 900.0, 700.0);
+        let (cancel, _) = app
+            .view
+            .surface
+            .dictation_buttons_for_host_test()
+            .expect("✕ and ■");
+        let (x, y) = centre(cancel);
+        assert!(app.click(&mut engine, x, y, false));
+        assert!(!app.dictation.is_live(), "✕ ended it");
+        assert_eq!(app.view.surface.dictation_composer().text(), "a");
+        assert!(!app.view.surface.dictating());
+
+        // Begun again from the microphone, the chord stops it.
+        app.draw(&mut vello::Scene::new(), &mut engine, 900.0, 700.0);
+        let (x, y) = centre(app.view.surface.microphone_for_host_test().unwrap());
+        app.click(&mut engine, x, y, false);
+        assert!(app.dictation.is_live());
+        let chord = koru_keys::registry::get(koru_keys::ShortcutId::Dictate).chord;
+        assert!(app.physical_key_pressed(
+            &mut engine,
+            PhysicalKey::Code(winit::keyboard::KeyCode::KeyD),
+            &Key::Character("d".into()),
+            Some("d"),
+            chord.mods,
+            false,
+        ));
+        assert_eq!(app.dictation.stage(), koru_dictation::Stage::Finalising);
     }
 
     #[test]
