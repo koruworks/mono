@@ -4048,6 +4048,18 @@ mod tests {
                 "/v1/profiles/{id}/personal-attributes",
                 Some(Scope::EditDocuments),
             ),
+            // a reader's own private view of a document: a write that needs
+            // only read access, because it changes nothing anyone else sees.
+            (
+                "GET",
+                "/v1/profiles/{id}/documents/{document}/private-state",
+                Some(Scope::ReadDocuments),
+            ),
+            (
+                "PATCH",
+                "/v1/profiles/{id}/documents/{document}/private-state",
+                Some(Scope::ReadDocuments),
+            ),
             // and the read-only export, which is a POST because it is work.
             (
                 "POST",

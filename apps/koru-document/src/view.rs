@@ -419,13 +419,24 @@ impl View for BuiltInDocument {
             .as_mut()
             .is_some_and(|viewer| viewer.maintain(now));
         let spelling = self.spelling.maintain(&mut self.editor, ws, now);
+        // A fold read or saved off-thread lands here after `Wake::Folds`.
+        let folds = self.folds.sync(&mut self.editor, ws);
         // The layouts the last reflow asked for go out; the drawings that
         // came back land, and the next frame takes its heights from them.
         let diagrams = self.diagrams.maintain(&mut self.editor);
         // Suggestions that just landed belong in the open context menu's
         // placeholder, not behind a reopen.
         let filled = self.fill_context_suggestions();
-        search || table || copy || warning || local || viewer || spelling || diagrams || filled
+        search
+            || table
+            || copy
+            || warning
+            || local
+            || viewer
+            || spelling
+            || folds
+            || diagrams
+            || filled
     }
 
     fn adopt(&mut self, ws: &WorkspaceDoc) {
@@ -1117,6 +1128,9 @@ impl View for BuiltInDocument {
         // for the panes that did not make the edit). Free when nothing
         // changed: one tracker drain of an empty set.
         self.spelling.observe(&mut self.editor, ws);
+        // A fold the person just made goes to the worker from here, the
+        // frame that follows the click.
+        self.folds.sync(&mut self.editor, ws);
         // Laid out before the bubble is placed. `frame` reflows too — cheap
         // when the rows are already clean — but the bubble is anchored to the
         // *selection's* rects, and measuring those against a stale layout puts

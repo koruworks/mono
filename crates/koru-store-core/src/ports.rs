@@ -768,6 +768,43 @@ pub trait WorkspaceRepo {
         Ok(None)
     }
 
+    // ------------------------------------------------- document-private state
+
+    /// A reader's private snapshot of a document's view state, or `None`
+    /// when they never changed it. Device-local; never replicated.
+    fn private_snapshot(
+        &self,
+        _document: DocumentId,
+        _owner: ProfileId,
+    ) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+    /// Replace one reader's private snapshot in one transaction. The caller
+    /// has already validated and merged it.
+    fn put_private_snapshot(
+        &mut self,
+        _document: DocumentId,
+        _owner: ProfileId,
+        _snapshot: &[u8],
+        _at: Timestamp,
+    ) -> Result<()> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "document-private state is not implemented by this repository",
+        ))
+    }
+    /// Every reader's private snapshot of one document, for a transfer that
+    /// must carry them before the source row is dropped.
+    fn private_snapshots(&self, _document: DocumentId) -> Result<Vec<(ProfileId, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
+    /// Delete private rows whose document is not in `listed` — the documents
+    /// the manifest still names, trashed or not. Idempotent. Returns how many
+    /// rows went.
+    fn prune_private_snapshots(&mut self, _listed: &[DocumentId]) -> Result<usize> {
+        Ok(0)
+    }
+
     /// Bytes on disk, for the debug routes. Metadata, never content.
     fn size_bytes(&self) -> Result<u64>;
 }

@@ -69,16 +69,16 @@ use koru_store_wire::reminders::{
 use koru_store_wire::search::{Navigation, SearchRequest, SearchResponse};
 use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse};
 use koru_store_wire::{
-    AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount, Created,
-    DocumentLocation, DocumentOutline, EnsuredFileNote, HistoryEntry, HistoryPage,
+    ApplyPrivateChanges, AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount,
+    Created, DocumentLocation, DocumentOutline, EnsuredFileNote, HistoryEntry, HistoryPage,
     LocalProfileRemoval, LocalProfileRestoration, ManifestRef, MoveWorkspace, NewDocument,
     NewProfile, NewWorkspace, PauseBlobTransfer, PersonalAttributesResponse,
-    PersonalDictionaryResponse, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
-    ProfileAppearance, ProfileLifecycleInventory, ProfileTransportModeOutcome, RelabelHistory,
-    RenameProfile, RenameWorkspace, SeedDocumentRequest, SeedDocumentWithCandidateRequest,
-    SetDictionaryWord, SetPersonalAttribute, SetProfileTransportMode, Status, Stopping,
-    StoreBackup, StoreBackupResult, TransferDocuments, Transferred, WelcomeProgress,
-    WorkspaceAppearance, WorkspaceOrder, WorkspaceUsage,
+    PersonalDictionaryResponse, PrivateState, ProfileAccountBindingOutcome,
+    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory,
+    ProfileTransportModeOutcome, RelabelHistory, RenameProfile, RenameWorkspace,
+    SeedDocumentRequest, SeedDocumentWithCandidateRequest, SetDictionaryWord, SetPersonalAttribute,
+    SetProfileTransportMode, Status, Stopping, StoreBackup, StoreBackupResult, TransferDocuments,
+    Transferred, WelcomeProgress, WorkspaceAppearance, WorkspaceOrder, WorkspaceUsage,
 };
 use schemars::{Schema, SchemaGenerator};
 
@@ -411,6 +411,34 @@ pub const ROUTES: &[Route] = &[
         returns: "the entity's attributes for this profile after the write. Personal state \
                   belongs to the profile in the path and never overwrites another \
                   profile's answer to the same question",
+    },
+    Route {
+        method: "GET",
+        audience: Audience::Public,
+        path: "/v1/profiles/{id}/documents/{document}/private-state",
+        handler: || get(routes::workspaces::document_private_state),
+        request: None,
+        response: Some(|g| g.subschema_for::<PrivateState>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "One reader's device-local private view state for one document",
+        returns: "the reader's private attributes by node id — today `koru.collapsed` for a \
+                  closed toggle — and a revision that grows with each change. A reader \
+                  who never changed anything gets an empty map at revision 0, and the \
+                  read writes nothing. Never replicated or exported",
+    },
+    Route {
+        method: "PATCH",
+        audience: Audience::Public,
+        path: "/v1/profiles/{id}/documents/{document}/private-state",
+        handler: || patch(routes::workspaces::apply_document_private_changes),
+        request: Some(|g| g.subschema_for::<ApplyPrivateChanges>()),
+        response: Some(|g| g.subschema_for::<PrivateState>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "Apply up to 512 explicit private view-state changes for one reader and document",
+        returns: "the reader's private state after the one atomic save. Each change names \
+                  the value it wants, so a repeat is a no-op; one invalid change rejects \
+                  the batch. Needs only read access: it changes this reader's view, never \
+                  the document, and it never wakes sync",
     },
     Route {
         method: "GET",

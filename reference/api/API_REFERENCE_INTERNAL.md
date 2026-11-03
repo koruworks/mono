@@ -21,6 +21,8 @@ Generated from the route catalog. Do not edit.
 - PATCH `/v1/profiles/{id}/appearance` — Set a profile's switcher icon and named colour (Public)
 - GET `/v1/profiles/{id}/personal-attributes` — One profile's personal attributes for one entity, named by ?entity=<kind>:<workspace>:<document>:<node> (Public)
 - PUT `/v1/profiles/{id}/personal-attributes` — Set one personal attribute on one entity, or clear it with a null value (Public)
+- GET `/v1/profiles/{id}/documents/{document}/private-state` — One reader's device-local private view state for one document (Public)
+- PATCH `/v1/profiles/{id}/documents/{document}/private-state` — Apply up to 512 explicit private view-state changes for one reader and document (Public)
 - GET `/v1/profiles/{id}/reminders` — Every reminder for ?entity=<canonical entity reference> (Public)
 - POST `/v1/profiles/{id}/reminders` — Create a reminder at a client-minted id (Public)
 - GET `/v1/profiles/{id}/reminders/{reminder}` — Fetch one reminder (Public)

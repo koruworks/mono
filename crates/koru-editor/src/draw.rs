@@ -423,6 +423,21 @@ pub fn draw_document(
             });
         }
 
+        if row.is_toggle() {
+            let hovered = matches!(hover, Some(Hover::Fold(h)) if h == i);
+            draw_fold_arrow(scene, root, row, engine, oy, hovered);
+            // An empty title reads "Toggle" in the reader's language: a
+            // placeholder, never stored as the title.
+            if row.text.is_empty() {
+                let hint = engine.placeholder_layout(
+                    koru_i18n::t(koru_i18n::current(), koru_i18n::Key::TogglePlaceholder),
+                    row.type_step(),
+                    row.font_choice().stack(),
+                    row.weight(),
+                );
+                draw_layout(scene, root, &hint, ox, oy, Some(theme::p().placeholder));
+            }
+        }
         if row.is_task() {
             let hovered = matches!(hover, Some(Hover::Checkbox(h)) if h == i);
             let reminder_attention = task_has_reminder_attention(reminder_chips.get(&row.id));
@@ -2431,6 +2446,40 @@ pub fn draw_checkbox(
             .swatch;
         fill(scene, root, color, &Circle::new(center, radius as f64));
     }
+}
+
+/// A toggle's arrow: pointing right when the reader closed it, down when it
+/// is open. Drawn in the checkbox's column, with the same hover ring.
+pub fn draw_fold_arrow(
+    scene: &mut Scene,
+    root: Affine,
+    row: &Paragraph,
+    engine: &mut TextEngine,
+    oy: f32,
+    hovered: bool,
+) {
+    let x = checkbox_x(row.depth);
+    let size = theme::CHECKBOX_SIZE;
+    let y = rowlayout::center_on_first_line(row, oy, size);
+    if hovered {
+        let pad = 4.0;
+        let ring = rrect(x - pad, y - pad, size + pad * 2.0, size + pad * 2.0, 5.0);
+        fill(scene, root, theme::p().hover_tint, &ring);
+    }
+    let glyph = if row.fold_closed {
+        koru_draw::icons::CARET_RIGHT
+    } else {
+        koru_draw::icons::CARET_DOWN
+    };
+    let laid = engine.icon_layout(glyph, size);
+    draw_layout(
+        scene,
+        root,
+        &laid,
+        x + (size - laid.width()) * 0.5,
+        y + (size - laid.height()) * 0.5,
+        Some(theme::p().text_dim),
+    );
 }
 
 pub(crate) fn task_has_reminder_attention(

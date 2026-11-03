@@ -43,6 +43,7 @@ apps/ios/koru.local.conf
 # Xcode's per-user state. **The directory is `xcuserdata/`, not
 # `*.xcuserdata/`** — the glob only matched a directory *ending* in that word,
 # so neither the container nor the `<user>.xcuserdatad/` inside it was ignored
+temp_auto_push.bat
 # and one developer's scheme list reached the repository.
 apps/ios/**/xcuserdata/
 apps/ios/**/*.xcuserdatad/
@@ -89,3 +90,5 @@ skills-lock.json
 # A maintainer's private notes beside AGENTS.md (AGENTS.md, "Maintainers'
 # private notes"). Never part of this repository.
 AGENTS.private.md
+.gitignore
+branch_structure.json

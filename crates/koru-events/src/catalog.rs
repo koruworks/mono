@@ -735,6 +735,25 @@ payload!(
     }
 );
 
+/// A reader's private document state changed. The reader travels as an
+/// attr, like the profile rows above; the document is the subject.
+pub struct DocumentPrivateChanged {
+    pub profile_id: Uuid,
+    pub workspace_id: Uuid,
+    pub document_id: Uuid,
+}
+
+payload!(
+    DocumentPrivateChanged,
+    "document.private.changed",
+    |self| {
+        Draft::new(EventName::from_static(Self::NAME))
+            .workspace(WorkspaceId(self.workspace_id))
+            .subject(Subject::document(self.document_id.to_string()))
+            .attr("profile", AttrValue::Id(self.profile_id))
+    }
+);
+
 /// The one shape the workspace-catalog rows share: a name, and the workspace
 /// the fact is about. Written once rather than nine times, so a later row
 /// cannot forget the subject and quietly publish an event nobody can route.

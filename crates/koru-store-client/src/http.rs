@@ -33,12 +33,13 @@ pub use koru_store_wire::search::{
 };
 pub use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse, TaskRow};
 pub use koru_store_wire::{
-    AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount, Created,
+    ApplyPrivateChanges, AssociateBlob, BindProfileAccount, CaptureHistory, ClearProfileAccount, Created,
     DocumentLocation, DocumentOutline, EnsuredFileNote, Failure, HistoryEntry, HistoryPage,
     HistoryQuery, ImportQuery, LocalProfileRemoval, LocalProfileRestoration, ManifestRef,
     NewDocument, NewProfile, NewWorkspace, OutlineHeading, PersonalAttributeValue,
     PersonalAttributesResponse, PersonalDictionaryResponse, ProfileAccountBindingOutcome,
-    ProfileAccountClearOutcome, ProfileAppearance, ProfileLifecycleInventory, RelabelHistory,
+    PrivateChange, PrivateState, ProfileAccountClearOutcome, ProfileAppearance,
+    ProfileLifecycleInventory, RelabelHistory,
     RenameProfile, RenameWorkspace, SeedDocumentRequest, SeedDocumentWithCandidateRequest,
     SetDictionaryWord, SetPersonalAttribute, Status, Stopping, StoreBackup, StoreBackupResult,
     WorkspaceAppearance, WorkspaceOrder, WorkspaceUsage,
@@ -788,6 +789,41 @@ impl Client {
                 })
         })?;
         self.decode(response)
+    }
+
+    // ------------------------------------------------- document-private state
+
+    /// One reader's device-local private view state for one document. A
+    /// reader who never changed anything gets an empty state at revision 0.
+    pub fn document_private_state(
+        &self,
+        profile: ProfileId,
+        document: DocumentId,
+    ) -> Result<PrivateState> {
+        self.get(&format!(
+            "/v1/profiles/{}/documents/{}/private-state",
+            profile.to_storage(),
+            document.to_storage()
+        ))
+    }
+
+    /// Apply up to [`MAX_BATCH`](koru_store_core::document_private::MAX_BATCH)
+    /// explicit changes in one atomic save. Safe to retry: each change names
+    /// the value it wants.
+    pub fn apply_document_private_changes(
+        &self,
+        profile: ProfileId,
+        document: DocumentId,
+        changes: Vec<PrivateChange>,
+    ) -> Result<PrivateState> {
+        self.patch(
+            &format!(
+                "/v1/profiles/{}/documents/{}/private-state",
+                profile.to_storage(),
+                document.to_storage()
+            ),
+            &ApplyPrivateChanges { changes },
+        )
     }
 
     // ------------------------------------------------------------- reminders

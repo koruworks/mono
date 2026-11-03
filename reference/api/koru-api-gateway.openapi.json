@@ -687,6 +687,22 @@
         ],
         "type": "object"
       },
+      "ApplyPrivateChanges": {
+        "additionalProperties": false,
+        "description": "`PATCH /v1/profiles/{id}/documents/{document}/private-state`.\n\nA bounded batch of explicit values for one reader's private view of one\ndocument. Each change names the value it wants — never \"invert\" — so a\nretried request is a no-op. All or nothing: one invalid change rejects the\nbatch and applies none of it.",
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/PrivateChange"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "changes"
+        ],
+        "type": "object"
+      },
       "ApprovalId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -7453,6 +7469,51 @@
             "type": "string"
           }
         ]
+      },
+      "PrivateChange": {
+        "additionalProperties": false,
+        "description": "One requested change: set `key` on `node_id` to `value`, or clear it when\n`value` is `null`.",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "value": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "node_id",
+          "key"
+        ],
+        "type": "object"
+      },
+      "PrivateState": {
+        "description": "What a reader sees: their private attributes by node, and a revision that\ngrows with every effective change. Absent state is empty at revision 0.",
+        "properties": {
+          "nodes": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "nodes"
+        ],
+        "type": "object"
       },
       "ProcessState": {
         "oneOf": [
@@ -22181,6 +22242,140 @@
           }
         ],
         "summary": "Add or remove one personal-dictionary word for one language"
+      }
+    },
+    "/v1/profiles/{id}/documents/{document}/private-state": {
+      "get": {
+        "description": "the reader's private attributes by node id — today `koru.collapsed` for a closed toggle — and a revision that grows with each change. A reader who never changed anything gets an empty map at revision 0, and the read writes nothing. Never replicated or exported",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivateState"
+                }
+              }
+            },
+            "description": "the reader's private attributes by node id — today `koru.collapsed` for a closed toggle — and a revision that grows with each change. A reader who never changed anything gets an empty map at revision 0, and the read writes nothing. Never replicated or exported"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "read_documents"
+            ]
+          }
+        ],
+        "summary": "One reader's device-local private view state for one document"
+      },
+      "patch": {
+        "description": "the reader's private state after the one atomic save. Each change names the value it wants, so a repeat is a no-op; one invalid change rejects the batch. Needs only read access: it changes this reader's view, never the document, and it never wakes sync",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyPrivateChanges"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivateState"
+                }
+              }
+            },
+            "description": "the reader's private state after the one atomic save. Each change names the value it wants, so a repeat is a no-op; one invalid change rejects the batch. Needs only read access: it changes this reader's view, never the document, and it never wakes sync"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "read_documents"
+            ]
+          }
+        ],
+        "summary": "Apply up to 512 explicit private view-state changes for one reader and document"
       }
     },
     "/v1/profiles/{id}/local": {

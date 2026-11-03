@@ -265,6 +265,8 @@ pub enum Hover {
     /// yet.
     Plus(usize),
     Checkbox(usize),
+    /// A toggle row's open/close arrow, in the column a checkbox uses.
+    Fold(usize),
     /// The icon beside the first row of a callout box. Pressing it opens the
     /// look picker for the box.
     CalloutIcon(usize),
@@ -351,6 +353,7 @@ impl Hover {
             Self::Grip(i)
             | Self::Plus(i)
             | Self::Checkbox(i)
+            | Self::Fold(i)
             | Self::CalloutIcon(i)
             | Self::Text(i)
             | Self::Emoji(i)
@@ -415,6 +418,7 @@ impl Hover {
             | Self::PanelControl
             | Self::ScrollTrack
             | Self::Checkbox(_)
+            | Self::Fold(_)
             | Self::CalloutIcon(_) => cursor::PRESS,
         }
     }

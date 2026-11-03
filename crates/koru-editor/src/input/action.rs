@@ -144,6 +144,11 @@ pub enum Action {
     /// `Ctrl+Shift+6`, beside the three list digits, and shared with the
     /// Callout row of the selection bubble's list menu.
     ToggleCallout,
+    /// Open or close the toggle the caret is on, or the one whose body it is
+    /// in — a private view preference, never an edit. With toggles selected,
+    /// every selected toggle takes the opposite of the focused one's state.
+    /// Reached via `Ctrl+Alt+Enter` (`Cmd+Option+Enter`).
+    ToggleFold,
     /// Drop a horizontal rule at the caret. Performed only by a view that offers
     /// dividers (`ViewState`), like [`SetHeading`](Action::SetHeading): the `/`
     /// menu and the `---` shorthand reach the same operation without an action.
@@ -240,6 +245,7 @@ impl Action {
                 | Self::Indent(_)
                 | Self::SetListStyle(_)
                 | Self::ToggleCallout
+                | Self::ToggleFold
                 // Formatting acts on every selected row, not only the focused
                 // one — clearing the marks first left Ctrl+B bolding a single
                 // line out of five.

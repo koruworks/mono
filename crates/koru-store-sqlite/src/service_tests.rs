@@ -14,6 +14,7 @@ use crate::{SqliteBackend, SqliteCatalog};
 mod account_provisioning;
 #[cfg(feature = "disk-tests")]
 mod cloud_restart;
+mod document_private;
 mod manifest_origin;
 mod objects;
 mod profile_projection;

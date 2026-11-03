@@ -110,6 +110,18 @@ Set one personal attribute on one entity, or clear it with a null value
 
 Returns: the entity's attributes for this profile after the write. Personal state belongs to the profile in the path and never overwrites another profile's answer to the same question
 
+## GET `/v1/profiles/{id}/documents/{document}/private-state`
+
+One reader's device-local private view state for one document
+
+Returns: the reader's private attributes by node id — today `koru.collapsed` for a closed toggle — and a revision that grows with each change. A reader who never changed anything gets an empty map at revision 0, and the read writes nothing. Never replicated or exported
+
+## PATCH `/v1/profiles/{id}/documents/{document}/private-state`
+
+Apply up to 512 explicit private view-state changes for one reader and document
+
+Returns: the reader's private state after the one atomic save. Each change names the value it wants, so a repeat is a no-op; one invalid change rejects the batch. Needs only read access: it changes this reader's view, never the document, and it never wakes sync
+
 ## GET `/v1/profiles/{id}/reminders`
 
 Every reminder for ?entity=<canonical entity reference>

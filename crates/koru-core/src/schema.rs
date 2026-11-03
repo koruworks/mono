@@ -151,7 +151,7 @@ pub(crate) const K_SCHEMA: &str = "schema_version";
 /// below a root it is derived rather than stored.
 const K_DOCUMENT: &str = "document";
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// What a document carrying no marker *is*.
 ///
@@ -1664,6 +1664,70 @@ impl WorkspaceDoc {
         })
     }
 
+    /// Put contiguous siblings under one new [`Kind::Toggle`] with an empty
+    /// title, created at the first target's position with the targets as its
+    /// body in order. The same all-or-nothing validation as
+    /// [`wrap_in_callout_many`](Self::wrap_in_callout_many); the caller puts
+    /// the caret in the empty title.
+    pub fn wrap_in_toggle_many(&mut self, targets: &[NodeId]) -> Result<NodeId> {
+        self.atomic(|ws| {
+            let first = *targets
+                .first()
+                .ok_or(StoreError::Malformed("empty toggle selection"))?;
+            let parent = ws.parent(first)?;
+            let index = ws.sibling_index(first)?;
+            for (offset, &target) in targets.iter().enumerate() {
+                if ws.parent(target)? != parent || ws.sibling_index(target)? != index + offset {
+                    return Err(StoreError::Malformed(
+                        "toggle selection must be contiguous siblings",
+                    ));
+                }
+            }
+            let toggle = ws.insert(parent, Node::toggle("")?)?;
+            ws.move_node(toggle, parent, index)?;
+            for (at, &target) in targets.iter().enumerate() {
+                ws.move_node(target, Parent::Node(toggle), at)?;
+            }
+            Ok(toggle)
+        })
+    }
+
+    /// Take a [`Kind::Toggle`] away without losing anything: a nonempty
+    /// title stays as an ordinary paragraph in the toggle's place (same node,
+    /// so its marks and identity survive) and the body follows it as
+    /// siblings, in order. An empty title goes with the toggle. Returns the
+    /// rows now standing where the toggle was, title first when kept.
+    pub fn unwrap_toggle(&mut self, toggle: NodeId) -> Result<Vec<NodeId>> {
+        self.atomic(|ws| {
+            if ws.kind_of(toggle) != Some(Kind::Toggle) {
+                return Err(StoreError::Malformed("not a toggle"));
+            }
+            let parent = ws.parent(toggle)?;
+            let index = ws.sibling_index(toggle)?;
+            let children = ws.children(Parent::Node(toggle))?;
+            let keep_title = ws
+                .read(toggle)?
+                .content
+                .as_text()
+                .is_some_and(|title| !title.is_empty());
+            for (offset, &child) in children.iter().enumerate() {
+                ws.move_node(child, parent, index + 1 + offset)?;
+            }
+            let mut out = Vec::with_capacity(children.len() + 1);
+            if keep_title {
+                let tid = ws.tree_id(toggle)?;
+                ws.nodes()
+                    .get_meta(tid)?
+                    .insert(K_KIND, Kind::Paragraph.as_str())?;
+                out.push(toggle);
+            } else {
+                ws.delete(toggle)?;
+            }
+            out.extend(children);
+            Ok(out)
+        })
+    }
+
     /// Merge a ListBlock with compatible ListBlock siblings immediately before
     /// and after it. The surviving container keeps every item in visible order.
     ///
@@ -2617,13 +2681,14 @@ impl WorkspaceDoc {
 
     /// Raise an older workspace's marker only when a write introduces content
     /// that the older schema cannot understand. Ordinary edits keep their
-    /// existing marker; adding a Divider, Quote or Callout makes the
+    /// existing marker; adding a Divider, Quote, Callout or Toggle makes the
     /// compatibility gate tell the corresponding older build to open read-only.
     fn record_schema_for_kind(&self, kind: Kind) -> Result<()> {
         let required = match kind {
             Kind::Divider => 2,
             Kind::Quote => 3,
             Kind::Callout => 5,
+            Kind::Toggle => 6,
             _ => return Ok(()),
         };
         if self.effective_schema_version() < required {

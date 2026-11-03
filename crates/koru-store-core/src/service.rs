@@ -65,6 +65,7 @@ use crate::reminders::{
 };
 use crate::text::Locale;
 
+mod document_private;
 mod profile_projection;
 mod profile_units;
 mod transport_modes;
@@ -2315,6 +2316,15 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 blob_hashes.push(b.hash);
             }
         }
+        // Each reader's private view state travels with the document: it is
+        // keyed by the document id, which a transfer keeps, and the source
+        // rows cascade away when the source drops its bytes below.
+        let mut private_rows: Vec<(DocumentId, ProfileId, Vec<u8>)> = Vec::new();
+        for id in &ids {
+            for (owner, bytes) in self.open[&source].repo.private_snapshots(*id)? {
+                private_rows.push((*id, owner, bytes));
+            }
+        }
 
         // Target parent must exist there (and not be in the moving set unless
         // it is the destination parent outside the set).
@@ -2388,6 +2398,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     received_at: at,
                     origins: vec![crate::ports::UpdateOrigin::Store],
                 })?;
+            }
+            for (id, owner, bytes) in &private_rows {
+                open.repo.put_private_snapshot(*id, *owner, bytes, at)?;
             }
 
             // Manifest rows: roots under `parent`, nested under remapped parents.
@@ -3931,6 +3944,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if is_manifest {
             let entries = open.manifest.entries();
             let _ = open.repo.reindex(&entries);
+            // A permanent delete is a manifest commit, local or synced; the
+            // private rows of what it removed go with it.
+            document_private::prune_private_state(workspace, &mut open.repo, &entries);
         }
 
         let manifest_workspace = is_manifest.then(|| manifest_workspace_projection(&open.manifest));
@@ -4293,6 +4309,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             })?;
 
         let opened = open_document(&repo, manifest_id)?;
+        // A manifest recovered from an older checkpoint may be missing
+        // entries added since; pruning private rows against it would delete
+        // folds for documents that still exist.
+        let manifest_sound = !matches!(opened, Opened::Recovered(..));
         if let Opened::Recovered(_, recovery) = &opened {
             self.recoveries.push(format!(
                 "workspace {workspace}: manifest — {}",
@@ -4330,6 +4350,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if let Some(open) = self.open.get_mut(&workspace) {
             let entries = open.manifest.entries();
             open.repo.reindex(&entries)?;
+            // Finish a private-state cleanup a crash interrupted.
+            if manifest_sound {
+                document_private::prune_private_state(workspace, &mut open.repo, &entries);
+            }
             // The manifest's journal was just replayed in full to open it;
             // if that replay was overdue for a checkpoint, take it now so
             // it was the last one of its size.

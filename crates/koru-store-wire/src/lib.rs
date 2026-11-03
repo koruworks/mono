@@ -209,6 +209,23 @@ pub struct SetPersonalAttribute {
     pub value: Option<PersonalAttributeValue>,
 }
 
+// ------------------------------------------------- document-private state
+
+// Declared once, in `koru-store-core`, like the personal value above.
+pub use koru_store_core::document_private::{PrivateChange, PrivateState};
+
+/// `PATCH /v1/profiles/{id}/documents/{document}/private-state`.
+///
+/// A bounded batch of explicit values for one reader's private view of one
+/// document. Each change names the value it wants — never "invert" — so a
+/// retried request is a no-op. All or nothing: one invalid change rejects the
+/// batch and applies none of it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyPrivateChanges {
+    pub changes: Vec<PrivateChange>,
+}
+
 /// `GET /v1/profiles/{id}/dictionary`, and every write's echo.
 ///
 /// The personal spelling dictionary: language tag → sorted words. Personal

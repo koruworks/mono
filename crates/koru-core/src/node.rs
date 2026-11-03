@@ -35,6 +35,13 @@ pub enum Kind {
     /// ([`crate::callout`]). Never a row of its own; the editor draws the
     /// box around its children's rows.
     Callout,
+    /// A line whose children can be hidden. Its text is the title, always
+    /// shown; its children are the body, which the reader may fold away. The
+    /// containment is explicit — a toggle owns exactly its children, never
+    /// "everything until the next heading". Whether it is open is a reader's
+    /// private view preference kept outside the shared document
+    /// ([`crate::toggle`]); nothing about folding is stored on the node.
+    Toggle,
     /// Its text is the title; its children are the body.
     Document,
     /// A named, opaque workspace file. Its bytes live in the blob store and
@@ -91,6 +98,7 @@ impl Kind {
             Self::Task
                 | Self::Paragraph
                 | Self::Callout
+                | Self::Toggle
                 | Self::Document
                 | Self::ListBlock
                 | Self::Trash
@@ -106,6 +114,7 @@ impl Kind {
             | Self::Paragraph
             | Self::Quote
             | Self::Callout
+            | Self::Toggle
             | Self::Document
             | Self::ListBlock
             | Self::Table
@@ -141,6 +150,7 @@ impl Kind {
             Self::Paragraph => "paragraph",
             Self::Quote => "quote",
             Self::Callout => "callout",
+            Self::Toggle => "toggle",
             Self::Document => "document",
             Self::File => "file",
             Self::ListBlock => "listblock",
@@ -160,6 +170,7 @@ impl Kind {
             "paragraph" => Self::Paragraph,
             "quote" => Self::Quote,
             "callout" => Self::Callout,
+            "toggle" => Self::Toggle,
             "document" => Self::Document,
             "file" => Self::File,
             "listblock" => Self::ListBlock,
@@ -902,6 +913,13 @@ impl Node {
         node.meta.icon = icon.filter(|icon| !icon.is_empty()).map(str::to_owned);
         node.meta.colour = tint.filter(|tint| !tint.is_empty()).map(str::to_owned);
         Ok(node)
+    }
+
+    /// A toggle whose title is `title`; its body is inserted under it. An
+    /// empty title is legal — the editor shows a localized placeholder rather
+    /// than storing one.
+    pub fn toggle(title: &str) -> Result<Self, ShapeError> {
+        Self::new(Kind::Toggle, Content::text(title))
     }
 
     /// A code block. Its text may span many lines — newlines are legal for

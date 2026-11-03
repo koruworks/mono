@@ -88,7 +88,9 @@ pub const CATALOG_SCHEMA_VERSION: i64 = 12;
 /// `documents.note_doc`, the derived projection of a file's attached note.
 /// `12` admits Cloud provenance in the existing journal JSON. Its empty
 /// structural migration fences older writers that would silently lose it.
-pub const WORKSPACE_SCHEMA_VERSION: i64 = 12;
+/// `13` adds `document_private_crdts`, a reader's device-local private view
+/// state per document (toggle folds), which cascades with `loro_documents`.
+pub const WORKSPACE_SCHEMA_VERSION: i64 = 13;
 
 /// The manifest `LoroDoc`'s shape, stored as `meta.schema_version`.
 ///
@@ -108,6 +110,9 @@ pub const PROFILE_CRDT_SCHEMA_VERSION: i64 = 3;
 pub const PROFILE_IDENTITY_CRDT_SCHEMA_VERSION: i64 = 1;
 pub const PERSONAL_CRDT_SCHEMA_VERSION: i64 = 1;
 pub const PROFILE_PRIVATE_CRDT_SCHEMA_VERSION: i64 = 1;
+/// A reader's device-local private view state for one document
+/// (`document_private_crdts`), stored as its own Loro snapshot.
+pub const DOCUMENT_PRIVATE_CRDT_SCHEMA_VERSION: i64 = 1;
 
 /// The `.koru` bundle, stored as `format_version` in its `manifest.json`.
 pub const BUNDLE_FORMAT_VERSION: u32 = 2;

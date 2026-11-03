@@ -37,6 +37,7 @@ pub struct ViewerLift {
 pub mod diagrams;
 pub mod docview;
 pub mod draw;
+mod folds;
 pub mod menu;
 pub mod page_menu;
 pub mod search;
@@ -220,6 +221,9 @@ pub struct BuiltInDocument {
     /// line to the shell's spell worker. Rebuilt with the view on `reseat`,
     /// which is what re-subscribes its change tracker to the new document.
     spelling: spelling::SpellCheck,
+    /// This reader's private toggle folds for the document, through the
+    /// shell's fold worker. Rebuilt with the view like `spelling`.
+    folds: folds::FoldSync,
     /// What the open context menu says about the clicked misspelling, frozen
     /// at open (D13) so the menu never relabels under the pointer. Assigned —
     /// to a snapshot or to `None` — on every context-menu open.
@@ -421,6 +425,7 @@ impl BuiltInDocument {
                     wants_copy_diagram: None,
                     dictation: None,
                     spelling: spelling::SpellCheck::new(),
+                    folds: folds::FoldSync::new(),
                     context_spelling: None,
                     diagrams: diagrams::Diagrams::new(),
                 }
@@ -498,6 +503,7 @@ impl BuiltInDocument {
             wants_copy_diagram: None,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
+                    folds: folds::FoldSync::new(),
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
         }
@@ -544,6 +550,7 @@ impl BuiltInDocument {
             wants_copy_diagram: None,
             dictation: None,
             spelling: spelling::SpellCheck::new(),
+                    folds: folds::FoldSync::new(),
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
         }
