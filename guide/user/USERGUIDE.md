@@ -1267,7 +1267,11 @@ picker except the search box. The list keeps the picker's size and scrolls
 when there is more than fits. The ↻ at the end of the search box asks the agent
 for its list again — after you connect a new provider in OpenCode, say. A
 chat that has begun on Koru AI, OpenAI or Ollama lists that provider's
-models instead, at the top of the rail. Along the bottom is the model's
+models instead, at the top of the rail. An agent that marks some of its
+models as older ends its list with **Legacy models**, and how many there
+are: click it, or press Enter on it, to show them in the list under it, and
+again to hide them (Right and Left do the same from the keyboard); a search
+finds them too, marked *Legacy*. Along the bottom is the model's
 reasoning level, for models that have levels: its name, ↺ to go back to the
 model's own default, and a slider with one stop per level. A local agent
 starts at the level you choose before the first message; after that the level
