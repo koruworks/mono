@@ -7,7 +7,8 @@
 //!   returns on close — Escape gives the keyboard back;
 //! - Up/Down move the keyboard a row, Home/End to either end;
 //! - Enter (or Space) opens; Delete asks — for the picked chats when the
-//!   keyboard's row is one of them;
+//!   keyboard's row is one of them; the menu key (or `Shift+F10`) opens the
+//!   row's menu, the one a right-click and its ⋯ open (D91);
 //! - a plain press picks one chat and opens it, Ctrl toggles a chat in the
 //!   pick, Shift extends it from the anchor (the library's rules, the CTO's
 //!   note);
@@ -199,6 +200,9 @@ impl ChatsSurface {
             // stopped answering the keys you are pressing.
             return self.clear_focus();
         }
+        if press == Press::Menu {
+            return self.menu_for_focus(area, top);
+        }
         let rows = self.pressable_rows(area, top);
         if rows.is_empty() {
             return false;
@@ -222,11 +226,35 @@ impl ChatsSurface {
                 };
             }
             Press::Delete => return self.ask_delete_selected(),
-            Press::Escape => unreachable!("answered above"),
+            Press::Escape | Press::Menu => unreachable!("answered above"),
         };
         let row = rows[next];
         self.focus = self.focus_of(row);
         self.scroll_into_view(row, area, top);
+        true
+    }
+
+    /// **The keyboard row's menu** (D91): what a right-click and the row's ⋯
+    /// open, about the pick when the row is in it, hung where the ⋯ would
+    /// sit — under the row's end. The buttons are the pointer's alone, so
+    /// this is the keyboard's way to the same actions.
+    fn menu_for_focus(&mut self, area: Rect, top: f32) -> bool {
+        let Some(row @ Row::Chat(index)) = self.focus_row() else {
+            return false;
+        };
+        let Some(chat) = self.chats.get(index).map(|chat| chat.id) else {
+            return false;
+        };
+        self.scroll_into_view(row, area, top);
+        let Some((_, rect)) = self
+            .layout(area, top)
+            .into_iter()
+            .find(|(candidate, _)| *candidate == row)
+        else {
+            return false;
+        };
+        let end = rect.x + rect.w - koru_draw::theme::NAV_PAD - crate::rows::END_W;
+        self.ask_menu(chat, (end, rect.y + rect.h));
         true
     }
 

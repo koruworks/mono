@@ -1659,7 +1659,7 @@ impl ExploreView {
         // The Chats view claims its contract's keys — the arrows, Home/End,
         // Enter, Delete, Escape — and no others.
         if self.mode == NavigatorMode::Chats {
-            let press = koru_chats_ui::Press::of(key)?;
+            let press = koru_chats_ui::Press::of_with(key, mods)?;
             let top = self.rows_top(area);
             if !self.chats.key(area, top, press) {
                 return None;

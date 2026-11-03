@@ -121,6 +121,9 @@ pub enum Press {
     Space,
     Delete,
     Escape,
+    /// The menu key, or `Shift+F10`: the keyboard row's menu — what a
+    /// right-click and the row's ⋯ open (D91).
+    Menu,
 }
 
 impl Press {
@@ -129,6 +132,7 @@ impl Press {
     pub fn of(key: &winit::keyboard::Key) -> Option<Self> {
         use winit::keyboard::{Key, NamedKey};
         match key {
+            Key::Named(NamedKey::ContextMenu) => Some(Self::Menu),
             Key::Named(NamedKey::ArrowUp) => Some(Self::Up),
             Key::Named(NamedKey::ArrowDown) => Some(Self::Down),
             Key::Named(NamedKey::Home) => Some(Self::Home),
@@ -140,6 +144,20 @@ impl Press {
             Key::Character(text) if text == " " => Some(Self::Space),
             _ => None,
         }
+    }
+
+    /// [`of`](Self::of), with the modifiers a chord needs: `Shift+F10` is
+    /// the menu key by another name, the platform's own convention. What
+    /// a host passes its keys through.
+    pub fn of_with(
+        key: &winit::keyboard::Key,
+        mods: winit::keyboard::ModifiersState,
+    ) -> Option<Self> {
+        use winit::keyboard::{Key, ModifiersState, NamedKey};
+        if matches!(key, Key::Named(NamedKey::F10)) && mods == ModifiersState::SHIFT {
+            return Some(Self::Menu);
+        }
+        Self::of(key)
     }
 }
 
@@ -638,8 +656,8 @@ impl ChatsSurface {
         }
     }
 
-    /// Ask for `chat`'s menu at `at` — the row's ⋯, and an accessibility
-    /// client's *More*. About the pick when the chat is in it.
+    /// Ask for `chat`'s menu at `at` — the row's ⋯, the menu key, and an
+    /// accessibility client's *More*. About the pick when the chat is in it.
     pub fn ask_menu(&mut self, chat: ChatId, at: (f32, f32)) {
         if !self.chats.iter().any(|candidate| candidate.id == chat) {
             return;

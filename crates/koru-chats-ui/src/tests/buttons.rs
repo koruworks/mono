@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A row's own buttons (koru-ai D86): ⋯ and the pin, on hover and under
-//! the keyboard, the pin always on a pinned row.
+//! A row's own buttons (koru-ai D86): ⋯ and the pin, **on the row under
+//! the pointer only** (D91) — the keyboard reaches the same menu with the
+//! menu key.
 
 use std::collections::HashMap;
 
@@ -35,28 +36,86 @@ fn hover_shows_more_and_the_pin_over_the_status_slot() {
     assert!(hovered.title.x + hovered.title.w <= hovered.pin.x);
 }
 
-/// A pinned row shows its pin without the pointer; the keyboard's row
-/// shows both buttons.
+/// **Only the pointer brings the buttons** (the user, 2026-11-03, D91): a
+/// pinned row at rest shows no pin — its *Pinned* heading says so — and
+/// the keyboard's row, the open one and a picked one show neither; each
+/// shows its status mark instead. The pointer over the row shows both.
 #[test]
-fn a_pinned_row_keeps_its_pin_and_the_keyboards_row_shows_both() {
+fn only_the_row_under_the_pointer_shows_its_pin_and_more() {
     let mut pinned = chat(1, "Pinned", 5_000);
     pinned.pinned_at = Some(Timestamp::from_millis(1));
     let mut surface = showing(vec![pinned, chat(2, "Other", 1_000)]);
+    surface.set_statuses(HashMap::from([(id(1), ChatStatus::Working)]));
     let rows = surface.rows(tall(), TOP);
     let (row, rect) = rows[1];
     assert_eq!(row, Row::Chat(0));
     let parts = surface.row_parts(row, rect);
-    assert!(parts.pin.w > 0.0);
-    assert_eq!(parts.more.w, 0.0);
+    assert_eq!(
+        (parts.pin.w, parts.more.w),
+        (0.0, 0.0),
+        "a pinned row at rest"
+    );
+    assert!(parts.end.w > 0.0, "its status mark shows");
 
-    surface.key(tall(), TOP, Press::End);
-    let (row, rect) = *surface
-        .rows(tall(), TOP)
-        .iter()
-        .find(|(row, _)| *row == Row::Chat(1))
-        .unwrap();
+    // The keyboard's row, open and picked: still no buttons.
+    surface.key(tall(), TOP, Press::Home);
+    surface.set_current(Some(id(1)));
+    surface.select_only(id(1));
+    let parts = surface.row_parts(row, rect);
+    assert_eq!(
+        (parts.pin.w, parts.more.w),
+        (0.0, 0.0),
+        "not the keyboard's"
+    );
+    assert!(parts.end.w > 0.0);
+
+    // The pointer over the row — or over a button, which is inside it.
+    surface.mouse_move(tall(), TOP, rect.x + 20.0, rect.y + rect.h * 0.5);
     let parts = surface.row_parts(row, rect);
     assert!(parts.more.w > 0.0 && parts.pin.w > 0.0);
+    surface.mouse_move(
+        tall(),
+        TOP,
+        parts.more.x + parts.more.w * 0.5,
+        parts.more.y + parts.more.h * 0.5,
+    );
+    assert!(surface.row_parts(row, rect).more.w > 0.0, "over ⋯ itself");
+    assert!(surface.clear_hover());
+    assert_eq!(surface.row_parts(row, rect).more.w, 0.0, "the pointer left");
+}
+
+/// **The menu key opens the keyboard row's menu** (D91) — the one a
+/// right-click and the row's ⋯ open, about that row — hung under the row's
+/// end; `Shift+F10` is the same key. With no row under the keyboard it is
+/// not claimed.
+#[test]
+fn the_menu_key_asks_for_the_keyboard_rows_menu() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    assert_eq!(
+        Press::of(&Key::Named(NamedKey::ContextMenu)),
+        Some(Press::Menu)
+    );
+    assert_eq!(
+        Press::of_with(&Key::Named(NamedKey::F10), ModifiersState::SHIFT),
+        Some(Press::Menu)
+    );
+    assert_eq!(Press::of(&Key::Named(NamedKey::F10)), None, "F10 alone");
+
+    let mut surface = three();
+    assert!(!surface.key(tall(), TOP, Press::Menu), "no keyboard row");
+    surface.key(tall(), TOP, Press::Home);
+    let newest = surface.chats()[0].id;
+    assert!(surface.key(tall(), TOP, Press::Menu));
+    let (row, rect) = surface.rows(tall(), TOP)[0];
+    assert_eq!(row, Row::Chat(0));
+    let (chats, at) = surface.take_wants_menu().expect("the menu is asked for");
+    assert_eq!(chats, vec![newest]);
+    assert_eq!(at.1, rect.y + rect.h, "under the row");
+    assert!(
+        at.0 > rect.x + rect.w * 0.5,
+        "at its end, where ⋯ would sit"
+    );
+    assert_eq!(surface.take_wants_open(), None, "and nothing opened");
 }
 
 /// **The pin pins at once and ⋯ asks for the menu under itself**; neither

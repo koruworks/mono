@@ -98,12 +98,14 @@ pub struct RowParts {
     /// The status mark's slot at the row's end (D83). Zero-width on a row
     /// with nothing to show there, so a title keeps the whole width.
     pub end: Rect,
-    /// The pin (D86): on a hovered or keyboard row, and always on a pinned
-    /// one. Zero-width where it is not shown.
+    /// The pin (D86): on the row under the pointer only (D91) — not the
+    /// open or picked row, not the keyboard's, and not a pinned row at rest,
+    /// which its *Pinned* heading already names. Zero-width where it is not
+    /// shown.
     pub pin: Rect,
-    /// **⋯**, which opens the row's menu (D86): on a hovered or keyboard
-    /// row only, where it takes the status mark's slot. Zero-width
-    /// elsewhere.
+    /// **⋯**, which opens the row's menu (D86): on the row under the
+    /// pointer only, where it takes the status mark's slot (D91). Zero-width
+    /// elsewhere; the keyboard reaches the same menu with the menu key.
     pub more: Rect,
 }
 
@@ -209,25 +211,23 @@ impl ChatsSurface {
             _ => false,
         };
         // The row's end, right to left: slot 1 at the edge, slot 2 before it
-        // (D86). A hovered or keyboard row shows ⋯ in slot 1 — over the
-        // status mark — and the pin in slot 2; any other row shows its mark
-        // in slot 1 and, when it is pinned, its pin beside it (or in slot 1
-        // when it has no mark).
+        // (D86). The row under the pointer shows ⋯ in slot 1 — over the
+        // status mark — and the pin in slot 2; every other row shows only
+        // its mark, in slot 1 (D91: the buttons are the pointer's alone).
         // A row being renamed keeps nothing at its end (D89): the field
         // runs to the pad, and there is no button under it to press.
-        let (buttons, pinned, marked) = match row {
+        let (buttons, marked) = match row {
             Row::Chat(index) => self
                 .chats
                 .get(index)
                 .filter(|chat| self.renaming != Some(chat.id))
-                .map_or((false, false, false), |chat| {
+                .map_or((false, false), |chat| {
                     (
                         self.shows_row_buttons(row),
-                        chat.pinned_at.is_some(),
                         self.status(chat.id) != crate::ChatStatus::Idle,
                     )
                 }),
-            _ => (false, false, false),
+            _ => (false, false),
         };
         let right = inner_x + inner_w;
         let slot = |n: f32| {
@@ -238,9 +238,9 @@ impl ChatsSurface {
         let (end, pin, more) = if buttons {
             (none, slot(2.0), slot(1.0))
         } else if marked {
-            (slot(1.0), if pinned { slot(2.0) } else { none }, none)
+            (slot(1.0), none, none)
         } else {
-            (none, if pinned { slot(1.0) } else { none }, none)
+            (none, none, none)
         };
         let taken = [end, pin, more]
             .iter()
@@ -269,12 +269,13 @@ impl ChatsSurface {
         }
     }
 
-    /// Whether a row shows its ⋯ and pin: under the pointer, or under the
-    /// keyboard (D86).
+    /// Whether a row shows its ⋯ and pin: **only under the pointer** (the
+    /// user, 2026-11-03, D91) — the pointer over the row or over the
+    /// buttons themselves, which are inside it. Not for the open or picked
+    /// row and not for the keyboard's: those reach the same actions through
+    /// the menu key, `F2` and Delete.
     pub(crate) fn shows_row_buttons(&self, row: Row) -> bool {
-        matches!(row, Row::Chat(_))
-            && !self.is_renaming(row)
-            && (self.hover == Some(row) || self.focus_row() == Some(row))
+        matches!(row, Row::Chat(_)) && !self.is_renaming(row) && self.hover == Some(row)
     }
 
     /// Whether this is the row the host is renaming (D89).

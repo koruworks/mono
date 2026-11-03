@@ -6598,6 +6598,24 @@ fn the_chats_view_keeps_the_interaction_contract() {
         view.nav_key(a, &Key::Named(NamedKey::Delete)),
         Some(Outcome::DeleteAiChats(vec![older]))
     );
+    // The menu key and Shift+F10 open the row's menu — the keyboard's way
+    // to Rename…, the pin and Delete, now the row's buttons are the
+    // pointer's alone (D91).
+    for (key, mods) in [
+        (
+            Key::Named(NamedKey::ContextMenu),
+            winit::keyboard::ModifiersState::empty(),
+        ),
+        (
+            Key::Named(NamedKey::F10),
+            winit::keyboard::ModifiersState::SHIFT,
+        ),
+    ] {
+        assert!(matches!(
+            view.nav_key_with_modifiers(a, &key, mods),
+            Some(Outcome::AiChatMenu { chats, .. }) if chats == vec![older]
+        ));
+    }
     assert!(view.nav_key(a, &Key::Character("a".into())).is_none());
     assert!(view.nav_key(a, &Key::Named(NamedKey::Tab)).is_none());
     assert_eq!(

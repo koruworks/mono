@@ -189,7 +189,8 @@ impl ChatsSurface {
                     koru_shell_chrome::status_mark::draw(scene, root, parts.end, mark);
                 }
                 // The pin (filled, in the accent, on a pinned chat) and ⋯
-                // (D86); a plate under the one the pointer is on.
+                // (D86), on the row under the pointer only (D91); a plate
+                // under the one the pointer is on.
                 let hovered = self
                     .hover_button
                     .filter(|_| self.hover == Some(row))

@@ -319,7 +319,7 @@ impl ChatSurface {
         {
             return Some(self.start_chats_rename());
         }
-        let press = Press::of(key)?;
+        let press = Press::of_with(key, mods)?;
         let (area, top) = self.chats_area();
         let handled = self.chats_pane.key(area, top, press);
         Some(self.drain_chats_pane() || handled)
@@ -1184,11 +1184,9 @@ mod tests {
         assert!(press(&mut surface, NamedKey::Escape));
         surface.draw_chats_pane(&mut scene, vello::kurbo::Affine::IDENTITY);
         assert_eq!(surface.chats_pane.renaming(), None);
+        surface.mouse_move(rect.x + 20.0, rect.y + rect.h * 0.5);
         let parts = surface.chats_pane.row_parts(row, rect);
-        assert!(
-            parts.more.w > 0.0,
-            "the keyboard's row has its buttons back"
-        );
+        assert!(parts.more.w > 0.0, "the row has its buttons back");
     }
 
     /// `F2` with the keyboard on no chat offers nothing.
@@ -1332,7 +1330,11 @@ mod tests {
         let (mut surface, commands, _updates) = pane_on(vec![one.clone()]);
         let (area, top) = surface.chats_area();
         let (row, rect) = surface.chats_pane.rows(area, top)[0];
-        // The keyboard entered on the row, so its buttons show.
+        // The keyboard entered on the row, but its buttons are the
+        // pointer's (D91): they show once it is over the row.
+        let parts = surface.chats_pane.row_parts(row, rect);
+        assert_eq!((parts.more.w, parts.pin.w), (0.0, 0.0));
+        surface.mouse_move(rect.x + 20.0, rect.y + rect.h * 0.5);
         let parts = surface.chats_pane.row_parts(row, rect);
         assert!(parts.more.w > 0.0 && parts.pin.w > 0.0);
 
@@ -1353,6 +1355,7 @@ mod tests {
             .into_iter()
             .find(|(row, _)| matches!(row, koru_chats_ui::Row::Chat(_)))
             .unwrap();
+        surface.mouse_move(rect.x + 20.0, rect.y + rect.h * 0.5);
         let more = surface.chats_pane.row_parts(row, rect).more;
         assert!(surface.mouse_down(more.x + more.w * 0.5, more.y + more.h * 0.5));
         let lang = surface.lang;
@@ -1361,6 +1364,27 @@ mod tests {
             koru_i18n::t(lang, koru_i18n::Key::ChatsUnpin)
         );
         assert!(commands.try_recv().is_err(), "the menu sends nothing");
+    }
+
+    /// **The menu key, and `Shift+F10`, open the keyboard row's menu** in
+    /// the pane (D91): the buttons are the pointer's, so this is how the
+    /// keyboard reaches *Rename…*, the pin and Delete.
+    #[test]
+    fn the_menu_key_opens_the_keyboard_rows_menu() {
+        let one = chat("One");
+        let (mut surface, commands, _updates) = pane_on(vec![one.clone()]);
+        assert!(press(&mut surface, NamedKey::ContextMenu));
+        let lang = surface.lang;
+        assert_eq!(
+            menu_labels(&surface)[0],
+            koru_i18n::t(lang, koru_i18n::Key::ScheduleRename)
+        );
+        assert_eq!(surface.chats_menu.as_ref().unwrap().chats, vec![one.id]);
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert!(surface.chats_menu.is_none());
+        assert!(surface.key(&Key::Named(NamedKey::F10), None, ModifiersState::SHIFT));
+        assert!(surface.chats_menu.is_some(), "Shift+F10 is the same key");
+        assert!(commands.try_recv().is_err(), "a menu sends nothing");
     }
 
     /// The command a host with its own Chats list renames through: trimmed,
