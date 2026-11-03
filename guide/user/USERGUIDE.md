@@ -1386,7 +1386,7 @@ asking). Codex offers **Ask for approval** (the default), **Approve for me**
 (Codex edits in the chat's folder and its reviewer decides anything that needs
 more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 **Plan**. Full access is shown in the warning color. `Shift+Tab` in the
-composer steps to the next mode and says which beside the chip; it never steps
+composer steps to the next mode, which the chip then names; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
 **default permission** you set on **Settings → Coding → Agent providers** —

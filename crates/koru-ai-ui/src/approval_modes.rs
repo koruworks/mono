@@ -22,12 +22,14 @@
 //! made. A change inside a chat stays that chat's. *Yolo* is the only way a
 //! new chat starts in *Full access*: the person chose it there.
 //!
-//! **Shift+Tab** steps to the next mode and says which beside the chip. It
+//! **Shift+Tab** steps to the next mode, which the chip then names. It
 //! skips *Full access*. The composer is asked first, so an outdent would
 //! win where there is something to outdent (`koru_keys`' `CycleAgentMode`).
+//! No note repeats the mode's name beside the chip (D65, the user: *the name
+//! is clear*): the chip's label already reads it.
 //!
 //! A mode chosen while a reply runs applies to the next message, and the
-//! note beside the chip says so.
+//! note beside the chip says so — the one thing the chip does not.
 
 use std::time::{Duration, Instant};
 
@@ -537,10 +539,10 @@ impl crate::ChatSurface {
         was
     }
 
-    /// **Choose a mode for the chat's next message**. Said beside the chip
-    /// with `announce` (Shift+Tab), and always while a reply runs, when it
-    /// applies to the next message.
-    pub(crate) fn choose_approval_mode(&mut self, id: &str, announce: bool) -> bool {
+    /// **Choose a mode for the chat's next message**. The chip names it; a
+    /// note beside the chip speaks only while a reply runs, to say it
+    /// applies to the next message (D65).
+    pub(crate) fn choose_approval_mode(&mut self, id: &str) -> bool {
         let Some(row) = self
             .approval_mode_rows()
             .into_iter()
@@ -569,23 +571,20 @@ impl crate::ChatSurface {
                 },
             ));
         }
-        if announce || self.attempt.is_some() {
-            self.announce_approval_mode(&row);
+        if self.attempt.is_some() {
+            self.announce_next_message(&row);
         }
         true
     }
 
-    /// The short note beside the chip: the mode's name, and while a reply
-    /// runs that it applies to the next message.
-    fn announce_approval_mode(&mut self, row: &ModeRow) {
+    /// The short note beside the chip while a reply runs: the mode applies
+    /// to the next message. With no reply running there is none — the
+    /// chip's label already names the mode (D65).
+    fn announce_next_message(&mut self, row: &ModeRow) {
         let Some(chip) = self.approval_mode_button() else {
             return;
         };
-        let label = if self.attempt.is_some() {
-            fill(t(self.lang, Words::AiAgentModeNextMessage), &[&row.title])
-        } else {
-            row.title.clone()
-        };
+        let label = fill(t(self.lang, Words::AiAgentModeNextMessage), &[&row.title]);
         self.copy_feedback.show_transient(
             TooltipContent::new(NOTE_KEY, chip, label),
             Instant::now(),
@@ -601,7 +600,7 @@ impl crate::ChatSurface {
         let Some(next) = next_mode(&rows, current.as_deref()).cloned() else {
             return false;
         };
-        self.choose_approval_mode(&next.id, true)
+        self.choose_approval_mode(&next.id)
     }
 
     /// The open list's keys: Up and Down move, Enter chooses, Escape closes.
@@ -631,7 +630,7 @@ impl crate::ChatSurface {
             }
             Key::Named(NamedKey::Enter) => {
                 let id = rows.get(focused).map(|row| row.id.clone())?;
-                Some(self.choose_approval_mode(&id, false))
+                Some(self.choose_approval_mode(&id))
             }
             _ => None,
         }
@@ -642,7 +641,7 @@ impl crate::ChatSurface {
     pub(crate) fn approval_mode_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
         if let Some(index) = self.approval_mode_row_at(x, y) {
             let id = self.approval_mode_rows().get(index)?.id.clone();
-            return Some(self.choose_approval_mode(&id, false));
+            return Some(self.choose_approval_mode(&id));
         }
         if self
             .approval_mode_button()

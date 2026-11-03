@@ -166,16 +166,21 @@ fn the_chip_names_the_current_mode_and_is_absent_without_modes() {
     );
 }
 
-/// **Shift+Tab in the composer** chooses the next mode for the chat, says
-/// which beside the chip, and never lands on Full access.
+/// **Shift+Tab in the composer** chooses the next mode for the chat and
+/// never lands on Full access. No note repeats the mode's name beside the
+/// chip (D65): the chip names it.
 #[test]
-fn shift_tab_chooses_the_next_mode_and_says_which() {
+fn shift_tab_chooses_the_next_mode_and_the_chip_names_it() {
     let (mut surface, commands) = surface();
     // The chat is not made yet: the stand-in keeps the choice.
     surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
     assert!(shift_tab(&mut surface));
     assert_eq!(mode_of(&surface).as_deref(), Some("acceptEdits"));
-    assert_eq!(surface.copy_feedback.label(), Some("Accept edits"));
+    assert_eq!(
+        surface.copy_feedback.label(),
+        None,
+        "the chip's label is the mode's name; no tooltip repeats it"
+    );
     assert!(commands.try_recv().is_err(), "nothing reaches the service");
     surface.unmade_chat = None;
     for expected in ["plan", "auto", "dontAsk", "default"] {
@@ -205,7 +210,7 @@ fn a_mode_chosen_during_a_reply_says_it_applies_to_the_next_message() {
     assert_eq!(chosen(&commands).as_deref(), Some("acceptEdits"));
 
     surface.copy_feedback.clear();
-    assert!(surface.choose_approval_mode("plan", false));
+    assert!(surface.choose_approval_mode("plan"));
     assert_eq!(
         surface.copy_feedback.label(),
         Some("Plan · applies to your next message")
@@ -213,7 +218,7 @@ fn a_mode_chosen_during_a_reply_says_it_applies_to_the_next_message() {
     // With no reply running, a press says nothing.
     surface.attempt = None;
     surface.copy_feedback.clear();
-    assert!(surface.choose_approval_mode("default", false));
+    assert!(surface.choose_approval_mode("default"));
     assert_eq!(surface.copy_feedback.label(), None);
 }
 
