@@ -1173,6 +1173,16 @@ fn checked_in_schema_evidence_matches_the_adapter_boundary() {
         assert_eq!(evidence["cli_version"], version);
         assert_eq!(evidence["protocol_version"], CODEX_PROTOCOL_VERSION);
         assert_eq!(evidence["schema_sha256"], digest, "{version}");
+        // A steer rides `turn/steer`; the newest evidence names it.
+        if version == "0.166.0" {
+            assert!(
+                evidence["required_client_methods"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("turn/steer")),
+                "{version} lists turn/steer"
+            );
+        }
     }
     assert_eq!(
         SUPPORTED_CODEX_VERSIONS.len(),

@@ -37,6 +37,9 @@ pub(super) struct FakeAcpConfig {
     pub thought_by_model: Vec<(String, Value)>,
     /// The level is taken but not applied: `currentValue` stays as it was.
     pub ignore_level: bool,
+    /// The steering extension (Claude's wrapper): advertised at initialize,
+    /// and `_session/steering` answered with this outcome.
+    pub steering: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -48,6 +51,7 @@ pub(super) struct FakeAcpState {
     pub receives: usize,
     pub prompts: usize,
     pub cancels: usize,
+    pub steers: usize,
     pub permission_pending: bool,
 }
 
@@ -67,6 +71,7 @@ impl fmt::Debug for FakeAcpState {
             .field("receives", &self.receives)
             .field("prompts", &self.prompts)
             .field("cancels", &self.cancels)
+            .field("steers", &self.steers)
             .field("permission_pending", &self.permission_pending)
             .finish()
     }
@@ -153,10 +158,13 @@ impl JsonRpcTransport for FakeAcpPeer {
             Some("initialize") => {
                 self.check_stage(ProviderStage::Initialize)?;
                 decode::<acp::InitializeRequest>(params)?;
-                let result = json!({"protocolVersion":1,"agentCapabilities":{
+                let mut result = json!({"protocolVersion":1,"agentCapabilities":{
                     "mcpCapabilities":{"http":true,"sse":false},
                     "promptCapabilities":{"image":true}
                 },"authMethods":[]});
+                if self.config.steering.is_some() {
+                    result["_meta"] = json!({"steering":{"supported":true}});
+                }
                 decode::<acp::InitializeResponse>(&result)?;
                 self.reply(id, result)?;
             }
@@ -223,6 +231,16 @@ impl JsonRpcTransport for FakeAcpPeer {
                 } else if let Some(stop) = self.config.stop_reason {
                     self.finish(stop)?;
                 }
+            }
+            Some("_session/steering") => {
+                let Some(outcome) = self.config.steering else {
+                    return Err(failure(
+                        ProviderStage::Write,
+                        ProviderDiagnostic::InvalidInput,
+                    ));
+                };
+                self.state.lock().unwrap().steers += 1;
+                self.reply(id, json!({"outcome": outcome}))?;
             }
             Some("session/cancel") => {
                 self.check_stage(ProviderStage::Cancel)?;

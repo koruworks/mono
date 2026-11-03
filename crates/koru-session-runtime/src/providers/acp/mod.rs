@@ -11,6 +11,7 @@ mod models;
 mod modes;
 mod probe;
 mod routes;
+mod steering;
 
 pub use config::{AcpConfig, AcpRoute};
 pub use probe::{AcpCompatibilityProbe, AcpFactory};
@@ -41,6 +42,10 @@ pub struct AcpControl {
     session_id: Option<SessionId>,
     native_session: Option<String>,
     mcp_sse: bool,
+    /// The agent advertised the steering extension at initialize
+    /// (`_meta.steering.supported`), so text can go into a running turn
+    /// ([`steering`]).
+    steering: bool,
     wrapper_auth: Option<claude::WrapperAuth>,
     grok_inventory: Option<String>,
     /// What the session advertised under its `model` config option, for
@@ -131,6 +136,7 @@ impl AcpControl {
             session_id: None,
             native_session: None,
             mcp_sse: false,
+            steering: false,
             wrapper_auth: None,
             grok_inventory: None,
             model_options: Vec::new(),
@@ -743,6 +749,7 @@ impl AcpControl {
             .pointer("/agentCapabilities/mcpCapabilities/sse")
             .and_then(Value::as_bool)
             == Some(true);
+        self.steering = steering::advertised(&initialized);
         let image = initialized
             .pointer("/agentCapabilities/promptCapabilities/image")
             .and_then(Value::as_bool)
@@ -1008,6 +1015,10 @@ impl AgentControl for AcpControl {
             })?;
         }
         Ok(())
+    }
+
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        self.steer_turn(input)
     }
 
     fn cancel(&mut self, turn_id: AgentTurnId) -> Result<(), ProviderFailure> {

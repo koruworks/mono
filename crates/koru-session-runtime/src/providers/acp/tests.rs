@@ -1097,6 +1097,8 @@ mod routes_live;
 
 mod diagnostics;
 
+mod steering;
+
 /// Protocol v17: a failed call's own message crosses, bounded — the first
 /// text block of the update, else the raw output's `message` — and a
 /// completed call carries none.

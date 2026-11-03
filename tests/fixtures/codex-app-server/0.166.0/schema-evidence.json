@@ -7,7 +7,8 @@
     "model/list",
     "thread/start",
     "turn/start",
-    "turn/interrupt"
+    "turn/interrupt",
+    "turn/steer"
   ],
   "required_server_notifications": [
     "item/agentMessage/delta",

@@ -26,6 +26,11 @@ against the installed CLI: 8 models in 1.0 s, no thread, no prompt.
 default), so delegated launches set both child-agent switches off as before;
 `multi_agent_v2_dynamic_tools` is still under development and off.
 
+`turn/steer`, which a steer from Koru AI's queue rides (a message sent into
+the running turn), was added to `required_client_methods` on 2026-11-02 after
+regenerating the schema from the installed 0.166.0: the same digest, and
+`turn/steer` with `TurnSteerParams` is in it.
+
 **What was not.** There are no replay fixtures for this version, and no model
 turn, approval, interruption or image turn has been recorded under 0.166.0.
 The unhandled server requests are still unhandled, and the many additive

@@ -38,6 +38,7 @@ $required = @(
     '"thread/start"',
     '"turn/start"',
     '"turn/interrupt"',
+    '"turn/steer"',
     '"item/agentMessage/delta"',
     '"thread/tokenUsage/updated"',
     '"item/commandExecution/requestApproval"',
