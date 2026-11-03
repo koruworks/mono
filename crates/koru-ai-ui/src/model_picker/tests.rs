@@ -2292,13 +2292,23 @@ fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
         koru_draw::el::FrameCx::root(),
     );
     assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
-    let buttons: Vec<_> = frame
-        .semantics()
+    // Every node of the tree, depth first: the strip's segments are its
+    // group's children.
+    fn every(nodes: Vec<koru_draw::el::SemNode>, out: &mut Vec<koru_draw::el::SemNode>) {
+        for mut node in nodes {
+            let children = std::mem::take(&mut node.children);
+            out.push(node);
+            every(children, out);
+        }
+    }
+    let mut all = Vec::new();
+    every(frame.semantics(), &mut all);
+    let buttons: Vec<_> = all
         .into_iter()
         .filter(|node| node.role == Role::Button)
         .collect();
-    // Favorites, Claude, OpenCode, the + and ↻; Low and High; Fast and
-    // 1M context.
+    // Favorites, Claude, OpenCode, the + and ↻; Low and High under the
+    // strip's group; Fast and 1M context.
     assert_eq!(buttons.len(), surface.picker_rail().len() + 2 + 2 + 2);
     assert!(
         buttons
