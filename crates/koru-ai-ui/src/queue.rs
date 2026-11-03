@@ -3,7 +3,7 @@
 //! **Messages queued while a reply runs**, and **Steer**.
 //!
 //! Sending while a reply runs no longer does nothing: the message — its text
-//! with its chips, its quotes, its attachments — is set aside whole in the
+//! with its chips and quotes, its attachments — is set aside whole in the
 //! chat's queue and the composer is cleared for the next. The queue shows as
 //! a *pending* list above the composer, one elided line each, with Steer,
 //! Edit and Remove ×.
@@ -40,13 +40,12 @@ use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use crate::quote_pills::{PendingQuote, compose_markdown};
 use crate::reader::Command;
 use crate::{ChatSurface, attachments, composer, doc_links};
 
 /// One row of the pending list.
 pub(crate) const ROW_H: f32 = 28.0;
-/// Between the list and what is under it (the quote pills, the composer).
+/// Between the list and what is under it (the document pill, the composer).
 const GAP: f32 = 6.0;
 /// The items shown; the rest are counted on a line of their own.
 const SHOWN: usize = 3;
@@ -58,11 +57,11 @@ const TOOLTIP_BASE: u64 = 0x5155_0000;
 
 /// One message set aside whole, as the composer held it.
 pub(crate) struct Queued {
+    /// The composer's document, quote chips (D88) and all.
     pub(crate) composer: composer::Draft,
-    pub(crate) quotes: Vec<PendingQuote>,
     pub(crate) attachments: Vec<attachments::Draft>,
-    /// What it says as it would be sent: the quotes, then the text, chips
-    /// in their `[[koru://doc/…]]` spelling.
+    /// What it says as it would be sent: chips in their `[[koru://doc/…]]`
+    /// spelling, each quote a blockquote before the text under it.
     pub(crate) markdown: String,
     /// It names a document by chip, which only a send can pin.
     pub(crate) documents: bool,
@@ -204,7 +203,7 @@ impl ChatSurface {
     /// The composer holds something to send: text, a chip, a quote or an
     /// attachment.
     pub(crate) fn composer_has_content(&self) -> bool {
-        !self.composer.is_blank() || !self.pending_quotes.is_empty() || self.has_strip()
+        !self.composer.is_blank() || self.has_strip()
     }
 
     pub(crate) fn send_mode(&self) -> SendMode {
@@ -264,16 +263,12 @@ impl ChatSurface {
                 self.document_titles.insert(*document, title.clone());
             }
         }
-        let markdown = compose_markdown(&self.pending_quotes, &message.markdown);
         let item = Queued {
             composer: self.composer.stash(),
-            quotes: std::mem::take(&mut self.pending_quotes),
             attachments,
-            markdown,
+            markdown: message.markdown.trim().to_owned(),
             documents: !message.documents.is_empty(),
         };
-        self.staged_chat = None;
-        self.comment_editor = None;
         self.pill_strip.clear_tooltip();
         self.forget_input_walk();
         self.queues.push(chat, item);
@@ -305,7 +300,6 @@ impl ChatSurface {
         let typing = self.composer.stash();
         let walk = (self.history_cursor.take(), self.history_draft.take());
         self.composer.unstash(item.composer);
-        let quotes = std::mem::replace(&mut self.pending_quotes, item.quotes);
         let strip = self.strips.take(chat);
         for draft in item.attachments {
             self.strips.push(chat, draft);
@@ -316,7 +310,6 @@ impl ChatSurface {
         if self.composer_has_content() {
             let item = Queued {
                 composer: self.composer.stash(),
-                quotes: std::mem::take(&mut self.pending_quotes),
                 attachments: self.strips.take(chat),
                 markdown: item.markdown,
                 documents: item.documents,
@@ -325,7 +318,6 @@ impl ChatSurface {
             self.queues.pause(chat);
         }
         self.composer.unstash(typing);
-        self.pending_quotes = quotes;
         for draft in strip {
             self.strips.push(chat, draft);
         }
@@ -411,10 +403,9 @@ impl ChatSurface {
         if self.composer_has_content() {
             let message = self.composer.message();
             let displaced = Queued {
-                markdown: compose_markdown(&self.pending_quotes, &message.markdown),
+                markdown: message.markdown.trim().to_owned(),
                 documents: !message.documents.is_empty(),
                 composer: self.composer.stash(),
-                quotes: std::mem::take(&mut self.pending_quotes),
                 attachments: self.strips.take(chat),
             };
             let at = index.min(self.queues.len(chat));
@@ -425,7 +416,6 @@ impl ChatSurface {
             }
         }
         self.composer.unstash(item.composer);
-        self.pending_quotes = item.quotes;
         for draft in item.attachments {
             self.strips.push(chat, draft);
         }
@@ -540,7 +530,7 @@ impl ChatSurface {
         }
     }
 
-    /// The pending list, as wide as the composer, above the quote pills.
+    /// The pending list, as wide as the composer, above the document pill.
     pub(crate) fn queue_band_rect(&mut self) -> Option<Rect> {
         let rows = self.queue_rows();
         if rows == 0 {
@@ -745,8 +735,11 @@ impl ChatSurface {
                     .iter()
                     .take(SHOWN)
                     .map(|item| {
-                        let (read, _) =
-                            doc_links::titled(&item.markdown, &self.document_titles, untitled);
+                        let (read, _) = doc_links::titled(
+                            &crate::quote_pills::quote_bars(&item.markdown),
+                            &self.document_titles,
+                            untitled,
+                        );
                         one_line(&read)
                     })
                     .collect()

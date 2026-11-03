@@ -210,17 +210,33 @@ pub(crate) fn display_layout(
     links: &[koru_markdown::LinkSpan],
     wrap_width: f32,
 ) -> Layout<Brush> {
-    if links.is_empty() {
+    // A quote the person sent (D88) is set behind the reply's blockquote bar
+    // (`crate::quote_pills::quote_bars`) and drawn in the dim ink, so what
+    // they quoted reads apart from what they said about it.
+    let mut quoted = Vec::new();
+    let mut start = 0;
+    for line in display.split_inclusive('\n') {
+        if line.starts_with(crate::quote_pills::QUOTE_BAR.trim_end()) {
+            quoted.push(start..start + line.trim_end_matches('\n').len());
+        }
+        start += line.len();
+    }
+    if links.is_empty() && quoted.is_empty() {
         return engine.simple_layout_wrapped(display, theme::role::ui(), wrap_width);
     }
     let style = theme::role::ui();
-    let ranges: Vec<koru_draw::text::RangeStyle> = links
-        .iter()
-        .map(|link| koru_draw::text::RangeStyle {
+    let ranges: Vec<koru_draw::text::RangeStyle> = quoted
+        .into_iter()
+        .map(|range| koru_draw::text::RangeStyle {
+            range,
+            color: Some(theme::p().text_dim),
+            strikethrough: false,
+        })
+        .chain(links.iter().map(|link| koru_draw::text::RangeStyle {
             range: link.range.clone(),
             color: Some(theme::p().accent),
             strikethrough: false,
-        })
+        }))
         .collect();
     engine.styled_layout(
         display,

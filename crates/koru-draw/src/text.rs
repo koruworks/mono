@@ -499,7 +499,8 @@ impl TextEngine {
             | PillKind::Link
             | PillKind::Run
             | PillKind::Schedule
-            | PillKind::SchedulePaused => 0.0,
+            | PillKind::SchedulePaused
+            | PillKind::Quote => 0.0,
             PillKind::File | PillKind::Contact | PillKind::Date => theme::PILL_PAD_X,
         };
         // Document titles: peel a leading emoji into the icon slot (Explore/tabs
@@ -585,6 +586,8 @@ impl TextEngine {
             Some(self.icon_layout(crate::icons::CLOCK_COUNTDOWN, icon_slot.max(1.0)))
         } else if kind == PillKind::SchedulePaused {
             Some(self.icon_layout(crate::icons::PAUSE, icon_slot.max(1.0)))
+        } else if kind == PillKind::Quote {
+            Some(self.icon_layout(crate::icons::QUOTES, icon_slot.max(1.0)))
         } else {
             None
         };

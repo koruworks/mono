@@ -346,3 +346,84 @@ fn a_sent_message_comes_back_with_its_chips() {
     assert!(ctrl(&mut composer, "z"));
     assert!(composer.is_blank());
 }
+
+// ----- quotes (koru-ai D88) ---------------------------------------------------
+
+/// **A quote is a chip on its own line, the caret under it**: two quotes,
+/// each followed by its comment, interleave in the order they were added
+/// and go out as blockquotes before the text under them.
+#[test]
+fn quotes_interleave_with_their_comments_and_send_as_blockquotes() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.insert_quote("g work, so \"workspaces\"\nstay"));
+    typed(&mut composer, "something here");
+    assert!(composer.insert_quote("one line"));
+    typed(&mut composer, "Another one");
+    assert_eq!(
+        composer.text(),
+        "> g work, so \"workspaces\"\n> stay\n\nsomething here\n\n> one line\n\nAnother one"
+    );
+    assert!(!composer.is_blank());
+    assert!(
+        !composer.insert_quote(" \n "),
+        "an empty passage is not a quote"
+    );
+}
+
+/// **A quote lands at the caret**: text before it stays above the chip,
+/// text after it moves under, the caret at its start.
+#[test]
+fn a_quote_splits_the_line_at_the_caret() {
+    let mut composer = ChatComposer::new(None);
+    typed(&mut composer, "before after");
+    for _ in 0.."after".len() {
+        press(&mut composer, NamedKey::ArrowLeft);
+    }
+    assert!(composer.insert_quote("passage"));
+    typed(&mut composer, "X");
+    assert_eq!(composer.text(), "before \n\n> passage\n\nXafter");
+}
+
+/// **Backspace removes a quote** as it removes a document chip, and undo
+/// brings it back.
+#[test]
+fn backspace_removes_a_quote_chip() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.insert_quote("passage"));
+    // The caret is on the empty line under the chip: one Backspace joins
+    // the lines, the next takes the chip.
+    assert!(press(&mut composer, NamedKey::Backspace));
+    assert!(press(&mut composer, NamedKey::Backspace));
+    assert!(composer.is_blank(), "{:?}", composer.text());
+    assert!(ctrl(&mut composer, "z"));
+    assert!(composer.text().contains("> passage"));
+}
+
+/// **A recalled message brings its quotes back as chips** and leaves again
+/// spelled exactly as it was sent.
+#[test]
+fn a_recalled_message_brings_its_quotes_back() {
+    let mut composer = ChatComposer::new(None);
+    let sent = "intro\n\n> first\n>\n> passage\n\nsomething here\n\n> other\n\nAnother one";
+    composer.set_message(sent, |_| String::new());
+    assert_eq!(composer.text(), sent);
+    let quotes = composer
+        .ws
+        .children(Parent::Node(composer.root))
+        .unwrap()
+        .into_iter()
+        .filter(|row| {
+            let node = composer.ws.read(*row).unwrap();
+            node.content
+                .attrs()
+                .iter()
+                .any(|attr| attr.role == koru_core::attributes::ROLE_QUOTE)
+        })
+        .count();
+    assert_eq!(quotes, 2, "each blockquote is a chip again");
+
+    let mut composer = ChatComposer::new(None);
+    composer.set_message("> only a quote", |_| String::new());
+    typed(&mut composer, "and a comment");
+    assert_eq!(composer.text(), "> only a quote\n\nand a comment");
+}

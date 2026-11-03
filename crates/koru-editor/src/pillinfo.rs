@@ -57,7 +57,40 @@ pub fn schedule_entity_key(schedule: &str) -> String {
 const RUN_WITHOUT_A_LABEL: &str = "Run";
 const SCHEDULE_WITHOUT_A_LABEL: &str = "Schedule";
 
+/// How many characters of a quoted passage its chip shows before the `…`.
+const QUOTE_LABEL_CHARS: usize = 24;
+
+/// A quote chip's caption: the passage's start, on one line, in quotation
+/// marks — `"g work, so "worksp…"`. The passage itself stays whole in the
+/// record; this is only what the chip shows.
+pub fn quote_label(passage: &str) -> String {
+    let one_line = passage.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = one_line.chars();
+    let head: String = chars.by_ref().take(QUOTE_LABEL_CHARS).collect();
+    if chars.next().is_some() {
+        format!("\"{}\u{2026}\"", head.trim_end())
+    } else {
+        format!("\"{head}\"")
+    }
+}
+
 pub fn info_for(ws: &WorkspaceDoc, attr: &Attr) -> PillInfo {
+    // **A quote in the chat's composer** (koru-ai D88), keyed on its role as
+    // a run is: a `Text` record would otherwise read as a document caption.
+    if attr.role == koru_core::attributes::ROLE_QUOTE {
+        let passage = match &attr.value {
+            AttrValue::Text(passage) => passage.as_str(),
+            _ => "",
+        };
+        return PillInfo {
+            kind: PillKind::Quote,
+            label: quote_label(passage),
+            dangling: false,
+            trashed: false,
+            url: None,
+            entity: None,
+        };
+    }
     if attr.role == koru_core::attributes::ROLE_SCHEDULE {
         let schedule = match &attr.value {
             AttrValue::Text(schedule) => Some(schedule.as_str()),
@@ -287,6 +320,21 @@ mod tests {
 
     fn ws() -> WorkspaceDoc {
         WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap()
+    }
+
+    /// A quote in the chat's composer (koru-ai D88) is its own kind, captioned
+    /// by the passage's start on one line in quotation marks; the passage is
+    /// never the caption a `Text` record would otherwise get.
+    #[test]
+    fn a_quote_is_its_own_kind_captioned_by_its_start() {
+        let attr = Attr::new(
+            koru_core::attributes::ROLE_QUOTE,
+            AttrValue::Text("g work, so \"workspaces\"\nstay together in one store".into()),
+        );
+        let info = info_for(&ws(), &attr);
+        assert_eq!(info.kind, PillKind::Quote);
+        assert_eq!(info.label, "\"g work, so \"workspaces\"\u{2026}\"");
+        assert_eq!(quote_label("short"), "\"short\"");
     }
 
     /// The key is what `Paragraph::adopt` matches on and what a caption cache

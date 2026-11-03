@@ -25,6 +25,17 @@
 //! joins the paragraphs with one newline, so what is sent reads exactly as the
 //! one-block field this replaced sent it.
 //!
+//! ## Quotes
+//!
+//! A passage of a reply added to the message (koru-ai D88) is a **quote
+//! chip** on a line of its own — the editor's pill under
+//! [`koru_core::attributes::ROLE_QUOTE`], holding the passage whole — with
+//! the person's comment on the lines under it. Several interleave with their
+//! comments in the order they were added. At send each is a Markdown
+//! blockquote before the text that follows it
+//! (`koru_export_markdown::message_text`); a recalled or queued message
+//! brings its quotes back as chips.
+//!
 //! ## Where it is drawn
 //!
 //! The editor believes it owns a viewport with its own margins; the chat gives
@@ -229,7 +240,8 @@ impl ChatComposer {
     /// Replace the message with one already sent, **chips and all** — what a
     /// recalled message is. `markdown` is the message as it went out, chips
     /// in their `[[koru://doc/…]]` spelling; each comes back as the chip it
-    /// was, captioned by `title`, and every other token stays text. One undo
+    /// was, captioned by `title`, a blockquote comes back as the quote chip
+    /// it was sent from (D88), and every other token stays text. One undo
     /// step, the caret after the last character.
     pub(crate) fn set_message(
         &mut self,
@@ -249,7 +261,7 @@ impl ChatComposer {
         self.ws.checkpoint();
         self.ws.begin_group();
         let mut at = 0;
-        for (i, line) in normalized.split('\n').enumerate() {
+        for (i, recalled) in recalled_rows(&normalized).into_iter().enumerate() {
             if i > 0 {
                 match self.ws.split(row, at) {
                     Ok(tail) => {
@@ -259,6 +271,15 @@ impl ChatComposer {
                     Err(_) => break,
                 }
             }
+            let line = match recalled {
+                Recalled::Line(line) => line,
+                Recalled::Quote(passage) => {
+                    if self.ws.insert_pill(row, at, &quote_attr(&passage)).is_ok() {
+                        at += koru_core::ANCHOR.len_utf8();
+                    }
+                    continue;
+                }
+            };
             let mut from = 0;
             for found in koru_link::wrapped(line) {
                 let koru_link::KoruLink::Document { document, node } = found.link else {
@@ -314,6 +335,59 @@ impl ChatComposer {
         self.editor = draft.editor;
         self.editor.view.active = active;
         self.editor.set_viewport(viewport.0, viewport.1);
+    }
+
+    /// **Quote a passage into the message** (koru-ai D88): a quote chip at
+    /// the caret, on a line of its own, and the caret on a new line under it
+    /// for the comment. Text before the caret stays above the chip; text after
+    /// it moves under, the caret at its start. One undo step. `false` for a
+    /// passage with nothing in it.
+    pub(crate) fn insert_quote(&mut self, passage: &str) -> bool {
+        let passage = passage.replace("\r\n", "\n").replace('\r', "\n");
+        let passage = passage.trim_matches('\n');
+        if passage.trim().is_empty() {
+            return false;
+        }
+        let first = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied());
+        let Some((mut row, mut at)) = self
+            .editor
+            .body
+            .focused()
+            .map(|paragraph| (paragraph.id, paragraph.caret()))
+            .or(first.map(|row| (row, 0)))
+        else {
+            return false;
+        };
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if at > 0
+            && let Ok(tail) = self.ws.split(row, at)
+        {
+            row = tail;
+            at = 0;
+        }
+        if self.ws.insert_pill(row, at, &quote_attr(passage)).is_err() {
+            self.ws.checkpoint();
+            return false;
+        }
+        let after = at + koru_core::ANCHOR.len_utf8();
+        let (caret_row, caret) = match self.ws.split(row, after) {
+            Ok(tail) => (tail, 0),
+            Err(_) => (row, after),
+        };
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(caret_row);
+        self.editor.place_caret(caret);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
     }
 
     /// Whether the caret is on the message's first visual line — where Up
@@ -592,7 +666,7 @@ impl ChatComposer {
     }
 
     /// The `@` picker, drawn **after** everything else the chat draws: it
-    /// floats over the conversation, the quote pills and the toolbar.
+    /// floats over the conversation, the document pill and the toolbar.
     pub(crate) fn draw_panels(&mut self, canvas: &mut Scene, root: Affine) {
         let at = root * Affine::translate((self.origin.0 as f64, self.origin.1 as f64));
         koru_editor::draw::floating_panels(canvas, at, &mut self.editor);
@@ -779,6 +853,56 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     editor.body.focus = editor.body.first_body_row();
     editor.place_caret(0);
     (ws, root, editor)
+}
+
+/// A quote chip's record: the passage whole, as text, under the quote role.
+fn quote_attr(passage: &str) -> Attr {
+    Attr::new(
+        koru_core::attributes::ROLE_QUOTE,
+        AttrValue::Text(passage.to_owned()),
+    )
+}
+
+/// One row of a recalled message: a line of text, or a quoted passage.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Recalled<'a> {
+    Line(&'a str),
+    Quote(String),
+}
+
+/// A sent message read back into rows, **the inverse of what the composer
+/// sends**: a run of `>` lines is one quoted passage, and the blank line
+/// either side of it is the separator `message_text` wrote, not a line the
+/// person typed. A message that ends on a quote gets an empty line under it
+/// for the caret.
+pub(crate) fn recalled_rows(markdown: &str) -> Vec<Recalled<'_>> {
+    let lines: Vec<&str> = markdown.split('\n').collect();
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].starts_with('>') {
+            rows.push(Recalled::Line(lines[i]));
+            i += 1;
+            continue;
+        }
+        let mut passage = Vec::new();
+        while i < lines.len() && lines[i].starts_with('>') {
+            let line = &lines[i][1..];
+            passage.push(line.strip_prefix(' ').unwrap_or(line));
+            i += 1;
+        }
+        if rows.last() == Some(&Recalled::Line("")) {
+            rows.pop();
+        }
+        rows.push(Recalled::Quote(passage.join("\n")));
+        if lines.get(i) == Some(&"") {
+            i += 1;
+        }
+    }
+    if matches!(rows.last(), Some(Recalled::Quote(_))) {
+        rows.push(Recalled::Line(""));
+    }
+    rows
 }
 
 /// Insert `text` into `row` at `at`: the bytes it added, none for an empty

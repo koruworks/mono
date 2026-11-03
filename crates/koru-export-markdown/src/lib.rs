@@ -212,11 +212,18 @@ pub fn render_node(
 /// What is shared is the part that must never drift: a document pill is
 /// `[[koru://doc/<id>]]` (or `…#<node>`) here exactly as in a document export,
 /// so the importer, the chat renderer and this writer agree on one token.
+///
+/// **A quote chip is a blockquote** (koru-ai D88): the passage it holds,
+/// `> ` before every line, as a block of its own — a blank line before and
+/// after it, so the text that follows is the person's comment on it and not
+/// a lazy continuation of the quote. An empty line beside a quote is that
+/// separator already and is not sent twice. Every agent reads the same
+/// Markdown; there is no quote-only wire shape.
 pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportError> {
     let children = ws
         .children(Parent::Node(root))
         .map_err(|e| ExportError::new(e.to_string()))?;
-    let mut lines = Vec::with_capacity(children.len());
+    let mut pieces: Vec<MessagePiece> = Vec::with_capacity(children.len());
     for id in children {
         let node = ws.read(id).map_err(|e| ExportError::new(e.to_string()))?;
         if node.content.as_text().is_none() {
@@ -225,10 +232,19 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
         let runs = ws.runs(id).map_err(|e| ExportError::new(e.to_string()))?;
         let attrs = node.content.attrs();
         let mut line = String::new();
+        let mut quoted = false;
         for run in &runs {
             if let Some(pill) = run.pill {
                 if let Some(attr) = attrs.iter().find(|a| a.id == pill) {
-                    line.push_str(&serialize_pill(attr));
+                    if let Some(passage) = quoted_passage(attr) {
+                        if !line.is_empty() {
+                            pieces.push(MessagePiece::Line(std::mem::take(&mut line)));
+                        }
+                        pieces.push(MessagePiece::Quote(passage.to_owned()));
+                        quoted = true;
+                    } else {
+                        line.push_str(&serialize_pill(attr));
+                    }
                 }
                 continue;
             }
@@ -237,9 +253,74 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
             }
             line.push_str(&run.text);
         }
-        lines.push(line);
+        if !quoted || !line.is_empty() {
+            pieces.push(MessagePiece::Line(line));
+        }
     }
-    Ok(lines.join("\n"))
+    Ok(join_message(&pieces))
+}
+
+/// One line of a composed message, or one quoted passage.
+enum MessagePiece {
+    Line(String),
+    Quote(String),
+}
+
+/// The passage a quote chip holds, when `attr` is one.
+fn quoted_passage(attr: &Attr) -> Option<&str> {
+    if attr.role != koru_core::attributes::ROLE_QUOTE {
+        return None;
+    }
+    match &attr.value {
+        AttrValue::Text(passage) => Some(passage.as_str()),
+        _ => None,
+    }
+}
+
+/// `passage` as a Markdown blockquote: `> ` before every line, a bare `>`
+/// for an empty one.
+pub fn blockquote(passage: &str) -> String {
+    passage
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim_matches('\n')
+        .split('\n')
+        .map(|line| {
+            if line.trim().is_empty() {
+                ">".to_owned()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Lines joined by one newline; a quote set off by a blank line on each side,
+/// an empty line beside it dropped as the separator it already is.
+fn join_message(pieces: &[MessagePiece]) -> String {
+    let beside_quote = |index: usize| {
+        let quote = |at: Option<&MessagePiece>| matches!(at, Some(MessagePiece::Quote(_)));
+        quote(index.checked_sub(1).and_then(|before| pieces.get(before)))
+            || quote(pieces.get(index + 1))
+    };
+    let mut out = String::new();
+    let mut last_was_quote = None::<bool>;
+    for (index, piece) in pieces.iter().enumerate() {
+        let (text, is_quote) = match piece {
+            MessagePiece::Line(line) if line.is_empty() && beside_quote(index) => continue,
+            MessagePiece::Line(line) => (line.clone(), false),
+            MessagePiece::Quote(passage) => (blockquote(passage), true),
+        };
+        match last_was_quote {
+            None => {}
+            Some(previous) if previous || is_quote => out.push_str("\n\n"),
+            Some(_) => out.push('\n'),
+        }
+        out.push_str(&text);
+        last_was_quote = Some(is_quote);
+    }
+    out
 }
 
 fn document_root(ws: &WorkspaceDoc) -> Option<NodeId> {

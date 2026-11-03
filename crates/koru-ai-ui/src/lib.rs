@@ -91,10 +91,7 @@ pub use model_picker::FavoriteModel;
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
 use layout_cache::{BlockLayout, MessageInput, MessageLayout, RebuildStats};
-use quote_pills::{
-    CommentEditor, ContextDocumentPill, PendingQuote, PillStrip, ResponseMenuItem,
-    compose_markdown, pill_band_height,
-};
+use quote_pills::{AddPill, ContextDocumentPill, PillStrip, ResponseMenuItem, pill_band_height};
 use reader::{Command, DestinationOption, POLL_INTERVAL, Reader, SendError, Update};
 use usage::{format_usage_report, message_content_height, message_height, usage_line};
 
@@ -361,14 +358,13 @@ struct ResponseTextHit {
 }
 
 /// A message sent and not yet accepted: everything the composer held —
-/// its text with its chips and undo, its quotes, its attachments.
+/// its text with its chips, quotes and undo, and its attachments.
 struct SentMessage {
     chat: ChatId,
     composer: composer::Draft,
-    quotes: Vec<PendingQuote>,
     attachments: Vec<attachments::Draft>,
-    /// What it said, quotes first: a queued message refused by the service
-    /// goes back to its queue with it (`queue`).
+    /// What it said: a queued message refused by the service goes back to
+    /// its queue with it (`queue`).
     markdown: String,
     /// It named a document by chip.
     documents: bool,
@@ -529,10 +525,9 @@ pub struct ChatSurface {
     /// a new chat and does not want the active tab's document pre-attached.
     suppress_next_document_context: bool,
     context_workspace: Option<WorkspaceId>,
-    pending_quotes: Vec<PendingQuote>,
-    staged_chat: Option<ChatId>,
     pill_strip: PillStrip,
-    comment_editor: Option<CommentEditor>,
+    /// *Add to chat* over a reply's selection (D88).
+    add_pill: AddPill,
     response_menu_anchor: Option<Rect>,
     credential_request: Option<OpenAiCredentialRequest>,
     pending_openai_settings: Option<(Option<String>, ReasoningChoice)>,
@@ -907,10 +902,8 @@ impl ChatSurface {
             dismissed_context_document: None,
             suppress_next_document_context: false,
             context_workspace: None,
-            pending_quotes: Vec::new(),
-            staged_chat: None,
             pill_strip: PillStrip::default(),
-            comment_editor: None,
+            add_pill: AddPill::default(),
             response_menu_anchor: None,
             credential_request: None,
             pending_openai_settings: None,
@@ -1267,9 +1260,6 @@ impl ChatSurface {
         self.system_prompt = TextArea::new(&mut self.engine, role::ui());
         self.system_prompt
             .set_text(&mut self.engine, &system_prompt);
-        if let Some(editor) = &mut self.comment_editor {
-            editor.rebind(&mut self.engine);
-        }
         // Every kept layout was shaped in the old engine's fonts: a message
         // or a call's detail reused as it is would keep them after the App
         // font changed. Laid out again, once each.
@@ -1436,11 +1426,13 @@ impl ChatSurface {
         {
             return CursorIcon::Default;
         }
-        if let Some(editor) = &self.comment_editor {
-            let bounds = self.conversation_hit_rect;
-            if editor.panel_rect(bounds).contains(p.0, p.1) {
-                return CursorIcon::Text;
-            }
+        // *Add to chat* floats over the reply's text: the arrow (ADR-215).
+        if self
+            .add_pill
+            .rect()
+            .is_some_and(|rect| rect.contains(p.0, p.1))
+        {
+            return CursorIcon::Default;
         }
         if self.conversation_scroll_drag.is_some()
             || self
@@ -1554,6 +1546,7 @@ impl ChatSurface {
             )
             && self.move_response_selection(key)
         {
+            self.show_add_pill();
             return true;
         }
         if Self::is_question_navigation_chord(key, mods) {
@@ -1877,9 +1870,15 @@ impl ChatSurface {
         if let Some(handled) = self.viewer_mouse_down(x, y) {
             return handled;
         }
-        if let Some(handled) = self.quote_overlay_mouse_down(x, y) {
+        if let Some(handled) = self.response_menu_mouse_down(x, y) {
             return handled;
         }
+        // *Add to chat* over the selection; any other press lets it go.
+        if self.add_pill.rect().is_some_and(|rect| rect.contains(x, y)) {
+            self.add_selection_to_chat();
+            return true;
+        }
+        self.add_pill.hide();
         if let Some(confirm) = &mut self.confirm {
             let outcome = confirm.mouse_down(
                 &mut self.engine,
@@ -2320,10 +2319,7 @@ impl ChatSurface {
             );
             return changed || old != self.cursor_icon();
         }
-        let (claimed, pill_changed) = self.quote_content_mouse_move(x, y, old);
-        if let Some(changed) = claimed {
-            return changed;
-        }
+        let pill_changed = self.pill_strip_mouse_move(x, y) | self.add_pill_mouse_move(x, y);
         let old_response_hover = self.response_hover;
         let old_message_hover = self.response_message_hover;
         let old_tool_hover = self.tool_activity_hover;
@@ -2389,9 +2385,10 @@ impl ChatSurface {
         self.ollama_endpoint.release();
         self.ollama_model.release();
         self.system_prompt.release();
-        if let Some(editor) = &mut self.comment_editor {
-            editor.release();
-        }
+        let selected = self
+            .response_selection
+            .as_ref()
+            .is_some_and(|selection| selection.dragging);
         let pressed = self.response_selection.as_mut().and_then(|selection| {
             selection.dragging = false;
             (selection.anchor == selection.focus)
@@ -2400,6 +2397,10 @@ impl ChatSurface {
         });
         if let Some(url) = pressed {
             self.follow_link(&url);
+        }
+        // A drag through a reply let go: *Add to chat* over what it chose.
+        if selected {
+            self.show_add_pill();
         }
         true
     }
@@ -2433,6 +2434,7 @@ impl ChatSurface {
                 dragging: false,
                 pressed_link: None,
             });
+            self.show_add_pill();
             return true;
         }
         false
@@ -2444,6 +2446,8 @@ impl ChatSurface {
         }
         self.question_navigation = None;
         self.question_navigation_anchor = None;
+        // A scroll lets *Add to chat* go; the selection stays.
+        self.add_pill.hide();
         // Over the composer's open picker, or over its own lines once they
         // overflow, the wheel is the composer's.
         let (px, py) = self.pointer;
@@ -2621,10 +2625,6 @@ impl ChatSurface {
             self.draw_setup(canvas, root);
         } else {
             self.draw_chat(canvas, root);
-            let bounds = self.conversation_hit_rect;
-            if let Some(editor) = &mut self.comment_editor {
-                editor.draw(canvas, root, &mut self.engine, bounds);
-            }
         }
         if let Some(confirm) = &self.confirm {
             confirm.draw(
@@ -2833,9 +2833,6 @@ impl ChatSurface {
                 self.selected_destination = self
                     .selected_destination
                     .min(self.destinations.len().saturating_sub(1));
-                if let Some(current) = &transcript {
-                    self.retain_staged_quotes_for(current.chat.id);
-                }
                 self.scroll_loaded_chat_to_bottom = transcript.is_some();
                 self.transcript = transcript;
                 self.select_context_workspace_if_needed();
@@ -2866,7 +2863,6 @@ impl ChatSurface {
                         transcript.reasoning_control = stand_in.reasoning_control.clone();
                     }
                 }
-                self.retain_staged_quotes_for(transcript.chat.id);
                 if made.is_none() {
                     self.forget_input_walk();
                     self.waiting = false;
@@ -2914,7 +2910,6 @@ impl ChatSurface {
                 self.status = Some(failure_text(&failure, self.lang));
             }
             Update::Transcript(transcript) => {
-                self.retain_staged_quotes_for(transcript.chat.id);
                 self.waiting = false;
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
@@ -3062,12 +3057,7 @@ impl ChatSurface {
                 } else {
                     transcript
                 };
-                if let Some(current) = &transcript {
-                    self.retain_staged_quotes_for(current.chat.id);
-                } else {
-                    self.pending_quotes.clear();
-                    self.comment_editor = None;
-                    self.staged_chat = None;
+                if transcript.is_none() {
                     self.pill_strip.clear_tooltip();
                 }
                 self.waiting = false;
@@ -3746,7 +3736,6 @@ impl ChatSurface {
         let id = chat.chat.id;
         self.fresh_chat_wanted = false;
         self.forget_input_walk();
-        self.retain_staged_quotes_for(id);
         self.usage_report = None;
         self.question_navigation = None;
         self.question_navigation_anchor = None;
@@ -4115,7 +4104,7 @@ impl ChatSurface {
         }
         let message = self.composer.message();
         let typed = message.markdown;
-        if typed.trim().is_empty() && self.pending_quotes.is_empty() && !self.has_strip() {
+        if typed.trim().is_empty() && !self.has_strip() {
             return false;
         }
         let Some(chat_id) = self.transcript.as_ref().map(|t| t.chat.id) else {
@@ -4129,7 +4118,7 @@ impl ChatSurface {
             self.status = Some("Loading private local usage…".into());
             return self.send_command(Command::Usage(chat_id));
         }
-        let markdown = compose_markdown(&self.pending_quotes, &typed);
+        let markdown = typed.trim().to_owned();
         if markdown.is_empty() && !self.has_strip() {
             return false;
         }
@@ -4177,9 +4166,6 @@ impl ChatSurface {
             self.queues.resume(chat_id);
         }
         self.pending_user = Some(markdown.clone());
-        let quotes = std::mem::take(&mut self.pending_quotes);
-        self.staged_chat = None;
-        self.comment_editor = None;
         self.pill_strip.clear_tooltip();
         self.pulse = Some(PulsingDots::new(Instant::now()));
         self.live_usage = None;
@@ -4201,7 +4187,6 @@ impl ChatSurface {
         self.sent_message = Some(SentMessage {
             chat: chat_id,
             composer: self.composer.stash(),
-            quotes,
             attachments: sent_attachments,
             markdown: markdown.clone(),
             documents: !chips.is_empty(),
@@ -4253,7 +4238,7 @@ impl ChatSurface {
     }
 
     /// The send did not go: the message comes back to the composer as it
-    /// was — text, chips, quotes and attachments, the one the service named
+    /// was — text, chips and quotes, and attachments, the one the service named
     /// red — and the reason is said. Something typed since is kept rather
     /// than overwritten.
     fn give_back_sent(&mut self, failure: Option<&koru_ai_wire::Failure>) {
@@ -4279,7 +4264,6 @@ impl ChatSurface {
                 sent.chat,
                 queue::Queued {
                     composer: sent.composer,
-                    quotes: sent.quotes,
                     attachments: sent.attachments,
                     markdown: sent.markdown,
                     documents: sent.documents,
@@ -4291,9 +4275,6 @@ impl ChatSurface {
         if self.shown_chat_id() == Some(sent.chat) {
             if self.composer.is_blank() {
                 self.composer.unstash(sent.composer);
-            }
-            if self.pending_quotes.is_empty() {
-                self.pending_quotes = sent.quotes;
             }
         }
         self.restore_drafts(sent.chat, sent.attachments, failure);
@@ -4922,7 +4903,7 @@ impl ChatSurface {
             content.w,
             (composer.y
                 - COMPOSER_GAP
-                - pill_band_height(context_document.as_ref(), &self.pending_quotes)
+                - pill_band_height(context_document.as_ref())
                 - self.queue_band_h()
                 - footer_h
                 - top)
@@ -5805,6 +5786,8 @@ impl ChatSurface {
             }
         }
         self.draw_messages(canvas, root);
+        // Over the transcript, under everything that floats over it.
+        self.draw_add_pill(canvas, root);
         let composer = self.composer_rect();
         self.draw_greeting(canvas, root);
         let pill_band = self.pill_band_rect();
@@ -5814,7 +5797,6 @@ impl ChatSurface {
             root,
             &mut self.engine,
             context_document.as_ref(),
-            &self.pending_quotes,
             pill_band,
             self.viewport,
             Instant::now(),
@@ -5826,7 +5808,7 @@ impl ChatSurface {
             let context_document = self.context_document_pill();
             let y = composer.y
                 - COMPOSER_GAP
-                - pill_band_height(context_document.as_ref(), &self.pending_quotes)
+                - pill_band_height(context_document.as_ref())
                 - self.queue_band_h()
                 - layout.height();
             scene::draw_layout(canvas, root, &layout, content.x, y, Some(p.text_dim));
@@ -6233,7 +6215,11 @@ impl ChatSurface {
                     // The person's own message carries its chips as
                     // `[[koru://doc/…]]`; they read as titled links.
                     let (mut display, links) = if message.role == ChatRole::User {
-                        doc_links::titled(&display, &self.document_titles, untitled)
+                        doc_links::titled(
+                            &quote_pills::quote_bars(&display),
+                            &self.document_titles,
+                            untitled,
+                        )
                     } else {
                         (display, Vec::new())
                     };
@@ -6587,7 +6573,11 @@ impl ChatSurface {
     ) -> MessageLayout {
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let user_width = message_wrap_width(ChatRole::User, width);
-        let (display, links) = doc_links::titled(markdown, &self.document_titles, untitled);
+        let (display, links) = doc_links::titled(
+            &quote_pills::quote_bars(markdown),
+            &self.document_titles,
+            untitled,
+        );
         MessageLayout {
             id: None,
             top: 0.0,

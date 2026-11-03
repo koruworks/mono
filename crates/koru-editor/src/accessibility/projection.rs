@@ -147,7 +147,7 @@ impl InlineObject {
             | PillKind::Run
             | PillKind::Schedule
             | PillKind::SchedulePaused => Role::Link,
-            PillKind::Contact | PillKind::Date => Role::Label,
+            PillKind::Contact | PillKind::Date | PillKind::Quote => Role::Label,
         }
     }
 

@@ -221,6 +221,29 @@ fn a_completed_reply_sends_the_head_of_the_queue() {
     );
 }
 
+/// **A queued message keeps its quotes** (D88): set aside with a quote chip
+/// and the comment under it, it goes out with the blockquote when the reply
+/// completes; *Edit* brings the chip back into the composer.
+#[test]
+fn a_queued_message_keeps_its_quotes() {
+    let expected = "> a passage\n> of two lines\n\nwhy?";
+    let (mut surface, transcript, commands) = agent_surface("agent-claude", &[]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    assert!(surface.composer.insert_quote("a passage\nof two lines"));
+    type_into(&mut surface, "why?");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert!(surface.composer.is_blank());
+    assert_eq!(queued_texts(&surface), [expected]);
+
+    assert!(surface.queue_action(QueueHit::Edit(0)));
+    assert_eq!(surface.composer.text(), expected, "the chip comes back");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(queued_texts(&surface), [expected]);
+
+    end_reply(&mut surface, &transcript, completed(attempt));
+    assert_eq!(sends(&drain(&commands)), [expected]);
+}
+
 /// **A Stop pauses the queue**, and so does a failure; *Send next* sends
 /// the head and resumes it.
 #[test]

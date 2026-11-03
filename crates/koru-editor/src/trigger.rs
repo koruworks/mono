@@ -389,6 +389,9 @@ pub fn open_for_pill(
         // it opens the run (`follow_run_pill`); nothing about it is editable
         // here, and a caption prompt would overwrite the reference with text.
         PillKind::Run | PillKind::Schedule | PillKind::SchedulePaused => Overlay::None,
+        // A quote in the chat's composer is a passage held whole: nothing
+        // about it is edited in place, and Backspace removes it.
+        PillKind::Quote => Overlay::None,
         // Fall back to today only if the pill somehow has no stored date.
         PillKind::Date => Overlay::Date(DatePicker::for_pill(
             trigger,

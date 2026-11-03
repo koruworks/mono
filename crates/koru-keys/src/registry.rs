@@ -381,6 +381,18 @@ pub enum ShortcutId {
     /// **The chat below in the Chats list** (D87); the same chord as the
     /// editor's [`MoveRowDown`](Self::MoveRowDown), on the same terms.
     NextChat,
+    /// **Add the text selected in a reply to the message** (koru-ai D88): a
+    /// quote chip at the composer's caret, the caret on a new line under it
+    /// for the comment, and the keyboard in the composer. The *Add to chat*
+    /// pill over the selection and the reply's right-click menu do the same.
+    ///
+    /// The same chord as the editor's [`AlignLeft`](Self::AlignLeft), and
+    /// said so: the chat takes it only while a reply has a selection **and
+    /// the keyboard is not in the composer**. In the composer the chord is
+    /// the editor's, and its policy refuses alignment in a message, so there
+    /// it does nothing; a document beside the chat keeps it whenever the
+    /// keyboard is there.
+    AddSelectionToChat,
 }
 
 /// One row of the table.
@@ -1105,6 +1117,15 @@ pub const REGISTRY: &[Shortcut] = &[
             Chord::new(named(NamedKey::ArrowDown), PRIMARY_SHIFT),
         )
     },
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::AlignLeft),
+        ..s(
+            ShortcutId::AddSelectionToChat,
+            Layer::Chat,
+            "Add to chat",
+            Chord::new(On::Letter('l'), PRIMARY),
+        )
+    },
 ];
 
 impl ShortcutId {
@@ -1126,7 +1147,8 @@ impl ShortcutId {
             | Self::CycleAgentMode
             | Self::JumpToLatest
             | Self::PreviousChat
-            | Self::NextChat => koru_features::ai(),
+            | Self::NextChat
+            | Self::AddSelectionToChat => koru_features::ai(),
             Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),

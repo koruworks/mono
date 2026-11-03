@@ -3881,6 +3881,12 @@ pub trait Editing {
                 koru_core::attributes::ROLE_SCHEDULE,
                 AttrValue::Text(spec.label.clone()),
             ),
+            // No picker mints a quote either: the chat's composer writes one
+            // from a reply's selection (`koru_ai_ui`).
+            PillKind::Quote => Attr::new(
+                koru_core::attributes::ROLE_QUOTE,
+                AttrValue::Text(spec.label.clone()),
+            ),
         }
     }
 

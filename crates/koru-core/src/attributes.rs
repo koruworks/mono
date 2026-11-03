@@ -99,6 +99,18 @@ pub const ROLE_RUN: &str = "koru.run";
 /// record and draw its stored label without needing a content-schema bump.
 pub const ROLE_SCHEDULE: &str = "koru.schedule";
 
+/// The role of a **quote chip in the AI chat's composer** (koru-ai D88): a
+/// passage of a reply, held whole as text, drawn as one chip and sent as a
+/// Markdown blockquote (`koru_export_markdown::message_text`).
+///
+/// The composer is a private in-memory document that is never stored, so
+/// this name is not written anywhere a later build reads it back. It is an
+/// open role like [`ROLE_RUN`] — a [`Text`](crate::node::AttrValue::Text)
+/// record, no new value type and no content-schema bump — and it is named
+/// here only so the editor that draws the chip and the export that sends it
+/// spell it the same.
+pub const ROLE_QUOTE: &str = "koru.quote";
+
 /// The roles whose `"ref"` record means **a reference to a document**, and
 /// which are therefore read back as [`AttrValue::Document`] rather than as a
 /// bare [`AttrValue::Ref`] homed at one.

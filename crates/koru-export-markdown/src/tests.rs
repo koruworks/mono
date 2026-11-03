@@ -413,6 +413,40 @@ fn a_message_joins_paragraphs_with_one_newline_and_keeps_typed_markdown() {
     );
 }
 
+/// Quote chips (koru-ai D88) go out as blockquotes, each before the comment
+/// written under it, in the order they sit: `> ` on every line of the
+/// passage, a blank line around it, and the empty line beside a quote not
+/// sent twice.
+#[test]
+fn quote_chips_are_blockquotes_before_their_comments_in_order() {
+    let (mut ws, root) = with_doc("");
+    let quote = |passage: &str| {
+        Attr::new(
+            koru_core::attributes::ROLE_QUOTE,
+            AttrValue::Text(passage.to_owned()),
+        )
+    };
+    let row = |ws: &mut WorkspaceDoc, text: &str| {
+        ws.insert(Parent::Node(root), Node::paragraph(text).unwrap())
+            .unwrap()
+    };
+    let first = row(&mut ws, "");
+    ws.insert_pill(first, 0, &quote("g work, so\n\"workspaces\" stay"))
+        .unwrap();
+    row(&mut ws, "something here");
+    row(&mut ws, "");
+    let second = row(&mut ws, "");
+    ws.insert_pill(second, 0, &quote("one line")).unwrap();
+    row(&mut ws, "Another one");
+    row(&mut ws, "and a second line");
+
+    assert_eq!(
+        message_text(&ws, root).unwrap(),
+        "> g work, so\n> \"workspaces\" stay\n\nsomething here\n\n> one line\n\nAnother one\nand a second line"
+    );
+    assert_eq!(blockquote("a\n\nb\r\nc\n"), "> a\n>\n> b\n> c");
+}
+
 /// Mixed right-to-left and left-to-right text is bytes to the exporter: a
 /// message in Arabic with a Latin word round-trips exactly.
 #[test]

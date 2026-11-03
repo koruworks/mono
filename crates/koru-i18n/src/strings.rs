@@ -296,6 +296,7 @@ pub enum Key {
     AiModelsLegacy,
     AiModelsLegacyTag,
     AiJumpToLatest,
+    AiAddToChat,
     AiStoredInKoru,
     AiOpenStoredDocument,
     // The composer's tool-approval chip and panel, and a tool's approval card.
@@ -2830,7 +2831,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1971] = [
+    pub const ALL: [Key; 1972] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3022,6 +3023,7 @@ impl Key {
         Key::AiModelsLegacy,
         Key::AiModelsLegacyTag,
         Key::AiJumpToLatest,
+        Key::AiAddToChat,
         Key::AiStoredInKoru,
         Key::AiOpenStoredDocument,
         Key::AiToolApprovalHeading,
@@ -6969,6 +6971,19 @@ pub const ROWS: &[Row] = &[
         ar: "الانتقال إلى الأحدث",
         zh_hans: "跳到最新",
         ja: "最新へ移動",
+    },
+    // The pill over text selected in a chat reply, and the reply's right-click
+    // menu row: the selection goes into the message as a quote (Ctrl+L).
+    Row {
+        key: Key::AiAddToChat,
+        en: "Add to chat",
+        es: "Añadir al chat",
+        pt_br: "Adicionar ao chat",
+        de: "Zum Chat hinzufügen",
+        fr: "Ajouter au chat",
+        ar: "إضافة إلى المحادثة",
+        zh_hans: "添加到聊天",
+        ja: "チャットに追加",
     },
     // The chat's status line after a reply is stored as a Koru document: {} is the document's title.
     Row {
