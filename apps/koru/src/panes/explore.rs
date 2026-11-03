@@ -1165,6 +1165,14 @@ impl ExploreView {
         if let Some(chat) = self.chats.take_wants_open() {
             return Outcome::OpenAiChat(chat);
         }
+        // A row's own buttons (D86): its pin, and its ⋯ — the menu a
+        // right-click opens, under the button.
+        if let Some((chat, pinned)) = self.chats.take_wants_pin() {
+            return Outcome::PinAiChat(chat, pinned);
+        }
+        if let Some((chats, at)) = self.chats.take_wants_menu() {
+            return Outcome::AiChatMenu { chats, at };
+        }
         if self.chats.take_wants_new() {
             return Outcome::NewAiChat;
         }

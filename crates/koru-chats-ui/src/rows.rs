@@ -98,6 +98,20 @@ pub struct RowParts {
     /// The status mark's slot at the row's end (D83). Zero-width on a row
     /// with nothing to show there, so a title keeps the whole width.
     pub end: Rect,
+    /// The pin (D86): on a hovered or keyboard row, and always on a pinned
+    /// one. Zero-width where it is not shown.
+    pub pin: Rect,
+    /// **⋯**, which opens the row's menu (D86): on a hovered or keyboard
+    /// row only, where it takes the status mark's slot. Zero-width
+    /// elsewhere.
+    pub more: Rect,
+}
+
+/// A button at a row's end (D86).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RowButton {
+    Pin,
+    More,
 }
 
 impl ChatsSurface {
@@ -194,15 +208,39 @@ impl ChatsSurface {
             Row::Chat(index) => self.chats.get(index).is_some_and(|chat| chat.private),
             _ => false,
         };
-        let end_w = match row {
-            Row::Chat(index) => self
-                .chats
-                .get(index)
-                .filter(|chat| self.status(chat.id) != crate::ChatStatus::Idle)
-                .map_or(0.0, |_| END_W.min(inner_w)),
-            _ => 0.0,
+        // The row's end, right to left: slot 1 at the edge, slot 2 before it
+        // (D86). A hovered or keyboard row shows ⋯ in slot 1 — over the
+        // status mark — and the pin in slot 2; any other row shows its mark
+        // in slot 1 and, when it is pinned, its pin beside it (or in slot 1
+        // when it has no mark).
+        let (buttons, pinned, marked) = match row {
+            Row::Chat(index) => self.chats.get(index).map_or((false, false, false), |chat| {
+                (
+                    self.shows_row_buttons(row),
+                    chat.pinned_at.is_some(),
+                    self.status(chat.id) != crate::ChatStatus::Idle,
+                )
+            }),
+            _ => (false, false, false),
         };
-        let end = Rect::new(inner_x + inner_w - end_w, r.y, end_w, r.h);
+        let right = inner_x + inner_w;
+        let slot = |n: f32| {
+            let w = END_W.min(inner_w / n);
+            Rect::new(right - w * n, r.y, w, r.h)
+        };
+        let none = Rect::new(right, r.y, 0.0, r.h);
+        let (end, pin, more) = if buttons {
+            (none, slot(2.0), slot(1.0))
+        } else if marked {
+            (slot(1.0), if pinned { slot(2.0) } else { none }, none)
+        } else {
+            (none, if pinned { slot(1.0) } else { none }, none)
+        };
+        let taken = [end, pin, more]
+            .iter()
+            .filter(|part| part.w > 0.0)
+            .map(|part| part.x)
+            .fold(right, f32::min);
         let lead_w = if private { LEAD_W.min(inner_w) } else { 0.0 };
         let lead = Rect::new(inner_x, r.y, lead_w, r.h);
         let text_x = if private {
@@ -210,16 +248,36 @@ impl ChatsSurface {
         } else {
             inner_x
         };
-        let text_end = if end_w > 0.0 {
-            end.x - END_GAP
+        let text_end = if taken < right {
+            taken - END_GAP
         } else {
-            inner_x + inner_w
+            right
         };
         let text_w = (text_end - text_x).max(0.0);
         RowParts {
             lead,
             title: Rect::new(text_x, r.y, text_w, r.h),
             end,
+            pin,
+            more,
+        }
+    }
+
+    /// Whether a row shows its ⋯ and pin: under the pointer, or under the
+    /// keyboard (D86).
+    pub(crate) fn shows_row_buttons(&self, row: Row) -> bool {
+        matches!(row, Row::Chat(_)) && (self.hover == Some(row) || self.focus_row() == Some(row))
+    }
+
+    /// Which of a row's buttons is under a point, if one is shown there.
+    pub(crate) fn button_at(&self, row: Row, r: Rect, x: f32, y: f32) -> Option<RowButton> {
+        let parts = self.row_parts(row, r);
+        if parts.more.w > 0.0 && parts.more.contains(x, y) {
+            Some(RowButton::More)
+        } else if parts.pin.w > 0.0 && parts.pin.contains(x, y) {
+            Some(RowButton::Pin)
+        } else {
+            None
         }
     }
 

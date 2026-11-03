@@ -30,11 +30,12 @@
 //! before the row was removed, so a chat open here takes its new name with
 //! the list.
 //!
-//! **A right-click on a row opens its menu** — the workspace window's Chats
-//! menu: *Rename…* for one chat, which opens the same field `F2` does, and
-//! the delete row for the pick, through the Delete key's confirmation. It is
-//! the shared popover menu (`koru_ui::Menu`), as the conversation's own
-//! right-click menu is.
+//! **A right-click on a row opens its menu, and so does its ⋯** (koru-ai
+//! D86) — the workspace window's Chats menu: *Rename…* for one chat, which
+//! opens the same field `F2` does, *Pin* or *Unpin*, then the delete row for
+//! the pick, through the Delete key's confirmation. It is the shared popover
+//! menu (`koru_ui::Menu`), as the conversation's own right-click menu is,
+//! and it shows no chords for now. A row's pin pins it at once.
 
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -94,17 +95,32 @@ pub(crate) struct ChatsMenuItem {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ChatsMenuAction {
     Rename,
+    Pin,
+    Unpin,
+    Divider,
     Delete,
 }
 
 impl ChatsMenuItem {
-    /// The rows for a pick of `count` chats: rename, then delete. Rename is
-    /// single-only, as the workspace's is — one field cannot name several.
-    fn rows(count: usize, lang: koru_i18n::Lang) -> Vec<Self> {
+    /// The rows for a pick of `count` chats: rename, pin or unpin, then
+    /// delete (D86). Rename and the pin are single-only, as the workspace's
+    /// are — one field cannot name several.
+    fn rows(count: usize, lang: koru_i18n::Lang, pinned: bool) -> Vec<Self> {
+        let pin = if pinned {
+            ChatsMenuAction::Unpin
+        } else {
+            ChatsMenuAction::Pin
+        };
+        let single = [
+            ChatsMenuAction::Rename,
+            pin,
+            ChatsMenuAction::Divider,
+            ChatsMenuAction::Delete,
+        ];
         let actions: &[ChatsMenuAction] = if count > 1 {
             &[ChatsMenuAction::Delete]
         } else {
-            &[ChatsMenuAction::Rename, ChatsMenuAction::Delete]
+            &single
         };
         actions
             .iter()
@@ -123,6 +139,13 @@ impl MenuItem for ChatsMenuItem {
             ChatsMenuAction::Rename => {
                 Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ScheduleRename))
             }
+            ChatsMenuAction::Pin => {
+                Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ChatsPin))
+            }
+            ChatsMenuAction::Unpin => {
+                Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ChatsUnpin))
+            }
+            ChatsMenuAction::Divider => Cow::Borrowed(""),
             ChatsMenuAction::Delete if self.count <= 1 => {
                 Cow::Borrowed(koru_i18n::t(self.lang, koru_i18n::Key::ChatsDelete))
             }
@@ -137,14 +160,8 @@ impl MenuItem for ChatsMenuItem {
         (self.action == ChatsMenuAction::Delete).then_some(koru_draw::icons::TRASH)
     }
 
-    fn shortcut(&self) -> Option<String> {
-        match self.action {
-            ChatsMenuAction::Rename => koru_keys::show_hint(
-                koru_keys::ShortcutId::RenameDocument,
-                koru_keys::Section::Menu,
-            ),
-            ChatsMenuAction::Delete => None,
-        }
+    fn divider(&self) -> bool {
+        self.action == ChatsMenuAction::Divider
     }
 
     fn destructive(&self) -> bool {
@@ -372,13 +389,23 @@ impl ChatSurface {
         }
         let (area, top) = self.chats_area();
         if let Some(chats) = self.chats_pane.context_menu(area, top, x, y) {
-            let rows = ChatsMenuItem::rows(chats.len(), self.lang);
-            let enabled = vec![true; rows.len()];
-            let mut menu = Menu::new(&mut self.engine, (x, y), rows);
-            menu.step(&enabled, 1);
-            self.chats_menu = Some(ChatsMenu { menu, chats });
+            self.open_chats_menu(chats, (x, y));
         }
         Some(true)
+    }
+
+    /// Open a row's menu about `chats` at `at` — a right-click, or the
+    /// row's ⋯ (D86).
+    fn open_chats_menu(&mut self, chats: Vec<ChatId>, at: (f32, f32)) {
+        let pinned = match chats.as_slice() {
+            [chat] => self.chats_pane.is_pinned(*chat),
+            _ => false,
+        };
+        let rows = ChatsMenuItem::rows(chats.len(), self.lang, pinned);
+        let enabled = vec![true; rows.len()];
+        let mut menu = Menu::new(&mut self.engine, at, rows);
+        menu.step(&enabled, 1);
+        self.chats_menu = Some(ChatsMenu { menu, chats });
     }
 
     /// A key while the row menu is open: the arrows step its rows, Enter
@@ -421,6 +448,15 @@ impl ChatSurface {
                 [chat] => self.start_chats_rename_of(*chat),
                 _ => true,
             },
+            ChatsMenuAction::Pin | ChatsMenuAction::Unpin => match open.chats.as_slice() {
+                [chat] => {
+                    let pinned = row.action == ChatsMenuAction::Pin;
+                    self.chats_pane.set_pinned(*chat, pinned, epoch_ms());
+                    self.pin_chat(*chat, pinned)
+                }
+                _ => true,
+            },
+            ChatsMenuAction::Divider => true,
             ChatsMenuAction::Delete => {
                 self.open_confirmation(DestructiveAction::DeleteChats(open.chats));
                 true
@@ -476,6 +512,16 @@ impl ChatSurface {
         let asked = self.chats_pane.take_wants_delete();
         if !asked.is_empty() {
             self.open_confirmation(DestructiveAction::DeleteChats(asked));
+            changed = true;
+        }
+        // A row's pin (D86): the row has moved; the pin is sent.
+        if let Some((chat, pinned)) = self.chats_pane.take_wants_pin() {
+            self.pin_chat(chat, pinned);
+            changed = true;
+        }
+        // A row's ⋯: the menu a right-click opens, under the button.
+        if let Some((chats, at)) = self.chats_pane.take_wants_menu() {
+            self.open_chats_menu(chats, at);
             changed = true;
         }
         changed
@@ -1058,6 +1104,8 @@ mod tests {
             menu_labels(&surface),
             [
                 koru_i18n::t(lang, koru_i18n::Key::ScheduleRename),
+                koru_i18n::t(lang, koru_i18n::Key::ChatsPin),
+                "",
                 koru_i18n::t(lang, koru_i18n::Key::ChatsDelete),
             ]
         );
@@ -1105,6 +1153,8 @@ mod tests {
         assert!(surface.history_open, "Escape closed the menu, not the pane");
 
         assert!(right_click(&mut surface, one.id));
+        // Rename, Pin, the divider (stepped over), Delete.
+        assert!(press(&mut surface, NamedKey::ArrowDown));
         assert!(press(&mut surface, NamedKey::ArrowDown));
         assert!(press(&mut surface, NamedKey::Enter));
         assert!(surface.chats_menu.is_none());
@@ -1136,6 +1186,47 @@ mod tests {
             )],
             "one field cannot name two chats"
         );
+    }
+
+    /// **A row's ⋯ opens the menu a right-click opens, under the button,
+    /// and its pin pins at once** (D86): the row moves into the Pinned
+    /// group and the pin goes through the pin command; the menu then offers
+    /// *Unpin*.
+    #[test]
+    fn a_rows_more_button_opens_its_menu_and_its_pin_pins_at_once() {
+        let one = chat("One");
+        let (mut surface, commands, _updates) = pane_on(vec![one.clone()]);
+        let (area, top) = surface.chats_area();
+        let (row, rect) = surface.chats_pane.rows(area, top)[0];
+        // The keyboard entered on the row, so its buttons show.
+        let parts = surface.chats_pane.row_parts(row, rect);
+        assert!(parts.more.w > 0.0 && parts.pin.w > 0.0);
+
+        assert!(surface.mouse_down(
+            parts.pin.x + parts.pin.w * 0.5,
+            parts.pin.y + parts.pin.h * 0.5
+        ));
+        assert!(surface.chats_pane.is_pinned(one.id), "moved at once");
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Pin(chat, koru_ai_wire::PinChatRequest { pinned: true }) if chat == one.id
+        ));
+        assert!(surface.chats_menu.is_none(), "a pin is not the menu");
+
+        let (row, rect) = surface
+            .chats_pane
+            .rows(area, top)
+            .into_iter()
+            .find(|(row, _)| matches!(row, koru_chats_ui::Row::Chat(_)))
+            .unwrap();
+        let more = surface.chats_pane.row_parts(row, rect).more;
+        assert!(surface.mouse_down(more.x + more.w * 0.5, more.y + more.h * 0.5));
+        let lang = surface.lang;
+        assert_eq!(
+            menu_labels(&surface)[1],
+            koru_i18n::t(lang, koru_i18n::Key::ChatsUnpin)
+        );
+        assert!(commands.try_recv().is_err(), "the menu sends nothing");
     }
 
     /// The command a host with its own Chats list renames through: trimmed,

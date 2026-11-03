@@ -130,8 +130,12 @@ pub enum Outcome {
     /// container asks through its confirmation and, on yes, the Chats
     /// surface sends the delete itself.
     DeleteAiChats(Vec<koru_chats_ui::ChatId>),
-    /// A right-click on a chat row. The pane reports which chat; the
-    /// container builds the menu, whose one verb is *Delete chat*.
+    /// A chat row's pin was pressed (koru-ai D86): the chat, and whether it
+    /// is now pinned. The row has moved already; the container sends it.
+    PinAiChat(koru_chats_ui::ChatId, bool),
+    /// A right-click on a chat row, or its ⋯ (D86). The pane reports which
+    /// chats and where; the container builds the menu — *Rename…*,
+    /// *Pin*/*Unpin*, *Delete chat*.
     AiChatMenu {
         /// The picked chats, in list order — one, or a multi-selection (the
         /// CTO's note: delete several as several documents).

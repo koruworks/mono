@@ -4273,7 +4273,9 @@ impl MainView {
             },
             MenuSubject::AiChat { chats } => match action {
                 MenuAction::DeleteAiChat => true,
-                MenuAction::Rename => chats.len() == 1,
+                MenuAction::RenameAiChat | MenuAction::PinAiChat | MenuAction::UnpinAiChat => {
+                    chats.len() == 1
+                }
                 _ => false,
             },
             MenuSubject::AgentSchedules { schedules } => {
@@ -4644,8 +4646,12 @@ impl MainView {
             },
             MenuSubject::AiChat { chats } => match action {
                 MenuAction::DeleteAiChat => self.ask_delete_chats(chats.clone()),
-                MenuAction::Rename => match chats.as_slice() {
+                MenuAction::RenameAiChat => match chats.as_slice() {
                     [chat] => self.start_chat_rename(*chat),
+                    _ => false,
+                },
+                MenuAction::PinAiChat | MenuAction::UnpinAiChat => match chats.as_slice() {
+                    [chat] => self.pin_ai_chat(*chat, action == MenuAction::PinAiChat),
                     _ => false,
                 },
                 _ => false,
@@ -5949,15 +5955,43 @@ impl MainView {
         true
     }
 
-    /// A chat row's menu: *Rename…* for one chat, and *Delete chat*.
+    /// A chat row's menu — its right-click and its ⋯ (D86): *Rename…* and
+    /// *Pin* or *Unpin* for one chat, then *Delete chat*.
     fn open_chat_menu(&mut self, chats: Vec<koru_ai_ui::ChatId>, at: (f32, f32)) -> bool {
         // The row counts the pick, the way *Delete run* does.
         context_menu::set_chat_delete_count(chats.len());
-        let items = context_menu::ai_chat_items(chats.len());
+        let pinned = match chats.as_slice() {
+            [chat] => self.explore.chats_mut().is_pinned(*chat),
+            _ => false,
+        };
+        let items = context_menu::ai_chat_items(chats.len(), pinned);
         let mut menu = ContextMenu::new(&mut self.engine, MenuSubject::AiChat { chats }, at, items);
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
         self.menu = Some(menu);
+        true
+    }
+
+    /// **Pin a chat, or unpin it** (D80, D86) — the row's pin and the menu's
+    /// *Pin*/*Unpin*. The Chats view moves the row at once; the pin is sent
+    /// through an AI chat tab on the chat, else the side pane's surface,
+    /// the way a rename is, and the listing it changes confirms it.
+    fn pin_ai_chat(&mut self, chat: koru_ai_ui::ChatId, pinned: bool) -> bool {
+        self.explore
+            .chats_mut()
+            .set_pinned(chat, pinned, epoch_millis());
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view
+                    && view.chat_id() == Some(chat)
+                {
+                    view.pin_chat(chat, pinned);
+                    return true;
+                }
+            }
+        }
+        self.ai_chat.activate();
+        self.ai_chat.pin_chat(chat, pinned);
         true
     }
 
@@ -7593,6 +7627,7 @@ impl MainView {
             Outcome::NewAiChat => self.open_ai_chat_tab(),
             Outcome::DeleteAiChats(chats) => self.ask_delete_chats(chats),
             Outcome::AiChatMenu { chats, at } => self.open_chat_menu(chats, at),
+            Outcome::PinAiChat(chat, pinned) => self.pin_ai_chat(chat, pinned),
             // The Agents tree's mutations: every one a typed verb to the
             // session host, with the tree reflecting the catalog that answers
             // — the container keeps no project truth (ADR-264, Q-E6).

@@ -344,6 +344,14 @@ pub enum MenuAction {
     /// stays with a sentence under it when its agent could not be stopped
     /// (UC13).
     DeleteAiChat,
+    /// *Rename…* on a chat row's menu (koru-ai D86): the field `F2` opens,
+    /// over the row. Its own row rather than [`Rename`](Self::Rename)
+    /// because this menu shows no chords for now.
+    RenameAiChat,
+    /// *Pin* / *Unpin* on a chat row's menu (D86): into or out of the
+    /// Chats list's Pinned group.
+    PinAiChat,
+    UnpinAiChat,
     /// Rename a recurring schedule in its navigator row.
     ScheduleRename,
     /// Edit the complete future definition of a recurring schedule.
@@ -957,6 +965,9 @@ impl MenuAction {
             | Self::Chats
             | Self::OpenRecentChat(_)
             | Self::DeleteAiChat
+            | Self::RenameAiChat
+            | Self::PinAiChat
+            | Self::UnpinAiChat
             | Self::Delegate
             | Self::TaskDelegate
             | Self::OpenRunResult(_)
@@ -1099,6 +1110,24 @@ impl MenuAction {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::TerminalDeleteProject,
+                ));
+            }
+            MenuAction::RenameAiChat => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ScheduleRename,
+                ));
+            }
+            MenuAction::PinAiChat => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ChatsPin,
+                ));
+            }
+            MenuAction::UnpinAiChat => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::ChatsUnpin,
                 ));
             }
             MenuAction::DeleteAiChat => {
@@ -2191,13 +2220,24 @@ pub fn agent_run_items() -> Vec<MenuAction> {
     vec![MenuAction::DeleteRun]
 }
 
-/// A chat row's menu in the Chats navigator: rename, then delete. Rename is
-/// single-only, as a library row's is — one field cannot name several chats.
-pub fn ai_chat_items(count: usize) -> Vec<MenuAction> {
+/// A chat row's menu in the Chats navigator — its right-click and its ⋯
+/// (koru-ai D86): *Rename…*, *Pin* or *Unpin*, a divider, then *Delete
+/// chat*. Rename and the pin are single-only, as a library row's rename is
+/// — one field cannot name several chats.
+pub fn ai_chat_items(count: usize, pinned: bool) -> Vec<MenuAction> {
     if count > 1 {
         vec![MenuAction::DeleteAiChat]
     } else {
-        vec![MenuAction::Rename, MenuAction::DeleteAiChat]
+        vec![
+            MenuAction::RenameAiChat,
+            if pinned {
+                MenuAction::UnpinAiChat
+            } else {
+                MenuAction::PinAiChat
+            },
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat,
+        ]
     }
 }
 

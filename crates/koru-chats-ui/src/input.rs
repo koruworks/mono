@@ -43,12 +43,27 @@ impl ChatsSurface {
         ctrl: bool,
         shift: bool,
     ) -> bool {
-        let Some((Row::Chat(index), _)) = self.row_at(area, top, x, y) else {
+        let Some((row @ Row::Chat(index), rect)) = self.row_at(area, top, x, y) else {
             return true;
         };
         let Some(chat) = self.chats.get(index).map(|chat| chat.id) else {
             return true;
         };
+        // **The row's own buttons** (D86) do what they say and do not also
+        // choose the row: the pin pins, ⋯ opens the menu under itself.
+        match self.button_at(row, rect, x, y) {
+            Some(crate::RowButton::Pin) => {
+                let pinned = !self.is_pinned(chat);
+                self.ask_pin(chat, pinned);
+                return true;
+            }
+            Some(crate::RowButton::More) => {
+                let more = self.row_parts(row, rect).more;
+                self.ask_menu(chat, (more.x, more.y + more.h));
+                return true;
+            }
+            None => {}
+        }
         if shift {
             self.select_through(chat);
         } else if ctrl {
@@ -90,19 +105,24 @@ impl ChatsSurface {
         self.chats.get(index).map(|chat| chat.id)
     }
 
-    /// A pointer move. `true` when the hover changed.
+    /// A pointer move. `true` when the hover changed — the row, or the
+    /// row's button under it.
     pub fn mouse_move(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        let hover = self
+        let at = self
             .row_at(area, top, x, y)
-            .map(|(row, _)| row)
-            .filter(Row::pressable);
+            .filter(|(row, _)| row.pressable());
+        let hover = at.map(|(row, _)| row);
         let moved = self.hover != hover;
         self.hover = hover;
-        moved
+        let button = at.and_then(|(row, rect)| self.button_at(row, rect, x, y));
+        let pressed_on = self.hover_button != button;
+        self.hover_button = button;
+        moved || pressed_on
     }
 
     /// The pointer has left the list.
     pub fn clear_hover(&mut self) -> bool {
+        self.hover_button = None;
         self.hover.take().is_some()
     }
 

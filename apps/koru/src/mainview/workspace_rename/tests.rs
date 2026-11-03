@@ -285,14 +285,22 @@ fn a_chat_is_renamed_in_its_chats_row() {
 
     // Offered for one chat; one field cannot name a pick of several.
     assert_eq!(
-        context_menu::ai_chat_items(1),
-        [MenuAction::Rename, MenuAction::DeleteAiChat]
+        context_menu::ai_chat_items(1, false),
+        [
+            MenuAction::RenameAiChat,
+            MenuAction::PinAiChat,
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat
+        ]
     );
-    assert_eq!(context_menu::ai_chat_items(3), [MenuAction::DeleteAiChat]);
+    assert_eq!(
+        context_menu::ai_chat_items(3, false),
+        [MenuAction::DeleteAiChat]
+    );
 
     assert!(v.run_menu_action_for_test(
         MenuSubject::AiChat { chats: vec![chat] },
-        MenuAction::Rename
+        MenuAction::RenameAiChat
     ));
     assert!(matches!(
         v.workspace_rename.as_ref().map(|rename| rename.target),

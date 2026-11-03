@@ -2731,6 +2731,17 @@ pub enum Key {
     AiNewMessages,
     /// The heading over the pinned chats in the Chats list (koru-ai D85).
     ChatsPinned,
+    /// A chat row's menu (koru-ai D86): into the Pinned group…
+    ChatsPin,
+    /// …and out of it.
+    ChatsUnpin,
+    /// A chat row's ⋯ button, as a screen reader names it (D86).
+    ChatsMore,
+    /// A chat row's pin button, as a screen reader names it (D86), on a
+    /// chat that is not pinned…
+    ChatsPinChat,
+    /// …and on one that is.
+    ChatsUnpinChat,
     /// The coding-agent CLI cards: "{} update available", with the CLI's
     /// brand name.
     AgentCliUpdateAvailable,
@@ -2819,7 +2830,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1966] = [
+    pub const ALL: [Key; 1971] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4736,6 +4747,11 @@ impl Key {
         Key::ChatsStatusUnread,
         Key::AiNewMessages,
         Key::ChatsPinned,
+        Key::ChatsPin,
+        Key::ChatsUnpin,
+        Key::ChatsMore,
+        Key::ChatsPinChat,
+        Key::ChatsUnpinChat,
         Key::AgentCliUpdateAvailable,
         Key::AgentCliVersions,
         Key::AgentCliVersion,
@@ -15127,6 +15143,11 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ChatsStatusUnread, en: "unread", es: "sin leer", pt_br: "não lido", de: "ungelesen", fr: "non lu", ar: "غير مقروءة", zh_hans: "未读", ja: "未読" },
     Row { key: Key::AiNewMessages, en: "NEW", es: "NUEVO", pt_br: "NOVO", de: "NEU", fr: "NOUVEAU", ar: "جديد", zh_hans: "新消息", ja: "新着" },
     Row { key: Key::ChatsPinned, en: "Pinned", es: "Fijados", pt_br: "Fixados", de: "Angeheftet", fr: "Épinglées", ar: "المثبتة", zh_hans: "已固定", ja: "固定済み" },
+    Row { key: Key::ChatsPin, en: "Pin", es: "Fijar", pt_br: "Fixar", de: "Anheften", fr: "Épingler", ar: "تثبيت", zh_hans: "固定", ja: "固定" },
+    Row { key: Key::ChatsUnpin, en: "Unpin", es: "No fijar", pt_br: "Desafixar", de: "Lösen", fr: "Désépingler", ar: "إلغاء التثبيت", zh_hans: "取消固定", ja: "固定を解除" },
+    Row { key: Key::ChatsMore, en: "More", es: "Más", pt_br: "Mais", de: "Mehr", fr: "Plus", ar: "المزيد", zh_hans: "更多", ja: "その他" },
+    Row { key: Key::ChatsPinChat, en: "Pin chat", es: "Fijar chat", pt_br: "Fixar chat", de: "Chat anheften", fr: "Épingler la discussion", ar: "تثبيت المحادثة", zh_hans: "固定聊天", ja: "チャットを固定" },
+    Row { key: Key::ChatsUnpinChat, en: "Unpin chat", es: "No fijar chat", pt_br: "Desafixar chat", de: "Chat lösen", fr: "Désépingler la discussion", ar: "إلغاء تثبيت المحادثة", zh_hans: "取消固定聊天", ja: "チャットの固定を解除" },
     Row { key: Key::AgentCliUpdateAvailable, en: "{} update available", es: "Actualización de {} disponible", pt_br: "Atualização do {} disponível", de: "Update für {} verfügbar", fr: "Mise à jour de {} disponible", ar: "يتوفر تحديث لـ {}", zh_hans: "{} 有可用更新", ja: "{} のアップデートがあります" },
     Row { key: Key::AgentCliVersions, en: "v{} → v{}", es: "v{} → v{}", pt_br: "v{} → v{}", de: "v{} → v{}", fr: "v{} → v{}", ar: "v{} → v{}", zh_hans: "v{} → v{}", ja: "v{} → v{}" },
     Row { key: Key::AgentCliVersion, en: "v{}", es: "v{}", pt_br: "v{}", de: "v{}", fr: "v{}", ar: "v{}", zh_hans: "v{}", ja: "v{}" },

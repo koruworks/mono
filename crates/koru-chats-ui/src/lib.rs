@@ -86,7 +86,7 @@ pub use draw::MODE_ICON;
 /// Re-exported so a host names the id a row carries without a
 /// `koru-ai-core` dependency of its own.
 pub use koru_ai_core::ChatId;
-pub use rows::{Notice, Row, RowParts};
+pub use rows::{Notice, Row, RowButton, RowParts};
 pub use seen::{SeenBook, SeenMark};
 pub use status::ChatStatus;
 
@@ -224,6 +224,14 @@ pub struct ChatsSurface {
     pub(crate) statuses: HashMap<ChatId, ChatStatus>,
     /// The person asked for less motion: a working chat's ring holds still.
     pub(crate) reduced_motion: bool,
+    /// The row button under the pointer (D86), for its plate.
+    pub(crate) hover_button: Option<RowButton>,
+    /// A pin pressed: the chat, and whether it is now pinned. The row has
+    /// already moved; the host sends it.
+    pub(crate) wants_pin: Option<(ChatId, bool)>,
+    /// ⋯ pressed: the chats the host's menu is about and where it opens —
+    /// under the button.
+    pub(crate) wants_menu: Option<(Vec<ChatId>, (f32, f32))>,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -282,6 +290,9 @@ impl ChatsSurface {
             in_flight: false,
             statuses: HashMap::new(),
             reduced_motion: false,
+            hover_button: None,
+            wants_pin: None,
+            wants_menu: None,
             reader_link: None,
             seq: 0,
         }
@@ -574,6 +585,49 @@ impl ChatsSurface {
     /// A chat the person chose to read. `None` most of the time.
     pub fn take_wants_open(&mut self) -> Option<ChatId> {
         self.wants_open.take()
+    }
+
+    /// **A row's pin was pressed** (D86): the chat, and whether it is now
+    /// pinned. The row has moved already; the host sends the pin through a
+    /// chat surface (`ChatSurface::pin_chat`).
+    pub fn take_wants_pin(&mut self) -> Option<(ChatId, bool)> {
+        self.wants_pin.take()
+    }
+
+    /// **A row's ⋯ was pressed** (D86): the chats its menu is about — the
+    /// pick when the row is in it, else that chat — and where the menu
+    /// opens. The host opens the menu a right-click opens.
+    pub fn take_wants_menu(&mut self) -> Option<(Vec<ChatId>, (f32, f32))> {
+        self.wants_menu.take()
+    }
+
+    /// Pin or unpin `chat` — the row's pin, and an accessibility client's
+    /// *Pin chat*. The row moves at once.
+    pub fn ask_pin(&mut self, chat: ChatId, pinned: bool) {
+        if self.chats.iter().any(|candidate| candidate.id == chat) {
+            self.set_pinned(chat, pinned, self.now_ms);
+            self.wants_pin = Some((chat, pinned));
+        }
+    }
+
+    /// Ask for `chat`'s menu at `at` — the row's ⋯, and an accessibility
+    /// client's *More*. About the pick when the chat is in it.
+    pub fn ask_menu(&mut self, chat: ChatId, at: (f32, f32)) {
+        if !self.chats.iter().any(|candidate| candidate.id == chat) {
+            return;
+        }
+        self.focus = Some(Focus::Chat(chat));
+        if !self.selection.contains(&chat) {
+            self.select_only(chat);
+        }
+        self.wants_menu = Some((self.selected(), at));
+    }
+
+    /// Whether `chat` is pinned, as the list has it.
+    pub fn is_pinned(&self, chat: ChatId) -> bool {
+        self.chats
+            .iter()
+            .any(|candidate| candidate.id == chat && candidate.pinned_at.is_some())
     }
 
     /// *New chat* was chosen.

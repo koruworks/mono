@@ -884,11 +884,37 @@ fn rename_is_localized_like_a_schedules() {
         koru_i18n::with_current(lang, || {
             let word = koru_i18n::t(lang, koru_i18n::Key::ScheduleRename);
             assert_eq!(MenuAction::Rename.label(), word, "{lang:?}");
-            assert_eq!(ai_chat_items(1)[0].label(), word, "{lang:?}");
+            assert_eq!(ai_chat_items(1, false)[0].label(), word, "{lang:?}");
         });
     }
     koru_i18n::with_current(koru_i18n::Lang::De, || {
         assert_eq!(MenuAction::Rename.label(), "Umbenennen\u{2026}");
+    });
+}
+
+/// **A chat row's menu** (koru-ai D86) — its right-click and its ⋯: *Rename…*,
+/// *Pin* or *Unpin* as the chat is, a divider, then the red delete row, and
+/// no chord on any of them for now. A pick of several is the delete row.
+#[test]
+fn a_chat_rows_menu_is_rename_pin_divider_delete_without_chords() {
+    assert_eq!(
+        ai_chat_items(1, false),
+        [
+            MenuAction::RenameAiChat,
+            MenuAction::PinAiChat,
+            MenuAction::Divider,
+            MenuAction::DeleteAiChat
+        ]
+    );
+    assert_eq!(ai_chat_items(1, true)[1], MenuAction::UnpinAiChat);
+    assert_eq!(ai_chat_items(4, true), [MenuAction::DeleteAiChat]);
+    for action in ai_chat_items(1, false) {
+        assert_eq!(koru_ui::MenuItem::shortcut(&action), None, "{action:?}");
+    }
+    assert!(MenuAction::DeleteAiChat.destructive());
+    koru_i18n::with_current(koru_i18n::Lang::En, || {
+        assert_eq!(MenuAction::PinAiChat.label(), "Pin");
+        assert_eq!(MenuAction::UnpinAiChat.label(), "Unpin");
     });
 }
 

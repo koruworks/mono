@@ -254,6 +254,12 @@ impl AiChatView {
         self.surface.rename_chat(chat, title)
     }
 
+    /// Pin or unpin a chat through this tab's surface — the Chats view's
+    /// pin, sent here when this tab shows the chat (D86).
+    pub fn pin_chat(&mut self, chat: ChatId, pinned: bool) -> bool {
+        self.surface.pin_chat(chat, pinned)
+    }
+
     /// The *Chats* button in this tab was pressed: show the Chats view.
     pub fn take_wants_chats_view(&mut self) -> bool {
         self.surface.take_wants_chats_view()

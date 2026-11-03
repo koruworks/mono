@@ -7,7 +7,9 @@
 //! when (and *private* when it is); *New chat* is the heading's button, in
 //! the pane's own tree (the CTO's note). Each
 //! chat row offers **Open** (its click) and carries a **Delete chat** button as
-//! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`).
+//! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`) —
+//! and the row's own two buttons (koru-ai D86): **More**, which opens the
+//! row's menu, and **Pin chat** / **Unpin chat**.
 //! Geometry is never re-derived: every rect is the surface's own
 //! [`layout`](koru_chats_ui::ChatsSurface::layout), unculled, so a row
 //! scrolled out of the band is still published where it would be.
@@ -32,6 +34,10 @@ use crate::panes::Outcome;
 const CHATS: &str = "explore-chats";
 /// The Delete button under a chat's row node.
 const DELETE: ControlPart = ControlPart::new("delete");
+/// The row's ⋯ (D86).
+const MORE: ControlPart = ControlPart::new("more");
+/// The row's pin (D86).
+const PIN: ControlPart = ControlPart::new("pin");
 
 fn chat_occurrence(cx: &Context, chat: koru_chats_ui::ChatId, part: ControlPart) -> Occurrence {
     Occurrence::model(cx.window, cx.view, chat.as_uuid(), part)
@@ -49,6 +55,19 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
             .with_label(t(cx.lang, Key::ChatsDelete))
             .with_bounds(rect)
             .with_action(Action::Click);
+        let more = SemanticNode::new(chat_occurrence(cx, chat, MORE), Role::Button)
+            .with_label(t(cx.lang, Key::ChatsMore))
+            .with_bounds(rect)
+            .with_action(Action::Click);
+        let pin_label = if chats.is_pinned(chat) {
+            Key::ChatsUnpinChat
+        } else {
+            Key::ChatsPinChat
+        };
+        let pin = SemanticNode::new(chat_occurrence(cx, chat, PIN), Role::Button)
+            .with_label(t(cx.lang, pin_label))
+            .with_bounds(rect)
+            .with_action(Action::Click);
         children.push(
             SemanticNode::new(chat_occurrence(cx, chat, ControlPart::ROOT), Role::ListItem)
                 .with_label(name)
@@ -57,7 +76,7 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
                 .with_position(index)
                 .with_size_of_set(total)
                 .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView])
-                .with_children(vec![delete]),
+                .with_children(vec![more, pin, delete]),
         );
     }
     SemanticNode::new(
@@ -93,7 +112,9 @@ pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
             .bool(chat.private)
             .str(chat.current_model.provider.as_str())
             .str(&chat.current_model.requested_model)
-            .bool(chats.deleting(chat.id).is_some());
+            .bool(chats.deleting(chat.id).is_some())
+            .bool(chat.pinned_at.is_some())
+            .byte(chats.status(chat.id) as u8);
     }
     rev.u64(chats.agents().len() as u64);
 }
@@ -117,6 +138,30 @@ pub(super) fn action(
                 .iter()
                 .map(|chat| chat.id)
                 .find(|chat| chat.as_uuid() == id)?;
+            if target.part == PIN {
+                if action != Action::Click {
+                    return None;
+                }
+                chats.ask_pin(chat, !chats.is_pinned(chat));
+                return chats
+                    .take_wants_pin()
+                    .map(|(chat, pinned)| Outcome::PinAiChat(chat, pinned));
+            }
+            if target.part == MORE {
+                if action != Action::Click {
+                    return None;
+                }
+                // Under the row's end, where the ⋯ is drawn.
+                let rect = chats
+                    .chat_rects(area, top)
+                    .into_iter()
+                    .find(|(id, _)| *id == chat)
+                    .map(|(_, rect)| rect)?;
+                chats.ask_menu(chat, (rect.x + rect.w - 24.0, rect.y + rect.h));
+                return chats
+                    .take_wants_menu()
+                    .map(|(chats, at)| Outcome::AiChatMenu { chats, at });
+            }
             if target.part == DELETE {
                 if action != Action::Click {
                     return None;

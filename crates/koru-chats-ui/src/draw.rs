@@ -17,7 +17,7 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
 use koru_i18n::strings::{Key, t};
-use koru_shell_chrome::tabs::draw_icon;
+use koru_shell_chrome::tabs::{draw_icon, draw_icon_filled};
 use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::Color;
@@ -149,6 +149,7 @@ impl ChatsSurface {
                     return;
                 };
                 let private = chat.private;
+                let chat_pinned = chat.pinned_at.is_some();
                 let title = crate::text::title(lang, chat).to_owned();
                 let status = self.status(chat.id);
                 // An unread chat's title is semibold until it is opened
@@ -178,6 +179,47 @@ impl ChatsSurface {
                     && let Some(mark) = status.mark(now)
                 {
                     koru_shell_chrome::status_mark::draw(scene, root, parts.end, mark);
+                }
+                // The pin (filled, in the accent, on a pinned chat) and ⋯
+                // (D86); a plate under the one the pointer is on.
+                let hovered = self
+                    .hover_button
+                    .filter(|_| self.hover == Some(row))
+                    .map(|button| match button {
+                        crate::RowButton::Pin => parts.pin,
+                        crate::RowButton::More => parts.more,
+                    });
+                if let Some(plate) = hovered.filter(|plate| plate.w > 0.0) {
+                    let side = plate.w.min(plate.h) - 2.0;
+                    scene::fill(
+                        scene,
+                        root,
+                        p.hover_tint,
+                        &scene::rrect(
+                            plate.x + (plate.w - side) * 0.5,
+                            plate.y + (plate.h - side) * 0.5,
+                            side,
+                            side,
+                            5.0,
+                        ),
+                    );
+                }
+                if parts.pin.w > 0.0 {
+                    if chat_pinned {
+                        draw_icon_filled(scene, root, engine, icons::PUSH_PIN, parts.pin, p.accent);
+                    } else {
+                        draw_icon(scene, root, engine, icons::PUSH_PIN, parts.pin, p.text_dim);
+                    }
+                }
+                if parts.more.w > 0.0 {
+                    draw_icon(
+                        scene,
+                        root,
+                        engine,
+                        icons::DOTS_THREE,
+                        parts.more,
+                        p.text_dim,
+                    );
                 }
             }
             Row::Note(index) => {
