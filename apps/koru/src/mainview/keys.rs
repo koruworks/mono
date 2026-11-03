@@ -102,7 +102,8 @@ impl Chord {
     /// whether or not Tasks is shown; with it hidden `Alt+3` does nothing and
     /// `Alt+4` is still Chats. The digit is the registry's chord and the
     /// shortcut sheet's, and a digit that meant a different view per build
-    /// would make both lie.
+    /// would make both lie. Home's `Alt+H` is the same: with Home hidden for
+    /// now (`koru_features::HOME_SHOWN`) it does nothing.
     pub fn shown_in_product(self) -> bool {
         match self {
             Chord::ShowNavigator(mode) => mode.shown_in_product(),

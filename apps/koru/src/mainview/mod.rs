@@ -16158,6 +16158,11 @@ impl MainView {
 
     /// The Home tab — Today — as a singleton, on the Settings tab's pattern.
     pub(super) fn open_home_tab(&mut self) -> bool {
+        // Home is hidden for now (`koru_features::HOME_SHOWN`): nothing opens
+        // its tab, whoever asks.
+        if !koru_features::home() {
+            return false;
+        }
         let existing = self
             .tabs()
             .iter()

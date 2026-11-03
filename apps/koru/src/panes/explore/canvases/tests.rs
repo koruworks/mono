@@ -53,13 +53,13 @@ fn a_workspace() -> Vec<ExploreEntry> {
 }
 
 /// **The canvases mode is reached the way the others are** — its icon (the
-/// eighth, Home leading the row), its token, its chord — and says its name
+/// seventh, Home hidden for now), its token, its chord — and says its name
 /// in the person's language.
 #[test]
 fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
     let mut view = ExploreView::new();
     let a = area();
-    let (mode, icon) = view.navigator_mode_rects(view.rail_of(a))[7];
+    let (mode, icon) = view.navigator_mode_rects(view.rail_of(a))[6];
     assert_eq!(mode, NavigatorMode::Canvases);
     let (x, y) = icon.centre();
     assert_eq!(

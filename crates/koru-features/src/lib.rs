@@ -269,6 +269,29 @@ pub fn socials() -> bool {
     features().socials
 }
 
+// ------------------------------------------------------- hidden for now
+//
+// **Not flags: switches in the source.** A flag above is a surface a release
+// may bake on and a person may turn on with a variable. What follows is a
+// part of a shown surface that is hidden *for now* — nothing about it is
+// configurable, it is one constant to flip back, and it is here, beside the
+// flags, so "what does this build hide" has one place to look. The code
+// behind each stays built and tested where it can be; turning the constant
+// to `true` puts every way into it back.
+
+/// **Home** — the house at the top of the left rail, its page (Inbox, Today,
+/// Upcoming, Recent) and its `Alt+H`. Hidden (the user, 2026-11-03): "we
+/// don't have anything functional for now". With it off the rail starts at
+/// Documents, `Alt+H` does nothing and is taught nowhere, a window that last
+/// showed Home reopens on Documents, and nothing opens the Home tab. The
+/// other views keep their `Alt+digit`.
+pub const HOME_SHOWN: bool = false;
+
+/// Whether Home is shown ([`HOME_SHOWN`]).
+pub fn home() -> bool {
+    HOME_SHOWN
+}
+
 /// `koru_env::switch_value`, as a `const fn` so a baked value is a constant:
 /// on when set to anything except `""`, `0`, `false`, `no`, `off` (trimmed,
 /// case-insensitive); unset is off.

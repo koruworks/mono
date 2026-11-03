@@ -237,7 +237,7 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
         .iter()
         .filter(|node| node.role == Role::Tab)
         .collect();
-    assert_eq!(modes.len(), NavigatorMode::ALL.len());
+    assert_eq!(modes.len(), NavigatorMode::visible().len());
     assert_eq!(
         modes
             .iter()
@@ -248,7 +248,7 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
     );
     // The identity is the stored token, which is neither translated nor a
     // position.
-    for mode in NavigatorMode::ALL {
+    for mode in NavigatorMode::visible() {
         assert!(
             published
                 .iter()
@@ -256,6 +256,13 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
             "no button for {mode:?}"
         );
     }
+    // Home is hidden for now (`koru_features::HOME_SHOWN`): no button.
+    assert!(
+        !published
+            .iter()
+            .any(|node| node.occurrence.part.name() == NavigatorMode::Home.token()),
+        "a hidden mode is not announced"
+    );
 }
 
 #[test]

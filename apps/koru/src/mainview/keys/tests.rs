@@ -408,8 +408,10 @@ fn every_container_shortcut_in_the_registry_resolves_here() {
             KOn::Letter(c) => Some(c.to_string()),
             KOn::Named(_) => None,
         };
+        // The binding, whether or not this build shows its surface: Home's
+        // `Alt+H` is bound and hidden for now (`koru_features::HOME_SHOWN`).
         assert!(
-            resolve(&key, text.as_deref(), entry.chord.mods).is_some(),
+            resolve_any(&key, text.as_deref(), entry.chord.mods).is_some(),
             "the registry says {:?} is `{}`, but the container does not bind it \
              — one of the two moved without the other",
             entry.id,

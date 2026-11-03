@@ -1140,6 +1140,8 @@ impl ShortcutId {
     /// container's `mainview::keys::resolve`).
     pub fn shown_in_product(self) -> bool {
         match self {
+            // Home is hidden for now, by a constant (`koru_features::HOME_SHOWN`).
+            Self::ShowHome => koru_features::home(),
             Self::ShowTasks => koru_features::tasks(),
             Self::ShowChats
             | Self::ToggleAiPane

@@ -3897,7 +3897,8 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
         assert_eq!(rail.w, theme::RAIL_W);
         assert_eq!(rail.y, a.y + theme::CAPTION_H, "under the lane");
         let rects = view.navigator_mode_rects(rail);
-        assert_eq!(rects.len(), NavigatorMode::ALL.len());
+        // Every mode this build shows — all but Home, hidden for now.
+        assert_eq!(rects.len(), NavigatorMode::visible().len());
         for &(mode, r) in &rects {
             assert_eq!(r.w, apps_rail::SQUARE, "{mode:?} is a square");
             assert!(
@@ -6355,7 +6356,8 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     );
     let mut view = ExploreView::new();
     let a = area();
-    let (_, chats) = view.navigator_mode_rects(view.rail_of(a))[4];
+    // The fourth icon: Home is hidden for now (`koru_features::HOME_SHOWN`).
+    let (_, chats) = view.navigator_mode_rects(view.rail_of(a))[3];
     let (x, y) = chats.centre();
     assert_eq!(
         view.apps_rail_mouse_down(view.rail_of(a), x, y),
@@ -6454,7 +6456,9 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
         ai: true,
         ..Features::ALL_OFF
     };
-    for (features, shown) in [(Features::ALL_OFF, 3), (four, 5)] {
+    // Home is hidden for now (`koru_features::HOME_SHOWN`), whatever the
+    // flags say: Documents and Files, then Tasks and Chats.
+    for (features, shown) in [(Features::ALL_OFF, 2), (four, 4)] {
         koru_features::testing::with(features, || {
             let view = ExploreView::new();
             let rects = view.navigator_mode_rects(view.rail_of(a));
@@ -6462,13 +6466,13 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
             for &(mode, r) in &rects {
                 assert_eq!(r.w, apps_rail::SQUARE, "{mode:?} at {shown} shown");
             }
-            assert_eq!(rects[2].0, NavigatorMode::Files);
+            assert_eq!(rects[1].0, NavigatorMode::Files);
             assert!(view.actions_button(a).w > 0.);
         });
     }
     let view = ExploreView::new();
     let rects = view.navigator_mode_rects(view.rail_of(a));
-    assert_eq!(rects.len(), NavigatorMode::ALL.len());
+    assert_eq!(rects.len(), NavigatorMode::ALL.len() - 1, "all but Home");
     assert!(rects.iter().all(|(_, r)| r.w == apps_rail::SQUARE));
 }
 
@@ -6683,35 +6687,30 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
         let a = area();
         let rects = view.navigator_mode_rects(view.rail_of(a));
         let modes: Vec<NavigatorMode> = rects.iter().map(|(mode, _)| *mode).collect();
-        assert_eq!(
-            modes,
-            [
-                NavigatorMode::Home,
-                NavigatorMode::Documents,
-                NavigatorMode::Files
-            ]
-        );
-        // Files keeps its place within the build: third, one gap under
+        // Home is hidden for now as well (`koru_features::HOME_SHOWN`).
+        assert_eq!(modes, [NavigatorMode::Documents, NavigatorMode::Files]);
+        // Files keeps its place within the build: second, one gap under
         // Documents, on every call.
         assert_eq!(
             rects,
             view.navigator_mode_rects(view.rail_of(a)),
             "Files keeps its place"
         );
-        assert_eq!(rects[2].1.y, rects[1].1.y + rects[1].1.h + apps_rail::GAP);
+        assert_eq!(rects[1].1.y, rects[0].1.y + rects[0].1.h + apps_rail::GAP);
         for &(mode, r) in &rects {
             let (x, y) = r.centre();
             assert_eq!(mode_at(&view, a, x, y), Some(mode));
         }
         // Past Files there is nothing: the hidden icons leave no gap and no
         // target where Tasks' icon would be.
-        let files = rects[2].1;
+        let files = rects[1].1;
         let (x, y) = (
             files.x + files.w / 2.,
             files.y + files.h + apps_rail::GAP + files.h / 2.,
         );
         assert_eq!(mode_at(&view, a, x, y), None);
         for hidden in [
+            NavigatorMode::Home,
             NavigatorMode::Tasks,
             NavigatorMode::Chats,
             NavigatorMode::Agents,

@@ -253,6 +253,20 @@ agents hidden a canvas is **cards and images**
   device waits in the publisher's journal and goes out when a build that shows
   Socials runs again.
 
+## Hidden for now: constants, not flags
+
+A part of a surface that is shown can be hidden *for now* by a constant in
+`koru-features`, beside the flags. It is not baked by a release nor turned on
+by a variable: it is one line to flip back to `true`, and every way into the
+part comes back with it. The code behind it stays built.
+
+| Constant | Hides | Since |
+| --- | --- | --- |
+| `HOME_SHOWN` | Home: the house at the top of the left rail, its nav (Inbox, Today, Upcoming, Recent), the Home tab and `Alt+H`. The rail starts at Documents, `Alt+H` resolves to nothing and no hint teaches it (the other views keep their `Alt+digit`), a window that last showed Home reopens on Documents. The recent documents Home listed stay under **+ → Documents** and the Windows Jump List | 2026-11-03 |
+
+Unlike a flag, a constant is off in the test suites too, so a test that
+assumed the part is updated rather than run under an override.
+
 ## Not gated, deliberately
 
 - `reference/SHORTCUTS.md` is generated from the whole `koru-keys`

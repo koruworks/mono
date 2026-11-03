@@ -7817,30 +7817,48 @@ fn following_a_link_in_place_is_recorded_in_the_history() {
     assert_eq!(v.document_root(), Some(a));
 }
 
-/// **Home is one tab**, opened from the nav's Today row and reused after
-/// that: the Settings tab's rule. Home leads the apps row, on `Alt+H`
-/// (the CTO's note, E69).
+/// **Home is hidden for now** (the user, 2026-11-03:
+/// `koru_features::HOME_SHOWN`). The rail starts at Documents; `Alt+H`
+/// resolves to nothing and is taught nowhere, while the other views keep
+/// their digits; asking for Home — a restored token, the chord's own
+/// request, the Home tab's `Outcome` — lands on Documents or opens nothing.
 #[test]
-fn the_home_tab_is_a_singleton_opened_from_the_nav() {
+fn home_is_hidden_and_every_way_in_lands_on_documents() {
     use crate::panes::explore::NavigatorMode;
-    let (mut view, mut workspace) = container();
-    assert_eq!(NavigatorMode::visible()[0], NavigatorMode::Home);
+    assert!(!koru_features::HOME_SHOWN);
+    assert_eq!(NavigatorMode::visible()[0], NavigatorMode::Documents);
+    assert!(!NavigatorMode::visible().contains(&NavigatorMode::Home));
+    let alt = koru_keys::VIEW;
     assert_eq!(
-        NavigatorMode::Home.shortcut(),
-        Some(koru_keys::ShortcutId::ShowHome)
+        crate::mainview::keys::resolve(&Key::Character("h".into()), Some("h"), alt),
+        None,
+        "Alt+H does nothing"
     );
+    assert_eq!(
+        crate::mainview::keys::resolve(&Key::Character("1".into()), Some("1"), alt),
+        Some(crate::mainview::keys::Chord::ShowNavigator(
+            NavigatorMode::Documents
+        )),
+        "Alt+1 is still Documents"
+    );
+    assert_eq!(
+        koru_keys::show_hint(koru_keys::ShortcutId::ShowHome, koru_keys::Section::Tooltip),
+        None,
+        "and Alt+H is taught nowhere"
+    );
+
+    let (mut view, mut workspace) = container();
+    view.show_navigator(NavigatorMode::Home);
+    assert_eq!(view.explore.navigator_mode(), NavigatorMode::Documents);
     let before = view.tabs().len();
-    assert!(view.apply(&mut workspace.ws, Outcome::OpenHome));
-    assert_eq!(view.tabs().len(), before + 1);
-    assert!(matches!(view.tabs().active_tab().view, TabView::Home(_)));
-    assert!(view.apply(&mut workspace.ws, Outcome::OpenHome));
-    assert_eq!(view.tabs().len(), before + 1, "the one Home tab is reused");
-    let homes = view
-        .tabs()
-        .iter()
-        .filter(|t| matches!(t.view, TabView::Home(_)))
-        .count();
-    assert_eq!(homes, 1);
+    assert!(!view.apply(&mut workspace.ws, Outcome::OpenHome));
+    assert_eq!(view.tabs().len(), before, "no Home tab");
+    assert!(
+        !view
+            .tabs()
+            .iter()
+            .any(|t| matches!(t.view, TabView::Home(_)))
+    );
 }
 
 /// The command bar: 640 wide, 400 tall, 96 px from the top (frame 2).
@@ -8614,7 +8632,7 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     // The tooltips wait for the column's slide to end, as the caption's do.
     v.sidebar.advance(Instant::now() + Duration::from_secs(5));
     v.relayout();
-    for mode in NavigatorMode::ALL {
+    for mode in NavigatorMode::visible() {
         let (x, y) = mode_icon(&v, mode).centre();
         let tip = v
             .navigator_mode_tooltip(x, y)
