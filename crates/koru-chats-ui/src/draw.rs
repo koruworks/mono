@@ -97,8 +97,10 @@ impl ChatsSurface {
             scene::fill(scene, root, p.hover_tint, &chip(rect, area));
         }
         // The ring says *here, not yet chosen*; a ring on a card would read
-        // as two things open, so the card wins.
-        if treatment != "Card" && row.pressable() && self.focus_row() == Some(row) {
+        // as two things open, so the card wins. A row being renamed wears
+        // none of the three: the field's box is the only one on it (D89).
+        if matches!(treatment, "Hover" | "Idle") && row.pressable() && self.focus_row() == Some(row)
+        {
             scene::stroke(
                 scene,
                 root,
@@ -169,6 +171,12 @@ impl ChatsSurface {
                 // name's, not the row's.
                 if private && parts.lead.w > 0.0 {
                     draw_icon(scene, root, engine, icons::DETECTIVE, parts.lead, ink);
+                }
+                // Renamed in place (D89): the host's field stands where the
+                // title, the mark and the buttons were, and nothing of the
+                // row is drawn under or beside it.
+                if treatment == "Renaming" {
+                    return;
                 }
                 self.line(scene, root, engine, parts.title, &title, style, ink);
                 // The mark at the row's end: the ring while it works, the
@@ -249,8 +257,13 @@ impl ChatsSurface {
 
     /// What a row is wearing, in the library's vocabulary. Open **or**
     /// picked wear the card — one treatment, as the library's rows: a
-    /// multi-selection and the chat you have open are the same claim.
-    fn row_treatment(&self, row: Row) -> &'static str {
+    /// multi-selection and the chat you have open are the same claim. A row
+    /// being renamed is *Renaming* whatever else it is (D89): it wears
+    /// nothing, so the field over it is the one box there.
+    pub(crate) fn row_treatment(&self, row: Row) -> &'static str {
+        if self.is_renaming(row) {
+            return "Renaming";
+        }
         let open = match row {
             Row::Chat(index) => self
                 .chats

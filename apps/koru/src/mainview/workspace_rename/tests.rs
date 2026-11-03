@@ -315,12 +315,28 @@ fn a_chat_is_renamed_in_its_chats_row() {
         Some(title),
         "over the chat's title"
     );
+    // The field is the only box on the row (koru-ai D89): a frame tells the
+    // list which row is renamed, so it drops its plate, mark, pin and ⋯.
+    let draw = |v: &mut crate::mainview::MainView, ws: &koru_workspace::Workspace| {
+        v.draw_frame(
+            &mut vello::Scene::new(),
+            ws,
+            &koru_draw::ImageCache::new(),
+            vello::kurbo::Affine::IDENTITY,
+            false,
+            (-1.0, -1.0),
+        );
+    };
+    draw(&mut v, &w);
+    assert_eq!(v.explore.chats().renaming(), Some(chat));
     let none = ModifiersState::empty();
     assert!(View::key(&mut v, &mut w.ws, &ESC, None, none));
     assert!(
         v.workspace_rename.is_none(),
         "Escape leaves the name as it was"
     );
+    draw(&mut v, &w);
+    assert_eq!(v.explore.chats().renaming(), None, "the row is back");
 
     // F2 over the row opens the same field.
     v.pointer = (title.x + 4.0, title.y + title.h * 0.5);

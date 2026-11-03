@@ -426,6 +426,14 @@ impl MainView {
                     scene::rect(pane.x, pane.y, pane.w, pane.h),
                     |r| r.property("layout", "Column / vertical", "explore host"),
                 );
+                // A chat row being renamed stands aside for the field drawn
+                // over it (koru-ai D89), said from the one field the window
+                // holds.
+                let renaming = match self.workspace_rename.as_ref().map(|field| field.target) {
+                    Some(super::workspace_rename::Target::Chat(chat)) => Some(chat),
+                    _ => None,
+                };
+                self.explore.chats_mut().set_renaming(renaming);
                 self.explore.draw(scene, root, &mut self.engine, pane);
             }
             // The lane, over the column's top band: window chrome, so it is

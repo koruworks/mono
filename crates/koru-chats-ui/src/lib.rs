@@ -59,9 +59,12 @@
 //! ([`delete`](ChatsSurface::delete)) so a refusal lands on the row it is about.
 //!
 //! **Renaming is the host's too.** Each host draws its own field over the
-//! row's title ([`title_rect`](ChatsSurface::title_rect)) and renames through
-//! the chat surface's rename command, the one the chat's title row used — so
-//! a chat open in a tab or in the window takes its new name with the list.
+//! row's text area ([`rename_rect`](ChatsSurface::rename_rect)) and renames
+//! through the chat surface's rename command, the one the chat's title row
+//! used — so a chat open in a tab or in the window takes its new name with
+//! the list. While it does, the host says which row
+//! ([`set_renaming`](ChatsSurface::set_renaming)) and that row stands aside:
+//! the field is the only box on it (koru-ai D89).
 //!
 //! [`refresh`]: ChatsSurface::refresh
 //! [`poll`]: ChatsSurface::poll
@@ -234,6 +237,11 @@ pub struct ChatsSurface {
     /// ⋯ pressed: the chats the host's menu is about and where it opens —
     /// under the button.
     pub(crate) wants_menu: Option<(Vec<ChatId>, (f32, f32))>,
+    /// The chat whose row the host is renaming, said by the host
+    /// ([`set_renaming`](Self::set_renaming)). That row gives itself up to
+    /// the host's field: no card, tint or ring, no title, no status mark, no
+    /// pin and no ⋯ — one box, the field's.
+    pub(crate) renaming: Option<ChatId>,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -295,6 +303,7 @@ impl ChatsSurface {
             hover_button: None,
             wants_pin: None,
             wants_menu: None,
+            renaming: None,
             reader_link: None,
             seq: 0,
         }
@@ -356,6 +365,21 @@ impl ChatsSurface {
 
     pub fn current(&self) -> Option<ChatId> {
         self.current
+    }
+
+    /// **Which chat's row the host is renaming** (koru-ai D89), `None` when
+    /// it is renaming none. The host says so on every frame it draws the
+    /// list, from the one field it holds, so the two cannot disagree. That
+    /// row then draws only a private chat's mark beside the field, and has
+    /// no buttons to hit. `true` when it changed.
+    pub fn set_renaming(&mut self, chat: Option<ChatId>) -> bool {
+        let changed = self.renaming != chat;
+        self.renaming = chat;
+        changed
+    }
+
+    pub fn renaming(&self) -> Option<ChatId> {
+        self.renaming
     }
 
     /// **Every chat's status, as the host derived it** (D83) — idle chats

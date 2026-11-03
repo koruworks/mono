@@ -94,3 +94,127 @@ fn the_pin_pins_and_more_asks_for_the_menu_and_neither_opens() {
     );
     assert_eq!(surface.take_wants_open(), None);
 }
+
+/// **A row being renamed stands aside for the field** (D89, the user's
+/// screenshot): no card, tint or ring behind the field, no status mark, no
+/// pin and no ⋯ to draw or press — and the field's text starts where the
+/// title did and runs to the row's end pad. When the rename ends the row
+/// is itself again.
+#[test]
+fn a_row_being_renamed_draws_and_hits_nothing_but_the_fields_area() {
+    let mut pinned = chat(1, "Renamed", 1_000);
+    pinned.pinned_at = Some(Timestamp::from_millis(1));
+    let mut surface = showing(vec![pinned, chat(2, "Other", 60_000)]);
+    let chat_id = id(1);
+    surface.set_current(Some(chat_id));
+    surface.set_statuses(HashMap::from([(chat_id, ChatStatus::Working)]));
+    let (row, rect) = *surface
+        .rows(tall(), TOP)
+        .iter()
+        .find(|(row, _)| *row == Row::Chat(0))
+        .unwrap();
+    // The pointer and the keyboard on it: every button showing.
+    surface.mouse_move(tall(), TOP, rect.x + 20.0, rect.y + rect.h * 0.5);
+    surface.reveal(chat_id, tall(), TOP);
+    let before = surface.row_parts(row, rect);
+    assert!(before.more.w > 0.0 && before.pin.w > 0.0);
+
+    assert!(surface.set_renaming(Some(chat_id)));
+    let parts = surface.row_parts(row, rect);
+    assert_eq!(
+        (parts.end.w, parts.pin.w, parts.more.w),
+        (0.0, 0.0, 0.0),
+        "no mark, no pin, no ⋯"
+    );
+    let pad_end = rect.x + rect.w - koru_draw::theme::NAV_PAD;
+    assert_eq!(parts.title.x, before.title.x, "the title's own inset");
+    assert_eq!(parts.title.x + parts.title.w, pad_end, "to the end pad");
+    for at in [before.pin, before.more] {
+        let (x, y) = (at.x + at.w * 0.5, at.y + at.h * 0.5);
+        assert_eq!(surface.button_at(row, rect, x, y), None);
+    }
+    assert_eq!(surface.row_treatment(row), "Renaming");
+
+    // The field's box: the text area widened by the field's own text pad,
+    // so the typed text starts where the title did, on the row's height.
+    let inset = 7.0;
+    let field = surface
+        .rename_rect(tall(), TOP, chat_id, inset)
+        .expect("the row is showing");
+    assert_eq!(field.x + inset, parts.title.x);
+    assert_eq!(field.x + field.w, pad_end);
+    assert_eq!((field.y, field.h), (rect.y, rect.h));
+    // The same box before the host has said it is renaming.
+    surface.set_renaming(None);
+    assert_eq!(
+        surface.rename_rect(tall(), TOP, chat_id, inset),
+        Some(field)
+    );
+    surface.set_renaming(Some(chat_id));
+
+    // Drawn: the row's record holds nothing — no plate, ring, text or icon.
+    let mut engine = koru_draw::text::TextEngine::new();
+    let capture = koru_draw::inspect::Frame::begin(
+        1,
+        vello::kurbo::Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 260.0, 2_000.0),
+    );
+    let mut scene = vello::Scene::new();
+    surface.draw(
+        &mut scene,
+        vello::kurbo::Affine::IDENTITY,
+        &mut engine,
+        tall(),
+        TOP,
+    );
+    let snapshot = capture.finish();
+    let records = &snapshot.records;
+    let rows: Vec<usize> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| record.name == "ExploreRow")
+        .map(|(index, _)| index)
+        .collect();
+    let treatment = |index: usize| {
+        records[index]
+            .properties
+            .iter()
+            .find(|property| property.name == "treatment")
+            .map(|property| property.value.clone())
+    };
+    let renamed = *rows
+        .iter()
+        .find(|index| treatment(**index).as_deref() == Some("Renaming"))
+        .expect("the renamed row is recorded");
+    let inside = |ancestor: usize| {
+        records.iter().filter(move |record| {
+            let mut at = record.parent;
+            while let Some(parent) = at {
+                if parent == ancestor {
+                    return true;
+                }
+                at = records[parent].parent;
+            }
+            false
+        })
+    };
+    assert_eq!(
+        inside(renamed).count(),
+        0,
+        "nothing drawn on the renamed row: {:?}",
+        inside(renamed)
+            .map(|record| record.name)
+            .collect::<Vec<_>>()
+    );
+    let other = *rows
+        .iter()
+        .find(|index| **index != renamed && treatment(**index).as_deref() == Some("Idle"))
+        .expect("the other row");
+    assert!(inside(other).count() > 0, "an ordinary row draws its title");
+
+    // Done: the row is itself again.
+    assert!(surface.set_renaming(None));
+    let after = surface.row_parts(row, rect);
+    assert!(after.more.w > 0.0 && after.pin.w > 0.0);
+    assert_eq!(surface.row_treatment(row), "Card");
+}

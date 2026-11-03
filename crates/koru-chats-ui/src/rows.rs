@@ -213,14 +213,20 @@ impl ChatsSurface {
         // status mark — and the pin in slot 2; any other row shows its mark
         // in slot 1 and, when it is pinned, its pin beside it (or in slot 1
         // when it has no mark).
+        // A row being renamed keeps nothing at its end (D89): the field
+        // runs to the pad, and there is no button under it to press.
         let (buttons, pinned, marked) = match row {
-            Row::Chat(index) => self.chats.get(index).map_or((false, false, false), |chat| {
-                (
-                    self.shows_row_buttons(row),
-                    chat.pinned_at.is_some(),
-                    self.status(chat.id) != crate::ChatStatus::Idle,
-                )
-            }),
+            Row::Chat(index) => self
+                .chats
+                .get(index)
+                .filter(|chat| self.renaming != Some(chat.id))
+                .map_or((false, false, false), |chat| {
+                    (
+                        self.shows_row_buttons(row),
+                        chat.pinned_at.is_some(),
+                        self.status(chat.id) != crate::ChatStatus::Idle,
+                    )
+                }),
             _ => (false, false, false),
         };
         let right = inner_x + inner_w;
@@ -266,7 +272,20 @@ impl ChatsSurface {
     /// Whether a row shows its ⋯ and pin: under the pointer, or under the
     /// keyboard (D86).
     pub(crate) fn shows_row_buttons(&self, row: Row) -> bool {
-        matches!(row, Row::Chat(_)) && (self.hover == Some(row) || self.focus_row() == Some(row))
+        matches!(row, Row::Chat(_))
+            && !self.is_renaming(row)
+            && (self.hover == Some(row) || self.focus_row() == Some(row))
+    }
+
+    /// Whether this is the row the host is renaming (D89).
+    pub(crate) fn is_renaming(&self, row: Row) -> bool {
+        match row {
+            Row::Chat(index) => self
+                .chats
+                .get(index)
+                .is_some_and(|chat| self.renaming == Some(chat.id)),
+            _ => false,
+        }
     }
 
     /// Which of a row's buttons is under a point, if one is shown there.
@@ -339,10 +358,11 @@ impl ChatsSurface {
             .find(|(_, r)| y >= r.y && y < r.y + r.h)
     }
 
-    /// Where a chat's title sits — what a host draws its rename field over,
-    /// so the field covers the words it replaces. Inside the band only, for
-    /// the hit test's reason: `None` when the list does not hold the chat or
-    /// its row is scrolled out of view.
+    /// Where a chat's title sits, as the row is drawn now. Inside the band
+    /// only, for the hit test's reason: `None` when the list does not hold
+    /// the chat or its row is scrolled out of view. A rename field goes over
+    /// [`rename_rect`](Self::rename_rect) instead, which does not shrink for
+    /// buttons the renamed row no longer shows.
     pub fn title_rect(&self, area: Rect, top: f32, chat: crate::ChatId) -> Option<Rect> {
         let index = self
             .chats
@@ -355,6 +375,48 @@ impl ChatsSurface {
             .find(|(row, _)| *row == Row::Chat(index))?;
         (rect.y + rect.h > band.y && rect.y < band.y + band.h)
             .then(|| self.row_parts(row, rect).title)
+    }
+
+    /// **Where a host's rename field goes** (D89): the row's whole text
+    /// area — from where the title starts to the row's end pad, because
+    /// the row drops its status mark, pin and ⋯ while it is renamed — the
+    /// row's full height, and widened left by `text_inset`, the field's own
+    /// padding before its text, so the typed text starts exactly where the
+    /// title did — short of a private chat's mark, which stays beside the
+    /// field. A host centres its box in this, which keeps the baseline
+    /// on the row's middle, where the title's sat.
+    ///
+    /// The same answer whether or not [`set_renaming`](Self::set_renaming)
+    /// has been said yet, so the box a press is measured against and the
+    /// one drawn agree on the first frame. `None` when the list does not
+    /// hold the chat or its row is out of the band.
+    pub fn rename_rect(
+        &self,
+        area: Rect,
+        top: f32,
+        chat: crate::ChatId,
+        text_inset: f32,
+    ) -> Option<Rect> {
+        let index = self
+            .chats
+            .iter()
+            .position(|candidate| candidate.id == chat)?;
+        let band = self.band(area, top);
+        let (row, rect) = self
+            .layout(area, top)
+            .into_iter()
+            .find(|(row, _)| *row == Row::Chat(index))?;
+        if rect.y + rect.h <= band.y || rect.y >= band.y + band.h {
+            return None;
+        }
+        let parts = self.row_parts(row, rect);
+        let right = rect.x + theme::NAV_PAD + (rect.w - theme::NAV_PAD * 2.0).max(0.0);
+        // Never over a private chat's mark, which stays beside the field.
+        let mut x = parts.title.x - text_inset;
+        if parts.lead.w > 0.0 {
+            x = x.max(parts.lead.x + parts.lead.w);
+        }
+        Some(Rect::new(x, rect.y, (right - x).max(0.0), rect.h))
     }
 
     /// Every chat and where its row sits, unculled and in order — what a

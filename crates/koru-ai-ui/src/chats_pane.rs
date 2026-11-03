@@ -582,6 +582,10 @@ impl ChatSurface {
         let (area, top) = self.chats_area();
         self.chats_pane.set_lang(self.lang);
         self.chats_pane.set_now(epoch_ms());
+        // The renamed row stands aside for the field (D89), said from the
+        // one field this surface holds.
+        self.chats_pane
+            .set_renaming(self.chats_rename.as_ref().map(|rename| rename.chat));
         self.chats_pane
             .draw(canvas, root, &mut self.engine, area, top);
         self.draw_chats_rename(canvas, root);
@@ -706,19 +710,19 @@ impl ChatSurface {
         true
     }
 
-    /// The field, centred over the row's title. `None` when the row is
-    /// scrolled out of the list — a press then reads as *elsewhere*.
+    /// The field, centred in the row's text area (koru-ai D89): its text
+    /// starts where the title did, on the title's baseline, and it runs to
+    /// the row's end pad — the row draws no mark or buttons while it is
+    /// renamed. `None` when the row is scrolled out of the list — a press
+    /// then reads as *elsewhere*.
     fn chats_rename_rect(&self) -> Option<Rect> {
         let rename = self.chats_rename.as_ref()?;
         let (area, top) = self.chats_area();
-        let title = self.chats_pane.title_rect(area, top, rename.chat)?;
-        let h = RENAME_H.min(title.h);
-        Some(Rect::new(
-            title.x,
-            title.y + (title.h - h) * 0.5,
-            title.w,
-            h,
-        ))
+        let text = self
+            .chats_pane
+            .rename_rect(area, top, rename.chat, koru_ui::text_field::PAD)?;
+        let h = RENAME_H.min(text.h);
+        Some(Rect::new(text.x, text.y + (text.h - h) * 0.5, text.w, h))
     }
 
     fn chats_rename_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
@@ -1111,6 +1115,52 @@ mod tests {
         assert!(commands.try_recv().is_err(), "and reads no other chat");
         assert!(surface.chats_rename.is_none());
         assert!(surface.history_open);
+    }
+
+    /// **The field is the only box on a renamed row** (koru-ai D89, the
+    /// user's screenshot): drawing the pane tells the list which row is
+    /// renamed, so that row drops its card, mark, pin and ⋯; the field's
+    /// text starts where the title's did and the box ends at the row's end
+    /// pad. Escape gives the row back.
+    #[test]
+    fn the_rename_field_replaces_its_rows_plate_and_buttons() {
+        let one = chat("One");
+        let (mut surface, _commands, _updates) = pane_on(vec![one.clone()]);
+        let (area, top) = surface.chats_area();
+        let (row, rect) = surface.chats_pane.rows(area, top)[0];
+        let title = surface.chats_pane.title_rect(area, top, one.id).unwrap();
+        assert!(press(&mut surface, NamedKey::F2));
+        let mut scene = vello::Scene::new();
+        surface.draw_chats_pane(&mut scene, vello::kurbo::Affine::IDENTITY);
+        assert_eq!(surface.chats_pane.renaming(), Some(one.id));
+        let parts = surface.chats_pane.row_parts(row, rect);
+        assert_eq!((parts.end.w, parts.pin.w, parts.more.w), (0.0, 0.0, 0.0));
+
+        let field = surface.chats_rename_rect().expect("the field is showing");
+        assert_eq!(
+            field.x + koru_ui::text_field::PAD,
+            title.x,
+            "the title's inset"
+        );
+        assert_eq!(
+            field.x + field.w,
+            rect.x + rect.w - koru_draw::theme::NAV_PAD,
+            "to the row's end pad, over where the buttons were"
+        );
+        assert_eq!(
+            field.y + field.h * 0.5,
+            rect.y + rect.h * 0.5,
+            "centred on the row, so on the title's baseline"
+        );
+
+        assert!(press(&mut surface, NamedKey::Escape));
+        surface.draw_chats_pane(&mut scene, vello::kurbo::Affine::IDENTITY);
+        assert_eq!(surface.chats_pane.renaming(), None);
+        let parts = surface.chats_pane.row_parts(row, rect);
+        assert!(
+            parts.more.w > 0.0,
+            "the keyboard's row has its buttons back"
+        );
     }
 
     /// `F2` with the keyboard on no chat offers nothing.

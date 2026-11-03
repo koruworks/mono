@@ -1140,14 +1140,17 @@ impl ExploreView {
         self.chats.reveal(chat, area, top)
     }
 
-    /// Where a chat's title sits in the Chats view, in window coordinates —
-    /// what the container draws its rename field over. `None` when the view
-    /// is not showing or the row is scrolled out of it.
+    /// Where the container's rename field goes over a chat's row in the
+    /// Chats view, in window coordinates (koru-ai D89): the row's text area
+    /// to its end pad, widened by the field's own text pad so the typed
+    /// text starts where the title did. `None` when the view is not showing
+    /// or the row is scrolled out of it.
     pub fn chat_label_rect(&self, area: Rect, chat: koru_chats_ui::ChatId) -> Option<Rect> {
         if self.mode != NavigatorMode::Chats {
             return None;
         }
-        self.chats.title_rect(area, self.rows_top(area), chat)
+        self.chats
+            .rename_rect(area, self.rows_top(area), chat, koru_ui::text_field::PAD)
     }
 
     /// The chat under a point in the Chats view — what `F2` renames.
