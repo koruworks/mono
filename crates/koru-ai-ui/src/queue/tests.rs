@@ -536,13 +536,19 @@ fn a_refused_steer_stays_a_new_turn() {
     assert_eq!(live.len(), 2, "only the question and the reply");
     assert_eq!(queued_texts(&surface), ["later"]);
 
+    // The reply ends; the waiting message is sent as a turn of its own.
     transcript.messages = vec![
         stored(&transcript, 0, ChatRole::User, "first"),
         stored(&transcript, 1, ChatRole::Assistant, "first reply"),
-        stored(&transcript, 2, ChatRole::User, "later"),
-        stored(&transcript, 3, ChatRole::Assistant, "later reply"),
     ];
     end_reply(&mut surface, &transcript, completed(attempt));
+    assert_eq!(sends(&drain(&commands)), ["later"]);
+    // Its turn read back after its own reply.
+    transcript.messages.extend([
+        stored(&transcript, 2, ChatRole::User, "later"),
+        stored(&transcript, 3, ChatRole::Assistant, "later reply"),
+    ]);
+    surface.apply_update(Update::Transcript(transcript.clone()));
     let read = cards(&mut surface);
     assert_eq!(
         read.iter()

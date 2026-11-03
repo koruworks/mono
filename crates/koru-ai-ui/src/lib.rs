@@ -13375,8 +13375,10 @@ mod tests {
     ];
 
     /// **Up walks back through every message, not only the newest** (D100),
-    /// long ones included: three Ups reach the first, three Downs come back
-    /// to the draft, with a frame drawn between presses as in the app.
+    /// long ones included: three Ups reach the first, with a frame drawn
+    /// between presses as in the app. Down walks forward again to the
+    /// draft; in a message that wraps it first takes the caret to the
+    /// last line, as Down does inside any message of several lines.
     #[test]
     fn up_three_times_reaches_the_first_of_three_long_messages() {
         let (mut surface, _commands) = walked_chat(&LONG);
@@ -13387,10 +13389,21 @@ mod tests {
             drawn(&mut surface);
             assert_eq!(surface.composer.text(), *expected);
             assert!(surface.composer.caret_on_first_line());
+            assert!(
+                !surface.composer.caret_on_last_line(),
+                "it wraps, so a caret at its end would have climbed"
+            );
         }
         assert!(press(&mut surface, NamedKey::ArrowUp), "the oldest holds");
         assert_eq!(surface.composer.text(), LONG[0]);
         for expected in [LONG[1], LONG[2], "my draft"] {
+            for _ in 0..4 {
+                if surface.composer.caret_on_last_line() {
+                    break;
+                }
+                assert!(press(&mut surface, NamedKey::ArrowDown));
+                drawn(&mut surface);
+            }
             assert!(press(&mut surface, NamedKey::ArrowDown));
             drawn(&mut surface);
             assert_eq!(surface.composer.text(), expected);
