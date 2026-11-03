@@ -475,7 +475,11 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // the tool events a terminal view leaves unread; no capability.
     // **v18 is what an agent says about its models** (agent-models D10):
     // optional fields on a listed model; no capability.
-    assert_eq!(offer.versions.max, 18);
+    // **v19 is an agent's approval modes and Fast** (chat review D7, D11):
+    // a launch and an input may carry a mode, and an agent may report a
+    // mode change, which the host rewrites for an older peer. A terminal
+    // view sends neither and reads the change as one more event.
+    assert_eq!(offer.versions.max, 19);
     assert!(offer.capabilities.supports(capability::PROVIDER_MODELS));
     assert!(
         offer
