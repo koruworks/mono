@@ -1236,6 +1236,11 @@ impl ChatSurface {
         if let Some(editor) = &mut self.comment_editor {
             editor.rebind(&mut self.engine);
         }
+        // Every kept layout was shaped in the old engine's fonts: a message
+        // or a call's detail reused as it is would keep them after the App
+        // font changed. Laid out again, once each.
+        self.message_layouts.clear();
+        self.call_details.clear();
         self.messages_dirty = true;
     }
 
@@ -10283,6 +10288,54 @@ mod tests {
         assert!(surface.images.get(&key).is_some_and(|image| image.failed));
         assert_eq!(surface.images.len(), 1, "a relative path is never read");
         assert_eq!(image_key("pictures/pear.png"), "pictures/pear.png");
+    }
+
+    /// **A font change lays every message out again** (found with D79): a
+    /// finished message is otherwise reused as it was laid out — its text,
+    /// width and blocks unchanged — so it kept the old font after the App
+    /// font changed, `invalidate` keeping `message_layouts`.
+    #[test]
+    fn invalidate_lays_every_finished_message_out_again() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut transcript = transcript();
+        let message_id = MessageId::new();
+        transcript.messages.push(koru_ai_core::Message {
+            id: message_id,
+            chat_id: transcript.chat.id,
+            ordinal: 0,
+            role: ChatRole::Assistant,
+            state: MessageState::Complete,
+            markdown: "A durable answer".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+        });
+        transcript.blocks.push(koru_ai_core::MessageBlock {
+            id: MessageBlockId::new(),
+            message_id,
+            ordinal: 0,
+            kind: koru_ai_core::MessageBlockKind::Paragraph,
+            markdown: "A durable answer".into(),
+            plain_text: "A durable answer".into(),
+        });
+        surface.transcript = Some(transcript);
+        surface.rebuild_messages(600.0);
+        surface.rebuild_messages(600.0);
+        assert_eq!(
+            surface.last_rebuild_stats.messages_reused, 1,
+            "unchanged, it is reused"
+        );
+        surface.invalidate();
+        assert!(surface.messages_dirty);
+        surface.rebuild_messages(600.0);
+        assert_eq!(surface.last_rebuild_stats.messages_reused, 0);
+        assert_eq!(surface.last_rebuild_stats.blocks_reused, 0);
+        assert_eq!(surface.last_rebuild_stats.messages_laid_out, 1);
+        assert_eq!(surface.last_rebuild_stats.blocks_laid_out, 1);
     }
 
     #[test]
