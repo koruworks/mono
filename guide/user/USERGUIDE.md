@@ -956,7 +956,11 @@ that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
 it a row of **apps** — Documents, Files, Tasks and the rest the build shows
-— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them);
+— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them;
+drag an icon up or down to put it where you want it, or with the rail
+focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
+a view keeps its shortcut wherever it sits, and the order is remembered on
+this computer);
 then that app's own navigation; and on the floor one chip that says which
 workspace you are in and who you are, with a **?** beside it. The chip opens
 the workspace and account switcher; the **?** opens help: what is new in
