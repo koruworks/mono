@@ -1572,6 +1572,11 @@ Markdown blocks. Hold `Shift` with any arrow key to extend that selection;
 right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
 with its `Ctrl+L` hint. `Ctrl+L` adds the selection whenever the **Add to
 chat** button is showing, even while you are typing in the message box.
+Click any link in an answer, including one inside a table, to open it: a web
+page opens in your browser, a Koru document opens as a tab. A web address the
+answer writes out in full is a link too. Rest the pointer on a link and a
+card shows where it goes, with **Copy** to put the address on the clipboard
+and **Open** to open it; press Escape or move away to close it.
 Completed responses also offer icon actions for **Copy** (the exact Markdown),
 toggleable **Good** and **Bad**, **Branch**, **Store**, and **Link**. Branch opens a new durable chat
 containing the conversation through that response. Store asks for a
