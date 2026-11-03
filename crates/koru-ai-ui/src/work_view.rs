@@ -30,7 +30,7 @@ use vello::kurbo::Affine;
 
 use crate::tool_groups::{self, StepGroup, WorkItem};
 use crate::tool_output::Ink;
-use crate::tool_output::layout::{DetailHit, DetailLine, color};
+use crate::tool_output::layout::{DetailHit, DetailLine, DetailPicture, color};
 
 /// The header's height; its hairline sits at the bottom.
 pub(crate) const HEADER_H: f32 = 30.0;
@@ -76,6 +76,8 @@ pub(crate) struct WorkLine {
     pub panel: bool,
     /// Where a link line goes: a web address, or a changed file's path.
     pub url: Option<String>,
+    /// A picture a call read, drawn in the line's place (D38).
+    pub picture: Option<DetailPicture>,
 }
 
 pub(crate) struct WorkLayout {
@@ -126,11 +128,19 @@ impl WorkLine {
             ink: None,
             panel: false,
             url: None,
+            picture: None,
         }
     }
 
     fn said(self) -> Self {
         Self { said: true, ..self }
+    }
+
+    /// How tall the line is drawn: its picture's height, else its text's.
+    fn height(&self) -> f32 {
+        self.picture
+            .as_ref()
+            .map_or_else(|| self.layout.height(), |picture| picture.height)
     }
 }
 
@@ -142,7 +152,7 @@ struct Stack {
 
 impl Stack {
     fn push(&mut self, line: WorkLine, gap: f32) {
-        let height = line.layout.height();
+        let height = line.height();
         self.lines.push(WorkLine { y: self.y, ..line });
         self.y += height + gap;
     }
@@ -248,6 +258,7 @@ pub(crate) fn build(
                                         ink: Some(line.ink),
                                         panel: line.panel,
                                         url: line.url.clone(),
+                                        picture: line.picture.clone(),
                                     },
                                     gap,
                                 );
@@ -272,7 +283,12 @@ pub(crate) fn build(
     }
 }
 
-/// Draw `work` with its top-left at `(x, y)`, `w` wide.
+/// Draws the picture the image cache keeps under a key, fitted in a rect
+/// (`crate::ChatSurface::images`).
+pub(crate) type PictureDrawer<'a> = dyn FnMut(&mut Scene, Affine, &str, Rect) + 'a;
+
+/// Draw `work` with its top-left at `(x, y)`, `w` wide; a call's picture
+/// through `picture`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     canvas: &mut Scene,
@@ -284,6 +300,7 @@ pub(crate) fn draw(
     hover: Option<WorkHit>,
     focused: bool,
     now_ms: i64,
+    picture: &mut PictureDrawer<'_>,
 ) {
     let p = theme::p();
     let (x, y, w) = (origin.x, origin.y, origin.w);
@@ -347,6 +364,15 @@ pub(crate) fn draw(
         &scene::rect(x, y + HEADER_H - 1.0, w, theme::BORDER_W as f32),
     );
     for line in &work.lines {
+        if let Some(shown) = &line.picture {
+            picture(
+                canvas,
+                root,
+                &shown.key,
+                Rect::new(x + line.indent, y + line.y, shown.width, shown.height),
+            );
+            continue;
+        }
         if line.panel {
             scene::fill(
                 canvas,
@@ -402,7 +428,7 @@ pub(crate) fn hit(work: &WorkLayout, x: f32, y: f32, w: f32, px: f32, py: f32) -
             x + line.indent,
             y + line.y,
             (w - line.indent).max(1.0),
-            line.layout.height().max(1.0),
+            line.height().max(1.0),
         )
         .contains(px, py)
         .then_some(hit)

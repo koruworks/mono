@@ -45,10 +45,14 @@ pub(crate) struct BlockLayout {
     pub image: Option<ImageSpec>,
 }
 
+/// How tall a reply's picture box is; the picture is fitted inside it. A
+/// picture in a call's detail is never taller (`crate::tool_output::picture`).
+pub(crate) const IMAGE_BOX_H: f32 = 260.0;
+
 impl BlockLayout {
     pub fn height(&self) -> f32 {
         if self.image.is_some() {
-            return 260.0;
+            return IMAGE_BOX_H;
         }
         self.table
             .as_ref()

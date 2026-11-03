@@ -39,6 +39,17 @@ pub(crate) struct DetailLine {
     /// Where a link line goes: a web address, or a changed file's path as
     /// the agent wrote it.
     pub url: Option<String>,
+    /// A picture drawn in the line's place (D38); its layout is empty.
+    pub picture: Option<DetailPicture>,
+}
+
+/// A picture in a detail: the image cache's key for it — the file's
+/// resolved path — and the size it is drawn at.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DetailPicture {
+    pub key: String,
+    pub width: f32,
+    pub height: f32,
 }
 
 /// The color an ink is drawn in, from the theme now.
@@ -84,6 +95,7 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
         panel: false,
         hit: None,
         url: None,
+        picture: None,
     };
     for piece in pieces {
         match piece {
@@ -147,6 +159,24 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
                     Some(Ink::Link),
                 )
             }),
+            // Only a loaded picture has a size; one still loading, or not
+            // there, takes no room.
+            Piece::Picture {
+                path,
+                size: Some((picture_width, picture_height)),
+            } => {
+                let (drawn_width, drawn_height) =
+                    super::picture::fitted(*picture_width, *picture_height, width);
+                lines.push(DetailLine {
+                    picture: Some(DetailPicture {
+                        key: path.clone(),
+                        width: drawn_width,
+                        height: drawn_height,
+                    }),
+                    ..line(engine.simple_layout("", role::meta()), None)
+                });
+            }
+            Piece::Picture { size: None, .. } => {}
         }
     }
     lines

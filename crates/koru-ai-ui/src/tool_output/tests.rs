@@ -57,6 +57,7 @@ fn words(pieces: &[Piece]) -> Vec<String> {
             | Piece::Path(text)
             | Piece::Header { text, .. } => text.clone(),
             Piece::Link { title, site, .. } => format!("{title} · {site}"),
+            Piece::Picture { path, .. } => format!("[picture {path}]"),
             Piece::Code(lines) => lines
                 .iter()
                 .map(|line| format!("{}{}", line.gutter, line.text))

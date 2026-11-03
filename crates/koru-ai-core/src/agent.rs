@@ -131,7 +131,9 @@ impl CallShape {
             "Search" if rest.len() > 2 && rest.starts_with('"') && rest.ends_with('"') => {
                 Self::Fetch
             }
-            "Read" => Self::Read,
+            // A picture an agent looked at is a file it read: Codex's
+            // image viewer is labelled with its tool's own name.
+            "Read" | "view_image" => Self::Read,
             "Find" | "Glob" | "grep" | "Grep" | "List" | "Search" => Self::Search,
             "Fetch" => Self::Fetch,
             _ if label.len() > 2 && label.starts_with('"') && label.ends_with('"') => Self::Fetch,
@@ -356,6 +358,7 @@ mod tests {
     #[test]
     fn a_labels_shape_says_what_a_call_did() {
         assert_eq!(CallShape::of("Read README.md"), Some(CallShape::Read));
+        assert_eq!(CallShape::of("view_image"), Some(CallShape::Read));
         assert_eq!(CallShape::of("Find `**/*.rs`"), Some(CallShape::Search));
         assert_eq!(CallShape::of("grep -n \"todo\""), Some(CallShape::Search));
         assert_eq!(

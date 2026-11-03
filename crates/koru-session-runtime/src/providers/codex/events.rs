@@ -164,17 +164,22 @@ impl CodexControl {
             .and_then(Value::as_str)
             .ok_or_else(malformed_read)?;
         if kind == "imageView" {
-            if completed
-                && let Some(path) = item.get("path").and_then(Value::as_str)
-                && let Some(attachment_id) =
-                    self.attachment_paths.remove(&(turn_id, path.to_owned()))
-            {
-                self.queue(AgentEvent::AttachmentAccepted {
-                    turn_id,
-                    attachment_id,
-                })?;
+            let attached = item
+                .get("path")
+                .and_then(Value::as_str)
+                .map(|path| (turn_id, path.to_owned()))
+                .filter(|key| self.attachment_paths.contains_key(key));
+            // A picture the person attached, which the agent has now seen.
+            if let Some(key) = attached {
+                if completed && let Some(attachment_id) = self.attachment_paths.remove(&key) {
+                    self.queue(AgentEvent::AttachmentAccepted {
+                        turn_id,
+                        attachment_id,
+                    })?;
+                }
+                return Ok(());
             }
-            return Ok(());
+            return self.handle_image_view(turn_id, item, completed);
         }
         let Some(tool) = normalize::tool_kind(kind) else {
             if !matches!(kind, "agentMessage" | "userMessage" | "reasoning" | "plan") {
@@ -217,6 +222,58 @@ impl CodexControl {
                 input: normalize::item_input(item),
             })
         }
+    }
+
+    /// **A picture the agent chose to look at** (koru-ai D38): a step,
+    /// labelled with the tool's own name and with the file as its input, so
+    /// the chat files it as a read and can draw the picture from the disk.
+    /// The item carries no status — it is the record of a view that
+    /// happened — so it completes as succeeded. A completion whose start
+    /// was never seen still gets its step.
+    fn handle_image_view(
+        &mut self,
+        turn_id: AgentTurnId,
+        item: &Value,
+        completed: bool,
+    ) -> Result<(), ProviderFailure> {
+        const LABEL: &str = "view_image";
+        let native_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| valid_native_id(value))
+            .ok_or_else(malformed_read)?;
+        let key = (turn_id, native_id.to_owned());
+        let started = if completed {
+            self.tools.remove(&key)
+        } else {
+            None
+        };
+        let tool_call_id = match started {
+            Some(tool_call_id) => tool_call_id,
+            None => {
+                let tool_call_id = ToolCallId::mint();
+                self.queue(AgentEvent::ToolStarted {
+                    turn_id,
+                    tool_call_id,
+                    label: LABEL.to_owned(),
+                    input: normalize::item_input(item),
+                })?;
+                if !completed {
+                    self.tools.insert(key, tool_call_id);
+                    return Ok(());
+                }
+                tool_call_id
+            }
+        };
+        self.queue(AgentEvent::ToolCompleted {
+            turn_id,
+            tool_call_id,
+            succeeded: true,
+            tool: Some(koru_session_protocol::ToolKind::Other),
+            detail: None,
+            failure: None,
+            output: None,
+        })
     }
 
     /// `thread/tokenUsage/updated` carries the thread's cumulative total.

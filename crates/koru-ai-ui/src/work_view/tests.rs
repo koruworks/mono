@@ -506,3 +506,81 @@ fn a_reply_from_before_offsets_folds_only_its_steps() {
     assert_eq!(surface.work_layouts.len(), 1);
     assert_eq!(layout_of(&surface, id).display, markdown);
 }
+
+/// **A picture a call read, in its opened detail** (D38): asked of the
+/// image cache only once the call is opened — a running one too — by its
+/// path read against the chat's working folder; drawn once it has loaded,
+/// fitted to the column and no taller than a reply's picture; and, when the
+/// file cannot be read (as under test, where nothing is), not drawn at all.
+#[test]
+fn a_read_picture_is_drawn_in_its_opened_detail_and_a_missing_one_is_not() {
+    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut transcript = transcript();
+    let folder = std::env::temp_dir().join("koru-d38");
+    transcript.chat.agent_working_folder = Some(folder.to_string_lossy().into_owned());
+    let chat = transcript.chat.id;
+    surface.transcript = Some(transcript);
+    let reply = MessageId::new();
+    surface.pending_user = Some("What is in the picture?".into());
+    surface.pending_assistant_message_id = Some(reply);
+    surface.live_turn_started_ms = Some(Timestamp::now().millis());
+    surface.draft = "Looking.".into();
+    let mut claude = row(
+        chat,
+        reply,
+        "agent.read",
+        Some("Read shots/apple.png"),
+        ToolActivityStatus::Running,
+        None,
+    );
+    claude.agent_input = Some(r#"{"file_path":"shots/apple.png"}"#.into());
+    let call = claude.id;
+    surface.upsert_tool_activity(claude);
+    rebuild(&mut surface);
+    assert!(
+        surface.images.is_empty(),
+        "nothing is read for a closed step"
+    );
+
+    surface.toggle_work(WorkHit::Group(reply, 0));
+    surface.toggle_work(WorkHit::Call(call));
+    rebuild(&mut surface);
+    let key = folder
+        .join("shots/apple.png")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        surface.images.get(&key).map(crate::ImageLoad::progress),
+        Some(crate::tool_output::picture::Loaded::Failed),
+        "asked for once opened, against the working folder; not read under test"
+    );
+    let work = &surface.work_layouts[0];
+    assert!(
+        work.lines.iter().any(|line| line.ink.is_some()),
+        "the detail"
+    );
+    assert!(work.lines.iter().all(|line| line.picture.is_none()));
+
+    // The same picture, loaded: it takes its place in the detail.
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(800, 400, image::Rgba([200, 30, 30, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let loaded = crate::decode_image(&png).expect("a PNG decodes");
+    assert!(crate::decode_image(b"not a picture").is_err());
+    surface.images.get_mut(&key).unwrap().ready = Some(loaded);
+    rebuild(&mut surface);
+    let work = &surface.work_layouts[0];
+    let shown = work
+        .lines
+        .iter()
+        .filter_map(|line| line.picture.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].key, key);
+    assert!(shown[0].width <= 800.0 && shown[0].height <= crate::layout_cache::IMAGE_BOX_H);
+    assert!(
+        (shown[0].height - shown[0].width / 2.0).abs() < 0.01,
+        "its shape kept"
+    );
+}

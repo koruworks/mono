@@ -8,7 +8,9 @@
 //! "limit"}` for its input and a title like *Read src/a.rs (40 - 89)*; its
 //! output is the file's lines as `N<tab>line`, in a fence long enough to
 //! hold any fence inside (claude-agent-acp 0.76.0, `markdownEscape`). An
-//! older Claude numbered lines as `   N→line`. Codex reads through commands.
+//! older Claude numbered lines as `   N→line`. Codex reads through commands,
+//! and looks at a picture with `view_image`, whose input is `{"path"}`. A
+//! read of a picture also shows the picture ([`super::picture`], D38).
 
 use koru_i18n::{Key, Lang, fill, t};
 
@@ -30,6 +32,15 @@ pub(super) fn render(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<Rend
         });
     // The lines read, as the output numbers them; else as the call asked.
     let range = shown.filter(|(first, _)| *first > 1).or(asked);
+    // A picture is drawn under its path, above any text the agent sent
+    // (D38); the surface leaves it out until it has loaded.
+    let picture = path
+        .as_deref()
+        .filter(|path| super::picture::is_picture(path))
+        .map(|path| Piece::Picture {
+            path: path.to_owned(),
+            size: None,
+        });
     if let Some(path) = path {
         let text = match range {
             Some((first, last)) => format!(
@@ -43,6 +54,7 @@ pub(super) fn render(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<Rend
         };
         pieces.push(Piece::Header { text, mono: false });
     }
+    pieces.extend(picture);
     super::error_block(call, expanded, lang, &mut pieces);
     if !lines.is_empty() {
         pieces.extend(code_block(

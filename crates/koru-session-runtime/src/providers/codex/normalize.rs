@@ -250,6 +250,9 @@ pub(super) fn item_input(item: &Value) -> Option<String> {
         }
         // The query a web search ran, so its row says what it looked for.
         "webSearch" => item.get("query")?.as_str()?.to_owned(),
+        // The picture the agent looked at, as a read's input names its file,
+        // so the chat can show it (koru-ai D38).
+        "imageView" => serde_json::json!({ "path": item.get("path")?.as_str()? }).to_string(),
         _ => return None,
     };
     koru_session_protocol::bound_tool_content(&text)

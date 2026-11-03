@@ -294,10 +294,23 @@ struct LoadedImage {
 
 type ImageResult = Result<LoadedImage, String>;
 
-struct RemoteImage {
+/// A picture read and decoded on a `koru-ai-image` thread, then kept: one a
+/// reply links to on the web, or a file a call read (D38).
+struct ImageLoad {
     pending: Option<Arc<Mutex<Option<ImageResult>>>>,
     ready: Option<LoadedImage>,
     failed: bool,
+}
+
+impl ImageLoad {
+    fn progress(&self) -> tool_output::picture::Loaded {
+        use tool_output::picture::Loaded;
+        match &self.ready {
+            Some(loaded) => Loaded::Ready(loaded.width, loaded.height),
+            None if self.failed => Loaded::Failed,
+            None => Loaded::Loading,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -562,7 +575,9 @@ pub struct ChatSurface {
     web_search_tooltip: Tooltip,
     response_selection: Option<ResponseSelection>,
     response_menu: Option<Menu<ResponseMenuItem>>,
-    remote_images: HashMap<String, RemoteImage>,
+    /// Pictures by where they come from: a reply's web address, or the
+    /// resolved path of a picture a call read (D38).
+    images: HashMap<String, ImageLoad>,
     pending_model_prefetch: Option<AiProviderId>,
     retry_link: Option<Rect>,
     ollama_search_link: Option<Rect>,
@@ -868,7 +883,7 @@ impl ChatSurface {
             web_search_tooltip: Tooltip::default(),
             response_selection: None,
             response_menu: None,
-            remote_images: HashMap::new(),
+            images: HashMap::new(),
             pending_model_prefetch: None,
             retry_link: None,
             ollama_search_link: None,
@@ -1188,7 +1203,7 @@ impl ChatSurface {
             .highlight
             .and_then(|(_, since)| since.checked_add(HIGHLIGHT_FOR));
         let image = self
-            .remote_images
+            .images
             .values()
             .any(|image| image.pending.is_some())
             .then(|| Instant::now() + Duration::from_millis(100));
@@ -1242,7 +1257,7 @@ impl ChatSurface {
             self.stop_armed_at = None;
             changed = true;
         }
-        changed |= self.maintain_remote_images();
+        changed |= self.maintain_images();
         // A running reply's *Working for 6s* moves on once a second.
         if self
             .work_tick_deadline()
@@ -5802,9 +5817,28 @@ impl ChatSurface {
         self.call_details.retain(|id, _| opened_calls.contains(id));
         let expanded = &self.expanded_outputs;
         let cache = &mut self.call_details;
+        // A picture a call read is drawn from its file (D38): its path read
+        // as a changed file's is, and the picture asked of the image cache.
+        let folder = self
+            .transcript
+            .as_ref()
+            .and_then(|transcript| transcript.chat.agent_working_folder.clone());
+        let images = &self.images;
+        let mut wanted_pictures = Vec::new();
         let mut call_detail = |engine: &mut TextEngine, activity: &ToolActivity, width: f32| {
             let pieces = if is_agent_row(activity) {
-                tool_output::pieces(activity, lang, now_ms, expanded.contains(&activity.id))
+                tool_output::picture::settle(
+                    tool_output::pieces(activity, lang, now_ms, expanded.contains(&activity.id)),
+                    |path| {
+                        tool_output::open_path::resolve(
+                            path,
+                            folder.as_deref(),
+                            std::env::home_dir().as_deref(),
+                        )
+                    },
+                    |key| images.get(key).map(ImageLoad::progress),
+                    &mut wanted_pictures,
+                )
             } else {
                 tool_activity_detail(activity)
                     .lines()
@@ -6175,6 +6209,9 @@ impl ChatSurface {
             .collect::<Vec<_>>();
         for url in image_urls {
             self.ensure_remote_image(&url);
+        }
+        for path in wanted_pictures {
+            self.ensure_disk_image(path);
         }
         tracing::debug!(
             target: "koru_ai::ui",
@@ -6565,6 +6602,12 @@ impl ChatSurface {
             }
         }
         let now_ms = koru_ai_core::Timestamp::now().millis();
+        let images = &self.images;
+        let mut picture = |canvas: &mut Scene, root: Affine, key: &str, rect: Rect| {
+            if let Some(loaded) = images.get(key).and_then(|image| image.ready.as_ref()) {
+                draw_image_fitted(canvas, root, loaded, rect);
+            }
+        };
         for work in &self.work_layouts {
             let origin = Rect::new(
                 area.x + PAD,
@@ -6585,6 +6628,7 @@ impl ChatSurface {
                 self.work_hover,
                 self.focus == Focus::Work(work.message),
                 now_ms,
+                &mut picture,
             );
         }
         for tool in &self.tool_activity_layouts {
@@ -7356,34 +7400,66 @@ impl ChatSurface {
     }
 
     fn ensure_remote_image(&mut self, url: &str) {
-        if self.remote_images.contains_key(url) || !is_web_url(url) {
+        if self.images.contains_key(url) || !is_web_url(url) {
             return;
         }
+        let worker_url = url.to_owned();
+        self.start_image_load(url.to_owned(), move || load_remote_image(&worker_url));
+    }
+
+    /// **A picture a call read, from the disk** (D38): read and decoded
+    /// the way a reply's picture is, off this thread, once. Under test
+    /// nothing is read: the picture counts as not there.
+    fn ensure_disk_image(&mut self, path: PathBuf) {
+        let key = path.to_string_lossy().into_owned();
+        if self.images.contains_key(&key) {
+            return;
+        }
+        if cfg!(test) {
+            self.images.insert(
+                key,
+                ImageLoad {
+                    pending: None,
+                    ready: None,
+                    failed: true,
+                },
+            );
+            return;
+        }
+        self.start_image_load(key, move || load_disk_image(&path));
+    }
+
+    /// Run `load` on a `koru-ai-image` thread, keeping its picture under
+    /// `key` once [`Self::maintain_images`] collects it.
+    fn start_image_load(
+        &mut self,
+        key: String,
+        load: impl FnOnce() -> ImageResult + Send + 'static,
+    ) {
         let result = Arc::new(Mutex::new(None));
         let worker_result = result.clone();
-        let url = url.to_owned();
-        let worker_url = url.clone();
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("koru-ai-image".into())
             .spawn(move || {
-                let loaded = load_remote_image(&worker_url);
+                let loaded = load();
                 if let Ok(mut slot) = worker_result.lock() {
                     *slot = Some(loaded);
                 }
             });
-        self.remote_images.insert(
-            url,
-            RemoteImage {
-                pending: Some(result),
+        self.images.insert(
+            key,
+            ImageLoad {
+                failed: spawned.is_err(),
+                pending: spawned.is_ok().then_some(result),
                 ready: None,
-                failed: false,
             },
         );
     }
 
-    fn maintain_remote_images(&mut self) -> bool {
+    fn maintain_images(&mut self) -> bool {
         let mut changed = false;
-        for image in self.remote_images.values_mut() {
+        let mut relayout = false;
+        for (key, image) in &mut self.images {
             let completed = image
                 .pending
                 .as_ref()
@@ -7395,7 +7471,13 @@ impl ChatSurface {
                     Err(_) => image.failed = true,
                 }
                 changed = true;
+                // A reply's picture has its box already; a call's takes
+                // room only once it has loaded (D38).
+                relayout |= !is_web_url(key);
             }
+        }
+        if relayout {
+            self.messages_dirty = true;
         }
         changed
     }
@@ -7410,7 +7492,7 @@ impl ChatSurface {
         hovered: bool,
     ) {
         let Some(loaded) = self
-            .remote_images
+            .images
             .get(&image.url)
             .and_then(|image| image.ready.as_ref())
         else {
@@ -7439,18 +7521,7 @@ impl ChatSurface {
             }
             return;
         };
-        let scale = (rect.w / loaded.width.max(1) as f32).min(rect.h / loaded.height.max(1) as f32);
-        let width = loaded.width as f32 * scale;
-        let height = loaded.height as f32 * scale;
-        let x = rect.x + (rect.w - width) * 0.5;
-        let y = rect.y + (rect.h - height) * 0.5;
-        let transform = root
-            * Affine::translate((x as f64, y as f64))
-            * Affine::scale_non_uniform(
-                width as f64 / loaded.width.max(1) as f64,
-                height as f64 / loaded.height.max(1) as f64,
-            );
-        canvas.draw_image(&loaded.brush, transform);
+        draw_image_fitted(canvas, root, loaded, rect);
         if hovered {
             scene::stroke(
                 canvas,
@@ -8348,9 +8419,10 @@ fn is_web_url(url: &str) -> bool {
     lower.starts_with("http://") || lower.starts_with("https://")
 }
 
+/// The largest picture file read, from the web or the disk.
+const MAX_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
+
 fn load_remote_image(url: &str) -> ImageResult {
-    const MAX_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
-    const MAX_IMAGE_EDGE: u32 = 1_600;
     if !is_web_url(url) {
         return Err("image URL is not HTTP or HTTPS".into());
     }
@@ -8371,10 +8443,30 @@ fn load_remote_image(url: &str) -> ImageResult {
         return Err("image is larger than 12 MB".into());
     }
     let bytes = response.bytes().map_err(|error| error.to_string())?;
+    decode_image(&bytes)
+}
+
+/// **A picture a call read, from its file** (D38), bounded as a reply's
+/// picture is. Run off the thread that draws.
+fn load_disk_image(path: &std::path::Path) -> ImageResult {
+    let size = std::fs::metadata(path)
+        .map_err(|error| error.to_string())?
+        .len();
+    if size > MAX_IMAGE_BYTES {
+        return Err("image is larger than 12 MB".into());
+    }
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    decode_image(&bytes)
+}
+
+/// A picture's bytes decoded, made no larger than 1,600 pixels on a side,
+/// as the brush it is drawn with.
+fn decode_image(bytes: &[u8]) -> ImageResult {
+    const MAX_IMAGE_EDGE: u32 = 1_600;
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err("image is larger than 12 MB".into());
     }
-    let mut rgba = image::load_from_memory(&bytes)
+    let mut rgba = image::load_from_memory(bytes)
         .map_err(|error| error.to_string())?
         .to_rgba8();
     let (mut width, mut height) = rgba.dimensions();
@@ -8397,6 +8489,23 @@ fn load_remote_image(url: &str) -> ImageResult {
         width,
         height,
     })
+}
+
+/// `loaded` drawn as large as fits in `rect`, keeping its shape, centered:
+/// a reply's picture in its box, and a call's in a rect already its size.
+fn draw_image_fitted(canvas: &mut Scene, root: Affine, loaded: &LoadedImage, rect: Rect) {
+    let scale = (rect.w / loaded.width.max(1) as f32).min(rect.h / loaded.height.max(1) as f32);
+    let width = loaded.width as f32 * scale;
+    let height = loaded.height as f32 * scale;
+    let x = rect.x + (rect.w - width) * 0.5;
+    let y = rect.y + (rect.h - height) * 0.5;
+    let transform = root
+        * Affine::translate((x as f64, y as f64))
+        * Affine::scale_non_uniform(
+            width as f64 / loaded.width.max(1) as f64,
+            height as f64 / loaded.height.max(1) as f64,
+        );
+    canvas.draw_image(&loaded.brush, transform);
 }
 
 /// Hand a web link the person clicked to the desktop. `false` when the

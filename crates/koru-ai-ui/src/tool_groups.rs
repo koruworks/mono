@@ -289,7 +289,7 @@ pub(crate) fn step_call_line(group: &StepGroup<'_>, activity: &ToolActivity, lan
 
 /// Titles that say only what kind of call it was: a kind's token, or the
 /// placeholder an agent titles a call with before its input is written.
-const GENERIC_LABELS: [&str; 20] = [
+const GENERIC_LABELS: [&str; 21] = [
     "command_execution",
     "file_change",
     "mcp_tool",
@@ -310,6 +310,8 @@ const GENERIC_LABELS: [&str; 20] = [
     "grep",
     "Task",
     "Unknown Tool",
+    // A picture an agent looked at: the line names the file (D38).
+    "view_image",
 ];
 
 /// One call's line inside an opened group: what it did — what the agent

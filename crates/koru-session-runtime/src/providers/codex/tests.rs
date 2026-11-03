@@ -1862,6 +1862,79 @@ fn every_tool_the_adapter_names_arrives_as_its_token_and_its_class() {
     }
 }
 
+fn image_view_frame(method: &str, native_id: &str, path: &str) -> Value {
+    json!({
+        "method": method,
+        "params": {
+            "threadId": "fixture-thread",
+            "turnId": "native-tool-turn",
+            "item": { "id": native_id, "type": "imageView", "path": path },
+        }
+    })
+}
+
+/// koru-ai D38: a picture the agent chose to look at is a step labelled
+/// with the tool's own name, its file as the input, succeeded — with or
+/// without the start having been seen. A picture the person attached is
+/// still only accepted, and is no step.
+#[test]
+fn a_picture_the_agent_looked_at_is_a_step_and_an_attached_one_is_not() {
+    let (mut control, turn_id) = tool_turn(vec![
+        image_view_frame("item/started", "v1", "D:\\shots\\apple.jpeg"),
+        image_view_frame("item/completed", "v1", "D:\\shots\\apple.jpeg"),
+        image_view_frame("item/completed", "v2", "shots/pear.png"),
+        image_view_frame("item/started", "v3", "C:\\attached.png"),
+        image_view_frame("item/completed", "v3", "C:\\attached.png"),
+    ]);
+    let attachment = AttachmentId::mint();
+    control
+        .attachment_paths
+        .insert((turn_id, "C:\\attached.png".into()), attachment);
+    for path in ["D:\\shots\\apple.jpeg", "shots/pear.png"] {
+        let AgentEvent::ToolStarted {
+            tool_call_id: started,
+            label,
+            input,
+            ..
+        } = next(&mut control)
+        else {
+            panic!("expected a start");
+        };
+        assert_eq!(label, "view_image");
+        let input: Value = serde_json::from_str(input.as_deref().unwrap()).unwrap();
+        assert_eq!(input["path"], path);
+        match next(&mut control) {
+            AgentEvent::ToolCompleted {
+                tool_call_id,
+                succeeded,
+                tool,
+                failure,
+                output,
+                ..
+            } => {
+                assert_eq!(tool_call_id, started);
+                assert!(succeeded);
+                assert_eq!(tool, Some(ToolKind::Other));
+                assert_eq!(failure, None);
+                assert_eq!(output, None);
+            }
+            event => panic!("expected a completion, got {event:?}"),
+        }
+    }
+    match next(&mut control) {
+        AgentEvent::AttachmentAccepted {
+            turn_id: observed,
+            attachment_id,
+        } => {
+            assert_eq!(observed, turn_id);
+            assert_eq!(attachment_id, attachment);
+        }
+        event => panic!("expected the attachment accepted, got {event:?}"),
+    }
+    assert!(control.tools.is_empty());
+    assert!(control.attachment_paths.is_empty());
+}
+
 /// **Standing requirement 7 at the adapter's edge, as amended for the
 /// chat (protocol v17).** A provider error is classified into a token, and
 /// of its text exactly one field crosses: `message`, bounded, as the

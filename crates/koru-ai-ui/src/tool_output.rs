@@ -24,6 +24,7 @@ mod diff;
 mod file;
 pub(crate) mod layout;
 pub(crate) mod open_path;
+pub(crate) mod picture;
 mod search;
 mod structured;
 
@@ -80,6 +81,13 @@ pub(crate) enum Piece {
     },
     /// *Show all 120 lines* / *Show fewer lines*.
     Toggle(String),
+    /// **The picture a read was of, from the disk** (D38): the path as the
+    /// agent wrote it until the surface settles it, then the resolved path
+    /// and the picture's size once it has loaded ([`picture`]).
+    Picture {
+        path: String,
+        size: Option<(u32, u32)>,
+    },
 }
 
 /// A long block shows its first lines and its last, and how many are
