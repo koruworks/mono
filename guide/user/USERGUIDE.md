@@ -1274,13 +1274,15 @@ again to hide them (Right and Left do the same from the keyboard); a search
 finds them too, marked *Legacy*. At the foot of the picker you choose how
 hard the model thinks: a strip shows each effort level the model offers,
 with the current one raised; pick the level the readout marks as the
-model's default to go back to it. A local agent starts at the level you
-choose before the first message; after that the level is shown but cannot
-change for that chat. Under the strip, **⚡ Fast** (Claude Code's on the
+model's default to go back to it. You can change the level at any time; the
+new level applies from your next message, and if a reply is running Koru
+says so and that reply keeps its level. (With an older Koru agent service the
+level stays the one the chat started with.) Under the strip, **⚡ Fast** (Claude Code's on the
 models that support it, Codex's *Fast* service tier) and **1M context**
 appear when the model offers them, and the line at the end says the effort
 in use, for example *Effort: High (default)*. Fast can change at any time
-and applies from your next message. Choosing a model leaves the picker open —
+and applies from your next message; **1M context** is chosen before the
+first message. Choosing a model leaves the picker open —
 the ✓ moves to it and the effort strip and toggles become that model's —
 so you can set them right after; a click outside the picker, or Esc, closes
 it. The picker works from the keyboard
@@ -1295,6 +1297,13 @@ following a reply as it arrives. If you have typed something, `Ctrl+End`
 moves to the end of your text instead. After you store a reply as a Koru
 document, click **Open** at the end of the confirmation to open the new
 document in a tab.
+
+Some agents send short status messages that are not part of their answer —
+Devin, for example, reports a hook on your computer that failed. These show
+as a small grey line above that answer and stay with the chat. A reply that
+shows a picture from a file on your computer — a `file:///…` link or a full
+path to a PNG, JPEG, GIF, WebP or BMP file — shows the picture itself; if the
+file isn't there, you see its description instead.
 
 **Favorite models.** Hover a model and a ☆ appears at the end of its row;
 click it to make the model a favorite (★, shown whether or not you hover),
@@ -6118,7 +6127,8 @@ a new chat to work somewhere else.
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort
 (*gpt-5.6 · Medium*). Open the chip and pick a level on the effort strip; the chat keeps that level and the next message uses
-it. A local agent runs at its own effort and shows no slider.
+it. A coding agent's level is set the same way, on the strip at the foot
+of its model picker.
 
 In Settings, the **Local agents** card lists the same agents; saving one makes
 it the default for new chats.
