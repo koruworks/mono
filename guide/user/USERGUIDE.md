@@ -1254,8 +1254,7 @@ turned off — on the same colour as the window's own left rail, and a **+** at
 the foot of that
 column, which opens **Settings → Coding → Agent providers**; the selected
 agent's models sit beside them under
-their own names, each with the agent's short description of it on a second,
-smaller line when the agent gives one, and a **Search models…** box above the
+their own names, one line each, and a **Search models…** box above the
 list (typing narrows
 it; every word must match). The pointer is the usual arrow everywhere in the
 picker except the search box. The list keeps the picker's size and scrolls

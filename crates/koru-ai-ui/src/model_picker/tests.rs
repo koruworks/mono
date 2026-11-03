@@ -394,108 +394,40 @@ fn the_highlight_steps_over_rows_that_cannot_be_chosen() {
     assert_eq!(step_highlight(&choosable, Some(3), 1), None);
     assert_eq!(step_highlight(&choosable, Some(3), -1), Some(1));
     assert_eq!(step_highlight(&choosable, None, -1), Some(3));
-    let even = [ROW_H; 13];
-    let room = 9.0 * ROW_H;
-    assert_eq!(scroll_into_view(&even, 12, 0, room), 4);
-    assert_eq!(scroll_into_view(&even, 2, 4, room), 2);
-    assert_eq!(scroll_into_view(&even, 5, 4, room), 4);
+    assert_eq!(scroll_into_view(12, 0, 9), 4);
+    assert_eq!(scroll_into_view(2, 4, 9), 2);
+    assert_eq!(scroll_into_view(5, 4, 9), 4);
 }
 
-/// **Rows of two heights scroll by whole rows** (D43): a row is shown only
-/// when all of it fits, the highlight scrolls until its row is whole in
-/// view, the wheel stops at the last page with the last row at the foot,
-/// and a press lands on the row drawn under it.
+/// **A model row is one line** (D43 taken back): Claude's *Default* and
+/// *Sonnet* carry a description and *Opus* none, and every row is as tall
+/// as a heading, one under the next.
 #[test]
-fn rows_of_two_heights_place_scroll_and_hit_whole() {
-    let heights = [ROW_H, TALL_ROW_H, TALL_ROW_H, ROW_H, TALL_ROW_H, TALL_ROW_H];
-    let room = LIST_ROWS as f32 * ROW_H; // 180: 30 + 46 + 46 + 30 = 152 fits
-    assert_eq!(rows_that_fit(&heights, 0, room), 4);
-    assert_eq!(rows_that_fit(&heights, 4, room), 2);
-    assert_eq!(rows_that_fit(&[TALL_ROW_H], 0, 10.0), 1, "the first always");
-    assert_eq!(rows_that_fit(&[], 0, room), 0);
-    // Row 5 in view: the rows from 2 to 5 are 46 + 30 + 46 + 46 = 168.
-    assert_eq!(scroll_into_view(&heights, 5, 0, room), 2);
-    assert_eq!(scroll_into_view(&heights, 1, 3, room), 1, "up: to the row");
-    assert_eq!(scroll_into_view(&heights, 3, 0, room), 0, "already whole");
-    assert_eq!(max_offset(&heights, room), 2);
-    assert_eq!(max_offset(&heights[..3], room), 0, "all fit");
-    assert_eq!(max_offset(&[], room), 0);
-    assert_eq!(row_top(&heights, 2), ROW_H + TALL_ROW_H);
-    // The tops are 0, 30 and 76.
-    assert_eq!(offset_at(&heights, 40.0, 2), 1, "nearest top: 30");
-    assert_eq!(offset_at(&heights, 60.0, 2), 2, "nearest top: 76");
-    assert_eq!(
-        offset_at(&heights, 500.0, 2),
-        2,
-        "no further than the last page"
-    );
-    assert_eq!(row_at(&heights, 0, 29.0), Some(0));
-    assert_eq!(row_at(&heights, 0, 31.0), Some(1));
-    assert_eq!(row_at(&heights, 2, 47.0), Some(3));
-    assert_eq!(row_at(&heights, 0, -1.0), None);
-    assert_eq!(row_at(&heights, 0, 1_000.0), None);
-}
-
-/// **A model's description is its row's second line** (D43): Claude's
-/// *Default* and *Sonnet* carry one and are two lines tall; *Opus* has
-/// none and stays one line, as do the built-in providers' rows.
-#[test]
-fn a_description_is_a_second_line_and_a_row_without_one_stays_one_line() {
+fn every_model_row_is_one_line_whatever_its_description() {
     let mut surface = surface();
     open(&mut surface);
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
-    let rows = surface.picker_rows();
     assert_eq!(
-        rows,
+        surface.picker_rows(),
         [
             Row::Default,
             Row::Model("opus".into()),
             Row::Model("sonnet".into())
         ]
     );
-    let entry = surface.picker_entry().unwrap();
-    let described: Vec<Option<String>> = rows
-        .iter()
-        .map(|row| surface.picker_row_description(&entry, row))
-        .collect();
-    assert_eq!(
-        described,
-        [
-            Some("Opus 4.7 · Most capable".to_owned()),
-            None,
-            Some("Fast and able".to_owned())
-        ]
-    );
-    assert_eq!(
-        surface.picker_row_heights(&rows),
-        [TALL_ROW_H, ROW_H, TALL_ROW_H]
-    );
-    // Where they are drawn, one under the next.
     let geometry = surface.picker_geometry().unwrap();
-    let first = surface.picker_row_rect(&geometry, 0).unwrap();
-    let second = surface.picker_row_rect(&geometry, 1).unwrap();
-    assert_eq!(first.h, TALL_ROW_H);
-    assert_eq!(second.y, first.y + TALL_ROW_H);
-    assert_eq!(second.h, ROW_H);
-    // A blank description is no description.
-    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
-    {
-        models[2].description = Some("  ".into());
+    for index in 0..3 {
+        let row = surface.picker_row_rect(&geometry, index).unwrap();
+        assert_eq!(row.h, ROW_H);
+        assert_eq!(row.y, geometry.list.y + index as f32 * ROW_H);
     }
-    assert_eq!(surface.picker_row_heights(&rows)[2], ROW_H);
-    // A heading or a note is never two lines.
-    assert!(
-        surface
-            .picker_row_description(&entry, &Row::Heading("Claude".into()))
-            .is_none()
-    );
 }
 
-/// **A list of two-line rows still scrolls to its end** (D43): the wheel
-/// stops with the last model whole at the foot, the keyboard scrolls the
-/// highlight into view, and a press chooses the row drawn under it.
+/// **A long list scrolls to its end**: the wheel stops with the last model
+/// whole at the foot, the keyboard scrolls the highlight into view, and a
+/// press chooses the row drawn under it.
 #[test]
-fn a_list_of_two_line_rows_scrolls_to_its_last_model() {
+fn a_long_list_scrolls_to_its_last_model() {
     let mut surface = surface();
     surface.agent_models.insert(
         agent("agent-claude"),
@@ -1563,10 +1495,6 @@ fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
     let entry = RailEntry::Favorites;
     let first = Row::Favorite(agent("agent-claude"), "sonnet".into());
     assert_eq!(surface.picker_row_label(&entry, &first), "Sonnet 4.6");
-    assert_eq!(
-        surface.picker_row_description(&entry, &first).as_deref(),
-        Some("Fast and able")
-    );
     assert_eq!(
         surface.row_favorite(&entry, &first),
         Some((agent("agent-claude"), "sonnet".to_owned())),
