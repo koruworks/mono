@@ -16365,9 +16365,9 @@ impl MainView {
     }
 
     /// The tooltip for the view icon under the pointer, if one is: its name
-    /// and its **slot's** `Alt+digit`, from the registry — the rects are in
-    /// rail order, so the icon's index is its slot. Keys past the caption's
-    /// and well short of the history rows' 100+.
+    /// and its **slot's** `Alt+digit`, from the registry
+    /// (`ExploreView::rail_shortcut`). Keys past the caption's and well
+    /// short of the history rows' 100+.
     fn navigator_mode_tooltip(&self, x: f32, y: f32) -> Option<TooltipContent> {
         if self.carrying() || self.sidebar.animating() {
             return None;
@@ -16379,7 +16379,8 @@ impl MainView {
             .find(|(_, (_, rect))| rect.w > 0.0 && rect.contains(x, y))
             .map(|(i, (mode, rect))| {
                 TooltipContent::new(40 + i as u64, rect, mode.label()).with_optional_shortcut(
-                    koru_keys::rail_slot(i)
+                    self.explore
+                        .rail_shortcut(mode)
                         .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
                 )
             })
