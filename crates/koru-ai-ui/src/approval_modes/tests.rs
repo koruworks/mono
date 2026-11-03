@@ -576,3 +576,133 @@ fn devins_modes_map_ask_bypass_and_manual_correctly() {
         at = Some(next.id.as_str());
     }
 }
+
+/// **The chip comes once the agent's modes do** — even when the first
+/// listing came without them. The session host reads an agent's modes with
+/// its probe, seconds after it starts, and answers its models from disk at
+/// once; the window used to ask once, as it opened, and showed no chip until
+/// the model picker asked again. Now the shown chat's agent is asked again,
+/// a little later, until its modes come or the asks run out.
+#[test]
+fn the_chip_comes_when_the_modes_come_after_the_models() {
+    let (mut surface, commands) = surface();
+    surface.agent_modes.clear();
+    let claude = agent("agent-claude");
+    let start = std::time::Instant::now();
+    let asks = |commands: &std::sync::mpsc::Receiver<Command>| {
+        let mut asked = 0;
+        while let Ok(command) = commands.recv_timeout(Duration::from_millis(20)) {
+            if matches!(command, Command::DiscoverModels(ref of) if *of == agent("agent-claude")) {
+                asked += 1;
+            }
+        }
+        asked
+    };
+    let answer = |surface: &mut ChatSurface, modes: Vec<AgentModeView>| {
+        surface.apply_update(crate::reader::Update::AgentModels(
+            koru_ai_wire::AgentModelsResponse {
+                provider: agent("agent-claude"),
+                models: Vec::new(),
+                modes,
+                default_mode: Some("default".into()),
+                levels_per_turn: false,
+            },
+        ));
+    };
+
+    assert!(surface.modes_deadline().is_some(), "owed at once");
+    surface.follow_agent_modes(start);
+    assert_eq!(asks(&commands), 1);
+    surface.follow_agent_modes(start);
+    assert_eq!(asks(&commands), 0, "not while the ask is out");
+    // The host has not probed yet: models, no modes.
+    answer(&mut surface, Vec::new());
+    assert!(surface.approval_mode_button().is_none());
+    surface.follow_agent_modes(start + Duration::from_millis(500));
+    assert_eq!(asks(&commands), 0, "not again at once");
+    let next = surface.modes_deadline().expect("asked again later");
+    assert!(next >= start + MODES_ASK_AGAIN);
+    surface.follow_agent_modes(start + MODES_ASK_AGAIN);
+    assert_eq!(asks(&commands), 1);
+    // Probed: the modes come, the chip with them, and nothing more is asked.
+    answer(&mut surface, claude_modes().modes);
+    assert!(surface.approval_mode_button().is_some());
+    assert_eq!(mode_of(&surface).as_deref(), Some("default"));
+    assert!(surface.modes_deadline().is_none());
+    surface.follow_agent_modes(start + MODES_ASK_AGAIN * 4);
+    assert_eq!(asks(&commands), 0);
+    assert!(surface.agent_modes.contains_key(&claude));
+}
+
+/// An agent that offers no modes is asked a few times, then left alone; and
+/// a chat that is not an agent's owes nothing.
+#[test]
+fn an_agent_with_no_modes_is_not_asked_forever() {
+    let (mut surface, commands) = surface();
+    surface.agent_modes.clear();
+    let start = std::time::Instant::now();
+    for ask in 0..u32::from(MODES_ASKS) + 3 {
+        surface.follow_agent_modes(start + MODES_ASK_AGAIN * ask);
+        surface.apply_update(crate::reader::Update::AgentModels(
+            koru_ai_wire::AgentModelsResponse {
+                provider: agent("agent-claude"),
+                models: Vec::new(),
+                modes: Vec::new(),
+                default_mode: None,
+                levels_per_turn: false,
+            },
+        ));
+    }
+    let mut asked = 0;
+    while let Ok(command) = commands.recv_timeout(Duration::from_millis(20)) {
+        if matches!(command, Command::DiscoverModels(_)) {
+            asked += 1;
+        }
+    }
+    assert_eq!(asked, usize::from(MODES_ASKS));
+    assert!(surface.modes_deadline().is_none());
+
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .chat
+        .current_model
+        .provider = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
+    surface.modes_asked.clear();
+    assert!(surface.modes_deadline().is_none());
+}
+
+/// **The composer's toolbar for a Claude chat** holds, left to right, the
+/// spaces the chat may read, the approval-mode chip naming its mode, the
+/// model chip and the send button — each where it is drawn and hit, none
+/// over another. No globe: web search is an OpenAI model's.
+#[test]
+fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
+    let (mut surface, _commands) = surface();
+    let mut scene = vello::Scene::new();
+    surface.draw(&mut scene, vello::kurbo::Affine::IDENTITY);
+    assert_eq!(surface.tool_access_label(), "0 spaces");
+    assert_eq!(
+        surface
+            .current_approval_row()
+            .map(|row| row.title)
+            .as_deref(),
+        Some("Ask first")
+    );
+    assert!(surface.web_search_button().is_none());
+    let toolbar = surface.composer_toolbar_rect();
+    let spaces = surface.tool_access_button();
+    let mode = surface.approval_mode_button().expect("the mode chip");
+    let model = surface.chat_model_button();
+    let send = surface.send_button();
+    assert_eq!(spaces.x, toolbar.x, "the spaces start the row");
+    for (left, right) in [(spaces, mode), (mode, model), (model, send)] {
+        assert!(left.w > 0.0 && right.w > 0.0);
+        assert!(left.x + left.w <= right.x, "{left:?} runs into {right:?}");
+    }
+    assert!(
+        mode.w >= surface.approval_mode_chip_w.min(toolbar.w * 0.4),
+        "the chip is as wide as its words"
+    );
+}

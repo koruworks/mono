@@ -551,6 +551,10 @@ pub struct ChatSurface {
     approval_mode_chip_w: f32,
     /// Each agent's approval modes, from the same listing as its models.
     agent_modes: HashMap<AiProviderId, approval_modes::ListedModes>,
+    /// Each agent's listing asked again for its modes, while its chat is
+    /// shown and they are not known: how many times, and when last
+    /// ([`approval_modes`]).
+    modes_asked: HashMap<AiProviderId, (u8, Instant)>,
     /// The agents whose level a begun chat can change, applied from the
     /// next message (koru-ai D70): their listing said so — the session
     /// host is v20. Every other agent chat keeps its level from its start.
@@ -923,6 +927,7 @@ impl ChatSurface {
             approval_mode_focus: None,
             approval_mode_chip_w: 0.0,
             agent_modes: HashMap::new(),
+            modes_asked: HashMap::new(),
             levels_per_turn: HashSet::new(),
             hidden_agents: std::collections::HashSet::new(),
             agent_defaults: agents::AgentDefaults::default(),
@@ -1316,6 +1321,7 @@ impl ChatSurface {
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
             self.work_tick_deadline(),
+            self.modes_deadline(),
             self.viewer
                 .as_ref()
                 .and_then(|open| open.viewer.maintenance_deadline()),
@@ -1332,6 +1338,7 @@ impl ChatSurface {
         changed |= self.drain_updates();
         changed |= self.maintain_chats_pane();
         self.follow_agent_checks(_now);
+        self.follow_agent_modes(_now);
         if self
             .highlight
             .is_some_and(|(_, since)| _now.duration_since(since) >= HIGHLIGHT_FOR)

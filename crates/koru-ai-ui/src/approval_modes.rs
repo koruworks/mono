@@ -408,7 +408,68 @@ pub(crate) fn next_mode<'a>(rows: &'a [ModeRow], current: Option<&str>) -> Optio
     }
 }
 
+/// How long after an agent's listing came without modes it is asked again.
+const MODES_ASK_AGAIN: Duration = Duration::from_secs(2);
+/// How many times, at most, per agent: the probe that reads them takes
+/// seconds, up to about fifteen for the slowest agent, and an agent that
+/// offers none is not asked forever.
+const MODES_ASKS: u8 = 8;
+
 impl crate::ChatSurface {
+    /// The agent of the chat on screen, for an agent chat.
+    fn shown_agent(&self) -> Option<&AiProviderId> {
+        let provider = &self.transcript.as_ref()?.chat.current_model.provider;
+        is_agent_provider(provider).then_some(provider)
+    }
+
+    /// **An agent's modes can come after its models.** The session host
+    /// keeps an agent's modes in memory only, read by its probe's session
+    /// start, while its models come from the list it kept on disk at once.
+    /// A listing answered before that probe — the one asked as the window
+    /// opens, against a host that has just started — carries no modes, and
+    /// the chip was missing until the model picker happened to ask again.
+    /// So while an agent chat is shown and its agent's modes are not known,
+    /// its listing is asked again every [`MODES_ASK_AGAIN`], at most
+    /// [`MODES_ASKS`] times; the host answers from memory.
+    pub(crate) fn follow_agent_modes(&mut self, now: Instant) {
+        let Some(agent) = self.modes_owed() else {
+            return;
+        };
+        if self
+            .modes_asked
+            .get(&agent)
+            .is_some_and(|(_, last)| now.duration_since(*last) < MODES_ASK_AGAIN)
+        {
+            return;
+        }
+        let asked = self.modes_asked.entry(agent.clone()).or_insert((0, now));
+        *asked = (asked.0 + 1, now);
+        self.ask_agent_models(agent);
+    }
+
+    /// When [`Self::follow_agent_modes`] asks next, if it will.
+    pub(crate) fn modes_deadline(&self) -> Option<Instant> {
+        let agent = self.modes_owed()?;
+        Some(
+            self.modes_asked
+                .get(&agent)
+                .map_or_else(Instant::now, |(_, last)| *last + MODES_ASK_AGAIN),
+        )
+    }
+
+    /// The shown chat's agent, while its modes are owed: not known, no ask
+    /// out for them, and asks left.
+    fn modes_owed(&self) -> Option<AiProviderId> {
+        let agent = self.shown_agent()?;
+        let owed = !self.agent_modes.contains_key(agent)
+            && !self.agent_models_asked.contains(agent)
+            && self
+                .modes_asked
+                .get(agent)
+                .is_none_or(|(count, _)| *count < MODES_ASKS);
+        owed.then(|| agent.clone())
+    }
+
     /// The chat's agent and its listed modes: an agent chat whose agent
     /// lists any. `None` for every other chat.
     fn chat_modes(&self) -> Option<(&AiProviderId, &ListedModes)> {
