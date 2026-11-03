@@ -396,7 +396,9 @@ fn rows_of_two_heights_place_scroll_and_hit_whole() {
     assert_eq!(max_offset(&heights[..3], room), 0, "all fit");
     assert_eq!(max_offset(&[], room), 0);
     assert_eq!(row_top(&heights, 2), ROW_H + TALL_ROW_H);
-    assert_eq!(offset_at(&heights, 70.0, 2), 1, "nearest top: 30");
+    // The tops are 0, 30 and 76.
+    assert_eq!(offset_at(&heights, 40.0, 2), 1, "nearest top: 30");
+    assert_eq!(offset_at(&heights, 60.0, 2), 2, "nearest top: 76");
     assert_eq!(
         offset_at(&heights, 500.0, 2),
         2,
