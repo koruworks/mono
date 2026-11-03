@@ -10,7 +10,8 @@ use vello::kurbo::Affine;
 
 use super::*;
 use crate::reader::DestinationOption;
-use crate::{ChatSurface, SurfaceMode};
+use crate::{ChatSurface, SurfaceMode, TOOL_ACCESS_CHIP_MAX_W};
+use koru_ui::button::{ActionButton, ActionStyle};
 
 /// A surface on an OpenAI chat that may reach the second of `count`
 /// workspaces, the access panel open.
@@ -289,4 +290,104 @@ fn the_panels_words_come_from_the_catalog() {
     surface.workspace_catalog_error = Some("The service did not answer.".into());
     let (_, spec, _) = surface.tool_access_frame().unwrap();
     assert_eq!(spec.empty.as_deref(), Some("The service did not answer."));
+}
+
+/// The *Button label* record inside the `KoruButton` record drawn at
+/// `chip`, from a frame of the whole surface.
+fn chip_label(surface: &mut ChatSurface, chip: Rect) -> vello::kurbo::Rect {
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
+    );
+    let mut scene = Scene::new();
+    surface.draw(&mut scene, Affine::IDENTITY);
+    let snapshot = capture.finish();
+    let records = &snapshot.records;
+    let button = records
+        .iter()
+        .position(|record| {
+            let r = record.rect();
+            record.name == "KoruButton"
+                && (r.x0 as f32 - chip.x).abs() < 0.01
+                && (r.y0 as f32 - chip.y).abs() < 0.01
+                && (r.width() as f32 - chip.w).abs() < 0.01
+        })
+        .expect("the chip's button");
+    records
+        .iter()
+        .find(|record| record.name == "Button label" && record.parent == Some(button))
+        .expect("the chip's label")
+        .rect()
+}
+
+/// **The *1 space* chip hugs its label** (D107, the user: *left indent the
+/// text, don't show that spacing on the left*). It starts where the toolbar
+/// does, its label at its left padding — the approval-mode chip's
+/// `ActionButton::PAD_X` — then the caret, and it is as wide as that and its
+/// padding: no wider button with the label centred in it.
+#[test]
+fn the_access_chip_hugs_its_label_from_its_left_padding() {
+    let mut surface = open_panel(3);
+    surface.tool_access_open = false;
+    let mut scene = Scene::new();
+    surface.draw(&mut scene, Affine::IDENTITY);
+    assert_eq!(surface.tool_access_label(), "1 space");
+    let chip = surface.tool_access_button();
+    let toolbar = surface.composer_toolbar_rect();
+    let start = surface
+        .web_search_button()
+        .or_else(|| surface.privacy_button())
+        .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
+    near(chip.x, start, "it starts the row");
+    let hug = ActionButton::new("1 space", ActionStyle::Ghost, Some(icons::CARET_DOWN))
+        .width(&mut surface.engine);
+    near(chip.w, hug, "as wide as its label, caret and padding");
+    assert!(chip.w < 78.0, "narrower than the old least, {}", chip.w);
+    let label = chip_label(&mut surface, chip);
+    near(
+        label.x0 as f32,
+        chip.x + ActionButton::PAD_X,
+        "label at the padding",
+    );
+    // More workspaces, a longer label: the chip grows with it.
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .tool_policy
+        .workspace_ids = surface
+        .destinations
+        .iter()
+        .map(|workspace| workspace.workspace_id)
+        .collect();
+    surface.draw(&mut scene, Affine::IDENTITY);
+    let wider = surface.tool_access_button();
+    assert!(wider.w > chip.w, "{} after {}", wider.w, chip.w);
+    let label = chip_label(&mut surface, wider);
+    near(
+        label.x0 as f32,
+        wider.x + ActionButton::PAD_X,
+        "still at the padding",
+    );
+}
+
+/// A label longer than the chip's widest is elided to the room its
+/// padding and caret leave, so it still starts at the padding; the chip
+/// stops at its widest.
+#[test]
+fn a_long_access_label_is_elided_inside_the_widest_chip() {
+    let mut surface = open_panel(3);
+    let long = "Zugriff auf Arbeitsbereiche, alle neunzehn";
+    surface.tool_access_chip_w =
+        ActionButton::new(long, ActionStyle::Ghost, Some(icons::CARET_DOWN))
+            .width(&mut surface.engine);
+    assert!(surface.tool_access_chip_w > TOOL_ACCESS_CHIP_MAX_W);
+    let chip = surface.tool_access_button();
+    assert!(chip.w <= TOOL_ACCESS_CHIP_MAX_W + 0.01, "{}", chip.w);
+    let shown = surface.tool_access_label_shown(long, chip);
+    assert!(shown.chars().count() < long.chars().count(), "{shown}");
+    let drawn = ActionButton::new(&shown, ActionStyle::Ghost, Some(icons::CARET_DOWN))
+        .width(&mut surface.engine);
+    assert!(drawn <= chip.w + 0.01, "{drawn} in {}", chip.w);
 }

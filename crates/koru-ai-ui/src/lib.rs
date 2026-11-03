@@ -189,6 +189,8 @@ const AUTO_TITLE_CHARS: usize = 48;
 const TOOL_ACTIVITY_MIN_EXPANDED_H: f32 = 60.0;
 const TOOL_ACCESS_WORKSPACE_ROW_H: f32 = 32.0;
 const TOOL_ACCESS_VISIBLE_ROWS: usize = 6;
+/// The workspace-access chip at its widest; a longer label is elided.
+const TOOL_ACCESS_CHIP_MAX_W: f32 = 140.0;
 
 /// Where the shared surface is hosted. It is recorded on every attempt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -554,6 +556,9 @@ pub struct ChatSurface {
     approval_mode_focus: Option<usize>,
     /// The approval-mode chip's width as last drawn: its icon, name and caret.
     approval_mode_chip_w: f32,
+    /// The workspace-access chip's width as last measured: its label, caret
+    /// and padding (D107).
+    tool_access_chip_w: f32,
     /// Each agent's approval modes, from the same listing as its models.
     agent_modes: HashMap<AiProviderId, approval_modes::ListedModes>,
     /// Each agent's listing asked again for its modes, while its chat is
@@ -939,6 +944,7 @@ impl ChatSurface {
             approval_mode_open: false,
             approval_mode_focus: None,
             approval_mode_chip_w: 0.0,
+            tool_access_chip_w: 0.0,
             agent_modes: HashMap::new(),
             modes_asked: HashMap::new(),
             levels_per_turn: HashSet::new(),
@@ -5569,10 +5575,34 @@ impl ChatSurface {
             .web_search_button()
             .or_else(|| self.privacy_button())
             .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
-        let width = (toolbar.w * 0.28)
-            .clamp(78.0, 140.0)
+        // **It hugs its label** (D107): its padding, the label and the
+        // caret, as the approval-mode chip does — never a wider button
+        // with the label centred in it — up to its widest, and never into
+        // the chip after it. Until it is first measured, its widest.
+        let content = if self.tool_access_chip_w > 0.0 {
+            self.tool_access_chip_w
+        } else {
+            TOOL_ACCESS_CHIP_MAX_W
+        };
+        let width = content
+            .min(TOOL_ACCESS_CHIP_MAX_W)
             .min((next_x - x - 6.0).max(1.0));
         Rect::new(x, toolbar.y, width, toolbar.h)
+    }
+
+    /// The workspace-access chip's label as drawn in `chip`: whole when it
+    /// fits, elided to the room its padding and caret leave when it does
+    /// not.
+    fn tool_access_label_shown(&mut self, label: &str, chip: Rect) -> String {
+        if self.tool_access_chip_w <= chip.w + 0.01 {
+            return label.to_owned();
+        }
+        let caret = self
+            .engine
+            .icon_layout(icons::CARET_DOWN, ActionButton::ICON_SIZE)
+            .width();
+        let room = (chip.w - ActionButton::PAD_X * 2.0 - ActionButton::GAP - caret).max(1.0);
+        self.engine.elided(label, role::row(), room)
     }
 
     /// The chat's model's effort control: the one the service sent with
@@ -6188,8 +6218,14 @@ impl ChatSurface {
             drop(_send);
             let chip_label = self.chip_label();
             self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
-            let access_button = self.tool_access_button();
+            // The workspace-access chip hugs its label (D107): measured
+            // first, so its button is as wide as what it draws.
             let access_label = self.tool_access_label();
+            self.tool_access_chip_w =
+                ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN))
+                    .width(&mut self.engine);
+            let access_button = self.tool_access_button();
+            let access_label = self.tool_access_label_shown(&access_label, access_button);
             ActionButton::new(&access_label, ActionStyle::Ghost, Some(icons::CARET_DOWN)).draw(
                 canvas,
                 root,
