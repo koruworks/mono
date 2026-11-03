@@ -276,6 +276,8 @@ fn a_registered_nondefault_provider_is_a_candidate_but_delegation_requires_its_o
         arguments: &[],
         launch_policy: koru_session_profiles::ManagedLaunchPolicy::Raw,
         minimum_host_capability: koru_session_protocol::capability::MANAGED_SESSIONS,
+        update_command: None,
+        sign_in_command: None,
     };
     let rows = agents_for(
         &[profile.clone()],

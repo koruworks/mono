@@ -22,6 +22,13 @@ pub struct ManagedProviderRegistration {
     pub arguments: &'static [&'static str],
     pub launch_policy: ManagedLaunchPolicy,
     pub minimum_host_capability: &'static str,
+    /// The command a person runs to update the agent to a version Koru
+    /// supports, named on the *Agent providers* page when the installed one
+    /// is not; `None` where Koru knows no such command.
+    pub update_command: Option<&'static str>,
+    /// The command a person runs to sign the agent in, named on the page
+    /// when it reports itself signed out; `None` where Koru knows none.
+    pub sign_in_command: Option<&'static str>,
 }
 
 pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -30,6 +37,8 @@ pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegis
     arguments: &["app-server", "--stdio"],
     launch_policy: ManagedLaunchPolicy::PreferManaged,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 
 pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -38,6 +47,8 @@ pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegi
     arguments: &[],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 
 pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -46,6 +57,8 @@ pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRe
     arguments: &["acp"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "kimi",
@@ -53,6 +66,8 @@ pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     arguments: &["acp"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "grok",
@@ -60,6 +75,8 @@ pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     arguments: &["agent", "stdio"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 
 /// Google's official Antigravity ACP server (AGENTUX I9). It is a separate
@@ -72,6 +89,8 @@ pub const ANTIGRAVITY_REGISTRATION: ManagedProviderRegistration = ManagedProvide
     arguments: &[],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    update_command: None,
+    sign_in_command: None,
 };
 
 /// Cognition's Devin CLI as an ACP server over stdio (`devin acp`). The same
@@ -84,6 +103,9 @@ pub const DEVIN_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegis
     arguments: &["acp"],
     launch_policy: ManagedLaunchPolicy::Raw,
     minimum_host_capability: capability::MANAGED_SESSIONS,
+    // Both as Devin's bundled docs give them.
+    update_command: Some("devin update"),
+    sign_in_command: Some("devin auth login"),
 };
 
 /// Registration grants neither managed readiness nor delegation's live verdict.

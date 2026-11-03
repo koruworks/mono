@@ -113,10 +113,14 @@ pub(crate) fn agent_status(
             })
         }
         ExecutableAvailability::SignedOut { .. } => {
-            AgentProviderStatus::NeedsAttention(AgentAttention::SignedOut)
+            AgentProviderStatus::NeedsAttention(AgentAttention::SignedOut {
+                sign_in: registration.sign_in_command.map(str::to_owned),
+            })
         }
         ExecutableAvailability::Incompatible { .. } => {
-            AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion)
+            AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+                update: registration.update_command.map(str::to_owned),
+            })
         }
         ExecutableAvailability::Failed { .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::CheckFailed)

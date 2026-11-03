@@ -80,3 +80,31 @@ fn live_is_the_default_and_down_is_the_exception() {
     assert!(!Availability::Live.is_down());
     assert!(Availability::Down.is_down());
 }
+
+/// An agent that knows the command to run names it, in code style; one that
+/// does not keeps the sentence it always had.
+#[test]
+fn an_attention_row_names_the_agents_command_when_it_has_one() {
+    let lang = koru_i18n::Lang::En;
+    let words = |why| AgentProviderStatus::NeedsAttention(why).words(lang);
+    assert_eq!(
+        words(AgentAttention::UnsupportedVersion {
+            update: Some("devin update".into())
+        }),
+        "Needs attention — This version isn't one Koru supports yet. Run `devin update` to update it."
+    );
+    assert_eq!(
+        words(AgentAttention::SignedOut {
+            sign_in: Some("devin auth login".into())
+        }),
+        "Needs attention — Signed out. Run `devin auth login` to sign in."
+    );
+    assert!(
+        words(AgentAttention::UnsupportedVersion { update: None })
+            .ends_with("This version isn't one Koru supports yet.")
+    );
+    assert!(
+        words(AgentAttention::SignedOut { sign_in: None })
+            .ends_with("Signed out. Sign in from the agent's own CLI.")
+    );
+}

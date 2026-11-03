@@ -68,11 +68,11 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
     assert_eq!(status("claude", Some(true)), AgentProviderStatus::Ready);
     assert_eq!(
         status("codex", Some(true)),
-        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion)
+        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion { update: None })
     );
     assert_eq!(
         status("kimi", Some(true)),
-        AgentProviderStatus::NeedsAttention(AgentAttention::SignedOut)
+        AgentProviderStatus::NeedsAttention(AgentAttention::SignedOut { sign_in: None })
     );
     assert_eq!(
         status("antigravity", Some(true)),
@@ -95,6 +95,39 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
         agent_status(&profile("claude"), Some(true), None),
         AgentProviderStatus::Checking
     );
+}
+
+/// **Devin's rows name the command to run**: an unsupported version names
+/// `devin update`, signed out names `devin auth login`, from its
+/// registration; an agent with no such command keeps today's words.
+#[test]
+fn devins_attention_rows_name_the_command_to_run() {
+    let incompatible = ExecutableAvailability::Incompatible {
+        code: ErrorCode::ProviderIncompatible,
+    };
+    let signed_out = ExecutableAvailability::SignedOut {
+        code: ErrorCode::ProviderFailed,
+    };
+    let lang = koru_i18n::Lang::En;
+    let words = |key: &str, availability: &ExecutableAvailability| {
+        let snapshot = vec![readiness(key, availability.clone())];
+        agent_status(&profile(key), Some(true), Some(&snapshot)).words(lang)
+    };
+    assert_eq!(
+        agent_status(
+            &profile("devin"),
+            Some(true),
+            Some(&[readiness("devin", incompatible.clone())])
+        ),
+        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            update: Some("devin update".into())
+        })
+    );
+    assert!(words("devin", &incompatible).contains("Run `devin update` to update it."));
+    assert!(words("devin", &signed_out).contains("Run `devin auth login` to sign in."));
+    // Codex knows no such command here: the row reads as it always did.
+    assert!(words("codex", &incompatible).ends_with("This version isn't one Koru supports yet."));
+    assert!(words("kimi", &signed_out).ends_with("Sign in from the agent's own CLI."));
 }
 
 /// **The page lists every coding agent Koru supports** — the *Agents ›*

@@ -260,16 +260,16 @@ pub enum AgentProviderStatus {
 /// checks already know.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentAttention {
-    /// A version Koru's managed route does not accept yet.
-    UnsupportedVersion,
-    SignedOut,
+    /// A version Koru's managed route does not accept yet; `update` is the
+    /// command that updates it, named on the row when the agent has one.
+    UnsupportedVersion { update: Option<String> },
+    /// Signed out; `sign_in` is the command that signs it in, when known.
+    SignedOut { sign_in: Option<String> },
     /// The check itself failed.
     CheckFailed,
     /// The agent is installed but the program a chat runs it through is
     /// not — Claude's `claude-agent-acp`, Antigravity's `agy_acp_server`.
-    AdapterMissing {
-        program: String,
-    },
+    AdapterMissing { program: String },
 }
 
 impl AgentProviderStatus {
@@ -292,10 +292,21 @@ impl AgentProviderStatus {
             Self::NeedsAttention(why) => detail(
                 Key::SettingsAgentNeedsAttention,
                 match why {
-                    AgentAttention::UnsupportedVersion => {
+                    AgentAttention::UnsupportedVersion { update: None } => {
                         t(lang, Key::SettingsAgentUnsupportedVersion).to_owned()
                     }
-                    AgentAttention::SignedOut => t(lang, Key::SettingsAgentSignedOut).to_owned(),
+                    AgentAttention::UnsupportedVersion {
+                        update: Some(command),
+                    } => fill(
+                        t(lang, Key::SettingsAgentUnsupportedVersionUpdate),
+                        &[command],
+                    ),
+                    AgentAttention::SignedOut { sign_in: None } => {
+                        t(lang, Key::SettingsAgentSignedOut).to_owned()
+                    }
+                    AgentAttention::SignedOut {
+                        sign_in: Some(command),
+                    } => fill(t(lang, Key::SettingsAgentSignedOutRun), &[command]),
                     AgentAttention::CheckFailed => {
                         t(lang, Key::SettingsAgentCheckFailed).to_owned()
                     }

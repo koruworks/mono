@@ -2570,6 +2570,8 @@ pub enum Key {
     SettingsAgentNotOnPath,
     SettingsAgentUnsupportedVersion,
     SettingsAgentSignedOut,
+    SettingsAgentUnsupportedVersionUpdate,
+    SettingsAgentSignedOutRun,
     SettingsAgentCheckFailed,
     SettingsAgentStatusDetail,
     SettingsAgentSetupGuide,
@@ -2786,7 +2788,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1940] = [
+    pub const ALL: [Key; 1942] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4577,6 +4579,8 @@ impl Key {
         Key::SettingsAgentNotOnPath,
         Key::SettingsAgentUnsupportedVersion,
         Key::SettingsAgentSignedOut,
+        Key::SettingsAgentUnsupportedVersionUpdate,
+        Key::SettingsAgentSignedOutRun,
         Key::SettingsAgentCheckFailed,
         Key::SettingsAgentStatusDetail,
         Key::SettingsAgentSetupGuide,
@@ -14739,6 +14743,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsAgentNotOnPath, en: "`{}` isn't on PATH.", es: "`{}` no está en el PATH.", pt_br: "`{}` não está no PATH.", de: "`{}` ist nicht im PATH.", fr: "`{}` n'est pas dans le PATH.", ar: "`{}` غير موجود في PATH.", zh_hans: "`{}` 不在 PATH 中。", ja: "`{}` が PATH にありません。" },
     Row { key: Key::SettingsAgentUnsupportedVersion, en: "This version isn't one Koru supports yet.", es: "Koru aún no admite esta versión.", pt_br: "O Koru ainda não oferece suporte a esta versão.", de: "Koru unterstützt diese Version noch nicht.", fr: "Koru ne prend pas encore en charge cette version.", ar: "لا يدعم Koru هذا الإصدار بعد.", zh_hans: "Koru 尚不支持此版本。", ja: "このバージョンにはまだ Koru が対応していません。" },
     Row { key: Key::SettingsAgentSignedOut, en: "Signed out. Sign in from the agent's own CLI.", es: "Sesión cerrada. Inicia sesión desde la propia herramienta del agente.", pt_br: "Desconectado. Faça login pela própria ferramenta do agente.", de: "Abgemeldet. Melde dich im eigenen Kommandozeilen-Tool des Agenten an.", fr: "Déconnecté. Connectez-vous depuis l'outil en ligne de commande de l'agent.", ar: "غير مسجّل الدخول. سجّل الدخول من أداة سطر الأوامر الخاصة بالوكيل.", zh_hans: "未登录。请在该智能体自己的命令行工具中登录。", ja: "サインアウトしています。エージェント自身の CLI からサインインしてください。" },
+    Row { key: Key::SettingsAgentUnsupportedVersionUpdate, en: "This version isn't one Koru supports yet. Run `{}` to update it.", es: "Koru aún no admite esta versión. Ejecuta `{}` para actualizarla.", pt_br: "O Koru ainda não oferece suporte a esta versão. Execute `{}` para atualizá-la.", de: "Koru unterstützt diese Version noch nicht. Führe `{}` aus, um sie zu aktualisieren.", fr: "Koru ne prend pas encore en charge cette version. Exécutez `{}` pour la mettre à jour.", ar: "لا يدعم Koru هذا الإصدار بعد. شغّل `{}` لتحديثه.", zh_hans: "Koru 尚不支持此版本。运行 `{}` 进行更新。", ja: "このバージョンにはまだ Koru が対応していません。`{}` を実行して更新してください。" },
+    Row { key: Key::SettingsAgentSignedOutRun, en: "Signed out. Run `{}` to sign in.", es: "Sesión cerrada. Ejecuta `{}` para iniciar sesión.", pt_br: "Desconectado. Execute `{}` para fazer login.", de: "Abgemeldet. Führe `{}` aus, um dich anzumelden.", fr: "Déconnecté. Exécutez `{}` pour vous connecter.", ar: "غير مسجّل الدخول. شغّل `{}` لتسجيل الدخول.", zh_hans: "未登录。运行 `{}` 进行登录。", ja: "サインアウトしています。`{}` を実行してサインインしてください。" },
     Row { key: Key::SettingsAgentCheckFailed, en: "Koru couldn't check it.", es: "Koru no pudo comprobarlo.", pt_br: "O Koru não conseguiu verificá-lo.", de: "Koru konnte es nicht prüfen.", fr: "Koru n'a pas pu le vérifier.", ar: "تعذّر على Koru التحقق منه.", zh_hans: "Koru 无法检查它。", ja: "Koru が確認できませんでした。" },
     Row { key: Key::SettingsAgentStatusDetail, en: "{} — {}", es: "{} — {}", pt_br: "{} — {}", de: "{} — {}", fr: "{} — {}", ar: "{} — {}", zh_hans: "{} — {}", ja: "{} — {}" },
     Row { key: Key::SettingsAgentSetupGuide, en: "Setup guide ↗", es: "Guía de instalación ↗", pt_br: "Guia de instalação ↗", de: "Einrichtungsanleitung ↗", fr: "Guide d'installation ↗", ar: "دليل الإعداد ↗", zh_hans: "设置指南 ↗", ja: "セットアップガイド ↗" },

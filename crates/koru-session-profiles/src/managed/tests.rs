@@ -158,6 +158,8 @@ fn fixture_registration() -> ManagedProviderRegistration {
         arguments: &[],
         launch_policy: ManagedLaunchPolicy::Raw,
         minimum_host_capability: capability::MANAGED_SESSIONS,
+        update_command: None,
+        sign_in_command: None,
     }
 }
 

@@ -31,7 +31,9 @@ fn rows() -> Vec<AgentProviderRow> {
         row(
             "codex",
             "Codex",
-            AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion),
+            AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+                update: None,
+            }),
             true,
         ),
         row(
