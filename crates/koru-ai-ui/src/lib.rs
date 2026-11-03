@@ -712,6 +712,9 @@ pub struct ChatSurface {
     /// moves the chat up its Chats list on each.
     activity: u32,
     activity_reported: u32,
+    /// `Ctrl+Shift+↑`/`↓` asked for the chat above or below in the Chats
+    /// list, where a host with a navigator answers it (D87).
+    wants_chat_step: Option<koru_chats_ui::ChatStep>,
     /// A NEW divider above the first message the person has not seen, and
     /// the chat opened there (D84). Set by the host as the chat comes into
     /// view.
@@ -995,6 +998,7 @@ impl ChatSurface {
             asked_reported: false,
             activity: 0,
             activity_reported: 0,
+            wants_chat_step: None,
             new_divider: None,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
@@ -1571,6 +1575,13 @@ impl ChatSurface {
             && self.jump_key_is_ours()
         {
             return self.jump_to_latest();
+        }
+        // **Ctrl+Shift+↑/↓ step through the Chats list** (D87) — on the
+        // same terms: in a message with text the chord stays the editor's.
+        if let Some(step) = Self::chat_step_chord(key, text, mods)
+            && self.jump_key_is_ours()
+        {
+            return self.step_chat(step);
         }
         if let Focus::Work(message) = self.focus
             && let Some(handled) = self.work_key(message, key, mods)
@@ -13466,6 +13477,66 @@ mod tests {
         surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
         assert!(surface.new_divider_index().is_none());
         assert!(surface.new_divider.as_ref().unwrap().top.is_none());
+    }
+
+    /// **Ctrl+Shift+↑/↓ step through the Chats list** (D87): in a host with a
+    /// navigator the host is asked; with text in the composer the chord is
+    /// the editor's and nothing is asked; the standalone window reads the
+    /// next chat in place, in the list's order.
+    #[test]
+    fn ctrl_shift_arrows_step_through_the_chats_list_with_an_empty_composer() {
+        let primary_shift = if cfg!(target_os = "macos") {
+            ModifiersState::SUPER | ModifiersState::SHIFT
+        } else {
+            ModifiersState::CONTROL | ModifiersState::SHIFT
+        };
+        let down = Key::Named(NamedKey::ArrowDown);
+        let up = Key::Named(NamedKey::ArrowUp);
+
+        let mut pane = ChatSurface::new(SurfaceMode::ContextPane);
+        pane.transcript = Some(transcript());
+        pane.validated_ready = true;
+        pane.setup_open = false;
+        assert!(pane.key(&down, None, primary_shift));
+        assert_eq!(
+            pane.take_wants_chat_step(),
+            Some(koru_chats_ui::ChatStep::Next)
+        );
+        pane.composer.set_text("two\nlines");
+        pane.key(&up, None, primary_shift);
+        assert_eq!(pane.take_wants_chat_step(), None, "the editor's chord");
+
+        let mut window = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        window.reader = Some(reader);
+        window.validated_ready = true;
+        window.setup_open = false;
+        let shown = transcript();
+        let mut above = shown.chat.clone();
+        above.id = ChatId::new();
+        above.updated_at = koru_ai_core::Timestamp::from_millis(50);
+        let mut below = shown.chat.clone();
+        below.id = ChatId::new();
+        below.updated_at = koru_ai_core::Timestamp::from_millis(0);
+        let mut current = shown.chat.clone();
+        current.updated_at = koru_ai_core::Timestamp::from_millis(10);
+        window.chats = vec![below.clone(), current, above.clone()];
+        window.transcript = Some(shown);
+        assert!(window.key(&down, None, primary_shift));
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Read(chat) if chat == below.id
+        ));
+        assert!(window.key(&up, None, primary_shift));
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Read(chat) if chat == above.id
+        ));
+        assert_eq!(window.take_wants_chat_step(), None, "read in place");
+        assert_eq!(
+            koru_keys::registry::get(koru_keys::ShortcutId::NextChat).layer,
+            koru_keys::Layer::Chat
+        );
     }
 
     /// Reduced motion holds the light over *Working for …* still: the work

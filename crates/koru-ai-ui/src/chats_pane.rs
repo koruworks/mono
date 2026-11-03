@@ -619,6 +619,62 @@ impl ChatSurface {
         self.send_command(Command::Pin(chat, koru_ai_wire::PinChatRequest { pinned }))
     }
 
+    /// Which step through the Chats list a key is, if it is one (D87).
+    pub(crate) fn chat_step_chord(
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<koru_chats_ui::ChatStep> {
+        let is = |id| koru_keys::registry::get(id).chord.matches(key, text, mods);
+        if is(koru_keys::ShortcutId::PreviousChat) {
+            Some(koru_chats_ui::ChatStep::Previous)
+        } else if is(koru_keys::ShortcutId::NextChat) {
+            Some(koru_chats_ui::ChatStep::Next)
+        } else {
+            None
+        }
+    }
+
+    /// **Move to the chat above or below in the Chats list** (D87), as
+    /// choosing its row would. The standalone window reads it in place, as
+    /// its pane's rows do; a host with a navigator is asked
+    /// ([`take_wants_chat_step`](Self::take_wants_chat_step)), because the
+    /// list it shows is its own. At either end nothing moves, and the key
+    /// is still taken: it means *next chat* here, not *move this line*.
+    pub(crate) fn step_chat(&mut self, step: koru_chats_ui::ChatStep) -> bool {
+        if !self.hosts_chats_pane() {
+            self.wants_chat_step = Some(step);
+            return true;
+        }
+        let Some(current) = self.current_chat_id() else {
+            return true;
+        };
+        let mut chats = if self.chats_pane.chats().is_empty() {
+            self.chats.clone()
+        } else {
+            self.chats_pane.chats().to_vec()
+        };
+        koru_chats_ui::sort_for_list(&mut chats);
+        if let Some(chat) = step.from(&chats, current) {
+            self.close_chats_pane();
+            self.scroll_loaded_chat_to_bottom = true;
+            self.send_command(Command::Read(chat));
+        }
+        true
+    }
+
+    /// `Ctrl+Shift+↑`/`↓` in a surface whose host has a Chats navigator:
+    /// the host moves to the chat above or below in its list (D87).
+    pub fn take_wants_chat_step(&mut self) -> Option<koru_chats_ui::ChatStep> {
+        self.wants_chat_step.take()
+    }
+
+    /// The chats this surface last listed, for a host whose own list has
+    /// not been asked yet.
+    pub fn listed_chats(&self) -> &[koru_ai_core::Chat] {
+        &self.chats
+    }
+
     /// `F2` on the pane: open the field over the keyboard's chat.
     pub(crate) fn start_chats_rename(&mut self) -> bool {
         let Some(chat) = self.chats_pane.focused_chat() else {

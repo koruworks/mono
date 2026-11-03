@@ -75,6 +75,61 @@ fn an_unread_chat_coming_into_view_gets_its_divider_from_the_last_seen_message()
     assert!(with_book(|book| !book.is_unread(behind, None)));
 }
 
+/// **Ctrl+Shift+↓ in a chat tab opens the chat below in the Chats list**
+/// (D87), as choosing its row does — focusing its tab when one shows it.
+#[test]
+fn a_step_in_a_chat_tab_opens_the_chat_below_in_the_list() {
+    let (mut v, _ws) = container();
+    let chat = |n: u128, updated: i64| koru_chats_ui::Chat {
+        id: ChatId::from_uuid(uuid::Uuid::from_u128(n)),
+        title: format!("Chat {n}"),
+        private: false,
+        current_model: koru_ai_core::ModelSelection {
+            provider: koru_ai_core::AiProviderId::parse("openai").unwrap(),
+            requested_model: "gpt-test".into(),
+            default_reasoning: koru_ai_core::ReasoningChoice::Default,
+        },
+        branched_from: None,
+        agent_working_folder: None,
+        agent_mode: None,
+        agent_fast: None,
+        pinned_at: None,
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+        updated_at: koru_ai_core::Timestamp::from_millis(updated),
+    };
+    let (top, below) = (chat(0xa1, 20), chat(0xa2, 10));
+    v.explore
+        .chats_mut()
+        .take_listing(Ok(koru_chats_ui::Listing {
+            chats: vec![below.clone(), top.clone()],
+            agents: Vec::new(),
+        }));
+    assert!(v.open_ai_chat_tab_for(top.id));
+    let primary_shift = if cfg!(target_os = "macos") {
+        winit::keyboard::ModifiersState::SUPER | winit::keyboard::ModifiersState::SHIFT
+    } else {
+        winit::keyboard::ModifiersState::CONTROL | winit::keyboard::ModifiersState::SHIFT
+    };
+    let TabView::AiChat(view) = &mut v.tabs_mut().active_mut().view else {
+        panic!("a chat tab in front");
+    };
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("create");
+    koru_workspace_host::View::key(
+        view,
+        &mut ws,
+        &winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowDown),
+        None,
+        primary_shift,
+    );
+    assert!(v.step_chats());
+    let TabView::AiChat(view) = &v.tabs().active_tab().view else {
+        panic!("a chat tab in front");
+    };
+    assert_eq!(view.chat_id(), Some(below.id));
+    assert!(!v.step_chats(), "asked once");
+}
+
 /// **An idle window asks for no frames**: chat tabs that neither work nor
 /// wait leave the status deadline empty, unread or not.
 #[test]

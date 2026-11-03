@@ -260,6 +260,17 @@ impl AiChatView {
         self.surface.pin_chat(chat, pinned)
     }
 
+    /// `Ctrl+Shift+↑`/`↓` in this tab: the container moves to the chat
+    /// above or below in its Chats list (D87).
+    pub fn take_wants_chat_step(&mut self) -> Option<koru_chats_ui::ChatStep> {
+        self.surface.take_wants_chat_step()
+    }
+
+    /// The chats this tab's surface last listed.
+    pub fn listed_chats(&self) -> &[koru_chats_ui::Chat] {
+        self.surface.listed_chats()
+    }
+
     /// The *Chats* button in this tab was pressed: show the Chats view.
     pub fn take_wants_chats_view(&mut self) -> bool {
         self.surface.take_wants_chats_view()

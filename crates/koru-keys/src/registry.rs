@@ -368,6 +368,19 @@ pub enum ShortcutId {
     /// keyboard is not in the composer. The editor's caret keys are not
     /// rows of this table, so no row is shared.
     JumpToLatest,
+    /// **The chat above in the Chats list** (koru-ai D87), as shown — the
+    /// Pinned group first, then by activity — the same as choosing its row.
+    ///
+    /// The same chord as the editor's [`MoveRowUp`](Self::MoveRowUp), and
+    /// said so: the composer is an editor, and in a message with lines in
+    /// it the chord stays *move this line up*. The chat takes it only while
+    /// the message is empty or the keyboard is not in the composer — the
+    /// rule `Ctrl+End` keeps (D77). The Agent providers list's row moves
+    /// (D41) and the document's block moves are other surfaces.
+    PreviousChat,
+    /// **The chat below in the Chats list** (D87); the same chord as the
+    /// editor's [`MoveRowDown`](Self::MoveRowDown), on the same terms.
+    NextChat,
 }
 
 /// One row of the table.
@@ -1074,6 +1087,24 @@ pub const REGISTRY: &[Shortcut] = &[
         "Jump to latest",
         Chord::new(named(NamedKey::End), PRIMARY),
     ),
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::MoveRowUp),
+        ..s(
+            ShortcutId::PreviousChat,
+            Layer::Chat,
+            "Previous chat",
+            Chord::new(named(NamedKey::ArrowUp), PRIMARY_SHIFT),
+        )
+    },
+    Shortcut {
+        shares_chord_with: Some(ShortcutId::MoveRowDown),
+        ..s(
+            ShortcutId::NextChat,
+            Layer::Chat,
+            "Next chat",
+            Chord::new(named(NamedKey::ArrowDown), PRIMARY_SHIFT),
+        )
+    },
 ];
 
 impl ShortcutId {
@@ -1093,7 +1124,9 @@ impl ShortcutId {
             | Self::ToggleAiPane
             | Self::Delegate
             | Self::CycleAgentMode
-            | Self::JumpToLatest => koru_features::ai(),
+            | Self::JumpToLatest
+            | Self::PreviousChat
+            | Self::NextChat => koru_features::ai(),
             Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),

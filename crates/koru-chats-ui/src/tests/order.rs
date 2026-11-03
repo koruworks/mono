@@ -97,6 +97,28 @@ fn pinning_moves_the_row_at_once_and_unpinning_returns_it() {
     );
 }
 
+/// **A step moves through the list as shown** (D87): into and out of the
+/// Pinned group, and not past either end.
+#[test]
+fn a_step_moves_through_the_list_as_shown_and_stops_at_the_ends() {
+    let surface = showing(vec![
+        chat(1, "Newest", 1_000),
+        pinned(chat(2, "Pinned", 60_000), 5),
+        chat(3, "Oldest", 3_600_000),
+    ]);
+    let chats = surface.chats();
+    assert_eq!(crate::ChatStep::Next.from(chats, id(2)), Some(id(1)));
+    assert_eq!(crate::ChatStep::Previous.from(chats, id(1)), Some(id(2)));
+    assert_eq!(crate::ChatStep::Next.from(chats, id(1)), Some(id(3)));
+    assert_eq!(
+        crate::ChatStep::Previous.from(chats, id(2)),
+        None,
+        "the top"
+    );
+    assert_eq!(crate::ChatStep::Next.from(chats, id(3)), None, "the end");
+    assert_eq!(crate::ChatStep::Next.from(chats, id(9)), None, "not listed");
+}
+
 /// The keyboard stays on its chat when a row moves under it.
 #[test]
 fn the_keyboard_follows_its_chat_when_the_order_moves() {

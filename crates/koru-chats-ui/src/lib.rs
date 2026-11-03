@@ -69,7 +69,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use koru_ai_core::Chat;
+/// Re-exported so a host can hold a listed chat without a `koru-ai-core`
+/// dependency of its own.
+pub use koru_ai_core::Chat;
 use koru_ai_wire::{AgentProviderView, Failure};
 use koru_i18n::Lang;
 
@@ -779,6 +781,28 @@ impl ChatsSurface {
             Some(status) => format!("{name}, {status}"),
             None => name,
         })
+    }
+}
+
+/// **A step through the Chats list** (koru-ai D87): `Ctrl+Shift+↑` and
+/// `Ctrl+Shift+↓` in a chat.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ChatStep {
+    Previous,
+    Next,
+}
+
+impl ChatStep {
+    /// The chat a step from `current` lands on in `chats`, which are in the
+    /// list's order ([`sort_for_list`]). `None` at either end — a step does
+    /// not wrap — and for a chat the list does not hold.
+    pub fn from(self, chats: &[Chat], current: ChatId) -> Option<ChatId> {
+        let at = chats.iter().position(|chat| chat.id == current)?;
+        let to = match self {
+            Self::Previous => at.checked_sub(1)?,
+            Self::Next => at + 1,
+        };
+        chats.get(to).map(|chat| chat.id)
     }
 }
 

@@ -5821,6 +5821,7 @@ impl MainView {
         // Which chats work, wait or hold something unseen (D83), before the
         // Chats view is asked again below.
         let status_changed = self.maintain_chat_status();
+        let step_changed = self.step_chats();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
         let mut wants_view = self
             .ai_chat
@@ -5849,7 +5850,7 @@ impl MainView {
                 relabeled = true;
             }
         }
-        let mut changed = relabeled || status_changed;
+        let mut changed = relabeled || status_changed || step_changed;
         if let Some(chat) = wants_view {
             changed |= self.show_chats_on(chat);
         }
@@ -5877,6 +5878,45 @@ impl MainView {
             chat_status::forget(chat);
         }
         changed
+    }
+
+    /// **`Ctrl+Shift+↑`/`↓` in a chat** (koru-ai D87): the chat above or
+    /// below in the Chats list as it is shown — Pinned first, then by
+    /// activity — opened the way choosing its row opens it. The navigator's
+    /// list when it has one; else the list the asking surface last read,
+    /// in the same order. At either end nothing moves.
+    fn step_chats(&mut self) -> bool {
+        let mut asked: Option<(
+            koru_ai_ui::ChatId,
+            koru_chats_ui::ChatStep,
+            Vec<koru_chats_ui::Chat>,
+        )> = None;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view
+                    && let Some(step) = view.take_wants_chat_step()
+                    && let Some(chat) = view.chat_id()
+                {
+                    asked = Some((chat, step, view.listed_chats().to_vec()));
+                }
+            }
+        }
+        if let Some(step) = self.ai_chat.take_wants_chat_step()
+            && let Some(chat) = self.ai_chat.current_chat_id()
+        {
+            asked = Some((chat, step, self.ai_chat.listed_chats().to_vec()));
+        }
+        let Some((current, step, mut fallback)) = asked else {
+            return false;
+        };
+        let shown = self.explore.chats_mut().chats();
+        let target = if shown.iter().any(|chat| chat.id == current) {
+            step.from(shown, current)
+        } else {
+            koru_chats_ui::sort_for_list(&mut fallback);
+            step.from(&fallback, current)
+        };
+        target.is_some_and(|chat| self.open_ai_chat_tab_for(chat))
     }
 
     /// Show the Chats view, on `chat` when there is one — the *Chats* button
