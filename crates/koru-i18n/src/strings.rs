@@ -2836,13 +2836,19 @@ pub enum Key {
     PageMenuGlobalSettings,
     /// The only row of a document's `…` in its title row, for now.
     DocumentOpenInChat,
+    /// The composer's workspace-access panel (koru-ai D106): its heading,
+    /// its filter's placeholder, and what its list says with no row.
+    AiToolWorkspaceAccessHeading,
+    AiToolWorkspaceFilter,
+    AiToolWorkspacesNone,
+    AiToolWorkspacesNoMatch,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1979] = [
+    pub const ALL: [Key; 1983] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4822,6 +4828,10 @@ impl Key {
         Key::VoiceConsentClosing,
         Key::PageMenuGlobalSettings,
         Key::DocumentOpenInChat,
+        Key::AiToolWorkspaceAccessHeading,
+        Key::AiToolWorkspaceFilter,
+        Key::AiToolWorkspacesNone,
+        Key::AiToolWorkspacesNoMatch,
     ];
 }
 
@@ -15416,5 +15426,54 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "فتح في محادثة",
         zh_hans: "在聊天中打开",
         ja: "チャットで開く",
+    },
+    // The workspace-access panel's heading, above the workspaces the chat
+    // may reach; the count (chosen of all) follows it.
+    Row {
+        key: Key::AiToolWorkspaceAccessHeading,
+        en: "WORKSPACE ACCESS",
+        es: "ACCESO A ESPACIOS",
+        pt_br: "ACESSO A ESPAÇOS",
+        de: "ZUGRIFF AUF ARBEITSBEREICHE",
+        fr: "ACCÈS AUX ESPACES",
+        ar: "الوصول إلى مساحات العمل",
+        zh_hans: "工作区访问",
+        ja: "ワークスペースへのアクセス",
+    },
+    // The panel's filter field, empty: shown over five workspaces.
+    Row {
+        key: Key::AiToolWorkspaceFilter,
+        en: "Filter workspaces",
+        es: "Filtrar espacios",
+        pt_br: "Filtrar espaços",
+        de: "Arbeitsbereiche filtern",
+        fr: "Filtrer les espaces",
+        ar: "تصفية مساحات العمل",
+        zh_hans: "筛选工作区",
+        ja: "ワークスペースを絞り込む",
+    },
+    // The panel's list when there is no workspace at all.
+    Row {
+        key: Key::AiToolWorkspacesNone,
+        en: "No Koru workspaces are available.",
+        es: "No hay espacios de Koru disponibles.",
+        pt_br: "Nenhum espaço do Koru está disponível.",
+        de: "Keine Koru-Arbeitsbereiche verfügbar.",
+        fr: "Aucun espace Koru n’est disponible.",
+        ar: "لا تتوفر مساحات عمل في Koru.",
+        zh_hans: "没有可用的 Koru 工作区。",
+        ja: "利用できる Koru のワークスペースはありません。",
+    },
+    // The panel's list when the filter matches none.
+    Row {
+        key: Key::AiToolWorkspacesNoMatch,
+        en: "No matching workspaces.",
+        es: "Ningún espacio coincide.",
+        pt_br: "Nenhum espaço corresponde.",
+        de: "Keine passenden Arbeitsbereiche.",
+        fr: "Aucun espace ne correspond.",
+        ar: "لا توجد مساحات عمل مطابقة.",
+        zh_hans: "没有匹配的工作区。",
+        ja: "一致するワークスペースはありません。",
     },
 ];

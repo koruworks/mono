@@ -70,6 +70,9 @@ mod tokens;
 /// model's id — the approval-mode list and the workspace-access panel are
 /// laid out on them as the picker is.
 pub(crate) use elements::{layout as layout_elements, stable_id};
+/// The search field's adapter, which the workspace-access panel's filter
+/// field is too (D106).
+pub(crate) use paint::{SearchLeaf, SearchPaint};
 
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
@@ -229,9 +232,14 @@ pub(crate) struct SharedInput(Rc<RefCell<TextInput>>);
 
 impl SharedInput {
     fn new(engine: &mut TextEngine) -> Self {
-        Self(Rc::new(RefCell::new(TextInput::new(
-            engine,
-            theme::role::row(),
+        Self::with_text(engine, theme::role::row(), "")
+    }
+
+    /// An input in `style` holding `text`: the workspace-access panel's
+    /// filter (D106), which shares the search field's leaf.
+    pub(crate) fn with_text(engine: &mut TextEngine, style: theme::TextStyle, text: &str) -> Self {
+        Self(Rc::new(RefCell::new(TextInput::with_text(
+            engine, style, text,
         ))))
     }
 
@@ -240,11 +248,24 @@ impl SharedInput {
         self.0.borrow().raw_text().to_owned()
     }
 
+    /// What is typed, as a field's value.
+    pub(crate) fn value(&self) -> String {
+        self.0.borrow().value()
+    }
+
     pub(crate) fn set_text(&self, engine: &mut TextEngine, text: &str) {
         self.0.borrow_mut().set_text(engine, text);
     }
 
-    fn key(
+    pub(crate) fn drag(&self, engine: &mut TextEngine, r: Rect, x: f32) -> bool {
+        self.0.borrow_mut().drag(engine, r, x)
+    }
+
+    pub(crate) fn release(&self) {
+        self.0.borrow_mut().release();
+    }
+
+    pub(crate) fn key(
         &self,
         engine: &mut TextEngine,
         key: &WinitKey,
@@ -254,7 +275,7 @@ impl SharedInput {
         self.0.borrow_mut().key(engine, key, text, mods)
     }
 
-    fn click(&self, engine: &mut TextEngine, r: Rect, x: f32, y: f32) -> bool {
+    pub(crate) fn click(&self, engine: &mut TextEngine, r: Rect, x: f32, y: f32) -> bool {
         self.0.borrow_mut().click(engine, r, x, y)
     }
 

@@ -3,9 +3,16 @@
 //! Per-chat privacy and tool-access controls.
 
 use koru_ai_wire::UpdateChatPrivacyRequest;
+use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_i18n::Key;
 
 use super::*;
+use crate::model_picker::SearchPaint;
+
+mod elements;
+#[cfg(test)]
+mod tests;
+mod tokens;
 
 const WORKSPACE_PANEL_FIXED_H: f32 = 35.0;
 const WORKSPACE_LIST_Y: f32 = 31.0;
@@ -85,17 +92,117 @@ impl ChatSurface {
             }
     }
 
+    /// The filter field, where the frame draws it: over five workspaces.
     pub(super) fn tool_access_search_rect(&self) -> Option<Rect> {
         if self.destinations.len() <= WORKSPACE_SEARCH_THRESHOLD {
             return None;
         }
+        let (_, _, frame) = self.tool_access_frame()?;
+        Some(frame.node(elements::FILTER_KEY)?.rect)
+    }
+
+    /// What the open panel's tree declares (D106): its heading and count,
+    /// the filter field over five workspaces, a row for each workspace the
+    /// filter lets through — the chosen ones marked — or the note that
+    /// takes the list's place when none does.
+    fn tool_access_spec(&self) -> Option<elements::Spec> {
+        let policy = &self.transcript.as_ref()?.tool_policy;
+        let lang = self.lang;
+        let matching = self.matching_workspace_indices();
+        let empty = matching.is_empty().then(|| {
+            if self.destinations.is_empty() {
+                self.workspace_catalog_error
+                    .clone()
+                    .unwrap_or_else(|| koru_i18n::t(lang, Key::AiToolWorkspacesNone).to_owned())
+            } else {
+                koru_i18n::t(lang, Key::AiToolWorkspacesNoMatch).to_owned()
+            }
+        });
+        Some(elements::Spec {
+            heading: koru_i18n::t(lang, Key::AiToolWorkspaceAccessHeading).to_owned(),
+            count: format!("{}/{}", policy.workspace_ids.len(), self.destinations.len()),
+            filter: self.destinations.len() > WORKSPACE_SEARCH_THRESHOLD,
+            rows: matching
+                .iter()
+                .map(|index| {
+                    let workspace = &self.destinations[*index];
+                    elements::AccessRow {
+                        key: elements::row_key(workspace.workspace_id),
+                        label: workspace.label.clone(),
+                        chosen: policy.workspace_ids.contains(&workspace.workspace_id),
+                    }
+                })
+                .collect(),
+            offset: self.tool_workspace_offset,
+            empty,
+        })
+    }
+
+    /// **The open panel's frame** (D106): where a press lands, which row it
+    /// is, the list's scrollbar — what is drawn, laid out without the
+    /// pointer.
+    fn tool_access_frame(&self) -> Option<(Rect, elements::Spec, Frame)> {
         let panel = self.tool_access_panel()?;
-        Some(Rect::new(
-            panel.x + 8.0,
-            panel.y + WORKSPACE_LIST_Y,
-            panel.w - 16.0,
-            WORKSPACE_SEARCH_H,
-        ))
+        let spec = self.tool_access_spec()?;
+        let frame = elements::layout(
+            &elements::tree(&spec, elements::Painted::default()),
+            panel,
+            FrameCx::root(),
+        );
+        Some((panel, spec, frame))
+    }
+
+    /// The list's scrollbar, as the frame draws it: while there are more
+    /// workspaces than rows.
+    #[cfg(test)]
+    pub(super) fn tool_access_scrollbar(&self) -> Option<koru_draw::scrollbar::ScrollbarGeom> {
+        self.tool_access_frame()?.2.scrollbar(elements::LIST_KEY)
+    }
+
+    /// The first row a drag of the list's thumb to `y` shows, the thumb
+    /// held `grab` below its top: the frame's whole rows.
+    fn tool_access_drag_to(&self, frame: &Frame, y: f32, grab: f32) -> Option<usize> {
+        let scroll = frame.drag_offset(elements::LIST_KEY, y, grab)?;
+        let max = self
+            .matching_workspace_indices()
+            .len()
+            .saturating_sub(self.tool_access_visible_rows());
+        Some(((scroll / TOOL_ACCESS_WORKSPACE_ROW_H).round().max(0.0) as usize).min(max))
+    }
+
+    /// A press on the list's scrollbar: it holds the thumb and the list
+    /// follows it. `false` for a press anywhere else.
+    pub(super) fn tool_access_press_scrollbar(&mut self, x: f32, y: f32) -> bool {
+        let Some((_, _, frame)) = self.tool_access_frame() else {
+            return false;
+        };
+        let Some(bar) = frame
+            .scrollbar(elements::LIST_KEY)
+            .filter(|bar| bar.in_gutter(x, y))
+        else {
+            return false;
+        };
+        let grab = bar.grab_at(x, y);
+        self.tool_workspace_drag = Some(grab);
+        if let Some(offset) = self.tool_access_drag_to(&frame, y, grab) {
+            self.tool_workspace_offset = offset;
+        }
+        true
+    }
+
+    /// The pointer moved while the list's thumb is held. `None` without a
+    /// drag.
+    pub(super) fn tool_access_drag(&mut self, y: f32) -> Option<bool> {
+        let grab = self.tool_workspace_drag?;
+        let next = self
+            .tool_access_frame()
+            .and_then(|(_, _, frame)| self.tool_access_drag_to(&frame, y, grab));
+        let Some(next) = next else {
+            return Some(true);
+        };
+        let changed = next != self.tool_workspace_offset;
+        self.tool_workspace_offset = next;
+        Some(changed)
     }
 
     pub(super) fn matching_workspace_indices(&self) -> Vec<usize> {
@@ -129,27 +236,14 @@ impl ChatSurface {
         ])
     }
 
-    pub(super) fn tool_access_workspace_list(&self) -> Option<Rect> {
-        let panel = self.tool_access_panel()?;
-        let list_y = panel.y + self.tool_access_fixed_height() - 4.0;
-        Some(Rect::new(
-            panel.x + 4.0,
-            list_y,
-            panel.w - 8.0,
-            panel.y + panel.h - list_y - 4.0,
-        ))
-    }
-
+    /// The workspace whose row is at `x`, `y`, from the frame's targets:
+    /// none over the scrollbar's gutter, the filter or the heading.
     pub(super) fn tool_access_workspace_at(&self, x: f32, y: f32) -> Option<WorkspaceId> {
-        let list = self.tool_access_workspace_list()?;
-        if !list.contains(x, y) {
-            return None;
-        }
-        let visible = ((y - list.y) / TOOL_ACCESS_WORKSPACE_ROW_H).floor() as usize;
-        let matches = self.matching_workspace_indices();
-        matches
-            .get(self.tool_workspace_offset + visible)
-            .and_then(|index| self.destinations.get(*index))
+        let (_, _, frame) = self.tool_access_frame()?;
+        let key = frame.hit_at(x, y)?;
+        self.destinations
+            .iter()
+            .find(|workspace| elements::row_key(workspace.workspace_id) == key)
             .map(|workspace| workspace.workspace_id)
     }
 
@@ -227,18 +321,36 @@ impl ChatSurface {
         );
     }
 
+    /// **The open panel** (D106): its element tree ([`elements`]) — the
+    /// heading and count, the filter field, the rows with the chosen ones'
+    /// plate and ✓, the scrollbar — laid out with the pointer on it and
+    /// painted while the panel's `FloatingPanel` record is open, so
+    /// everything drawn in the panel nests under it in the inspector.
     pub(super) fn draw_tool_access_picker(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(panel) = self.tool_access_panel() else {
+        let Some((panel, spec, targets)) = self.tool_access_frame() else {
             return;
         };
-        let Some(policy) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.tool_policy.clone())
-        else {
-            return;
+        // The host's pointer, by key: the frame's own target under it, and
+        // the list while its thumb is held.
+        let hot = targets.hit_at(self.pointer.0, self.pointer.1);
+        let painted = elements::Painted {
+            filter: spec.filter.then(|| SearchPaint {
+                input: self.workspace_search.clone(),
+                placeholder: koru_i18n::t(self.lang, Key::AiToolWorkspaceFilter).to_owned(),
+                focused: self.focus == Focus::WorkspaceSearch,
+            }),
         };
-        scene::floating_panel(
+        let tree = elements::tree(&spec, painted);
+        let frame = elements::layout(
+            &tree,
+            panel,
+            FrameCx::root().with_interaction(Interaction {
+                hot,
+                pressed: self.tool_workspace_drag.map(|_| elements::LIST_KEY),
+                focused: None,
+            }),
+        );
+        let _panel = scene::floating_panel_scope(
             canvas,
             root,
             panel.x,
@@ -247,110 +359,6 @@ impl ChatSurface {
             panel.h,
             &scene::Panel::popover(8.0),
         );
-        let p = theme::p();
-        let heading = self.engine.simple_layout(
-            &format!(
-                "WORKSPACE ACCESS    {}/{}",
-                policy.workspace_ids.len(),
-                self.destinations.len()
-            ),
-            role::meta(),
-        );
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &heading,
-            panel.x + 10.0,
-            panel.y + 9.0,
-            Some(p.text_dim),
-        );
-        if let Some(search) = self.tool_access_search_rect() {
-            self.workspace_search.draw(
-                canvas,
-                root,
-                &mut self.engine,
-                search,
-                InputStyle::search(),
-                Some("Filter workspaces"),
-                self.focus == Focus::WorkspaceSearch,
-            );
-        }
-        let list = self
-            .tool_access_workspace_list()
-            .expect("an open access panel has a workspace list");
-        let matching = self.matching_workspace_indices();
-        if matching.is_empty() {
-            let empty = self.engine.simple_layout_wrapped(
-                if self.destinations.is_empty() {
-                    self.workspace_catalog_error
-                        .as_deref()
-                        .unwrap_or("No Koru workspaces are available.")
-                } else {
-                    "No matching workspaces."
-                },
-                role::row(),
-                list.w - 12.0,
-            );
-            scene::draw_layout(
-                canvas,
-                root,
-                &empty,
-                list.x + 6.0,
-                list.y + 7.0,
-                Some(p.text_dim),
-            );
-            return;
-        }
-        for (visible, index) in matching
-            .iter()
-            .skip(self.tool_workspace_offset)
-            .take(self.tool_access_visible_rows())
-            .enumerate()
-        {
-            let workspace = &self.destinations[*index];
-            let row = Rect::new(
-                list.x,
-                list.y + visible as f32 * TOOL_ACCESS_WORKSPACE_ROW_H,
-                list.w,
-                TOOL_ACCESS_WORKSPACE_ROW_H,
-            );
-            let selected = policy.workspace_ids.contains(&workspace.workspace_id);
-            if selected || row.contains(self.pointer.0, self.pointer.1) {
-                scene::fill(
-                    canvas,
-                    root,
-                    if selected {
-                        p.row_selected
-                    } else {
-                        p.hover_tint
-                    },
-                    &scene::rrect(row.x, row.y, row.w, row.h, 5.0),
-                );
-            }
-            let label = self.engine.simple_layout_wrapped(
-                &workspace.label,
-                role::row(),
-                (row.w - 38.0).max(1.0),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &label,
-                row.x + 8.0,
-                row.y + (row.h - label.height()) * 0.5,
-                Some(p.text),
-            );
-            if selected {
-                let check = self.engine.icon_layout(icons::CHECK, 14.0);
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &check,
-                    row.x + row.w - check.width() - 8.0,
-                    row.y + (row.h - check.height()) * 0.5,
-                    Some(p.accent),
-                );
-            }
-        }
+        frame.paint(&tree, canvas, root, &mut self.engine);
     }
 }

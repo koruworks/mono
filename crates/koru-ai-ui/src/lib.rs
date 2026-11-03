@@ -451,7 +451,9 @@ pub struct ChatSurface {
     /// A chip or a titled link was clicked: the document the host should open.
     open_document_request: Option<koru_link::KoruLink>,
     conversation_hit_rect: Rect,
-    workspace_search: TextInput,
+    /// The workspace-access panel's filter, shared with the leaf that draws
+    /// it (D106).
+    workspace_search: model_picker::SharedInput,
     /// Asked for a fresh chat before the service answered the boot (a new
     /// tab, the CTO's note): the boot's snapshot carries the service's
     /// current chat, and a tab that wanted a new one must not take it.
@@ -610,6 +612,8 @@ pub struct ChatSurface {
     response_message_hover: Option<usize>,
     tool_activity_hover: Option<(ToolInvocationId, u8)>,
     tool_workspace_offset: usize,
+    /// A drag of the workspace list's thumb, held this far below its top.
+    tool_workspace_drag: Option<f32>,
     copy_feedback: Tooltip,
     /// The card a link in the conversation shows under a resting pointer:
     /// the document's link card, with *open* for its pencil (koru-ai D95).
@@ -822,7 +826,7 @@ impl ChatSurface {
         let mut engine = TextEngine::new();
         let composer = ChatComposer::new(root.clone());
         let attachment_work = attachments::Work::new(root.clone());
-        let workspace_search = TextInput::new(&mut engine, role::ui());
+        let workspace_search = model_picker::SharedInput::with_text(&mut engine, role::ui(), "");
         let openai_key = TextInput::new(&mut engine, role::row());
         let openai_model = TextInput::new(&mut engine, role::row());
         let ollama_endpoint =
@@ -959,6 +963,7 @@ impl ChatSurface {
             response_message_hover: None,
             tool_activity_hover: None,
             tool_workspace_offset: 0,
+            tool_workspace_drag: None,
             copy_feedback: Tooltip::default(),
             link_card: link_card::LinkCard::default(),
             web_search_tooltip: Tooltip::default(),
@@ -1275,7 +1280,7 @@ impl ChatSurface {
         self.engine = TextEngine::new();
         self.composer.invalidate();
         self.workspace_search =
-            TextInput::with_text(&mut self.engine, role::ui(), &workspace_search);
+            model_picker::SharedInput::with_text(&mut self.engine, role::ui(), &workspace_search);
         self.openai_key = TextInput::with_text(&mut self.engine, role::row(), &openai_key);
         self.openai_model = TextInput::with_text(&mut self.engine, role::row(), &openai_model);
         self.ollama_endpoint =
@@ -1480,7 +1485,7 @@ impl ChatSurface {
         {
             return CursorIcon::NsResize;
         }
-        if self.picker.scroll_drag.is_some() {
+        if self.picker.scroll_drag.is_some() || self.tool_workspace_drag.is_some() {
             return CursorIcon::NsResize;
         }
         if self.retry_link.is_some_and(|rect| rect.contains(p.0, p.1))
@@ -1559,7 +1564,7 @@ impl ChatSurface {
                 self.focus = Focus::Composer;
                 return true;
             }
-            let before = self.workspace_search.raw_text().to_owned();
+            let before = self.workspace_search.raw_text();
             let handled =
                 self.workspace_search.key(&mut self.engine, key, text, mods) == Typed::Handled;
             if self.workspace_search.raw_text() != before {
@@ -2103,6 +2108,10 @@ impl ChatSurface {
             }
         }
         if self.tool_access_open {
+            // The list's scrollbar first: its gutter is over the rows' ends.
+            if self.tool_access_press_scrollbar(x, y) {
+                return true;
+            }
             if self
                 .tool_access_search_rect()
                 .is_some_and(|rect| rect.contains(x, y))
@@ -2510,6 +2519,9 @@ impl ChatSurface {
         if let Some(changed) = self.picker_mouse_move(x, y) {
             return changed || old != self.cursor_icon();
         }
+        if let Some(changed) = self.tool_access_drag(y) {
+            return changed || old != self.cursor_icon();
+        }
         if let Some(confirm) = &mut self.confirm {
             let changed = confirm.mouse_move(
                 &mut self.engine,
@@ -2583,6 +2595,7 @@ impl ChatSurface {
         }
         self.conversation_scroll_drag = None;
         self.picker.scroll_drag = None;
+        self.tool_workspace_drag = None;
         self.composer.mouse_up();
         self.workspace_search.release();
         self.openai_key.release();

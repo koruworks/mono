@@ -31,6 +31,9 @@ const MIGRATED: &[&str] = &[
     // The composer's approval-mode list (koru-ai D7, D105): boxes, text and
     // icons only; its tokens are beside it in `approval_modes/tokens.rs`.
     "crates/koru-ai-ui/src/approval_modes/elements.rs",
+    // The composer's workspace-access panel (koru-ai D106): its filter field
+    // is the picker's `SearchLeaf`; its tokens are in `privacy/tokens.rs`.
+    "crates/koru-ai-ui/src/privacy/elements.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");
