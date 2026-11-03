@@ -1105,8 +1105,9 @@ fn with_legacy(surface: &mut ChatSurface) {
     }
 }
 
-/// **Rung 6: older models live behind *Legacy models ›***, at the foot of
-/// the list; a search shows them inline after the others, tagged.
+/// **Rung 6: older models live under *Legacy models (N)***, at the foot of
+/// the list, collapsed (M4); a search shows them inline after the others,
+/// tagged.
 #[test]
 fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
     let mut surface = surface();
@@ -1120,12 +1121,12 @@ fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
             Row::Default,
             Row::Model("opus".into()),
             Row::Model("sonnet".into()),
-            Row::LegacyMore,
+            Row::LegacyToggle,
         ]
     );
     assert_eq!(
-        surface.picker_row_label(&claude, &Row::LegacyMore),
-        "Legacy models"
+        surface.picker_row_label(&claude, &Row::LegacyToggle),
+        "Legacy models (2)"
     );
     type_query(&mut surface, "claude-");
     let rows = surface.picker_rows();
@@ -1142,38 +1143,67 @@ fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
     // Today's agents mark nothing: no Legacy row.
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-opencode")));
     surface.picker.query.set_text(&mut surface.engine, "");
-    assert!(!surface.picker_rows().contains(&Row::LegacyMore));
+    assert!(!surface.picker_rows().contains(&Row::LegacyToggle));
 }
 
-/// Enter or Right on the row opens the flyout beside it; Up and Down walk
-/// it, Left closes it, Enter chooses — the older model is the chat's, the
-/// flyout closes and the picker stays open (D66).
+/// **The older models expand in the same list** (M4, the user's design):
+/// a click on *Legacy models (2)* puts them under it — no popover, no
+/// flyout — and a second click takes them away; Enter does the same, and
+/// Right expands and Left collapses. Up and Down walk into them, Enter
+/// chooses one — the chat's model now, the picker still open (D66) — and
+/// its ✓ is in the list, untagged.
 #[test]
-fn the_legacy_flyout_opens_walks_closes_and_chooses() {
+fn the_legacy_row_expands_and_collapses_in_the_list() {
     let mut surface = surface();
     with_legacy(&mut surface);
     open(&mut surface);
-    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
-    surface.picker.focus = PickerFocus::List;
-    surface.picker.highlight = Some(3);
-    press(&mut surface, NamedKey::ArrowRight);
-    let menu = surface.picker.legacy.as_ref().expect("Right opens it");
-    assert_eq!(menu.items().len(), 2);
+    let claude = RailEntry::Agent(agent("agent-claude"));
+    surface.picker.rail = Some(claude.clone());
+    let collapsed = surface.picker_rows();
+    let toggle = collapsed.len() - 1;
+    assert_eq!(collapsed[toggle], Row::LegacyToggle);
+
+    // A click expands it, in place.
     let geometry = surface.picker_geometry().unwrap();
-    let parent = surface.picker_row_rect(&geometry, 3).unwrap();
-    let panel = menu.panel(surface.menu_viewport());
-    assert!(
-        panel.x >= parent.x + parent.w - 0.5 || panel.x + panel.w <= parent.x + 0.5,
-        "beside the row, never over it"
+    let row = surface.picker_row_rect(&geometry, toggle).unwrap();
+    surface.picker_mouse_down(row.x + 20.0, row.y + row.h * 0.5);
+    assert!(surface.chat_model_open);
+    assert_eq!(
+        &surface.picker_rows()[toggle..],
+        [
+            Row::LegacyToggle,
+            Row::Model("claude-2".into()),
+            Row::Model("claude-1".into()),
+        ]
     );
-    press(&mut surface, NamedKey::ArrowLeft);
-    assert!(surface.picker.legacy.is_none(), "Left closes it");
+    let spec = surface.picker_spec();
+    assert_eq!(
+        spec.list[toggle].legacy,
+        Some(true),
+        "its caret points down"
+    );
+    assert!(spec.list[toggle + 1].tag.is_none(), "no tag under the row");
+    // A second click collapses it.
+    surface.picker_mouse_down(row.x + 20.0, row.y + row.h * 0.5);
+    assert_eq!(surface.picker_rows(), collapsed);
+    assert_eq!(surface.picker_spec().list[toggle].legacy, Some(false));
+
+    // The keyboard: Enter expands, Left collapses, Right expands.
+    surface.picker.focus = PickerFocus::List;
+    surface.picker.highlight = Some(toggle);
     press(&mut surface, NamedKey::Enter);
-    assert!(surface.picker.legacy.is_some(), "Enter on the row opens it");
+    assert!(surface.picker.legacy_open, "Enter expands");
+    press(&mut surface, NamedKey::ArrowLeft);
+    assert!(!surface.picker.legacy_open, "Left collapses");
+    assert_eq!(surface.picker.highlight, Some(toggle));
+    press(&mut surface, NamedKey::ArrowRight);
+    assert!(surface.picker.legacy_open, "Right expands");
+    // Down walks into the older models, and Enter chooses one.
     press(&mut surface, NamedKey::ArrowDown);
+    press(&mut surface, NamedKey::ArrowDown);
+    assert_eq!(surface.picker.highlight, Some(toggle + 2));
     press(&mut surface, NamedKey::Enter);
     assert!(surface.chat_model_open, "the picker stays open");
-    assert!(surface.picker.legacy.is_none(), "the flyout closes");
     assert_eq!(
         surface
             .transcript
@@ -1184,22 +1214,20 @@ fn the_legacy_flyout_opens_walks_closes_and_chooses() {
             .requested_model,
         "claude-1"
     );
-}
+    assert!(surface.picker_row_current(&claude, &Row::Model("claude-1".into())));
 
-/// At the viewport's right edge the flyout opens to the row's left.
-#[test]
-fn the_legacy_flyout_flips_left_at_the_viewport_edge() {
-    let mut engine = TextEngine::new();
-    let items = vec![LegacyItem {
-        id: "claude-2".into(),
-        label: "Claude 2".into(),
-        current: false,
-    }];
-    let parent = Rect::new(500.0, 100.0, 280.0, ROW_H);
-    let flipped = Menu::as_submenu(&mut engine, parent, items.clone(), (800.0, 600.0));
-    assert!(flipped.panel((800.0, 600.0)).x + flipped.panel((800.0, 600.0)).w <= parent.x + 0.5);
-    let roomy = Menu::as_submenu(&mut engine, parent, items, (1600.0, 600.0));
-    assert!(roomy.panel((1600.0, 600.0)).x >= parent.x + parent.w - 0.5);
+    // Opened again on a chat whose model is an older one, the row is
+    // expanded and the ✓ is in view.
+    surface.close_picker();
+    open(&mut surface);
+    assert!(surface.picker.legacy_open);
+    let current = surface.picker.highlight.expect("on the current model");
+    assert_eq!(
+        surface.picker_rows()[current],
+        Row::Model("claude-1".into())
+    );
+    let geometry = surface.picker_geometry().unwrap();
+    assert!(surface.picker_row_rect(&geometry, current).is_some());
 }
 
 /// D11: a model that offers Fast mode shows a Fast row — *Off* and *On* —
@@ -1546,8 +1574,8 @@ fn the_rails_plus_asks_the_host_for_agent_providers() {
 
 /// **The arrow over the picker, the I-beam only in its search** (D44): the
 /// picker lies over the conversation, whose text gave its I-beam to the
-/// rows. Rows, the rail, ↻, the panel's foot and the *Legacy models ›*
-/// flyout show the arrow; the search field shows the I-beam.
+/// rows. Rows, *Legacy models*, the rail, ↻ and the panel's foot show the
+/// arrow; the search field shows the I-beam.
 #[test]
 fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
     use winit::window::CursorIcon;
@@ -1565,7 +1593,7 @@ fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
         at(&mut surface, field.x + 12.0, field.y + field.h * 0.5),
         CursorIcon::Text
     );
-    for index in 0..3 {
+    for index in 0..4 {
         let row = surface.picker_row_rect(&geometry, index).unwrap();
         assert_eq!(
             at(&mut surface, row.x + 20.0, row.y + row.h * 0.5),
@@ -1593,18 +1621,6 @@ fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
         ),
         CursorIcon::Default,
         "the foot"
-    );
-    assert!(surface.open_legacy_menu(3));
-    let flyout = surface
-        .picker
-        .legacy
-        .as_ref()
-        .unwrap()
-        .panel(surface.menu_viewport());
-    assert_eq!(
-        at(&mut surface, flyout.x + 8.0, flyout.y + 8.0),
-        CursorIcon::Default,
-        "the flyout"
     );
 }
 

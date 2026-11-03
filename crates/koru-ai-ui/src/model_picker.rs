@@ -43,10 +43,10 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{brand, icons, scene, theme};
 use koru_i18n::{Key, Lang, t};
+use koru_ui::Typed;
 use koru_ui::popover::{PopoverAlign, PopoverShell};
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
-use koru_ui::{Menu, MenuItem, Typed};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
@@ -179,26 +179,9 @@ pub(crate) struct PickerState {
     pub(crate) focus: PickerFocus,
     /// Agents whose ↻ is under way: the list reads *Checking…* meanwhile.
     pub(crate) refreshing: HashSet<AiProviderId>,
-    /// The *Legacy models ›* flyout, while it is open (D11, rung 6).
-    pub(crate) legacy: Option<Menu<LegacyItem>>,
-}
-
-/// One older model in the *Legacy models ›* flyout.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LegacyItem {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) current: bool,
-}
-
-impl MenuItem for LegacyItem {
-    fn label(&self) -> std::borrow::Cow<'_, str> {
-        std::borrow::Cow::Borrowed(&self.label)
-    }
-
-    fn checked(&self) -> Option<bool> {
-        Some(self.current)
-    }
+    /// *Legacy models (N)* is expanded: the agent's older models follow it
+    /// in the list (QUESTIONS M4, the user's design, 2026-11-03).
+    pub(crate) legacy_open: bool,
 }
 
 impl PickerState {
@@ -211,7 +194,7 @@ impl PickerState {
             scroll_drag: None,
             focus: PickerFocus::Search,
             refreshing: HashSet::new(),
-            legacy: None,
+            legacy_open: false,
         }
     }
 }
@@ -290,10 +273,11 @@ pub(crate) enum Row {
     Favorite(AiProviderId, String),
     /// A word in place of models: listing, checking, failed, no match.
     Note(String),
-    /// *Legacy models ›*, at the foot: the models the agent marks as older,
-    /// in a flyout (D11). Only while not searching; a search shows them
-    /// inline instead.
-    LegacyMore,
+    /// *Legacy models (N)*, at the foot: the models the agent marks as
+    /// older (D11) follow it in the list while it is expanded — a click or
+    /// Enter expands it, again collapses it (M4, the user's design). Only
+    /// while not searching; a search shows them inline, tagged.
+    LegacyToggle,
     /// **A search's heading for an entry** (D67): its mark and name, above
     /// what the query found in its list.
     EntryHeading(RailEntry),
@@ -309,7 +293,7 @@ impl Row {
             Self::Found(_, row) => row.choosable(),
             other => matches!(
                 other,
-                Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyMore
+                Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyToggle
             ),
         }
     }
@@ -963,12 +947,16 @@ impl crate::ChatSurface {
             }
             rows.extend(found);
         }
-        // The models the agent marks as older (D11): behind one row at the
-        // foot, or — while searching — inline after the others, tagged.
+        // The models the agent marks as older (D11): under one row at the
+        // foot, while it is expanded (M4), or — while searching — inline
+        // after the others, tagged.
         let legacy: Vec<_> = listed_models(models).filter(|m| m.legacy).collect();
         if query.is_empty() {
             if !legacy.is_empty() {
-                rows.push(Row::LegacyMore);
+                rows.push(Row::LegacyToggle);
+                if self.picker.legacy_open {
+                    rows.extend(legacy.iter().map(|model| Row::Model(model.id.clone())));
+                }
             }
         } else {
             rows.extend(
@@ -1008,94 +996,38 @@ impl crate::ChatSurface {
         }
     }
 
-    /// **Open *Legacy models ›*** beside its row (rung 6): a flyout of the
-    /// agent's older models, to the row's right when it fits and its left
-    /// otherwise (`Menu::as_submenu`).
-    pub(crate) fn open_legacy_menu(&mut self, index: usize) -> bool {
-        let (Some(geometry), Some(RailEntry::Agent(agent))) =
-            (self.picker_geometry(), self.picker_entry())
-        else {
-            return false;
-        };
-        let Some(parent) = self.picker_row_rect(&geometry, index) else {
-            return false;
-        };
-        let current = self
-            .transcript
-            .as_ref()
-            .filter(|transcript| transcript.chat.current_model.provider == agent)
-            .map(|transcript| transcript.chat.current_model.requested_model.clone());
-        let models = self.listed_agent_models(&agent);
-        let current = current
-            .as_deref()
-            .and_then(|current| find_listed(models, current))
-            .map(|(listed, _)| listed.id.clone());
-        let items: Vec<LegacyItem> = listed_models(models)
-            .filter(|model| model.legacy)
-            .map(|model| LegacyItem {
-                id: model.id.clone(),
-                label: model_label(model),
-                current: current.as_deref() == Some(model.id.as_str()),
-            })
-            .collect();
-        if items.is_empty() {
-            return false;
+    /// **Expand or collapse *Legacy models (N)*** (M4, the user's design):
+    /// the agent's older models follow the row in the same list, or go.
+    /// The keyboard stays on the row; the list keeps in range.
+    fn toggle_legacy(&mut self, index: usize, open: bool) -> bool {
+        if self.picker.legacy_open == open {
+            return true;
         }
-        let viewport = self.menu_viewport();
-        let mut menu = Menu::as_submenu(&mut self.engine, parent, items, viewport);
-        menu.hover = Some(0);
-        self.picker.legacy = Some(menu);
+        self.picker.legacy_open = open;
+        self.picker.highlight = Some(index);
+        self.settle_after_choice();
         true
     }
 
-    /// Choose the flyout's item `item`: the older model is the chat's. The
-    /// flyout closes; the picker stays open on the new model (D66).
-    fn choose_legacy_item(&mut self, item: usize) -> bool {
-        let Some(RailEntry::Agent(agent)) = self.picker_entry() else {
-            return true;
+    /// Whether the chat's own model is one `entry` lists as older: then its
+    /// *Legacy models* row opens expanded, so the ✓ is in the list.
+    fn current_is_legacy(&self, entry: &RailEntry) -> bool {
+        let (Some(transcript), RailEntry::Agent(agent)) = (&self.transcript, entry) else {
+            return false;
         };
-        let Some(id) = self
-            .picker
-            .legacy
-            .as_ref()
-            .and_then(|menu| menu.items().get(item))
-            .map(|item| item.id.clone())
-        else {
-            return true;
-        };
-        let can = self.entry_choosable(&RailEntry::Agent(agent.clone()));
-        self.picker.legacy = None;
-        let chosen = if can {
-            self.choose_agent_model(agent, id)
-        } else {
-            true
-        };
-        self.settle_after_choice();
-        chosen
+        let model = &transcript.chat.current_model;
+        &model.provider == agent
+            && find_listed(self.listed_agent_models(agent), &model.requested_model)
+                .is_some_and(|(listed, _)| listed.legacy)
     }
 
-    /// A press while the flyout is open: an item is chosen; anywhere else
-    /// closes the flyout and is the picker's as usual. `None` when it is not
-    /// open or the press is not on it.
-    fn legacy_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
-        let viewport = self.menu_viewport();
-        let menu = self.picker.legacy.as_ref()?;
-        if menu.panel(viewport).contains(x, y) {
-            return Some(match menu.item_at(viewport, x, y) {
-                Some(item) => self.choose_legacy_item(item),
-                None => true,
-            });
-        }
-        self.picker.legacy = None;
-        None
-    }
-
-    /// Draw the open flyout, over the picker.
-    pub(crate) fn draw_legacy_menu(&mut self, canvas: &mut Scene, root: Affine) {
-        let viewport = self.menu_viewport();
-        if let Some(menu) = &self.picker.legacy {
-            let enabled = vec![true; menu.items().len()];
-            menu.draw(canvas, root, &mut self.engine, viewport, &enabled);
+    /// How many older models `entry` lists: *Legacy models (N)*.
+    fn legacy_count(&self, entry: &RailEntry) -> usize {
+        match entry {
+            RailEntry::Agent(agent) => listed_models(self.listed_agent_models(agent))
+                .filter(|model| model.legacy)
+                .count(),
+            RailEntry::Favorites | RailEntry::Provider(_) => 0,
         }
     }
 
@@ -1116,6 +1048,9 @@ impl crate::ChatSurface {
             .is_some_and(|entry| self.entry_choosable(&entry));
         rows.iter()
             .map(|row| match row {
+                // Showing the older models chooses nothing: it works in a
+                // begun chat too, whose models are only shown.
+                Row::LegacyToggle => true,
                 Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
                 // A search's row can be chosen as on its own entry's list.
                 Row::Found(entry, found) => self.entry_choosable(entry) && found.choosable(),
@@ -1137,7 +1072,13 @@ impl crate::ChatSurface {
             (RailEntry::Provider(_) | RailEntry::Favorites, Row::Default | Row::Model(_)) => {
                 String::new()
             }
-            (_, Row::LegacyMore) => t(self.lang, Key::AiModelsLegacy).to_owned(),
+            (_, Row::LegacyToggle) => koru_i18n::fill(
+                t(self.lang, Key::AiModelsLegacy),
+                &[&koru_i18n::number::decimal(
+                    self.lang,
+                    self.legacy_count(entry) as u64,
+                )],
+            ),
             (RailEntry::Agent(agent), Row::Default) => {
                 default_model_label(self.listed_agent_models(agent), self.lang)
             }
@@ -1166,6 +1107,7 @@ impl crate::ChatSurface {
     }
 
     /// Row `index` where it is drawn, while it is in view.
+    #[cfg(test)]
     pub(crate) fn picker_row_rect(&self, _geometry: &Geometry, index: usize) -> Option<Rect> {
         let (geometry, _, frame) = self.picker_frame()?;
         let rect = frame.named(elements::MODEL_ROW).nth(index)?.rect;
@@ -1261,8 +1203,12 @@ impl crate::ChatSurface {
     /// **Open the picker** on the chat's own entry, the query empty, the
     /// search field focused and the current model in view.
     pub(crate) fn reset_picker(&mut self) {
-        self.picker.legacy = None;
         self.picker.rail = self.picker_initial_entry();
+        self.picker.legacy_open = self
+            .picker
+            .rail
+            .as_ref()
+            .is_some_and(|entry| self.current_is_legacy(entry));
         self.picker.query.set_text(&mut self.engine, "");
         self.picker.focus = PickerFocus::Search;
         self.picker.scroll_drag = None;
@@ -1297,7 +1243,7 @@ impl crate::ChatSurface {
     /// from it. A query is cleared, as its results span every entry (D67)
     /// and would hide the list asked for.
     fn select_rail_entry(&mut self, entry: RailEntry) {
-        self.picker.legacy = None;
+        self.picker.legacy_open = self.current_is_legacy(&entry);
         if !self.picker.query.raw_text().is_empty() {
             self.picker.query.set_text(&mut self.engine, "");
         }
@@ -1337,15 +1283,14 @@ impl crate::ChatSurface {
         if !choosable.get(index).copied().unwrap_or(false) {
             return true;
         }
-        if *row == Row::LegacyMore {
-            return self.open_legacy_menu(index);
+        if *row == Row::LegacyToggle {
+            return self.toggle_legacy(index, !self.picker.legacy_open);
         }
         // A search's row is its own entry's (D67).
         let (entry, row) = match row.clone() {
             Row::Found(entry, row) => (entry, *row),
             row => (entry, row),
         };
-        self.picker.legacy = None;
         self.picker.highlight = Some(index);
         let chosen = match (entry, row) {
             (RailEntry::Agent(agent), Row::Default) => {
@@ -1411,9 +1356,6 @@ impl crate::ChatSurface {
     /// took it, closing it for a press outside.
     pub(crate) fn picker_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
         let (geometry, spec, frame) = self.picker_frame()?;
-        if let Some(handled) = self.legacy_mouse_down(x, y) {
-            return Some(handled);
-        }
         if !geometry.panel.contains(x, y) {
             if self.chat_model_button().contains(x, y) {
                 return None;
@@ -1530,15 +1472,6 @@ impl crate::ChatSurface {
     /// tooltip under it. `Some` when the picker claimed the move.
     pub(crate) fn picker_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
         let geometry = self.picker_geometry()?;
-        let viewport = self.menu_viewport();
-        if let Some(menu) = &mut self.picker.legacy
-            && menu.panel(viewport).contains(x, y)
-        {
-            let next = menu.item_at(viewport, x, y);
-            let changed = menu.hover != next;
-            menu.hover = next.or(menu.hover);
-            return Some(changed);
-        }
         if let Some(grab) = self.picker.scroll_drag {
             if let Some((_, _, frame)) = self.picker_frame()
                 && let Some(next) = self.picker_drag_to(&frame, y, grab)
@@ -1633,22 +1566,14 @@ impl crate::ChatSurface {
 
     /// **The pointer over the open picker** (D44): the I-beam over its
     /// search field, the one place in it that takes typing, and the arrow
-    /// everywhere else — the rows, the rail, ↻, the footer and the
-    /// *Legacy models ›* flyout. A scrollbar drag keeps its resize arrows.
-    /// `None` when the picker is closed or the pointer is outside it.
+    /// everywhere else — the rows, *Legacy models*, the rail, ↻ and the
+    /// footer. A scrollbar drag keeps its resize arrows. `None` when the
+    /// picker is closed or the pointer is outside it.
     pub(crate) fn picker_cursor(&self, x: f32, y: f32) -> Option<winit::window::CursorIcon> {
         use winit::window::CursorIcon;
         let geometry = self.picker_geometry()?;
         if self.picker.scroll_drag.is_some() {
             return Some(CursorIcon::NsResize);
-        }
-        if self
-            .picker
-            .legacy
-            .as_ref()
-            .is_some_and(|menu| menu.panel(self.menu_viewport()).contains(x, y))
-        {
-            return Some(CursorIcon::Default);
         }
         if !geometry.panel.contains(x, y) {
             return None;
@@ -1691,30 +1616,6 @@ impl crate::ChatSurface {
         let footer = self.effort_control().is_some();
         let context = self.picker_context().is_some();
         let fast = self.picker_fast().is_some();
-        // The flyout first: Up and Down walk it, Enter chooses, Left and
-        // Esc close it.
-        if let Some(menu) = &mut self.picker.legacy {
-            let count = menu.items().len();
-            match key {
-                WinitKey::Named(NamedKey::ArrowUp) => {
-                    menu.hover = Some(menu.hover.unwrap_or(0).saturating_sub(1));
-                    return Some(true);
-                }
-                WinitKey::Named(NamedKey::ArrowDown) => {
-                    menu.hover = Some((menu.hover.map_or(0, |at| at + 1)).min(count - 1));
-                    return Some(true);
-                }
-                WinitKey::Named(NamedKey::Enter) => {
-                    let item = menu.hover.unwrap_or(0);
-                    return Some(self.choose_legacy_item(item));
-                }
-                WinitKey::Named(NamedKey::ArrowLeft | NamedKey::Escape) => {
-                    self.picker.legacy = None;
-                    return Some(true);
-                }
-                _ => {}
-            }
-        }
         match key {
             WinitKey::Named(NamedKey::Escape) => {
                 if !self.picker.query.raw_text().is_empty() {
@@ -1822,14 +1723,22 @@ impl crate::ChatSurface {
                 let index = self.picker.highlight?;
                 Some(self.choose_picker_row(index))
             }
+            // On *Legacy models*, Right expands it and Left collapses it;
+            // in the search, either moves the caret as ever.
+            WinitKey::Named(direction @ (NamedKey::ArrowRight | NamedKey::ArrowLeft))
+                if (self.picker.focus != PickerFocus::Search
+                    || self.picker.query.raw_text().is_empty())
+                    && self.picker.highlight.is_some_and(|index| {
+                        self.picker_rows().get(index) == Some(&Row::LegacyToggle)
+                    }) =>
+            {
+                let index = self.picker.highlight?;
+                Some(self.toggle_legacy(index, *direction == NamedKey::ArrowRight))
+            }
             WinitKey::Named(NamedKey::ArrowRight)
                 if self.picker.focus != PickerFocus::Search
                     || self.picker.query.raw_text().is_empty() =>
             {
-                let index = self.picker.highlight?;
-                if self.picker_rows().get(index) == Some(&Row::LegacyMore) {
-                    return Some(self.open_legacy_menu(index));
-                }
                 let before = self.picker.query.raw_text().to_owned();
                 let typed =
                     self.picker.query.key(&mut self.engine, key, text, mods) == Typed::Handled;
@@ -1923,7 +1832,7 @@ pub(crate) fn row_id(entry: &RailEntry, row: &Row) -> Option<String> {
         Row::Favorite(agent, id) => {
             format!("{}\u{1f}{}\u{1f}{id}", entry_id(entry), agent.as_str())
         }
-        Row::LegacyMore => format!("{}\u{1f}legacy", entry_id(entry)),
+        Row::LegacyToggle => format!("{}\u{1f}legacy", entry_id(entry)),
     })
 }
 

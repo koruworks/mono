@@ -95,6 +95,7 @@ impl crate::ChatSurface {
         let rows = self.picker_rows();
         let choosable = self.picker_choosable(&rows);
         let keyboard = matches!(self.picker.focus, PickerFocus::Search | PickerFocus::List);
+        let searching = !self.picker_query().is_empty();
         rows.iter()
             .enumerate()
             .map(|(index, row)| {
@@ -120,9 +121,10 @@ impl crate::ChatSurface {
                             shown: false,
                         })
                     }),
-                    legacy_more: *row == Row::LegacyMore,
-                    tag: self
-                        .row_is_legacy(&entry, row)
+                    legacy: (*row == Row::LegacyToggle).then_some(self.picker.legacy_open),
+                    // Under an expanded *Legacy models* row an older model
+                    // needs no tag; found by a search, it has one.
+                    tag: (searching && self.row_is_legacy(&entry, row))
                         .then(|| t(self.lang, Key::AiModelsLegacyTag).to_owned()),
                 }
             })

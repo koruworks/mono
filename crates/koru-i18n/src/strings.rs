@@ -6800,17 +6800,18 @@ pub const ROWS: &[Row] = &[
         zh_hans: "（默认）",
         ja: "（既定）",
     },
-    // The row at the foot of an agent's models that opens the ones it marks as older.
+    // The row at the foot of an agent's models that expands, under it in the
+    // same list, the ones it marks as older; {} is how many there are.
     Row {
         key: Key::AiModelsLegacy,
-        en: "Legacy models",
-        es: "Modelos heredados",
-        pt_br: "Modelos legados",
-        de: "Ältere Modelle",
-        fr: "Anciens modèles",
-        ar: "النماذج القديمة",
-        zh_hans: "旧版模型",
-        ja: "レガシーモデル",
+        en: "Legacy models ({})",
+        es: "Modelos heredados ({})",
+        pt_br: "Modelos legados ({})",
+        de: "Ältere Modelle ({})",
+        fr: "Anciens modèles ({})",
+        ar: "النماذج القديمة ({})",
+        zh_hans: "旧版模型（{}）",
+        ja: "レガシーモデル（{}）",
     },
     // Beside an older model found by a search.
     Row {

@@ -16,6 +16,8 @@
 //!     scroll  Model list                fill, a row a step, the scrollbar
 //!       row  Model row                  PICKER_ROW_H: [mark] name [tag]
 //!                                       [caret] [✓] [☆]
+//!       row  Model row                  Legacy models (N) ›, its older
+//!                                       models under it while expanded
 //!     Fast row · Context row · Effort footer
 //! ```
 //!
@@ -229,8 +231,10 @@ pub(crate) struct ListRow {
     /// The keyboard is on it.
     pub(crate) lit: bool,
     pub(crate) star: Option<StarSpec>,
-    /// *Legacy models ›*: its caret.
-    pub(crate) legacy_more: bool,
+    /// *Legacy models (N)*, and whether it is expanded: its caret points
+    /// down at the older models under it, or along the row while they are
+    /// hidden (M4).
+    pub(crate) legacy: Option<bool>,
     /// An older model found by a search: its tag.
     pub(crate) tag: Option<String>,
 }
@@ -582,12 +586,19 @@ fn list_row(spec: &ListRow) -> El {
                 .pad_start(TAG_GAP),
         );
     }
-    if spec.legacy_more {
+    if let Some(open) = spec.legacy {
         el = el.child(
-            icon(icons::CARET_RIGHT, IconSize::XS)
-                .decorative()
-                .ink(Ink::Secondary)
-                .pad_start(CARET_GAP),
+            icon(
+                if open {
+                    icons::CARET_DOWN
+                } else {
+                    icons::CARET_RIGHT
+                },
+                IconSize::XS,
+            )
+            .decorative()
+            .ink(Ink::Secondary)
+            .pad_start(CARET_GAP),
         );
     }
     if spec.current {

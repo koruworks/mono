@@ -5748,7 +5748,6 @@ impl ChatSurface {
             self.draw_chats_pane(canvas, root);
         }
         self.draw_model_picker(canvas, root);
-        self.draw_legacy_menu(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);

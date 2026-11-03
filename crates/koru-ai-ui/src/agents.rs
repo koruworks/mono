@@ -855,7 +855,6 @@ impl crate::ChatSurface {
     pub(crate) fn close_picker(&mut self) {
         self.chat_model_open = false;
         self.picker.scroll_drag = None;
-        self.picker.legacy = None;
         self.picker_tooltip.clear();
     }
 
