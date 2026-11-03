@@ -15,7 +15,7 @@
 
 use koru_draw::theme::{Metric, Space, Tagged};
 
-use super::{RAIL_BUTTON, RAIL_W, ROW_H, ROW_MARK, SEARCH_H, STAR};
+use super::{PILL_H, RAIL_BUTTON, RAIL_W, ROW_H, ROW_MARK, SEARCH_H, STAR, STRIP_H};
 
 /// The rail's width ([`RAIL_W`]).
 pub(crate) const RAIL_WIDTH: Metric = Metric::new("PICKER_RAIL_W", RAIL_W);
@@ -95,3 +95,44 @@ pub(crate) const TAG_GAP: Tagged<Space> = Tagged::new("PICKER_TAG_GAP", Space::S
 
 /// Before the *Legacy models* row's caret.
 pub(crate) const CARET_GAP: Tagged<Space> = Tagged::new("PICKER_CARET_GAP", Space::S2);
+
+/// **The footer** (koru-ai D76, the user's design *A1a*): 10 above its
+/// rows, below the divider.
+pub(crate) const FOOTER_TOP: Tagged<Space> = Tagged::new("PICKER_FOOTER_TOP", Space::S2_5);
+
+/// The footer's inset at its sides and foot: with the content column's own
+/// `PICKER_PAD`, the design's 12 from the panel's end and foot; at the
+/// start, level with a list row's name.
+pub(crate) const FOOTER_INSET: Tagged<Space> = Tagged::new("PICKER_FOOTER_INSET", Space::S2);
+
+/// Between the effort strip and the row of toggles under it.
+pub(crate) const FOOTER_ROW_GAP: Tagged<Space> = Tagged::new("PICKER_FOOTER_GAP", Space::S2);
+
+/// The effort strip ([`STRIP_H`]): a segment's height and the strip's
+/// inset round them.
+pub(crate) const STRIP_HEIGHT: Metric = Metric::new("PICKER_EFFORT_STRIP_H", STRIP_H);
+
+/// The strip's inset round its segments, and the gap between them: 2.
+pub(crate) const STRIP_INSET: Tagged<Space> = Tagged::new("PICKER_EFFORT_STRIP_PAD", Space::S0_5);
+
+/// The strip's corners: the design's 9, which no radius step names.
+pub(crate) const STRIP_RADIUS: Metric = Metric::new("PICKER_EFFORT_STRIP_RADIUS", 9.0);
+
+/// A segment's corners inside the strip: the strip's, less its inset.
+pub(crate) const SEGMENT_RADIUS: Metric = Metric::new("PICKER_SEGMENT_RADIUS", 7.0);
+
+/// A pill toggle's height ([`PILL_H`]).
+pub(crate) const PILL_HEIGHT: Metric = Metric::new("PICKER_PILL_H", PILL_H);
+
+/// A pill's inset at its start and end: 10.
+pub(crate) const PILL_PAD: Tagged<Space> = Tagged::new("PICKER_PILL_PAD", Space::S2_5);
+
+/// Between a pill's ⚡ and its word.
+pub(crate) const PILL_ICON_GAP: Tagged<Space> = Tagged::new("PICKER_PILL_ICON_GAP", Space::S1);
+
+/// Between one pill and the next, and before the readout.
+pub(crate) const PILL_GAP: Tagged<Space> = Tagged::new("PICKER_PILL_GAP", Space::S1_5);
+
+/// How much of the accent an *on* pill is filled with: the design's light
+/// accent wash under its accent border and words.
+pub(crate) const PILL_ON_FILL_ALPHA: f32 = 0.10;

@@ -1,39 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The picker's Context row** (koru-ai D10): *Context · Auto | 1M*, above
-//! the level's footer, for a chat whose model has a longer context window.
+//! **The picker's context toggle** (koru-ai D10, D76): a *1M context* pill
+//! in the footer's second row, for a chat whose model has a longer context
+//! window. On is the longer window; off is the model's own (*Auto*, before
+//! D76).
 //!
 //! An agent may list a model twice, once per window (Claude's `opus` and
 //! `opus[1m]`). The runtime folds the two into one model that carries the
 //! longer window's id ([`AgentModelView::context`]), so the list shows one
-//! *Opus* and this row chooses the window. Choosing only chooses which id
-//! the chat takes as its model, through the same update as a row: *Auto*
-//! is the model's own id, the other the window's. Nothing here knows how an
-//! agent spells either.
+//! *Opus* and this pill chooses the window. Choosing only chooses which id
+//! the chat takes as its model, through the same update as a row: off is
+//! the model's own id, on the window's. Nothing here knows how an agent
+//! spells either.
 //!
 //! Like the level, the window is chosen before an agent chat's first
-//! message: the agent starts with it, so afterwards the row only shows it.
+//! message: the agent starts with it, so afterwards the pill only shows it.
 
 use koru_ai_core::AiProviderId;
-use koru_draw::geometry::Rect;
-use koru_draw::text::TextEngine;
-use koru_draw::theme::Palette;
-use koru_draw::{scene, theme};
 use koru_i18n::{Key, Lang, fill, number, t};
-use koru_ui::Segmented;
-use vello::Scene;
-use vello::kurbo::Affine;
 
-use super::{Geometry, PickerFocus};
 use crate::agents::{find_listed, is_agent_provider};
-
-/// The row's height: a segmented control and room around it.
-pub(crate) const CONTEXT_H: f32 = Segmented::H + 6.0;
 
 /// The chat's model's context choice.
 pub(crate) struct ContextChoice {
     pub(super) agent: AiProviderId,
-    /// The model's own id: *Auto*.
+    /// The model's own id: off.
     pub(super) base: String,
     /// The id that runs it with the longer window.
     pub(super) long: String,
@@ -42,7 +33,7 @@ pub(crate) struct ContextChoice {
     pub(super) chosen_long: bool,
 }
 
-/// A window's size as the row names it: *1M*, or *200k*.
+/// A window's size as the pill names it: *1M*, or *200k*.
 pub(crate) fn window_label(lang: Lang, tokens: u32) -> String {
     let tokens = u64::from(tokens);
     if tokens >= 1_000_000 && tokens % 1_000_000 == 0 {
@@ -56,6 +47,14 @@ pub(crate) fn window_label(lang: Lang, tokens: u32) -> String {
             &[&number::decimal(lang, tokens / 1_000)],
         )
     }
+}
+
+/// The pill's words: *1M context*.
+pub(crate) fn pill_label(lang: Lang, tokens: u32) -> String {
+    fill(
+        t(lang, Key::AiModelContextPill),
+        &[&window_label(lang, tokens)],
+    )
 }
 
 impl crate::ChatSurface {
@@ -80,8 +79,8 @@ impl crate::ChatSurface {
         })
     }
 
-    /// Choose the window: the longer one when `long`, else *Auto*. Read
-    /// only once the chat has begun, as the level is.
+    /// Choose the window: the longer one when `long`, else the model's own.
+    /// Read only once the chat has begun, as the level is.
     pub(crate) fn choose_context(&mut self, long: bool) -> bool {
         let Some(choice) = self.picker_context() else {
             return false;
@@ -97,112 +96,11 @@ impl crate::ChatSurface {
         self.choose_agent_model(choice.agent, id)
     }
 
-    /// The row's two words and its control, laid out at the row's end.
-    pub(super) fn context_control(&mut self, row: Rect, tokens: u32) -> ([String; 2], Segmented) {
-        context_control(&mut self.engine, self.lang, row, tokens)
-    }
-
-    /// A press on the row: a choice is chosen. `None` when the press is
-    /// not on the row.
-    pub(crate) fn context_mouse_down(
-        &mut self,
-        geometry: &Geometry,
-        x: f32,
-        y: f32,
-    ) -> Option<bool> {
-        let row = geometry.context.filter(|row| row.contains(x, y))?;
-        let choice = self.picker_context()?;
-        let (_, control) = self.context_control(row, choice.tokens);
-        self.picker.focus = PickerFocus::Context;
-        Some(match control.segment_at(x, y) {
-            Some(segment) => self.choose_context(segment == 1),
-            None => true,
-        })
-    }
-}
-
-/// The row's two words and its control, laid out at the end of `row`.
-pub(super) fn context_control(
-    engine: &mut TextEngine,
-    lang: Lang,
-    row: Rect,
-    tokens: u32,
-) -> ([String; 2], Segmented) {
-    let labels = [
-        t(lang, Key::AiModelContextAuto).to_owned(),
-        window_label(lang, tokens),
-    ];
-    let words = [labels[0].as_str(), labels[1].as_str()];
-    let width = Segmented::width(engine, &words);
-    let control = Segmented::layout(
-        engine,
-        &words,
-        row.x + row.w - width - 4.0,
-        row.y + (row.h - Segmented::H) * 0.5,
-    );
-    (labels, control)
-}
-
-/// What the Context row shows: the longer window, which of the two the
-/// chat is on, whether it is read only, the pointer and the keyboard.
-pub(super) struct ContextPaint {
-    pub(super) lang: Lang,
-    pub(super) tokens: u32,
-    pub(super) chosen_long: bool,
-    pub(super) locked: bool,
-    pub(super) pointer: (f32, f32),
-    pub(super) focused: bool,
-}
-
-/// Paint the row in `row`, the allocation the picker's element frame gave
-/// it, in its palette `p`: a rule above it, *Context*, and the two choices.
-pub(super) fn paint_context_row(
-    canvas: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    row: Rect,
-    context: &ContextPaint,
-    p: &Palette,
-) {
-    scene::fill(
-        canvas,
-        root,
-        p.panel_border,
-        &scene::rrect(row.x, row.y, row.w, 1.0, 0.5),
-    );
-    let title = engine.simple_layout(t(context.lang, Key::AiModelContext), theme::role::row());
-    scene::draw_layout_first_line(
-        canvas,
-        root,
-        &title,
-        row.x + 8.0,
-        row.y + (row.h - title.height()) * 0.5,
-        Some(if context.locked { p.text_dim } else { p.text }),
-    );
-    let (labels, control) = context_control(engine, context.lang, row, context.tokens);
-    let words = [labels[0].as_str(), labels[1].as_str()];
-    let hovered = if context.locked {
-        None
-    } else {
-        control.segment_at(context.pointer.0, context.pointer.1)
-    };
-    control.draw(
-        canvas,
-        root,
-        engine,
-        &words,
-        Some(usize::from(context.chosen_long)),
-        hovered,
-        if context.locked { 0.5 } else { 1.0 },
-    );
-    if context.focused {
-        let bounds = control.bounds;
-        scene::stroke(
-            canvas,
-            root,
-            p.accent,
-            1.0,
-            &scene::rrect(bounds.x, bounds.y, bounds.w, bounds.h, 7.0),
-        );
+    /// The pill pressed, or Space or Enter on it: the other window.
+    pub(crate) fn toggle_context(&mut self) -> bool {
+        match self.picker_context() {
+            Some(choice) => self.choose_context(!choice.chosen_long),
+            None => false,
+        }
     }
 }

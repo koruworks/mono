@@ -2,10 +2,12 @@
 
 //! **The composer's model picker** (agent-models §9, rung 5): the agents run
 //! down a rail, one mark each; above the selected agent's models sits a
-//! *Search models…* field with ↻; the footer shows the chat's reasoning
-//! level as a word, ↺ back to the model's default, and the stepped slider;
-//! above it, for a model with a longer window, the Context row
-//! ([`context`]). It opens upward, above the composer and end-aligned with the chip, as the
+//! *Search models…* field with ↻; the footer (D76, the user's design *A1a*)
+//! is the effort strip — one segment per level the model offers, the chat's
+//! level raised, and a press on the model's default level the way back to
+//! it — over a row of pill toggles, *⚡ Fast* ([`fast`]) and *1M context*
+//! ([`context`]), each only when the model offers it, with *Effort: High
+//! (default)* at the row's end. It opens upward, above the composer and end-aligned with the chip, as the
 //! workspace and tool-approval panels do — below the chip only when there is
 //! no room above — and it is driven fully from the keyboard.
 //!
@@ -62,8 +64,6 @@ mod elements;
 mod fast;
 mod paint;
 mod tokens;
-pub(crate) use context::CONTEXT_H;
-pub(crate) use fast::FAST_H;
 
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
@@ -98,17 +98,28 @@ const STAR: f32 = 22.0;
 const STAR_INSET: f32 = 12.0;
 /// A favorite's agent mark at its row's start.
 const ROW_MARK: f32 = 16.0;
-/// The footer: the level's word and ↺ on one line, the slider under it.
-pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
+/// An effort segment's height, and the effort strip's: the segments and
+/// the strip's 2 round them (D76).
+pub(crate) const SEGMENT_H: f32 = 28.0;
+pub(crate) const STRIP_H: f32 = SEGMENT_H + 4.0;
+/// A pill toggle's height: *⚡ Fast*, *1M context*.
+pub(crate) const PILL_H: f32 = 28.0;
+/// **The footer at its tallest** (D76): the divider, 10 above the effort
+/// strip, 8 between it and the pills' row, and 8 under that (12 from the
+/// panel's foot with [`PAD`]). Without levels it is the divider and the
+/// pills' row alone ([`FOOTER_TOGGLES_H`]).
+pub(crate) const FOOTER_H: f32 = 1.0 + 10.0 + STRIP_H + 8.0 + PILL_H + 8.0;
+/// The footer of a model with Fast or a longer window and no levels.
+#[cfg(test)]
+pub(crate) const FOOTER_TOGGLES_H: f32 = 1.0 + 10.0 + PILL_H + 8.0;
 const PAD: f32 = 4.0;
 /// The picker is as wide as the composer, up to this.
 pub(crate) const MAX_W: f32 = 360.0;
 /// The tooltips' keys, so moving from one mark or row to the next is a new
-/// tooltip: the rail's first mark, ↻, ↺, the read-only footer. A model row
-/// has none (D25).
+/// tooltip: the rail's first mark, ↻, the read-only strip and context
+/// pill. A model row has none (D25).
 const TOOLTIP_RAIL: u64 = 0x5049_0000;
 const TOOLTIP_REFRESH: u64 = 0x5049_1000;
-const TOOLTIP_RESET: u64 = 0x5049_1001;
 const TOOLTIP_LOCKED: u64 = 0x5049_1002;
 const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
 
@@ -152,18 +163,18 @@ impl RailEntry {
 }
 
 /// Where the keyboard is inside the picker; Tab and Shift+Tab move through
-/// them in this order, the footer's two only when there is a footer.
+/// them in this order, the footer's only while the model offers them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PickerFocus {
     Search,
     Rail,
     List,
-    /// The Fast row's two choices (koru-ai D11).
+    /// The effort strip (D76): Left and Right move the level.
+    Effort,
+    /// The *⚡ Fast* pill (koru-ai D11): Space or Enter toggles it.
     Fast,
-    /// The Context row's two choices (koru-ai D10).
+    /// The *1M context* pill (koru-ai D10): Space or Enter toggles it.
     Context,
-    Reset,
-    Slider,
 }
 
 /// The picker's own state on the surface. It lives only while the picker
@@ -311,11 +322,14 @@ pub(crate) struct Geometry {
     pub(crate) field: Rect,
     pub(crate) refresh: Rect,
     pub(crate) list: Rect,
-    /// The level's section: its word, ↺ and the slider.
+    /// The footer under the list (D76): its divider, the effort strip and
+    /// the pills' row. `None` for a model that offers none of them.
     pub(crate) footer: Option<Rect>,
-    /// The Context row, above the level's section (koru-ai D10).
+    /// The effort strip, while the model offers levels.
+    pub(crate) strip: Option<Rect>,
+    /// The *1M context* pill (koru-ai D10).
     pub(crate) context: Option<Rect>,
-    /// The Fast row, above the Context row (koru-ai D11).
+    /// The *⚡ Fast* pill (koru-ai D11), first in its row.
     pub(crate) fast: Option<Rect>,
 }
 
@@ -324,44 +338,32 @@ impl Geometry {
     pub(crate) fn visible_rows(&self) -> usize {
         (self.list.h / ROW_H).floor().max(0.0) as usize
     }
-
-    /// ↺, at the footer line's end.
-    pub(crate) fn reset(&self) -> Option<Rect> {
-        self.footer.map(reset_in)
-    }
-
-    /// The slider's section, which [`effort::slider`] lays its stops on.
-    pub(crate) fn slider_section(&self) -> Option<Rect> {
-        self.footer
-    }
-}
-
-/// ↺ inside the level's footer `footer`, at the end of its first line.
-pub(crate) fn reset_in(footer: Rect) -> Rect {
-    Rect::new(footer.x + footer.w - 28.0, footer.y + 2.0, 24.0, 24.0)
 }
 
 /// The picker's width and height: as wide as the composer up to
-/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows, the Context
-/// row and the level's footer, whatever the list holds and whether or not
-/// the chat's model has either row — never shorter than the rail needs.
+/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows and the footer
+/// at its tallest, whatever the list holds and whether or not the chat's
+/// model has a footer — never shorter than the rail needs.
 pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
     let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
-    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + CONTEXT_H + FOOTER_H;
+    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H;
     (width, height.max(rail_h))
 }
 
-/// The picker's parts inside `panel`: the level's footer at the foot when
-/// `levels`, the Context row above it when `context`, the Fast row above
-/// that when `fast`, and the list in what is left — so a model with both
-/// rows gives a list row of the fixed height to the second. Laid out by the
+/// The picker's parts inside `panel`: the footer at the foot when the
+/// model offers `levels`, `context` or `fast` — the strip for levels, the
+/// pills' row for any — and the list in what is left. Laid out by the
 /// picker's element tree ([`elements::tree`]), whose marks take no room of
 /// their own: the rail is as tall as the panel.
+#[cfg(test)]
 pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
+    geometry_with(panel, elements::Footer::shape(levels, context, fast))
+}
+
+/// The picker's parts inside `panel` with `footer` at its foot.
+pub(crate) fn geometry_with(panel: Rect, footer: Option<elements::Footer>) -> Geometry {
     let spec = elements::Spec {
-        levels,
-        context,
-        fast,
+        footer,
         ..elements::Spec::default()
     };
     let tree = elements::tree(&spec, elements::Painted::default());
@@ -426,18 +428,32 @@ pub(crate) fn matches(query: &str, fields: &[&str]) -> bool {
         .all(|term| fields.iter().any(|field| field.contains(&term)))
 }
 
-/// **The footer's words** (§9.3): the chat's level in Koru's words, and the
-/// dimmed *(default)* after it when the chat is on *Default* and the model
-/// states the level that means. A model that states none reads *Default*.
-pub(crate) fn footer_words(
+/// **The footer's readout** (§9.3, D76): *Effort: High*, the chat's level
+/// in Koru's full words, and *(default)* after it when the level shown is
+/// the one the model states as its own. A model that states none reads
+/// *Effort: Default* while the chat chooses none.
+///
+/// Longest first: the readout, then shorter forms of it — *High (default)*,
+/// *High* — for a row too narrow for the whole (the pills come first).
+pub(crate) fn readout(
     control: &ReasoningControl,
     choice: ReasoningChoice,
     lang: Lang,
-) -> (String, Option<String>) {
+) -> Vec<String> {
     let shown = effort::resolve(control, choice).unwrap_or(ReasoningChoice::Default);
-    let suffix = (choice == ReasoningChoice::Default && shown != ReasoningChoice::Default)
-        .then(|| t(lang, Key::AiEffortIsDefault).to_owned());
-    (effort::word(lang, shown), suffix)
+    let word = effort::word(lang, shown);
+    let level = match effort::default_level(control) {
+        Some(default) if default == shown => {
+            format!("{word} {}", t(lang, Key::AiEffortIsDefault))
+        }
+        _ => word.clone(),
+    };
+    let mut forms = vec![koru_i18n::fill(t(lang, Key::AiEffortReadout), &[&level])];
+    if level != word {
+        forms.push(level);
+    }
+    forms.push(word);
+    forms
 }
 
 /// The next choosable row from `from` in `step`'s direction, wrapping at
@@ -1116,6 +1132,13 @@ impl crate::ChatSurface {
         (rect.y >= list.y - 0.01 && rect.y + rect.h <= list.y + list.h + 0.01).then_some(rect)
     }
 
+    /// The effort strip's segment for `choice`, where it is drawn.
+    #[cfg(test)]
+    pub(crate) fn picker_segment_rect(&self, choice: ReasoningChoice) -> Option<Rect> {
+        let (_, _, frame) = self.picker_frame()?;
+        Some(frame.node(elements::segment_key(choice))?.rect)
+    }
+
     /// How many rows the open list shows.
     fn picker_visible_rows(&self) -> usize {
         self.picker_geometry()
@@ -1172,9 +1195,6 @@ impl crate::ChatSurface {
         let rail = self.picker_rail();
         let marks = rail.len() + usize::from(self.agent_settings_offered);
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
-        let levels = self.effort_control().is_some();
-        let context = self.picker_context().is_some();
-        let fast = self.picker_fast().is_some();
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
         let panel = if self.fits_above_composer(h) {
@@ -1182,7 +1202,8 @@ impl crate::ChatSurface {
         } else {
             PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
         };
-        Some(geometry(panel, levels, context, fast))
+        // The footer as it is drawn: its pills are as wide as their words.
+        Some(geometry_with(panel, self.picker_footer()))
     }
 
     /// The list's scrollbar, as the frame draws it (M1: the shared bar).
@@ -1400,29 +1421,33 @@ impl crate::ChatSurface {
                 .click(&mut self.engine, geometry.search, x, y);
             return Some(true);
         }
-        if let Some(reset) = geometry.reset()
-            && reset.contains(x, y)
-        {
-            self.picker.focus = PickerFocus::Reset;
-            return Some(self.reset_level());
-        }
-        if let Some(handled) = self.context_mouse_down(&geometry, x, y) {
-            return Some(handled);
-        }
-        if let Some(handled) = self.fast_mouse_down(&geometry, x, y) {
-            return Some(handled);
-        }
-        if let (Some(section), Some(control)) =
-            (geometry.slider_section(), self.effort_control().cloned())
-            && let Some(choice) = effort::stop_at(&effort::slider(section, &control), x, y)
-        {
-            self.picker.focus = PickerFocus::Slider;
+        // The footer (D76): a level's segment, read only once an agent chat
+        // has begun — the press says why — and the pills.
+        if geometry.strip.is_some_and(|strip| strip.contains(x, y)) {
+            self.picker.focus = PickerFocus::Effort;
             if self.effort_locked() {
                 self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
                 return Some(true);
             }
-            self.effort_drag = Some(choice);
-            return Some(true);
+            let pressed = spec.footer.as_ref().and_then(|footer| {
+                footer.segments.iter().find(|segment| {
+                    frame
+                        .node(segment.key)
+                        .is_some_and(|node| node.rect.contains(x, y))
+                })
+            });
+            return Some(match pressed {
+                Some(segment) => self.choose_level(segment.choice),
+                None => true,
+            });
+        }
+        if geometry.fast.is_some_and(|pill| pill.contains(x, y)) {
+            self.picker.focus = PickerFocus::Fast;
+            return Some(self.toggle_fast());
+        }
+        if geometry.context.is_some_and(|pill| pill.contains(x, y)) {
+            self.picker.focus = PickerFocus::Context;
+            return Some(self.toggle_context());
         }
         if geometry.list.contains(x, y) {
             self.picker.focus = PickerFocus::List;
@@ -1454,19 +1479,33 @@ impl crate::ChatSurface {
         Some(true)
     }
 
-    /// ↺: back to the model's own default (*Default*, which sends nothing).
-    fn reset_level(&mut self) -> bool {
+    /// **Choose a level on the strip** (D76): the model's own default level
+    /// is the chat's *Default* — so a press on it is the way back to the
+    /// model's default, with no ↺ — and any other is that level. Read only
+    /// once an agent chat has begun.
+    pub(crate) fn choose_level(&mut self, choice: ReasoningChoice) -> bool {
         if self.effort_locked() {
             self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
             return true;
         }
-        let at_default = self.transcript.as_ref().is_none_or(|transcript| {
-            transcript.chat.current_model.default_reasoning == ReasoningChoice::Default
-        });
-        if at_default {
+        let Some(control) = self.effort_control().cloned() else {
+            return false;
+        };
+        let target = if effort::default_level(&control) == Some(choice) {
+            ReasoningChoice::Default
+        } else {
+            choice
+        };
+        let current = self
+            .transcript
+            .as_ref()
+            .map_or(ReasoningChoice::Default, |transcript| {
+                transcript.chat.current_model.default_reasoning
+            });
+        if current == target {
             return true;
         }
-        self.choose_effort(ReasoningChoice::Default)
+        self.choose_effort(target)
     }
 
     /// The pointer moved with the picker open: a scrollbar drag, and the
@@ -1529,15 +1568,6 @@ impl crate::ChatSurface {
                 t(self.lang, Key::AiModelsRefresh),
             ));
         }
-        if let Some(reset) = geometry.reset()
-            && reset.contains(x, y)
-        {
-            return Some(TooltipContent::new(
-                TOOLTIP_RESET,
-                reset,
-                t(self.lang, Key::AiEffortReset),
-            ));
-        }
         if let Some(context) = geometry.context
             && context.contains(x, y)
             && self.effort_locked()
@@ -1548,13 +1578,13 @@ impl crate::ChatSurface {
                 t(self.lang, Key::AiModelContextLockedAfterStart),
             ));
         }
-        if let Some(footer) = geometry.footer
-            && footer.contains(x, y)
+        if let Some(strip) = geometry.strip
+            && strip.contains(x, y)
             && self.effort_locked()
         {
             return Some(TooltipContent::new(
                 TOOLTIP_LOCKED,
-                footer,
+                strip,
                 t(self.lang, Key::AiEffortLockedAfterStart),
             ));
         }
@@ -1602,8 +1632,9 @@ impl crate::ChatSurface {
     /// typing edits the query wherever the focus is; Up and Down move the
     /// highlighted row, or the rail's entry from the rail; Enter chooses,
     /// and the picker stays open (D66);
-    /// Left and Right move the slider a stop; Tab and Shift+Tab move between
-    /// search, rail, list, ↺ and the slider; Esc clears the query, else
+    /// Left and Right move the effort strip's level a segment, and Space or
+    /// Enter toggles a pill (D76); Tab and Shift+Tab move between search,
+    /// rail, list, the strip and the pills; Esc clears the query, else
     /// closes. Starring a model is a click on its ☆ only (D47 taken back). `None` when the picker is closed.
     pub(crate) fn picker_key(
         &mut self,
@@ -1614,7 +1645,7 @@ impl crate::ChatSurface {
         if !self.chat_model_open {
             return None;
         }
-        let footer = self.effort_control().is_some();
+        let levels = self.effort_control().is_some();
         let context = self.picker_context().is_some();
         let fast = self.picker_fast().is_some();
         match key {
@@ -1629,14 +1660,14 @@ impl crate::ChatSurface {
             }
             WinitKey::Named(NamedKey::Tab) => {
                 let mut order = vec![PickerFocus::Search, PickerFocus::Rail, PickerFocus::List];
+                if levels {
+                    order.push(PickerFocus::Effort);
+                }
                 if fast {
                     order.push(PickerFocus::Fast);
                 }
                 if context {
                     order.push(PickerFocus::Context);
-                }
-                if footer {
-                    order.extend([PickerFocus::Reset, PickerFocus::Slider]);
                 }
                 let at = order
                     .iter()
@@ -1675,32 +1706,23 @@ impl crate::ChatSurface {
                 }
                 _ => {}
             },
-            PickerFocus::Reset => {
-                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
-                    return Some(self.reset_level());
-                }
-            }
-            PickerFocus::Slider => {
+            // Left and Right move the level a segment.
+            PickerFocus::Effort => {
                 if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
                     key
                 {
                     return Some(self.step_level(*direction == NamedKey::ArrowRight));
                 }
             }
-            // Left is Off, Right is On.
+            // Space or Enter toggles the pill the keyboard is on.
             PickerFocus::Fast => {
-                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
-                    key
-                {
-                    return Some(self.choose_fast(*direction == NamedKey::ArrowRight));
+                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
+                    return Some(self.toggle_fast());
                 }
             }
-            // Left is Auto, Right the longer window.
             PickerFocus::Context => {
-                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
-                    key
-                {
-                    return Some(self.choose_context(*direction == NamedKey::ArrowRight));
+                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
+                    return Some(self.toggle_context());
                 }
             }
             PickerFocus::Search | PickerFocus::List => {}
@@ -1762,7 +1784,8 @@ impl crate::ChatSurface {
         }
     }
 
-    /// Left or Right on the slider: the chat's level one stop over.
+    /// Left or Right on the strip: the chat's level one segment over — the
+    /// model's default level is its *Default*, as a press makes it.
     fn step_level(&mut self, up: bool) -> bool {
         if self.effort_locked() {
             self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
@@ -1782,7 +1805,7 @@ impl crate::ChatSurface {
             (None, false) => stops.len().saturating_sub(1),
         };
         match stops.get(next) {
-            Some(choice) => self.choose_effort(*choice),
+            Some(choice) => self.choose_level(*choice),
             None => false,
         }
     }

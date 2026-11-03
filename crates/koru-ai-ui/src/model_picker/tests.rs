@@ -125,14 +125,13 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
         assert!(geometry.search.x >= geometry.rail.x + RAIL_W);
         assert!(geometry.refresh.x + geometry.refresh.w <= geometry.search.x + geometry.search.w);
         let footer = geometry.footer.unwrap();
+        let strip = geometry.strip.unwrap();
         let context = geometry.context.unwrap();
-        assert!(geometry.list.y + geometry.list.h <= context.y + 0.5);
-        assert!(
-            (context.y + context.h - footer.y).abs() < 0.5,
-            "right above it"
-        );
+        assert!(geometry.list.y + geometry.list.h <= footer.y + 0.5);
+        assert!(strip.y + strip.h <= context.y, "the pills under the strip");
+        assert!(context.y + context.h <= footer.y + footer.h);
         assert!((geometry.list.h - LIST_ROWS as f32 * ROW_H).abs() < 0.5);
-        assert!(geometry.reset().unwrap().x + 24.0 <= footer.x + footer.w);
+        assert!(strip.x + strip.w <= footer.x + footer.w);
     }
     assert_eq!(size(1000.0, 0.0).0, MAX_W);
     // Never shorter than the rail needs room for.
@@ -150,11 +149,14 @@ fn the_content_column_keeps_a_gap_from_the_rail() {
     let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true, true);
     let rail_end = geometry.rail.x + geometry.rail.w;
     let footer = geometry.footer.unwrap();
-    let context = geometry.context.unwrap();
-    let fast = geometry.fast.unwrap();
-    for column in [geometry.search, geometry.list, footer, context, fast] {
+    for column in [geometry.search, geometry.list, footer] {
         assert!((column.x - (rail_end + RAIL_CONTENT_GAP)).abs() < 0.01);
         assert!(column.x + column.w <= geometry.panel.x + geometry.panel.w);
+    }
+    // The footer's parts start 8 in, level with a row's name.
+    for part in [geometry.strip, geometry.fast].map(Option::unwrap) {
+        assert!((part.x - (rail_end + RAIL_CONTENT_GAP + 8.0)).abs() < 0.01);
+        assert!(part.x + part.w <= geometry.panel.x + geometry.panel.w - 12.0 + 0.01);
     }
     assert_eq!(h, size(360.0, rail_height(3, 1)).1, "the height is fixed");
     assert_eq!(
@@ -164,14 +166,14 @@ fn the_content_column_keeps_a_gap_from_the_rail() {
     );
 }
 
-/// D13: one size — search, six rows, the Context row and the level's
-/// footer — whatever the agent lists: a short list leaves room, a long one
-/// scrolls, and a model without either row gives its room to the list.
+/// D13: one size — search, six rows and the footer at its tallest (D76) —
+/// whatever the agent lists: a short list leaves room, a long one scrolls,
+/// and a model without a footer gives its room to the list.
 #[test]
 fn the_picker_keeps_one_height_from_agent_to_agent() {
     let (_, h) = size(360.0, rail_height(2, 0));
     let rows = LIST_ROWS as f32 * ROW_H;
-    assert!((h - (PAD * 2.0 + SEARCH_H + rows + CONTEXT_H + FOOTER_H)).abs() < 0.5);
+    assert!((h - (PAD * 2.0 + SEARCH_H + rows + FOOTER_H)).abs() < 0.5);
 
     let mut surface = surface();
     let mut heights = Vec::new();
@@ -188,9 +190,18 @@ fn the_picker_keeps_one_height_from_agent_to_agent() {
     assert_eq!(heights[0], h);
 
     let levels = geometry(Rect::new(0.0, 0.0, 360.0, h), true, false, false);
-    assert!(levels.list.h >= rows - 0.5, "no Context row");
+    assert!(levels.list.h >= rows - 0.5, "the strip and its readout");
+    let toggles = geometry(Rect::new(0.0, 0.0, 360.0, h), false, true, true);
+    assert!(
+        toggles.list.h >= rows + ROW_H - 0.5,
+        "pills alone: a row more"
+    );
     let bare = geometry(Rect::new(0.0, 0.0, 360.0, h), false, false, false);
-    assert!(bare.list.h > rows + ROW_H - 0.5, "neither row: more rows");
+    assert!(
+        bare.list.h > rows + ROW_H * 2.0 - 0.5,
+        "no footer: more rows"
+    );
+    assert!(bare.footer.is_none() && bare.strip.is_none());
 }
 
 /// Claude's list as the runtime folds it (koru-ai D10): *Opus* carries its
@@ -205,10 +216,10 @@ fn with_opus_context(surface: &mut ChatSurface) {
     }
 }
 
-/// D10: a model with a longer window shows a Context row — *Auto* and *1M*
-/// — and choosing *1M* gives the chat that window's id as its model; the
-/// list keeps one *Opus*, current either way. A model without one shows no
-/// row.
+/// D10, D76: a model with a longer window shows a *1M context* pill, and
+/// turning it on gives the chat that window's id as its model; the list
+/// keeps one *Opus*, current either way. A model without one shows no
+/// pill.
 #[test]
 fn the_context_row_chooses_which_id_the_chat_takes() {
     let mut surface = surface();
@@ -225,6 +236,10 @@ fn the_context_row_chooses_which_id_the_chat_takes() {
     open(&mut surface);
     assert!(surface.picker_context().is_none(), "sonnet: none");
     assert!(surface.picker_geometry().unwrap().context.is_none());
+    assert!(
+        surface.picker_geometry().unwrap().footer.is_none(),
+        "no footer"
+    );
     surface.close_picker();
 
     on_agent(
@@ -237,12 +252,16 @@ fn the_context_row_chooses_which_id_the_chat_takes() {
     surface.unmade_chat = Some(chat);
     open(&mut surface);
     let geometry = surface.picker_geometry().unwrap();
-    let row = geometry.context.expect("opus has a Context row");
+    let pill = geometry.context.expect("opus has a context pill");
     assert_eq!(context::window_label(koru_i18n::Lang::En, 1_000_000), "1M");
+    assert_eq!(
+        context::pill_label(koru_i18n::Lang::En, 1_000_000),
+        "1M context"
+    );
     while commands.try_recv().is_ok() {}
 
     surface.picker.focus = PickerFocus::Context;
-    assert!(press(&mut surface, NamedKey::ArrowRight));
+    assert!(press(&mut surface, NamedKey::Space));
     let model = |surface: &ChatSurface| {
         surface
             .transcript
@@ -270,14 +289,13 @@ fn the_context_row_chooses_which_id_the_chat_takes() {
         "listed once"
     );
 
-    // A press on *Auto* takes the model's own id again.
-    let (_, control) = surface.context_control(row, 1_000_000);
-    let auto = control.segments[0];
+    // A press on the pill takes the model's own id again.
     assert_eq!(
-        surface.picker_mouse_down(auto.x + 2.0, auto.y + 2.0),
+        surface.picker_mouse_down(pill.x + pill.w * 0.5, pill.y + pill.h * 0.5),
         Some(true)
     );
     assert_eq!(model(&surface), "opus");
+    assert_eq!(surface.picker.focus, PickerFocus::Context);
 }
 
 /// D10: once an agent chat has begun, its window is shown, not changed —
@@ -496,20 +514,38 @@ fn the_footer_reads_the_level_and_says_when_it_is_the_default() {
         supports_off: false,
     };
     assert_eq!(
-        footer_words(&stated, ReasoningChoice::Default, Lang::En),
-        ("High".into(), Some("(default)".into()))
+        readout(&stated, ReasoningChoice::Default, Lang::En),
+        ["Effort: High (default)", "High (default)", "High"]
     );
     assert_eq!(
-        footer_words(&unstated, ReasoningChoice::Default, Lang::En),
-        ("Default".into(), None)
+        readout(
+            &stated,
+            ReasoningChoice::Level(ReasoningLevel::High),
+            Lang::En
+        )[0],
+        "Effort: High (default)",
+        "the level shown is the model's own, however it was chosen"
     );
     assert_eq!(
-        footer_words(
-            &unstated,
+        readout(
+            &stated,
             ReasoningChoice::Level(ReasoningLevel::Low),
             Lang::En
         ),
-        ("Low".into(), None)
+        ["Effort: Low", "Low"],
+        "no (default) on another level"
+    );
+    assert_eq!(
+        readout(&unstated, ReasoningChoice::Default, Lang::En),
+        ["Effort: Default", "Default"]
+    );
+    assert_eq!(
+        readout(
+            &unstated,
+            ReasoningChoice::Level(ReasoningLevel::Low),
+            Lang::En
+        )[0],
+        "Effort: Low"
     );
 }
 
@@ -869,8 +905,9 @@ fn the_keyboard_alone_chooses_a_model_and_moves_through_the_picker() {
     assert!(!surface.chat_model_open, "an empty query: Esc closes");
 }
 
-/// §9.3: no control, no footer; ↺ does nothing at *Default*; a stop or ↺
-/// sets the chat's level; Left and Right move a stop.
+/// §9.3, D76: no control, no footer; Left and Right on the strip move a
+/// segment; the model's own level is the chat's *Default* — a press on it
+/// is the way back, with no ↺.
 #[test]
 fn the_footer_follows_the_chats_model_and_sets_its_level() {
     let mut surface = surface();
@@ -880,7 +917,7 @@ fn the_footer_follows_the_chats_model_and_sets_its_level() {
             ReasoningLevel::High,
             ReasoningLevel::Max,
         ],
-        default: None,
+        default: Some(ReasoningLevel::High),
         supports_off: false,
     };
     if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
@@ -909,7 +946,6 @@ fn the_footer_follows_the_chats_model_and_sets_its_level() {
     surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
     open(&mut surface);
     assert!(surface.picker_geometry().unwrap().footer.is_some());
-    assert!(surface.reset_level(), "nothing to reset at Default");
     let level = |surface: &ChatSurface| {
         surface
             .transcript
@@ -919,18 +955,29 @@ fn the_footer_follows_the_chats_model_and_sets_its_level() {
             .current_model
             .default_reasoning
     };
+    let high = ReasoningChoice::Level(ReasoningLevel::High);
     assert_eq!(level(&surface), ReasoningChoice::Default);
-    surface.picker.focus = PickerFocus::Slider;
+    assert!(surface.choose_level(high), "already the model's own");
+    assert_eq!(level(&surface), ReasoningChoice::Default);
+    surface.picker.focus = PickerFocus::Effort;
     press(&mut surface, NamedKey::ArrowRight);
-    assert_eq!(level(&surface), ReasoningChoice::Level(ReasoningLevel::Low));
-    press(&mut surface, NamedKey::ArrowRight);
+    assert_eq!(level(&surface), ReasoningChoice::Level(ReasoningLevel::Max));
+    press(&mut surface, NamedKey::ArrowLeft);
     assert_eq!(
         level(&surface),
-        ReasoningChoice::Level(ReasoningLevel::High)
+        ReasoningChoice::Default,
+        "stepping onto the model's own level is its Default"
     );
-    surface.picker.focus = PickerFocus::Reset;
-    press(&mut surface, NamedKey::Enter);
-    assert_eq!(level(&surface), ReasoningChoice::Default, "↺");
+    press(&mut surface, NamedKey::ArrowLeft);
+    assert_eq!(level(&surface), ReasoningChoice::Level(ReasoningLevel::Low));
+    // A press on the model's own level is the way back to it.
+    let at = surface.picker_segment_rect(high).unwrap();
+    assert_eq!(
+        surface.picker_mouse_down(at.x + at.w * 0.5, at.y + at.h * 0.5),
+        Some(true)
+    );
+    assert_eq!(level(&surface), ReasoningChoice::Default);
+    assert_eq!(surface.picker.focus, PickerFocus::Effort);
 }
 
 /// ↻ (D13): the selected agent's list rebuilt; *Checking…* until an answer
@@ -1043,7 +1090,7 @@ fn choosing_a_model_keeps_the_picker_open_and_its_footer_follows() {
     );
 
     // The level is set right after, in the same open picker.
-    surface.picker.focus = PickerFocus::Slider;
+    surface.picker.focus = PickerFocus::Effort;
     press(&mut surface, NamedKey::ArrowRight);
     assert_eq!(
         surface
@@ -1266,8 +1313,10 @@ fn the_fast_row_shows_only_when_the_model_offers_it_and_stays_changeable() {
     surface.unmade_chat = None;
     let geometry = surface.picker_geometry().unwrap();
     let (fast, context) = (geometry.fast.unwrap(), geometry.context.unwrap());
-    assert!(fast.y + fast.h <= context.y, "Fast sits above Context");
+    assert!(fast.x + fast.w <= context.x, "Fast first, in one row");
+    assert_eq!(fast.y, context.y);
     assert!(geometry.list.y + geometry.list.h <= fast.y);
+    assert!(geometry.strip.is_none(), "opus offers no levels here");
     assert!(!surface.picker_fast().unwrap().on, "the model's default");
 
     // The chat has begun: Fast mode still changes, for the next message.
@@ -1296,9 +1345,18 @@ fn the_fast_row_shows_only_when_the_model_offers_it_and_stays_changeable() {
         crate::reader::Command::UpdateAgentSettings(_, request)
             if request.fast == Some(true) && request.mode.is_none()
     ));
-    // Right and Left on the focused row choose On and Off.
+    // Space or Enter on the focused pill toggles it; so does a press.
     surface.picker.focus = PickerFocus::Fast;
-    assert!(press(&mut surface, NamedKey::ArrowLeft));
+    assert!(press(&mut surface, NamedKey::Space));
+    assert!(!surface.picker_fast().unwrap().on);
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert!(surface.picker_fast().unwrap().on);
+    assert!(
+        surface.picker.query.raw_text().is_empty(),
+        "Space on a pill is not typed"
+    );
+    let fast = surface.picker_geometry().unwrap().fast.unwrap();
+    surface.picker_mouse_down(fast.x + fast.w * 0.5, fast.y + fast.h * 0.5);
     assert!(!surface.picker_fast().unwrap().on);
 }
 
@@ -1885,20 +1943,34 @@ fn a_star_toggles_into_and_out_of_the_list_in_place() {
 
 /// The picker's parts as they were placed before its chrome was an element
 /// tree: the arithmetic `geometry` and `rail_rects` held until D64, kept
-/// here as the record the frame is held to.
+/// here as the record the frame is held to — the footer as D76 places it:
+/// the divider, 10, the strip, 8, the pills' row and 8, its parts 8 in
+/// from the content column's sides, a wordless pill its inset and icon.
 fn arithmetic_geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
     let inner_x = panel.x + RAIL_W + RAIL_CONTENT_GAP;
     let inner_w = (panel.w - RAIL_W - RAIL_CONTENT_GAP - PAD).max(1.0);
     let mut bottom = panel.y + panel.h - PAD;
-    let mut below = |on: bool, h: f32| {
-        on.then(|| {
-            bottom -= h;
-            Rect::new(inner_x, bottom, inner_w, h)
-        })
+    let footer_h = if levels {
+        Some(FOOTER_H)
+    } else if context || fast {
+        Some(FOOTER_TOGGLES_H)
+    } else {
+        None
     };
-    let footer = below(levels, FOOTER_H);
-    let context = below(context, CONTEXT_H);
-    let fast = below(fast, FAST_H);
+    let footer = footer_h.map(|h| {
+        bottom -= h;
+        Rect::new(inner_x, bottom, inner_w, h)
+    });
+    let part_x = inner_x + 8.0;
+    let strip = levels.then(|| Rect::new(part_x, bottom + 11.0, inner_w - 16.0, STRIP_H));
+    let pills_y = bottom + 11.0 + if levels { STRIP_H + 8.0 } else { 0.0 };
+    let fast_w = 10.0 * 2.0 + 12.0 + 4.0;
+    let fast_rect = fast.then(|| Rect::new(part_x, pills_y, fast_w, PILL_H));
+    let context = context.then(|| {
+        let x = if fast { part_x + fast_w + 6.0 } else { part_x };
+        Rect::new(x, pills_y, 20.0, PILL_H)
+    });
+    let fast = fast_rect;
     let search = Rect::new(inner_x, panel.y + PAD + 4.0, inner_w, SEARCH_H - 8.0);
     let refresh = Rect::new(
         search.x + search.w - 28.0,
@@ -1921,6 +1993,7 @@ fn arithmetic_geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> 
         refresh,
         list: Rect::new(inner_x, list_top, inner_w, rows * ROW_H),
         footer,
+        strip,
         context,
         fast,
     }
@@ -1953,9 +2026,9 @@ fn assert_same_rect(found: Rect, expected: Rect, what: &str) {
 }
 
 /// **The element frame puts every part where the arithmetic did** (D64):
-/// rail, search box, field, ↻, list and the three rows under it, for narrow,
-/// middling and wide panels with every combination of rows — pixel for
-/// pixel.
+/// rail, search box, field, ↻, list and the footer's parts under it, for
+/// narrow, middling and wide panels with every combination of parts —
+/// pixel for pixel.
 #[test]
 fn the_element_frame_places_the_picker_where_it_always_was() {
     for composer in [280.0, 360.0, 1000.0] {
@@ -1976,6 +2049,7 @@ fn the_element_frame_places_the_picker_where_it_always_was() {
                         assert_same_rect(found.list, was.list, &format!("list, {case}"));
                         for (part, a, b) in [
                             ("footer", found.footer, was.footer),
+                            ("strip", found.strip, was.strip),
                             ("context", found.context, was.context),
                             ("fast", found.fast, was.fast),
                         ] {
@@ -2084,7 +2158,7 @@ fn everything_drawn_inside_the_picker_nests_under_the_popover_surface() {
     use koru_draw::inspect;
     let mut surface = picker_with_everything();
     let geometry = surface.picker_geometry().unwrap();
-    assert!(geometry.fast.is_some() && geometry.context.is_some() && geometry.footer.is_some());
+    assert!(geometry.fast.is_some() && geometry.context.is_some() && geometry.strip.is_some());
     // The pointer on *Opus*, so its ☆ and plate are drawn too.
     let row = surface.picker_row_rect(&geometry, 1).unwrap();
     surface.pointer = (row.x + 20.0, row.y + row.h * 0.5);
@@ -2151,15 +2225,28 @@ fn everything_drawn_inside_the_picker_nests_under_the_popover_surface() {
     assert!(!named("Rail divider").is_empty(), "Favorites is set off");
     let plus = named(elements::MANAGE_NAME);
     assert!(!plus.is_empty() && plus.iter().all(|record| under(*record, rail)));
-    for part in [
-        elements::SEARCH_ROW,
-        elements::LIST,
-        elements::FAST_ROW,
-        elements::CONTEXT_ROW,
-        elements::EFFORT_FOOTER,
-    ] {
+    for part in [elements::SEARCH_ROW, elements::LIST, elements::FOOTER] {
         assert_eq!(records[one(part)].parent, Some(content), "{part}");
     }
+    // The footer's parts: the strip and its segments, the pills, the
+    // readout — each its own record inside the footer.
+    let footer = one(elements::FOOTER);
+    for part in [
+        elements::EFFORT_STRIP,
+        elements::FAST_PILL,
+        elements::CONTEXT_PILL,
+        elements::READOUT,
+    ] {
+        assert!(under(one(part), footer), "{part}");
+    }
+    let strip = one(elements::EFFORT_STRIP);
+    let segments = named(elements::EFFORT_SEGMENT);
+    assert_eq!(segments.len(), 2, "Low and High");
+    assert!(
+        segments
+            .iter()
+            .all(|segment| records[*segment].parent == Some(strip))
+    );
     let field = one(elements::SEARCH_FIELD);
     assert!(under(field, content));
     assert!(
@@ -2210,8 +2297,24 @@ fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
         .into_iter()
         .filter(|node| node.role == Role::Button)
         .collect();
-    // Favorites, Claude, OpenCode, the + and ↻.
-    assert_eq!(buttons.len(), surface.picker_rail().len() + 2);
+    // Favorites, Claude, OpenCode, the + and ↻; Low and High; Fast and
+    // 1M context.
+    assert_eq!(buttons.len(), surface.picker_rail().len() + 2 + 2 + 2);
+    assert!(
+        buttons
+            .iter()
+            .any(|button| { button.name == Some(Name::Key(koru_i18n::Key::AiEffortHigh)) })
+    );
+    assert!(
+        buttons
+            .iter()
+            .any(|button| { button.name == Some(Name::Key(koru_i18n::Key::AiModelFast)) })
+    );
+    assert!(
+        frame.semantics().iter().any(|node| node.role == Role::Group
+            && node.name == Some(Name::Key(koru_i18n::Key::AiEffortGroup))),
+        "the strip is a group named Effort"
+    );
     assert_eq!(
         buttons[0].name,
         Some(Name::Key(koru_i18n::Key::AiPickerFavorites))
@@ -2355,4 +2458,264 @@ fn the_lists_scrollbar_drags_by_whole_rows() {
     surface.picker_mouse_move(x, bar.thumb_top + 2.0 + travel * 0.5);
     let middle = surface.picker.offset;
     assert!(middle > 0 && middle < surface.picker_rows().len() - geometry.visible_rows());
+}
+
+/// **The strip shows the levels the model offers, and no others** (D76): a
+/// segment each, in the model's order, its short word shown and its full
+/// word its name; the chat's level raised; equal columns filling the
+/// strip. A model with Off has an Off segment; *Ultra* is no level any
+/// model offers yet, so none shows.
+#[test]
+fn the_strip_shows_exactly_the_models_levels() {
+    let mut surface = surface();
+    surface.lang = Lang::En;
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[1].reasoning = Some(ReasoningControl::Levels {
+            values: vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::XHigh,
+                ReasoningLevel::Max,
+            ],
+            default: Some(ReasoningLevel::XHigh),
+            supports_off: false,
+        });
+        models[2].reasoning = Some(ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low, ReasoningLevel::High],
+            default: None,
+            supports_off: true,
+        });
+    }
+    let words = |surface: &ChatSurface| {
+        let footer = surface.picker_footer().expect("a footer");
+        footer
+            .segments
+            .iter()
+            .map(|segment| (segment.label.clone(), segment.name, segment.selected))
+            .collect::<Vec<_>>()
+    };
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert_eq!(
+        words(&surface),
+        [
+            (String::from("Low"), Key::AiEffortLow, false),
+            (String::from("Med"), Key::AiEffortMedium, false),
+            (String::from("High"), Key::AiEffortHigh, false),
+            (String::from("XH"), Key::AiEffortXHigh, true),
+            (String::from("Max"), Key::AiEffortMax, false),
+        ],
+        "the model's own level is raised while the chat is on Default"
+    );
+    let strip = surface.picker_geometry().unwrap().strip.unwrap();
+    let rects: Vec<Rect> = surface
+        .picker_footer()
+        .unwrap()
+        .segments
+        .iter()
+        .map(|segment| surface.picker_segment_rect(segment.choice).unwrap())
+        .collect();
+    for (index, rect) in rects.iter().enumerate() {
+        assert!((rect.w - rects[0].w).abs() < 0.01, "equal columns");
+        assert!((rect.h - SEGMENT_H).abs() < 0.01, "28 tall");
+        if index > 0 {
+            let gap = rect.x - (rects[index - 1].x + rects[index - 1].w);
+            assert!((gap - 2.0).abs() < 0.01, "2 between");
+        }
+    }
+    assert!(
+        (rects[0].x - (strip.x + 2.0)).abs() < 0.01,
+        "2 inside the strip"
+    );
+    let last = rects[rects.len() - 1];
+    assert!((last.x + last.w - (strip.x + strip.w - 2.0)).abs() < 0.01);
+    assert!((strip.h - STRIP_H).abs() < 0.01);
+    surface.close_picker();
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Level(ReasoningLevel::High),
+    );
+    open(&mut surface);
+    assert_eq!(
+        words(&surface),
+        [
+            (String::from("Off"), Key::AiEffortOff, false),
+            (String::from("Low"), Key::AiEffortLow, false),
+            (String::from("High"), Key::AiEffortHigh, true),
+        ]
+    );
+    assert!(
+        surface
+            .picker_footer()
+            .unwrap()
+            .readout
+            .first()
+            .is_some_and(|readout| readout == "Effort: High"),
+        "no (default): the model states none"
+    );
+}
+
+/// **A pill shows only when the model offers it, and a footer only when it
+/// offers a part** (D76): levels alone are the strip and the readout;
+/// Fast alone is its pill and no strip; a model with neither has no
+/// footer and no divider.
+#[test]
+fn the_pills_and_the_footer_show_only_what_the_model_offers() {
+    let mut surface = surface();
+    surface.lang = Lang::En;
+    with_opus_context(&mut surface);
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        // Sonnet: Fast and nothing else; the default entry: levels only.
+        models[2].fast = Some(koru_ai_wire::AgentModelFast {
+            on_by_default: true,
+        });
+        models[0].reasoning = Some(ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low, ReasoningLevel::High],
+            default: Some(ReasoningLevel::Low),
+            supports_off: false,
+        });
+    }
+    let parts = |surface: &ChatSurface| {
+        let footer = surface.picker_footer();
+        (
+            footer.as_ref().is_some_and(|footer| footer.levels),
+            footer.as_ref().and_then(|footer| {
+                footer
+                    .fast
+                    .as_ref()
+                    .map(|pill| (pill.label.clone(), pill.on))
+            }),
+            footer
+                .as_ref()
+                .and_then(|footer| footer.context.as_ref().map(|pill| pill.label.clone())),
+            footer.map(|footer| footer.readout.first().cloned()),
+        )
+    };
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert_eq!(
+        parts(&surface),
+        (false, Some((String::from("Fast"), true)), None, Some(None)),
+        "Fast alone: its pill, on by the model's default; no strip, no readout"
+    );
+    let geometry = surface.picker_geometry().unwrap();
+    assert!(geometry.strip.is_none() && geometry.context.is_none());
+    assert!((geometry.footer.unwrap().h - FOOTER_TOGGLES_H).abs() < 0.01);
+    assert!(geometry.fast.is_some());
+    surface.close_picker();
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert_eq!(
+        parts(&surface),
+        (false, None, Some(String::from("1M context")), Some(None)),
+        "a longer window alone: its pill"
+    );
+    surface.close_picker();
+
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "default",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert_eq!(
+        parts(&surface),
+        (
+            true,
+            None,
+            None,
+            Some(Some(String::from("Effort: Low (default)")))
+        ),
+        "levels alone: the strip and the readout"
+    );
+    let geometry = surface.picker_geometry().unwrap();
+    assert!((geometry.footer.unwrap().h - FOOTER_H).abs() < 0.01);
+    assert!(geometry.fast.is_none() && geometry.context.is_none());
+    surface.close_picker();
+
+    on_agent(
+        &mut surface,
+        "agent-opencode",
+        "deepseek/v4-pro",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert_eq!(
+        parts(&surface),
+        (false, None, None, None),
+        "nothing offered"
+    );
+    let geometry = surface.picker_geometry().unwrap();
+    assert!(geometry.footer.is_none(), "no footer, no divider");
+    let spec = surface.picker_spec();
+    let frame = elements::layout(
+        &elements::tree(&spec, elements::Painted::default()),
+        geometry.panel,
+        FrameCx::root(),
+    );
+    assert!(frame.named(elements::FOOTER).next().is_none());
+    assert!(frame.named("Divider").next().is_none());
+}
+
+/// **The footer's measurements** (D76, the design *A1a*): 87 at its tallest
+/// — the divider, 10, the 32 strip, 8, the 28 pills' row, 8 and the content
+/// column's 4 under it, 12 from the panel's foot — where the Fast row, the
+/// Context row and the slider's footer took 124 (30 + 30 + 64); 47 for
+/// pills alone. A pill is 28 tall and as wide as its words.
+#[test]
+fn the_footer_is_the_designs_size() {
+    assert_eq!(FOOTER_H, 87.0);
+    assert_eq!(FOOTER_TOGGLES_H, 47.0);
+    let (w, h) = size(360.0, rail_height(2, 0));
+    assert_eq!(h, PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + 87.0);
+    let geometry = geometry(Rect::new(0.0, 0.0, w, h), true, true, true);
+    let footer = geometry.footer.unwrap();
+    let strip = geometry.strip.unwrap();
+    let fast = geometry.fast.unwrap();
+    assert!((footer.y + footer.h - (h - PAD)).abs() < 0.01);
+    assert!((strip.y - (footer.y + 1.0 + 10.0)).abs() < 0.01);
+    assert!((fast.y - (strip.y + strip.h + 8.0)).abs() < 0.01);
+    assert!((fast.h - PILL_H).abs() < 0.01);
+    assert!(
+        (h - (fast.y + fast.h) - 12.0).abs() < 0.01,
+        "12 from the foot"
+    );
+    assert!(
+        (w - (strip.x + strip.w) - 12.0).abs() < 0.01,
+        "12 from the end"
+    );
+
+    let mut surface = picker_with_everything();
+    surface.lang = Lang::En;
+    let geometry = surface.picker_geometry().unwrap();
+    let (fast, context) = (geometry.fast.unwrap(), geometry.context.unwrap());
+    assert!(
+        context.w > fast.w,
+        "*1M context* has more words than *Fast*"
+    );
+    assert!((context.x - (fast.x + fast.w + 6.0)).abs() < 0.01);
 }

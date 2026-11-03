@@ -18,7 +18,13 @@
 //!                                       [caret] [✓] [☆]
 //!       row  Model row                  Legacy models (N) ›, its older
 //!                                       models under it while expanded
-//!     Fast row · Context row · Effort footer
+//!     col  Picker footer                only while the model offers a part
+//!       Divider
+//!       col  Footer block               10 above, 8 at the sides and foot
+//!         row  Effort strip             group "Effort": a segment a level
+//!           Effort segment …            equal columns, the chosen raised
+//!         row  Footer toggles           ⚡ Fast pill · 1M context pill ·
+//!                                       Effort readout (at the row's end)
 //! ```
 //!
 //! **The list is elements** (QUESTIONS M1, approved by the user
@@ -28,7 +34,9 @@
 //!
 //! **Existing controls go in as named adapters** (ELEMENTS.final §3.1, the
 //! custom leaf; QUESTIONS M7): the search field's `TextInput`, ↻, the
-//! Segmented rows, the effort slider and a provider's brand mark have no
+//! effort segments and pills — a raised plate with a shadow, a hairline
+//! border and an accent wash the element layer cannot paint — the readout
+//! and a provider's brand mark have no
 //! element form, so each is a type in [`super::paint`] whose `impl Leaf`
 //! delegates to the drawing the control always had, in the allocation the
 //! frame gives it, in the frame's palette. What the element layer could not
@@ -42,7 +50,7 @@
 
 use std::cell::RefCell;
 
-use koru_ai_core::AiProviderId;
+use koru_ai_core::{AiProviderId, ReasoningChoice, ReasoningLevel};
 use koru_draw::el::{
     Action, Align, El, Frame, FrameCx, Key, Look, Ring, Role, StateRecipe, TextCache, boxed, col,
     divider, icon, leaf, row, scroll_y, text,
@@ -50,16 +58,19 @@ use koru_draw::el::{
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{Accent, IconSize, Ink, Line, Radius, Space, Surface, roles};
+use koru_draw::theme::{Accent, IconSize, Ink, Line, Profile, Radius, Space, Surface, roles};
 
-use super::context::ContextPaint;
-use super::fast::FastPaint;
 use super::paint::{
-    ContextLeaf, EffortLeaf, EffortPaint, FastLeaf, ProviderMark, RefreshLeaf, SearchLeaf,
-    SearchPaint,
+    PillLeaf, ProviderMark, ReadoutLeaf, RefreshLeaf, SearchLeaf, SearchPaint, SegmentLeaf,
 };
 pub(crate) use super::tokens::*;
 use super::{Geometry, ROW_H, RailEntry, SEARCH_H};
+
+/// **The *⚡ Fast* pill's lightning** (D76): Phosphor's `ph-lightning` in
+/// the bundled Phosphor face. Koru's vector icon catalog has no lightning,
+/// so the glyph is drawn from the font the catalog falls back to for a
+/// glyph it does not hold (`TextEngine::icon_layout`).
+pub(crate) const LIGHTNING: char = '\u{E2DE}';
 
 /// A rail mark's glyph inside its square, and a row's mark inside its own.
 pub(crate) const RAIL_GLYPH_INSET: f32 = 7.0;
@@ -87,9 +98,14 @@ pub(crate) const ROW_NAME: &str = "Model name";
 pub(crate) const ROW_MARK_NAME: &str = "Row mark";
 pub(crate) const STAR_NAME: &str = "Favorite star";
 pub(crate) const CHECK: &str = "Current check";
-pub(crate) const FAST_ROW: &str = "Fast row";
-pub(crate) const CONTEXT_ROW: &str = "Context row";
-pub(crate) const EFFORT_FOOTER: &str = "Effort footer";
+pub(crate) const FOOTER: &str = "Picker footer";
+pub(crate) const FOOTER_BLOCK: &str = "Footer block";
+pub(crate) const EFFORT_STRIP: &str = "Effort strip";
+pub(crate) const EFFORT_SEGMENT: &str = "Effort segment";
+pub(crate) const TOGGLES: &str = "Footer toggles";
+pub(crate) const FAST_PILL: &str = "Fast pill";
+pub(crate) const CONTEXT_PILL: &str = "Context pill";
+pub(crate) const READOUT: &str = "Effort readout";
 
 /// The picker, as its keys name it.
 pub(crate) const SURFACE: &str = "model-picker";
@@ -101,6 +117,25 @@ pub(crate) const LIST_KEY: Key = Key::surface(SURFACE, "list");
 pub(crate) const FAST_KEY: Key = Key::surface(SURFACE, "fast");
 pub(crate) const CONTEXT_KEY: Key = Key::surface(SURFACE, "context");
 pub(crate) const EFFORT_KEY: Key = Key::surface(SURFACE, "effort");
+
+/// A level's segment in the effort strip, by the level: the same key in
+/// every frame and for every model that offers it.
+pub(crate) fn segment_key(choice: ReasoningChoice) -> Key {
+    Key::surface(
+        SURFACE,
+        match choice {
+            ReasoningChoice::Default => "effort-default",
+            ReasoningChoice::Off => "effort-off",
+            ReasoningChoice::On => "effort-on",
+            ReasoningChoice::Level(ReasoningLevel::Minimal) => "effort-minimal",
+            ReasoningChoice::Level(ReasoningLevel::Low) => "effort-low",
+            ReasoningChoice::Level(ReasoningLevel::Medium) => "effort-medium",
+            ReasoningChoice::Level(ReasoningLevel::High) => "effort-high",
+            ReasoningChoice::Level(ReasoningLevel::XHigh) => "effort-xhigh",
+            ReasoningChoice::Level(ReasoningLevel::Max) => "effort-max",
+        },
+    )
+}
 
 /// A rail entry's key: *Favorites* by its keyword, an agent or a built-in
 /// provider by its id — never its place on the rail, which the person can
@@ -189,9 +224,8 @@ pub(crate) struct Spec {
     pub(crate) manage: bool,
     /// ↻, while an agent is selected, and whether it is disabled now.
     pub(crate) refresh: Option<bool>,
-    pub(crate) fast: bool,
-    pub(crate) context: bool,
-    pub(crate) levels: bool,
+    /// The footer under the list (D76), while the model offers a part.
+    pub(crate) footer: Option<Footer>,
     /// Every row of the list, and the first one shown.
     pub(crate) list: Vec<ListRow>,
     pub(crate) offset: usize,
@@ -211,6 +245,181 @@ impl Spec {
     }
 }
 
+/// **The footer** (D76, the user's design *A1a*): the effort strip while
+/// the model offers levels, and under it the pills it offers and the
+/// readout.
+pub(crate) struct Footer {
+    /// The model offers levels: the strip shows, and the readout.
+    pub(crate) levels: bool,
+    /// One segment a level, in the strip's order.
+    pub(crate) segments: Vec<Segment>,
+    /// An agent chat that has begun: the strip only shows its level.
+    pub(crate) locked: bool,
+    pub(crate) fast: Option<Pill>,
+    pub(crate) context: Option<Pill>,
+    /// The readout, longest first ([`super::readout`]); empty without levels.
+    pub(crate) readout: Vec<String>,
+}
+
+impl Footer {
+    /// A footer with the parts named and no words: the geometry of one.
+    #[cfg(test)]
+    pub(crate) fn shape(levels: bool, context: bool, fast: bool) -> Option<Self> {
+        let pill = |icon: Option<char>| Pill {
+            label: String::new(),
+            icon,
+            on: false,
+            disabled: false,
+        };
+        (levels || context || fast).then(|| Self {
+            levels,
+            segments: Vec::new(),
+            locked: false,
+            fast: fast.then(|| pill(Some(LIGHTNING))),
+            context: context.then(|| pill(None)),
+            readout: if levels {
+                vec![String::new()]
+            } else {
+                Vec::new()
+            },
+        })
+    }
+}
+
+/// One level's segment in the effort strip.
+pub(crate) struct Segment {
+    pub(crate) key: Key,
+    pub(crate) choice: ReasoningChoice,
+    /// The short word it shows: *Med*, *XH*.
+    pub(crate) label: String,
+    /// The full word a screen reader says: *Medium*, *Extra high*.
+    pub(crate) name: koru_i18n::Key,
+    /// The chat's level: raised.
+    pub(crate) selected: bool,
+}
+
+/// A pill toggle: *⚡ Fast*, *1M context*.
+pub(crate) struct Pill {
+    pub(crate) label: String,
+    pub(crate) icon: Option<char>,
+    pub(crate) on: bool,
+    /// Shown, not changed: the context window once an agent chat has begun.
+    pub(crate) disabled: bool,
+}
+
+thread_local! {
+    /// The engine a pill's words are measured on while its tree is built:
+    /// a leaf is measured without one, and a pill is as wide as its words.
+    static MEASURE: RefCell<Option<TextEngine>> = const { RefCell::new(None) };
+}
+
+/// A pill's width: its inset at both ends, its icon and the gap after it,
+/// and its words in the pill's role.
+fn pill_width(pill: &Pill) -> f32 {
+    let profile = Profile::Desktop;
+    let words = MEASURE.with_borrow_mut(|slot| {
+        let engine = slot.get_or_insert_with(TextEngine::new);
+        engine
+            .simple_layout(&pill.label, roles::META.style())
+            .width()
+    });
+    let icon = if pill.icon.is_some() {
+        IconSize::XS.px(profile) + PILL_ICON_GAP.token.px(profile)
+    } else {
+        0.0
+    };
+    PILL_PAD.token.px(profile) * 2.0 + icon + words
+}
+
+/// **The footer** (D76): a divider across the content column, then the
+/// strip and the pills' row in their block.
+fn footer(spec: &Footer) -> El {
+    let mut block = col(FOOTER_BLOCK)
+        .pad_top(FOOTER_TOP)
+        .pad_x(FOOTER_INSET)
+        .pad_bottom(FOOTER_INSET)
+        .gap(FOOTER_ROW_GAP);
+    if spec.levels {
+        block = block.child(
+            row(EFFORT_STRIP)
+                .h(STRIP_HEIGHT)
+                .pad(STRIP_INSET)
+                .gap(STRIP_INSET)
+                .bg(Surface::Chip)
+                .radius(Radius::Metric(STRIP_RADIUS))
+                .id(EFFORT_KEY)
+                .semantics(Role::Group)
+                .name(koru_i18n::Key::AiEffortGroup)
+                .children(spec.segments.iter().map(|segment| {
+                    leaf(
+                        EFFORT_SEGMENT,
+                        SegmentLeaf {
+                            label: segment.label.clone(),
+                            selected: segment.selected,
+                            locked: spec.locked,
+                        },
+                    )
+                    .semantic()
+                    .id(segment.key)
+                    .hit()
+                    .action(Action::Click)
+                    .semantics(Role::Button)
+                    .name(segment.name)
+                    .selected(segment.selected)
+                    .disabled(spec.locked)
+                    .fill()
+                })),
+        );
+    }
+    let pill = |name: &'static str, key: Key, pill: &Pill| {
+        let width = pill_width(pill);
+        leaf(
+            name,
+            PillLeaf {
+                label: pill.label.clone(),
+                icon: pill.icon,
+                on: pill.on,
+                width,
+            },
+        )
+        .semantic()
+        .id(key)
+        .hit()
+        .action(Action::Click)
+        .semantics(Role::Button)
+        .selected(pill.on)
+        .disabled(pill.disabled)
+    };
+    let mut toggles = row(TOGGLES).h(PILL_HEIGHT).gap(PILL_GAP).items_center();
+    let mut any = false;
+    if let Some(fast) = &spec.fast {
+        any = true;
+        toggles = toggles.child(pill(FAST_PILL, FAST_KEY, fast).name(koru_i18n::Key::AiModelFast));
+    }
+    if let Some(context) = &spec.context {
+        any = true;
+        toggles = toggles
+            .child(pill(CONTEXT_PILL, CONTEXT_KEY, context).name_text(context.label.clone()));
+    }
+    if !spec.readout.is_empty() {
+        any = true;
+        toggles = toggles.child(
+            leaf(
+                READOUT,
+                ReadoutLeaf {
+                    forms: spec.readout.clone(),
+                },
+            )
+            .decorative()
+            .fill(),
+        );
+    }
+    if any {
+        block = block.child(toggles);
+    }
+    col(FOOTER).child(divider(Line::Divider)).child(block)
+}
+
 /// A list row's key, and its ☆'s, from what the row chooses: `id` names
 /// the entry and the model. The same model gives the same key in every
 /// frame, wherever it is listed.
@@ -222,15 +431,13 @@ pub(crate) fn star_key(id: &str) -> Key {
     Key::model(stable_id(id), "star")
 }
 
-/// **What the adapters draw**: each control's state for this frame, handed
-/// to its leaf. None of it when the tree is laid out only for its geometry,
-/// where nothing is painted.
+/// **What the adapters draw** beyond the spec: the search field's input,
+/// handed to its leaf. None of it when the tree is laid out only for its
+/// geometry, where nothing is painted. The footer's leaves draw from the
+/// spec ([`Footer`]), as its pills' widths come from their words.
 #[derive(Default)]
 pub(crate) struct Painted {
     pub(crate) search: Option<SearchPaint>,
-    pub(crate) fast: Option<FastPaint>,
-    pub(crate) context: Option<ContextPaint>,
-    pub(crate) effort: Option<EffortPaint>,
 }
 
 /// **The rail**: its marks one under another, each followed by its room and,
@@ -634,27 +841,9 @@ pub(crate) fn tree(spec: &Spec, painted: Painted) -> El {
         .pad_bottom(PANEL_INSET)
         .child(search)
         .child(list(spec));
-    // The rows under the list, each a target of its own: Fast, Context
-    // and the level's footer.
-    let rows = [
-        spec.fast.then(|| {
-            leaf(FAST_ROW, FastLeaf(painted.fast))
-                .semantic()
-                .id(FAST_KEY)
-        }),
-        spec.context.then(|| {
-            leaf(CONTEXT_ROW, ContextLeaf(painted.context))
-                .semantic()
-                .id(CONTEXT_KEY)
-        }),
-        spec.levels.then(|| {
-            leaf(EFFORT_FOOTER, EffortLeaf(painted.effort))
-                .semantic()
-                .id(EFFORT_KEY)
-        }),
-    ];
-    for row in rows.into_iter().flatten() {
-        content = content.child(row.hit());
+    // Under the list: the strip and the pills (D76).
+    if let Some(spec) = &spec.footer {
+        content = content.child(footer(spec));
     }
     row(PICKER)
         .gap(CONTENT_GAP)
@@ -693,8 +882,9 @@ pub(crate) fn geometry_of(frame: &Frame, panel: Rect) -> Geometry {
             .node(LIST_KEY)
             .and_then(|node| node.viewport)
             .unwrap_or(none),
-        footer: at(EFFORT_FOOTER),
-        context: at(CONTEXT_ROW),
-        fast: at(FAST_ROW),
+        footer: at(FOOTER),
+        strip: at(EFFORT_STRIP),
+        context: at(CONTEXT_PILL),
+        fast: at(FAST_PILL),
     }
 }

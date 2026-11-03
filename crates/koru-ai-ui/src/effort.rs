@@ -1,29 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The effort control on the chip: what a model's reasoning control offers
-//! as stops, what the chat's setting resolves to under it, the word for
-//! each, and the slider's geometry and drawing. Nothing here knows a
-//! provider; the control comes from the service with the transcript.
+//! as levels, what the chat's setting resolves to under it, and the words
+//! for each — the full word a readout and a screen reader say, and the
+//! short one the model picker's effort strip shows (D76). Nothing here
+//! knows a provider; the control comes from the service with the transcript.
 
 use koru_ai_core::{ReasoningChoice, ReasoningControl, ReasoningLevel};
-use koru_draw::geometry::Rect;
-use koru_draw::scene;
-use koru_draw::text::TextEngine;
 use koru_i18n::{Key, Lang, t};
-use vello::Scene;
-use vello::kurbo::{Affine, Circle};
 
-use crate::{role, theme};
-
-/// The section's height inside the chip's popover: a heading line and the
-/// track with its stop words.
-pub(crate) const SECTION_H: f32 = 64.0;
-const TRACK_PAD: f32 = 18.0;
-const STOP_R: f64 = 5.0;
-const CURRENT_R: f64 = 7.0;
-
-/// The stops a control offers, in slider order. `Default` is never a stop:
-/// the chip shows what the default resolves to instead.
+/// The levels a control offers, in the strip's order. `Default` is never
+/// one: the chip shows what the default resolves to instead.
 pub(crate) fn stops(control: &ReasoningControl) -> Vec<ReasoningChoice> {
     match control {
         ReasoningControl::Unsupported => Vec::new(),
@@ -43,10 +30,10 @@ pub(crate) fn stops(control: &ReasoningControl) -> Vec<ReasoningChoice> {
     }
 }
 
-/// What the chat's setting means under the control: the stop the chip
-/// reads and the slider marks. `None` where the model has no control. A
+/// What the chat's setting means under the control: the level the chip
+/// reads and the strip raises. `None` where the model has no control. A
 /// model that states no default level reads *Default* while the chat
-/// chooses none, and the slider marks no stop: the agent decides.
+/// chooses none, and the strip raises no level: the agent decides.
 pub(crate) fn resolve(
     control: &ReasoningControl,
     choice: ReasoningChoice,
@@ -78,9 +65,17 @@ pub(crate) fn resolve(
     }
 }
 
-/// The word a stop reads as, in the person's language.
-pub(crate) fn word(lang: Lang, choice: ReasoningChoice) -> String {
-    let key = match choice {
+/// **The model's own level** (D76): what the chat's *Default* resolves to,
+/// when the model states one. A press on it in the strip is the chat's
+/// *Default* again; `None` for a model that states none.
+pub(crate) fn default_level(control: &ReasoningControl) -> Option<ReasoningChoice> {
+    resolve(control, ReasoningChoice::Default).filter(|level| *level != ReasoningChoice::Default)
+}
+
+/// The key of the full word a level reads as: the readout's, and the
+/// accessible name of its segment in the strip.
+pub(crate) fn word_key(choice: ReasoningChoice) -> Key {
+    match choice {
         ReasoningChoice::Default => Key::AiEffortDefault,
         ReasoningChoice::Off => Key::AiEffortOff,
         ReasoningChoice::On => Key::AiEffortOn,
@@ -90,124 +85,28 @@ pub(crate) fn word(lang: Lang, choice: ReasoningChoice) -> String {
         ReasoningChoice::Level(ReasoningLevel::High) => Key::AiEffortHigh,
         ReasoningChoice::Level(ReasoningLevel::XHigh) => Key::AiEffortXHigh,
         ReasoningChoice::Level(ReasoningLevel::Max) => Key::AiEffortMax,
+    }
+}
+
+/// The word a level reads as, in the person's language.
+pub(crate) fn word(lang: Lang, choice: ReasoningChoice) -> String {
+    t(lang, word_key(choice)).to_owned()
+}
+
+/// **A level's short word** (D76, the design's *Low · Med · High · XH ·
+/// Max*): what its segment in the effort strip shows, where six share the
+/// picker's width. Off and On are short already.
+pub(crate) fn short_word(lang: Lang, choice: ReasoningChoice) -> String {
+    let key = match choice {
+        ReasoningChoice::Level(ReasoningLevel::Minimal) => Key::AiEffortShortMinimal,
+        ReasoningChoice::Level(ReasoningLevel::Low) => Key::AiEffortShortLow,
+        ReasoningChoice::Level(ReasoningLevel::Medium) => Key::AiEffortShortMedium,
+        ReasoningChoice::Level(ReasoningLevel::High) => Key::AiEffortShortHigh,
+        ReasoningChoice::Level(ReasoningLevel::XHigh) => Key::AiEffortShortXHigh,
+        ReasoningChoice::Level(ReasoningLevel::Max) => Key::AiEffortShortMax,
+        other => word_key(other),
     };
     t(lang, key).to_owned()
-}
-
-/// Where the stops sit inside a section.
-pub(crate) struct Slider {
-    pub(crate) track_y: f32,
-    pub(crate) stops: Vec<(f32, ReasoningChoice)>,
-}
-
-pub(crate) fn slider(section: Rect, control: &ReasoningControl) -> Slider {
-    let stops = stops(control);
-    let left = section.x + TRACK_PAD;
-    let right = section.x + section.w - TRACK_PAD;
-    let count = stops.len().max(1);
-    let step = if count > 1 {
-        (right - left) / (count - 1) as f32
-    } else {
-        0.0
-    };
-    Slider {
-        track_y: section.y + 32.0,
-        stops: stops
-            .into_iter()
-            .enumerate()
-            .map(|(index, choice)| (left + index as f32 * step, choice))
-            .collect(),
-    }
-}
-
-/// The stop nearest to `x`, when `y` is on the track's band.
-pub(crate) fn stop_at(slider: &Slider, x: f32, y: f32) -> Option<ReasoningChoice> {
-    if (y - slider.track_y).abs() > 16.0 {
-        return None;
-    }
-    nearest(slider, x)
-}
-
-/// The stop nearest to `x`, whatever the row: a drag stays on the slider.
-pub(crate) fn nearest(slider: &Slider, x: f32) -> Option<ReasoningChoice> {
-    slider
-        .stops
-        .iter()
-        .min_by(|(a, _), (b, _)| {
-            (a - x)
-                .abs()
-                .partial_cmp(&(b - x).abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(_, choice)| *choice)
-}
-
-/// The slider: its track, a stop per level with its word under it, the
-/// current one marked. The model picker's footer puts the level's word and
-/// ↺ above it (§9.3). `focused` rings the current stop for the keyboard.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_track(
-    canvas: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    lang: Lang,
-    section: Rect,
-    control: &ReasoningControl,
-    current: ReasoningChoice,
-    pointer: (f32, f32),
-    focused: bool,
-) {
-    let p = theme::p();
-    let slider = slider(section, control);
-    if let (Some((first, _)), Some((last, _))) = (slider.stops.first(), slider.stops.last()) {
-        scene::fill(
-            canvas,
-            root,
-            p.text_dim,
-            &scene::rrect(
-                *first,
-                slider.track_y - 1.0,
-                (last - first).max(1.0),
-                2.0,
-                1.0,
-            ),
-        );
-    }
-    let hovered = stop_at(&slider, pointer.0, pointer.1);
-    for (x, choice) in &slider.stops {
-        let is_current = *choice == current;
-        let radius = if is_current { CURRENT_R } else { STOP_R };
-        scene::fill(
-            canvas,
-            root,
-            if is_current {
-                p.accent
-            } else if hovered == Some(*choice) {
-                p.text
-            } else {
-                p.text_dim
-            },
-            &Circle::new((*x as f64, slider.track_y as f64), radius),
-        );
-        if focused && is_current {
-            scene::stroke(
-                canvas,
-                root,
-                p.accent,
-                1.0,
-                &Circle::new((*x as f64, slider.track_y as f64), radius + 3.0),
-            );
-        }
-        let label = engine.simple_layout(&word(lang, *choice), role::meta());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &label,
-            x - label.width() * 0.5,
-            slider.track_y + 10.0,
-            Some(if is_current { p.text } else { p.text_dim }),
-        );
-    }
 }
 
 #[cfg(test)]
@@ -241,6 +140,10 @@ mod tests {
             Some(ReasoningChoice::Level(ReasoningLevel::Medium))
         );
         assert_eq!(
+            default_level(&levels()),
+            Some(ReasoningChoice::Level(ReasoningLevel::Medium))
+        );
+        assert_eq!(
             resolve(&levels(), ReasoningChoice::Off),
             Some(ReasoningChoice::Level(ReasoningLevel::Medium)),
             "off is not offered, so it reads as the default"
@@ -259,44 +162,48 @@ mod tests {
             resolve(&toggle, ReasoningChoice::Default),
             Some(ReasoningChoice::On)
         );
+        assert_eq!(default_level(&toggle), Some(ReasoningChoice::On));
+        let unstated = ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low],
+            default: None,
+            supports_off: false,
+        };
+        assert_eq!(default_level(&unstated), None, "the agent decides");
         assert!(stops(&ReasoningControl::Unsupported).is_empty());
         assert!(resolve(&ReasoningControl::Unsupported, ReasoningChoice::Default).is_none());
     }
 
+    /// D76: the strip's words are the design's short ones; the full word
+    /// stays the readout's and the screen reader's.
     #[test]
-    fn the_slider_spaces_stops_evenly_and_a_drag_snaps_to_the_nearest() {
-        let section = Rect::new(100.0, 0.0, 300.0, SECTION_H);
-        let slider = slider(section, &levels());
-        let xs: Vec<f32> = slider.stops.iter().map(|(x, _)| *x).collect();
-        assert_eq!(xs, vec![118.0, 250.0, 382.0]);
-        assert_eq!(
-            stop_at(&slider, 260.0, slider.track_y + 4.0),
-            Some(ReasoningChoice::Level(ReasoningLevel::Medium))
-        );
-        assert_eq!(stop_at(&slider, 260.0, slider.track_y + 40.0), None);
-        assert_eq!(
-            nearest(&slider, 900.0),
-            Some(ReasoningChoice::Level(ReasoningLevel::High))
-        );
-    }
-
-    #[test]
-    fn every_stop_has_a_word_in_every_language() {
+    fn every_level_has_a_short_and_a_full_word_in_every_language() {
+        let all = stops(&ReasoningControl::Levels {
+            values: vec![
+                ReasoningLevel::Minimal,
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::XHigh,
+                ReasoningLevel::Max,
+            ],
+            default: Some(ReasoningLevel::Medium),
+            supports_off: true,
+        });
         for lang in koru_i18n::Lang::ALL {
-            for choice in stops(&ReasoningControl::Levels {
-                values: vec![
-                    ReasoningLevel::Minimal,
-                    ReasoningLevel::Low,
-                    ReasoningLevel::Medium,
-                    ReasoningLevel::High,
-                    ReasoningLevel::XHigh,
-                    ReasoningLevel::Max,
-                ],
-                default: Some(ReasoningLevel::Medium),
-                supports_off: true,
-            }) {
+            for choice in all.iter().copied().chain([ReasoningChoice::On]) {
                 assert!(!word(lang, choice).is_empty());
+                assert!(!short_word(lang, choice).is_empty());
             }
         }
+        let short: Vec<String> = all
+            .iter()
+            .skip(2)
+            .map(|choice| short_word(Lang::En, *choice))
+            .collect();
+        assert_eq!(short, ["Low", "Med", "High", "XH", "Max"]);
+        assert_eq!(
+            word(Lang::En, ReasoningChoice::Level(ReasoningLevel::XHigh)),
+            "Extra high"
+        );
     }
 }

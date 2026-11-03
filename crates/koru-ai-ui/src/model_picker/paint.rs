@@ -6,30 +6,31 @@
 //! under the surface in the inspector.
 //!
 //! **Every leaf is a named adapter** (QUESTIONS M7, approved by the user
-//! 2026-11-03): a provider's mark, the search field, ↻, the Fast and
-//! Context rows and the level's footer are each a type whose `impl Leaf`
-//! runs the drawing its control always had, in the allocation the frame
-//! gives it and in the frame's palette, never the global one. This file and
-//! the tree are on `ui_scan`'s migrated list.
+//! 2026-11-03): a provider's mark, the search field, ↻, the effort strip's
+//! segments, the pill toggles and the readout (D76) are each a type whose
+//! `impl Leaf` draws its control in the allocation the frame gives it and
+//! in the frame's palette, never the global one. This file and the tree are
+//! on `ui_scan`'s migrated list.
 
-use koru_ai_core::{AiProviderId, ReasoningChoice, ReasoningControl};
+use koru_ai_core::{AiProviderId, ReasoningChoice};
 use koru_draw::el::{ElState, FrameCx, Interaction, Leaf};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{Ink, Line, roles};
+use koru_draw::theme::{FontWeight, IconSize, Ink, Line, Surface, roles};
 use koru_draw::{icons, scene, theme};
-use koru_i18n::{Key, Lang, t};
+use koru_i18n::{Key, t};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
 use koru_ui::popover::PopoverShell;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::context::{CONTEXT_H, ContextPaint, paint_context_row};
-use super::elements::{self, ListRow, MarkName, MarkSpec, Painted, Spec, StarSpec};
-use super::fast::{FastPaint, paint_fast_row};
+use super::elements::{
+    self, Footer, LIGHTNING, ListRow, MarkName, MarkSpec, PILL_HEIGHT, PILL_ICON_GAP,
+    PILL_ON_FILL_ALPHA, PILL_PAD, Painted, Pill, SEGMENT_RADIUS, Segment, Spec, StarSpec,
+};
 use super::{
-    FAST_H, FOOTER_H, PickerFocus, RailEntry, Row, SharedInput, draw_provider_mark, footer_words,
-    provider_name, rail_dividers, reset_in,
+    PickerFocus, RailEntry, Row, SharedInput, draw_provider_mark, provider_name, rail_dividers,
+    readout,
 };
 use crate::agents::AgentStatus;
 use crate::effort;
@@ -85,12 +86,67 @@ impl crate::ChatSurface {
                 Some(RailEntry::Agent(agent)) => Some(!self.refresh_enabled(agent)),
                 _ => None,
             },
-            fast: self.picker_fast().is_some(),
-            context: self.picker_context().is_some(),
-            levels: self.effort_control().is_some(),
+            footer: self.picker_footer(),
             list: self.picker_list_rows(),
             offset: self.picker.offset,
         }
+    }
+
+    /// **The footer** (D76): a segment for each level the chat's model
+    /// offers, the chat's level raised; *⚡ Fast* and *1M context* when the
+    /// model offers them; the readout. `None` for a model that offers none
+    /// of them: no footer, no divider.
+    pub(crate) fn picker_footer(&self) -> Option<Footer> {
+        let lang = self.lang;
+        let control = self.effort_control().cloned();
+        let fast = self.picker_fast();
+        let context = self.picker_context();
+        if control.is_none() && fast.is_none() && context.is_none() {
+            return None;
+        }
+        let locked = self.effort_locked();
+        let shown = self.effective_reasoning();
+        let choice = self
+            .transcript
+            .as_ref()
+            .map_or(ReasoningChoice::Default, |transcript| {
+                transcript.chat.current_model.default_reasoning
+            });
+        let segments = control
+            .as_ref()
+            .map(|control| {
+                effort::stops(control)
+                    .into_iter()
+                    .map(|stop| Segment {
+                        key: elements::segment_key(stop),
+                        choice: stop,
+                        label: effort::short_word(lang, stop),
+                        name: effort::word_key(stop),
+                        selected: shown == Some(stop),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Footer {
+            levels: control.is_some(),
+            segments,
+            locked,
+            fast: fast.map(|fast| Pill {
+                label: t(lang, Key::AiModelFast).to_owned(),
+                icon: Some(LIGHTNING),
+                on: fast.on,
+                disabled: false,
+            }),
+            context: context.map(|context| Pill {
+                label: super::context::pill_label(lang, context.tokens),
+                icon: None,
+                on: context.chosen_long,
+                disabled: locked,
+            }),
+            readout: control
+                .map(|control| readout(&control, choice, lang))
+                .unwrap_or_default(),
+        })
     }
 
     /// Every row of the list as it is drawn and pressed (M1).
@@ -137,50 +193,39 @@ impl crate::ChatSurface {
             .collect()
     }
 
-    /// What the picker's adapters draw this frame: the search field, the
-    /// Fast and Context rows and the level's footer, each with the pointer
-    /// and the keyboard on it.
+    /// What the picker's adapters draw this frame beyond the spec: the
+    /// search field, with the keyboard on it or not.
     fn picker_painted(&self) -> Painted {
-        let pointer = self.pointer;
-        let lang = self.lang;
-        let focus = self.picker.focus;
         Painted {
             search: Some(SearchPaint {
                 input: self.picker.query.clone(),
-                placeholder: t(lang, Key::AiModelSearch).to_owned(),
-                focused: focus == PickerFocus::Search,
+                placeholder: t(self.lang, Key::AiModelSearch).to_owned(),
+                focused: self.picker.focus == PickerFocus::Search,
             }),
-            fast: self.picker_fast().map(|fast| FastPaint {
-                lang,
-                on: fast.on,
-                pointer,
-                focused: focus == PickerFocus::Fast,
+        }
+    }
+
+    /// The control the keyboard is on, by key, for its ring: the selected
+    /// rail mark, the strip's raised segment (its first while none is), or a
+    /// pill.
+    fn picker_focused_key(&self, spec: &Spec) -> Option<koru_draw::el::Key> {
+        match self.picker.focus {
+            PickerFocus::Rail => spec
+                .marks
+                .iter()
+                .find(|mark| mark.selected)
+                .map(|mark| mark.key),
+            PickerFocus::Effort => spec.footer.as_ref().and_then(|footer| {
+                footer
+                    .segments
+                    .iter()
+                    .find(|segment| segment.selected)
+                    .or_else(|| footer.segments.first())
+                    .map(|segment| segment.key)
             }),
-            context: self.picker_context().map(|choice| ContextPaint {
-                lang,
-                tokens: choice.tokens,
-                chosen_long: choice.chosen_long,
-                locked: self.effort_locked(),
-                pointer,
-                focused: focus == PickerFocus::Context,
-            }),
-            effort: self.effort_control().cloned().zip(self.effort_shown()).map(
-                |(control, shown)| EffortPaint {
-                    lang,
-                    control,
-                    shown,
-                    choice: self
-                        .transcript
-                        .as_ref()
-                        .map_or(ReasoningChoice::Default, |transcript| {
-                            transcript.chat.current_model.default_reasoning
-                        }),
-                    locked: self.effort_locked(),
-                    pointer,
-                    reset_focused: focus == PickerFocus::Reset,
-                    slider_focused: focus == PickerFocus::Slider,
-                },
-            ),
+            PickerFocus::Fast => Some(elements::FAST_KEY),
+            PickerFocus::Context => Some(elements::CONTEXT_KEY),
+            PickerFocus::Search | PickerFocus::List => None,
         }
     }
 
@@ -194,7 +239,7 @@ impl crate::ChatSurface {
         let mut spec = self.picker_spec();
         // The host's pointer and keyboard, by key: the frame's own target
         // under the pointer, the list while its thumb is dragged, and the
-        // selected mark while the rail has the keyboard.
+        // control the keyboard is on.
         let targets = elements::layout(
             &elements::tree(&spec, Painted::default()),
             panel,
@@ -205,12 +250,7 @@ impl crate::ChatSurface {
         let interaction = Interaction {
             hot,
             pressed: self.picker.scroll_drag.map(|_| elements::LIST_KEY),
-            focused: spec
-                .marks
-                .iter()
-                .find(|mark| mark.selected)
-                .filter(|_| self.picker.focus == PickerFocus::Rail)
-                .map(|mark| mark.key),
+            focused: self.picker_focused_key(&spec),
         };
         let tree = elements::tree(&spec, self.picker_painted());
         let frame = elements::layout(&tree, panel, FrameCx::root().with_interaction(interaction));
@@ -337,73 +377,20 @@ impl Leaf for RefreshLeaf {
     }
 }
 
-/// **The Fast row** (koru-ai D11, M7): *Fast · Off | On*.
-pub(crate) struct FastLeaf(pub(crate) Option<FastPaint>);
-
-impl Leaf for FastLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (0.0, FAST_H)
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        if let Some(fast) = &self.0 {
-            paint_fast_row(scene, root, engine, at, fast, cx.palette());
-        }
-    }
-}
-
-/// **The Context row** (koru-ai D10, M7): *Context · Auto | 1M*.
-pub(crate) struct ContextLeaf(pub(crate) Option<ContextPaint>);
-
-impl Leaf for ContextLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (0.0, CONTEXT_H)
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        if let Some(context) = &self.0 {
-            paint_context_row(scene, root, engine, at, context, cx.palette());
-        }
-    }
-}
-
-/// The level's footer as it is drawn.
-pub(crate) struct EffortPaint {
-    pub(crate) lang: Lang,
-    pub(crate) control: ReasoningControl,
-    /// The level the slider shows.
-    pub(crate) shown: ReasoningChoice,
-    /// The chat's own choice, which may be *Default*.
-    pub(crate) choice: ReasoningChoice,
+/// **A level's segment in the effort strip** (D76, M7): its short word,
+/// centred; the chat's level raised — the popover's own surface on a soft
+/// shadow, its word set SemiBold in the primary ink — and the others in
+/// the secondary ink, lit under the pointer. Read only, every word is
+/// secondary. The keyboard's segment wears the accent ring.
+pub(crate) struct SegmentLeaf {
+    pub(crate) label: String,
+    pub(crate) selected: bool,
     pub(crate) locked: bool,
-    pub(crate) pointer: (f32, f32),
-    pub(crate) reset_focused: bool,
-    pub(crate) slider_focused: bool,
 }
 
-/// **The level's footer** (§9.3, M7): a rule above it, the level's word and
-/// ↺ on one line, the stepped slider under it.
-pub(crate) struct EffortLeaf(pub(crate) Option<EffortPaint>);
-
-impl Leaf for EffortLeaf {
+impl Leaf for SegmentLeaf {
     fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (0.0, FOOTER_H)
+        (0.0, super::SEGMENT_H)
     }
 
     fn paint(
@@ -411,68 +398,182 @@ impl Leaf for EffortLeaf {
         scene: &mut Scene,
         root: Affine,
         engine: &mut TextEngine,
-        footer: Rect,
+        at: Rect,
         cx: &FrameCx,
-        _state: ElState,
+        state: ElState,
     ) {
-        let Some(effort) = &self.0 else {
-            return;
-        };
         let palette = cx.palette();
-        scene::fill(
-            scene,
-            root,
-            Line::Divider.of(palette),
-            &scene::rrect(footer.x, footer.y, footer.w, 1.0, 0.5),
-        );
-        let (word, suffix) = footer_words(&effort.control, effort.choice, effort.lang);
-        let line = engine.simple_layout(&word, roles::ROW.style());
-        let label_y = footer.y + 6.0;
+        let radius = SEGMENT_RADIUS.value;
+        let plate = scene::rrect(at.x, at.y, at.w, at.h, radius);
+        if self.selected {
+            // The design's `0 1px 2px` lift: the shadow a pixel down, and
+            // a fainter one half a pixel wider round it.
+            scene::fill(
+                scene,
+                root,
+                palette.panel_shadow.multiply_alpha(0.5),
+                &scene::rrect(at.x - 0.5, at.y + 0.5, at.w + 1.0, at.h + 1.5, radius + 0.5),
+            );
+            scene::fill(
+                scene,
+                root,
+                palette.panel_shadow,
+                &scene::rrect(at.x, at.y + 1.0, at.w, at.h, radius),
+            );
+            scene::fill(scene, root, cx.surface(Surface::Raised), &plate);
+        } else if state.hovered {
+            scene::fill(scene, root, cx.surface(Surface::Hover), &plate);
+        }
+        let style = if self.selected {
+            roles::HINT.style().with_weight(FontWeight::SemiBold)
+        } else {
+            roles::HINT.style()
+        };
+        let words = engine.simple_layout(&self.label, style);
+        let ink = if self.selected && !self.locked {
+            Ink::Primary
+        } else {
+            Ink::Secondary
+        };
         scene::draw_layout_first_line(
             scene,
             root,
-            &line,
-            footer.x + 8.0,
-            label_y,
-            Some(if effort.locked {
-                Ink::Secondary.of(palette)
-            } else {
-                Ink::Primary.of(palette)
-            }),
+            &words,
+            at.x + ((at.w - words.width()) * 0.5).max(0.0),
+            scene::centre_y_in(&words, at),
+            Some(ink.of(palette)),
         );
-        if let Some(suffix) = suffix {
-            let dim = engine.simple_layout(&suffix, roles::META.style());
-            scene::draw_layout_first_line(
+        if state.focused {
+            scene::stroke(scene, root, palette.accent, 1.0, &plate);
+        }
+    }
+}
+
+/// **A pill toggle** (D76, M7): *⚡ Fast*, *1M context* — as wide as its
+/// words, fully rounded, a hairline round it. On, it is the accent's: an
+/// accent border, a light accent wash and accent words. Lit under the
+/// pointer; a pill that is only shown is drawn at half strength. The
+/// keyboard's pill wears the accent ring outside its border.
+pub(crate) struct PillLeaf {
+    pub(crate) label: String,
+    pub(crate) icon: Option<char>,
+    pub(crate) on: bool,
+    /// Its words, inset and icon: measured as the tree was built.
+    pub(crate) width: f32,
+}
+
+impl Leaf for PillLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (self.width, PILL_HEIGHT.value)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        state: ElState,
+    ) {
+        let palette = cx.palette();
+        let strength = if state.disabled { 0.5 } else { 1.0 };
+        let radius = at.h * 0.5;
+        let shape = scene::rrect(at.x, at.y, at.w, at.h, radius);
+        let (border, words_ink) = if self.on {
+            (palette.accent, palette.accent)
+        } else {
+            (Line::Border.of(palette), Ink::Primary.of(palette))
+        };
+        if self.on {
+            scene::fill(
                 scene,
                 root,
-                &dim,
-                footer.x + 8.0 + line.width() + 6.0,
-                label_y + (line.height() - dim.height()) * 0.5,
-                Some(Ink::Secondary.of(palette)),
+                palette.accent.multiply_alpha(PILL_ON_FILL_ALPHA * strength),
+                &shape,
             );
         }
-        let reset = reset_in(footer);
-        IconButton::new(icons::RESET, reset)
-            .with_state(IconButtonState {
-                hovered: reset.contains(effort.pointer.0, effort.pointer.1),
-                active: effort.reset_focused,
-                disabled: effort.locked || effort.choice == ReasoningChoice::Default,
-            })
-            .draw(scene, root, engine);
-        effort::draw_track(
+        if state.hovered {
+            scene::fill(scene, root, cx.surface(Surface::Hover), &shape);
+        }
+        scene::stroke(
             scene,
             root,
-            engine,
-            effort.lang,
-            footer,
-            &effort.control,
-            effort.shown,
-            if effort.locked {
-                (-1.0, -1.0)
-            } else {
-                effort.pointer
-            },
-            effort.slider_focused,
+            border.multiply_alpha(strength),
+            1.0,
+            &scene::rrect(at.x + 0.5, at.y + 0.5, at.w - 1.0, at.h - 1.0, radius - 0.5),
         );
+        let mut x = at.x + PILL_PAD.token.px(cx.profile);
+        if let Some(glyph) = self.icon {
+            let size = IconSize::XS.px(cx.profile);
+            let layout = engine.icon_layout(glyph, size);
+            scene::draw_layout(
+                scene,
+                root,
+                &layout,
+                x + (size - layout.width()) * 0.5,
+                at.y + (at.h - layout.height()) * 0.5,
+                Some(words_ink.multiply_alpha(strength)),
+            );
+            x += size + PILL_ICON_GAP.token.px(cx.profile);
+        }
+        let words = engine.simple_layout(&self.label, roles::META.style());
+        scene::draw_layout_first_line(
+            scene,
+            root,
+            &words,
+            x,
+            scene::centre_y_in(&words, at),
+            Some(words_ink.multiply_alpha(strength)),
+        );
+        if state.focused {
+            scene::stroke(
+                scene,
+                root,
+                palette.accent,
+                1.0,
+                &scene::rrect(at.x - 2.0, at.y - 2.0, at.w + 4.0, at.h + 4.0, radius + 2.0),
+            );
+        }
+    }
+}
+
+/// **The readout** (D76, M7): *Effort: High (default)* in the secondary
+/// ink at the end of the pills' row, the design's `margin-left: auto`. Its
+/// longest form that fits the room the pills leave, the shortest whatever.
+pub(crate) struct ReadoutLeaf {
+    pub(crate) forms: Vec<String>,
+}
+
+impl Leaf for ReadoutLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, PILL_HEIGHT.value)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        let style = roles::HINT.style();
+        let count = self.forms.len();
+        for (index, form) in self.forms.iter().enumerate() {
+            let words = engine.simple_layout(form, style);
+            if words.width() <= at.w || index + 1 == count {
+                scene::draw_layout_first_line(
+                    scene,
+                    root,
+                    &words,
+                    (at.x + at.w - words.width()).max(at.x),
+                    scene::centre_y_in(&words, at),
+                    Some(Ink::Secondary.of(cx.palette())),
+                );
+                return;
+            }
+        }
     }
 }

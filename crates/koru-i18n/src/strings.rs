@@ -284,8 +284,15 @@ pub enum Key {
     AiModelSearch,
     AiModelsNoMatch,
     AiModelsRefresh,
-    AiEffortReset,
     AiEffortIsDefault,
+    AiEffortGroup,
+    AiEffortReadout,
+    AiEffortShortMinimal,
+    AiEffortShortLow,
+    AiEffortShortMedium,
+    AiEffortShortHigh,
+    AiEffortShortXHigh,
+    AiEffortShortMax,
     AiModelsLegacy,
     AiModelsLegacyTag,
     // The composer's tool-approval chip and panel, and a tool's approval card.
@@ -301,10 +308,9 @@ pub enum Key {
     AiToolApprove,
     AiToolDeny,
     // The model picker's Context row (koru-ai D10).
-    AiModelContext,
-    AiModelContextAuto,
     AiModelContextMillions,
     AiModelContextThousands,
+    AiModelContextPill,
     AiModelContextLockedAfterStart,
     AiAgentModeAskFirst,
     AiAgentModeAskFirstHelp,
@@ -326,8 +332,6 @@ pub enum Key {
     AiAgentModeOpenCodePlanHelp,
     AiAgentModeNextMessage,
     AiModelFast,
-    AiModelFastOff,
-    AiModelFastOn,
     /// The composer's model chip before any model is chosen.
     AiChooseModel,
     // The chip composer (AGENTUX I6).
@@ -2800,7 +2804,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1954] = [
+    pub const ALL: [Key; 1958] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2980,8 +2984,15 @@ impl Key {
         Key::AiModelSearch,
         Key::AiModelsNoMatch,
         Key::AiModelsRefresh,
-        Key::AiEffortReset,
         Key::AiEffortIsDefault,
+        Key::AiEffortGroup,
+        Key::AiEffortReadout,
+        Key::AiEffortShortMinimal,
+        Key::AiEffortShortLow,
+        Key::AiEffortShortMedium,
+        Key::AiEffortShortHigh,
+        Key::AiEffortShortXHigh,
+        Key::AiEffortShortMax,
         Key::AiModelsLegacy,
         Key::AiModelsLegacyTag,
         Key::AiToolApprovalHeading,
@@ -2995,10 +3006,9 @@ impl Key {
         Key::AiToolSpaces,
         Key::AiToolApprove,
         Key::AiToolDeny,
-        Key::AiModelContext,
-        Key::AiModelContextAuto,
         Key::AiModelContextMillions,
         Key::AiModelContextThousands,
+        Key::AiModelContextPill,
         Key::AiModelContextLockedAfterStart,
         Key::AiAgentModeAskFirst,
         Key::AiAgentModeAskFirstHelp,
@@ -3020,8 +3030,6 @@ impl Key {
         Key::AiAgentModeOpenCodePlanHelp,
         Key::AiAgentModeNextMessage,
         Key::AiModelFast,
-        Key::AiModelFastOff,
-        Key::AiModelFastOn,
         Key::AiChooseModel,
         Key::AiComposerPlaceholder,
         Key::AiComposerSend,
@@ -6776,18 +6784,6 @@ pub const ROWS: &[Row] = &[
         zh_hans: "刷新模型",
         ja: "モデルを更新",
     },
-    // The ↺ in the model picker's footer: the chat's level back to the model's own.
-    Row {
-        key: Key::AiEffortReset,
-        en: "Reset to the model’s default",
-        es: "Restablecer al valor predeterminado del modelo",
-        pt_br: "Redefinir para o padrão do modelo",
-        de: "Auf die Standardstufe des Modells zurücksetzen",
-        fr: "Rétablir la valeur par défaut du modèle",
-        ar: "إعادة التعيين إلى الإعداد الافتراضي للنموذج",
-        zh_hans: "重置为模型默认值",
-        ja: "モデルの既定に戻す",
-    },
     // After the level's word in the picker's footer, when it is the model's own default.
     Row {
         key: Key::AiEffortIsDefault,
@@ -6799,6 +6795,102 @@ pub const ROWS: &[Row] = &[
         ar: "(افتراضي)",
         zh_hans: "（默认）",
         ja: "（既定）",
+    },
+    // The model picker's effort strip, as a screen reader names the group of its levels.
+    Row {
+        key: Key::AiEffortGroup,
+        en: "Effort",
+        es: "Esfuerzo",
+        pt_br: "Esforço",
+        de: "Denkstufe",
+        fr: "Effort",
+        ar: "الجهد",
+        zh_hans: "推理级别",
+        ja: "推論レベル",
+    },
+    // The readout at the end of the model picker's footer: {} is the chat's level, maybe with “(default)” after it.
+    Row {
+        key: Key::AiEffortReadout,
+        en: "Effort: {}",
+        es: "Esfuerzo: {}",
+        pt_br: "Esforço: {}",
+        de: "Denkstufe: {}",
+        fr: "Effort : {}",
+        ar: "الجهد: {}",
+        zh_hans: "推理级别：{}",
+        ja: "推論レベル：{}",
+    },
+    // The effort strip's short word for the Minimal level: six levels share the picker's width.
+    Row {
+        key: Key::AiEffortShortMinimal,
+        en: "Min",
+        es: "Mín.",
+        pt_br: "Mín.",
+        de: "Min.",
+        fr: "Min.",
+        ar: "أدنى",
+        zh_hans: "最低",
+        ja: "最小",
+    },
+    // The effort strip's short word for the Low level.
+    Row {
+        key: Key::AiEffortShortLow,
+        en: "Low",
+        es: "Bajo",
+        pt_br: "Baixo",
+        de: "Niedr.",
+        fr: "Faible",
+        ar: "منخفض",
+        zh_hans: "低",
+        ja: "低",
+    },
+    // The effort strip's short word for the Medium level.
+    Row {
+        key: Key::AiEffortShortMedium,
+        en: "Med",
+        es: "Medio",
+        pt_br: "Médio",
+        de: "Mittel",
+        fr: "Moyen",
+        ar: "متوسط",
+        zh_hans: "中",
+        ja: "中",
+    },
+    // The effort strip's short word for the High level.
+    Row {
+        key: Key::AiEffortShortHigh,
+        en: "High",
+        es: "Alto",
+        pt_br: "Alto",
+        de: "Hoch",
+        fr: "Élevé",
+        ar: "مرتفع",
+        zh_hans: "高",
+        ja: "高",
+    },
+    // The effort strip's short word for the Extra high level.
+    Row {
+        key: Key::AiEffortShortXHigh,
+        en: "XH",
+        es: "M. alto",
+        pt_br: "M. alto",
+        de: "S. hoch",
+        fr: "T. élevé",
+        ar: "أعلى",
+        zh_hans: "极高",
+        ja: "超高",
+    },
+    // The effort strip's short word for the Max level.
+    Row {
+        key: Key::AiEffortShortMax,
+        en: "Max",
+        es: "Máx.",
+        pt_br: "Máx.",
+        de: "Max.",
+        fr: "Max",
+        ar: "أقصى",
+        zh_hans: "最高",
+        ja: "最大",
     },
     // The row at the foot of an agent's models that expands, under it in the
     // same list, the ones it marks as older; {} is how many there are.
@@ -6957,30 +7049,6 @@ pub const ROWS: &[Row] = &[
         zh_hans: "拒绝",
         ja: "拒否",
     },
-    // The model picker's footer: the row that chooses a model's context window.
-    Row {
-        key: Key::AiModelContext,
-        en: "Context",
-        es: "Contexto",
-        pt_br: "Contexto",
-        de: "Kontext",
-        fr: "Contexte",
-        ar: "السياق",
-        zh_hans: "上下文",
-        ja: "コンテキスト",
-    },
-    // The Context row's first choice: the model's own window.
-    Row {
-        key: Key::AiModelContextAuto,
-        en: "Auto",
-        es: "Automático",
-        pt_br: "Automático",
-        de: "Auto",
-        fr: "Auto",
-        ar: "تلقائي",
-        zh_hans: "自动",
-        ja: "自動",
-    },
     // A context window of {} million tokens, as the Context row names it.
     Row {
         key: Key::AiModelContextMillions,
@@ -7004,6 +7072,18 @@ pub const ROWS: &[Row] = &[
         ar: "{} ألف",
         zh_hans: "{}k",
         ja: "{}k",
+    },
+    // The model picker's pill that turns a model's longer context window on: {} is its size, “1M”.
+    Row {
+        key: Key::AiModelContextPill,
+        en: "{} context",
+        es: "Contexto de {}",
+        pt_br: "Contexto de {}",
+        de: "Kontext {}",
+        fr: "Contexte {}",
+        ar: "سياق {}",
+        zh_hans: "{} 上下文",
+        ja: "{} コンテキスト",
     },
     // An agent chat's context after its first message: the agent started with it.
     Row {
@@ -7256,30 +7336,6 @@ pub const ROWS: &[Row] = &[
         ar: "سريع",
         zh_hans: "快速",
         ja: "高速",
-    },
-    // The Fast row's first choice: the model at its usual speed.
-    Row {
-        key: Key::AiModelFastOff,
-        en: "Off",
-        es: "No",
-        pt_br: "Não",
-        de: "Aus",
-        fr: "Non",
-        ar: "إيقاف",
-        zh_hans: "关",
-        ja: "オフ",
-    },
-    // The Fast row's second choice: the model's Fast mode.
-    Row {
-        key: Key::AiModelFastOn,
-        en: "On",
-        es: "Sí",
-        pt_br: "Sim",
-        de: "An",
-        fr: "Oui",
-        ar: "تشغيل",
-        zh_hans: "开",
-        ja: "オン",
     },
     // The model chip of a chat that has no model yet: picking one starts it.
     Row {

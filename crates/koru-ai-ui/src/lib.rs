@@ -394,9 +394,6 @@ pub struct ChatSurface {
     /// The folder control's measured width — its icon, its name and the air
     /// around them — from the last [`ChatSurface::composer_rect`].
     folder_button_w: f32,
-    /// A press on the effort slider: the stop under the pointer until
-    /// release, when it becomes the chat's setting.
-    effort_drag: Option<ReasoningChoice>,
     live_reasoning: String,
     reasoning_expanded: bool,
     attempt: Option<InferenceAttemptId>,
@@ -774,7 +771,6 @@ impl ChatSurface {
             live_sources: Vec::new(),
             open_searches: HashSet::new(),
             web_search_armed: false,
-            effort_drag: None,
             chip_label_w: 0.0,
             folder_button_w: 0.0,
             live_reasoning: String::new(),
@@ -2109,15 +2105,6 @@ impl ChatSurface {
             }
             return true;
         }
-        if self.effort_drag.is_some()
-            && let (Some(section), Some(control)) =
-                (self.effort_section(), self.effort_control().cloned())
-        {
-            let next = effort::nearest(&effort::slider(section, &control), x);
-            let changed = next != self.effort_drag;
-            self.effort_drag = next;
-            return changed;
-        }
         if let Some(changed) = self.picker_mouse_move(x, y) {
             return changed || old != self.cursor_icon();
         }
@@ -2192,10 +2179,6 @@ impl ChatSurface {
         }
         self.conversation_scroll_drag = None;
         self.picker.scroll_drag = None;
-        if let Some(choice) = self.effort_drag.take() {
-            self.choose_effort(choice);
-            return true;
-        }
         self.composer.mouse_up();
         self.workspace_search.release();
         self.openai_key.release();
@@ -5043,13 +5026,6 @@ impl ChatSurface {
         Rect::new(x, toolbar.y, width, toolbar.h)
     }
 
-    /// The picker footer's slider section, when the model advertises a
-    /// control (§9.3).
-    fn effort_section(&self) -> Option<Rect> {
-        self.effort_control()?;
-        self.picker_geometry()?.slider_section()
-    }
-
     /// The chat's model's effort control: the one the service sent with
     /// the transcript, or — for an agent model, and a new chat not made yet
     /// — the levels its agent's listing carries (agent-models D14).
@@ -5071,26 +5047,12 @@ impl ChatSurface {
 
     /// **An agent chat's level is chosen before its first message** (S5):
     /// the agent starts at it, and a live session is not reconfigured, so
-    /// afterwards the slider only shows it.
+    /// afterwards the picker's effort strip only shows it.
     fn effort_locked(&self) -> bool {
         self.transcript.as_ref().is_some_and(|transcript| {
             agents::is_agent_provider(&transcript.chat.current_model.provider)
                 && !transcript.messages.is_empty()
         })
-    }
-
-    /// Which slider stop the pointer is on, for hover redraws.
-    fn effort_stop_index_at(&self, x: f32, y: f32) -> Option<usize> {
-        let section = self.effort_section()?;
-        let control = self.effort_control()?;
-        let slider = effort::slider(section, control);
-        let choice = effort::stop_at(&slider, x, y)?;
-        slider.stops.iter().position(|(_, stop)| *stop == choice)
-    }
-
-    /// The stop the slider shows: the press in flight, else the setting.
-    fn effort_shown(&self) -> Option<ReasoningChoice> {
-        self.effort_drag.or_else(|| self.effective_reasoning())
     }
 
     /// Set the chat's effort: the persisted default the next turn uses.
@@ -5388,9 +5350,6 @@ impl ChatSurface {
                     .is_some_and(|button| button.contains(x, y))
             {
                 return Some((5, 12));
-            }
-            if let Some(index) = self.effort_stop_index_at(x, y) {
-                return Some((16, index));
             }
             if self
                 .web_search_button()
@@ -11540,7 +11499,7 @@ mod tests {
     }
 
     /// **S5: after an agent chat's first message its level only shows**: the
-    /// agent started at it. A press on the slider says why instead.
+    /// agent started at it. A press on its effort strip says why instead.
     #[test]
     fn an_agent_chats_level_is_read_only_after_its_first_message() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
@@ -11574,12 +11533,11 @@ mod tests {
         surface.composer_rect();
         assert!(surface.open_model_picker());
         while commands.try_recv().is_ok() {}
-        let section = surface.effort_section().expect("the level still shows");
         let control = surface.effort_control().cloned().unwrap();
-        let (x, _) = effort::slider(section, &control).stops[0];
-        let y = effort::slider(section, &control).track_y;
-        assert!(surface.mouse_down(x, y));
-        assert!(surface.effort_drag.is_none(), "no stop is taken");
+        let low = surface
+            .picker_segment_rect(effort::stops(&control)[0])
+            .expect("the level still shows");
+        assert!(surface.mouse_down(low.x + low.w * 0.5, low.y + low.h * 0.5));
         assert_eq!(
             surface.status.as_deref(),
             Some(koru_i18n::t(
@@ -11643,18 +11601,11 @@ mod tests {
 
         let chip = surface.chat_model_button();
         assert!(surface.mouse_down(chip.x + 2.0, chip.y + 2.0));
-        let section = surface
-            .effort_section()
-            .expect("a model with levels has a slider");
         let control = surface.effort_control().cloned().unwrap();
-        let slider = effort::slider(section, &control);
-        let (high_x, _) = slider.stops[2];
-        assert!(surface.mouse_down(high_x, slider.track_y));
-        assert_eq!(
-            surface.effort_shown(),
-            Some(ReasoningChoice::Level(ReasoningLevel::High))
-        );
-        assert!(surface.mouse_up());
+        let high = surface
+            .picker_segment_rect(ReasoningChoice::Level(ReasoningLevel::High))
+            .expect("a model with levels has an effort strip");
+        assert!(surface.mouse_down(high.x + high.w * 0.5, high.y + high.h * 0.5));
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::UpdateModel(id, request) => {
                 assert_eq!(id, chat_id);
@@ -11710,11 +11661,10 @@ mod tests {
             surface.chat_model_open,
             "the chip opens even with no model list"
         );
-        let section = surface.effort_section().unwrap();
-        let slider = effort::slider(section, &ReasoningControl::Toggle { default_on: true });
-        let (off_x, _) = slider.stops[0];
-        assert!(surface.mouse_down(off_x, slider.track_y));
-        assert!(surface.mouse_up());
+        let off = surface
+            .picker_segment_rect(ReasoningChoice::Off)
+            .expect("the toggle is a strip of two");
+        assert!(surface.mouse_down(off.x + off.w * 0.5, off.y + off.h * 0.5));
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::UpdateModel(_, request) => {
                 assert_eq!(request.model.default_reasoning, ReasoningChoice::Off);
