@@ -11,8 +11,11 @@
 //! output; Codex files it as `mcpToolCall`, with `server: tool {args}` as
 //! its input and the call's `result` — `{"content": [{"type": "text",
 //! …}], …}` — as its output. Every output is cut at the row's bound
-//! (4,000 characters), so a large result — a whole document — is cut off,
-//! no longer parses, and reads as text.
+//! (4,000 characters). A JSON result too long for it is kept as a valid
+//! **summary** carrying a `_truncated` marker — the result's size, each
+//! list's full length, a document's block count — so the line still counts
+//! the whole result and says it is a summary; any other output too long for
+//! the bound is cut off, no longer parses, and reads as text.
 
 use koru_ai_core::CallShape;
 use koru_i18n::{Key, Lang, fill, t};
@@ -69,6 +72,16 @@ pub(super) fn render_koru(call: &Call<'_>, lang: Lang, expanded: bool) -> Option
     }
     super::error_block(call, expanded, lang, &mut pieces);
     match value {
+        // A summary kept in place of a result too long for the row: how
+        // large the result was is said instead of *Show all*, because the
+        // whole result is not there to open.
+        Some(value) if summarized_bytes(&value).is_some() => {
+            let bytes = summarized_bytes(&value).unwrap_or_default();
+            pieces.push(Piece::Meta(fill(
+                t(lang, Key::AiToolResultSummarized),
+                &[&bytes.div_ceil(1024).max(1).to_string()],
+            )));
+        }
         // The JSON behind the line is the person's to open.
         Some(value) => {
             let lines = pretty(&value);
@@ -104,7 +117,8 @@ pub(super) fn render_mcp(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<
         });
     }
     super::error_block(call, expanded, lang, &mut pieces);
-    pieces.extend(code_block(pretty(&value), expanded, lang));
+    // A summary's marker is bookkeeping, not the tool's answer.
+    pieces.extend(code_block(pretty(&without_marker(&value)), expanded, lang));
     Some(Rendered {
         pieces,
         notes: Vec::new(),
@@ -182,22 +196,50 @@ fn title_of(value: &Value) -> Option<String> {
     (!title.is_empty()).then(|| title.chars().take(80).collect())
 }
 
-/// How much it holds: a document's blocks, or a list's results.
+/// The marker a result too long for the row carries once it was kept as a
+/// summary (`koru-session-runtime`'s `providers::tool_output`):
+/// `{"bytes": N, "lengths": {key: total}, "counts": {"blocks": B, …}}`.
+const TRUNCATED_KEY: &str = "_truncated";
+
+/// The size of the result a summary stands for; `None` for a whole result.
+fn summarized_bytes(value: &Value) -> Option<u64> {
+    value.get(TRUNCATED_KEY)?.get("bytes")?.as_u64()
+}
+
+/// The value without a summary's marker, as it is shown.
+fn without_marker(value: &Value) -> Value {
+    let mut value = value.clone();
+    if let Value::Object(map) = &mut value {
+        map.remove(TRUNCATED_KEY);
+    }
+    value
+}
+
+/// How much it holds: a document's blocks, or a list's results. A summary
+/// keeps only a list's first items, so its marker's totals are the count.
 fn count_of(value: &Value, lang: Lang) -> Option<String> {
+    let marker = value.get(TRUNCATED_KEY);
     if let Some(nodes) = value.get("nodes").and_then(Value::as_array) {
-        let blocks = nodes
-            .iter()
-            .filter(|node| node.get("kind").and_then(Value::as_str) != Some("document"))
-            .count();
+        let blocks = marker
+            .and_then(|marker| marker.pointer("/counts/blocks"))
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                nodes
+                    .iter()
+                    .filter(|node| node.get("kind").and_then(Value::as_str) != Some("document"))
+                    .count() as u64
+            });
         return Some(fill(t(lang, Key::AiToolBlockCount), &[&blocks.to_string()]));
     }
-    let list = match value {
-        Value::Array(items) => Some(items),
-        Value::Object(map) => map.values().find_map(Value::as_array),
+    let (key, list) = match value {
+        Value::Array(items) => Some((None, items)),
+        Value::Object(map) => map
+            .iter()
+            .find_map(|(key, value)| value.as_array().map(|items| (Some(key), items))),
         _ => None,
     }?;
-    Some(fill(
-        t(lang, Key::AiToolResultCount),
-        &[&list.len().to_string()],
-    ))
+    let total = key
+        .and_then(|key| marker?.get("lengths")?.get(key)?.as_u64())
+        .unwrap_or(list.len() as u64);
+    Some(fill(t(lang, Key::AiToolResultCount), &[&total.to_string()]))
 }

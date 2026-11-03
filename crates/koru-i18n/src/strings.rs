@@ -415,6 +415,7 @@ pub enum Key {
     AiStepRefused,
     AiToolBlockCount,
     AiToolResultCount,
+    AiToolResultSummarized,
     AiFailureConfiguration,
     AiFailureAuthentication,
     AiFailureRateLimit,
@@ -2785,7 +2786,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1939] = [
+    pub const ALL: [Key; 1940] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3091,6 +3092,7 @@ impl Key {
         Key::AiStepRefused,
         Key::AiToolBlockCount,
         Key::AiToolResultCount,
+        Key::AiToolResultSummarized,
         Key::AiFailureConfiguration,
         Key::AiFailureAuthentication,
         Key::AiFailureRateLimit,
@@ -8176,6 +8178,17 @@ pub const ROWS: &[Row] = &[
         ar: "{} نتائج",
         zh_hans: "{} 个结果",
         ja: "{} 件の結果",
+    },
+    Row {
+        key: Key::AiToolResultSummarized,
+        en: "Result was {} KB; showing a summary",
+        es: "El resultado ocupaba {} KB; se muestra un resumen",
+        pt_br: "O resultado tinha {} KB; mostrando um resumo",
+        de: "Das Ergebnis war {} KB groß; eine Zusammenfassung wird gezeigt",
+        fr: "Le résultat faisait {} Ko ; un résumé est affiché",
+        ar: "كان حجم النتيجة {} كيلوبايت؛ يُعرض ملخص",
+        zh_hans: "结果为 {} KB；显示摘要",
+        ja: "結果は {} KB でした。要約を表示しています",
     },
     Row {
         key: Key::AiFailureConfiguration,

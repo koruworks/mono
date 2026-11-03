@@ -680,3 +680,51 @@ fn another_mcp_tools_result_is_pretty_json_or_text() {
         [r#"{"items":[{"a":1},{"#, "Done · 1s · Just now"]
     );
 }
+
+/// A document too long for the row arrives as its summary (`_truncated`):
+/// the line counts the whole document from the marker, not the few nodes
+/// kept, and says how large the result was instead of offering it all.
+#[test]
+fn a_summarized_koru_result_counts_from_its_marker_and_says_its_size() {
+    let summary = r#"{"document_id":"d","nodes":[
+        {"node_id":"r","kind":"document","content":{"type":"text","text":"Trip to Portugal"}},
+        {"node_id":"a","kind":"paragraph","content":{"type":"text","text":"Lisbon"}}],
+        "_truncated":{"bytes":51234,"lengths":{"nodes":213},"counts":{"blocks":212,"tasks":12}}}"#;
+    let read = done("agent.other", "mcp__koru__read_document", None, summary);
+    let folded = pieces(&read, Lang::En, NOW, false);
+    assert_eq!(
+        folded[0],
+        Piece::Header {
+            text: "Read a document · Trip to Portugal · 212 blocks".into(),
+            mono: false
+        }
+    );
+    assert_eq!(
+        folded[1],
+        Piece::Meta("Result was 51 KB; showing a summary".into())
+    );
+    assert!(!folded.iter().any(|piece| matches!(piece, Piece::Toggle(_))));
+
+    // Any other list: its full length from `lengths`.
+    let listed = r#"{"workspaces":[{"id":"a"},{"id":"b"}],
+        "_truncated":{"bytes":9000,"lengths":{"workspaces":40}}}"#;
+    let list = done("agent.other", "mcp__koru__list_workspaces", None, listed);
+    let Piece::Header { text, .. } = &pieces(&list, Lang::En, NOW, false)[0] else {
+        panic!("a header first");
+    };
+    assert!(text.ends_with("40 results"), "{text}");
+}
+
+/// Another MCP tool's summary shows the summary, without its marker.
+#[test]
+fn an_mcp_summary_is_shown_without_its_marker() {
+    let call = done(
+        "agent.mcp",
+        "mcp__github__search",
+        None,
+        r#"{"total":2,"_truncated":{"bytes":9000,"lengths":{}}}"#,
+    );
+    let shown = words(&pieces(&call, Lang::En, NOW, false)).join("\n");
+    assert!(shown.contains("\"total\": 2"));
+    assert!(!shown.contains("_truncated"), "{shown}");
+}
