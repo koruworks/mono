@@ -11,8 +11,8 @@
 //!
 //! A model row is one line, the model's name; a ☆ at its end stars it
 //! (D46): the rail then leads with *Favorites*, the starred models of every
-//! agent turned on, each beside its agent's mark. The primary modifier and
-//! D stars the row the keyboard is on (D47).
+//! agent turned on, each beside its agent's mark. Only a click stars a
+//! model: there is no key for it (D47, taken back by the user).
 //!
 //! The geometry, the rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
@@ -1233,22 +1233,6 @@ impl crate::ChatSurface {
         }
     }
 
-    /// **Star the row the keyboard is on** (D47), or take its star away;
-    /// `false` when that row has no ☆.
-    fn toggle_highlighted_favorite(&mut self) -> bool {
-        let (Some(entry), Some(index)) = (self.picker_entry(), self.picker.highlight) else {
-            return false;
-        };
-        let rows = self.picker_rows();
-        let Some((agent, model)) = rows
-            .get(index)
-            .and_then(|row| self.row_favorite(&entry, row))
-        else {
-            return false;
-        };
-        self.toggle_favorite(&agent, &model)
-    }
-
     /// **↻** (D13): the selected agent's list rebuilt now. *Checking…*
     /// stands in the list until it lands; a second press waits for the
     /// first. Not for an agent that is not installed.
@@ -1554,9 +1538,8 @@ impl crate::ChatSurface {
     /// typing edits the query wherever the focus is; Up and Down move the
     /// highlighted row, or the rail's entry from the rail; Enter chooses;
     /// Left and Right move the slider a stop; Tab and Shift+Tab move between
-    /// search, rail, list, ↺ and the slider; the primary modifier and D
-    /// stars the highlighted model (D47); Esc clears the query, else
-    /// closes. `None` when the picker is closed.
+    /// search, rail, list, ↺ and the slider; Esc clears the query, else
+    /// closes. Starring a model is a click on its ☆ only (D47 taken back). `None` when the picker is closed.
     pub(crate) fn picker_key(
         &mut self,
         key: &WinitKey,
@@ -1592,17 +1575,6 @@ impl crate::ChatSurface {
                 }
                 _ => {}
             }
-        }
-        // **The primary modifier and D stars the row the keyboard is on**
-        // (D47; `koru_keys`' `FavoriteModel`), from the search field or the
-        // list — before the query, which would otherwise take the key.
-        if matches!(self.picker.focus, PickerFocus::Search | PickerFocus::List)
-            && koru_keys::registry::get(koru_keys::ShortcutId::FavoriteModel)
-                .chord
-                .matches(key, text, mods)
-        {
-            self.toggle_highlighted_favorite();
-            return Some(true);
         }
         match key {
             WinitKey::Named(NamedKey::Escape) => {

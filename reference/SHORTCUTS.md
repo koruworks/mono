@@ -126,4 +126,3 @@ Chords are shown as this platform writes them.
 | | |
 | --- | --- |
 | `Shift+Tab` | Next approval mode |
-| `Ctrl+D` | Favorite the model in the model picker |

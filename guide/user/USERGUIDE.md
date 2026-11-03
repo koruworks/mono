@@ -1272,8 +1272,8 @@ own default until you choose; unlike the level it can change at any time, and
 applies from your next message. The picker works from the keyboard
 too: type to search, Up and Down to pick, Enter to choose, Tab to move between
 the search box, the agents, the list, the Fast and Context rows and the level,
-Left and Right to move the level or choose in a row, `Ctrl+D` (`⌘D` on a Mac)
-to make the highlighted model a favorite, Esc to clear the search or close.
+Left and Right to move the level or choose in a row, Esc to clear the search
+or close.
 
 **Favorite models.** Hover a model and a ☆ appears at the end of its row;
 click it to make the model a favorite (★, shown whether or not you hover),

@@ -360,16 +360,6 @@ pub enum ShortcutId {
     /// and tables, so in a message there never is, and the key falls
     /// through to the chat.
     CycleAgentMode,
-    /// **Favorite the model the keyboard is on** in the chat's open model
-    /// picker, or take its favorite away (D47) — the ☆ a pointer reaches on
-    /// the row. The browser's *bookmark* chord, so the star is where a hand
-    /// expects it.
-    ///
-    /// The same chord as the editor's *Delete line*, and said so: the open
-    /// picker takes the keyboard before the composer sees a key, so while it
-    /// is open there is no line to delete, and while it is closed the chord
-    /// is the editor's.
-    FavoriteModel,
 }
 
 /// One row of the table.
@@ -1070,15 +1060,6 @@ pub const REGISTRY: &[Shortcut] = &[
             Chord::new(named(NamedKey::Tab), SHIFT),
         )
     },
-    Shortcut {
-        shares_chord_with: Some(ShortcutId::DeleteRows),
-        ..s(
-            ShortcutId::FavoriteModel,
-            Layer::Chat,
-            "Favorite the model in the model picker",
-            Chord::new(On::Letter('d'), PRIMARY),
-        )
-    },
 ];
 
 impl ShortcutId {
@@ -1094,11 +1075,9 @@ impl ShortcutId {
     pub fn shown_in_product(self) -> bool {
         match self {
             Self::ShowTasks => koru_features::tasks(),
-            Self::ShowChats
-            | Self::ToggleAiPane
-            | Self::Delegate
-            | Self::CycleAgentMode
-            | Self::FavoriteModel => koru_features::ai(),
+            Self::ShowChats | Self::ToggleAiPane | Self::Delegate | Self::CycleAgentMode => {
+                koru_features::ai()
+            }
             Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),

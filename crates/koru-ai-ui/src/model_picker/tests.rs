@@ -1371,7 +1371,8 @@ fn the_rail_is_the_colour_of_the_windows_rail() {
     assert!(geometry.rail.x + geometry.rail.w <= geometry.list.x + 0.5);
 }
 
-/// The primary modifier and D: the picker's favorite chord (D47).
+/// The primary modifier and D, which starred a model until D47 was taken
+/// back.
 fn favorite_key(surface: &mut ChatSurface) -> bool {
     let primary = if cfg!(target_os = "macos") {
         ModifiersState::SUPER
@@ -1424,37 +1425,30 @@ fn a_press_on_the_star_toggles_the_favorite_and_asks_the_host_to_store_it() {
     assert_eq!(surface.take_favorite_models_request(), Some(Vec::new()));
 }
 
-/// **The keyboard stars the row it is on** (D47) — from the search field
-/// or the list, before the query could take the key; a row with no ☆ is
-/// left alone and the query is untouched.
+/// **No key stars a model** (D47 taken back by the user: *click on star
+/// only*): the primary modifier and D, from the search field or the list,
+/// leaves the highlighted row's star alone, and no shortcut is registered
+/// for it.
 #[test]
-fn the_favorite_chord_toggles_the_highlighted_row() {
-    let entry = koru_keys::registry::get(koru_keys::ShortcutId::FavoriteModel);
-    assert_eq!(entry.layer, koru_keys::Layer::Chat);
-    assert_eq!(
-        entry.shares_chord_with,
-        Some(koru_keys::ShortcutId::DeleteRows)
+fn the_primary_modifier_and_d_does_not_star_the_highlighted_row() {
+    let chord = koru_keys::Chord::new(koru_keys::On::Letter('d'), koru_keys::PRIMARY);
+    assert!(
+        koru_keys::REGISTRY
+            .iter()
+            .filter(|shortcut| shortcut.layer == koru_keys::Layer::Chat)
+            .all(|shortcut| shortcut.chord != chord),
+        "the chat layer has no Ctrl+D"
     );
-
     let mut surface = surface();
     open(&mut surface);
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
-    surface.picker.focus = PickerFocus::Search;
     surface.picker.highlight = Some(1);
-    assert!(favorite_key(&mut surface));
-    assert!(surface.is_favorite(&agent("agent-claude"), "opus"));
-    assert_eq!(surface.picker.query.raw_text(), "", "not typed");
-    surface.picker.focus = PickerFocus::List;
-    assert!(favorite_key(&mut surface));
-    assert!(!surface.is_favorite(&agent("agent-claude"), "opus"));
-
-    surface.take_favorite_models_request();
-    surface.picker.highlight = Some(0);
-    assert!(
-        favorite_key(&mut surface),
-        "the Default row: nothing to star"
-    );
-    assert_eq!(surface.take_favorite_models_request(), None);
+    for focus in [PickerFocus::Search, PickerFocus::List] {
+        surface.picker.focus = focus;
+        favorite_key(&mut surface);
+        assert!(!surface.is_favorite(&agent("agent-claude"), "opus"));
+        assert_eq!(surface.take_favorite_models_request(), None);
+    }
 }
 
 /// **Favorites leads the rail and lists every agent's starred models**
@@ -1564,7 +1558,9 @@ fn unstarring_the_last_favorite_leaves_favorites_gracefully() {
     surface.select_rail_entry(RailEntry::Favorites);
     surface.picker.focus = PickerFocus::List;
     assert_eq!(surface.picker.highlight, Some(0));
-    assert!(favorite_key(&mut surface));
+    let geometry = surface.picker_geometry().unwrap();
+    let star = star_rect(surface.picker_row_rect(&geometry, 0).unwrap());
+    surface.picker_mouse_down(star.x + star.w * 0.5, star.y + star.h * 0.5);
     assert!(!surface.picker_rail().contains(&RailEntry::Favorites));
     assert!(matches!(surface.picker_entry(), Some(RailEntry::Agent(_))));
     let rows = surface.picker_rows();
