@@ -270,12 +270,12 @@ fn ctrl_l_adds_a_quote_chip_and_moves_focus_to_the_composer() {
     assert_eq!(surface.composer.text(), "> Koru\n\nwhy?");
 }
 
-/// **The chord is the chat's only over a selection, from outside the
-/// composer.** In the composer `Ctrl+L` stays the editor's (whose policy
-/// refuses alignment in a message), and with nothing selected the chat
-/// leaves it alone.
+/// **The chord is the chat's while *Add to chat* is offered** (the user's
+/// call, 2026-11-03) — wherever the keyboard is, the composer included,
+/// whose policy refuses alignment in a message anyway. With nothing
+/// selected, or the pill put away with Escape, the chat leaves it alone.
 #[test]
-fn ctrl_l_is_scoped_to_a_selection_outside_the_composer() {
+fn ctrl_l_is_the_chats_while_the_pill_is_offered() {
     let entry = koru_keys::registry::get(koru_keys::ShortcutId::AddSelectionToChat);
     assert_eq!(entry.layer, koru_keys::Layer::Chat);
     assert_eq!(
@@ -290,15 +290,58 @@ fn ctrl_l_is_scoped_to_a_selection_outside_the_composer() {
     let mut surface = reply_surface();
     selected(&mut surface, 0, 4);
     surface.focus = Focus::Composer;
-    assert!(!surface.add_to_chat_key_is_ours());
-    ctrl_l(&mut surface);
-    assert!(surface.composer.is_blank(), "in the composer, no quote");
+    surface.composer.set_focused(true);
+    assert!(surface.add_to_chat_key_is_ours(), "in the composer too");
+    assert!(ctrl_l(&mut surface));
+    assert_eq!(surface.composer.text(), "> Koru");
 
     let mut surface = reply_surface();
     surface.focus = Focus::None;
     assert!(!surface.add_to_chat_key_is_ours(), "nothing selected");
     ctrl_l(&mut surface);
     assert!(surface.composer.is_blank());
+
+    let mut surface = reply_surface();
+    selected(&mut surface, 0, 4);
+    surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty());
+    assert!(!surface.add_to_chat_key_is_ours(), "put away");
+    ctrl_l(&mut surface);
+    assert!(surface.composer.is_blank());
+}
+
+/// **Ctrl+L after a real drag, as the window delivers it** (the user's
+/// report, 2026-11-03): the press, the drag and the release on the reply,
+/// then the Ctrl key's own press — which the shell hands the surface as a
+/// key — then `L` with Windows' control character for text. The bare Ctrl
+/// used to move the keyboard to the composer, and the `L` was refused.
+#[test]
+fn ctrl_l_after_a_mouse_selection_adds_it_as_the_window_delivers_it() {
+    let mut surface = reply_surface();
+    assert_eq!(surface.focus, Focus::Composer, "the keyboard starts there");
+    let (layout, origin) = surface.response_layout(0, Some(0)).unwrap();
+    let from = Cursor::from_byte_index(layout, 0, Affinity::Downstream).geometry(layout, 1.0);
+    let to = Cursor::from_byte_index(layout, 4, Affinity::Downstream).geometry(layout, 1.0);
+    let y = origin.1 + (from.y0 + from.y1) as f32 * 0.5;
+    assert!(surface.mouse_down(origin.0 + from.x0 as f32 + 0.5, y));
+    surface.mouse_move(origin.0 + to.x0 as f32, y);
+    surface.mouse_up();
+    draw(&mut surface);
+    assert!(surface.add_pill.rect().is_some(), "the pill is up");
+
+    let ctrl = koru_keys::PRIMARY;
+    let modifier = if cfg!(target_os = "macos") {
+        NamedKey::Super
+    } else {
+        NamedKey::Control
+    };
+    assert!(
+        !surface.key(&Key::Named(modifier), None, ctrl),
+        "a bare modifier is not a key the chat acts on"
+    );
+    assert_ne!(surface.focus, Focus::Composer, "and it moved nothing");
+    assert!(surface.key(&Key::Character("l".into()), Some("\u{c}"), ctrl));
+    assert_eq!(surface.composer.text(), "> Koru");
+    assert_eq!(surface.focus, Focus::Composer);
 }
 
 /// **Two quotes, each with its comment, go out in order** as blockquotes

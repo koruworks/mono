@@ -387,11 +387,11 @@ pub enum ShortcutId {
     /// pill over the selection and the reply's right-click menu do the same.
     ///
     /// The same chord as the editor's [`AlignLeft`](Self::AlignLeft), and
-    /// said so: the chat takes it only while a reply has a selection **and
-    /// the keyboard is not in the composer**. In the composer the chord is
-    /// the editor's, and its policy refuses alignment in a message, so there
-    /// it does nothing; a document beside the chat keeps it whenever the
-    /// keyboard is there.
+    /// said so: the chat takes it **while *Add to chat* is offered** — a
+    /// reply has a selection and the pill is up — wherever the keyboard is
+    /// in the chat, the composer included, whose policy refuses alignment
+    /// in a message anyway (the user's call, 2026-11-03). A document beside
+    /// the chat keeps it whenever the keyboard is there.
     AddSelectionToChat,
 }
 

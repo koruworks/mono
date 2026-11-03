@@ -1581,6 +1581,25 @@ impl ChatSurface {
         {
             return handled;
         }
+        // **A modifier pressed on its own is not typing** (D90's Ctrl+L
+        // bug): the shell hands this surface the Ctrl of `Ctrl+L` as a key
+        // of its own, and taking it as the keyboard arriving in the composer
+        // moved the keyboard off the transcript a moment before the `L`. It
+        // leaves the keyboard where it is.
+        if matches!(
+            key,
+            Key::Named(
+                NamedKey::Control
+                    | NamedKey::Shift
+                    | NamedKey::Alt
+                    | NamedKey::AltGraph
+                    | NamedKey::Super
+                    | NamedKey::Meta
+                    | NamedKey::Hyper
+            )
+        ) {
+            return false;
+        }
         if self.focus != Focus::Composer {
             self.focus = Focus::Composer;
         }

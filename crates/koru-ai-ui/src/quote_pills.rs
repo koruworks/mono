@@ -374,11 +374,14 @@ impl ChatSurface {
         }
     }
 
-    /// **The chat takes `Ctrl+L`** only while a reply has a selection and
-    /// the keyboard is not in the composer; there the chord stays the
-    /// editor's (`koru_keys::ShortcutId::AddSelectionToChat`).
+    /// **The chat takes `Ctrl+L` while *Add to chat* is offered** — a reply
+    /// has a selection and the pill is up — wherever the keyboard is in this
+    /// surface, the composer included (the user's call, 2026-11-03): the
+    /// composer refuses alignment in a message anyway, so nothing is lost
+    /// there, and only a document editor outside the chat keeps the chord
+    /// as Align left (`koru_keys::ShortcutId::AddSelectionToChat`).
     pub(crate) fn add_to_chat_key_is_ours(&self) -> bool {
-        self.focus != Focus::Composer && self.selected_response_text().is_some()
+        self.add_pill.shown() && self.selected_response_text().is_some()
     }
 
     pub(crate) fn add_pill_mouse_move(&mut self, x: f32, y: f32) -> bool {
@@ -679,6 +682,102 @@ fn elide(value: &str, max_scalars: usize) -> String {
         format!("{head}\u{2026}")
     } else {
         head
+    }
+}
+
+/// **Seams for a host's own suite** (D90): a host drives *Add to chat*
+/// through its real key and pointer path — the window's routing, not this
+/// surface's — and needs a reply on screen and a way to read the composer.
+/// Only with `no-client`, which only a host's dev-dependencies turn on.
+#[cfg(any(test, feature = "no-client"))]
+impl ChatSurface {
+    /// Put one finished reply on screen, as a loaded chat would, ready to
+    /// be laid out by the host's next frame.
+    #[doc(hidden)]
+    pub fn show_reply_for_host_test(&mut self, reply: &str) {
+        use koru_ai_core::{
+            AiProviderId, Chat, ChatId, ChatRole, Message, MessageBlock, MessageBlockId,
+            MessageBlockKind, MessageId, MessageState, ModelSelection, ReasoningChoice, Timestamp,
+        };
+        let now = Timestamp::from_millis(1);
+        let chat_id = ChatId::new();
+        let message_id = MessageId::new();
+        self.transcript = Some(koru_ai_wire::ChatTranscript {
+            sources: Vec::new(),
+            chat: Chat {
+                id: chat_id,
+                title: "Chat".into(),
+                private: false,
+                current_model: ModelSelection {
+                    provider: AiProviderId::parse(AiProviderId::OPENAI).expect("a known provider"),
+                    requested_model: "gpt-test".into(),
+                    default_reasoning: ReasoningChoice::Default,
+                },
+                branched_from: None,
+                agent_working_folder: None,
+                agent_mode: None,
+                agent_fast: None,
+                pinned_at: None,
+                created_at: now,
+                updated_at: now,
+            },
+            tool_policy: koru_ai_core::ChatToolPolicy {
+                chat_id,
+                mode: koru_ai_core::ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+            tool_activities: Vec::new(),
+            notices: Vec::new(),
+            messages: vec![Message {
+                id: message_id,
+                chat_id,
+                ordinal: 0,
+                role: ChatRole::Assistant,
+                state: MessageState::Complete,
+                markdown: reply.into(),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: now,
+                completed_at: Some(now),
+            }],
+            blocks: vec![MessageBlock {
+                id: MessageBlockId::new(),
+                message_id,
+                ordinal: 0,
+                kind: MessageBlockKind::Paragraph,
+                markdown: reply.into(),
+                plain_text: reply.into(),
+            }],
+            pinned_documents: Vec::new(),
+            feedback: Vec::new(),
+            usage: Vec::new(),
+            reasoning_control: None,
+            attachments: Vec::new(),
+        });
+        self.validated_ready = true;
+        self.setup_open = false;
+    }
+
+    /// Where byte `byte` of that reply sits on screen, half way down its
+    /// line, as of the last frame. `None` before one has laid it out.
+    #[doc(hidden)]
+    pub fn reply_point_for_host_test(&self, byte: usize) -> Option<(f32, f32)> {
+        let (layout, origin) = self.response_layout(0, Some(0))?;
+        let caret =
+            Cursor::from_byte_index(layout, byte, Affinity::Downstream).geometry(layout, 1.0);
+        Some((
+            origin.0 + caret.x0 as f32,
+            origin.1 + (caret.y0 + caret.y1) as f32 * 0.5,
+        ))
+    }
+
+    /// What the composer holds, quotes as their `> ` lines.
+    #[doc(hidden)]
+    pub fn composer_text_for_host_test(&self) -> String {
+        self.composer.text()
     }
 }
 
