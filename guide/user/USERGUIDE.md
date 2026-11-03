@@ -1271,22 +1271,30 @@ models instead, at the top of the rail. An agent that marks some of its
 models as older ends its list with **Legacy models**, and how many there
 are: click it, or press Enter on it, to show them in the list under it, and
 again to hide them (Right and Left do the same from the keyboard); a search
-finds them too, marked *Legacy*. Along the bottom is the model's
-reasoning level, for models that have levels: its name, ↺ to go back to the
-model's own default, and a slider with one stop per level. A local agent
-starts at the level you choose before the first message; after that the level
-is shown but cannot change for that chat. A local agent's model that has a
-**Fast** mode (Claude Code's on the models that support it, Codex's *Fast*
-service tier) adds a **Fast** row, **Off** or **On**, which reads the model's
-own default until you choose; unlike the level it can change at any time, and
-applies from your next message. Choosing a model leaves the picker open —
-the ✓ moves to it and the Fast, Context and level rows become that model's —
+finds them too, marked *Legacy*. At the foot of the picker you choose how
+hard the model thinks: a strip shows each effort level the model offers,
+with the current one raised; pick the level the readout marks as the
+model's default to go back to it. A local agent starts at the level you
+choose before the first message; after that the level is shown but cannot
+change for that chat. Under the strip, **⚡ Fast** (Claude Code's on the
+models that support it, Codex's *Fast* service tier) and **1M context**
+appear when the model offers them, and the line at the end says the effort
+in use, for example *Effort: High (default)*. Fast can change at any time
+and applies from your next message. Choosing a model leaves the picker open —
+the ✓ moves to it and the effort strip and toggles become that model's —
 so you can set them right after; a click outside the picker, or Esc, closes
 it. The picker works from the keyboard
 too: type to search, Up and Down to pick, Enter to choose, Tab to move between
-the search box, the agents, the list, the Fast and Context rows and the level,
-Left and Right to move the level or choose in a row, Esc to clear the search
-or close.
+the search box, the agents, the list, the effort strip and the toggles,
+Left and Right to move the level on the strip, Space or Enter to flip a
+toggle, Esc to clear the search or close.
+
+When you scroll up in a chat, a round ↓ button appears above the message
+box; click it, or press `Ctrl+End`, to jump to the newest message and keep
+following a reply as it arrives. If you have typed something, `Ctrl+End`
+moves to the end of your text instead. After you store a reply as a Koru
+document, click **Open** at the end of the confirmation to open the new
+document in a tab.
 
 **Favorite models.** Hover a model and a ☆ appears at the end of its row;
 click it to make the model a favorite (★, shown whether or not you hover),
@@ -6109,8 +6117,7 @@ a new chat to work somewhere else.
 
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort
-(*gpt-5.6 · Medium*). Open the chip and drag or click the slider at the top
-to a different level; the chat keeps that level and the next message uses
+(*gpt-5.6 · Medium*). Open the chip and pick a level on the effort strip; the chat keeps that level and the next message uses
 it. A local agent runs at its own effort and shows no slider.
 
 In Settings, the **Local agents** card lists the same agents; saving one makes
