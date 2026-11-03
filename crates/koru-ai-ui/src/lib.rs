@@ -1653,6 +1653,14 @@ impl ChatSurface {
         {
             return self.composer_key(key, text, mods) || self.cycle_approval_mode();
         }
+        // **Escape while walking gives the draft back**, as Down past the
+        // newest does — before it arms a stop.
+        if matches!(key, Key::Named(NamedKey::Escape))
+            && mods.is_empty()
+            && self.history_cursor.is_some()
+        {
+            return self.leave_input_walk();
+        }
         if matches!(key, Key::Named(NamedKey::Escape))
             && let Some(attempt) = self.attempt
         {
@@ -1864,6 +1872,13 @@ impl ChatSurface {
     /// the newest gives it back. A recalled message keeps its chips too.
     /// `false` when there is nowhere to go, so the key falls through to the
     /// editor.
+    ///
+    /// **The caret lands where the next step starts** (koru-ai D100): at
+    /// the start of a message Up brought back, on its first line, and at
+    /// the end of one Down brought back, on its last. It used to land at
+    /// the end either way, so a message long enough to wrap had Up climb
+    /// its lines before going on, and the walk read as stopping at the
+    /// newest message.
     fn recall_input(&mut self, older: bool) -> bool {
         let entries = self.input_history();
         let next = match (self.history_cursor, older) {
@@ -1894,14 +1909,25 @@ impl ChatSurface {
                         .cloned()
                         .unwrap_or_else(|| untitled.to_owned())
                 });
-            }
-            None => {
-                self.history_cursor = None;
-                match self.history_draft.take() {
-                    Some(draft) => self.composer.unstash(draft),
-                    None => self.composer.clear(),
+                if older {
+                    self.composer.caret_to_start();
                 }
             }
+            None => {
+                self.leave_input_walk();
+            }
+        }
+        true
+    }
+
+    /// Stop walking and give back what was being typed before the walk
+    /// began, chips, quotes and caret as they were: Down past the newest,
+    /// and Escape while walking.
+    fn leave_input_walk(&mut self) -> bool {
+        self.history_cursor = None;
+        match self.history_draft.take() {
+            Some(draft) => self.composer.unstash(draft),
+            None => self.composer.clear(),
         }
         true
     }
@@ -13285,10 +13311,14 @@ mod tests {
         assert_eq!(walk(&mut surface, NamedKey::ArrowDown), "draft");
         assert!(surface.history_cursor.is_none());
 
-        // A recalled message is edited at its end.
+        // A message Up brought back has the caret at its start (D100);
+        // End takes it to its end.
         walk(&mut surface, NamedKey::ArrowUp);
+        type_into(&mut surface, "¡");
+        assert_eq!(surface.composer.text(), "¡third");
+        press(&mut surface, NamedKey::End);
         type_into(&mut surface, "!");
-        assert_eq!(surface.composer.text(), "third!");
+        assert_eq!(surface.composer.text(), "¡third!");
 
         // Inside a longer message the arrows move the caret.
         surface.forget_input_walk();
@@ -13312,6 +13342,161 @@ mod tests {
         press(&mut surface, NamedKey::ArrowUp);
         assert!(surface.history_cursor.is_none());
         assert_eq!(surface.composer.text(), "@");
+    }
+
+    /// The composer as a person sees it: laid out at the window's width,
+    /// so a long message wraps.
+    fn drawn(surface: &mut ChatSurface) {
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+    }
+
+    /// A surface on a chat that has been sent `asked`, in a narrow window.
+    fn walked_chat(asked: &[&str]) -> (ChatSurface, std::sync::mpsc::Receiver<Command>) {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        std::mem::forget(_updates);
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 420.0, 700.0));
+        let mut chat = transcript();
+        for markdown in asked {
+            let message = user_message(&chat, markdown);
+            chat.messages.push(message);
+        }
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        drawn(&mut surface);
+        (surface, commands)
+    }
+
+    const LONG: [&str; 3] = [
+        "The first thing I asked, long enough to wrap over more than one line of the composer",
+        "Then a second question, also long enough that it wraps onto a second line at this width",
+        "And a third, the newest, which wraps as well because it goes on and on for quite a while",
+    ];
+
+    /// **Up walks back through every message, not only the newest** (D100),
+    /// long ones included: three Ups reach the first, three Downs come back
+    /// to the draft, with a frame drawn between presses as in the app.
+    #[test]
+    fn up_three_times_reaches_the_first_of_three_long_messages() {
+        let (mut surface, _commands) = walked_chat(&LONG);
+        type_into(&mut surface, "my draft");
+        drawn(&mut surface);
+        for expected in LONG.iter().rev() {
+            assert!(press(&mut surface, NamedKey::ArrowUp));
+            drawn(&mut surface);
+            assert_eq!(surface.composer.text(), *expected);
+            assert!(surface.composer.caret_on_first_line());
+        }
+        assert!(press(&mut surface, NamedKey::ArrowUp), "the oldest holds");
+        assert_eq!(surface.composer.text(), LONG[0]);
+        for expected in [LONG[1], LONG[2], "my draft"] {
+            assert!(press(&mut surface, NamedKey::ArrowDown));
+            drawn(&mut surface);
+            assert_eq!(surface.composer.text(), expected);
+            assert!(surface.composer.caret_on_last_line());
+        }
+        assert!(surface.history_cursor.is_none());
+    }
+
+    /// **Inside a message of several lines the arrows move the caret**; only
+    /// from its first line does Up step back, and only from its last does
+    /// Down step forward.
+    #[test]
+    fn inside_a_message_of_several_lines_the_arrows_move_the_caret() {
+        let (mut surface, _commands) = walked_chat(&["older", "line one\nline two\nline three"]);
+        // Up brings the newest back with the caret on its first line…
+        press(&mut surface, NamedKey::ArrowUp);
+        drawn(&mut surface);
+        assert_eq!(surface.composer.text(), "line one\nline two\nline three");
+        // …so Down moves into it, line by line, before it steps forward.
+        press(&mut surface, NamedKey::ArrowDown);
+        drawn(&mut surface);
+        assert_eq!(surface.history_cursor, Some(1), "the caret moved down");
+        press(&mut surface, NamedKey::ArrowDown);
+        drawn(&mut surface);
+        assert!(surface.composer.caret_on_last_line());
+        press(&mut surface, NamedKey::ArrowUp);
+        drawn(&mut surface);
+        assert_eq!(surface.history_cursor, Some(1), "and back up");
+        press(&mut surface, NamedKey::ArrowUp);
+        drawn(&mut surface);
+        assert!(surface.composer.caret_on_first_line());
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(
+            surface.composer.text(),
+            "older",
+            "from the first line, Up steps"
+        );
+        // Down brings the longer one back with the caret on its last line.
+        press(&mut surface, NamedKey::ArrowDown);
+        drawn(&mut surface);
+        assert_eq!(surface.composer.text(), "line one\nline two\nline three");
+        assert!(surface.composer.caret_on_last_line());
+        press(&mut surface, NamedKey::ArrowDown);
+        assert!(surface.history_cursor.is_none(), "to the (empty) draft");
+        assert!(surface.composer.is_blank());
+    }
+
+    /// **A recalled message, edited and sent, is a new message**: the edit
+    /// is what is sent, the chat's earlier messages are not touched, and the
+    /// walk starts again from the newest — the one just sent.
+    #[test]
+    fn an_edited_recalled_message_is_sent_as_a_new_one() {
+        let (mut surface, commands) = walked_chat(&["first", "second"]);
+        press(&mut surface, NamedKey::ArrowUp);
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(surface.composer.text(), "first");
+        press(&mut surface, NamedKey::End);
+        type_into(&mut surface, " again");
+        assert!(press(&mut surface, NamedKey::Enter));
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::Send(request) => Some(request.markdown),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, ["first again"]);
+        assert!(surface.history_cursor.is_none(), "the walk starts again");
+        let asked: Vec<_> = surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .messages
+            .iter()
+            .map(|message| message.markdown.as_str())
+            .collect();
+        assert_eq!(asked, ["first", "second"], "history is not rewritten");
+        surface.pending_user = None;
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(surface.composer.text(), "first again");
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(surface.composer.text(), "second");
+    }
+
+    /// **The draft survives the walk, chip and all** — given back by Down
+    /// past the newest, and by Escape while walking.
+    #[test]
+    fn a_draft_with_a_chip_survives_the_walk_and_escape_gives_it_back() {
+        let (mut surface, _commands) = walked_chat(&["first", "second"]);
+        type_into(&mut surface, "see ");
+        let document = chip_into(&mut surface, "Budget");
+        let draft = surface.composer.message();
+        assert_eq!(draft.documents, vec![(document, "Budget".to_owned())]);
+
+        press(&mut surface, NamedKey::ArrowUp);
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(surface.composer.text(), "first");
+        press(&mut surface, NamedKey::ArrowDown);
+        press(&mut surface, NamedKey::ArrowDown);
+        assert_eq!(surface.composer.message(), draft, "Down gives it back");
+
+        press(&mut surface, NamedKey::ArrowUp);
+        assert_eq!(surface.composer.text(), "second");
+        assert!(press(&mut surface, NamedKey::Escape));
+        assert_eq!(surface.composer.message(), draft, "so does Escape");
+        assert!(surface.history_cursor.is_none());
+        assert!(surface.stop_armed_at.is_none(), "no stop was armed");
     }
 
     /// **A recalled message keeps its chips**, as the draft does: Up gives

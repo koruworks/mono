@@ -670,3 +670,27 @@ fn a_steer_with_attachments_stops_then_sends() {
     assert_eq!(sent.markdown, "see this");
     assert_eq!(sent.attachment_ids.len(), 1);
 }
+
+/// **A steered message is in the walk once the agent took it** (D100):
+/// Up brings it back; while it waited in the queue it was not there.
+#[test]
+fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "steered");
+    press(&mut surface, NamedKey::Enter);
+    type_into(&mut surface, "queued");
+    press(&mut surface, NamedKey::Enter);
+    assert!(surface.composer.is_blank());
+    assert_eq!(surface.input_history(), ["first"], "queued is not sent");
+    assert!(surface.queue_action(QueueHit::Steer(0)));
+    drain(&commands);
+    surface.apply_update(Update::Steered(koru_ai_wire::SteerAttemptResponse {
+        attempt_id: attempt,
+        user_message_id: koru_ai_core::MessageId::new(),
+        replayed: false,
+    }));
+    assert_eq!(surface.input_history(), ["first", "steered"]);
+    assert_eq!(queued_texts(&surface), ["queued"]);
+}

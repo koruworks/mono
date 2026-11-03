@@ -310,6 +310,24 @@ impl ChatComposer {
         self.editor.settle();
     }
 
+    /// Put the caret before the message's first character: where a message
+    /// recalled by Up leaves it, on the first line, so the next Up walks on
+    /// instead of climbing through the lines of a long one.
+    pub(crate) fn caret_to_start(&mut self) {
+        let Some(first) = self
+            .ws
+            .children(Parent::Node(self.root))
+            .ok()
+            .and_then(|rows| rows.first().copied())
+        else {
+            return;
+        };
+        self.editor.body.focus_on(first);
+        self.editor.place_caret(0);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+    }
+
     /// Set the message being typed aside whole — its chips, its undo — and
     /// start an empty one: what walking back through earlier messages does,
     /// so walking forward past the newest can give it back untouched.

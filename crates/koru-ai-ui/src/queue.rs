@@ -480,6 +480,9 @@ impl ChatSurface {
     /// carries it there (D99).
     pub(crate) fn steer_accepted(&mut self) {
         if let Some((chat, item)) = self.steering.take() {
+            // Sent now, so Up walks back to it (D100), as to any message
+            // sent; while it waited in the queue it was not.
+            self.sent_inputs.push((chat, item.markdown.clone()));
             self.steered.push((chat, item.markdown));
             self.messages_dirty = true;
         }
