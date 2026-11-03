@@ -63,6 +63,7 @@ pub(crate) fn chat(n: u32, title: &str, ago_ms: i64) -> Chat {
         agent_working_folder: None,
         agent_mode: None,
         agent_fast: None,
+        pinned_at: None,
         created_at: Timestamp::from_millis(NOW - ago_ms - 1_000),
         updated_at: Timestamp::from_millis(NOW - ago_ms),
     }

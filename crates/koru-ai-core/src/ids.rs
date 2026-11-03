@@ -134,6 +134,11 @@ id_type!(
     ChatAttachmentId,
     "attachment"
 );
+id_type!(
+    /// One status line a local agent said beside its reply (koru-ai D69).
+    AgentNoticeId,
+    "notice"
+);
 
 #[cfg(test)]
 mod tests {
@@ -150,6 +155,7 @@ mod tests {
             DocumentExportId::new().as_uuid(),
             ToolInvocationId::new().as_uuid(),
             ChatAttachmentId::new().as_uuid(),
+            AgentNoticeId::new().as_uuid(),
         ] {
             assert_eq!(id.get_version(), Some(uuid::Version::Random));
         }

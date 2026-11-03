@@ -38,6 +38,7 @@ fn chat(id: ChatId, offset: i64) -> Chat {
         agent_working_folder: None,
         agent_mode: None,
         agent_fast: None,
+        pinned_at: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -307,6 +308,81 @@ fn an_agent_row_records_where_the_reply_stood_when_it_began() {
             .unwrap()
             .text_offset,
         None
+    );
+}
+
+/// **A local agent's notice is kept where the reply stood** (koru-ai D69,
+/// schema 12): in byte length, in the order notices came, with its reply,
+/// and gone with its chat.
+#[test]
+fn an_agent_notice_records_where_the_reply_stood_and_goes_with_its_chat() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    let pending = turn(chat_id, Uuid::new_v4(), 1);
+    repository.begin_turn(&pending).unwrap();
+    let notice = |text: &str, offset: i64| koru_ai_core::AgentNotice {
+        id: koru_ai_core::AgentNoticeId::new(),
+        attempt_id: pending.attempt.id,
+        chat_id,
+        assistant_message_id: pending.assistant_message.id,
+        text: text.into(),
+        text_offset: None,
+        created_at: at(offset),
+    };
+    let first = repository
+        .create_agent_notice(&notice("Hook failed: exit 127", 2))
+        .unwrap();
+    assert_eq!(first.text_offset, Some(0), "before any reply text");
+    assert_eq!(first.assistant_message_id, pending.assistant_message.id);
+    repository
+        .apply_event(
+            &AiEvent::TextDelta {
+                attempt_id: pending.attempt.id,
+                text: "Voilà é.".into(),
+                at: at(3),
+            },
+            &[],
+        )
+        .unwrap();
+    let second = repository
+        .create_agent_notice(&notice("Second", 4))
+        .unwrap();
+    assert_eq!(second.text_offset, Some("Voilà é.".len() as u32));
+    assert_eq!(
+        repository.agent_notices(chat_id).unwrap(),
+        vec![first, second]
+    );
+    // A notice naming another chat's reply is refused, never misfiled.
+    let mut foreign = notice("x", 5);
+    foreign.chat_id = ChatId::new();
+    assert!(repository.create_agent_notice(&foreign).is_err());
+    repository.delete_chat(chat_id).unwrap();
+    assert!(repository.agent_notices(chat_id).unwrap().is_empty());
+}
+
+/// **A pin is the chat's, durable and listed** (schema 12), and like a
+/// rename it leaves the chat where it is in the list.
+#[test]
+fn a_chats_pin_is_durable_listed_and_leaves_its_place() {
+    let mut repository = Repository::in_memory().unwrap();
+    let chat_id = ChatId::new();
+    repository.create_chat(&chat(chat_id, 0)).unwrap();
+    assert_eq!(repository.chat(chat_id).unwrap().unwrap().pinned_at, None);
+    let pinned = repository
+        .set_chat_pinned(chat_id, Some(at(7)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(pinned.pinned_at, Some(at(7)));
+    assert_eq!(pinned.updated_at, at(0), "the list order is untouched");
+    assert_eq!(repository.chats().unwrap()[0].pinned_at, Some(at(7)));
+    let unpinned = repository.set_chat_pinned(chat_id, None).unwrap().unwrap();
+    assert_eq!(unpinned.pinned_at, None);
+    assert!(
+        repository
+            .set_chat_pinned(ChatId::new(), Some(at(1)))
+            .unwrap()
+            .is_none()
     );
 }
 
@@ -704,6 +780,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
         agent_working_folder: None,
         agent_mode: None,
         agent_fast: None,
+        pinned_at: None,
         created_at: at(4),
         updated_at: at(4),
     };

@@ -58,6 +58,13 @@ pub trait AiPersistence: Send {
         chat: ChatId,
         fast: Option<bool>,
     ) -> Result<Option<Chat>, AiError>;
+    /// Pin the chat at `pinned_at`, or unpin it with `None` (AI schema 12).
+    /// Like a rename, it leaves the chat where it is in the list.
+    fn set_chat_pinned(
+        &mut self,
+        chat: ChatId,
+        pinned_at: Option<Timestamp>,
+    ) -> Result<Option<Chat>, AiError>;
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError>;
     fn replace_chat_tool_policy(
         &mut self,
@@ -89,6 +96,15 @@ pub trait AiPersistence: Send {
     fn attempt_by_operation(&self, id: Uuid) -> Result<Option<InferenceAttempt>, AiError>;
     fn tool_activity(&self, id: ToolInvocationId) -> Result<Option<ToolActivity>, AiError>;
     fn tool_activities(&self, chat: ChatId) -> Result<Vec<ToolActivity>, AiError>;
+    /// A local agent's notices on the chat's replies, in the order they
+    /// came (koru-ai D69).
+    fn agent_notices(&self, chat: ChatId) -> Result<Vec<crate::AgentNotice>, AiError>;
+    /// Write a notice at the reply's current length, and answer it with
+    /// that offset.
+    fn create_agent_notice(
+        &mut self,
+        notice: &crate::AgentNotice,
+    ) -> Result<crate::AgentNotice, AiError>;
     fn create_tool_activity(&mut self, activity: &ToolActivity) -> Result<(), AiError>;
     fn update_tool_activity(&mut self, activity: &ToolActivity) -> Result<bool, AiError>;
     /// Move a local agent's activity row through its lifecycle. Unlike

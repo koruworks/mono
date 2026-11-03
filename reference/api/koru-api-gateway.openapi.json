@@ -2578,6 +2578,20 @@
           "id": {
             "$ref": "#/components/schemas/ChatId"
           },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "When the person pinned this chat (AI schema 12); `None` when it is\nnot pinned. The pinned chats are listed oldest pin first. Pinning is\nnot activity: the chat keeps its place among the others."
+          },
           "private": {
             "default": false,
             "type": "boolean"

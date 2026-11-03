@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    AiErrorClass, AiProviderId, AiUsage, ChatId, DocumentExportId, DocumentId, FeedbackEventId,
-    InferenceAttemptId, MessageBlockId, MessageId, ModelSelection, ProfileId, ReasoningChoice,
-    RequestMeasurements, Timestamp, ToolInvocationId, WorkspaceId,
+    AgentNoticeId, AiErrorClass, AiProviderId, AiUsage, ChatId, DocumentExportId, DocumentId,
+    FeedbackEventId, InferenceAttemptId, MessageBlockId, MessageId, ModelSelection, ProfileId,
+    ReasoningChoice, RequestMeasurements, Timestamp, ToolInvocationId, WorkspaceId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,8 +36,34 @@ pub struct Chat {
     /// mode, chosen at any time and applied from the next message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_fast: Option<bool>,
+    /// When the person pinned this chat (AI schema 12); `None` when it is
+    /// not pinned. The pinned chats are listed oldest pin first. Pinning is
+    /// not activity: the chat keeps its place among the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// **A short status line a local agent said during a reply that is not
+/// part of the reply** (koru-ai D69, AI schema 12): Devin's *Hook failed:
+/// …* about a hook on the person's machine. Kept with the reply it came
+/// with, in the order it came, and where in the reply it came.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AgentNotice {
+    pub id: AgentNoticeId,
+    pub attempt_id: InferenceAttemptId,
+    pub chat_id: ChatId,
+    pub assistant_message_id: MessageId,
+    /// The agent's words, bounded to 500 characters by the session host
+    /// before they reach the chat.
+    pub text: String,
+    /// How much of the reply's Markdown, in bytes, had arrived when the
+    /// notice came; `None` until the store has written it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_offset: Option<u32>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

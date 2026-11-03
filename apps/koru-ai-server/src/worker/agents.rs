@@ -360,11 +360,17 @@ impl WorkerState {
         else {
             return;
         };
-        if let AgentActivityEvent::ModeChanged { started_in, mode } = activity {
-            return self.follow_agent_mode(chat_id, started_in, mode);
-        }
+        let activity = match activity {
+            AgentActivityEvent::ModeChanged { started_in, mode } => {
+                return self.follow_agent_mode(chat_id, started_in, mode);
+            }
+            AgentActivityEvent::Notice { text } => {
+                return self.record_agent_notice(attempt, chat_id, assistant_message_id, text, at);
+            }
+            activity => activity,
+        };
         let result = match activity {
-            AgentActivityEvent::ModeChanged { .. } => return,
+            AgentActivityEvent::ModeChanged { .. } | AgentActivityEvent::Notice { .. } => return,
             AgentActivityEvent::ToolStarted {
                 invocation,
                 label,
@@ -499,6 +505,38 @@ impl WorkerState {
                     "an agent activity could not be recorded"
                 );
             }
+        }
+    }
+
+    /// **A local agent's notice is kept with its reply** (koru-ai D69): one
+    /// row, at the reply's length when it came, so a reopened chat shows it
+    /// where it showed while the reply ran. A notice that cannot be written
+    /// is logged and dropped; it never stops the reply.
+    fn record_agent_notice(
+        &mut self,
+        attempt: &InferenceAttempt,
+        chat_id: ChatId,
+        assistant_message_id: MessageId,
+        text: String,
+        at: Timestamp,
+    ) {
+        let notice = koru_ai_core::AgentNotice {
+            id: koru_ai_core::AgentNoticeId::new(),
+            attempt_id: attempt.id,
+            chat_id,
+            assistant_message_id,
+            text,
+            text_offset: None,
+            created_at: at,
+        };
+        match self.repository.create_agent_notice(&notice) {
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                target: "koru_ai::agent",
+                attempt = %attempt.id,
+                class = ?error.class,
+                "an agent notice could not be recorded"
+            ),
         }
     }
 

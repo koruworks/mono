@@ -286,6 +286,11 @@ pub enum AgentActivityEvent {
         started_in: Option<String>,
         mode: String,
     },
+    /// A short status line from the agent that is not part of its reply
+    /// (koru-ai D69): kept with the reply, shown beside it.
+    Notice {
+        text: String,
+    },
 }
 
 /// Why a tool call did not succeed, in the host's closed vocabulary. The

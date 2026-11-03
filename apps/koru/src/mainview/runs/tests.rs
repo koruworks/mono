@@ -430,6 +430,7 @@ fn ctrl_shift_e_on_an_ai_chat_tab_reveals_it_in_chats() {
                 agent_working_folder: None,
                 agent_mode: None,
                 agent_fast: None,
+                pinned_at: None,
                 created_at: now,
                 updated_at: now,
             }],

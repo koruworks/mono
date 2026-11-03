@@ -2171,6 +2171,7 @@ impl WorkerState {
             agent_working_folder: None,
             agent_mode: None,
             agent_fast: None,
+            pinned_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -2836,6 +2837,7 @@ impl WorkerState {
             // A branch is a new chat, and starts in the agent's defaults.
             agent_mode: None,
             agent_fast: None,
+            pinned_at: None,
             created_at: now,
             updated_at: now,
         };

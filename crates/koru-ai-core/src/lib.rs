@@ -26,7 +26,7 @@ pub use blocks::{BlockCut, cut_markdown, finalize_markdown};
 pub use chat_tools::*;
 pub use conversion::{ConvertedChat, ConvertedMessage};
 pub use ids::{
-    ChatAttachmentId, ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId,
+    AgentNoticeId, ChatAttachmentId, ChatId, DocumentExportId, FeedbackEventId, InferenceAttemptId,
     MessageBlockId, MessageId, ToolInvocationId,
 };
 pub use inference::{

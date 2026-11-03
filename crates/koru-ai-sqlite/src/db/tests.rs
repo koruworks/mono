@@ -30,6 +30,7 @@ fn fresh_database_applies_all_numbered_ai_migrations() {
         "response_quality_by_model",
         "message_attachments",
         "message_attachments_bound_are_immutable",
+        "agent_notices",
     ] {
         let exists: bool = connection
             .query_row(
@@ -573,7 +574,7 @@ fn a_build_that_understands_only_schema_10_refuses_schema_11() {
 #[test]
 fn an_empty_database_opens_at_schema_11_with_the_agent_mode_columns() {
     let connection = open_in_memory().unwrap();
-    assert_eq!(user_version(&connection).unwrap(), 11);
+    assert!(user_version(&connection).unwrap() >= 11);
     for column in ["agent_mode", "agent_fast"] {
         let has_column: bool = connection
             .query_row(
@@ -632,4 +633,98 @@ fn a_v10_database_keeps_its_chats_with_no_agent_mode() {
     // Reopened, it is already current and nothing runs again.
     prepare(&mut connection).unwrap();
     assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+}
+
+/// **An older build refuses schema 12 cleanly** (koru-ai D69, pinned
+/// chats): a build that understands 11 meets a database this build has
+/// moved on and opens nothing.
+#[test]
+fn a_build_that_understands_only_schema_11_refuses_schema_12() {
+    let mut connection = open_in_memory().unwrap();
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 11,
+        migrations: &MIGRATIONS[..11],
+    };
+    assert_eq!(
+        koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
+        OpenError::SchemaTooNew {
+            database: crate::DATABASE_FILE,
+            discovered: 12,
+            supported: 11,
+        }
+    );
+}
+
+/// **Schema 12** (koru-ai D69, pinned chats): a schema-11 database keeps
+/// its chats, none of them pinned, and gains an empty notice table whose
+/// words and offset are checked.
+#[test]
+fn a_v11_database_keeps_its_chats_unpinned_and_gains_agent_notices() {
+    const V11: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 11,
+        migrations: MIGRATIONS.split_at(11).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V11).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 11);
+    connection
+        .execute(
+            "INSERT INTO chats (
+                id, title, current_provider, current_model, created_at_ms, updated_at_ms,
+                agent_mode
+             ) VALUES ('chat', 'kept', 'agent-devin', 'default', 1, 1, 'plan')",
+            [],
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+
+    assert_eq!(user_version(&connection).unwrap(), 12);
+    let (title, mode, pinned): (String, Option<String>, Option<i64>) = connection
+        .query_row(
+            "SELECT title, agent_mode, pinned_at_ms FROM chats WHERE id = 'chat'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (title.as_str(), mode.as_deref(), pinned),
+        ("kept", Some("plan"), None)
+    );
+    connection
+        .execute("UPDATE chats SET pinned_at_ms = 5", [])
+        .unwrap();
+    assert!(
+        connection
+            .execute("UPDATE chats SET pinned_at_ms = -1", [])
+            .is_err(),
+        "a pin time is never negative"
+    );
+    let notices: i64 = connection
+        .query_row("SELECT count(*) FROM agent_notices", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(notices, 0);
+    connection
+        .execute_batch(
+            "INSERT INTO inference_attempts (
+                id, operation_id, chat_id, surface, provider, requested_model,
+                prompt_template_version, status, queued_at_ms
+             ) VALUES ('attempt', 'op', 'chat', 'standalone', 'agent-devin', 'default',
+                       'v1', 'pending', 1);",
+        )
+        .unwrap();
+    let insert = |text: &str, offset: i64| {
+        connection.execute(
+            "INSERT INTO agent_notices (id, attempt_id, chat_id, text, text_offset, created_at_ms)
+             VALUES (?1, 'attempt', 'chat', ?2, ?3, 2)",
+            rusqlite::params![format!("n{offset}{}", text.len()), text, offset],
+        )
+    };
+    assert!(insert("", 0).is_err(), "a notice has words");
+    assert!(
+        insert("Hook failed", -1).is_err(),
+        "an offset is never negative"
+    );
+    insert("Hook failed", 0).unwrap();
 }

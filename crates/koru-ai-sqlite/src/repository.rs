@@ -7,17 +7,17 @@ use std::path::Path;
 use std::time::Instant;
 
 use koru_ai_core::{
-    AgentToolKind, AiError, AiErrorClass, AiEvent, AiIntent, AiPersistence, AiProviderId,
-    AiSearchHit, AiSearchPage, AiSearchQuery, AiSearchSpan, AiSettings, AiSurface, AiUsage,
-    AttemptStatus, BranchCopy, BranchOrigin, Chat, ChatAccessLens, ChatId, ChatOverview, ChatRole,
-    ChatToolPolicy, ContextCommit, DocumentDestination, DocumentExport, DocumentExportId,
-    DocumentId, DocumentRelation, FeedbackEvent, FeedbackEventId, FeedbackValue, InferenceAttempt,
-    InferenceAttemptId, Message, MessageBlock, MessageBlockContext, MessageBlockId,
-    MessageBlockKind, MessageId, MessageState, ModelSelection, OllamaSettings, OpenAiSettings,
-    PendingRetry, PendingTurn, PinnedDocument, ReasoningChoice, RecoveryCounts, SourceLink,
-    Timestamp, ToolActivity, ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId,
-    ToolMode, UsageClearResult, UsageGroup, UsageReport, UsageSource, UsageTotals, WebSearchPhase,
-    WorkspaceId,
+    AgentNotice, AgentNoticeId, AgentToolKind, AiError, AiErrorClass, AiEvent, AiIntent,
+    AiPersistence, AiProviderId, AiSearchHit, AiSearchPage, AiSearchQuery, AiSearchSpan,
+    AiSettings, AiSurface, AiUsage, AttemptStatus, BranchCopy, BranchOrigin, Chat, ChatAccessLens,
+    ChatId, ChatOverview, ChatRole, ChatToolPolicy, ContextCommit, DocumentDestination,
+    DocumentExport, DocumentExportId, DocumentId, DocumentRelation, FeedbackEvent, FeedbackEventId,
+    FeedbackValue, InferenceAttempt, InferenceAttemptId, Message, MessageBlock,
+    MessageBlockContext, MessageBlockId, MessageBlockKind, MessageId, MessageState, ModelSelection,
+    OllamaSettings, OpenAiSettings, PendingRetry, PendingTurn, PinnedDocument, ReasoningChoice,
+    RecoveryCounts, SourceLink, Timestamp, ToolActivity, ToolActivityStatus, ToolApproval,
+    ToolErrorCode, ToolInvocationId, ToolMode, UsageClearResult, UsageGroup, UsageReport,
+    UsageSource, UsageTotals, WebSearchPhase, WorkspaceId,
 };
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -155,8 +155,8 @@ impl AiPersistence for Repository {
                 "INSERT INTO chats (
                     id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode, agent_fast
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     chat.id.to_storage(),
                     chat.title,
@@ -171,6 +171,7 @@ impl AiPersistence for Repository {
                     chat.agent_working_folder,
                     chat.agent_mode,
                     chat.agent_fast,
+                    chat.pinned_at.map(Timestamp::millis),
                 ],
             )
             .map_err(storage_failed)?;
@@ -293,6 +294,24 @@ impl AiPersistence for Repository {
         query_chat(&self.connection, chat)
     }
 
+    fn set_chat_pinned(
+        &mut self,
+        chat: ChatId,
+        pinned_at: Option<Timestamp>,
+    ) -> Result<Option<Chat>, AiError> {
+        let updated = self
+            .connection
+            .execute(
+                "UPDATE chats SET pinned_at_ms = ?2 WHERE id = ?1",
+                params![chat.to_storage(), pinned_at.map(Timestamp::millis)],
+            )
+            .map_err(storage_failed)?;
+        if updated == 0 {
+            return Ok(None);
+        }
+        query_chat(&self.connection, chat)
+    }
+
     fn chat_tool_policy(&self, chat: ChatId) -> Result<Option<ChatToolPolicy>, AiError> {
         query_chat_tool_policy(&self.connection, chat)
     }
@@ -359,7 +378,7 @@ impl AiPersistence for Repository {
                 "SELECT id, title, current_provider, current_model, current_reasoning,
                         branched_from_chat_id, branched_from_message_id,
                         created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode,
-                        agent_fast
+                        agent_fast, pinned_at_ms
                    FROM chats
                   ORDER BY updated_at_ms DESC, id",
             )
@@ -748,6 +767,59 @@ impl AiPersistence for Repository {
             .query_map([chat.to_storage()], tool_activity_from_row)
             .map_err(storage_failed)?;
         collect_rows(rows)
+    }
+
+    fn agent_notices(&self, chat: ChatId) -> Result<Vec<AgentNotice>, AiError> {
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT {AGENT_NOTICE_COLUMNS}
+                   FROM agent_notices
+                  WHERE chat_id = ?1
+                  ORDER BY created_at_ms, rowid"
+            ))
+            .map_err(storage_failed)?;
+        let rows = statement
+            .query_map([chat.to_storage()], agent_notice_from_row)
+            .map_err(storage_failed)?;
+        collect_rows(rows)
+    }
+
+    fn create_agent_notice(&mut self, notice: &AgentNotice) -> Result<AgentNotice, AiError> {
+        let attempt = self
+            .attempt(notice.attempt_id)?
+            .ok_or_else(invariant_failed)?;
+        if attempt.chat_id != Some(notice.chat_id)
+            || attempt.assistant_message_id != Some(notice.assistant_message_id)
+        {
+            return Err(invariant_failed());
+        }
+        // Where the reply stood when the notice came: text deltas are
+        // written before the next event is applied, so the length is exact.
+        self.connection
+            .execute(
+                "INSERT INTO agent_notices (
+                    id, attempt_id, chat_id, text, text_offset, created_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4,
+                           (SELECT length(CAST(markdown AS BLOB)) FROM messages WHERE id = ?5),
+                           ?6)",
+                params![
+                    notice.id.to_storage(),
+                    notice.attempt_id.to_storage(),
+                    notice.chat_id.to_storage(),
+                    notice.text,
+                    notice.assistant_message_id.to_storage(),
+                    notice.created_at.millis(),
+                ],
+            )
+            .map_err(storage_failed)?;
+        self.connection
+            .query_row(
+                &format!("SELECT {AGENT_NOTICE_COLUMNS} FROM agent_notices WHERE id = ?1"),
+                [notice.id.to_storage()],
+                agent_notice_from_row,
+            )
+            .map_err(storage_failed)
     }
 
     fn create_tool_activity(&mut self, activity: &ToolActivity) -> Result<(), AiError> {
@@ -1810,7 +1882,7 @@ fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiErr
         .query_row(
             "SELECT id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode, agent_fast
+                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms
                FROM chats WHERE id = ?1",
             [id.to_storage()],
             chat_from_row,
@@ -1890,8 +1962,8 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
             "INSERT INTO chats (
             id, title, current_provider, current_model, current_reasoning,
             branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms, private,
-            agent_working_folder, agent_mode, agent_fast
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            agent_working_folder, agent_mode, agent_fast, pinned_at_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 chat.id.to_storage(),
                 chat.title,
@@ -1906,10 +1978,27 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
                 chat.agent_working_folder,
                 chat.agent_mode,
                 chat.agent_fast,
+                chat.pinned_at.map(Timestamp::millis),
             ],
         )
         .map_err(storage_failed)?;
     Ok(())
+}
+
+const AGENT_NOTICE_COLUMNS: &str = "id, attempt_id, chat_id, text, text_offset, created_at_ms,
+    (SELECT assistant_message_id FROM inference_attempts
+      WHERE id = agent_notices.attempt_id)";
+
+fn agent_notice_from_row(row: &Row<'_>) -> rusqlite::Result<AgentNotice> {
+    Ok(AgentNotice {
+        id: required_id(row, 0, AgentNoticeId::parse, "AgentNoticeId")?,
+        attempt_id: required_id(row, 1, InferenceAttemptId::parse, "InferenceAttemptId")?,
+        chat_id: required_id(row, 2, ChatId::parse, "ChatId")?,
+        text: row.get(3)?,
+        text_offset: Some(nonnegative_u32(row, 4)?),
+        created_at: Timestamp::from_millis(row.get(5)?),
+        assistant_message_id: required_id(row, 6, MessageId::parse, "MessageId")?,
+    })
 }
 
 const EXPORT_COLUMNS: &str = "id, idempotency_key, chat_id, through_message_id,
@@ -2239,6 +2328,7 @@ fn chat_from_row(row: &Row<'_>) -> rusqlite::Result<Chat> {
         agent_working_folder: row.get(10)?,
         agent_mode: row.get(11)?,
         agent_fast: row.get(12)?,
+        pinned_at: row.get::<_, Option<i64>>(13)?.map(Timestamp::from_millis),
         created_at: Timestamp::from_millis(row.get(7)?),
         updated_at: Timestamp::from_millis(row.get(8)?),
     })
