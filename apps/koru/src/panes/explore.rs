@@ -4280,12 +4280,23 @@ impl ExploreView {
                 rec.property("square", apps_rail::SQUARE, "control side");
             },
         );
+        // **The ground runs up under the lane** (2026-11-03, the user's
+        // screenshot: a short line between the Koru mark and the first
+        // app). The rail's ground and the lane's are the same colour but
+        // were two rects meeting edge to edge at the lane's foot; wherever
+        // that edge falls between device pixels (most display scales), each
+        // fill antialiases its half of the row and the window's clear
+        // colour shows through the seam as a faint rule across the rail.
+        // Starting the ground at the column's top puts it under the lane,
+        // which is drawn after it, so no edge falls there at all. Nothing
+        // moves: the squares are laid out from the band as before.
+        let lane_h = theme::CAPTION_H.min(r.band.y);
         scene::fill(
             scene,
             root,
             // The theme's ground, or the base colour chosen for this theme.
             theme::base_fill(),
-            &scene::rect(r.band.x, r.band.y, r.band.w, r.band.h),
+            &scene::rect(r.band.x, r.band.y - lane_h, r.band.w, r.band.h + lane_h),
         );
         // Hairline between the rail and the pane.
         scene::fill(

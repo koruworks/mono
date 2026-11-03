@@ -169,3 +169,62 @@ fn the_header_row_parents_the_strip_and_the_caption_furniture() {
         "the page's AI/Context buttons draw inside the Content pane"
     );
 }
+
+/// **No rule between the Koru mark and the first app** (2026-11-03, the
+/// user's screenshot). The rail's ground and the lane's are one colour, and
+/// they used to be two rects meeting at the lane's foot: at a display scale
+/// where that edge falls between device pixels both fills antialiased the
+/// row and the clear colour showed through as a short line across the rail.
+/// The rail's ground now runs up under the lane, so in the rail's column no
+/// fill has an edge at the lane's foot — and the first square has not moved.
+#[test]
+fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
+    let (mut view, workspace) = crate::mainview::harness::on_document();
+    view.viewport = (1200.0, 700.0);
+    view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
+    view.sidebar
+        .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
+    view.relayout();
+    let root = Affine::IDENTITY;
+    let frame = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 1200.0, 700.0));
+    view.draw_frame(
+        &mut Scene::new(),
+        &workspace,
+        &ImageCache::new(),
+        root,
+        false,
+        (-1.0, -1.0),
+    );
+    let records = frame.finish().records;
+    let rail = records
+        .iter()
+        .position(|r| r.name == "KoruRail")
+        .expect("the rail is drawn");
+    let band = records[rail].rect();
+    let lane = records
+        .iter()
+        .find(|r| r.name == "KoruLane")
+        .expect("the lane is drawn")
+        .rect();
+    assert_eq!(band.y0, lane.y1, "the rail starts at the lane's foot");
+    let (ground_at, ground) = records
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.name == "fill" && r.parent == Some(rail))
+        .map(|(i, r)| (i, r.rect()))
+        .expect("the rail's ground");
+    // One opaque fill across the lane's foot, drawn before the lane: the
+    // lane's own edge then lands on its own colour, and nothing shows.
+    assert!(
+        ground.y0 <= lane.y0 && ground.y1 >= band.y1,
+        "the ground runs from under the lane to the rail's foot: {ground:?}"
+    );
+    let lane_at = records.iter().position(|r| r.name == "KoruLane").unwrap();
+    assert!(ground_at < lane_at, "the ground is under the lane");
+    // The spacing is the rail's own: the first square where it always was.
+    let squares = view.explore.navigator_mode_rects(view.rail_area());
+    assert_eq!(
+        squares[0].1.y as f64,
+        band.y0 + crate::panes::sidebar::apps_rail::PAD_TOP as f64
+    );
+}
