@@ -35,13 +35,40 @@ use koru_chats_ui::{ChatStatus, SeenBook};
 
 use super::{MainView, TabView, epoch_millis};
 
-/// **The process's book.** One, because every window of the process shows
-/// the same chats to the same person.
-static BOOK: Mutex<Option<SeenBook>> = Mutex::new(None);
+/// **The process's book**, and its session line as last rendered. One book,
+/// because every window of the process shows the same chats to the same
+/// person; the line is kept because the session is captured far oftener
+/// than the book moves.
+struct Book {
+    book: SeenBook,
+    line: Option<String>,
+}
 
-fn with_book<R>(f: impl FnOnce(&mut SeenBook) -> R) -> R {
+static BOOK: Mutex<Option<Book>> = Mutex::new(None);
+
+fn with<R>(f: impl FnOnce(&mut Book) -> R) -> R {
     let mut guard = BOOK.lock().unwrap_or_else(|error| error.into_inner());
-    f(guard.get_or_insert_with(SeenBook::default))
+    f(guard.get_or_insert_with(|| Book {
+        book: SeenBook::default(),
+        line: None,
+    }))
+}
+
+/// Read or change the book. `f` answers whether it changed it, so the line
+/// is rendered again only then.
+fn change_book<R>(f: impl FnOnce(&mut SeenBook) -> (R, bool)) -> R {
+    with(|book| {
+        let (answer, moved) = f(&mut book.book);
+        if moved {
+            book.line = None;
+        }
+        answer
+    })
+}
+
+#[cfg(test)]
+fn with_book<R>(f: impl FnOnce(&mut SeenBook) -> R) -> R {
+    change_book(|book| (f(book), true))
 }
 
 /// Fold in the session file's line. **A merge, never a replace**: a second
@@ -52,17 +79,25 @@ pub(super) fn restore(line: &str) {
         return;
     }
     let read = SeenBook::parse(line);
-    with_book(|book| book.merge(read));
+    change_book(|book| {
+        book.merge(read);
+        ((), true)
+    });
 }
 
-/// The line for the session file.
+/// The line for the session file — rendered again only after the book
+/// moved, because the session is captured on every persist check.
 pub(super) fn capture() -> String {
-    with_book(|book| book.to_storage())
+    with(|book| {
+        book.line
+            .get_or_insert_with(|| book.book.to_storage())
+            .clone()
+    })
 }
 
 /// A chat that was deleted keeps no mark.
 pub(super) fn forget(chat: ChatId) {
-    with_book(|book| book.forget(chat));
+    change_book(|book| ((), book.forget(chat)));
 }
 
 /// What one open chat says, gathered across every surface showing it.
@@ -139,7 +174,8 @@ impl MainView {
         // the message seen last, when something arrived since (D84). Read
         // before the look marks it seen.
         let mut came_into_view: Vec<(ChatId, Option<MessageId>)> = Vec::new();
-        let statuses = with_book(|book| {
+        let statuses = change_book(|book| {
+            let mut moved = false;
             for (chat, facts) in &open {
                 if looking.contains(chat) {
                     if !was_looking.contains(chat) {
@@ -148,17 +184,17 @@ impl MainView {
                             .then(|| book.last_seen(*chat))
                             .flatten();
                         came_into_view.push((*chat, from));
-                        book.seen(*chat, now_ms, facts.newest);
+                        moved |= book.seen(*chat, now_ms, facts.newest);
                     } else if let Some(newest) = facts.newest {
-                        book.saw_message(*chat, newest);
+                        moved |= book.saw_message(*chat, newest);
                     }
                 } else if facts.arrived {
-                    book.arrived(*chat, now_ms, facts.newest);
+                    moved |= book.arrived(*chat, now_ms, facts.newest);
                 }
             }
             for chat in was_looking.difference(&looking) {
                 let newest = open.get(chat).and_then(|facts| facts.newest);
-                book.seen(*chat, now_ms, newest);
+                moved |= book.seen(*chat, now_ms, newest);
             }
             // 3. Every chat's status: what its surfaces say, and unread when
             //    nobody is looking at it and something arrived.
@@ -175,7 +211,7 @@ impl MainView {
                     ChatStatus::of(facts.working, facts.needs_you, unread(*chat)),
                 );
             }
-            statuses
+            (statuses, moved)
         });
         self.chats_looking = looking;
         let divider_for = |chat: Option<ChatId>| {

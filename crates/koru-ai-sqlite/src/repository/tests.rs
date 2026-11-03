@@ -630,7 +630,9 @@ fn a_reply_that_ends_moves_its_chat_to_when_it_arrived() {
     let chat = repository.chat(chat_id).unwrap().unwrap();
     assert_eq!(chat.updated_at, at(12), "the completion, not the send");
 
-    let pending = turn(chat_id, Uuid::new_v4(), 20);
+    let mut pending = turn(chat_id, Uuid::new_v4(), 20);
+    pending.user_message.ordinal = 2;
+    pending.assistant_message.ordinal = 3;
     let attempt_id = pending.attempt.id;
     repository.begin_turn(&pending).unwrap();
     assert_eq!(

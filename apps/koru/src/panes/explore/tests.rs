@@ -6655,8 +6655,21 @@ fn the_chats_view_publishes_a_row_per_chat_with_open_and_delete() {
     let name = row.label.as_deref().unwrap_or_default();
     assert!(name.starts_with("Release notes, gpt-test, "), "{name}");
     assert!(row.actions.contains(&accesskit::Action::Click));
-    assert_eq!(row.children.len(), 1);
-    assert_eq!(row.children[0].label.as_deref(), Some("Delete chat"));
+    // The row's own two buttons (koru-ai D86), then the contract's delete.
+    let buttons: Vec<Option<&str>> = row
+        .children
+        .iter()
+        .map(|button| button.label.as_deref())
+        .collect();
+    assert_eq!(
+        buttons,
+        [Some("More"), Some("Pin chat"), Some("Delete chat")]
+    );
+    assert!(
+        row.children
+            .iter()
+            .all(|button| button.role == accesskit::Role::Button)
+    );
 }
 
 /// **The simplified product's mode row** (koru-features all off): only
