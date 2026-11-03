@@ -591,7 +591,7 @@ async fn serve_connection(
         control_receive,
         subscription_receive,
         protocol.dynamic_approvals(),
-        protocol.version >= koru_session_protocol::AGENT_MODES_PROTOCOL_VERSION,
+        protocol.version,
     ));
     let resources = Arc::new(Mutex::new(ConnectionResources::default()));
 
@@ -2049,7 +2049,7 @@ async fn writer_loop(
     mut control: mpsc::Receiver<FromHost>,
     mut subscriptions: mpsc::Receiver<FromHost>,
     dynamic_approvals: bool,
-    agent_modes: bool,
+    version: u32,
 ) {
     loop {
         let next = tokio::select! {
@@ -2063,9 +2063,7 @@ async fn writer_loop(
         if !dynamic_approvals {
             strip_dynamic_approvals(&mut frame);
         }
-        if !agent_modes {
-            strip_agent_modes(&mut frame);
-        }
+        strip_newer_agent_events(&mut frame, version);
         if write_frame(&mut writer, &frame).await.is_err() {
             break;
         }
@@ -2336,19 +2334,26 @@ mod bridge_pages_tests {
     }
 }
 
-/// **An older peer is never sent `mode_changed`** (protocol v19), a tag it
-/// cannot read. It gets an empty message delta of the same turn in its
-/// place, which reads as nothing and keeps every sequence number where it
-/// was. Filtered here, like the approvals below, never in the history.
-fn strip_agent_modes(frame: &mut FromHost) {
-    fn strip(event: &mut koru_session_protocol::AgentEvent) {
-        if let koru_session_protocol::AgentEvent::ModeChanged { turn_id, .. } = event {
+/// **An older peer is never sent an agent event it cannot read** —
+/// `mode_changed` (protocol v19), `notice` (v20). It gets an empty message
+/// delta of the same turn in its place, which reads as nothing and keeps
+/// every sequence number where it was: a notice is dropped for it, never
+/// turned into reply text. Filtered here, like the approvals below, never
+/// in the history.
+fn strip_newer_agent_events(frame: &mut FromHost, version: u32) {
+    let strip = |event: &mut koru_session_protocol::AgentEvent| {
+        if event.minimum_protocol_version() > version {
+            let turn_id = match event {
+                koru_session_protocol::AgentEvent::ModeChanged { turn_id, .. }
+                | koru_session_protocol::AgentEvent::Notice { turn_id, .. } => *turn_id,
+                _ => return,
+            };
             *event = koru_session_protocol::AgentEvent::MessageDelta {
-                turn_id: *turn_id,
+                turn_id,
                 text: String::new(),
             };
         }
-    }
+    };
     match frame {
         FromHost::Subscription {
             frame:

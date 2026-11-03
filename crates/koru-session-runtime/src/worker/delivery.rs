@@ -206,6 +206,7 @@ impl SessionHandle {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })?;
         // Recorded as sent, so the same key repeated is answered and not sent
         // twice. The running turn stays the session's active one.
@@ -484,6 +485,7 @@ impl SessionHandle {
             attachments: candidates.clone(),
             mode: input.mode.clone(),
             fast: input.fast,
+            reasoning: input.reasoning,
         });
         let mut state = self.shared.lock();
         // The request was lease-authorized before dispatch. Losing that lease

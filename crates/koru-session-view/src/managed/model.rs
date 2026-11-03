@@ -588,6 +588,9 @@ impl ManagedModel {
             // A chat's approval mode (koru-ai D7): the AI chat shows it, a
             // terminal session's transcript has nothing to draw for it.
             AgentEvent::ModeChanged { .. } => {}
+            // An agent's status line (koru-ai D69): the AI chat shows it, and
+            // it is not part of the reply this transcript draws.
+            AgentEvent::Notice { .. } => {}
             AgentEvent::MessageDelta { .. } => unreachable!("handled above"),
         }
     }

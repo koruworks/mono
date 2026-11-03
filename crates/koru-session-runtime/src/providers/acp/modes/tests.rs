@@ -285,6 +285,7 @@ fn turn(mode: Option<&str>) -> AgentInput {
         attachments: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
+        reasoning: None,
     }
 }
 

@@ -113,11 +113,57 @@ fn pending_input_preserves_attachment_order_and_unicode() {
         attachment_ids: vec![first, second],
         mode: None,
         fast: None,
+        reasoning: None,
     };
     let json = serde_json::to_string(&input).unwrap();
     let back: PendingInput = serde_json::from_str(&json).unwrap();
     assert_eq!(back, input);
     assert_eq!(back.attachment_ids, [first, second]);
+}
+
+/// **A turn's level is v20 and leaves no trace when unset** (koru-ai D70):
+/// an input without one is the v19 shape byte for byte, and one with a
+/// level says so — the client's gate reads `needs_turn_reasoning`.
+#[test]
+fn a_turns_level_is_written_only_when_chosen() {
+    let mut input = PendingInput {
+        idempotency_key: super::idempotency_key(),
+        text: "go on".into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+    };
+    let plain = serde_json::to_value(&input).unwrap();
+    assert!(plain.get("reasoning").is_none());
+    assert!(!input.needs_turn_reasoning());
+    input.reasoning = Some(LaunchReasoning::XHigh);
+    let json = serde_json::to_value(&input).unwrap();
+    assert_eq!(json["reasoning"], "xhigh");
+    assert!(input.needs_turn_reasoning());
+    assert!(!input.needs_agent_modes());
+    let back: PendingInput = serde_json::from_value(json).unwrap();
+    assert_eq!(back, input);
+}
+
+/// **A notice is bounded and blank is nothing** (koru-ai D69).
+#[test]
+fn an_agent_notice_is_bounded_and_trimmed() {
+    assert_eq!(bound_agent_notice("  \n "), None);
+    assert_eq!(
+        bound_agent_notice("  Hook failed  ").as_deref(),
+        Some("Hook failed")
+    );
+    let long = "é".repeat(AGENT_NOTICE_CHARS + 20);
+    let bounded = bound_agent_notice(&long).unwrap();
+    assert_eq!(bounded.chars().count(), AGENT_NOTICE_CHARS);
+    assert!(bounded.ends_with('…'));
+    let notice = AgentEvent::Notice {
+        turn_id: AgentTurnId::mint(),
+        text: "Hook failed".into(),
+    };
+    assert_eq!(notice.minimum_protocol_version(), 20);
+    assert_eq!(serde_json::to_value(&notice).unwrap()["kind"], "notice");
 }
 
 fn sample_attachment() -> Attachment {

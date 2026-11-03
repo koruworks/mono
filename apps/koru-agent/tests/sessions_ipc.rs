@@ -445,6 +445,7 @@ fn pending_input_uses_the_host_rooted_path_once() {
         attachment_ids: vec![attachment_id],
         mode: None,
         fast: None,
+        reasoning: None,
     };
     let sent = client
         .send_pending_input(session.id, lease.token, input.clone())
@@ -637,6 +638,7 @@ fn managed_codex_crosses_real_ipc_for_image_events_approval_cancel_and_reattach(
                 attachment_ids: vec![attachment_id],
                 mode: None,
                 fast: None,
+                reasoning: None,
             },
         )
         .unwrap();
@@ -841,6 +843,7 @@ fn attachment_commands_require_protocol_four_and_the_negotiated_capability() {
                 attachment_ids: Vec::new(),
                 mode: None,
                 fast: None,
+                reasoning: None,
             },
         )
         .unwrap_err();

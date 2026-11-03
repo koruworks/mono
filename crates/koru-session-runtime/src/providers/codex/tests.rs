@@ -370,6 +370,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
             }],
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap_err();
     assert_eq!(failure.code, ErrorCode::UnsupportedMedia);
@@ -409,6 +410,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
         }],
         mode: None,
         fast: None,
+        reasoning: None,
     };
     let first = control.submit(input.clone()).unwrap_err();
     assert_eq!(first.code, ErrorCode::ProviderUnavailable);
@@ -437,6 +439,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
         }],
         mode: None,
         fast: None,
+        reasoning: None,
         ..input
     };
     let conflict = control.submit(changed_kind).unwrap_err();
@@ -770,6 +773,7 @@ fn offline_replay(
         }],
         mode: None,
         fast: None,
+        reasoning: None,
     };
     control.submit(input.clone()).unwrap();
     control.submit(input.clone()).unwrap();
@@ -777,6 +781,7 @@ fn offline_replay(
         text: "different".into(),
         mode: None,
         fast: None,
+        reasoning: None,
         ..input
     };
     assert_eq!(
@@ -993,6 +998,7 @@ fn offline_replay(
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     assert_eq!(
@@ -1254,6 +1260,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
             }],
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1433,6 +1440,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let reports = drain_usage(&mut control);
@@ -1485,6 +1493,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     control.cancel(second).unwrap();
@@ -1522,6 +1531,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let reports = drain_usage(&mut fresh);
@@ -1617,6 +1627,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -2359,6 +2370,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
 
@@ -2369,6 +2381,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let sent = state.lock().unwrap().sent.clone();
@@ -2389,6 +2402,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap_err();
     assert_eq!(stranger.code, ErrorCode::InvalidTransition);
@@ -2400,6 +2414,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap_err();
     assert_eq!(finished.code, ErrorCode::InvalidTransition);
@@ -2451,6 +2466,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
         attachments: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
+        reasoning: None,
     };
     control.submit(turn(Some("full-access"))).unwrap();
     control.submit(turn(None)).unwrap();
@@ -2576,6 +2592,7 @@ fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
                     attachments: Vec::new(),
                     mode: None,
                     fast: *fast,
+                    reasoning: None,
                 })
                 .unwrap();
         }
@@ -2658,6 +2675,7 @@ fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
                     attachments: Vec::new(),
                     mode: None,
                     fast: None,
+                    reasoning: None,
                 })
                 .unwrap();
         }

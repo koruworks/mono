@@ -274,6 +274,11 @@ pub struct AgentInput {
     /// prompt when the model offers it, ignored when it does not. `None`
     /// leaves it as it is.
     pub fast: Option<bool>,
+    /// The reasoning level this turn runs at (koru-ai D70): set before the
+    /// prompt when it differs from the session's, and a turn the agent
+    /// cannot take it for is refused, never run at another level. `None`
+    /// leaves the level as it is.
+    pub reasoning: Option<koru_session_protocol::LaunchReasoning>,
 }
 
 impl AgentInput {
@@ -308,6 +313,7 @@ impl fmt::Debug for AgentInput {
             .field("attachment_count", &self.attachments.len())
             .field("mode", &self.mode)
             .field("fast", &self.fast)
+            .field("reasoning", &self.reasoning)
             .finish()
     }
 }

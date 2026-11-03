@@ -373,6 +373,7 @@ impl Sessions for HostSessions {
                     attachment_ids: Vec::new(),
                     mode: None,
                     fast: None,
+                    reasoning: None,
                 },
             )
             .map_err(|error| session_error("submit", error))?;

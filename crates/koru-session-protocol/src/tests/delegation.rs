@@ -9,7 +9,9 @@ use super::state::sample_summary;
 /// pins the two together so a host gate cannot drift from the changelog.
 #[test]
 fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
-    assert_eq!(MAX_PROTOCOL_VERSION, 19);
+    assert_eq!(MAX_PROTOCOL_VERSION, 20);
+    assert_eq!(AGENT_NOTICES_PROTOCOL_VERSION, 20);
+    assert_eq!(TURN_REASONING_PROTOCOL_VERSION, 20);
     assert_eq!(AGENT_MODES_PROTOCOL_VERSION, 19);
     assert_eq!(PROVIDER_MODEL_FACTS_PROTOCOL_VERSION, 18);
     assert_eq!(TOOL_DETAIL_PROTOCOL_VERSION, 17);

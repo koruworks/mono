@@ -450,6 +450,9 @@ impl Orchestrator {
             AgentEvent::ProviderState { .. } => {}
             // A chat's approval mode (koru-ai D7); a delegated run sets none.
             AgentEvent::ModeChanged { .. } => {}
+            // An agent's status line (koru-ai D69): the chat shows it; a run
+            // keeps its reply and its steps, and nothing else.
+            AgentEvent::Notice { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

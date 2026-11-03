@@ -657,6 +657,13 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        // A turn's level is v20: a v19 host would read and ignore it, and
+        // run the turn at the session's old level (koru-ai D70).
+        if input.needs_turn_reasoning() && !self.supports_turn_reasoning() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         match self.request(Request::SendPendingInput {
             session_id,
             controller_lease,
@@ -665,6 +672,13 @@ impl SessionClient {
             Response::PendingInputSent { result } => Ok(result),
             _ => Err(ClientError::UnexpectedResponse),
         }
+    }
+
+    /// Whether the host takes a turn's reasoning level with its input
+    /// (protocol v20, koru-ai D70). Against an older host a chat's level is
+    /// the one its session started at.
+    pub fn supports_turn_reasoning(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::TURN_REASONING_PROTOCOL_VERSION
     }
 
     pub fn supports_provider_models(&self) -> bool {

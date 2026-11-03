@@ -1766,7 +1766,8 @@ impl Shared {
             | AgentEvent::ApprovalResolved { .. }
             | AgentEvent::ApprovalExpired { .. }
             | AgentEvent::ChildSessionCreated { .. }
-            | AgentEvent::ModeChanged { .. } => {}
+            | AgentEvent::ModeChanged { .. }
+            | AgentEvent::Notice { .. } => {}
         }
         if let Some((turn_id, attachment_id, _, outcome)) = delivery_report
             && !delivery::mark_reported(&mut state, turn_id, attachment_id, outcome)

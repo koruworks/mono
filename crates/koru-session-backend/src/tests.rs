@@ -479,7 +479,11 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // a launch and an input may carry a mode, and an agent may report a
     // mode change, which the host rewrites for an older peer. A terminal
     // view sends neither and reads the change as one more event.
-    assert_eq!(offer.versions.max, 19);
+    // **v20 is an agent's notices and a turn's level** (chat review D69,
+    // D70): an agent may say a status line, which the host rewrites for an
+    // older peer, and an input may carry a level. A terminal view sends no
+    // level and reads a notice as one more event.
+    assert_eq!(offer.versions.max, 20);
     assert!(offer.capabilities.supports(capability::PROVIDER_MODELS));
     assert!(
         offer

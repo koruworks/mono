@@ -246,6 +246,47 @@ pub enum AgentEvent {
         turn_id: AgentTurnId,
         mode: crate::AgentModeId,
     },
+    /// Protocol v20 (koru-ai D69). A short status line from the agent that
+    /// is not part of its reply — a hook that failed on the person's machine,
+    /// a warning about the session — bounded to [`AGENT_NOTICE_CHARS`]
+    /// characters. One the agent said before any turn is said with the
+    /// next. A new tag, so the host sends it only to a v20 peer.
+    Notice {
+        turn_id: AgentTurnId,
+        text: String,
+    },
+}
+
+/// The most characters an agent's notice keeps; the rest is cut at a
+/// character boundary with an ellipsis.
+pub const AGENT_NOTICE_CHARS: usize = 500;
+
+/// `text` bounded for [`AgentEvent::Notice`]: trimmed, at most
+/// [`AGENT_NOTICE_CHARS`] characters, `None` when nothing is left.
+pub fn bound_agent_notice(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if text.chars().count() <= AGENT_NOTICE_CHARS {
+        return Some(text.to_owned());
+    }
+    let mut bounded: String = text.chars().take(AGENT_NOTICE_CHARS - 1).collect();
+    bounded.push('…');
+    Some(bounded)
+}
+
+impl AgentEvent {
+    /// First negotiated protocol version that can read this event. A host
+    /// forwards nothing a subscriber could not parse: an unknown tag would
+    /// end the subscriber's connection, not one event.
+    pub fn minimum_protocol_version(&self) -> u32 {
+        match self {
+            Self::ModeChanged { .. } => crate::AGENT_MODES_PROTOCOL_VERSION,
+            Self::Notice { .. } => crate::AGENT_NOTICES_PROTOCOL_VERSION,
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -285,6 +326,7 @@ impl std::fmt::Debug for AgentEvent {
             Self::TurnFailed { turn_id, .. } => ("TurnFailed", Some(turn_id)),
             Self::ProviderState { .. } => ("ProviderState", None),
             Self::ModeChanged { turn_id, .. } => ("ModeChanged", Some(turn_id)),
+            Self::Notice { turn_id, .. } => ("Notice", Some(turn_id)),
         };
         f.debug_struct(kind)
             .field("turn_id", &turn)

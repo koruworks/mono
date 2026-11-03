@@ -684,6 +684,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 attachment_ids: Vec::new(),
                 mode: None,
                 fast: None,
+                reasoning: None,
             },
         )
         .unwrap();
@@ -723,6 +724,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 attachment_ids: Vec::new(),
                 mode: None,
                 fast: None,
+                reasoning: None,
             },
         )
         .unwrap();

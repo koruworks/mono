@@ -91,6 +91,7 @@ fn logs_capture_lifecycle_counts_without_provider_content_and_coalesce_streams()
                 attachments: vec![],
                 mode: None,
                 fast: None,
+                reasoning: None,
             })
             .unwrap();
         h.control

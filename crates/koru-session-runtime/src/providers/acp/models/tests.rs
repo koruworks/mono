@@ -231,6 +231,7 @@ fn model_is_applied_before_prompt_and_never_claimed_as_reported() {
             attachments: vec![],
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let frames = sent.lock().unwrap();

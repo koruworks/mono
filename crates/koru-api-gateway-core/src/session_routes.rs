@@ -496,6 +496,7 @@ async fn send_pending(
                     attachment_ids: request.attachment_ids,
                     mode: None,
                     fast: None,
+                    reasoning: None,
                 },
             )
             .await,

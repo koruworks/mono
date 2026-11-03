@@ -153,12 +153,24 @@ pub struct PendingInput {
     /// off. `None` leaves it as it is; a model without one ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast: Option<bool>,
+    /// v20 (koru-ai D70): the reasoning level this turn runs at. The adapter
+    /// moves the session to it before the prompt when it is elsewhere, and
+    /// refuses the turn visibly when the agent cannot take it. `None` leaves
+    /// the level as it is. Sent only to a v20 host: a v19 host would read
+    /// and ignore it, and run the turn at the old level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<crate::LaunchReasoning>,
 }
 
 impl PendingInput {
     /// Whether only a v19 host can honor it.
     pub fn needs_agent_modes(&self) -> bool {
         self.mode.is_some() || self.fast.is_some()
+    }
+
+    /// Whether only a v20 host can honor it.
+    pub fn needs_turn_reasoning(&self) -> bool {
+        self.reasoning.is_some()
     }
 }
 

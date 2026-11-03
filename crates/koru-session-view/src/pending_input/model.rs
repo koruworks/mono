@@ -276,6 +276,7 @@ impl PendingInputModel {
                 .collect(),
             mode: None,
             fast: None,
+            reasoning: None,
         };
         self.submitting = true;
         self.last_submission = Some(input.clone());

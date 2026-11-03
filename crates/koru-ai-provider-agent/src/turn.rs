@@ -159,6 +159,7 @@ pub(crate) fn start(
                 attachment_ids,
                 mode: mode.clone(),
                 fast,
+                reasoning: None,
             },
         )
     };
@@ -697,6 +698,7 @@ impl TurnStream {
                     attachment_ids: Vec::new(),
                     mode: None,
                     fast: None,
+                    reasoning: None,
                 },
             );
             let outcome = match sent {

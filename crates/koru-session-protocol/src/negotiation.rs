@@ -72,7 +72,17 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// which is the hazard v16 names: it would ignore them and run the agent in
 /// whatever mode it starts in, so a client sends them only to a v19 host.
 /// The event is a new tag, so a host sends it only to a v19 peer.
-pub const MAX_PROTOCOL_VERSION: u32 = 19;
+///
+/// v20 adds an agent's **notice** (koru-ai D69) and a turn's **reasoning
+/// level** (D70): the `notice` agent event — a short status line from the
+/// agent that is not part of its reply, a new tag, so a host sends it only
+/// to a v20 peer and an older one gets an empty delta in its place, as with
+/// `mode_changed` — and the defaulted `reasoning` on a turn's pending input.
+/// The field is readable by a v19 host, which would ignore it and run the
+/// turn at the session's old level: the v16 hazard again, so a client sends
+/// it only to a v20 host, and a chat against an older one keeps its level
+/// from its start.
+pub const MAX_PROTOCOL_VERSION: u32 = 20;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
 /// failed call's message (`ToolCompleted.detail`), what the call was asked
@@ -88,6 +98,11 @@ pub const PROVIDER_MODEL_FACTS_PROTOCOL_VERSION: u32 = 18;
 /// The first version whose launch selection and pending input may carry an
 /// approval mode, and whose agent events may carry `mode_changed`.
 pub const AGENT_MODES_PROTOCOL_VERSION: u32 = 19;
+/// The first version whose agent events may carry `notice`.
+pub const AGENT_NOTICES_PROTOCOL_VERSION: u32 = 20;
+/// The first version whose pending input may carry a turn's reasoning
+/// level. The same bump as the notice.
+pub const TURN_REASONING_PROTOCOL_VERSION: u32 = 20;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

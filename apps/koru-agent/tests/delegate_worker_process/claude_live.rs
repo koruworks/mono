@@ -105,6 +105,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
         attachments:Vec::new(),
         mode: None,
         fast: None,
+        reasoning: None,
     }).unwrap();
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut completed = false;
@@ -160,6 +161,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
             attachments: Vec::new(),
             mode: None,
             fast: None,
+            reasoning: None,
         })
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(45);
