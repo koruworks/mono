@@ -956,11 +956,12 @@ that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
 it a row of **apps** — Documents, Files, Tasks and the rest the build shows
-— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them;
+— with the one you are in wearing its name (`Alt+1`…`Alt+8` switch them by
+place: `Alt+1` is the top view, `Alt+2` the next;
 drag an icon up or down to put it where you want it, or with the rail
 focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
-a view keeps its shortcut wherever it sits, and the order is remembered on
-this computer);
+the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
+the order is remembered on this computer);
 then that app's own navigation; and on the floor one chip that says which
 workspace you are in and who you are, with a **?** beside it. The chip opens
 the workspace and account switcher; the **?** opens help: what is new in
@@ -1129,9 +1130,7 @@ The side panes stay hidden until you ask:
 | `Ctrl+Shift+E` | **Explore** — focus the tree on this tab's document (may switch workspace). Click the arrow beside something to expand it |
 | `Ctrl+Shift+J` | **Koru AI pane** — opens the shared chat from the right, replacing Context when it is open, with the current document shown as a removable pill above the composer |
 | `Ctrl+J` | **Context** — comments, assets, tasks and threads for whatever the current tab is showing, on the right. The icon at the right of the document title does the same |
-| `Alt+1` / `Alt+2` / `Alt+3` | **Documents**, **Files**, **Tasks** — the three views at the head of the Explore column, in the order their icons sit; opens the column if it is closed. Hover an icon for its name and chord. **On a Mac these are `⌃⌘1` / `⌃⌘2` / `⌃⌘3`**, because Option with a digit types a character there (`¡`, `™`, `£` on a US keyboard) |
-| `Alt+7` (`⌃⌘7` on a Mac) | **Canvases** — the seventh icon: every canvas in this workspace, as one list. See [Canvases](#canvases) |
-| `Alt+8` (`⌃⌘8` on a Mac) | **Socials** — the eighth icon, the megaphone: scheduled posts, drafts and channels. See [Socials](#socials-experimental-desktop-mvp) |
+| `Alt+1` … `Alt+8` | the view in that place down the Explore column's rail, top first — Documents, Files, Tasks… in the default order, whatever order you drag them into; opens the column if it is closed. Hover an icon for its name and shortcut. **On a Mac `⌃⌘1` … `⌃⌘8`**, because Option with a digit types a character there (`¡`, `™`, `£` on a US keyboard) |
 
 **Drag a list to move it.** The Lists section on the tasks rail reorders the
 way the document tree does: press a row, move it, and the rows under it slide
@@ -6083,7 +6082,7 @@ restart.
 | `Ctrl+J` | show / hide the Context column |
 | `Ctrl+Alt+J` | step the Context column to its next section (opens it first) |
 | `Ctrl+Alt+K` | copy the Cloud sync section's facts to the clipboard |
-| `Alt+1` / `Alt+2` / `Alt+3` | the Explore column's Documents, Files, Tasks |
+| `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
 | `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 | `Ctrl+Shift+I` | open or foreground the standalone Koru AI chat |
 
