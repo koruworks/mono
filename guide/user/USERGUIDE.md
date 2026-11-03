@@ -3345,7 +3345,8 @@ a version Koru does not support yet, signed out, the program a chat runs the
 agent through missing (Claude's `claude-agent-acp`, say), or a check that
 failed. Where Koru knows the command that fixes it, the row names it — Devin's
 reads *Run `devin update` to update it.* for a version Koru does not support
-yet, and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
+yet, adding that the copy inside the Devin desktop app updates with the app,
+and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
 them again, and the rows update when the answers arrive. The card's first line
 counts them (*9 of 9 enabled*).
 
@@ -6056,8 +6057,8 @@ itself.
 a chat. Its installers leave it off your `PATH`, so Koru also looks where
 they put it: the standalone CLI first, then the copy inside the Devin desktop
 app. A chat needs Devin 3000.11.1 or newer and uses the first copy that is;
-if none is, Devin reads *Needs a supported version* — run `devin update` and
-restart Koru. Sign in with `devin auth login` (Koru never asks for or reads
+if none is, Devin reads *Needs a supported version* — run `devin update` (or,
+for the desktop app's copy, update the app) and restart Koru. Sign in with `devin auth login` (Koru never asks for or reads
 your Devin credentials); until you do, Devin reads *Signed out*. A Devin chat starts in Devin's own *Code* mode, which makes
 file edits in the folder without asking and still asks before running a
 command.
