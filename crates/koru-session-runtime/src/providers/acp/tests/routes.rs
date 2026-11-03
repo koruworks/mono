@@ -13,7 +13,8 @@ fn routes() -> Vec<(AcpRoute, &'static str)> {
             AcpRoute::antigravity(),
             "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
         ),
-        (AcpRoute::devin(), "devin 3000.10.48 (fcf7ba39)"),
+        // The floor's print is not recorded yet; the commit is a stand-in.
+        (AcpRoute::devin(), "devin 3000.11.1 (0123abcd)"),
     ]
 }
 
@@ -134,25 +135,25 @@ fn a_release_above_the_pin_is_admitted_and_one_below_it_is_not() {
         "not grok's print"
     );
     assert!(AcpRoute::antigravity().parse_version("1.2.2").is_err());
-    // Devin's own print, `devin <version> (<commit>)`. The standalone CLI
-    // this machine had, 3000.10.21, is below the pin.
-    assert_eq!(
-        AcpRoute::devin()
-            .parse_version("devin 3000.11.234 (0123abcd)\r\n")
-            .unwrap()
-            .as_str(),
-        "3000.11.234"
-    );
-    assert_eq!(
-        AcpRoute::devin()
-            .parse_version("devin 3000.10.48 (other)")
-            .unwrap()
-            .as_str(),
-        "3000.10.48",
-        "the commit is not the version"
-    );
+    // Devin's own print, `devin <version> (<commit>)`, floor 3000.11.1.
+    // Both copies the acceptance machine had are below it: the standalone
+    // CLI, 3000.10.21, and the desktop app's, 3000.10.48.
+    for (print, version) in [
+        ("devin 3000.11.1 (other)", "3000.11.1"),
+        ("devin 3000.11.234 (0123abcd)\r\n", "3000.11.234"),
+        ("devin 3000.12.0 (0123abcd)", "3000.12.0"),
+        ("devin 3001.0.0 (0123abcd)", "3001.0.0"),
+    ] {
+        assert_eq!(
+            AcpRoute::devin().parse_version(print).unwrap().as_str(),
+            version,
+            "the commit is not the version"
+        );
+    }
     for refused in [
         "devin 3000.10.21 (611c1cba)",
+        "devin 3000.10.48 (fcf7ba39)",
+        "devin 3000.11.0 (0123abcd)",
         "3000.11.234",
         "devin 3000.11.234",
         "grok 3000.11.234 (0123abcd)",
@@ -350,9 +351,11 @@ fn recorded_routes() -> Vec<(
             include_str!("fixtures/antigravity-1.2.1/new-session.json"),
             include_str!("fixtures/antigravity-1.2.1/auth-required.json"),
         ),
+        // 3000.10.48's frames, run under the floor's version: the recorded
+        // print is below the floor now, and 3000.11.x's are not captured.
         (
             AcpRoute::devin(),
-            include_str!("fixtures/devin-3000.10.48/version.txt"),
+            "devin 3000.11.1 (0123abcd)",
             include_str!("fixtures/devin-3000.10.48/initialize.json"),
             include_str!("fixtures/devin-3000.10.48/new-session.json"),
             include_str!("fixtures/devin-3000.10.48/auth-required.json"),

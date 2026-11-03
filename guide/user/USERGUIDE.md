@@ -6032,10 +6032,10 @@ itself.
 **Devin** is Cognition's Devin CLI, the same `devin` command in a tab and in
 a chat. Its installers leave it off your `PATH`, so Koru also looks where
 they put it: the standalone CLI first, then the copy inside the Devin desktop
-app. A chat needs Devin 3000.10.48 or newer and uses the first copy that is;
-if your standalone CLI is older, run `devin update` and restart Koru. Sign in
-with `devin auth login` (Koru never asks for or reads your Devin
-credentials). A Devin chat starts in Devin's own *Code* mode, which makes
+app. A chat needs Devin 3000.11.1 or newer and uses the first copy that is;
+if none is, Devin reads *Needs a supported version* — run `devin update` and
+restart Koru. Sign in with `devin auth login` (Koru never asks for or reads
+your Devin credentials); until you do, Devin reads *Signed out*. A Devin chat starts in Devin's own *Code* mode, which makes
 file edits in the folder without asking and still asks before running a
 command.
 

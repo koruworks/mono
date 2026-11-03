@@ -17,7 +17,9 @@ signed-out refusal. See `antigravity-1.2.1/README.md`.
 Devin CLI 3000.10.48 (`devin 3000.10.48 (fcf7ba39)`, the copy in Devin's
 desktop app) was reduced from observed frames too, including a signed-in
 `session/new`; its `auth-required.json` is the synthetic shape, because a
-signed-out 3000.10.48 starts a session and refuses only at the prompt. See
+signed-out 3000.10.48 starts a session and refuses only at the prompt. The
+route's floor is now 3000.11.1, whose handshake is not recorded yet, so
+these frames replay under the floor's version. See
 `devin-3000.10.48/README.md`.
 
 The version.txt files preserve only public exact --version output. JSON is

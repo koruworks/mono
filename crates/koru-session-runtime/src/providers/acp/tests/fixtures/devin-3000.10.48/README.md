@@ -31,5 +31,13 @@ configuration), and `config_option_update`, `current_mode_update` and
 `available_commands_update` updates before the `session/new` answer. The
 route tests replay a notification of each kind around the fixtures.
 
-Refresh the same way against a newly pinned build, then replay through
-`routes.rs`. Never retain raw frames, session ids, account data or paths.
+**The floor is now 3000.11.1** (2026-11-02), so `version.txt` is refused,
+as a below-floor print should be. 3000.11.1's handshake is not recorded:
+until it is, the route tests replay these frames under the floor's version
+(`tests/devin.rs`, `tests/routes.rs`). The signed-out answer the tests
+replay is `new-session.json` with its `model` options emptied, the shape
+observed above; no fixture of it was kept.
+
+Refresh the same way against a 3000.11.x build after `devin update`, into
+a `devin-3000.11.x` folder, then replay through `routes.rs`. Never retain
+raw frames, session ids, account data or paths.

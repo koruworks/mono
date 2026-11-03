@@ -383,9 +383,12 @@ impl CompatibilityProbe for AcpCompatibilityProbe {
             })
             .flatten();
         let modes = control.modes().cloned();
+        // Devin signed out starts a session with no models (routes.rs).
+        let signed_in = self.route.signed_in_by_models(control.model_options());
         let shutdown = control.shutdown();
         let capabilities = result?;
         shutdown?;
+        signed_in?;
         Ok((capabilities, ProbeCapture { models, modes }))
     }
 }

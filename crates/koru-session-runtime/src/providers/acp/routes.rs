@@ -139,6 +139,15 @@ impl AcpDialect {
         self == Self::Devin
     }
 
+    /// Whether a session that starts with **no models** means signed out.
+    /// Signed out, Devin 3000.10.48 answered `session/new` with a session
+    /// and an empty `model` list rather than ACP's `-32000`, and a missing
+    /// sign-in would surface only at the first prompt. For any other agent
+    /// an empty list is just an empty list.
+    pub(super) fn no_models_means_signed_out(self) -> bool {
+        self == Self::Devin
+    }
+
     /// The qualified pin: the first accepted version, which the probe logs
     /// as the expected one.
     pub(super) fn version(self) -> &'static str {
@@ -179,9 +188,14 @@ impl AcpDialect {
                 "04fd51b5c6dfb6d11e649c2cfc61a64ca31d9a4a58a9a3e5c93db934cd7a9695",
                 "1.2.1",
             )],
-            // The copy in Devin's desktop app on 2026-11-02, the first build
-            // whose no-prompt handshake was recorded (`devin-3000.10.48`).
-            Self::Devin => &[("devin 3000.10.48 (fcf7ba39)", "3000.10.48")],
+            // 3000.11.1 is the floor because Devin's changelog says it is
+            // the release where the MCP servers sent in `session/new` reach
+            // the agent and model, thinking effort and speed come through
+            // config options (maintainers' decision, 2026-11-02). Its
+            // handshake is not recorded yet — the frames replayed are
+            // 3000.10.48's (`devin-3000.10.48`) — so the print's commit is a
+            // stand-in; the commit is never read (`printed_version`).
+            Self::Devin => &[("devin 3000.11.1 (unrecorded)", "3000.11.1")],
         }
     }
 }
@@ -342,6 +356,25 @@ impl AcpRoute {
         } else {
             Err(rejected())
         }
+    }
+
+    /// **A started session's sign-in, read from the models it listed.** A
+    /// route whose signed-out answer is a session with no models
+    /// ([`AcpDialect::no_models_means_signed_out`]) is refused as
+    /// `AuthenticationRequired`, which readiness reads as *Signed out*;
+    /// every other route, and a session that listed a model, passes.
+    pub(super) fn signed_in_by_models(
+        &self,
+        models: &[koru_session_protocol::ProviderModel],
+    ) -> Result<(), ProviderFailure> {
+        if self.dialect.no_models_means_signed_out() && models.is_empty() {
+            return Err(failure(
+                ErrorCode::ProviderUnavailable,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::AuthenticationRequired,
+            ));
+        }
+        Ok(())
     }
 }
 
