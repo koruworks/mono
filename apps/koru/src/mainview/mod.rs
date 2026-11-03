@@ -1786,6 +1786,9 @@ impl MainView {
                 // A changed file's path shows the file in Explorer or Finder
                 // (D62).
                 chat.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
+                // Koru opens documents as tabs: a stored reply is followed
+                // by *Open* (D78).
+                chat.offer_open_stored_documents(true);
                 chat
             },
             ai_focused: false,

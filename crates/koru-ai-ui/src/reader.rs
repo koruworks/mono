@@ -161,7 +161,9 @@ pub(crate) enum Update {
     /// The host is still building the agent's list.
     AgentModelsPending(AiProviderId),
     Pull(ModelPullEvent),
-    Exported(String),
+    /// A reply stored as a Koru document: its title, and the document,
+    /// which *Open* after the status line opens (D78).
+    Exported(String, Option<koru_ai_core::DocumentId>),
     /// The titles `Command::DocumentTitles` could find. A document the Store
     /// cannot place is simply absent: its link keeps the fallback word.
     DocumentTitles(Vec<(koru_ai_core::DocumentId, String)>),
@@ -595,7 +597,10 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                             response = client.ai().read_export(response.export.id)?;
                         }
                         if response.export.status == koru_ai_core::ExportStatus::Complete {
-                            Ok(Update::Exported(response.export.destination.title))
+                            Ok(Update::Exported(
+                                response.export.destination.title,
+                                response.export.document_id,
+                            ))
                         } else {
                             Err(koru_ai_wire::Failure {
                                 code: "export_failed".into(),

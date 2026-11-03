@@ -54,6 +54,9 @@ impl AiChatView {
         surface.offer_agent_settings(true);
         // A changed file's path shows the file in Explorer or Finder (D62).
         surface.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
+        // Koru opens documents as tabs: a stored reply is followed by
+        // *Open* (D78).
+        surface.offer_open_stored_documents(true);
         Self {
             surface,
             face: ChatFace::default(),

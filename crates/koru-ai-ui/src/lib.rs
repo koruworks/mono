@@ -117,6 +117,8 @@ const JUMP_D: f32 = 32.0;
 const JUMP_GAP: f32 = 12.0;
 const JUMP_ICON: f32 = 16.0;
 const JUMP_SLACK: f32 = 1.0;
+/// Between the end of *Stored “…” in Koru.* and its *Open* (D78).
+const STORED_OPEN_GAP: f32 = 6.0;
 const CONTENT_MAX_W: f32 = 800.0;
 const USER_MESSAGE_MAX_FRACTION: f32 = 0.70;
 /// The composer's toolbar row — the private mark, the spaces, the mode, the
@@ -591,6 +593,15 @@ pub struct ChatSurface {
     pending_model_prefetch: Option<AiProviderId>,
     retry_link: Option<Rect>,
     ollama_search_link: Option<Rect>,
+    /// **The host opens documents as tabs** (D78): apps/koru says so; the
+    /// standalone chat window has no tabs and does not.
+    stored_documents_openable: bool,
+    /// **A reply just stored as a document** (D78): the status line that
+    /// says so, and the document. *Open* follows that line while it is the
+    /// one shown.
+    stored_document: Option<(String, DocumentId)>,
+    /// *Open* where it was last drawn, for the press.
+    stored_open_link: Option<Rect>,
     staged_embedded_send: Option<SendTurnRequest>,
     durable_observations: u8,
     destinations: Vec<DestinationOption>,
@@ -897,6 +908,9 @@ impl ChatSurface {
             pending_model_prefetch: None,
             retry_link: None,
             ollama_search_link: None,
+            stored_documents_openable: false,
+            stored_document: None,
+            stored_open_link: None,
             staged_embedded_send: None,
             durable_observations: 0,
             destinations: Vec::new(),
@@ -1375,6 +1389,9 @@ impl ChatSurface {
             || self
                 .ollama_search_link
                 .is_some_and(|rect| rect.contains(p.0, p.1))
+            || self
+                .stored_open_rect()
+                .is_some_and(|rect| rect.contains(p.0, p.1))
         {
             return CursorIcon::Default;
         }
@@ -1632,6 +1649,74 @@ impl ChatSurface {
         self.status.as_deref()
     }
 
+    /// **Say the host opens documents as tabs** (D78): then a reply stored
+    /// as a document is followed by *Open*. The standalone chat window has
+    /// no tabs and leaves it off.
+    pub fn offer_open_stored_documents(&mut self, offered: bool) {
+        self.stored_documents_openable = offered;
+    }
+
+    /// The document *Open* opens: the one just stored, while the footer
+    /// still says so and the host opens documents as tabs.
+    fn stored_open_document(&self) -> Option<DocumentId> {
+        let (line, document) = self.stored_document.as_ref()?;
+        (self.stored_documents_openable && self.footer_line() == Some(line.as_str()))
+            .then_some(*document)
+    }
+
+    /// *Open*'s rectangle, while it shows.
+    fn stored_open_rect(&self) -> Option<Rect> {
+        self.stored_open_document()?;
+        self.stored_open_link
+    }
+
+    /// **The footer line, laid out** at `width`: its words, wrapped, and —
+    /// after a stored reply (D78) — *Open*, with where it sits after the
+    /// last line's end. The words leave room for it at their side.
+    fn footer_layouts(
+        &mut self,
+        width: f32,
+    ) -> Option<(Layout<Brush>, Option<(Layout<Brush>, f32, f32)>)> {
+        let line = self.footer_line()?.to_owned();
+        let open = self.stored_open_document().map(|_| {
+            self.engine.simple_layout(
+                koru_i18n::t(self.lang, koru_i18n::Key::AiOpenStoredDocument),
+                role::meta(),
+            )
+        });
+        let room = open
+            .as_ref()
+            .map_or(0.0, |open| open.width() + STORED_OPEN_GAP);
+        let words = self
+            .engine
+            .simple_layout_wrapped(&line, role::meta(), (width - room).max(1.0));
+        let open = open.map(|open| {
+            let (end, top) = words.lines().last().map_or((0.0, 0.0), |last| {
+                let metrics = last.metrics();
+                (
+                    metrics.advance - metrics.trailing_whitespace,
+                    metrics.block_min_coord,
+                )
+            });
+            (open, end + STORED_OPEN_GAP, top)
+        });
+        Some((words, open))
+    }
+
+    /// *Open* pressed (D78): the stored document opens as a tab, the way a
+    /// document opened from the Files list does — the host's own
+    /// open-document request.
+    fn open_stored_document(&mut self) -> bool {
+        let Some(document) = self.stored_open_document() else {
+            return false;
+        };
+        self.open_document_request = Some(koru_link::KoruLink::Document {
+            document: document.as_uuid(),
+            node: None,
+        });
+        true
+    }
+
     /// What Up walks back through, oldest first: this chat's messages from
     /// the person, then what this surface sent that the transcript does not
     /// carry yet. The same message twice in a row is one step.
@@ -1764,6 +1849,12 @@ impl ChatSurface {
         }
         if self.pill_mouse_down(x, y) {
             return true;
+        }
+        if self
+            .stored_open_rect()
+            .is_some_and(|rect| rect.contains(x, y))
+        {
+            return self.open_stored_document();
         }
         if self
             .jump_button()
@@ -3295,10 +3386,15 @@ impl ChatSurface {
                 // layout cache relays those cards and no others.
                 self.messages_dirty |= changed;
             }
-            Update::Exported(title) => {
+            Update::Exported(title, document) => {
                 self.waiting = false;
                 self.destination_open = None;
-                self.status = Some(format!("Stored “{title}” in Koru."));
+                let line = koru_i18n::fill(
+                    koru_i18n::t(self.lang, koru_i18n::Key::AiStoredInKoru),
+                    &[&title],
+                );
+                self.stored_document = document.map(|document| (line.clone(), document));
+                self.status = Some(line);
             }
             Update::Steered(response) => {
                 tracing::debug!(
@@ -4708,13 +4804,9 @@ impl ChatSurface {
     fn conversation_rect(&mut self) -> Rect {
         let composer = self.composer_rect();
         let content = self.content_rect();
-        let footer = self.footer_line().map(str::to_owned);
-        let footer_h = footer.map_or(0.0, |line| {
-            self.engine
-                .simple_layout_wrapped(&line, role::meta(), content.w)
-                .height()
-                + 5.0
-        });
+        let footer_h = self
+            .footer_layouts(content.w)
+            .map_or(0.0, |(words, _)| words.height() + 5.0);
         let context_document = self.context_document_pill();
         let top = self.chat_top();
         let rect = Rect::new(
@@ -5473,6 +5565,12 @@ impl ChatSurface {
                 return Some((17, 0));
             }
             if self
+                .stored_open_rect()
+                .is_some_and(|rect| rect.contains(x, y))
+            {
+                return Some((18, 0));
+            }
+            if self
                 .privacy_button()
                 .is_some_and(|button| button.contains(x, y))
             {
@@ -5600,24 +5698,32 @@ impl ChatSurface {
             Instant::now(),
         );
         self.draw_queue(canvas, root);
-        if let Some(line) = self.footer_line().map(str::to_owned) {
-            let content = self.content_rect();
-            let layout = self
-                .engine
-                .simple_layout_wrapped(&line, role::meta(), content.w);
+        self.stored_open_link = None;
+        let content = self.content_rect();
+        if let Some((layout, open)) = self.footer_layouts(content.w) {
             let context_document = self.context_document_pill();
-            scene::draw_layout(
-                canvas,
-                root,
-                &layout,
-                content.x,
-                composer.y
-                    - COMPOSER_GAP
-                    - pill_band_height(context_document.as_ref(), &self.pending_quotes)
-                    - self.queue_band_h()
-                    - layout.height(),
-                Some(p.text_dim),
-            );
+            let y = composer.y
+                - COMPOSER_GAP
+                - pill_band_height(context_document.as_ref(), &self.pending_quotes)
+                - self.queue_band_h()
+                - layout.height();
+            scene::draw_layout(canvas, root, &layout, content.x, y, Some(p.text_dim));
+            // *Open* after a stored reply (D78): a link in the accent, as
+            // the chat's other links are, lit under the pointer.
+            if let Some((open, dx, dy)) = open {
+                let (x, top) = (content.x + dx, y + dy);
+                let hit = Rect::new(x - 3.0, top - 2.0, open.width() + 6.0, open.height() + 4.0);
+                if hit.contains(self.pointer.0, self.pointer.1) {
+                    scene::fill(
+                        canvas,
+                        root,
+                        p.hover_tint,
+                        &scene::rrect(hit.x, hit.y, hit.w, hit.h, 4.0),
+                    );
+                }
+                scene::draw_layout_first_line(canvas, root, &open, x, top, Some(p.accent));
+                self.stored_open_link = Some(hit);
+            }
         }
         // **The composer is one component** in the inspector, every primitive
         // it paints inside it: the box, the text, the toolbar's controls and
@@ -10892,6 +10998,55 @@ mod tests {
         other.rebuild_messages(400.0);
         assert_eq!(other.message_layouts[0].display, "Summarise Budget 2026");
         let _ = updates;
+    }
+
+    /// **D78: *Stored “…” in Koru.* is followed by *Open*** where the host
+    /// opens documents as tabs; a press asks the host to open the new
+    /// document, as a document link does. The standalone window, with no
+    /// tabs, shows no link; nor does a later status line.
+    #[test]
+    fn a_stored_reply_offers_open_where_the_host_has_tabs() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        surface.lang = koru_i18n::Lang::En;
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.validated_ready = true;
+        surface.composer_rect();
+        let document = DocumentId::new();
+        let stored = |surface: &mut ChatSurface| {
+            surface.apply_update(Update::Exported(
+                "Help me plan a trip to Portugal for 10 days".into(),
+                Some(document),
+            ));
+            surface.draw(&mut Scene::new(), Affine::IDENTITY);
+        };
+        stored(&mut surface);
+        assert_eq!(
+            surface.status.as_deref(),
+            Some("Stored “Help me plan a trip to Portugal for 10 days” in Koru.")
+        );
+        assert!(
+            surface.stored_open_rect().is_none(),
+            "the standalone window has no tabs: no Open"
+        );
+
+        surface.offer_open_stored_documents(true);
+        stored(&mut surface);
+        let open = surface.stored_open_rect().expect("Open after the line");
+        surface.pointer = (open.x + open.w * 0.5, open.y + open.h * 0.5);
+        assert_eq!(surface.cursor_icon(), CursorIcon::Default, "the arrow");
+        assert!(surface.mouse_down(open.x + open.w * 0.5, open.y + open.h * 0.5));
+        assert_eq!(
+            surface.take_open_document_request(),
+            Some(koru_link::KoruLink::Document {
+                document: document.as_uuid(),
+                node: None
+            })
+        );
+
+        // Another status line takes the link with it.
+        surface.status = Some("Something else".into());
+        assert!(surface.stored_open_rect().is_none());
     }
 
     #[test]

@@ -296,6 +296,8 @@ pub enum Key {
     AiModelsLegacy,
     AiModelsLegacyTag,
     AiJumpToLatest,
+    AiStoredInKoru,
+    AiOpenStoredDocument,
     // The composer's tool-approval chip and panel, and a tool's approval card.
     AiToolApprovalHeading,
     AiToolModeManualApproval,
@@ -2805,7 +2807,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1959] = [
+    pub const ALL: [Key; 1961] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2997,6 +2999,8 @@ impl Key {
         Key::AiModelsLegacy,
         Key::AiModelsLegacyTag,
         Key::AiJumpToLatest,
+        Key::AiStoredInKoru,
+        Key::AiOpenStoredDocument,
         Key::AiToolApprovalHeading,
         Key::AiToolModeManualApproval,
         Key::AiToolModeAutomatic,
@@ -6930,6 +6934,30 @@ pub const ROWS: &[Row] = &[
         ar: "الانتقال إلى الأحدث",
         zh_hans: "跳到最新",
         ja: "最新へ移動",
+    },
+    // The chat's status line after a reply is stored as a Koru document: {} is the document's title.
+    Row {
+        key: Key::AiStoredInKoru,
+        en: "Stored “{}” in Koru.",
+        es: "Se guardó «{}» en Koru.",
+        pt_br: "“{}” foi salvo no Koru.",
+        de: "„{}“ in Koru gespeichert.",
+        fr: "« {} » enregistré dans Koru.",
+        ar: "تم حفظ «{}» في Koru.",
+        zh_hans: "已将“{}”存入 Koru。",
+        ja: "「{}」を Koru に保存しました。",
+    },
+    // The link after “Stored … in Koru.”: opens the new document as a tab.
+    Row {
+        key: Key::AiOpenStoredDocument,
+        en: "Open",
+        es: "Abrir",
+        pt_br: "Abrir",
+        de: "Öffnen",
+        fr: "Ouvrir",
+        ar: "فتح",
+        zh_hans: "打开",
+        ja: "開く",
     },
     // The tool-approval panel's heading, above its two modes.
     Row {
