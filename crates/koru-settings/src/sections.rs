@@ -122,8 +122,18 @@ impl FavoriteModel {
 }
 
 /// Everything that applies to Koru as a whole, whoever is consuming it.
+///
+/// **Read tolerantly; written strictly.** A section is what the settings
+/// authority *answers* — a client reads it — so it ignores a field it does
+/// not know: an older Koru reading the section from a newer service keeps
+/// every value it understands instead of failing the whole read and falling
+/// back to defaults. Nothing ever writes a section: a write is a
+/// [`GlobalPatch`], which still refuses an unknown field, so the service
+/// answers a typo with a 400 rather than storing nothing. A field added
+/// here is also `#[serde(default)]`, so a newer client reads an older
+/// service. (The user's call, 2026-11-03: this reader ships before any new
+/// Global field does — koru-ai D79's Chat font is the first that waits.)
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct GlobalSettings {
     // Roaming — `preferences.conf`.
     pub theme: ThemeChoice,
@@ -733,8 +743,10 @@ pub(crate) fn normalized_agents(mut agents: Vec<String>) -> Vec<String> {
 /// row, beside the geometry, purely because the terminal had one file. How a
 /// terminal looks is a preference about the person, not about the monitor it
 /// happened to be opened on.
+///
+/// Read tolerantly, as [`GlobalSettings`] is: an unknown field is ignored on
+/// the read; the [`TerminalPatch`] that writes it refuses one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct TerminalSettings {
     pub theme: ThemeChoice,
     /// Mono-restricted, and deliberately **not** Global's `code_font`: a code
@@ -869,8 +881,11 @@ impl TerminalPatch {
 ///
 /// **A secret never appears here, in either direction.** The only thing said
 /// about the OpenAI key is whether one is configured.
+///
+/// Read tolerantly, as [`GlobalSettings`] is — and so are its two provider
+/// parts: an unknown field is ignored on the read; the [`AiPatch`] that
+/// writes it refuses one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct AiSettings {
     pub selected_provider: Option<AiProvider>,
     pub openai: OpenAiSection,
@@ -878,7 +893,6 @@ pub struct AiSettings {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct OpenAiSection {
     pub model: Option<String>,
     pub reasoning: ReasoningChoice,
@@ -887,7 +901,6 @@ pub struct OpenAiSection {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct OllamaSection {
     pub endpoint: String,
     pub model: Option<String>,

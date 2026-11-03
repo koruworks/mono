@@ -753,8 +753,7 @@
         "type": "object"
       },
       "AiSettings": {
-        "additionalProperties": false,
-        "description": "The AI section — **a facade, not a store.**\n\nThe values live in `ai.db` behind the AI worker, and the secrets live in\nthe OS vault behind `koru-ai-provider`. Both authorities are unchanged.\nThis type is the shape the facade presents; the mapping onto the worker is\nthe Gateway's, because the worker handle is the Gateway's.\n\n**A secret never appears here, in either direction.** The only thing said\nabout the OpenAI key is whether one is configured.",
+        "description": "The AI section — **a facade, not a store.**\n\nThe values live in `ai.db` behind the AI worker, and the secrets live in\nthe OS vault behind `koru-ai-provider`. Both authorities are unchanged.\nThis type is the shape the facade presents; the mapping onto the worker is\nthe Gateway's, because the worker handle is the Gateway's.\n\n**A secret never appears here, in either direction.** The only thing said\nabout the OpenAI key is whether one is configured.\n\nRead tolerantly, as [`GlobalSettings`] is — and so are its two provider\nparts: an unknown field is ignored on the read; the [`AiPatch`] that\nwrites it refuses one.",
         "properties": {
           "ollama": {
             "$ref": "#/components/schemas/OllamaSection"
@@ -5767,8 +5766,7 @@
         "type": "object"
       },
       "GlobalSettings": {
-        "additionalProperties": false,
-        "description": "Everything that applies to Koru as a whole, whoever is consuming it.",
+        "description": "Everything that applies to Koru as a whole, whoever is consuming it.\n\n**Read tolerantly; written strictly.** A section is what the settings\nauthority *answers* — a client reads it — so it ignores a field it does\nnot know: an older Koru reading the section from a newer service keeps\nevery value it understands instead of failing the whole read and falling\nback to defaults. Nothing ever writes a section: a write is a\n[`GlobalPatch`], which still refuses an unknown field, so the service\nanswers a typo with a 400 rather than storing nothing. A field added\nhere is also `#[serde(default)]`, so a newer client reads an older\nservice. (The user's call, 2026-11-03: this reader ships before any new\nGlobal field does — koru-ai D79's Chat font is the first that waits.)",
         "properties": {
           "agent_order": {
             "default": [],
@@ -7648,7 +7646,6 @@
         "type": "object"
       },
       "OllamaSection": {
-        "additionalProperties": false,
         "properties": {
           "endpoint": {
             "type": "string"
@@ -7761,7 +7758,6 @@
         ]
       },
       "OpenAiSection": {
-        "additionalProperties": false,
         "properties": {
           "credential_configured": {
             "description": "Whether a key is in the vault. **Read-only, and never a value.**",
@@ -14672,8 +14668,7 @@
         "type": "string"
       },
       "TerminalSettings": {
-        "additionalProperties": false,
-        "description": "Koru Terminal's appearance.\n\n**Roaming**, which is a change: these lived in this machine's `windows.conf`\nrow, beside the geometry, purely because the terminal had one file. How a\nterminal looks is a preference about the person, not about the monitor it\nhappened to be opened on.",
+        "description": "Koru Terminal's appearance.\n\n**Roaming**, which is a change: these lived in this machine's `windows.conf`\nrow, beside the geometry, purely because the terminal had one file. How a\nterminal looks is a preference about the person, not about the monitor it\nhappened to be opened on.\n\nRead tolerantly, as [`GlobalSettings`] is: an unknown field is ignored on\nthe read; the [`TerminalPatch`] that writes it refuses one.",
         "properties": {
           "composer_default": {
             "description": "Whether a *new* window opens with its composer showing.\n\nThe default only. Whether the composer is open in a window that already\nexists is furniture, and stays that window's `input_area` row.",

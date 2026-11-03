@@ -420,3 +420,60 @@ fn the_default_agent_patch_sets_clears_and_validates() {
         assert!(patch.validate().is_err(), "{bad:?}");
     }
 }
+
+/// **A section is read tolerantly** (the user's call, 2026-11-03): a Global
+/// section from a newer service, carrying a field this build has never
+/// heard of, still reads — every known value kept, the stranger ignored —
+/// instead of failing and leaving the window on defaults.
+#[test]
+fn a_global_section_with_an_unknown_field_reads_and_keeps_what_it_knows() {
+    let mut newer = serde_json::to_value(GlobalSettings {
+        theme: ThemeChoice::Dark,
+        density: DensityChoice::Comfortable,
+        favorite_models: vec![FavoriteModel::new("claude", "opus")],
+        ..GlobalSettings::default()
+    })
+    .unwrap();
+    let object = newer.as_object_mut().unwrap();
+    object.insert("chat_font".into(), serde_json::json!("follow"));
+    object.insert(
+        "a_later_setting".into(),
+        serde_json::json!({ "nested": [1, 2] }),
+    );
+    let read: GlobalSettings = serde_json::from_value(newer).unwrap();
+    assert_eq!(read.theme, ThemeChoice::Dark);
+    assert_eq!(read.density, DensityChoice::Comfortable);
+    assert_eq!(read.favorite_models, [FavoriteModel::new("claude", "opus")]);
+}
+
+/// The other two sections read the same way, the AI section's provider
+/// parts included.
+#[test]
+fn the_terminal_and_ai_sections_ignore_an_unknown_field_too() {
+    let mut terminal = serde_json::to_value(TerminalSettings {
+        composer_default: false,
+        ..TerminalSettings::default()
+    })
+    .unwrap();
+    terminal["a_later_setting"] = serde_json::json!(true);
+    let terminal: TerminalSettings = serde_json::from_value(terminal).unwrap();
+    assert!(!terminal.composer_default);
+
+    let mut ai = serde_json::to_value(AiSettings::default()).unwrap();
+    ai["a_later_setting"] = serde_json::json!(1);
+    ai["openai"]["a_later_setting"] = serde_json::json!(1);
+    ai["ollama"]["a_later_setting"] = serde_json::json!(1);
+    let ai: AiSettings = serde_json::from_value(ai).unwrap();
+    assert_eq!(ai, AiSettings::default());
+}
+
+/// **A write is still strict.** What a client sends is a patch, and every
+/// patch still refuses a field it does not know — so the service answers a
+/// typo, or a field from a newer client it cannot store, with a 400 rather
+/// than a write that silently did nothing.
+#[test]
+fn every_patch_still_refuses_an_unknown_field() {
+    assert!(serde_json::from_str::<GlobalPatch>(r#"{"chat_font":"follow"}"#).is_err());
+    assert!(serde_json::from_str::<TerminalPatch>(r#"{"fontt":"mono"}"#).is_err());
+    assert!(serde_json::from_str::<AiPatch>(r#"{"openai_modle":"x"}"#).is_err());
+}

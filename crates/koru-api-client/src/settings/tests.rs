@@ -190,3 +190,21 @@ fn the_paths_name_the_sections_the_routes_declare() {
     assert_eq!(path(Section::Ai), "/v1/settings/ai");
     assert_eq!(path(Section::Terminal), "/v1/settings/terminal");
 }
+
+/// **The client's read path is the tolerant one** (the user's call,
+/// 2026-11-03): a Global section answered by a newer service, with a field
+/// this build does not know, still decodes, with the values it does know.
+#[test]
+fn a_section_body_from_a_newer_service_still_decodes() {
+    let mut body = serde_json::to_value(SectionBody::Global(GlobalSettings {
+        spellcheck_enabled: false,
+        ..GlobalSettings::default()
+    }))
+    .unwrap();
+    body["chat_font"] = serde_json::json!("follow");
+    let read: SectionBody = serde_json::from_value(body).unwrap();
+    match read {
+        SectionBody::Global(global) => assert!(!global.spellcheck_enabled),
+        other => panic!("expected the Global section, got {other:?}"),
+    }
+}
