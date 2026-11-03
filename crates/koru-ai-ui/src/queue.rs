@@ -186,8 +186,19 @@ impl ChatSurface {
 
     /// A reply runs, or a message is on its way to start one: a send now
     /// is queued rather than refused.
+    /// Only this chat's: a message still on its way for a chat the surface
+    /// has since left does not hold the one on screen.
     pub(crate) fn reply_busy(&self) -> bool {
-        self.attempt.is_some() || self.message_on_its_way()
+        let shown = self.shown_chat_id();
+        self.attempt.is_some()
+            || self
+                .sent_message
+                .as_ref()
+                .is_some_and(|sent| Some(sent.chat) == shown)
+            || self
+                .staged_embedded_send
+                .as_ref()
+                .is_some_and(|staged| Some(staged.chat_id) == shown)
     }
 
     /// The composer holds something to send: text, a chip, a quote or an
