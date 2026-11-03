@@ -67,6 +67,7 @@ mod chat_history;
 mod chat_status;
 mod chats_pane;
 mod composer;
+mod dictation;
 mod doc_links;
 mod effort;
 mod layout_cache;
@@ -88,6 +89,7 @@ pub use agents::{AgentDefaults, agent_key, provider_mark};
 pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
+pub use dictation::{DictationPress, DictationShown};
 pub use model_picker::FavoriteModel;
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
@@ -726,6 +728,9 @@ pub struct ChatSurface {
     /// the chat opened there (D84). Set by the host as the chat comes into
     /// view.
     new_divider: Option<new_divider::NewDivider>,
+    /// Voice input in the composer (D103): the microphone, and the
+    /// recording row while the host dictates into it (`dictation`).
+    dictation: dictation::ComposerDictation,
     lang: koru_i18n::Lang,
 }
 
@@ -1008,6 +1013,7 @@ impl ChatSurface {
             wants_chat_step: None,
             chat_history: chat_history::ChatHistory::default(),
             new_divider: None,
+            dictation: dictation::ComposerDictation::default(),
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -1327,6 +1333,7 @@ impl ChatSurface {
             self.queue_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
+            self.dictation_deadline(),
             self.attachment_deadline(),
             self.work_tick_deadline(),
             self.modes_deadline(),
@@ -1377,6 +1384,7 @@ impl ChatSurface {
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
         changed |= self.composer.maintain();
+        changed |= self.maintain_dictation(_now);
         changed |= self.maintain_attachments();
         if let Some(open) = &mut self.viewer {
             changed |= open.viewer.maintain(_now);
@@ -1417,6 +1425,7 @@ impl ChatSurface {
             || self.picker_tooltip.animating(Instant::now())
             || self.queue_tooltip.animating(Instant::now())
             || self.pill_strip.animating(Instant::now())
+            || self.dictation_animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
     }
 
@@ -1515,6 +1524,11 @@ impl ChatSurface {
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         // The viewer is modal: every key is its own while it is up.
         if let Some(handled) = self.viewer_key(key, text, mods) {
+            return handled;
+        }
+        // A recording is stopped by its host (D103); a key never reaches the
+        // composer mid-composition, and Escape never arms a reply's stop.
+        if let Some(handled) = self.dictation_key(key) {
             return handled;
         }
         // A link's card (D95) goes on any key; Escape is spent on it.
@@ -1987,6 +2001,10 @@ impl ChatSurface {
             return handled;
         }
         if let Some(handled) = self.strip_mouse_down(x, y) {
+            return handled;
+        }
+        // The microphone, or a press on a composer that is recording (D103).
+        if let Some(handled) = self.dictation_mouse_down(x, y) {
             return handled;
         }
         // The `@` picker floats over the conversation, so a press on it is the
@@ -2476,7 +2494,7 @@ impl ChatSurface {
                     )
                 }),
             Instant::now(),
-        );
+        ) | self.dictation_hover(old_pointer, x, y);
         if let Some(changed) = self.response_menu_mouse_move(x, y, old) {
             return changed;
         }
@@ -5514,7 +5532,8 @@ impl ChatSurface {
     /// button.
     fn composer_toolbar_rect(&self) -> Rect {
         let composer = self.composer_hit_rect;
-        let send = self.send_button();
+        // Left of the microphone where there is one (D103), else of send.
+        let send = self.mic_button().unwrap_or_else(|| self.send_button());
         let x = composer.x + COMPOSER_PAD_X;
         Rect::new(
             x,
@@ -6107,7 +6126,7 @@ impl ChatSurface {
                 koru_i18n::t(self.lang, koru_i18n::Key::AiComposerPlaceholder),
             );
         }
-        {
+        'toolbar: {
             let toolbar = Rect::new(
                 composer.x,
                 composer.y + composer.h - COMPOSER_PAD_BOTTOM - COMPOSER_TOOLBAR_H,
@@ -6121,6 +6140,13 @@ impl ChatSurface {
                 scene::rect(toolbar.x, toolbar.y, toolbar.w, toolbar.h),
                 |_| {},
             );
+            // **Recording** (D103): the row is the waveform, the timer, ✕
+            // and ■ — none of the toolbar's controls, and no send.
+            if self.draw_dictation_row(canvas, root) {
+                self.draw_reasoning_drawer(canvas, root, composer);
+                break 'toolbar;
+            }
+            self.draw_mic(canvas, root);
             let send = self.send_button();
             let mode = self.send_mode();
             // Off while the chat waits for a model, whatever is typed.
@@ -6294,6 +6320,7 @@ impl ChatSurface {
             self.viewport,
             Instant::now(),
         );
+        self.draw_dictation_tooltip(canvas, root);
         self.composer.draw_panels(canvas, root);
     }
 
