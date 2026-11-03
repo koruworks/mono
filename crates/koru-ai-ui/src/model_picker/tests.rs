@@ -1650,7 +1650,11 @@ fn the_rail_is_the_colour_of_the_windows_rail() {
     // hairline on its start, top and foot, rounded at its start corners as
     // the panel is inside that hairline.
     let spec = surface.picker_spec();
-    let frame = elements::layout(&elements::tree(&spec, &mut |_| None), geometry.panel, cx);
+    let frame = elements::layout(
+        &elements::tree(&spec, elements::Painted::default()),
+        geometry.panel,
+        cx,
+    );
     let column = frame.named(elements::RAIL_COLUMN).next().unwrap();
     assert_eq!(column.look.bg, Some(Surface::Ground));
     let hairline = koru_draw::theme::BORDER_W as f32;
@@ -2196,7 +2200,7 @@ fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
     let geometry = surface.picker_geometry().unwrap();
     let spec = surface.picker_spec();
     let frame = elements::layout(
-        &elements::tree(&spec, &mut |_| None),
+        &elements::tree(&spec, elements::Painted::default()),
         geometry.panel,
         koru_draw::el::FrameCx::root(),
     );
@@ -2257,7 +2261,7 @@ fn the_list_is_rows_of_elements_in_the_shared_scroll_element() {
     let geometry = surface.picker_geometry().unwrap();
     let spec = surface.picker_spec();
     let frame = elements::layout(
-        &elements::tree(&spec, &mut |_| None),
+        &elements::tree(&spec, elements::Painted::default()),
         geometry.panel,
         FrameCx::root(),
     );

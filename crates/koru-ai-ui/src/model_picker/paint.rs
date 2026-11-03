@@ -3,14 +3,20 @@
 //! **Drawing the open picker** (D64): its element tree ([`super::elements`])
 //! laid out with the host's pointer and keyboard on it and painted inside
 //! the *Popover surface* record, so everything drawn in the panel nests
-//! under the surface in the inspector. Each leaf runs the drawing its
-//! control always had, in the allocation the frame gives it.
+//! under the surface in the inspector.
+//!
+//! **Every leaf is a named adapter** (QUESTIONS M7, approved by the user
+//! 2026-11-03): a provider's mark, the search field, ↻, the Fast and
+//! Context rows and the level's footer are each a type whose `impl Leaf`
+//! runs the drawing its control always had, in the allocation the frame
+//! gives it and in the frame's palette, never the global one. This file and
+//! the tree are on `ui_scan`'s migrated list.
 
 use koru_ai_core::{AiProviderId, ReasoningChoice, ReasoningControl};
 use koru_draw::el::{ElState, FrameCx, Interaction, Leaf};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::Ink;
+use koru_draw::theme::{Ink, Line, roles};
 use koru_draw::{icons, scene, theme};
 use koru_i18n::{Key, Lang, t};
 use koru_ui::icon_button::{IconButton, State as IconButtonState};
@@ -18,12 +24,12 @@ use koru_ui::popover::PopoverShell;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::context::{ContextPaint, paint_context_row};
-use super::elements::{self, ListRow, MarkName, MarkSpec, Paint, Part, Spec, StarSpec};
+use super::context::{CONTEXT_H, ContextPaint, paint_context_row};
+use super::elements::{self, ListRow, MarkName, MarkSpec, Painted, Spec, StarSpec};
 use super::fast::{FastPaint, paint_fast_row};
 use super::{
-    PickerFocus, RailEntry, Row, draw_provider_mark, footer_words, provider_name, rail_dividers,
-    reset_in,
+    FAST_H, FOOTER_H, PickerFocus, RailEntry, Row, SharedInput, draw_provider_mark, footer_words,
+    provider_name, rail_dividers, reset_in,
 };
 use crate::agents::AgentStatus;
 use crate::effort;
@@ -131,6 +137,53 @@ impl crate::ChatSurface {
             .collect()
     }
 
+    /// What the picker's adapters draw this frame: the search field, the
+    /// Fast and Context rows and the level's footer, each with the pointer
+    /// and the keyboard on it.
+    fn picker_painted(&self) -> Painted {
+        let pointer = self.pointer;
+        let lang = self.lang;
+        let focus = self.picker.focus;
+        Painted {
+            search: Some(SearchPaint {
+                input: self.picker.query.clone(),
+                placeholder: t(lang, Key::AiModelSearch).to_owned(),
+                focused: focus == PickerFocus::Search,
+            }),
+            fast: self.picker_fast().map(|fast| FastPaint {
+                lang,
+                on: fast.on,
+                pointer,
+                focused: focus == PickerFocus::Fast,
+            }),
+            context: self.picker_context().map(|choice| ContextPaint {
+                lang,
+                tokens: choice.tokens,
+                chosen_long: choice.chosen_long,
+                locked: self.effort_locked(),
+                pointer,
+                focused: focus == PickerFocus::Context,
+            }),
+            effort: self.effort_control().cloned().zip(self.effort_shown()).map(
+                |(control, shown)| EffortPaint {
+                    lang,
+                    control,
+                    shown,
+                    choice: self
+                        .transcript
+                        .as_ref()
+                        .map_or(ReasoningChoice::Default, |transcript| {
+                            transcript.chat.current_model.default_reasoning
+                        }),
+                    locked: self.effort_locked(),
+                    pointer,
+                    reset_focused: focus == PickerFocus::Reset,
+                    slider_focused: focus == PickerFocus::Slider,
+                },
+            ),
+        }
+    }
+
     /// Draw the open picker: the panel, and inside it the rail on its ground,
     /// the search with ↻, the list, and the rows under it.
     pub(crate) fn draw_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
@@ -143,7 +196,7 @@ impl crate::ChatSurface {
         // under the pointer, the list while its thumb is dragged, and the
         // selected mark while the rail has the keyboard.
         let targets = elements::layout(
-            &elements::tree(&spec, &mut |_| None),
+            &elements::tree(&spec, Painted::default()),
             panel,
             FrameCx::root(),
         );
@@ -159,7 +212,7 @@ impl crate::ChatSurface {
                 .filter(|_| self.picker.focus == PickerFocus::Rail)
                 .map(|mark| mark.key),
         };
-        let tree = elements::tree(&spec, &mut |part| self.picker_painter(part));
+        let tree = elements::tree(&spec, self.picker_painted());
         let frame = elements::layout(&tree, panel, FrameCx::root().with_interaction(interaction));
         let radius = theme::overlay::popover().radius;
         let engine = &mut self.engine;
@@ -171,91 +224,6 @@ impl crate::ChatSurface {
             frame.paint(&tree, canvas, root, engine);
         });
     }
-
-    /// The drawing `part` delegates to, holding what it shows; `None` where
-    /// the part draws nothing now.
-    fn picker_painter(&self, part: Part) -> Option<Paint> {
-        let pointer = self.pointer;
-        let lang = self.lang;
-        match part {
-            Part::Search => {
-                let input = self.picker.query.clone();
-                let placeholder = t(lang, Key::AiModelSearch).to_owned();
-                let focused = self.picker.focus == PickerFocus::Search;
-                painter(move |canvas, root, engine, at, _| {
-                    input.draw(canvas, root, engine, at, &placeholder, focused)
-                })
-            }
-            Part::Refresh => {
-                let Some(RailEntry::Agent(agent)) = self.picker_entry() else {
-                    return None;
-                };
-                let disabled = !self.refresh_enabled(&agent);
-                painter(move |canvas, root, engine, at, state| {
-                    IconButton::new(icons::ARROWS_CLOCKWISE, at)
-                        .with_state(IconButtonState {
-                            hovered: state.hovered,
-                            active: false,
-                            disabled,
-                        })
-                        .draw(canvas, root, engine)
-                })
-            }
-            Part::Fast => {
-                let fast = FastPaint {
-                    lang,
-                    on: self.picker_fast()?.on,
-                    pointer,
-                    focused: self.picker.focus == PickerFocus::Fast,
-                };
-                painter(move |canvas, root, engine, at, _| {
-                    paint_fast_row(canvas, root, engine, at, &fast)
-                })
-            }
-            Part::Context => {
-                let choice = self.picker_context()?;
-                let context = ContextPaint {
-                    lang,
-                    tokens: choice.tokens,
-                    chosen_long: choice.chosen_long,
-                    locked: self.effort_locked(),
-                    pointer,
-                    focused: self.picker.focus == PickerFocus::Context,
-                };
-                painter(move |canvas, root, engine, at, _| {
-                    paint_context_row(canvas, root, engine, at, &context)
-                })
-            }
-            Part::Effort => {
-                let effort = EffortPaint {
-                    lang,
-                    control: self.effort_control().cloned()?,
-                    shown: self.effort_shown()?,
-                    choice: self
-                        .transcript
-                        .as_ref()
-                        .map_or(ReasoningChoice::Default, |transcript| {
-                            transcript.chat.current_model.default_reasoning
-                        }),
-                    locked: self.effort_locked(),
-                    pointer,
-                    reset_focused: self.picker.focus == PickerFocus::Reset,
-                    slider_focused: self.picker.focus == PickerFocus::Slider,
-                };
-                painter(move |canvas, root, engine, at, _| {
-                    paint_effort(canvas, root, engine, at, &effort)
-                })
-            }
-        }
-    }
-}
-
-/// A leaf's painter, its closure typed by the bound — `&mut` arguments for
-/// any lifetime, as [`Paint`] takes them.
-fn painter(
-    paint: impl Fn(&mut Scene, Affine, &mut TextEngine, Rect, ElState) + 'static,
-) -> Option<Paint> {
-    Some(Box::new(paint))
 }
 
 /// **A provider's mark, as a leaf** (M1): the agent's brand by its kind,
@@ -302,79 +270,209 @@ impl Leaf for ProviderMark {
     }
 }
 
-/// The level's footer as it is drawn.
-struct EffortPaint {
-    lang: Lang,
-    control: ReasoningControl,
-    /// The level the slider shows.
-    shown: ReasoningChoice,
-    /// The chat's own choice, which may be *Default*.
-    choice: ReasoningChoice,
-    locked: bool,
-    pointer: (f32, f32),
-    reset_focused: bool,
-    slider_focused: bool,
+/// The search field as it is drawn: its input, shared with the picker
+/// (`SharedInput`, QUESTIONS M6), its placeholder and its focus.
+pub(crate) struct SearchPaint {
+    pub(crate) input: SharedInput,
+    pub(crate) placeholder: String,
+    pub(crate) focused: bool,
 }
 
-/// The footer in `footer`: a rule above it, the level's word and ↺ on one
-/// line, the slider under it.
-fn paint_effort(
-    canvas: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    footer: Rect,
-    effort: &EffortPaint,
-) {
-    let p = theme::p();
-    scene::fill(
-        canvas,
-        root,
-        p.panel_border,
-        &scene::rrect(footer.x, footer.y, footer.w, 1.0, 0.5),
-    );
-    let (word, suffix) = footer_words(&effort.control, effort.choice, effort.lang);
-    let line = engine.simple_layout(&word, theme::role::row());
-    let label_y = footer.y + 6.0;
-    scene::draw_layout_first_line(
-        canvas,
-        root,
-        &line,
-        footer.x + 8.0,
-        label_y,
-        Some(if effort.locked { p.text_dim } else { p.text }),
-    );
-    if let Some(suffix) = suffix {
-        let dim = engine.simple_layout(&suffix, theme::role::meta());
-        scene::draw_layout_first_line(
-            canvas,
+/// **The search field** (M7): the picker's `TextInput`, drawn in the
+/// allocation the frame gives it; it fills the search box short of ↻.
+pub(crate) struct SearchLeaf(pub(crate) Option<SearchPaint>);
+
+impl Leaf for SearchLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, 0.0)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        _state: ElState,
+    ) {
+        if let Some(search) = &self.0 {
+            search
+                .input
+                .draw(scene, root, engine, at, &search.placeholder, search.focused);
+        }
+    }
+}
+
+/// **↻** (M7): the shared `IconButton`, lit under the pointer; `disabled`
+/// while the agent's list is being rebuilt. `None` keeps its room with
+/// nothing drawn — a built-in provider has no ↻.
+pub(crate) struct RefreshLeaf {
+    pub(crate) disabled: Option<bool>,
+}
+
+impl Leaf for RefreshLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (elements::REFRESH_W, elements::REFRESH_H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        state: ElState,
+    ) {
+        if let Some(disabled) = self.disabled {
+            IconButton::new(icons::ARROWS_CLOCKWISE, at)
+                .with_state(IconButtonState {
+                    hovered: state.hovered,
+                    active: false,
+                    disabled,
+                })
+                .draw(scene, root, engine);
+        }
+    }
+}
+
+/// **The Fast row** (koru-ai D11, M7): *Fast · Off | On*.
+pub(crate) struct FastLeaf(pub(crate) Option<FastPaint>);
+
+impl Leaf for FastLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, FAST_H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        if let Some(fast) = &self.0 {
+            paint_fast_row(scene, root, engine, at, fast, cx.palette());
+        }
+    }
+}
+
+/// **The Context row** (koru-ai D10, M7): *Context · Auto | 1M*.
+pub(crate) struct ContextLeaf(pub(crate) Option<ContextPaint>);
+
+impl Leaf for ContextLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, CONTEXT_H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        if let Some(context) = &self.0 {
+            paint_context_row(scene, root, engine, at, context, cx.palette());
+        }
+    }
+}
+
+/// The level's footer as it is drawn.
+pub(crate) struct EffortPaint {
+    pub(crate) lang: Lang,
+    pub(crate) control: ReasoningControl,
+    /// The level the slider shows.
+    pub(crate) shown: ReasoningChoice,
+    /// The chat's own choice, which may be *Default*.
+    pub(crate) choice: ReasoningChoice,
+    pub(crate) locked: bool,
+    pub(crate) pointer: (f32, f32),
+    pub(crate) reset_focused: bool,
+    pub(crate) slider_focused: bool,
+}
+
+/// **The level's footer** (§9.3, M7): a rule above it, the level's word and
+/// ↺ on one line, the stepped slider under it.
+pub(crate) struct EffortLeaf(pub(crate) Option<EffortPaint>);
+
+impl Leaf for EffortLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, FOOTER_H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        footer: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        let Some(effort) = &self.0 else {
+            return;
+        };
+        let palette = cx.palette();
+        scene::fill(
+            scene,
             root,
-            &dim,
-            footer.x + 8.0 + line.width() + 6.0,
-            label_y + (line.height() - dim.height()) * 0.5,
-            Some(p.text_dim),
+            Line::Divider.of(palette),
+            &scene::rrect(footer.x, footer.y, footer.w, 1.0, 0.5),
+        );
+        let (word, suffix) = footer_words(&effort.control, effort.choice, effort.lang);
+        let line = engine.simple_layout(&word, roles::ROW.style());
+        let label_y = footer.y + 6.0;
+        scene::draw_layout_first_line(
+            scene,
+            root,
+            &line,
+            footer.x + 8.0,
+            label_y,
+            Some(if effort.locked {
+                Ink::Secondary.of(palette)
+            } else {
+                Ink::Primary.of(palette)
+            }),
+        );
+        if let Some(suffix) = suffix {
+            let dim = engine.simple_layout(&suffix, roles::META.style());
+            scene::draw_layout_first_line(
+                scene,
+                root,
+                &dim,
+                footer.x + 8.0 + line.width() + 6.0,
+                label_y + (line.height() - dim.height()) * 0.5,
+                Some(Ink::Secondary.of(palette)),
+            );
+        }
+        let reset = reset_in(footer);
+        IconButton::new(icons::RESET, reset)
+            .with_state(IconButtonState {
+                hovered: reset.contains(effort.pointer.0, effort.pointer.1),
+                active: effort.reset_focused,
+                disabled: effort.locked || effort.choice == ReasoningChoice::Default,
+            })
+            .draw(scene, root, engine);
+        effort::draw_track(
+            scene,
+            root,
+            engine,
+            effort.lang,
+            footer,
+            &effort.control,
+            effort.shown,
+            if effort.locked {
+                (-1.0, -1.0)
+            } else {
+                effort.pointer
+            },
+            effort.slider_focused,
         );
     }
-    let reset = reset_in(footer);
-    IconButton::new(icons::RESET, reset)
-        .with_state(IconButtonState {
-            hovered: reset.contains(effort.pointer.0, effort.pointer.1),
-            active: effort.reset_focused,
-            disabled: effort.locked || effort.choice == ReasoningChoice::Default,
-        })
-        .draw(canvas, root, engine);
-    effort::draw_track(
-        canvas,
-        root,
-        engine,
-        effort.lang,
-        footer,
-        &effort.control,
-        effort.shown,
-        if effort.locked {
-            (-1.0, -1.0)
-        } else {
-            effort.pointer
-        },
-        effort.slider_focused,
-    );
 }

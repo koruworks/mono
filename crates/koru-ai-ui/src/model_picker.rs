@@ -61,6 +61,7 @@ mod context;
 mod elements;
 mod fast;
 mod paint;
+mod tokens;
 pub(crate) use context::CONTEXT_H;
 pub(crate) use fast::FAST_H;
 
@@ -363,7 +364,7 @@ pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> 
         fast,
         ..elements::Spec::default()
     };
-    let tree = elements::tree(&spec, &mut |_| None);
+    let tree = elements::tree(&spec, elements::Painted::default());
     elements::geometry_of(&elements::layout(&tree, panel, FrameCx::root()), panel)
 }
 
@@ -1099,7 +1100,7 @@ impl crate::ChatSurface {
         let geometry = self.picker_geometry()?;
         let spec = self.picker_spec();
         let frame = elements::layout(
-            &elements::tree(&spec, &mut |_| None),
+            &elements::tree(&spec, elements::Painted::default()),
             geometry.panel,
             FrameCx::root(),
         );

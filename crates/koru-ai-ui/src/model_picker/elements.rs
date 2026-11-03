@@ -26,99 +26,41 @@
 //! by the one scroll element every list can use — it shows whole rows,
 //! scrolls by them, and draws and hit-tests the shared scrollbar.
 //!
-//! **Existing controls go in as leaves** (ELEMENTS.final §3.1, the custom
-//! leaf): the search field's `TextInput`, ↻, the Segmented rows and the
-//! effort slider have no element form yet, so each leaf delegates its paint
-//! to the code that drew it before, in the allocation the frame gives it.
-//! What the element layer could not express is in
-//! `docs/contributing/refactor-ui/QUESTIONS.md` (*Model picker on
-//! elements*).
+//! **Existing controls go in as named adapters** (ELEMENTS.final §3.1, the
+//! custom leaf; QUESTIONS M7): the search field's `TextInput`, ↻, the
+//! Segmented rows, the effort slider and a provider's brand mark have no
+//! element form, so each is a type in [`super::paint`] whose `impl Leaf`
+//! delegates to the drawing the control always had, in the allocation the
+//! frame gives it, in the frame's palette. What the element layer could not
+//! express is in `docs/contributing/refactor-ui/QUESTIONS.md` (*Model
+//! picker on elements*).
 //!
 //! **Every value is a token or a tagged metric** (QUESTIONS E4): the
-//! picker's own sizes are tagged here, so the inspector names them.
+//! picker's own sizes are tagged in [`super::tokens`], so the inspector
+//! names them. This file and [`super::paint`] are on the source scan's
+//! migrated list (`koru_draw::theme::ui_scan`).
 
 use std::cell::RefCell;
 
 use koru_ai_core::AiProviderId;
 use koru_draw::el::{
-    Action, Align, El, ElState, Frame, FrameCx, Key, Leaf, Look, Ring, Role, StateRecipe,
-    TextCache, boxed, col, divider, icon, leaf, row, scroll_y, text,
+    Action, Align, El, Frame, FrameCx, Key, Look, Ring, Role, StateRecipe, TextCache, boxed, col,
+    divider, icon, leaf, row, scroll_y, text,
 };
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{
-    Accent, IconSize, Ink, Line, Metric, Radius, Space, Surface, Tagged, roles,
+use koru_draw::theme::{Accent, IconSize, Ink, Line, Radius, Space, Surface, roles};
+
+use super::context::ContextPaint;
+use super::fast::FastPaint;
+use super::paint::{
+    ContextLeaf, EffortLeaf, EffortPaint, FastLeaf, ProviderMark, RefreshLeaf, SearchLeaf,
+    SearchPaint,
 };
-use vello::Scene;
-use vello::kurbo::Affine;
+pub(crate) use super::tokens::*;
+use super::{Geometry, ROW_H, RailEntry, SEARCH_H};
 
-use super::paint::ProviderMark;
-use super::{
-    CONTEXT_H, FAST_H, FOOTER_H, Geometry, RAIL_BUTTON, RAIL_W, ROW_H, ROW_MARK, RailEntry,
-    SEARCH_H, STAR,
-};
-
-/// The rail's width ([`RAIL_W`]).
-pub(crate) const RAIL_WIDTH: Metric = Metric::new("PICKER_RAIL_W", RAIL_W);
-/// A rail mark's square, and the divider's width under it.
-pub(crate) const RAIL_MARK: Metric = Metric::new("PICKER_RAIL_MARK", RAIL_BUTTON);
-/// The search row, ↻ at its end ([`SEARCH_H`]).
-pub(crate) const SEARCH_ROW_H: Metric = Metric::new("PICKER_SEARCH_H", SEARCH_H);
-
-/// Air between the rail and the content: 8 px, the composer toolbar's
-/// control gap.
-pub(crate) const CONTENT_GAP: Tagged<Space> = Tagged::new("RAIL_CONTENT_GAP", Space::S2);
-/// The content's inset from the panel's top, end and foot ([`super::PAD`]).
-pub(crate) const PANEL_INSET: Tagged<Space> = Tagged::new("PICKER_PAD", Space::S1);
-/// The panel's hairline (`BORDER_W`): the rail's ground keeps inside it on
-/// its start, top and foot, so the shell's border stays whole.
-pub(crate) const HAIRLINE: Tagged<Space> = Tagged::new(
-    "PICKER_PANEL_HAIRLINE",
-    Space::Px(koru_draw::theme::BORDER_W as f32),
-);
-/// The rail's inset above its first mark and below its last, inside the
-/// hairline: with it, the 8 units (`Space::S2`) the marks always sat from
-/// the panel's edge.
-pub(crate) const GROUND_INSET: Tagged<Space> = Tagged::new(
-    "PICKER_RAIL_INSET",
-    Space::Px(8.0 - koru_draw::theme::BORDER_W as f32),
-);
-/// The ground's start corners: the panel's radius inside its hairline.
-pub(crate) const GROUND_RADIUS: Metric = Metric::new(
-    "PICKER_RAIL_GROUND_RADIUS",
-    10.0 - koru_draw::theme::BORDER_W as f32,
-);
-/// The room after each mark ([`super::RAIL_GAP`]).
-pub(crate) const MARK_GAP: Tagged<Space> = Tagged::new("PICKER_RAIL_GAP", Space::S1_5);
-/// A rail divider's inset on every side of its hairline: with the hairline,
-/// the divider's room ([`super::RAIL_DIVIDER`]).
-pub(crate) const DIVIDER_INSET: Tagged<Space> = Tagged::new("PICKER_RAIL_DIVIDER_INSET", Space::S1);
-/// The search box's inset in its row.
-pub(crate) const SEARCH_INSET: Tagged<Space> = Tagged::new("PICKER_SEARCH_INSET", Space::S1);
-/// Between the search field and ↻, and after ↻.
-pub(crate) const REFRESH_GAP: Tagged<Space> = Tagged::new("PICKER_REFRESH_GAP", Space::S0_5);
-
-/// A row of the list ([`ROW_H`]): a heading, a note or a model, one line.
-/// The list scrolls by it.
-pub(crate) const ROW_HEIGHT: Metric = Metric::new("PICKER_ROW_H", ROW_H);
-/// A favorite's agent mark, or a search heading's, at its row's start
-/// ([`ROW_MARK`]).
-pub(crate) const ROW_MARK_SIZE: Metric = Metric::new("PICKER_ROW_MARK", ROW_MARK);
-/// The ☆'s square ([`STAR`]).
-pub(crate) const STAR_BOX: Metric = Metric::new("PICKER_STAR", STAR);
-/// The room before the ✓: 9, as it always had.
-pub(crate) const CHECK_GAP: Metric = Metric::new("PICKER_CHECK_GAP", 9.0);
-/// A row's content inset at its start, and at its end without a ☆.
-pub(crate) const ROW_INSET: Tagged<Space> = Tagged::new("PICKER_ROW_INSET", Space::S2);
-/// The ☆'s inset from the row's end, clear of the scrollbar's lane.
-pub(crate) const STAR_INSET: Tagged<Space> = Tagged::new("PICKER_STAR_INSET", Space::S3);
-/// Between a row's mark and its name.
-pub(crate) const MARK_ROOM: Tagged<Space> = Tagged::new("PICKER_ROW_MARK_GAP", Space::S2);
-/// Before an older model's tag.
-pub(crate) const TAG_GAP: Tagged<Space> = Tagged::new("PICKER_TAG_GAP", Space::S1_5);
-/// Before the *Legacy models* row's caret.
-pub(crate) const CARET_GAP: Tagged<Space> = Tagged::new("PICKER_CARET_GAP", Space::S2);
 /// A rail mark's glyph inside its square, and a row's mark inside its own.
 pub(crate) const RAIL_GLYPH_INSET: f32 = 7.0;
 
@@ -280,52 +222,15 @@ pub(crate) fn star_key(id: &str) -> Key {
     Key::model(stable_id(id), "star")
 }
 
-/// A leaf of the picker, for the host to hand a painter.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Part {
-    Search,
-    Refresh,
-    Fast,
-    Context,
-    Effort,
-}
-
-/// An existing control's paint, run in the leaf's allocation with the
-/// element's resolved state.
-pub(crate) type Paint = Box<dyn Fn(&mut Scene, Affine, &mut TextEngine, Rect, ElState)>;
-
-/// **The adapter every picker leaf is**: an intrinsic size, and the existing
-/// drawing it delegates to — none when the tree is laid out only for its
-/// geometry.
-pub(crate) struct HostLeaf {
-    size: (f32, f32),
-    paint: Option<Paint>,
-}
-
-impl HostLeaf {
-    fn new(size: (f32, f32), paint: Option<Paint>) -> Self {
-        Self { size, paint }
-    }
-}
-
-impl Leaf for HostLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        self.size
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        _cx: &FrameCx,
-        state: ElState,
-    ) {
-        if let Some(paint) = &self.paint {
-            paint(scene, root, engine, at, state);
-        }
-    }
+/// **What the adapters draw**: each control's state for this frame, handed
+/// to its leaf. None of it when the tree is laid out only for its geometry,
+/// where nothing is painted.
+#[derive(Default)]
+pub(crate) struct Painted {
+    pub(crate) search: Option<SearchPaint>,
+    pub(crate) fast: Option<FastPaint>,
+    pub(crate) context: Option<ContextPaint>,
+    pub(crate) effort: Option<EffortPaint>,
 }
 
 /// **The rail**: its marks one under another, each followed by its room and,
@@ -657,9 +562,9 @@ fn list(spec: &Spec) -> El {
         .children(spec.list.iter().map(list_row))
 }
 
-/// **The picker as one tree.** `paint` hands each leaf its painter; a tree
-/// laid out only for its geometry hands none.
-pub(crate) fn tree(spec: &Spec, paint: &mut dyn FnMut(Part) -> Option<Paint>) -> El {
+/// **The picker as one tree.** `painted` is what its adapters draw; a tree
+/// laid out only for its geometry hands them nothing.
+pub(crate) fn tree(spec: &Spec, painted: Painted) -> El {
     let mut slots = Vec::with_capacity(spec.marks.len() + 1);
     for spec in &spec.marks {
         slots.push((mark(spec, mark_glyph(spec)), spec.divider_after));
@@ -688,7 +593,9 @@ pub(crate) fn tree(spec: &Spec, paint: &mut dyn FnMut(Part) -> Option<Paint>) ->
 
     let refresh = leaf(
         REFRESH,
-        HostLeaf::new((REFRESH_W, REFRESH_H), paint(Part::Refresh)),
+        RefreshLeaf {
+            disabled: spec.refresh,
+        },
     );
     let refresh = match spec.refresh {
         Some(disabled) => refresh
@@ -713,7 +620,7 @@ pub(crate) fn tree(spec: &Spec, paint: &mut dyn FnMut(Part) -> Option<Paint>) ->
             .pad_end(REFRESH_GAP)
             .hit_as(SEARCH_KEY)
             .child(
-                leaf(SEARCH_FIELD, HostLeaf::new((0.0, 0.0), paint(Part::Search)))
+                leaf(SEARCH_FIELD, SearchLeaf(painted.search))
                     .semantic()
                     .id(SEARCH_KEY)
                     .fill(),
@@ -727,31 +634,27 @@ pub(crate) fn tree(spec: &Spec, paint: &mut dyn FnMut(Part) -> Option<Paint>) ->
         .pad_bottom(PANEL_INSET)
         .child(search)
         .child(list(spec));
-    for (shown, name, key, height, part) in [
-        (spec.fast, FAST_ROW, FAST_KEY, FAST_H, Part::Fast),
-        (
-            spec.context,
-            CONTEXT_ROW,
-            CONTEXT_KEY,
-            CONTEXT_H,
-            Part::Context,
-        ),
-        (
-            spec.levels,
-            EFFORT_FOOTER,
-            EFFORT_KEY,
-            FOOTER_H,
-            Part::Effort,
-        ),
-    ] {
-        if shown {
-            content = content.child(
-                leaf(name, HostLeaf::new((0.0, height), paint(part)))
-                    .semantic()
-                    .id(key)
-                    .hit(),
-            );
-        }
+    // The rows under the list, each a target of its own: Fast, Context
+    // and the level's footer.
+    let rows = [
+        spec.fast.then(|| {
+            leaf(FAST_ROW, FastLeaf(painted.fast))
+                .semantic()
+                .id(FAST_KEY)
+        }),
+        spec.context.then(|| {
+            leaf(CONTEXT_ROW, ContextLeaf(painted.context))
+                .semantic()
+                .id(CONTEXT_KEY)
+        }),
+        spec.levels.then(|| {
+            leaf(EFFORT_FOOTER, EffortLeaf(painted.effort))
+                .semantic()
+                .id(EFFORT_KEY)
+        }),
+    ];
+    for row in rows.into_iter().flatten() {
+        content = content.child(row.hit());
     }
     row(PICKER)
         .gap(CONTENT_GAP)

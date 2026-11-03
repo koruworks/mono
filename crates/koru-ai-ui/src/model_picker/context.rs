@@ -17,6 +17,7 @@
 use koru_ai_core::AiProviderId;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
+use koru_draw::theme::Palette;
 use koru_draw::{scene, theme};
 use koru_i18n::{Key, Lang, fill, number, t};
 use koru_ui::Segmented;
@@ -154,15 +155,15 @@ pub(super) struct ContextPaint {
 }
 
 /// Paint the row in `row`, the allocation the picker's element frame gave
-/// it: a rule above it, *Context*, and the two choices.
+/// it, in its palette `p`: a rule above it, *Context*, and the two choices.
 pub(super) fn paint_context_row(
     canvas: &mut Scene,
     root: Affine,
     engine: &mut TextEngine,
     row: Rect,
     context: &ContextPaint,
+    p: &Palette,
 ) {
-    let p = theme::p();
     scene::fill(
         canvas,
         root,

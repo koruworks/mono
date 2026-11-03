@@ -23,6 +23,11 @@ const MIGRATED: &[&str] = &[
     "apps/koru/src/panes/explore/popover_elements.rs",
     // ELEMENTS-PLAN P5: the Profiles page.
     "apps/koru/src/panes/explore/popover_elements/profiles.rs",
+    // The chat's model picker (koru-ai D64, QUESTIONS M7): its tree and its
+    // paint, every leaf a named adapter; its tokens are defined beside them
+    // in `model_picker/tokens.rs`.
+    "crates/koru-ai-ui/src/model_picker/elements.rs",
+    "crates/koru-ai-ui/src/model_picker/paint.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");
