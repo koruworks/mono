@@ -1582,7 +1582,8 @@ chat** button is showing, even while you are typing in the message box.
 Click any link in an answer, including one inside a table, to open it: a web
 page opens in your browser, a Koru document opens as a tab. A web address the
 answer writes out in full is a link too. Rest the pointer on a link and a
-card shows where it goes, with **Copy** to put the address on the clipboard
+card shows where it goes — a long address shortened in the middle — with
+**Copy** to put the whole address on the clipboard
 and **Open** to open it; press Escape or move away to close it.
 Completed responses also offer icon actions for **Copy** (the exact Markdown),
 toggleable **Good** and **Bad**, **Branch**, **Store**, and **Link**. Branch opens a new durable chat
@@ -6170,6 +6171,14 @@ Delete) and the pin; click the pin to pin or
 unpin the chat at once. In a chat, `Ctrl+Shift+↑` and `Ctrl+Shift+↓` (`⌘` on
 macOS) move to the chat above or below in the list, as long as your message
 box is empty.
+
+In a chat, as in a document, `Alt+←` / `Alt+→` (`⌘[` / `⌘]` on a Mac) or
+your mouse's Back and Forward buttons return to what you were looking at: the
+chat you were in before, or the page you opened from a link in a reply. It
+works while you're typing a message, and your message stays where you left
+it; going back never stops a reply that is still being written. In the Koru
+AI window, Back and Forward step through the chats you've opened there, each
+one back where you had scrolled.
 
 Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
