@@ -69,6 +69,7 @@ mod layout_cache;
 mod live_markdown;
 mod model_picker;
 mod privacy;
+mod queue;
 mod quote_pills;
 mod reader;
 mod sources;
@@ -327,6 +328,14 @@ struct SentMessage {
     composer: composer::Draft,
     quotes: Vec<PendingQuote>,
     attachments: Vec<attachments::Draft>,
+    /// What it said, quotes first: a queued message refused by the service
+    /// goes back to its queue with it (`queue`).
+    markdown: String,
+    /// It named a document by chip.
+    documents: bool,
+    /// It came from the queue, so a refusal sends it back there rather than
+    /// into the composer.
+    from_queue: bool,
 }
 
 /// One AI conversation surface, usable as a window body or in Koru's context
@@ -604,6 +613,24 @@ pub struct ChatSurface {
     viewer_lift: Option<attachments::ViewerLift>,
     /// The sent pictures' tiles as last drawn, for a click to open one.
     card_tile_hits: Vec<(Rect, attachments::Tile)>,
+    /// **Messages queued while a reply runs**, per chat, in memory only
+    /// ([`queue`]).
+    queues: queue::Queues,
+    /// The pending list's icons and the send button name themselves.
+    queue_tooltip: Tooltip,
+    /// How the reply that just ended ended, and in which chat, until the
+    /// transcript read that follows decides what the queue does.
+    reply_end: Option<(ChatId, queue::ReplyEnd)>,
+    /// A stop-then-send steer is waiting for its cancel to land: the head of
+    /// this chat's queue is sent then, and the queue is not paused.
+    steer_after_cancel: Option<ChatId>,
+    /// A queued item is being sent through the composer's send.
+    sending_queued: bool,
+    /// A native steer with the service, and the item it carries.
+    steering: Option<(ChatId, queue::Queued)>,
+    /// Steered messages the service took, shown under the running reply
+    /// until the transcript read at its end carries them.
+    steered: Vec<(ChatId, String)>,
     lang: koru_i18n::Lang,
 }
 
@@ -863,6 +890,13 @@ impl ChatSurface {
             viewer_opening: None,
             viewer_lift: None,
             card_tile_hits: Vec::new(),
+            queues: queue::Queues::default(),
+            queue_tooltip: Tooltip::default(),
+            reply_end: None,
+            steer_after_cancel: None,
+            sending_queued: false,
+            steering: None,
+            steered: Vec::new(),
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -1168,6 +1202,7 @@ impl ChatSurface {
             self.copy_feedback.maintenance_deadline(),
             self.web_search_tooltip.maintenance_deadline(),
             self.picker_tooltip.maintenance_deadline(),
+            self.queue_tooltip.maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.attachment_deadline(),
@@ -1211,6 +1246,7 @@ impl ChatSurface {
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
+        changed |= self.queue_tooltip.maintain(_now);
         // The `@` picker's search answers, delivered on this tick.
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
@@ -1253,6 +1289,7 @@ impl ChatSurface {
         self.copy_feedback.animating(Instant::now())
             || self.web_search_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
+            || self.queue_tooltip.animating(Instant::now())
             || self.pill_strip.animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
     }
@@ -1864,9 +1901,20 @@ impl ChatSurface {
             self.tool_access_open = false;
             return true;
         }
-        if self.attempt.is_some() && self.send_button().contains(x, y) {
-            if let Some(attempt) = self.attempt {
-                return self.send_command(Command::Cancel(attempt));
+        if let Some(hit) = self.queue_hit_at(x, y) {
+            return self.queue_action(hit);
+        }
+        if self.reply_busy() && self.send_button().contains(x, y) {
+            // **Queue** while the composer holds something, **Stop** while
+            // it is empty ([`queue::SendMode`]).
+            match (self.send_mode(), self.attempt) {
+                (queue::SendMode::Stop, Some(attempt)) => {
+                    return self.send_command(Command::Cancel(attempt));
+                }
+                _ => {
+                    self.queue_composer();
+                    return true;
+                }
             }
         } else if self.send_button().contains(x, y) {
             // Off while the chat waits for a model: the chip is the way on.
@@ -2012,6 +2060,7 @@ impl ChatSurface {
         let pane_left = self.chats_pane_mouse_move(x, y);
         let old = self.cursor_icon();
         let old_control_hover = self.control_hover_at(self.pointer.0, self.pointer.1);
+        let old_pointer = self.pointer;
         self.pointer = (x, y);
         let search_tooltip_changed = self.web_search_tooltip.set_hover(
             self.web_search_button()
@@ -2096,7 +2145,12 @@ impl ChatSurface {
             self.composer.mouse_move(x, y)
         };
         let response_dragged = self.drag_response_selection(x, y);
+        let queue_changed = !self.showing_setup() && self.queue_hover(x, y);
+        let queue_hover_changed = !self.showing_setup()
+            && self.queue_hit_at(old_pointer.0, old_pointer.1) != self.queue_hit_at(x, y);
         dragged
+            || queue_changed
+            || queue_hover_changed
             || pill_changed
             || response_dragged
             || old_response_hover != self.response_hover
@@ -2592,6 +2646,15 @@ impl ChatSurface {
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
                 self.messages_dirty = true;
+                // The read carries every steered message of the reply.
+                let read = self.transcript.as_ref().map(|t| t.chat.id);
+                self.steered.retain(|(chat, _)| Some(*chat) != read);
+                if let Some(chat) = read {
+                    if changed_chat {
+                        self.queue_shown_again(chat);
+                    }
+                    self.after_reply(chat);
+                }
             }
             Update::Renamed(chat) => {
                 self.waiting = false;
@@ -2797,6 +2860,14 @@ impl ChatSurface {
                     _ => {}
                 }
                 if terminal {
+                    if let Some(chat) = self.shown_chat_id() {
+                        let end = match &event.event {
+                            PublicAiEvent::Completed { .. } => queue::ReplyEnd::Completed,
+                            PublicAiEvent::Cancelled { .. } => queue::ReplyEnd::Stopped,
+                            _ => queue::ReplyEnd::Failed,
+                        };
+                        self.reply_end = Some((chat, end));
+                    }
                     self.ended_attempt = self.attempt;
                     self.pulse = None;
                     self.open_searches.clear();
@@ -2831,6 +2902,16 @@ impl ChatSurface {
                         "AI UI ignored recovery for an attempt that is no longer active"
                     );
                     return true;
+                }
+                if let Some(chat) = self.shown_chat_id() {
+                    self.reply_end = Some((
+                        chat,
+                        match status {
+                            koru_ai_core::AttemptStatus::Complete => queue::ReplyEnd::Completed,
+                            koru_ai_core::AttemptStatus::Cancelled => queue::ReplyEnd::Stopped,
+                            _ => queue::ReplyEnd::Failed,
+                        },
+                    ));
                 }
                 let changed = self.apply_update(Update::Transcript(transcript));
                 self.status = match status {
@@ -2871,6 +2952,10 @@ impl ChatSurface {
                 self.scroll_to_pending_question = false;
                 self.messages_dirty = true;
                 self.status = Some(message);
+                if let Some(chat) = self.shown_chat_id() {
+                    self.steer_after_cancel = None;
+                    self.queues.pause(chat);
+                }
             }
             Update::Settings(settings) => {
                 self.waiting = false;
@@ -3076,6 +3161,19 @@ impl ChatSurface {
                 self.waiting = false;
                 self.destination_open = None;
                 self.status = Some(format!("Stored “{title}” in Koru."));
+            }
+            Update::Steered(response) => {
+                tracing::debug!(
+                    target: "koru_ai::ui",
+                    replayed = response.replayed,
+                    "AI UI steer was taken by the running reply"
+                );
+                self.waiting = self.attempt.is_some();
+                self.steer_accepted();
+            }
+            Update::SteerFailed(failure) => {
+                self.waiting = self.attempt.is_some();
+                self.steer_refused(&failure);
             }
             Update::SendFailed(failure) => {
                 tracing::warn!(
@@ -3658,8 +3756,10 @@ impl ChatSurface {
     }
 
     fn send_composer(&mut self) -> bool {
-        if self.attempt.is_some() {
-            return false;
+        // **A reply is running: the message is queued** ([`queue`]), and
+        // sent when the reply completes.
+        if self.reply_busy() {
+            return self.queue_composer();
         }
         // **No model yet, so nothing to send to**: Enter opens the picker,
         // and the message waits in the composer for the chat it makes.
@@ -3729,6 +3829,11 @@ impl ChatSurface {
             .map(|(document, _)| *document)
             .collect();
         let (explicit_refs, overflowed) = self.turn_refs(&chips);
+        // A message sent by hand resumes a paused queue: what is queued
+        // follows it.
+        if !self.sending_queued {
+            self.queues.resume(chat_id);
+        }
         self.pending_user = Some(markdown.clone());
         let quotes = std::mem::take(&mut self.pending_quotes);
         self.staged_chat = None;
@@ -3756,6 +3861,9 @@ impl ChatSurface {
             composer: self.composer.stash(),
             quotes,
             attachments: sent_attachments,
+            markdown: markdown.clone(),
+            documents: !chips.is_empty(),
+            from_queue: self.sending_queued,
         });
         self.forget_input_walk();
         if !markdown.is_empty() {
@@ -3824,6 +3932,20 @@ impl ChatSurface {
         let Some(sent) = self.sent_message.take() else {
             return;
         };
+        if sent.from_queue {
+            self.requeue_refused(
+                sent.chat,
+                queue::Queued {
+                    composer: sent.composer,
+                    quotes: sent.quotes,
+                    attachments: sent.attachments,
+                    markdown: sent.markdown,
+                    documents: sent.documents,
+                },
+                failure,
+            );
+            return;
+        }
         if self.shown_chat_id() == Some(sent.chat) {
             if self.composer.is_blank() {
                 self.composer.unstash(sent.composer);
@@ -4463,6 +4585,7 @@ impl ChatSurface {
             (composer.y
                 - COMPOSER_GAP
                 - pill_band_height(context_document.as_ref(), &self.pending_quotes)
+                - self.queue_band_h()
                 - footer_h
                 - top)
                 .max(1.0),
@@ -5355,6 +5478,7 @@ impl ChatSurface {
             self.viewport,
             Instant::now(),
         );
+        self.draw_queue(canvas, root);
         if let Some(line) = self.footer_line().map(str::to_owned) {
             let content = self.content_rect();
             let layout = self
@@ -5369,6 +5493,7 @@ impl ChatSurface {
                 composer.y
                     - COMPOSER_GAP
                     - pill_band_height(context_document.as_ref(), &self.pending_quotes)
+                    - self.queue_band_h()
                     - layout.height(),
                 Some(p.text_dim),
             );
@@ -5460,21 +5585,31 @@ impl ChatSurface {
                 |_| {},
             );
             let send = self.send_button();
+            let mode = self.send_mode();
             // Off while the chat waits for a model, whatever is typed.
-            let send_enabled = self.attempt.is_some()
-                || (!self.awaiting_model()
-                    && (!self.composer.is_blank()
-                        || !self.pending_quotes.is_empty()
-                        || self.has_strip()));
+            let send_enabled = match mode {
+                queue::SendMode::Stop => true,
+                queue::SendMode::Queue => self.composer_has_content(),
+                queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+            };
+            let name = self.send_button_name();
+            let _send = koru_draw::inspect::scope(
+                name,
+                "button",
+                root,
+                scene::rect(send.x, send.y, send.w, send.h),
+                |r| r.property("accessible name", name, "caller label"),
+            );
             draw_composer_action(
                 canvas,
                 root,
                 &mut self.engine,
                 send,
-                self.attempt.is_some(),
+                mode,
                 send_enabled,
                 send.contains(self.pointer.0, self.pointer.1),
             );
+            drop(_send);
             let chip_label = self.chip_label();
             self.chip_label_w = self.engine.simple_layout(&chip_label, role::row()).width();
             let access_button = self.tool_access_button();
@@ -5600,6 +5735,13 @@ impl ChatSurface {
             Instant::now(),
         );
         self.picker_tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            Instant::now(),
+        );
+        self.queue_tooltip.draw(
             canvas,
             root,
             &mut self.engine,
@@ -5923,32 +6065,10 @@ impl ChatSurface {
                 attachments: Vec::new(),
             });
         }
-        if let Some(markdown) = &self.pending_user {
-            let user_width = message_wrap_width(ChatRole::User, width);
-            let (pending_display, pending_links) =
-                doc_links::titled(markdown, &self.document_titles, untitled);
-            messages.push(MessageLayout {
-                id: None,
-                top: 0.0,
-                role: ChatRole::User,
-                state: MessageState::Complete,
-                markdown: markdown.clone(),
-                // The just-sent card reads exactly as the durable one will.
-                layout: layout_cache::display_layout(
-                    &mut self.engine,
-                    &pending_display,
-                    &pending_links,
-                    user_width,
-                ),
-                display: pending_display,
-                links: pending_links,
-                wrap_width: user_width,
-                usage_text: None,
-                usage: None,
-                sources: None,
-                blocks: Vec::new(),
-                attachments: self.pending_user_tiles.clone(),
-            });
+        if let Some(markdown) = self.pending_user.clone() {
+            let tiles = self.pending_user_tiles.clone();
+            let card = self.user_card(&markdown, tiles, width);
+            messages.push(card);
             let assistant_width = message_wrap_width(ChatRole::Assistant, width);
             let usage_text = (!self.draft.is_empty())
                 .then_some(self.live_usage.as_ref())
@@ -6025,6 +6145,12 @@ impl ChatSurface {
                     attachments: Vec::new(),
                 }
             }));
+            // Messages steered into the running reply follow it, where the
+            // transcript records them (`queue`).
+            for steered in self.steered_shown() {
+                let card = self.user_card(&steered, Vec::new(), width);
+                messages.push(card);
+            }
         }
         self.message_layouts = messages;
         self.position_conversation_items();
@@ -6059,6 +6185,36 @@ impl ChatSurface {
             elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "AI Markdown layout rebuilt"
         );
+    }
+
+    /// A message of the person's not yet read back from the service — the
+    /// one just sent, or one steered into the running reply — laid out
+    /// exactly as the durable card will be.
+    fn user_card(
+        &mut self,
+        markdown: &str,
+        tiles: Vec<attachments::Tile>,
+        width: f32,
+    ) -> MessageLayout {
+        let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+        let user_width = message_wrap_width(ChatRole::User, width);
+        let (display, links) = doc_links::titled(markdown, &self.document_titles, untitled);
+        MessageLayout {
+            id: None,
+            top: 0.0,
+            role: ChatRole::User,
+            state: MessageState::Complete,
+            markdown: markdown.to_owned(),
+            layout: layout_cache::display_layout(&mut self.engine, &display, &links, user_width),
+            display,
+            links,
+            wrap_width: user_width,
+            usage_text: None,
+            usage: None,
+            sources: None,
+            blocks: Vec::new(),
+            attachments: tiles,
+        }
     }
 
     /// Place each reply's work and its pending permission cards in front of
@@ -7861,11 +8017,12 @@ fn draw_composer_action(
     root: Affine,
     engine: &mut TextEngine,
     rect: Rect,
-    stop: bool,
+    mode: queue::SendMode,
     enabled: bool,
     hovered: bool,
 ) {
     let p = theme::p();
+    let stop = mode == queue::SendMode::Stop;
     let fill = if stop {
         if hovered { p.hover_tint } else { p.panel_bg }
     } else if enabled {
@@ -7888,7 +8045,15 @@ fn draw_composer_action(
             &scene::rrect(rect.x, rect.y, rect.w, rect.h, rect.h * 0.5),
         );
     }
-    let glyph = engine.icon_layout(if stop { icons::SQUARE } else { icons::ARROW_UP }, 15.0);
+    let glyph = engine.icon_layout(
+        match mode {
+            queue::SendMode::Stop => icons::SQUARE,
+            // Queue: kept for after the reply.
+            queue::SendMode::Queue => icons::CLOCK,
+            queue::SendMode::Send => icons::ARROW_UP,
+        },
+        15.0,
+    );
     scene::draw_layout_first_line(
         canvas,
         root,

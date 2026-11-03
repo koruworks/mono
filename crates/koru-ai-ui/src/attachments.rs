@@ -1559,6 +1559,24 @@ impl ChatSurface {
     /// be stored. The drafts move to the sent card as its tiles, and are
     /// kept with the sent message until the service accepts it.
     pub(super) fn take_attachments_for_send(&mut self, chat: ChatId) -> Option<Vec<Draft>> {
+        if !self.attachments_ready(chat) {
+            return None;
+        }
+        let drafts = self.strips.take(chat);
+        self.pending_user_tiles = drafts.iter().map(Draft::tile).collect();
+        Some(drafts)
+    }
+
+    /// What a queued message carries (`queue`): the strip's drafts, on the
+    /// same terms as a send — none still being stored, none that could not
+    /// be — but with no sent card to show them on yet.
+    pub(super) fn take_attachments_for_queue(&mut self, chat: ChatId) -> Option<Vec<Draft>> {
+        self.attachments_ready(chat).then(|| self.strips.take(chat))
+    }
+
+    /// Whether the chat's drafts can go with a message now; the status line
+    /// says why not.
+    fn attachments_ready(&mut self, chat: ChatId) -> bool {
         let storing = self.strips.storing(chat);
         if storing > 0 {
             self.status = Some(if storing == 1 {
@@ -1569,11 +1587,11 @@ impl ChatSurface {
                     &[&storing.to_string()],
                 )
             });
-            return None;
+            return false;
         }
         if self.strips.any_failed(chat) {
             self.status = Some(koru_i18n::t(self.lang, Key::AiAttachmentsRemoveFailed).to_owned());
-            return None;
+            return false;
         }
         // Copied files' sizes are known only once stored, so the message's
         // total is checked again here; the service checks it at bind too.
@@ -1585,11 +1603,33 @@ impl ChatSurface {
             .sum();
         if total > koru_ai_core::attachments::MAX_MESSAGE_ATTACHMENT_BYTES {
             self.status = Some(koru_i18n::t(self.lang, Key::AiAttachmentLimit).to_owned());
-            return None;
+            return false;
         }
-        let drafts = self.strips.take(chat);
-        self.pending_user_tiles = drafts.iter().map(Draft::tile).collect();
-        Some(drafts)
+        true
+    }
+
+    /// A refused send's drafts, the one the service named marked red, kept
+    /// together rather than put back on the strip — for a queued message,
+    /// which goes back to its queue (`queue`).
+    pub(super) fn mark_refused(drafts: &mut [Draft], failure: Option<&Failure>) {
+        let named = failure
+            .and_then(|failure| failure.details.get("attachment_id"))
+            .and_then(|value| value.as_str())
+            .and_then(ChatAttachmentId::parse);
+        for draft in drafts {
+            if Some(draft.id) == named {
+                draft.state = DraftState::Failed { retryable: false };
+            }
+        }
+    }
+
+    /// Remove a queued message's drafts from the service, as a strip's are
+    /// when its chat stops taking them.
+    pub(super) fn discard_drafts(&mut self, chat: ChatId, drafts: Vec<Draft>) {
+        for draft in drafts {
+            self.attachment_work.remove(chat, draft.id);
+            self.thumbnails.remove(draft.id);
+        }
     }
 
     /// A send that did not go: its drafts go back to the strip, the one the

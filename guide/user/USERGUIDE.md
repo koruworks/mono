@@ -1403,7 +1403,29 @@ model controls against its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
 during an active response. Pressing `Esc` twice does the same as the stop
 control: the first press shows *Press Esc again to stop* above the composer,
-and a second press within about a second and a half stops the response.
+and a second press within about a second and a half stops the response,
+whatever the composer holds.
+
+**Write the next message while a reply is still running.** Press `Enter` (or
+the send button, which reads **Queue** while a reply runs and you have typed
+something, and **Stop** when the composer is empty) and the message is queued:
+the composer clears for the next one, and the message waits in a **pending**
+list above the composer, one line each, with everything it carries — document
+chips, quotes and attachments. When the reply finishes, the first queued
+message is sent, then the next after its reply, and so on. If you stop a reply,
+or it fails, the queue pauses and says *Queue paused · Send next*: **Send next**
+sends the first one, and so does sending a message yourself. A queued message
+the chat would not take goes back to the front of the queue rather than into
+the composer. Each queued message has three buttons: **Edit** puts it back in
+the composer (anything you were typing takes its place in the queue),
+**Remove ×** drops it, and **Steer** sends it into the running reply right now.
+With Codex and Claude, Steer hands your text to the agent mid-reply and the
+reply carries on with it; your message appears after the reply in the
+conversation. With every other agent — and for a message with attachments or
+document chips, which a reply cannot take mid-way — Steer *stops the reply,
+then sends* the message, without pausing the rest of the queue. The queue
+belongs to its chat, so another chat shows its own, and it lives only in this
+window: closing or reloading the window empties it.
 
 The incognito button at the left end of the composer footer controls
 **Private chat**. Turn it on to keep agents and connected assistants from
@@ -3322,7 +3344,9 @@ the agent's own install page, and its status in plain words: **Ready**;
 isn't on PATH.*); or **Needs attention**, with the reason Koru already knows —
 a version Koru does not support yet, signed out, the program a chat runs the
 agent through missing (Claude's `claude-agent-acp`, say), or a check that
-failed. The status reads what Koru's own checks found; **Refresh status** runs
+failed. Where Koru knows the command that fixes it, the row names it — Devin's
+reads *Run `devin update` to update it.* for a version Koru does not support
+yet, and *Run `devin auth login` to sign in.* when it is signed out. The status reads what Koru's own checks found; **Refresh status** runs
 them again, and the rows update when the answers arrive. The card's first line
 counts them (*9 of 9 enabled*).
 

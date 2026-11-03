@@ -50,6 +50,8 @@ pub(crate) enum Command {
     ClearUsage(Option<ChatId>),
     Send(SendTurnRequest),
     Cancel(InferenceAttemptId),
+    /// Send a queued message into the running reply (`queue`).
+    Steer(InferenceAttemptId, koru_ai_wire::SteerAttemptRequest),
     Branch(ChatId, BranchChatRequest),
     Retry(ChatId, RetryTurnRequest),
     Export(ChatId, ExportChatRequest),
@@ -89,6 +91,7 @@ impl Command {
             Self::ClearUsage(_) => "clear_usage",
             Self::Send(_) => "send",
             Self::Cancel(_) => "cancel",
+            Self::Steer(..) => "steer",
             Self::Branch(_, _) => "branch",
             Self::Retry(_, _) => "retry",
             Self::Export(_, _) => "export",
@@ -162,6 +165,10 @@ pub(crate) enum Update {
     /// The titles `Command::DocumentTitles` could find. A document the Store
     /// cannot place is simply absent: its link keeps the fallback word.
     DocumentTitles(Vec<(koru_ai_core::DocumentId, String)>),
+    /// The running reply took a steered message.
+    Steered(koru_ai_wire::SteerAttemptResponse),
+    /// The running reply would not take it; the message waits in the queue.
+    SteerFailed(koru_ai_wire::Failure),
     /// A send that did not go, for any reason: the surface gives the
     /// message back whole — text, chips, quotes and attachments.
     SendFailed(koru_ai_wire::Failure),
@@ -319,6 +326,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                                 Update::CreateFailed(request.chat_id, failure)
                             }
                             Command::Send(_) => Update::SendFailed(failure),
+                            Command::Steer(..) => Update::SteerFailed(failure),
                             _ => Update::Failure(message.clone()),
                         };
                         let _ = updates.send(update);
@@ -552,6 +560,13 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 if let Err(failure) = client.ai().cancel_attempt(attempt) {
                     let _ = updates.send(Update::Failure(failure.message));
                 }
+            }
+            Command::Steer(attempt, request) => {
+                let update = match client.ai().steer_attempt(attempt, &request) {
+                    Ok(response) => Update::Steered(response),
+                    Err(failure) => Update::SteerFailed(failure),
+                };
+                let _ = updates.send(update);
             }
             Command::Branch(chat, request) => {
                 send_result(
