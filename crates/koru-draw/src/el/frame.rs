@@ -19,6 +19,7 @@ use super::{
     Action, Axis, El, ElState, FrameCx, Key, Kind, Look, Name, Ring, Role, TextEl, TextMode,
 };
 use crate::geometry::Rect;
+use crate::scrollbar::{self, ScrollbarGeom};
 use crate::text::TextEngine;
 use crate::theme::{Brush, Contrast, TextStyle};
 use crate::{inspect, scene};
@@ -41,6 +42,14 @@ pub struct Node {
     pub overflow: bool,
     /// A scroll viewport's content extent and its clamped offset.
     pub scroll: Option<(f32, f32)>,
+    /// A scroll viewport's visible box: its allocation, or with a row step
+    /// the whole rows that fit from its top. What clips its rows.
+    pub viewport: Option<Rect>,
+    /// The shared scrollbar a scroll viewport draws, while its content
+    /// overflows.
+    pub scrollbar: Option<ScrollbarGeom>,
+    /// The step a scroll viewport scrolls by, in logical units.
+    pub(crate) step: Option<f32>,
     /// The theme, contrast and interaction this node resolved under.
     pub cx: FrameCx,
     pub state: ElState,
@@ -152,16 +161,83 @@ impl Frame {
         self.node(key).is_some()
     }
 
-    /// Every pointer target in paint order, clipped to its viewport.
+    /// Every pointer target in paint order, clipped to its viewport. A
+    /// scrollbar's gutter is its viewport's key, after the viewport's rows:
+    /// pressed there, the bar wins over the row under it.
     pub fn hits(&self) -> Vec<HitRegion> {
-        self.nodes
-            .iter()
-            .filter_map(|node| {
-                let region = node.hit_region()?;
-                let key = node.hit_key?;
-                (region.w > 0.0 && region.h > 0.0).then_some(HitRegion { key, region })
-            })
-            .collect()
+        let mut hits = Vec::new();
+        // Gutters waiting for their viewport's subtree to end.
+        let mut gutters: Vec<(usize, HitRegion)> = Vec::new();
+        for (index, node) in self.nodes.iter().enumerate() {
+            while let Some((end, _)) = gutters.last()
+                && *end < index
+            {
+                hits.push(gutters.pop().expect("checked").1);
+            }
+            if let Some(region) = node.hit_region()
+                && let Some(key) = node.hit_key
+                && region.w > 0.0
+                && region.h > 0.0
+            {
+                hits.push(HitRegion { key, region });
+            }
+            if let (Some(bar), Some(key)) = (node.scrollbar, node.key)
+                && !node.decorative
+            {
+                let gutter = match node.clip {
+                    Some(clip) => intersect(bar.gutter(), clip),
+                    None => bar.gutter(),
+                };
+                if gutter.w > 0.0 && gutter.h > 0.0 {
+                    gutters.push((
+                        self.subtree_end(index),
+                        HitRegion {
+                            key,
+                            region: gutter,
+                        },
+                    ));
+                }
+            }
+        }
+        while let Some((_, gutter)) = gutters.pop() {
+            hits.push(gutter);
+        }
+        hits
+    }
+
+    /// The last node of `index`'s subtree: its descendants follow it.
+    fn subtree_end(&self, index: usize) -> usize {
+        let within = |mut at: usize| loop {
+            match self.nodes[at].parent {
+                Some(parent) if parent == index => return true,
+                Some(parent) => at = parent,
+                None => return false,
+            }
+        };
+        let mut end = index;
+        while end + 1 < self.nodes.len() && within(end + 1) {
+            end += 1;
+        }
+        end
+    }
+
+    /// The scrollbar `key`'s scroll viewport draws, while its content
+    /// overflows: what the host hit-tests a press against.
+    pub fn scrollbar(&self, key: Key) -> Option<ScrollbarGeom> {
+        self.node(key)?.scrollbar
+    }
+
+    /// The offset a drag of `key`'s thumb to `pointer_y` scrolls to, the
+    /// thumb held `grab` below its top: whole steps when the viewport
+    /// scrolls by one. The host stores it, as it stores every offset.
+    pub fn drag_offset(&self, key: Key, pointer_y: f32, grab: f32) -> Option<f32> {
+        let node = self.node(key)?;
+        let bar = node.scrollbar?;
+        let scroll = bar.scroll_for_pointer(pointer_y, grab);
+        Some(match node.step {
+            Some(step) => (scroll / step).round() * step,
+            None => scroll,
+        })
     }
 
     /// The foremost target under a point in the frame's logical
@@ -224,8 +300,9 @@ impl Frame {
     }
 
     /// The offset `key`'s scroll viewport needs to show it whole, when it
-    /// is in one and is not showing whole now. The host stores the offset;
-    /// it is never asked to substitute another item.
+    /// is in one and is not showing whole now — whole steps when it scrolls
+    /// by one. The host stores the offset; it is never asked to substitute
+    /// another item.
     pub fn reveal(&self, key: Key) -> Option<(usize, f32)> {
         let index = self.nodes.iter().position(|node| node.key == Some(key))?;
         let target = self.nodes[index].rect;
@@ -233,7 +310,7 @@ impl Frame {
         while let Some(i) = at {
             let node = &self.nodes[i];
             if let Some((_, offset)) = node.scroll {
-                let view = node.rect;
+                let view = node.viewport.unwrap_or(node.rect);
                 let delta = if target.y < view.y {
                     target.y - view.y
                 } else if target.y + target.h > view.y + view.h {
@@ -241,7 +318,12 @@ impl Frame {
                 } else {
                     return None;
                 };
-                return Some((i, offset + delta));
+                let offset = match node.step {
+                    Some(step) if delta < 0.0 => ((offset + delta) / step + 0.001).floor() * step,
+                    Some(step) => ((offset + delta) / step - 0.001).ceil() * step,
+                    None => offset + delta,
+                };
+                return Some((i, offset));
             }
             at = node.parent;
         }
@@ -358,7 +440,12 @@ impl Frame {
                 }
             }
             Kind::Icon(i) => {
-                let layout = engine.icon_layout(i.glyph, i.size.px(cx.profile));
+                let size = i.size.px(cx.profile);
+                let layout = if i.filled {
+                    engine.icon_layout_filled(i.glyph, size)
+                } else {
+                    engine.icon_layout(i.glyph, size)
+                };
                 scene::draw_layout(
                     scene,
                     transform,
@@ -377,15 +464,29 @@ impl Frame {
                     &scene::rect(r.x, r.y, r.w, r.h),
                 );
             }
-            Kind::Scroll { .. } => {
+            Kind::Scroll(_) => {
+                let view = node.viewport.unwrap_or(r);
                 scene.push_clip_layer(
                     peniko::Fill::NonZero,
                     transform,
-                    &scene::rect(r.x, r.y, r.w, r.h),
+                    &scene::rect(view.x, view.y, view.w, view.h),
                 );
-                let _clip = inspect::clip(transform, scene::rect(r.x, r.y, r.w, r.h));
+                let _clip = inspect::clip(transform, scene::rect(view.x, view.y, view.w, view.h));
                 for child in &el.children {
                     self.paint_el(child, next, scene, transform, engine);
+                }
+                // The shared thumb over its rows, lit while the pointer is
+                // in its gutter or it is dragged.
+                if let Some(bar) = node.scrollbar {
+                    scrollbar::draw_thumb_in(
+                        scene,
+                        transform,
+                        bar.thumb(),
+                        crate::theme::scrollbar_thumb_color_in(
+                            palette,
+                            node.state.hovered || node.state.pressed,
+                        ),
+                    );
                 }
                 scene.pop_layer();
                 return;

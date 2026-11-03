@@ -11,8 +11,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use super::frame::{Diagnostic, Frame, Node, TextCache, intersect};
-use super::{Align, Axis, El, ElState, FrameCx, Kind, Length, Look, Role, TextEl, TextMode};
+use super::{
+    Align, Axis, El, ElState, FrameCx, Kind, Length, Look, Role, ScrollEl, TextEl, TextMode,
+};
 use crate::geometry::Rect;
+use crate::scrollbar::ScrollbarGeom;
 use crate::text::TextEngine;
 use crate::theme::{BORDER_W, Brush, Space, TextStyle};
 
@@ -167,7 +170,7 @@ impl Solver<'_> {
                 }
                 sum
             }
-            Kind::Stack(Axis::Vertical) | Kind::Scroll { .. } => {
+            Kind::Stack(Axis::Vertical) | Kind::Scroll(_) => {
                 let mut widest: f32 = 0.0;
                 for child in &el.children {
                     widest = widest.max(self.natural_w(child));
@@ -195,7 +198,7 @@ impl Solver<'_> {
             Kind::Icon(i) => i.size.px(self.cx.profile),
             Kind::Leaf(adapter) => adapter.measure(Some(inner_w)).1,
             Kind::Divider(_) => BORDER_W as f32,
-            Kind::Stack(Axis::Vertical) | Kind::Scroll { .. } => {
+            Kind::Stack(Axis::Vertical) | Kind::Scroll(_) => {
                 if matches!(el.kind, Kind::Stack(_)) && el.children.iter().any(Self::fills) {
                     self.diagnose(
                         el,
@@ -411,6 +414,9 @@ impl Solver<'_> {
                 .states
                 .and_then(|recipe| recipe.focus)
                 .filter(|_| state.focused && !el.decorative),
+            viewport: None,
+            scrollbar: None,
+            step: None,
             hit,
             hit_key,
             role: if el.decorative { None } else { el.role },
@@ -438,7 +444,7 @@ impl Solver<'_> {
                 self.frame.nodes[index].text = Some(layout);
             }
             Kind::Stack(axis) => self.place_stack(el, index, inner, *axis, clip),
-            Kind::Scroll { offset } => self.place_scroll(el, index, rect, inner, *offset, clip),
+            Kind::Scroll(scroll) => self.place_scroll(el, index, rect, inner, scroll, clip),
             Kind::Icon(_) | Kind::Leaf(_) | Kind::Divider(_) => {}
         }
         self.cx = outer;
@@ -533,14 +539,16 @@ impl Solver<'_> {
     }
 
     /// A finite viewport over a vertical Hug column of unbounded height
-    /// (§5.2). The host's offset is clamped to the content.
+    /// (§5.2). The host's offset is clamped to the content — with a row
+    /// step, to whole steps, in the whole rows that fit from the top — and
+    /// the shared scrollbar placed over the rows it shows.
     fn place_scroll(
         &mut self,
         el: &El,
         index: usize,
         viewport: Rect,
         inner: Rect,
-        offset: f32,
+        scroll: &ScrollEl,
         clip: Option<Rect>,
     ) {
         let mut heights = Vec::with_capacity(el.children.len());
@@ -558,8 +566,50 @@ impl Solver<'_> {
         }
         let gap = self.space(el.gap.space);
         let content = heights.iter().map(|(_, h)| h).sum::<f32>() + self.gaps(el);
-        let offset = offset.clamp(0.0, (content - inner.h).max(0.0));
-        self.frame.nodes[index].scroll = Some((content, offset));
+        let step = scroll
+            .step
+            .map(|step| self.px(step))
+            .filter(|step| *step > 0.0);
+        // What it shows: the whole steps that fit, from its top, or all of it.
+        let shown = match step {
+            Some(step) => (inner.h / step).floor().max(0.0) * step,
+            None => inner.h,
+        };
+        let viewport = match step {
+            Some(_) => Rect::new(
+                viewport.x,
+                viewport.y,
+                viewport.w,
+                (inner.y - viewport.y + shown).min(viewport.h),
+            ),
+            None => viewport,
+        };
+        let max = (content - shown).max(0.0);
+        let (offset, max) = match step {
+            Some(step) => (
+                (scroll.offset / step).round() * step,
+                (max / step - 0.001).ceil().max(0.0) * step,
+            ),
+            None => (scroll.offset, max),
+        };
+        let offset = offset.clamp(0.0, max);
+        let track = Rect::new(viewport.x, inner.y, viewport.w, shown);
+        let bar = scroll
+            .bar
+            .then(|| ScrollbarGeom::for_content(track, content, offset))
+            .flatten();
+        if scroll.bar && el.key.is_none() {
+            self.diagnose(
+                el,
+                Axis::Vertical,
+                "a scrollbar is pressed by its viewport's key, and this one has none",
+            );
+        }
+        let node = &mut self.frame.nodes[index];
+        node.scroll = Some((content, offset));
+        node.viewport = Some(viewport);
+        node.step = step;
+        node.scrollbar = bar;
         let clip = Some(match clip {
             Some(outer) => intersect(outer, viewport),
             None => viewport,

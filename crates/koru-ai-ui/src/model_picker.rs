@@ -46,7 +46,7 @@ use koru_i18n::{Key, Lang, t};
 use koru_ui::popover::{PopoverAlign, PopoverShell};
 use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
-use koru_ui::{Menu, MenuItem, Typed, scrollbar};
+use koru_ui::{Menu, MenuItem, Typed};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
@@ -90,12 +90,13 @@ pub(crate) const ROW_H: f32 = 30.0;
 /// A model with no footer gives the room to the list.
 pub(crate) const LIST_ROWS: usize = 6;
 /// The ☆ at a model row's end (D46): its square, and how far its right edge
-/// keeps from the list's, clear of the scrollbar's lane.
+/// keeps from the list's, clear of the scrollbar's lane
+/// ([`elements::STAR_INSET`]).
 const STAR: f32 = 22.0;
+#[cfg(test)]
 const STAR_INSET: f32 = 12.0;
-/// A favorite's agent mark at its row's start, and the room it takes.
+/// A favorite's agent mark at its row's start.
 const ROW_MARK: f32 = 16.0;
-const ROW_MARK_ROOM: f32 = ROW_MARK + 8.0;
 /// The footer: the level's word and ↺ on one line, the slider under it.
 pub(crate) const FOOTER_H: f32 = effort::SECTION_H;
 const PAD: f32 = 4.0;
@@ -334,16 +335,6 @@ pub(crate) struct Geometry {
 }
 
 impl Geometry {
-    /// Row `visible` of the list, counted from the first one shown.
-    pub(crate) fn row(&self, visible: usize) -> Rect {
-        Rect::new(
-            self.list.x,
-            self.list.y + visible as f32 * ROW_H,
-            self.list.w,
-            ROW_H,
-        )
-    }
-
     /// How many rows the list has room for.
     pub(crate) fn visible_rows(&self) -> usize {
         (self.list.h / ROW_H).floor().max(0.0) as usize
@@ -411,7 +402,9 @@ pub(crate) fn rail_height(count: usize, dividers: usize) -> f32 {
 }
 
 /// The ☆ of a model row drawn at `row` (D46): a square at its end, in the
-/// middle of the row whatever its height.
+/// middle of the row whatever its height. Where the arithmetic put it before
+/// the rows were elements: the record the frame is held to.
+#[cfg(test)]
 pub(crate) fn star_rect(row: Rect) -> Rect {
     Rect::new(
         row.x + row.w - STAR_INSET - STAR,
@@ -1158,21 +1151,26 @@ impl crate::ChatSurface {
         }
     }
 
-    /// Row `index` where it is drawn, while it is in view.
-    pub(crate) fn picker_row_rect(&self, geometry: &Geometry, index: usize) -> Option<Rect> {
-        let visible = index.checked_sub(self.picker.offset)?;
-        (visible < geometry.visible_rows() && index < self.picker_rows().len())
-            .then(|| geometry.row(visible))
+    /// **The open picker's frame, with its list** (M1): where a press
+    /// lands, which row it is, the list's scrollbar — what is drawn, laid
+    /// out without the pointer.
+    fn picker_frame(&self) -> Option<(Geometry, elements::Spec, koru_draw::el::Frame)> {
+        let geometry = self.picker_geometry()?;
+        let spec = self.picker_spec();
+        let frame = elements::layout(
+            &elements::tree(&spec, &mut |_| None),
+            geometry.panel,
+            FrameCx::root(),
+        );
+        Some((geometry, spec, frame))
     }
 
-    /// The row drawn at `y`, if any.
-    fn picker_row_at(&self, geometry: &Geometry, y: f32) -> Option<usize> {
-        if y < geometry.list.y {
-            return None;
-        }
-        let visible = ((y - geometry.list.y) / ROW_H).floor() as usize;
-        let index = self.picker.offset + visible;
-        (visible < geometry.visible_rows() && index < self.picker_rows().len()).then_some(index)
+    /// Row `index` where it is drawn, while it is in view.
+    pub(crate) fn picker_row_rect(&self, _geometry: &Geometry, index: usize) -> Option<Rect> {
+        let (geometry, _, frame) = self.picker_frame()?;
+        let rect = frame.named(elements::MODEL_ROW).nth(index)?.rect;
+        let list = geometry.list;
+        (rect.y >= list.y - 0.01 && rect.y + rect.h <= list.y + list.h + 0.01).then_some(rect)
     }
 
     /// How many rows the open list shows.
@@ -1244,17 +1242,20 @@ impl crate::ChatSurface {
         Some(geometry(panel, levels, context, fast))
     }
 
-    pub(crate) fn picker_scrollbar(&self, geometry: &Geometry) -> Option<scrollbar::ScrollbarGeom> {
-        scrollbar::ScrollbarGeom::for_content(
-            geometry.list,
-            self.picker_rows().len() as f32 * ROW_H,
-            self.picker.offset as f32 * ROW_H,
-        )
+    /// The list's scrollbar, as the frame draws it (M1: the shared bar).
+    #[cfg(test)]
+    pub(crate) fn picker_scrollbar(
+        &self,
+        _geometry: &Geometry,
+    ) -> Option<koru_draw::scrollbar::ScrollbarGeom> {
+        self.picker_frame()?.2.scrollbar(elements::LIST_KEY)
     }
 
-    /// Where a scrollbar drag to `scroll` pixels puts the list's first row.
-    fn picker_offset_at(&self, scroll: f32) -> usize {
-        ((scroll / ROW_H).round().max(0.0) as usize).min(self.picker_max_offset())
+    /// The first row a drag of the list's thumb to `y` shows, the thumb
+    /// held `grab` below its top: the frame's whole rows.
+    fn picker_drag_to(&self, frame: &koru_draw::el::Frame, y: f32, grab: f32) -> Option<usize> {
+        let scroll = frame.drag_offset(elements::LIST_KEY, y, grab)?;
+        Some(((scroll / ROW_H).round().max(0.0) as usize).min(self.picker_max_offset()))
     }
 
     /// **Open the picker** on the chat's own entry, the query empty, the
@@ -1409,7 +1410,7 @@ impl crate::ChatSurface {
     /// picker's — on the chip, which toggles it — and `Some` when the picker
     /// took it, closing it for a press outside.
     pub(crate) fn picker_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
-        let geometry = self.picker_geometry()?;
+        let (geometry, spec, frame) = self.picker_frame()?;
         if let Some(handled) = self.legacy_mouse_down(x, y) {
             return Some(handled);
         }
@@ -1420,17 +1421,14 @@ impl crate::ChatSurface {
             self.close_picker();
             return Some(true);
         }
-        if let Some(scrollbar) = self.picker_scrollbar(&geometry)
+        if let Some(scrollbar) = frame.scrollbar(elements::LIST_KEY)
             && scrollbar.in_gutter(x, y)
         {
-            let grab = if scrollbar.on_thumb(x, y) {
-                y - scrollbar.thumb_top
-            } else {
-                scrollbar.thumb_h * 0.5
-            };
+            let grab = scrollbar.grab_at(x, y);
             self.picker.scroll_drag = Some(grab);
-            let scroll = scrollbar.scroll_for_pointer(y, grab);
-            self.picker.offset = self.picker_offset_at(scroll);
+            if let Some(offset) = self.picker_drag_to(&frame, y, grab) {
+                self.picker.offset = offset;
+            }
             return Some(true);
         }
         let rail = self.picker_rail();
@@ -1485,20 +1483,28 @@ impl crate::ChatSurface {
         }
         if geometry.list.contains(x, y) {
             self.picker.focus = PickerFocus::List;
-            if let Some(index) = self.picker_row_at(&geometry, y) {
-                // The ☆ stars the row rather than choosing it (D46), and
-                // whether or not the row can be chosen now.
-                if let (Some(entry), Some(rect)) =
-                    (self.picker_entry(), self.picker_row_rect(&geometry, index))
-                    && star_rect(rect).contains(x, y)
-                    && let Some((agent, model)) = self
-                        .picker_rows()
-                        .get(index)
-                        .and_then(|row| self.row_favorite(&entry, row))
-                {
-                    self.picker.highlight = Some(index);
-                    return Some(self.toggle_favorite(&agent, &model));
-                }
+            let hit = frame.hit_at(x, y);
+            // The ☆ stars the row rather than choosing it (D46), and
+            // whether or not the row can be chosen now: it is a target of
+            // its own, over its row.
+            if let Some(index) = spec
+                .list
+                .iter()
+                .position(|row| row.star.as_ref().is_some_and(|star| Some(star.key) == hit))
+                && let Some(entry) = self.picker_entry()
+                && let Some((agent, model)) = self
+                    .picker_rows()
+                    .get(index)
+                    .and_then(|row| self.row_favorite(&entry, row))
+            {
+                self.picker.highlight = Some(index);
+                return Some(self.toggle_favorite(&agent, &model));
+            }
+            if let Some(index) = spec
+                .list
+                .iter()
+                .position(|row| row.key.is_some() && row.key == hit)
+            {
                 return Some(self.choose_picker_row(index));
             }
         }
@@ -1534,8 +1540,9 @@ impl crate::ChatSurface {
             return Some(changed);
         }
         if let Some(grab) = self.picker.scroll_drag {
-            if let Some(scrollbar) = self.picker_scrollbar(&geometry) {
-                let next = self.picker_offset_at(scrollbar.scroll_for_pointer(y, grab));
+            if let Some((_, _, frame)) = self.picker_frame()
+                && let Some(next) = self.picker_drag_to(&frame, y, grab)
+            {
                 let changed = next != self.picker.offset;
                 self.picker.offset = next;
                 return Some(changed);
@@ -1898,36 +1905,26 @@ fn provider_name(provider: &AiProviderId) -> String {
     }
 }
 
-/// An entry's mark on the rail: *Favorites*' filled star (D46), else its
-/// provider's mark ([`draw_provider_mark`]).
-fn draw_mark(
-    canvas: &mut Scene,
-    root: Affine,
-    engine: &mut TextEngine,
-    entry: &RailEntry,
-    rect: Rect,
-    colour: vello::peniko::Color,
-) {
-    let inner = Rect::new(rect.x + 7.0, rect.y + 7.0, rect.w - 14.0, rect.h - 14.0);
-    match entry {
-        RailEntry::Favorites => {
-            let layout = engine.icon_layout_filled(icons::STAR, 18.0);
-            scene::draw_layout(
-                canvas,
-                root,
-                &layout,
-                rect.x + (rect.w - layout.width()) * 0.5,
-                rect.y + (rect.h - layout.height()) * 0.5,
-                Some(colour),
-            );
+/// **A list row's identity** (M1): its entry and what it chooses — a
+/// model, the agent's *Default*, *Legacy models* — never its place, so a
+/// row keeps its key as the list scrolls, filters and reorders. `None` for
+/// a heading or a note, which choose nothing.
+pub(crate) fn row_id(entry: &RailEntry, row: &Row) -> Option<String> {
+    let entry_id = |entry: &RailEntry| match entry {
+        RailEntry::Favorites => "favorites".to_owned(),
+        RailEntry::Provider(provider) => format!("provider:{}", provider.as_str()),
+        RailEntry::Agent(agent) => format!("agent:{}", agent.as_str()),
+    };
+    Some(match row {
+        Row::Found(entry, row) => return row_id(entry, row),
+        Row::Heading(_) | Row::Note(_) | Row::EntryHeading(_) => return None,
+        Row::Default => format!("{}\u{1f}default", entry_id(entry)),
+        Row::Model(id) => format!("{}\u{1f}model\u{1f}{id}", entry_id(entry)),
+        Row::Favorite(agent, id) => {
+            format!("{}\u{1f}{}\u{1f}{id}", entry_id(entry), agent.as_str())
         }
-        RailEntry::Provider(provider) => {
-            draw_provider_mark(canvas, root, engine, provider, false, inner, colour)
-        }
-        RailEntry::Agent(agent) => {
-            draw_provider_mark(canvas, root, engine, agent, true, inner, colour)
-        }
-    }
+        Row::LegacyMore => format!("{}\u{1f}legacy", entry_id(entry)),
+    })
 }
 
 /// A provider's mark in `inner`: the agent's brand by its kind

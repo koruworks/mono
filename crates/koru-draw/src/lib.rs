@@ -25,6 +25,7 @@ pub mod inspect;
 pub mod installed_fonts;
 pub mod pill;
 pub mod scene;
+pub mod scrollbar;
 pub mod text;
 pub mod theme;
 pub mod tile;

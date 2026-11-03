@@ -192,3 +192,157 @@ fn a_rail_sits_on_the_ground_rounded_at_its_start() {
             .any(|(n, v)| n == "radius" && v == "Radius::M -> 6")
     );
 }
+
+const LIST_KEY: Key = Key::surface("test", "list");
+const STEP: Metric = Metric::new("TEST_ROW_H", 30.0);
+
+fn row_key(index: usize) -> Key {
+    Key::model(index as u128 + 1, "row")
+}
+
+/// `count` rows of 30 in a list that scrolls a row at a time, with the
+/// shared scrollbar.
+fn list(count: usize, offset: f32) -> El {
+    scroll_y("List")
+        .id(LIST_KEY)
+        .fill()
+        .row_step(STEP)
+        .scrollbar()
+        .offset(offset)
+        .children((0..count).map(|index| {
+            row("Row")
+                .h(STEP)
+                .id(row_key(index))
+                .hit()
+                .child(text(format!("Row {index}")).fill().truncate())
+        }))
+}
+
+fn laid(tree: &El, area: Rect, interaction: Interaction) -> Frame {
+    let mut engine = engine();
+    let mut cache = TextCache::default();
+    tree.layout(
+        &mut engine,
+        &mut cache,
+        area,
+        FrameCx::new(&themes::LIGHT_THEME, themes::Contrast::Standard)
+            .with_interaction(interaction),
+    )
+}
+
+/// **A row step shows whole rows and scrolls by them** (M1): a 200-unit
+/// viewport of 30-unit rows shows six, from its top; the offset is a
+/// whole number of rows, the last row reachable at the foot; a reveal
+/// and a thumb drag land on whole rows too.
+#[test]
+fn a_row_step_shows_whole_rows_and_scrolls_by_them() {
+    let area = Rect::new(10.0, 20.0, 240.0, 200.0);
+    let frame = laid(&list(10, 40.0), area, Interaction::default());
+    let node = frame.node(LIST_KEY).unwrap();
+    assert_eq!(node.viewport, Some(Rect::new(10.0, 20.0, 240.0, 180.0)));
+    assert_eq!(node.scroll, Some((300.0, 30.0)), "40 is a row and a third");
+    let first = frame.node(row_key(1)).unwrap();
+    assert_eq!(first.rect.y, 20.0, "row 1 at the top");
+    // Past the end: the last six rows.
+    let frame = laid(&list(10, 500.0), area, Interaction::default());
+    assert_eq!(frame.node(LIST_KEY).unwrap().scroll, Some((300.0, 120.0)));
+    // A row below the viewport is revealed a whole row at a time.
+    let frame = laid(&list(10, 0.0), area, Interaction::default());
+    assert_eq!(frame.reveal(row_key(7)).map(|(_, at)| at), Some(60.0));
+    assert_eq!(frame.reveal(row_key(2)), None, "already whole");
+    // Rows outside the whole-row viewport are not targets.
+    assert_eq!(frame.hit_at(30.0, 20.0 + 6.0 * 30.0 + 5.0), None);
+    // A drag lands on whole rows.
+    let bar = frame.scrollbar(LIST_KEY).unwrap();
+    let travel = bar.track_bottom - bar.track_top - bar.thumb_h;
+    let offset = frame
+        .drag_offset(LIST_KEY, bar.track_top + travel * 0.55, 0.0)
+        .unwrap();
+    assert_eq!(offset % 30.0, 0.0);
+    assert!((0.0..=120.0).contains(&offset));
+}
+
+/// **The scrollbar is the shared one** (M1): `koru_draw::scrollbar`'s
+/// geometry over the rows shown, absent while everything fits; its gutter
+/// presses the list over the rows under it; its thumb lit while the
+/// pointer is in the gutter or it is dragged.
+#[test]
+fn the_scrollbar_is_the_shared_bar_and_its_gutter_wins_over_the_rows() {
+    let area = Rect::new(0.0, 0.0, 240.0, 200.0);
+    let fits = laid(&list(4, 0.0), area, Interaction::default());
+    assert_eq!(fits.scrollbar(LIST_KEY), None);
+
+    let frame = laid(&list(10, 0.0), area, Interaction::default());
+    let bar = frame.scrollbar(LIST_KEY).unwrap();
+    assert_eq!(
+        Some(bar),
+        crate::scrollbar::ScrollbarGeom::for_content(Rect::new(0.0, 0.0, 240.0, 180.0), 300.0, 0.0)
+    );
+    let gutter = bar.gutter();
+    let y = 45.0;
+    assert_eq!(frame.hit_at(gutter.x + 1.0, y), Some(LIST_KEY));
+    assert_eq!(frame.hit_at(gutter.x - 20.0, y), Some(row_key(1)));
+
+    let thumb = |interaction: Interaction| {
+        let tree = list(10, 0.0);
+        let frame = laid(&tree, area, interaction);
+        painted(&tree, &frame)
+            .into_iter()
+            .filter(|(name, _)| name == "fill")
+            .map(|(_, colour)| colour)
+            .last()
+            .unwrap()
+    };
+    let palette = themes::LIGHT_THEME.standard;
+    let rest = inspect::color(crate::theme::scrollbar_thumb_color_in(palette, false));
+    let lit = inspect::color(crate::theme::scrollbar_thumb_color_in(palette, true));
+    assert_eq!(thumb(Interaction::default()), rest);
+    let hot = Interaction {
+        hot: Some(LIST_KEY),
+        ..Interaction::default()
+    };
+    assert_eq!(thumb(hot), lit, "the pointer in its gutter");
+    let dragged = Interaction {
+        pressed: Some(LIST_KEY),
+        ..Interaction::default()
+    };
+    assert_eq!(thumb(dragged), lit, "dragged");
+}
+
+/// A scrollbar without a key cannot be pressed, and says so.
+#[test]
+fn a_scrollbar_needs_its_viewports_key() {
+    let tree = scroll_y("List")
+        .fill()
+        .scrollbar()
+        .children((0..10).map(|_| boxed("Row").h(STEP)));
+    let frame = laid(
+        &tree,
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        Interaction::default(),
+    );
+    assert!(
+        frame
+            .diagnostics
+            .iter()
+            .any(|d| d.element == "List" && d.message.contains("scrollbar"))
+    );
+}
+
+/// **An icon has a filled form** (M1): the inspector names it.
+#[test]
+fn an_icon_can_be_filled() {
+    let tree = row("Mark").child(
+        icon(crate::icons::STAR, IconSize::L)
+            .decorative()
+            .filled()
+            .named("Star"),
+    );
+    let frame = laid(
+        &tree,
+        Rect::new(0.0, 0.0, 40.0, 40.0),
+        Interaction::default(),
+    );
+    let props = record_of(&tree, &frame, "Star");
+    assert!(props.iter().any(|(n, v)| n == "icon form" && v == "filled"));
+}

@@ -435,13 +435,27 @@ pub(crate) struct IconEl {
     pub glyph: char,
     pub size: IconSize,
     pub ink: Ink,
+    /// The glyph's filled form: a starred ☆, *Favorites*' mark.
+    pub filled: bool,
+}
+
+/// A scroll viewport: the host's offset, the step it scrolls by, and
+/// whether it draws the shared scrollbar.
+pub(crate) struct ScrollEl {
+    pub offset: f32,
+    /// Whole rows: the viewport shows as many whole steps as fit, from its
+    /// top, and the offset is a whole number of steps.
+    pub step: Option<Length>,
+    /// The shared overlay scrollbar (`crate::scrollbar`), at the viewport's
+    /// end, while the content overflows.
+    pub bar: bool,
 }
 
 pub(crate) enum Kind {
     Stack(Axis),
     Text(TextEl),
     Icon(IconEl),
-    Scroll { offset: f32 },
+    Scroll(ScrollEl),
     Leaf(Box<dyn Leaf>),
     Divider(Line),
 }
@@ -549,10 +563,19 @@ pub fn boxed(name: &'static str) -> El {
 }
 
 /// A bounded viewport over a vertical column of children, scrolled by the
-/// host's offset.
+/// host's offset. `.row_step` scrolls it a whole row at a time and
+/// `.scrollbar` draws the shared scrollbar: one scroll element for every
+/// list (QUESTIONS M1).
 #[track_caller]
 pub fn scroll_y(name: &'static str) -> El {
-    element(name, Kind::Scroll { offset: 0.0 })
+    element(
+        name,
+        Kind::Scroll(ScrollEl {
+            offset: 0.0,
+            step: None,
+            bar: false,
+        }),
+    )
 }
 
 /// Text in a role, Primary ink, single-line unless asked. Its words are
@@ -582,6 +605,7 @@ pub fn icon(glyph: char, size: IconSize) -> Unclassified {
             glyph,
             size,
             ink: Ink::Secondary,
+            filled: false,
         }),
     ))
 }
@@ -901,10 +925,42 @@ impl El {
         self
     }
 
-    /// The host's scroll offset; layout clamps it to the content.
+    /// The host's scroll offset; layout clamps it to the content, and to a
+    /// whole number of steps when the viewport scrolls by one.
     pub fn offset(mut self, offset: f32) -> Self {
-        if let Kind::Scroll { offset: at } = &mut self.kind {
-            *at = offset;
+        if let Kind::Scroll(scroll) = &mut self.kind {
+            scroll.offset = offset;
+        }
+        self
+    }
+
+    /// **Scroll a whole row at a time**: the viewport shows the whole rows
+    /// that fit, from its top — what is left under them stays empty — and
+    /// the offset, a reveal and a scrollbar drag are whole steps.
+    pub fn row_step(mut self, step: impl Into<Length>) -> Self {
+        if let Kind::Scroll(scroll) = &mut self.kind {
+            scroll.step = Some(step.into());
+        }
+        self
+    }
+
+    /// **The shared scrollbar** (`crate::scrollbar`): its thumb drawn at
+    /// the viewport's end while the content overflows, lit while the
+    /// pointer is in its gutter or it is dragged (the element hot or
+    /// pressed); its gutter a pointer target of this element's key, over
+    /// the rows. The host keeps the drag: `Frame::scrollbar` and
+    /// `Frame::drag_offset`.
+    pub fn scrollbar(mut self) -> Self {
+        if let Kind::Scroll(scroll) = &mut self.kind {
+            scroll.bar = true;
+        }
+        self
+    }
+
+    /// The icon's filled form.
+    pub fn filled(mut self) -> Self {
+        if let Kind::Icon(icon) = &mut self.kind {
+            icon.filled = true;
         }
         self
     }

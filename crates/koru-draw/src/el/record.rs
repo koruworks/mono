@@ -186,6 +186,9 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
                 format!("IconSize::{} -> {}", i.size.name(), i.size.px(profile)),
                 "icon",
             );
+            if i.filled {
+                record.property("icon form", "filled", "El::filled");
+            }
             let ink = node.look.ink.unwrap_or(i.ink);
             record.property(
                 "ink",
@@ -200,7 +203,7 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
                 "divider",
             );
         }
-        Kind::Scroll { .. } | Kind::Leaf(_) | Kind::Stack(_) => {}
+        Kind::Scroll(_) | Kind::Leaf(_) | Kind::Stack(_) => {}
     }
 
     // Geometry beyond the record's own bounds and clip.
@@ -209,6 +212,21 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
             "scroll",
             format!("content {content}, offset {offset}"),
             "runtime: host scroll offset",
+        );
+    }
+    if let (Kind::Scroll(scroll), Some(step)) = (&el.kind, node.step) {
+        let authored = scroll.step.map(Length::provenance).unwrap_or_default();
+        record.property("row step", format!("{authored} -> {step}"), "El::row_step");
+    }
+    if let Some(bar) = node.scrollbar {
+        let thumb = bar.thumb();
+        record.property(
+            "scrollbar",
+            format!(
+                "thumb {} high at {}; gutter {} wide",
+                thumb.h, thumb.y, bar.gutter_w
+            ),
+            "El::scrollbar: koru_draw::scrollbar",
         );
     }
     if node.overflow {
@@ -237,7 +255,7 @@ fn kind(el: &El) -> &'static str {
         Kind::Stack(super::Axis::Vertical) => "column",
         Kind::Text(_) => "text",
         Kind::Icon(_) => "icon",
-        Kind::Scroll { .. } => "scroll viewport",
+        Kind::Scroll(_) => "scroll viewport",
         Kind::Leaf(_) => "leaf",
         Kind::Divider(_) => "divider",
     }

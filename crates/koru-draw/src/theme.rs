@@ -2831,7 +2831,13 @@ pub const SCROLLBAR_MIN_THUMB: f32 = 28.0;
 /// Hover raises opacity and darkens RGB so the change reads as "active" without
 /// a grab cursor or a wider bar.
 pub fn scrollbar_thumb_color(active: bool) -> Color {
-    let c = p().scrollbar_thumb;
+    scrollbar_thumb_color_in(p(), active)
+}
+
+/// [`scrollbar_thumb_color`] from `palette`: an element's own theme rather
+/// than the root's.
+pub fn scrollbar_thumb_color_in(palette: &Palette, active: bool) -> Color {
+    let c = palette.scrollbar_thumb;
     if !active {
         return c;
     }

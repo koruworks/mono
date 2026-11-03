@@ -2229,3 +2229,110 @@ fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
         "the +",
     );
 }
+
+/// **The list is rows of elements** (M1, approved by the user 2026-11-03):
+/// each row a `Model row` in the one scroll element, whole rows from the
+/// list's top where the arithmetic put them; each ☆ a press target of its
+/// own where [`star_rect`] put it, over its row; the current model's ✓ the
+/// 14-unit `IconSize::S` (it was 13), ending 2 before the ☆.
+#[test]
+fn the_list_is_rows_of_elements_in_the_shared_scroll_element() {
+    let surface = picker_with_everything();
+    let geometry = surface.picker_geometry().unwrap();
+    let spec = surface.picker_spec();
+    let frame = elements::layout(
+        &elements::tree(&spec, &mut |_| None),
+        geometry.panel,
+        FrameCx::root(),
+    );
+    assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+    let list = frame.node(elements::LIST_KEY).unwrap();
+    assert_eq!(list.viewport, Some(geometry.list));
+    let rows: Vec<_> = frame.named(elements::MODEL_ROW).collect();
+    assert_eq!(rows.len(), surface.picker_rows().len());
+    let mut stars = 0;
+    for (index, node) in rows.iter().enumerate().take(geometry.visible_rows()) {
+        let expected = Rect::new(
+            geometry.list.x,
+            geometry.list.y + index as f32 * ROW_H,
+            geometry.list.w,
+            ROW_H,
+        );
+        assert_same_rect(node.rect, expected, &format!("row {index}"));
+        assert_eq!(surface.picker_row_rect(&geometry, index), Some(node.rect));
+        if let Some(star) = &spec.list[index].star {
+            stars += 1;
+            let at = frame.node(star.key).unwrap().rect;
+            assert_same_rect(at, star_rect(node.rect), &format!("☆ of row {index}"));
+            assert_eq!(
+                frame.hit_at(at.x + at.w * 0.5, at.y + at.h * 0.5),
+                Some(star.key),
+                "the ☆ is pressed over its row"
+            );
+            assert_eq!(
+                frame.hit_at(node.rect.x + 20.0, node.rect.y + 5.0),
+                spec.list[index].key,
+                "the rest of the row is the row's"
+            );
+        }
+    }
+    assert!(stars > 0, "the agent's models can be starred");
+    let check = frame.named(elements::CHECK).next().expect("the current ✓");
+    assert_eq!(check.rect.w, 14.0, "IconSize::S");
+    let current = spec.list.iter().position(|row| row.current).unwrap();
+    let star = frame
+        .node(spec.list[current].star.as_ref().unwrap().key)
+        .unwrap()
+        .rect;
+    assert!((check.rect.x + check.rect.w + 2.0 - star.x).abs() < 0.01);
+}
+
+/// **The list's scrollbar is the shared one** (M1): the frame's, over the
+/// rows shown; a press in its gutter takes the thumb and a drag moves the
+/// list a whole row at a time; the thumb is lit while it is dragged.
+#[test]
+fn the_lists_scrollbar_drags_by_whole_rows() {
+    let mut surface = surface();
+    surface.agent_models.insert(
+        agent("agent-claude"),
+        AgentModels::Listed(
+            (0..20)
+                .map(|n| {
+                    model(
+                        &format!("m{n}"),
+                        "claude",
+                        Some(&format!("Model {n}")),
+                        None,
+                    )
+                })
+                .collect(),
+        ),
+    );
+    open(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+    let bar = surface.picker_scrollbar(&geometry).expect("it overflows");
+    assert_eq!(
+        Some(bar),
+        koru_ui::scrollbar::ScrollbarGeom::for_content(
+            geometry.list,
+            surface.picker_rows().len() as f32 * ROW_H,
+            0.0
+        )
+    );
+    let x = bar.gutter_x + bar.gutter_w * 0.5;
+    assert_eq!(
+        surface.picker_mouse_down(x, bar.thumb_top + 2.0),
+        Some(true)
+    );
+    assert_eq!(surface.picker.scroll_drag, Some(2.0));
+    assert_eq!(surface.picker.offset, 0);
+    let travel = bar.track_bottom - bar.track_top - bar.thumb_h;
+    surface.picker_mouse_move(x, bar.thumb_top + 2.0 + travel);
+    assert_eq!(
+        surface.picker.offset,
+        surface.picker_rows().len() - geometry.visible_rows()
+    );
+    surface.picker_mouse_move(x, bar.thumb_top + 2.0 + travel * 0.5);
+    let middle = surface.picker.offset;
+    assert!(middle > 0 && middle < surface.picker_rows().len() - geometry.visible_rows());
+}
