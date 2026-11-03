@@ -110,7 +110,7 @@ fn hovered(surface: &ChatSurface, x: f32, y: f32) -> Vec<String> {
             let (_, (ox, oy)) = surface.response_layout(0, Some(index))?;
             message.blocks[index]
                 .link_at(x - ox, y - oy)
-                .map(|link| link.url.clone())
+                .map(|link| link.url.to_owned())
         })
         .collect()
 }

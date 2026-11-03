@@ -69,6 +69,7 @@ mod composer;
 mod doc_links;
 mod effort;
 mod layout_cache;
+mod link_card;
 mod live_markdown;
 mod model_picker;
 mod new_divider;
@@ -603,6 +604,9 @@ pub struct ChatSurface {
     tool_activity_hover: Option<(ToolInvocationId, u8)>,
     tool_workspace_offset: usize,
     copy_feedback: Tooltip,
+    /// The card a link in the conversation shows under a resting pointer:
+    /// the document's link card, with *open* for its pencil (koru-ai D95).
+    link_card: link_card::LinkCard,
     web_search_tooltip: Tooltip,
     response_selection: Option<ResponseSelection>,
     response_menu: Option<Menu<ResponseMenuItem>>,
@@ -942,6 +946,7 @@ impl ChatSurface {
             tool_activity_hover: None,
             tool_workspace_offset: 0,
             copy_feedback: Tooltip::default(),
+            link_card: link_card::LinkCard::default(),
             web_search_tooltip: Tooltip::default(),
             response_selection: None,
             response_menu: None,
@@ -1303,6 +1308,7 @@ impl ChatSurface {
             chats_pane_ring,
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
+            self.link_card.deadline(),
             self.web_search_tooltip.maintenance_deadline(),
             self.picker_tooltip.maintenance_deadline(),
             self.queue_tooltip.maintenance_deadline(),
@@ -1348,6 +1354,7 @@ impl ChatSurface {
             changed = true;
         }
         changed |= self.copy_feedback.maintain(_now);
+        changed |= self.link_card.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
         changed |= self.queue_tooltip.maintain(_now);
@@ -1434,6 +1441,14 @@ impl ChatSurface {
         {
             return CursorIcon::Default;
         }
+        // So does a link's card (D95).
+        if self
+            .link_card
+            .card_rect(Instant::now())
+            .is_some_and(|rect| rect.contains(p.0, p.1))
+        {
+            return CursorIcon::Default;
+        }
         if self.conversation_scroll_drag.is_some()
             || self
                 .conversation_scrollbar()
@@ -1486,6 +1501,12 @@ impl ChatSurface {
         // The viewer is modal: every key is its own while it is up.
         if let Some(handled) = self.viewer_key(key, text, mods) {
             return handled;
+        }
+        // A link's card (D95) goes on any key; Escape is spent on it.
+        let card_up = self.link_card.visible(Instant::now());
+        self.link_card.hide();
+        if card_up && matches!(key, Key::Named(NamedKey::Escape)) {
+            return true;
         }
         if let Some(confirm) = &mut self.confirm {
             let outcome = confirm.key(key);
@@ -1892,6 +1913,9 @@ impl ChatSurface {
         if let Some(handled) = self.response_menu_mouse_down(x, y) {
             return handled;
         }
+        if let Some(handled) = self.link_card_mouse_down(x, y) {
+            return handled;
+        }
         // *Add to chat* over the selection; any other press lets it go.
         if self.add_pill.rect().is_some_and(|rect| rect.contains(x, y)) {
             self.add_selection_to_chat();
@@ -2224,6 +2248,103 @@ impl ChatSurface {
         }
     }
 
+    /// **The link in the conversation under a point** (D95) — in a reply's
+    /// text or one of its tables' cells, or a document link in the
+    /// person's own message — with what it reads as and the line box it is
+    /// drawn in, for its card. Every block is asked through the same
+    /// [`BlockLayout::link_at`] that lights and follows it.
+    fn conversation_link_at(&self, x: f32, y: f32) -> Option<link_card::ConversationLink> {
+        let area = self.conversation_hit_rect;
+        if !area.contains(x, y) {
+            return None;
+        }
+        for message in &self.message_layouts {
+            let card = message_card(
+                area,
+                area.y - self.conversation_scroll + message.top,
+                message_height(message),
+                message,
+            );
+            // Asked on every move: a message the pointer is not on is not
+            // walked.
+            if !card.contains(x, y) {
+                continue;
+            }
+            match message.role {
+                ChatRole::Assistant => {
+                    let mut block_y = card.y + PAD;
+                    for block in &message.blocks {
+                        let origin = (card.x + PAD, block_y);
+                        if let Some(hit) = block.link_at(x - origin.0, y - origin.1) {
+                            return Some(link_card::ConversationLink::from_hit(
+                                &hit,
+                                origin,
+                                (x, y),
+                            ));
+                        }
+                        block_y += block.height() + BLOCK_GAP;
+                    }
+                }
+                ChatRole::User if !message.links.is_empty() => {
+                    let origin = (card.x + PAD, card.y + PAD);
+                    if let Some(hit) = koru_markdown::link_at(
+                        &message.display,
+                        &message.layout,
+                        &message.links,
+                        x - origin.0,
+                        y - origin.1,
+                    ) {
+                        return Some(link_card::ConversationLink::from_hit(&hit, origin, (x, y)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// A press on a link's card (D95): **copy** puts the address on the
+    /// clipboard, **open** does what clicking the link does, and the rest
+    /// of the card takes the press so nothing under it does. `None` when
+    /// the press is not on the card.
+    fn link_card_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        use koru_editor::draw::LinkCardHit;
+        let Some((hit, url)) = self
+            .link_card
+            .hit(x, y, Instant::now())
+            .map(|(hit, link)| (hit, link.url.clone()))
+        else {
+            // Any other press lets the card go.
+            self.link_card.hide();
+            return None;
+        };
+        match hit {
+            LinkCardHit::Copy => {
+                self.link_card.hide();
+                // `koru_ui`'s own test guard does not reach this crate's
+                // tests, which must not write the real clipboard.
+                #[cfg(test)]
+                tests::COPIED.with(|copied| copied.borrow_mut().push(url.clone()));
+                #[cfg(not(test))]
+                koru_ui::clipboard::put_plain(&url);
+                self.show_copy_feedback(koru_i18n::t(self.lang, koru_i18n::Key::AiLinkCopied));
+            }
+            LinkCardHit::Action => {
+                self.link_card.hide();
+                self.follow_link(&url);
+            }
+            LinkCardHit::Body | LinkCardHit::None => {}
+        }
+        Some(true)
+    }
+
+    /// The buttons on a link's card while it is up, each with its name in
+    /// the person's language — copy, then open (D95) — for a host that
+    /// publishes the conversation to a screen reader.
+    pub fn link_card_buttons(&self) -> Vec<(Rect, &'static str)> {
+        self.link_card.buttons(self.lang, Instant::now())
+    }
+
     /// The document link under a point in one of the person's own messages.
     fn user_link_at(&self, x: f32, y: f32) -> Option<String> {
         let area = self.conversation_hit_rect;
@@ -2373,6 +2494,10 @@ impl ChatSurface {
             self.composer.mouse_move(x, y)
         };
         let response_dragged = self.drag_response_selection(x, y);
+        let under = (!self.showing_setup())
+            .then(|| self.conversation_link_at(x, y))
+            .flatten();
+        let link_changed = self.link_card.track(under, (x, y), Instant::now());
         let queue_changed = !self.showing_setup() && self.queue_hover(x, y);
         let queue_hover_changed = !self.showing_setup()
             && self.queue_hit_at(old_pointer.0, old_pointer.1) != self.queue_hit_at(x, y);
@@ -2381,6 +2506,7 @@ impl ChatSurface {
             || queue_hover_changed
             || pill_changed
             || response_dragged
+            || link_changed
             || old_response_hover != self.response_hover
             || old_message_hover != self.response_message_hover
             || old_tool_hover != self.tool_activity_hover
@@ -2414,8 +2540,14 @@ impl ChatSurface {
                 .then(|| selection.pressed_link.take())
                 .flatten()
         });
+        // Followed only if let go over the link it was pressed on: in a
+        // table two cells' links can share a position, so a press that
+        // slid from one to the other does not open the first (D95).
         if let Some(url) = pressed {
-            self.follow_link(&url);
+            let (x, y) = self.pointer;
+            if self.response_text_hit(x, y).and_then(|hit| hit.link) == Some(url.clone()) {
+                self.follow_link(&url);
+            }
         }
         // A drag through a reply let go: *Add to chat* over what it chose.
         if selected {
@@ -2465,8 +2597,10 @@ impl ChatSurface {
         }
         self.question_navigation = None;
         self.question_navigation_anchor = None;
-        // A scroll lets *Add to chat* go; the selection stays.
+        // A scroll lets *Add to chat* go; the selection stays. A link's
+        // card goes too: what it hung from has moved.
         self.add_pill.hide();
+        self.link_card.hide();
         // Over the composer's open picker, or over its own lines once they
         // overflow, the wheel is the composer's.
         let (px, py) = self.pointer;
@@ -6080,6 +6214,16 @@ impl ChatSurface {
             }
         }
         drop(_composer);
+        // A link's card (D95): over the transcript and the composer, under
+        // the pickers and panes that float over both.
+        self.link_card.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            self.pointer,
+            Instant::now(),
+        );
         if self.history_open {
             self.draw_chats_pane(canvas, root);
         }
@@ -6915,6 +7059,14 @@ impl ChatSurface {
                                 0.0,
                                 None,
                             );
+                            // Over the grid, which fills its header row.
+                            self.draw_response_link_hover(
+                                canvas,
+                                root,
+                                block,
+                                card.x + PAD,
+                                block_y,
+                            );
                         } else if let Some(image) = &block.image {
                             self.draw_remote_image(
                                 canvas,
@@ -7479,12 +7631,29 @@ impl ChatSurface {
                                 link: block.image.as_ref().map(|image| image.url.clone()),
                             });
                         }
+                        // A table is not selected through, but a link in
+                        // one of its cells is pressed and followed as one
+                        // in a sentence is (D95).
+                        if block.table.is_some() && rect.contains(x, y) {
+                            if let Some(link) = block.link_at(x - origin.0, y - origin.1) {
+                                return Some(ResponseTextHit {
+                                    position: ResponsePosition {
+                                        message: message_index,
+                                        block: Some(block_index),
+                                        byte: link.range.start,
+                                        affinity: Affinity::Downstream,
+                                    },
+                                    selection: Selection::from_point(&block.layout, 0.0, 0.0),
+                                    link: Some(link.url.to_owned()),
+                                });
+                            }
+                        }
                         if block.table.is_none() && rect.contains(x, y) {
                             let selection =
                                 Selection::from_point(&block.layout, x - origin.0, y - origin.1);
                             let link = block
                                 .link_at(x - origin.0, y - origin.1)
-                                .map(|link| link.url.clone());
+                                .map(|link| link.url.to_owned());
                             return Some(ResponseTextHit {
                                 position: ResponsePosition {
                                     message: message_index,
@@ -7822,11 +7991,13 @@ impl ChatSurface {
         let Some(link) = block.link_at(self.pointer.0 - ox, self.pointer.1 - oy) else {
             return;
         };
+        // A link in a table's cell is drawn in that cell's layout.
+        let (ox, oy) = (ox + link.origin.0, oy + link.origin.1);
         let selection = Selection::new(
-            Cursor::from_byte_index(&block.layout, link.range.start, Affinity::Downstream),
-            Cursor::from_byte_index(&block.layout, link.range.end, Affinity::Upstream),
+            Cursor::from_byte_index(link.layout, link.range.start, Affinity::Downstream),
+            Cursor::from_byte_index(link.layout, link.range.end, Affinity::Upstream),
         );
-        selection.geometry_with(&block.layout, |bb, _| {
+        selection.geometry_with(link.layout, |bb, _| {
             scene::fill(
                 canvas,
                 root,
@@ -8012,7 +8183,7 @@ impl ChatSurface {
                     chat.id.as_uuid(),
                     Some(block.as_uuid()),
                 ));
-                self.show_copy_feedback("Link copied");
+                self.show_copy_feedback(koru_i18n::t(self.lang, koru_i18n::Key::AiLinkCopied));
                 true
             }
             ResponseAction::Retry(message) => {
@@ -8786,7 +8957,10 @@ fn render_chat_block(
             image: Some(image),
         };
     }
-    match koru_markdown::render_block(engine, markdown, max_w, &koru_markdown::Styles::ui()) {
+    // A bare `https://…` in a reply is a link (D95): the chat follows
+    // what it draws as one.
+    let styles = koru_markdown::Styles::ui().with_bare_links();
+    match koru_markdown::render_block(engine, markdown, max_w, &styles) {
         koru_markdown::Rendered::Text {
             text,
             layout,
@@ -8973,6 +9147,8 @@ fn open_web_link(url: &str) -> bool {
     if !is_web_url(url) {
         return false;
     }
+    #[cfg(test)]
+    tests::OPENED.with(|opened| opened.borrow_mut().push(url.to_owned()));
     if cfg!(any(test, feature = "no-client")) {
         return true;
     }
@@ -9257,6 +9433,17 @@ mod tests {
     use super::*;
     use koru_ai_core::ReasoningLevel;
     use std::time::Duration;
+
+    thread_local! {
+        /// Every web address this thread's surface handed the desktop to
+        /// open, which under test opens nothing.
+        pub(crate) static OPENED: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        /// Every link a card copied, which under test leaves the system
+        /// clipboard alone.
+        pub(crate) static COPIED: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
 
     use koru_ai_core::{ProfileId, ToolApproval, UsageTotals};
 
