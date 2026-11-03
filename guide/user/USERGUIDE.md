@@ -1525,13 +1525,16 @@ application. Neither surface shows the chat's title above the conversation —
 its tab and the Chats list name it. To rename a chat, rename it in the Chats
 list (see *Finding a chat again*).
 
-To collect questions about an answer, select response text, right-click, and
-choose **Add comment**. Type an optional comment and press Enter; a quote pill
-appears above the composer. Click a pill to revise its comment, or its close
-target to remove it. You can stage several while continuing to read. Sending
-turns the pills into visible Markdown blockquotes and comments above your typed
-question, then clears the strip. The pills stay only in this chat surface until
-send: switching chats or closing the surface discards them.
+To ask about part of an answer, select it — drag across it, double-click a
+word, or hold `Shift` with the arrow keys. An **Add to chat** button appears
+just above the selection; click it, or press `Ctrl+L` (`⌘L` on a Mac). The
+passage goes into your message as a quote, the start of it shown in quotation
+marks, and the cursor moves to a new line under it so you can write what you
+want to ask. Add as many quotes as you like, each followed by its own comment;
+they are sent in that order, each quote as a Markdown blockquote right before
+what you wrote about it. Remove a quote with Backspace, like a document chip.
+A message you queue while a reply is running keeps its quotes, and your sent
+message shows them with a bar beside the quoted lines.
 
 **Open Koru AI in its own window** from **Koru AI Chat** at the top of Koru
 Agent's right-click menu, **AI Chat** in Koru's `+` menu, or the global
@@ -1566,8 +1569,9 @@ for confirmation, with Cancel selected initially.
 
 Assistant response text selects like ordinary text across wrapped lines and
 Markdown blocks. Hold `Shift` with any arrow key to extend that selection;
-right-click inside it for **Copy** with its `Ctrl+C` hint or **Add comment** to
-stage the selected passage above the composer.
+right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
+with its `Ctrl+L` hint. `Ctrl+L` adds the selection only while your typing
+cursor isn't in the message box.
 Completed responses also offer icon actions for **Copy** (the exact Markdown),
 toggleable **Good** and **Bad**, **Branch**, **Store**, and **Link**. Branch opens a new durable chat
 containing the conversation through that response. Store asks for a
