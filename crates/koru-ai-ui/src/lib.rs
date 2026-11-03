@@ -6487,7 +6487,12 @@ impl ChatSurface {
             .filter_map(|block| block.image.as_ref().map(|image| image.url.clone()))
             .collect::<Vec<_>>();
         for url in image_urls {
-            self.ensure_remote_image(&url);
+            // A reply's picture from a file goes through the call pictures'
+            // loader (D38): one cache, one worker, one decoder, one limit.
+            match tool_output::picture::reply_picture_path(&url) {
+                Some(path) if !is_web_url(&url) => self.ensure_disk_image(path),
+                _ => self.ensure_remote_image(&url),
+            }
         }
         for path in wanted_pictures {
             self.ensure_disk_image(path);
@@ -7801,7 +7806,8 @@ impl ChatSurface {
                 }
                 changed = true;
                 // A reply's picture has its box already; a call's takes
-                // room only once it has loaded (D38).
+                // room only once it has loaded (D38). A picture from the
+                // disk may be either, so the messages are laid out again.
                 relayout |= !is_web_url(key);
             }
         }
@@ -7822,7 +7828,7 @@ impl ChatSurface {
     ) {
         let Some(loaded) = self
             .images
-            .get(&image.url)
+            .get(&image_key(&image.url))
             .and_then(|image| image.ready.as_ref())
         else {
             scene::fill(
@@ -8741,6 +8747,16 @@ fn generated_image_spec(markdown: &str) -> Option<ImageSpec> {
             .unwrap_or("Generated image")
             .to_owned(),
     })
+}
+
+/// The image cache's key for a reply picture's URL: the web address
+/// itself, or the path of a picture on the disk (`file:` or absolute), as
+/// [`ChatSurface::ensure_disk_image`] keeps it.
+fn image_key(url: &str) -> String {
+    match tool_output::picture::reply_picture_path(url) {
+        Some(path) if !is_web_url(url) => path.to_string_lossy().into_owned(),
+        _ => url.to_owned(),
+    }
 }
 
 fn is_web_url(url: &str) -> bool {
@@ -10201,6 +10217,72 @@ mod tests {
             default_reasoning: ReasoningChoice::Default,
         };
         assert!(surface.web_search_button().is_none());
+    }
+
+    /// **A reply's picture from a file is asked of the disk loader** (the
+    /// user's call, 2026-11-03): a `file:` URL is read through D38's loader
+    /// under its path, in the reply's picture box; a relative path is never
+    /// read, and keeps the alt text as before — as does a file that is not
+    /// there (under test nothing is read, so it reads as not there).
+    #[test]
+    fn a_replys_file_picture_is_read_from_the_disk() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut transcript = transcript();
+        let url = if cfg!(windows) {
+            "file:///D:/apple.jpeg"
+        } else {
+            "file:///home/me/apple.jpeg"
+        };
+        let mut ordinal = 0;
+        for markdown in [
+            format!("![Apple logo]({url})"),
+            "![Pear](pictures/pear.png)".to_owned(),
+        ] {
+            let message_id = MessageId::new();
+            transcript.messages.push(koru_ai_core::Message {
+                id: message_id,
+                chat_id: transcript.chat.id,
+                ordinal,
+                role: ChatRole::Assistant,
+                state: MessageState::Complete,
+                markdown: markdown.clone(),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: koru_ai_core::Timestamp::from_millis(1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+            });
+            transcript.blocks.push(koru_ai_core::MessageBlock {
+                id: MessageBlockId::new(),
+                message_id,
+                ordinal: 0,
+                kind: koru_ai_core::MessageBlockKind::Paragraph,
+                plain_text: markdown.clone(),
+                markdown,
+            });
+            ordinal += 1;
+        }
+        surface.transcript = Some(transcript);
+        surface.rebuild_messages(600.0);
+        let images: Vec<&ImageSpec> = surface
+            .message_layouts
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .filter_map(|block| block.image.as_ref())
+            .collect();
+        assert_eq!(images.len(), 2, "both keep their picture box");
+        assert_eq!(images[0].alt, "Apple logo");
+        let key = image_key(url);
+        assert_ne!(key, url, "kept under its path");
+        assert_eq!(
+            Some(std::path::PathBuf::from(&key)),
+            tool_output::picture::reply_picture_path(url)
+        );
+        assert!(surface.images.get(&key).is_some_and(|image| image.failed));
+        assert_eq!(surface.images.len(), 1, "a relative path is never read");
+        assert_eq!(image_key("pictures/pear.png"), "pictures/pear.png");
     }
 
     #[test]

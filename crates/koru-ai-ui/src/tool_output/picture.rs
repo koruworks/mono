@@ -91,6 +91,70 @@ pub(crate) fn settle(
         .collect()
 }
 
+/// **A reply's picture from a file** (the user's call, 2026-11-03): the
+/// local path a reply's Markdown image names — a `file:` URL
+/// (`![Apple logo](file:///D:/apple.jpeg)`), or an absolute path as the
+/// Markdown renderer hands it over — when it names a picture. Never a
+/// relative path: a reply's text has no folder to read one against. `None`
+/// for anything else, which keeps the reply's alt text, as before.
+pub(crate) fn reply_picture_path(url: &str) -> Option<PathBuf> {
+    let url = url.trim();
+    let path = match url.get(..5) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("file:") => file_url_path(&url[5..])?,
+        _ => PathBuf::from(url),
+    };
+    (path.is_absolute() && is_picture(path.to_str()?)).then_some(path)
+}
+
+/// The path of a `file:` URL, after its scheme: `///D:/a.png`,
+/// `//localhost/home/a.png`, `/home/a.png`. Its escapes are decoded and a
+/// query or fragment dropped; a URL naming another host is not a local
+/// file. A drive letter loses the slash before it on Windows.
+fn file_url_path(rest: &str) -> Option<PathBuf> {
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let path = match rest.strip_prefix("//") {
+        Some(after) => {
+            let slash = after.find('/')?;
+            let host = &after[..slash];
+            if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+                return None;
+            }
+            &after[slash..]
+        }
+        None => rest,
+    };
+    if !path.starts_with('/') {
+        return None;
+    }
+    let decoded = percent_decode(path)?;
+    let bytes = decoded.as_bytes();
+    let drive = bytes.len() >= 3 && bytes[1].is_ascii_alphabetic() && bytes[2] == b':';
+    Some(PathBuf::from(if cfg!(windows) && drive {
+        &decoded[1..]
+    } else {
+        decoded.as_str()
+    }))
+}
+
+/// `%XX` escapes decoded; `None` when one is malformed or the result is
+/// not UTF-8.
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = text.get(index + 1..index + 3)?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
 /// The size a `width` × `height` picture is drawn at in a column `column`
 /// wide: as large as it is, made smaller to fit the column and
 /// [`MAX_HEIGHT`], never larger — a 16-pixel icon stays an icon.

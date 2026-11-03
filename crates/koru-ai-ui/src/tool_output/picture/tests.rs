@@ -257,3 +257,51 @@ fn a_picture_fits_the_column_and_the_replys_box_and_never_grows() {
     assert_eq!(fitted(40, 20, 300.0), (40.0, 20.0));
     assert_eq!(fitted(0, 0, 300.0), (1.0, 1.0));
 }
+
+/// **A reply's picture from a file** (2026-11-03): a `file:` URL or an
+/// absolute path naming a picture is read from the disk; a relative path,
+/// another host, a web address or a file that is not a picture is not.
+#[test]
+fn a_replys_file_url_or_absolute_path_names_a_picture() {
+    let path = |url: &str| reply_picture_path(url).map(|path| path.to_string_lossy().into_owned());
+    if cfg!(windows) {
+        assert_eq!(
+            path("file:///D:/apple.jpeg").as_deref(),
+            Some("D:/apple.jpeg")
+        );
+        assert_eq!(
+            path("FILE://localhost/D:/My%20Pictures/apple.PNG?x=1#y").as_deref(),
+            Some("D:/My Pictures/apple.PNG")
+        );
+        assert_eq!(
+            path(r"D:\pictures\apple.webp").as_deref(),
+            Some(r"D:\pictures\apple.webp")
+        );
+        assert_eq!(path("D:/apple.jpeg").as_deref(), Some("D:/apple.jpeg"));
+    } else {
+        assert_eq!(
+            path("file:///home/me/apple.jpeg").as_deref(),
+            Some("/home/me/apple.jpeg")
+        );
+        assert_eq!(
+            path("file://localhost/home/me/My%20Pictures/apple.PNG").as_deref(),
+            Some("/home/me/My Pictures/apple.PNG")
+        );
+        assert_eq!(
+            path("/home/me/apple.webp").as_deref(),
+            Some("/home/me/apple.webp")
+        );
+    }
+    for refused in [
+        "apple.jpeg",
+        "./pictures/apple.jpeg",
+        "pictures/apple.jpeg",
+        "file://server/share/apple.jpeg",
+        "file:apple.jpeg",
+        "file:///D:/notes.txt",
+        "https://example.com/apple.jpeg",
+        "file:///D:/bad%zzname.png",
+    ] {
+        assert_eq!(path(refused), None, "{refused}");
+    }
+}
