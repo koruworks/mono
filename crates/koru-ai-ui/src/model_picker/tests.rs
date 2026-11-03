@@ -642,8 +642,9 @@ fn typing_searches_the_selected_agent_and_dims_the_rest() {
     );
 }
 
-/// §9.5: type *son*, Down, Enter chooses; Esc clears the query, then
-/// closes; Tab walks search → rail → list → ↺ → slider.
+/// §9.5: type *son*, Down, Enter chooses and the picker stays open (D66);
+/// Esc clears the query, then closes; Tab walks search → rail → list → ↺ →
+/// slider.
 #[test]
 fn the_keyboard_alone_chooses_a_model_and_moves_through_the_picker() {
     let mut surface = surface();
@@ -661,10 +662,13 @@ fn the_keyboard_alone_chooses_a_model_and_moves_through_the_picker() {
     type_query(&mut surface, "son");
     press(&mut surface, NamedKey::ArrowDown);
     assert!(press(&mut surface, NamedKey::Enter));
-    assert!(!surface.chat_model_open, "chosen, and closed");
+    assert!(surface.chat_model_open, "chosen, and still open");
     let chosen = &surface.transcript.as_ref().unwrap().chat.current_model;
     assert_eq!(chosen.provider, agent("agent-claude"));
     assert_eq!(chosen.requested_model, "sonnet");
+    assert!(press(&mut surface, NamedKey::Escape), "clears the query");
+    assert!(press(&mut surface, NamedKey::Escape), "closes");
+    assert!(!surface.chat_model_open);
 
     open(&mut surface);
     let order: Vec<PickerFocus> = (0..3)
@@ -783,8 +787,8 @@ fn refresh_reads_checking_until_the_answer_lands() {
     assert!(!surface.refresh_enabled(&agent("agent-claude")));
 }
 
-/// The wheel and a click: the list scrolls, and a press on a row chooses
-/// it; a press outside closes the picker.
+/// A press on a row chooses it and the picker stays open on it (D66);
+/// only a press outside closes the picker.
 #[test]
 fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
     let mut surface = surface();
@@ -796,7 +800,7 @@ fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
         surface.picker_mouse_down(row.x + 20.0, row.y + row.h * 0.5),
         Some(true)
     );
-    assert!(!surface.chat_model_open);
+    assert!(surface.chat_model_open, "still open, for the footer");
     assert_eq!(
         surface
             .transcript
@@ -807,9 +811,81 @@ fn a_click_on_a_row_chooses_it_and_one_outside_closes() {
             .requested_model,
         "opus"
     );
-    open(&mut surface);
+    let entry = surface.picker_entry().unwrap();
+    let rows = surface.picker_rows();
+    assert!(
+        surface.picker_row_current(&entry, &rows[1]),
+        "the ✓ is on it"
+    );
+    assert_eq!(surface.picker.highlight, Some(1));
     assert_eq!(surface.picker_mouse_down(1.0, 1.0), Some(true));
-    assert!(!surface.chat_model_open);
+    assert!(!surface.chat_model_open, "a press outside closes it");
+}
+
+/// **The footer follows the model chosen with the picker open** (D66):
+/// choosing a model with levels brings the level's footer, and the Context
+/// row, at once; choosing one without takes them away — the ✓ moving each
+/// time, the chosen row kept in view.
+#[test]
+fn choosing_a_model_keeps_the_picker_open_and_its_footer_follows() {
+    let mut surface = surface();
+    with_opus_context(&mut surface);
+    if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
+    {
+        models[1].reasoning = Some(ReasoningControl::Levels {
+            values: vec![ReasoningLevel::Low, ReasoningLevel::High],
+            default: None,
+            supports_off: false,
+        });
+    }
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
+    open(&mut surface);
+    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let before = surface.picker_geometry().unwrap();
+    assert!(before.footer.is_none() && before.context.is_none());
+
+    let opus = surface.picker_row_rect(&before, 1).unwrap();
+    surface.picker_mouse_down(opus.x + 20.0, opus.y + opus.h * 0.5);
+    assert!(surface.chat_model_open);
+    let after = surface.picker_geometry().unwrap();
+    assert!(after.footer.is_some(), "opus: the level's footer");
+    assert!(after.context.is_some(), "opus: the Context row");
+    let entry = surface.picker_entry().unwrap();
+    let rows = surface.picker_rows();
+    assert!(surface.picker_row_current(&entry, &rows[1]));
+    assert!(!surface.picker_row_current(&entry, &rows[2]));
+    let highlight = surface.picker.highlight.unwrap();
+    assert!(
+        surface.picker_row_rect(&after, highlight).is_some(),
+        "in view"
+    );
+
+    // The level is set right after, in the same open picker.
+    surface.picker.focus = PickerFocus::Slider;
+    press(&mut surface, NamedKey::ArrowRight);
+    assert_eq!(
+        surface
+            .transcript
+            .as_ref()
+            .unwrap()
+            .chat
+            .current_model
+            .default_reasoning,
+        ReasoningChoice::Level(ReasoningLevel::Low)
+    );
+
+    surface.picker.focus = PickerFocus::List;
+    surface.picker.highlight = Some(2);
+    assert!(press(&mut surface, NamedKey::Enter), "sonnet");
+    let back = surface.picker_geometry().unwrap();
+    assert!(back.footer.is_none() && back.context.is_none());
+    assert!(surface.chat_model_open);
 }
 
 /// **A model row raises no tooltip** (D25, the user: *don't show
@@ -890,7 +966,8 @@ fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
 }
 
 /// Enter or Right on the row opens the flyout beside it; Up and Down walk
-/// it, Left closes it, Enter chooses — the older model is the chat's.
+/// it, Left closes it, Enter chooses — the older model is the chat's, the
+/// flyout closes and the picker stays open (D66).
 #[test]
 fn the_legacy_flyout_opens_walks_closes_and_chooses() {
     let mut surface = surface();
@@ -915,7 +992,8 @@ fn the_legacy_flyout_opens_walks_closes_and_chooses() {
     assert!(surface.picker.legacy.is_some(), "Enter on the row opens it");
     press(&mut surface, NamedKey::ArrowDown);
     press(&mut surface, NamedKey::Enter);
-    assert!(!surface.chat_model_open);
+    assert!(surface.chat_model_open, "the picker stays open");
+    assert!(surface.picker.legacy.is_none(), "the flyout closes");
     assert_eq!(
         surface
             .transcript
@@ -1504,7 +1582,7 @@ fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
         )]
     );
     press(&mut surface, NamedKey::Enter);
-    assert!(!surface.chat_model_open);
+    assert!(surface.chat_model_open, "chosen, still open (D66)");
     let model = &surface.transcript.as_ref().unwrap().chat.current_model;
     assert_eq!(model.provider, agent("agent-opencode"));
     assert_eq!(model.requested_model, "deepseek/v4-pro");

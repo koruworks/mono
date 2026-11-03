@@ -9,6 +9,11 @@
 //! workspace and tool-approval panels do — below the chip only when there is
 //! no room above — and it is driven fully from the keyboard.
 //!
+//! **Choosing a model keeps the picker open** (D66, the user: *I still
+//! need to select the effort*): the ✓ moves and the Fast, Context and level
+//! rows below become the new model's at once. A press outside the picker,
+//! or Esc, closes it.
+//!
 //! A model row is one line, the model's name; a ☆ at its end stars it
 //! (D46): the rail then leads with *Favorites*, the starred models of every
 //! agent turned on, each beside its agent's mark. Only a click stars a
@@ -996,7 +1001,8 @@ impl crate::ChatSurface {
         true
     }
 
-    /// Choose the flyout's item `item`: the older model is the chat's.
+    /// Choose the flyout's item `item`: the older model is the chat's. The
+    /// flyout closes; the picker stays open on the new model (D66).
     fn choose_legacy_item(&mut self, item: usize) -> bool {
         let Some(RailEntry::Agent(agent)) = self.picker_entry() else {
             return true;
@@ -1011,12 +1017,14 @@ impl crate::ChatSurface {
             return true;
         };
         let can = self.entry_choosable(&RailEntry::Agent(agent.clone()));
-        self.close_picker();
-        if can {
+        self.picker.legacy = None;
+        let chosen = if can {
             self.choose_agent_model(agent, id)
         } else {
             true
-        }
+        };
+        self.settle_after_choice();
+        chosen
     }
 
     /// A press while the flyout is open: an item is chosen; anywhere else
@@ -1249,7 +1257,9 @@ impl crate::ChatSurface {
     /// **Choose row `index`**: an agent's model makes the agent and model
     /// the chat's (the level kept when it is offered, D18) — a favorite
     /// too, with its own agent (D46); a built-in provider's model is the
-    /// chat's next model. The picker closes.
+    /// chat's next model. **The picker stays open** (D66): the ✓ moves to
+    /// the row and the footer becomes the new model's, to be set next. A
+    /// press outside, or Esc, closes it.
     pub(crate) fn choose_picker_row(&mut self, index: usize) -> bool {
         let rows = self.picker_rows();
         let choosable = self.picker_choosable(&rows);
@@ -1263,8 +1273,9 @@ impl crate::ChatSurface {
             return self.open_legacy_menu(index);
         }
         let row = row.clone();
-        self.close_picker();
-        match (entry, row) {
+        self.picker.legacy = None;
+        self.picker.highlight = Some(index);
+        let chosen = match (entry, row) {
             (RailEntry::Agent(agent), Row::Default) => {
                 self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
             }
@@ -1273,7 +1284,22 @@ impl crate::ChatSurface {
             }
             (RailEntry::Provider(_), Row::Model(id)) => self.change_chat_model(id),
             _ => true,
+        };
+        self.settle_after_choice();
+        chosen
+    }
+
+    /// **The picker after a model is chosen** (D66): still open, its
+    /// footer now the new model's — Fast, Context and the level come and go
+    /// with it, and the list gets or gives up their room — so the list is
+    /// kept in range and the chosen row in view. Also run when a chat's
+    /// model lands from the service, which a chat already made answers.
+    pub(crate) fn settle_after_choice(&mut self) {
+        if !self.chat_model_open {
+            return;
         }
+        self.picker.offset = self.picker.offset.min(self.picker_max_offset());
+        self.scroll_highlight_into_view();
     }
 
     /// **↻** (D13): the selected agent's list rebuilt now. *Checking…*
@@ -1579,7 +1605,8 @@ impl crate::ChatSurface {
 
     /// **The keyboard inside the picker** (§9.5; widget navigation, D12):
     /// typing edits the query wherever the focus is; Up and Down move the
-    /// highlighted row, or the rail's entry from the rail; Enter chooses;
+    /// highlighted row, or the rail's entry from the rail; Enter chooses,
+    /// and the picker stays open (D66);
     /// Left and Right move the slider a stop; Tab and Shift+Tab move between
     /// search, rail, list, ↺ and the slider; Esc clears the query, else
     /// closes. Starring a model is a click on its ☆ only (D47 taken back). `None` when the picker is closed.

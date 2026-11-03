@@ -1269,7 +1269,10 @@ is shown but cannot change for that chat. A local agent's model that has a
 **Fast** mode (Claude Code's on the models that support it, Codex's *Fast*
 service tier) adds a **Fast** row, **Off** or **On**, which reads the model's
 own default until you choose; unlike the level it can change at any time, and
-applies from your next message. The picker works from the keyboard
+applies from your next message. Choosing a model leaves the picker open —
+the ✓ moves to it and the Fast, Context and level rows become that model's —
+so you can set them right after; a click outside the picker, or Esc, closes
+it. The picker works from the keyboard
 too: type to search, Up and Down to pick, Enter to choose, Tab to move between
 the search box, the agents, the list, the Fast and Context rows and the level,
 Left and Right to move the level or choose in a row, Esc to clear the search

@@ -2670,8 +2670,9 @@ impl ChatSurface {
             Update::ModelUpdated(chat, reasoning_control) => {
                 let chat_id = chat.id;
                 self.waiting = false;
-                // A row chosen in the picker has closed it already; a level
-                // set from its footer leaves it open, on the next step.
+                // The picker stays open over a model chosen in it (D66): its
+                // footer becomes the landed model's, and the list is kept
+                // in range around the chosen row.
                 self.remember_chat(&chat, true);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id
@@ -2679,6 +2680,7 @@ impl ChatSurface {
                     transcript.chat = chat;
                     transcript.reasoning_control = reasoning_control;
                 }
+                self.settle_after_choice();
                 self.status =
                     Some("This chat will use the selected model on its next turn.".into());
                 self.drop_strip_if_not_agent(chat_id);
