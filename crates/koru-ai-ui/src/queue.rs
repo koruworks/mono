@@ -459,8 +459,9 @@ impl ChatSurface {
 
     /// Hand the item's text to the running turn. The item waits beside the
     /// request until the service answers: accepted, it shows as a sent
-    /// message under the reply; refused, it goes back to the head of the
-    /// queue, unpaused, and is sent when the reply ends.
+    /// message under the question, above the reply (D99); refused, it goes
+    /// back to the head of the queue, unpaused, and is sent when the reply
+    /// ends.
     fn steer_natively(&mut self, chat: ChatId, attempt: InferenceAttemptId, item: Queued) -> bool {
         let request = koru_ai_wire::SteerAttemptRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -474,8 +475,9 @@ impl ChatSurface {
         true
     }
 
-    /// The service took the steer: the message shows under the running
-    /// reply until the transcript read at its end carries it.
+    /// The service took the steer: the message shows under the question,
+    /// above the running reply, until the transcript read at its end
+    /// carries it there (D99).
     pub(crate) fn steer_accepted(&mut self) {
         if let Some((chat, item)) = self.steering.take() {
             self.steered.push((chat, item.markdown));
@@ -497,7 +499,7 @@ impl ChatSurface {
         );
     }
 
-    /// The steered messages to draw under the running reply, in order.
+    /// The steered messages to draw under the question, in order.
     pub(crate) fn steered_shown(&self) -> Vec<String> {
         let Some(chat) = self.shown_chat_id() else {
             return Vec::new();

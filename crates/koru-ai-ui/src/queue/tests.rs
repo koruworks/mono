@@ -3,7 +3,9 @@
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use koru_ai_core::{AiProviderId, ModelSelection, ReasoningChoice, Timestamp};
+use koru_ai_core::{
+    AiProviderId, ChatRole, MessageState, ModelSelection, ReasoningChoice, Timestamp,
+};
 use koru_ai_wire::{
     AgentProviderView, ChatTranscript, Failure, ProviderSettingsResponse, PublicAiEvent,
     SendTurnAccepted, StreamEvent,
@@ -392,7 +394,7 @@ fn the_button_reads_queue_or_stop_and_escape_twice_still_stops() {
 // ----- steer ------------------------------------------------------------
 
 /// **Steer to an agent that takes text mid-turn is native**: the item's
-/// text goes to the attempt's steer; taken, it shows under the reply.
+/// text goes to the attempt's steer; taken, it shows under the question.
 #[test]
 fn steer_is_native_for_an_agent_that_steers() {
     let (mut surface, _transcript, commands) =
@@ -418,6 +420,161 @@ fn steer_is_native_for_an_agent_that_steers() {
         replayed: false,
     }));
     assert_eq!(surface.steered_shown(), ["also this"]);
+}
+
+/// The conversation as laid out: each card's role and what it says.
+fn cards(surface: &mut ChatSurface) -> Vec<(ChatRole, String)> {
+    surface.viewport = koru_draw::geometry::Rect::new(0.0, 0.0, 480.0, 640.0);
+    surface.messages_dirty = true;
+    surface.draw_messages(&mut vello::Scene::new(), vello::kurbo::Affine::IDENTITY);
+    surface
+        .message_layouts
+        .iter()
+        .map(|message| (message.role, message.markdown.clone()))
+        .collect()
+}
+
+/// A row of `transcript`'s chat as the store writes it.
+fn stored(
+    transcript: &ChatTranscript,
+    ordinal: u32,
+    role: ChatRole,
+    markdown: &str,
+) -> koru_ai_core::Message {
+    koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: transcript.chat.id,
+        ordinal,
+        role,
+        state: MessageState::Complete,
+        markdown: markdown.into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: Timestamp::from_millis(i64::from(ordinal) + 1),
+        completed_at: Some(Timestamp::from_millis(i64::from(ordinal) + 1)),
+    }
+}
+
+/// **A steer the agent took moves up under the question** (D99): at once,
+/// while the reply runs — the question, the steers in the order sent, then
+/// the reply — and the same once the transcript is read back, though the
+/// store keeps the steers after the reply.
+#[test]
+fn a_taken_steer_reads_under_the_question_live_and_after_the_reply() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "Today's news?");
+    for text in ["In the US", "Only politics"] {
+        type_into(&mut surface, text);
+        press(&mut surface, NamedKey::Enter);
+        assert!(surface.queue_action(QueueHit::Steer(0)));
+        drain(&commands);
+        surface.apply_update(Update::Steered(koru_ai_wire::SteerAttemptResponse {
+            attempt_id: attempt,
+            user_message_id: koru_ai_core::MessageId::new(),
+            replayed: false,
+        }));
+    }
+    let live = cards(&mut surface);
+    assert_eq!(
+        live.iter()
+            .map(|(role, text)| (*role, text.as_str()))
+            .collect::<Vec<_>>()[..3],
+        [
+            (ChatRole::User, "Today's news?"),
+            (ChatRole::User, "In the US"),
+            (ChatRole::User, "Only politics"),
+        ]
+    );
+    assert_eq!(live.len(), 4);
+    assert_eq!(live[3].0, ChatRole::Assistant, "the reply follows them");
+
+    // Read back: the store wrote the steers after the reply.
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "Today's news?"),
+        stored(&transcript, 1, ChatRole::Assistant, "The headlines"),
+        stored(&transcript, 2, ChatRole::User, "In the US"),
+        stored(&transcript, 3, ChatRole::User, "Only politics"),
+    ];
+    end_reply(&mut surface, &transcript, completed(attempt));
+    assert!(surface.steered_shown().is_empty());
+    let read = cards(&mut surface);
+    assert_eq!(
+        read.iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Today's news?",
+            "In the US",
+            "Only politics",
+            "The headlines"
+        ]
+    );
+}
+
+/// **A steer the reply would not take stays a turn of its own** (D99): not
+/// drawn above the reply while it waits in the queue, and sent after the
+/// reply as a new question, it reads after it.
+#[test]
+fn a_refused_steer_stays_a_new_turn() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-claude", &[("agent-claude", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "later");
+    press(&mut surface, NamedKey::Enter);
+    surface.queue_action(QueueHit::Steer(0));
+    surface.apply_update(Update::SteerFailed(Failure {
+        code: "steer_unavailable".into(),
+        message: "This reply cannot take a message now.".into(),
+        retryable: true,
+        details: Default::default(),
+    }));
+    let live = cards(&mut surface);
+    assert_eq!(live.len(), 2, "only the question and the reply");
+    assert_eq!(queued_texts(&surface), ["later"]);
+
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "first"),
+        stored(&transcript, 1, ChatRole::Assistant, "first reply"),
+        stored(&transcript, 2, ChatRole::User, "later"),
+        stored(&transcript, 3, ChatRole::Assistant, "later reply"),
+    ];
+    end_reply(&mut surface, &transcript, completed(attempt));
+    let read = cards(&mut surface);
+    assert_eq!(
+        read.iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "first reply", "later", "later reply"]
+    );
+}
+
+/// **The NEW divider counts what was written, not where it reads** (D84,
+/// D99): the newest message seen can be a steer, which reads above its
+/// reply; the divider still goes above the turn that came after, not above
+/// the reply that was seen.
+#[test]
+fn the_new_divider_goes_after_a_seen_steer_and_its_reply() {
+    let (mut surface, mut transcript, _commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "Question"),
+        stored(&transcript, 1, ChatRole::Assistant, "Reply"),
+        stored(&transcript, 2, ChatRole::User, "steered"),
+        stored(&transcript, 3, ChatRole::User, "Next"),
+        stored(&transcript, 4, ChatRole::Assistant, "Next reply"),
+    ];
+    let seen = transcript.messages[2].id;
+    let first_new = transcript.messages[3].id;
+    let chat = transcript.chat.id;
+    surface.transcript = Some(transcript);
+    surface.show_new_from(chat, Some(seen));
+    cards(&mut surface);
+    let index = surface.new_divider_index().expect("a turn came after");
+    assert_eq!(surface.message_layouts[index].id, Some(first_new));
 }
 
 /// A steer the reply would not take goes back to the head of the queue,

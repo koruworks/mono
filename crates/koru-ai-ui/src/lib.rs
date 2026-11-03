@@ -6367,7 +6367,9 @@ impl ChatSurface {
                 });
             }
             let mut worked: HashSet<MessageId> = HashSet::new();
-            for message in &transcript.messages {
+            // As a person reads them: a message steered into a reply
+            // under its question, before the reply (D99).
+            for message in koru_ai_core::reading_order(&transcript.messages) {
                 if !message.markdown.is_empty() || message.state != MessageState::Pending {
                     let wrap_width = message_wrap_width(message.role, width);
                     let usage_text = (message.role == ChatRole::Assistant
@@ -6610,6 +6612,13 @@ impl ChatSurface {
             let tiles = self.pending_user_tiles.clone();
             let card = self.user_card(&markdown, tiles, width);
             messages.push(card);
+            // Messages the running reply took read under the question,
+            // in the order sent, and the reply follows them — as the
+            // transcript reads once it is read back (D99).
+            for steered in self.steered_shown() {
+                let card = self.user_card(&steered, Vec::new(), width);
+                messages.push(card);
+            }
             let assistant_width = message_wrap_width(ChatRole::Assistant, width);
             let usage_text = (!self.draft.is_empty())
                 .then_some(self.live_usage.as_ref())
@@ -6686,12 +6695,6 @@ impl ChatSurface {
                     attachments: Vec::new(),
                 }
             }));
-            // Messages steered into the running reply follow it, where the
-            // transcript records them (`queue`).
-            for steered in self.steered_shown() {
-                let card = self.user_card(&steered, Vec::new(), width);
-                messages.push(card);
-            }
         }
         self.message_layouts = messages;
         self.position_conversation_items();

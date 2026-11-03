@@ -2996,3 +2996,57 @@ fn a_steer_is_refused_unless_a_local_agent_turn_is_running() {
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+/// **An export reads as the chat does** (D99): a message steered into a
+/// reply is written under its question, before the reply, though it was
+/// stored after it; the export through that reply carries it, and a later
+/// turn follows.
+#[test]
+fn an_export_carries_a_steer_under_its_question() {
+    let chat = ChatId::new();
+    let row = |ordinal: u32, role: ChatRole, markdown: &str| Message {
+        id: MessageId::new(),
+        chat_id: chat,
+        ordinal,
+        role,
+        state: MessageState::Complete,
+        markdown: markdown.into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: Timestamp::from_millis(i64::from(ordinal) + 1),
+        completed_at: Some(Timestamp::from_millis(i64::from(ordinal) + 1)),
+    };
+    let messages = vec![
+        row(0, ChatRole::User, "Today's news?"),
+        row(1, ChatRole::Assistant, "The headlines"),
+        row(2, ChatRole::User, "In the US"),
+        row(3, ChatRole::User, "Next"),
+        row(4, ChatRole::Assistant, "Next reply"),
+    ];
+    let block = MessageBlockId::new();
+
+    let through_reply = export_markdown(&messages, messages[1].id, chat, block);
+    assert!(
+        through_reply.starts_with(
+            "## You\n\nToday's news?\n\n## You\n\nIn the US\n\n## Koru AI\n\nThe headlines\n\n"
+        ),
+        "{through_reply}"
+    );
+    assert!(!through_reply.contains("Next"));
+
+    let through_next = export_markdown(&messages, messages[4].id, chat, block);
+    let order: Vec<_> = [
+        "Today's news?",
+        "In the US",
+        "The headlines",
+        "Next",
+        "Next reply",
+    ]
+    .iter()
+    .map(|text| through_next.find(text).unwrap())
+    .collect();
+    assert!(order.is_sorted(), "{through_next}");
+}

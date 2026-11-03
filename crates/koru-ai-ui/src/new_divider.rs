@@ -73,24 +73,39 @@ impl ChatSurface {
         }
     }
 
-    /// The message layout the divider goes above: the first message after
-    /// the one seen last, in the chat on screen. `None` when there is no
-    /// divider, it is another chat's, or nothing came after.
+    /// The message layout the divider goes above: the first, as the chat
+    /// reads, of the messages written after the one seen last, in the chat
+    /// on screen. Written after, not drawn after: a message steered into a
+    /// reply reads above it (D99), so the newest message seen can be drawn
+    /// above a reply that was seen too. A message not read back yet — the
+    /// running reply — is newer than any. `None` when there is no divider,
+    /// it is another chat's, or nothing came after.
     pub(crate) fn new_divider_index(&self) -> Option<usize> {
         let divider = self.new_divider.as_ref()?;
-        if self.transcript.as_ref()?.chat.id != divider.chat {
+        let transcript = self.transcript.as_ref()?;
+        if transcript.chat.id != divider.chat {
             return None;
         }
-        let seen = self
+        let written = |id: MessageId| {
+            transcript
+                .messages
+                .iter()
+                .find(|message| message.id == id)
+                .map(|message| message.ordinal)
+        };
+        let seen = written(divider.after)?;
+        if !self
             .message_layouts
             .iter()
-            .position(|message| message.id == Some(divider.after))?;
-        self.message_layouts
-            .iter()
-            .enumerate()
-            .skip(seen + 1)
-            .find(|(_, message)| message.id.is_some())
-            .map(|(index, _)| index)
+            .any(|message| message.id == Some(divider.after))
+        {
+            return None;
+        }
+        self.message_layouts.iter().position(|message| {
+            message
+                .id
+                .is_some_and(|id| written(id).is_none_or(|ordinal| ordinal > seen))
+        })
     }
 
     /// Where the chat should open, once, when it opens on its divider: the

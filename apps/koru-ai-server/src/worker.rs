@@ -2903,7 +2903,6 @@ impl WorkerState {
                 false,
             ));
         }
-        let through_ordinal = through.ordinal;
         let now = Timestamp::now();
         let chat = Chat {
             id: request.branch_chat_id,
@@ -2922,10 +2921,15 @@ impl WorkerState {
             created_at: now,
             updated_at: now,
         };
-        let prefix: Vec<_> = source_messages
+        // Through the message as the chat reads (D99): a reply brings the
+        // messages steered into it, though they were written after it.
+        // Copied in stored order, so the branch reads the same way.
+        let mut prefix: Vec<Message> = koru_ai_core::read_through(&source_messages, through.id)
+            .unwrap_or_default()
             .into_iter()
-            .filter(|message| message.ordinal <= through_ordinal)
+            .cloned()
             .collect();
+        prefix.sort_by_key(|message| message.ordinal);
         let mut message_ids = HashMap::new();
         let messages: Vec<_> = prefix
             .into_iter()
@@ -3067,7 +3071,7 @@ impl WorkerState {
             ));
         }
         if stored.status == ExportStatus::Pending {
-            let markdown = export_markdown(&messages, through.ordinal, chat.id, first_block.id);
+            let markdown = export_markdown(&messages, through.id, chat.id, first_block.id);
             self.export_pool
                 .try_submit(ExportJob {
                     export: stored.clone(),
@@ -6168,17 +6172,16 @@ fn active_history_conflict() -> Failure {
     )
 }
 
+/// The chat through `through` as a document, in the order it reads (D99):
+/// a message steered into a reply under its question, before the reply.
 fn export_markdown(
     messages: &[Message],
-    through_ordinal: u32,
+    through: MessageId,
     chat: ChatId,
     block: MessageBlockId,
 ) -> String {
     let mut markdown = String::new();
-    for message in messages
-        .iter()
-        .filter(|message| message.ordinal <= through_ordinal)
-    {
+    for message in koru_ai_core::read_through(messages, through).unwrap_or_default() {
         markdown.push_str(match message.role {
             ChatRole::User => "## You\n\n",
             ChatRole::Assistant => "## Koru AI\n\n",
