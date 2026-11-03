@@ -58,7 +58,9 @@ pub(crate) const RAIL_W: f32 = 44.0;
 /// **Air between the rail and the picker's content** — the search row, the
 /// list and the footer all start this far right of the rail, so its marks
 /// are not flush against them (the composer's toolbar keeps the same 8 px
-/// between its controls).
+/// between its controls). The picker lays out with the element token
+/// [`elements::CONTENT_GAP`]; this value is what the tests hold it to.
+#[cfg(test)]
 pub(crate) const RAIL_CONTENT_GAP: f32 = 8.0;
 const RAIL_BUTTON: f32 = 32.0;
 const RAIL_GAP: f32 = 6.0;

@@ -50,7 +50,8 @@ pub(crate) const RAIL_MARK: Metric = Metric::new("PICKER_RAIL_MARK", RAIL_BUTTON
 /// The search row, ↻ at its end ([`SEARCH_H`]).
 pub(crate) const SEARCH_ROW_H: Metric = Metric::new("PICKER_SEARCH_H", SEARCH_H);
 
-/// Air between the rail and the content ([`super::RAIL_CONTENT_GAP`]).
+/// Air between the rail and the content: 8 px, the composer toolbar's
+/// control gap.
 pub(crate) const CONTENT_GAP: Tagged<Space> = Tagged::new("RAIL_CONTENT_GAP", Space::S2);
 /// The content's inset from the panel's top, end and foot ([`super::PAD`]).
 pub(crate) const PANEL_INSET: Tagged<Space> = Tagged::new("PICKER_PAD", Space::S1);
