@@ -36,49 +36,26 @@ fn f9_resolves_only_where_the_recorder_exists() {
     );
 }
 
-/// `Alt+1..8` are the explore column's eight views, in icon order; the
-/// other digits under Alt are nobody's, and Ctrl+Alt+digit stays a heading.
+/// `Alt+1..8` are the rail's eight **slots**, top to bottom — which view is in
+/// one is the rail's to say, not this resolver's (the user, 2026-11-03: per
+/// slot, not per app). The other digits under Alt are nobody's, and
+/// Ctrl+Alt+digit stays a heading.
 #[test]
-fn alt_digits_show_the_eight_views() {
-    use crate::panes::explore::NavigatorMode;
+fn alt_digits_are_the_rails_eight_slots() {
     // The view modifier: Alt, or ⌃⌘ on a Mac (`koru_keys::VIEW`, M42).
     const ALT: ModifiersState = koru_keys::VIEW;
-    assert_eq!(
-        resolve(&ch("1"), Some("1"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Documents))
-    );
-    assert_eq!(
-        resolve(&ch("2"), Some("2"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Files))
-    );
-    assert_eq!(
-        resolve(&ch("3"), Some("3"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Tasks))
-    );
-    // Chats sits right of Tasks, so Agents and Artifacts moved up one (R3).
-    assert_eq!(
-        resolve(&ch("4"), Some("4"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Chats))
-    );
-    assert_eq!(
-        resolve(&ch("5"), Some("5"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Agents))
-    );
-    assert_eq!(
-        resolve(&ch("6"), Some("6"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Artifacts))
-    );
-    // Canvases is the seventh icon, so Alt+7 (CANVAS P1.3), and Socials the
-    // eighth, so Alt+8; the digit past the last view is still nobody's.
-    assert_eq!(
-        resolve(&ch("7"), Some("7"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Canvases))
-    );
-    assert_eq!(
-        resolve(&ch("8"), Some("8"), ALT),
-        Some(Chord::ShowNavigator(NavigatorMode::Socials))
-    );
+    for (slot, digit) in ["1", "2", "3", "4", "5", "6", "7", "8"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            resolve(&ch(digit), Some(digit), ALT),
+            Some(Chord::ShowRailSlot(slot)),
+            "Alt+{digit}"
+        );
+    }
     assert_eq!(resolve(&ch("9"), Some("9"), ALT), None);
+    assert_eq!(resolve(&ch("0"), Some("0"), ALT), None);
     assert_eq!(
         resolve(&ch("1"), Some("1"), PRIMARY_ALT),
         None,
@@ -465,24 +442,27 @@ fn the_container_binds_nothing_the_registry_has_not_recorded() {
 }
 
 /// **The simplified product's chords** (koru-features all off): the hidden
-/// surfaces' chords fall through as if unbound, the view digits skip rather
-/// than renumber, and the rest resolve unchanged.
+/// surfaces' chords fall through as if unbound and the rest resolve
+/// unchanged. The view digits are not among them: they are the rail's slots,
+/// which no switch hides — a hidden view takes no slot, and a digit with no
+/// view in its slot falls through at the container (`MainView::key`).
 #[test]
 fn hidden_surfaces_chords_fall_through() {
     // The view modifier: Alt, or ⌃⌘ on a Mac (`koru_keys::VIEW`, M42).
     const ALT: ModifiersState = koru_keys::VIEW;
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
-        assert_eq!(
-            resolve(&ch("1"), Some("1"), ALT),
-            Some(Chord::ShowNavigator(NavigatorMode::Documents))
-        );
-        assert_eq!(
-            resolve(&ch("2"), Some("2"), ALT),
-            Some(Chord::ShowNavigator(NavigatorMode::Files))
-        );
-        for digit in ["3", "4", "5", "6", "7", "8"] {
-            assert_eq!(resolve(&ch(digit), Some(digit), ALT), None, "Alt+{digit}");
+        for (digit, slot) in ["1", "2", "3", "8"].into_iter().zip([0, 1, 2, 7]) {
+            assert_eq!(
+                resolve(&ch(digit), Some(digit), ALT),
+                Some(Chord::ShowRailSlot(slot)),
+                "Alt+{digit}"
+            );
         }
+        assert_eq!(
+            resolve(&ch("h"), Some("h"), ALT),
+            None,
+            "Home is hidden for now"
+        );
         assert_eq!(resolve(&ch("j"), Some("j"), PRIMARY_SHIFT), None, "AI pane");
         assert_eq!(
             resolve(&ch("r"), Some("r"), PRIMARY_SHIFT),
@@ -500,50 +480,17 @@ fn hidden_surfaces_chords_fall_through() {
         );
         assert_eq!(resolve(&ch("t"), Some("t"), PRIMARY), Some(Chord::NewTab));
     });
-    // One flag on brings back only its own digit.
+    // One flag on brings back only its own chord.
     koru_features::testing::with(
         koru_features::Features {
             ai: true,
             ..koru_features::Features::ALL_OFF
         },
         || {
-            assert_eq!(resolve(&ch("3"), Some("3"), ALT), None);
-            assert_eq!(
-                resolve(&ch("4"), Some("4"), ALT),
-                Some(Chord::ShowNavigator(NavigatorMode::Chats))
-            );
             assert_eq!(
                 resolve(&ch("j"), Some("j"), PRIMARY_SHIFT),
                 Some(Chord::ToggleAi)
             );
-        },
-    );
-    // Canvases and Socials keep their own digits: Alt+7 and Alt+8 skip, never
-    // renumber, and each comes back with its own flag alone.
-    koru_features::testing::with(
-        koru_features::Features {
-            socials: true,
-            ..koru_features::Features::ALL_OFF
-        },
-        || {
-            assert_eq!(resolve(&ch("7"), Some("7"), ALT), None);
-            assert_eq!(
-                resolve(&ch("8"), Some("8"), ALT),
-                Some(Chord::ShowNavigator(NavigatorMode::Socials))
-            );
-        },
-    );
-    koru_features::testing::with(
-        koru_features::Features {
-            canvas: true,
-            ..koru_features::Features::ALL_OFF
-        },
-        || {
-            assert_eq!(
-                resolve(&ch("7"), Some("7"), ALT),
-                Some(Chord::ShowNavigator(NavigatorMode::Canvases))
-            );
-            assert_eq!(resolve(&ch("8"), Some("8"), ALT), None);
         },
     );
 }
@@ -553,7 +500,6 @@ fn hidden_surfaces_chords_fall_through() {
 #[cfg(target_os = "macos")]
 #[test]
 fn option_digits_type_on_a_mac_and_control_command_digits_switch() {
-    use crate::panes::explore::NavigatorMode;
     for (key, text) in [("1", "1"), ("¡", "¡"), ("2", "™")] {
         assert_eq!(
             resolve(&ch(key), Some(text), ModifiersState::ALT),
@@ -564,10 +510,10 @@ fn option_digits_type_on_a_mac_and_control_command_digits_switch() {
     let control_command = ModifiersState::CONTROL | ModifiersState::SUPER;
     assert_eq!(
         resolve(&ch("1"), Some("1"), control_command),
-        Some(Chord::ShowNavigator(NavigatorMode::Documents))
+        Some(Chord::ShowRailSlot(0))
     );
     assert_eq!(
         resolve(&ch("2"), Some("2"), control_command),
-        Some(Chord::ShowNavigator(NavigatorMode::Files))
+        Some(Chord::ShowRailSlot(1))
     );
 }

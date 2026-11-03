@@ -610,12 +610,12 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_ENABLE_CANVAS,
-        "Shows canvases: the Canvases view (Alt+7), the `+` menu's Canvases flyout and canvas tabs. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows canvases: the Canvases view on the rail, the `+` menu's Canvases flyout and canvas tabs. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(
         name::KORU_ENABLE_SOCIALS,
-        "Shows Socials: the Socials view (Alt+8), New social post and the Socials tab, and starts the Agent's Socials publisher (off, nothing publishes; scheduled posts wait). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Socials: the Socials view on the rail, New social post and the Socials tab, and starts the Agent's Socials publisher (off, nothing publishes; scheduled posts wait). Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces), koru-agent.exe (the Socials publisher)",
     ),
     // -------------------------------------------- behaviour / test switches

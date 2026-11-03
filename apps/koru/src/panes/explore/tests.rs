@@ -5410,9 +5410,10 @@ fn the_artifacts_mode_is_reached_by_its_icon_and_owns_the_column() {
         NavigatorMode::parse("artifacts"),
         Some(NavigatorMode::Artifacts)
     );
+    // Its chord is its slot's: sixth in the default order, so `Alt+6`.
     assert_eq!(
-        NavigatorMode::Artifacts.shortcut(),
-        Some(koru_keys::ShortcutId::ShowArtifacts)
+        view.rail_shortcut(NavigatorMode::Artifacts),
+        Some(koru_keys::ShortcutId::ShowRailView6)
     );
 }
 
@@ -6335,7 +6336,8 @@ fn showing_chats(chats: Vec<koru_ai_core::Chat>) -> ExploreView {
     view
 }
 
-/// **Chats sits right of Tasks** (R3): the fourth icon, `Alt+4`, with Agents
+/// **Chats sits right of Tasks** (R3): the fourth icon by default, so the
+/// fourth slot's `Alt+4`, with Agents
 /// and Artifacts one step further along — and the column below the heading
 /// becomes the Chats surface's.
 #[test]
@@ -6368,15 +6370,16 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
     assert!(view.rows.is_empty(), "the surface is not the library");
     assert_eq!(NavigatorMode::Chats.token(), "chats");
     assert_eq!(NavigatorMode::parse("chats"), Some(NavigatorMode::Chats));
+    // Fourth in the default order, so its slot's chord is `Alt+4`.
     assert_eq!(
-        NavigatorMode::Chats.shortcut(),
-        Some(koru_keys::ShortcutId::ShowChats)
+        view.rail_shortcut(NavigatorMode::Chats),
+        Some(koru_keys::ShortcutId::ShowRailView4)
     );
     assert_eq!(
         ExploreView::navigator_mode_icon(NavigatorMode::Chats),
         koru_chats_ui::MODE_ICON
     );
-    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowChats).chord;
+    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowRailView4).chord;
     assert!(chord.matches(&Key::Character("4".into()), Some("4"), koru_keys::VIEW));
 }
 
@@ -6401,9 +6404,10 @@ fn socials_mode_requests_its_shared_tab_and_has_no_library_footer() {
         NavigatorMode::parse(NavigatorMode::Socials.token()),
         Some(NavigatorMode::Socials)
     );
+    // Last of the eight in the default order: `Alt+8`.
     assert_eq!(
-        NavigatorMode::Socials.shortcut(),
-        Some(koru_keys::ShortcutId::ShowSocials)
+        view.rail_shortcut(NavigatorMode::Socials),
+        Some(koru_keys::ShortcutId::ShowRailView8)
     );
     assert_eq!(
         ExploreView::navigator_mode_icon(NavigatorMode::Socials),

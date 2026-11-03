@@ -147,10 +147,11 @@ fn enter_on_the_toggle_shuts_the_pane_and_the_lane_keeps_the_keyboard() {
 
 /// **`Ctrl+Shift+↓`/`↑` on a rail view the keyboard is on moves it**, and the
 /// keyboard goes with it; at the top there is nowhere to go and the chord is
-/// still the view's. The order is what the session saves, and the view's own
-/// shortcut goes with it — `Alt+4` is Chats wherever Chats sits.
+/// still the view's. The order is what the session saves, and the digits stay
+/// with the slots — the user, 2026-11-03: "if I move Chats to first
+/// position, it becomes Alt+1".
 #[test]
-fn the_move_chords_move_the_focused_rail_view_and_its_shortcut_goes_with_it() {
+fn the_move_chords_move_the_focused_rail_view_and_the_slots_keep_their_digits() {
     koru_features::testing::with(koru_features::Features::ALL_ON, || {
         let (mut v, mut workspace) = container();
         assert!(v.key(
@@ -187,6 +188,25 @@ fn the_move_chords_move_the_focused_rail_view_and_its_shortcut_goes_with_it() {
         );
         assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(0)));
         assert_eq!(v.explore.rail_modes()[0], NavigatorMode::Chats);
+        // First in the rail, so `Alt+1` — and Documents, one down, `Alt+2`.
+        assert_eq!(
+            v.explore.rail_shortcut(NavigatorMode::Chats),
+            Some(koru_keys::ShortcutId::ShowRailView1)
+        );
+        assert_eq!(
+            v.explore.rail_shortcut(NavigatorMode::Documents),
+            Some(koru_keys::ShortcutId::ShowRailView2)
+        );
+        // The ring stays on Chats while the digits are pressed.
+        assert!(alt_digit(&mut v, &mut workspace.ws, "4"));
+        assert_eq!(
+            v.explore.navigator_mode(),
+            NavigatorMode::Tasks,
+            "Chats, Documents, Files, Tasks: the fourth slot"
+        );
+        assert!(alt_digit(&mut v, &mut workspace.ws, "1"));
+        assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(0)));
 
         // Down once: Chats under Documents.
         let down = Key::Named(NamedKey::ArrowDown);
@@ -208,21 +228,61 @@ fn the_move_chords_move_the_focused_rail_view_and_its_shortcut_goes_with_it() {
             settings.rail_order
         );
 
-        // The view's chord did not move with its place.
+        // The digits stayed with the slots: Chats is second now, so `Alt+2`.
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
-        assert!(v.key(
-            &mut workspace.ws,
-            &Key::Character("1".into()),
-            Some("1"),
-            koru_keys::VIEW
-        ));
+        assert!(alt_digit(&mut v, &mut workspace.ws, "1"));
         assert_eq!(v.explore.navigator_mode(), NavigatorMode::Documents);
-        assert!(v.key(
-            &mut workspace.ws,
-            &Key::Character("4".into()),
-            Some("4"),
-            koru_keys::VIEW
-        ));
+        assert!(alt_digit(&mut v, &mut workspace.ws, "2"));
+        assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
+        assert_eq!(
+            v.explore.rail_shortcut(NavigatorMode::Chats),
+            Some(koru_keys::ShortcutId::ShowRailView2)
+        );
+    });
+}
+
+fn alt_digit(v: &mut MainView, ws: &mut WorkspaceDoc, digit: &str) -> bool {
+    v.key(
+        ws,
+        &Key::Character(digit.into()),
+        Some(digit),
+        koru_keys::VIEW,
+    )
+}
+
+/// **A hidden view takes no slot, so the digits count only what is drawn.**
+/// With Tasks and Koru AI's Chats on alone, the rail is Documents, Files,
+/// Tasks, Chats — and with Tasks off it is Documents, Files, Chats, so
+/// Chats is `Alt+3`. A digit with no view in its slot falls through to the
+/// tab as an unbound key would: nothing is shown and nothing is claimed.
+#[test]
+fn a_hidden_view_takes_no_slot_and_an_empty_slots_digit_falls_through() {
+    use koru_features::Features;
+    let chats_alone = Features {
+        ai: true,
+        ..Features::ALL_OFF
+    };
+    koru_features::testing::with(chats_alone, || {
+        let (mut v, mut workspace) = container();
+        assert_eq!(
+            v.explore.rail_modes(),
+            [
+                NavigatorMode::Documents,
+                NavigatorMode::Files,
+                NavigatorMode::Chats
+            ]
+        );
+        assert!(alt_digit(&mut v, &mut workspace.ws, "3"));
+        assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
+        assert_eq!(
+            v.explore.rail_shortcut(NavigatorMode::Chats),
+            Some(koru_keys::ShortcutId::ShowRailView3)
+        );
+        assert_eq!(v.explore.rail_shortcut(NavigatorMode::Tasks), None);
+        assert!(
+            !alt_digit(&mut v, &mut workspace.ws, "4"),
+            "the fourth slot is empty: the key is not the container's"
+        );
         assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
     });
 }

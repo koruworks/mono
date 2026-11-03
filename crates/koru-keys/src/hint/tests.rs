@@ -71,16 +71,10 @@ fn every_section_has_a_bit_of_its_own() {
 #[test]
 fn a_hidden_surfaces_chord_is_not_advertised() {
     let hidden = [
-        ShortcutId::ShowTasks,
-        ShortcutId::ShowChats,
-        ShortcutId::ShowAgents,
-        ShortcutId::ShowArtifacts,
         ShortcutId::ToggleAiPane,
         ShortcutId::CopyCloudDetails,
         ShortcutId::Reminders,
         ShortcutId::Delegate,
-        ShortcutId::ShowCanvases,
-        ShortcutId::ShowSocials,
     ];
     koru_features::testing::with(koru_features::Features::ALL_OFF, || {
         for id in hidden {
@@ -90,8 +84,11 @@ fn a_hidden_surfaces_chord_is_not_advertised() {
             }
             let _ = registry::get(id);
         }
-        assert!(ShortcutId::ShowDocuments.shown_in_product());
-        assert!(ShortcutId::ShowFiles.shown_in_product());
+        // The rail's digits belong to its slots, not to its views: no switch
+        // hides one, because a hidden view takes no slot at all.
+        for id in registry::RAIL_SLOTS {
+            assert!(id.shown_in_product(), "{id:?}");
+        }
     });
     for id in hidden {
         assert!(id.shown_in_product(), "{id:?} with every surface on");

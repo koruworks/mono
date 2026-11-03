@@ -18,6 +18,11 @@
 //! and the profile square are the foot's; none of them is a view and none of
 //! them is carried.
 //!
+//! **The digits stay in their slots.** `Alt+1` is the first view down the
+//! rail, whatever it is ([`ExploreView::rail_shortcut`]): a view carried
+//! from the fourth slot to the first is `Alt+1` the moment it lands there,
+//! and each view it passed moves one digit down with its square.
+//!
 //! **Order and frames.** The order changes the moment a square crosses half
 //! way, exactly as a tab's does, so hit-testing and the accessibility tree
 //! always read the order that is drawn; it reaches the session file at the
@@ -51,6 +56,21 @@ impl ExploreView {
     /// The views the rail draws, in the person's order.
     pub fn rail_modes(&self) -> Vec<NavigatorMode> {
         self.rail_order.visible()
+    }
+
+    /// The view in rail slot `slot`, counted from zero down the views drawn
+    /// — what `Alt+(slot+1)` shows. `None` for a slot with no view in it.
+    pub fn rail_mode_at(&self, slot: usize) -> Option<NavigatorMode> {
+        self.rail_modes().get(slot).copied()
+    }
+
+    /// The chord that shows `mode` **where it sits now**: its slot's digit,
+    /// never a digit of its own (`koru_keys::rail_slot`). Moving a view
+    /// moves its chord. `None` for a view this build hides, which takes no
+    /// slot, and for one past the last digit.
+    pub fn rail_shortcut(&self, mode: NavigatorMode) -> Option<koru_keys::ShortcutId> {
+        let slot = self.rail_modes().iter().position(|m| *m == mode)?;
+        koru_keys::rail_slot(slot)
     }
 
     /// The `rail_order=` line to save, empty for the default order.

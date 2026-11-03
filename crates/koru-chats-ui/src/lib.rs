@@ -7,7 +7,8 @@
 //! hosts** (I5):
 //!
 //! - the workspace window's navigator, as the *Chats* view right of Tasks
-//!   (`Alt+4`), where a row opens the chat as a tab;
+//!   (`Alt+4` while it sits fourth on the rail), where a row opens the chat
+//!   as a tab;
 //! - the standalone chat window, as the floating pane its *Chats* button
 //!   opens, where a row reads the chat in place.
 //!

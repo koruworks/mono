@@ -25,9 +25,11 @@
 //! ignores the line entirely — its `from_text` passes over keys it does not
 //! know — draws its default order, and drops the line on its next save.
 //!
-//! **Shortcuts stay with their view.** `Alt+4` is Chats wherever Chats sits;
-//! the order is where a view is drawn and which way the arrows walk, nothing
-//! else.
+//! **Shortcuts stay with their slot** (the user, 2026-11-03: "the Alt+X
+//! shortcuts are per slot, not per app"). `Alt+1` is whatever view is first
+//! in [`RailOrder::visible`], so putting Chats on top makes it `Alt+1`; a
+//! hidden view takes no slot and no digit. The order is where a view is
+//! drawn, which way the arrows walk and which digit shows it.
 
 use crate::panes::explore::NavigatorMode;
 

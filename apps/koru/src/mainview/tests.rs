@@ -7836,10 +7836,14 @@ fn home_is_hidden_and_every_way_in_lands_on_documents() {
     );
     assert_eq!(
         crate::mainview::keys::resolve(&Key::Character("1".into()), Some("1"), alt),
-        Some(crate::mainview::keys::Chord::ShowNavigator(
-            NavigatorMode::Documents
-        )),
-        "Alt+1 is still Documents"
+        Some(crate::mainview::keys::Chord::ShowRailSlot(0)),
+        "Alt+1 is the first slot"
+    );
+    let (v, _) = container();
+    assert_eq!(
+        v.explore.rail_mode_at(0),
+        Some(NavigatorMode::Documents),
+        "and Documents is in it: a hidden Home takes no slot"
     );
     assert_eq!(
         koru_keys::show_hint(koru_keys::ShortcutId::ShowHome, koru_keys::Section::Tooltip),
@@ -8611,9 +8615,9 @@ fn dragging_a_list_on_the_rail_writes_the_sections_order() {
     );
 }
 
-/// **`Alt+1..3` show the column's three views**, opening the column when it
-/// is closed, and each icon's tooltip names its view and teaches that chord
-/// from the registry.
+/// **`Alt+1..3` show the views in the rail's first three slots**, opening
+/// the column when it is closed, and each icon's tooltip names its view and
+/// teaches its slot's chord from the registry.
 #[test]
 fn alt_digits_show_the_views_and_the_icons_teach_them() {
     use crate::panes::explore::NavigatorMode;
@@ -8638,17 +8642,20 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
             .navigator_mode_tooltip(x, y)
             .unwrap_or_else(|| panic!("{mode:?} has a tooltip"));
         assert_eq!(tip.label, mode.label());
-        // Home has no chord (Q-C); every other app teaches the one the
-        // registry binds.
+        // Each icon teaches its slot's chord, from the registry.
         assert_eq!(
             tip.shortcut,
-            mode.shortcut().map(koru_keys::label_of),
+            v.explore.rail_shortcut(mode).map(koru_keys::label_of),
             "{mode:?} teaches the chord the registry binds"
         );
         assert_eq!(tip.anchor, mode_icon(&v, mode), "anchored on its own icon");
     }
     assert_eq!(
-        koru_keys::label_of(NavigatorMode::Tasks.shortcut().expect("Tasks has a chord")),
+        koru_keys::label_of(
+            v.explore
+                .rail_shortcut(NavigatorMode::Tasks)
+                .expect("Tasks has a chord")
+        ),
         // The registry's label, in the platform's own spelling.
         // ⌃⌘ on a Mac, where ⌥digit types a character (M42).
         if cfg!(target_os = "macos") {

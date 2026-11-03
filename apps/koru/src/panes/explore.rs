@@ -223,9 +223,9 @@ impl NavigatorMode {
         }
     }
 
-    /// The word the apps row and the icon's tooltip say — the registry's
-    /// label for the same chord, so the chip, the tooltip and the shortcut
-    /// sheet agree. In the window's language.
+    /// The word the apps row and the icon's tooltip say, in the window's
+    /// language. (The chord on the tooltip's second line is its slot's, not
+    /// the view's: `ExploreView::rail_shortcut`.)
     pub fn label(self) -> &'static str {
         self.label_in(crate::format::lang())
     }
@@ -248,26 +248,15 @@ impl NavigatorMode {
         }
     }
 
-    /// The chord that shows this view, by its registry id.
-    pub fn shortcut(self) -> Option<koru_keys::ShortcutId> {
-        Some(match self {
-            // Not a digit: `Alt+0` stays free (QUESTIONS.md Q-C); Home is
-            // its letter (E69).
-            Self::Home => koru_keys::ShortcutId::ShowHome,
-            Self::Documents => koru_keys::ShortcutId::ShowDocuments,
-            Self::Files => koru_keys::ShortcutId::ShowFiles,
-            Self::Tasks => koru_keys::ShortcutId::ShowTasks,
-            Self::Chats => koru_keys::ShortcutId::ShowChats,
-            Self::Agents => koru_keys::ShortcutId::ShowAgents,
-            Self::Artifacts => koru_keys::ShortcutId::ShowArtifacts,
-            Self::Canvases => koru_keys::ShortcutId::ShowCanvases,
-            Self::Socials => koru_keys::ShortcutId::ShowSocials,
-        })
-    }
+    // **No `shortcut()` here.** A view has no digit of its own: `Alt+1` is
+    // the first slot down the rail, whatever the person put there (the user,
+    // 2026-11-03), so the chord is asked of the rail —
+    // `ExploreView::rail_shortcut` — not of the view. Home's `Alt+H` is the
+    // registry's `ShowHome`.
 
-    /// Every mode, in the order the icons sit and the digits count. The rects,
-    /// the hit test and [`ExploreView::modes_right`] all read this, so adding a
-    /// mode is one entry here rather than four widths to keep in step.
+    /// Every mode, in the rail's **default** order — the person can reorder
+    /// it (`sidebar::rail_order`). Adding a mode is one entry here rather
+    /// than four widths to keep in step.
     pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Documents,
@@ -299,8 +288,8 @@ impl NavigatorMode {
 
     /// [`ALL`](Self::ALL) minus the modes this build hides, in the same
     /// order: the rail's **default** order. A hidden mode leaves no gap: the
-    /// icons close up, while its `Alt+digit` simply stops resolving
-    /// (`mainview::keys::Chord::shown_in_product`).
+    /// icons close up, and the digits with them — a hidden view takes no
+    /// slot, so `Alt+3` is whatever sits third.
     ///
     /// **Test-only now.** The icons, their rects, the hit test and the
     /// accessibility tree are built from the person's order

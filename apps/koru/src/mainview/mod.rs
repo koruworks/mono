@@ -14595,7 +14595,12 @@ impl MainView {
             return true;
         }
         // Container chords first: a tab is not the active view's to close.
-        if let Some(chord) = keys::resolve(key, text, mods) {
+        if let Some(chord) = keys::resolve(key, text, mods).filter(|chord| {
+            // A rail digit with no view in its slot is nobody's: it falls
+            // through to the tab, exactly as an unbound key would.
+            !matches!(chord, Chord::ShowRailSlot(slot)
+                if self.explore.rail_mode_at(*slot).is_none())
+        }) {
             return match chord {
                 Chord::NewTab => self.new_tab(),
                 Chord::AddContent => self.open_new_tab_menu(),
@@ -14610,6 +14615,7 @@ impl MainView {
                 Chord::OpenSettings => self.open_settings_tab_to_search(),
                 Chord::Rename => self.rename_here(ws),
                 Chord::ShowNavigator(mode) => self.show_navigator(mode),
+                Chord::ShowRailSlot(slot) => self.show_rail_slot(slot),
                 Chord::ManageWorkspaces => self.open_manage_workspaces(None),
                 Chord::WorkspacesPopover => self.open_workspaces_popover(),
                 Chord::ProfilesPopover => self.open_profiles_popover(),
@@ -16352,8 +16358,9 @@ impl MainView {
     }
 
     /// The tooltip for the view icon under the pointer, if one is: its name
-    /// and its `Alt+digit`, from the registry. Keys past the caption's and
-    /// well short of the history rows' 100+.
+    /// and its **slot's** `Alt+digit`, from the registry — the rects are in
+    /// rail order, so the icon's index is its slot. Keys past the caption's
+    /// and well short of the history rows' 100+.
     fn navigator_mode_tooltip(&self, x: f32, y: f32) -> Option<TooltipContent> {
         if self.group_drag().is_some() || self.sidebar.animating() {
             return None;
@@ -16365,14 +16372,23 @@ impl MainView {
             .find(|(_, (_, rect))| rect.w > 0.0 && rect.contains(x, y))
             .map(|(i, (mode, rect))| {
                 TooltipContent::new(40 + i as u64, rect, mode.label()).with_optional_shortcut(
-                    mode.shortcut()
+                    koru_keys::rail_slot(i)
                         .and_then(|id| koru_keys::show_hint(id, koru_keys::Section::Tooltip)),
                 )
             })
     }
 
-    /// `Alt+1..8`: show one of the explore column's views, opening the column
-    /// when it is closed — the view was asked for by name.
+    /// `Alt+1..8`: the view in that slot down the rail, or nothing — `false`,
+    /// and the key falls through — for a slot with no view in it.
+    pub(super) fn show_rail_slot(&mut self, slot: usize) -> bool {
+        match self.explore.rail_mode_at(slot) {
+            Some(mode) => self.show_navigator(mode),
+            None => false,
+        }
+    }
+
+    /// Show one of the explore column's views, opening the column when it is
+    /// closed — the view was asked for by name.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
         chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {

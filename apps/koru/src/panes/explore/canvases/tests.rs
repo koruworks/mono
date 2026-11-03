@@ -73,9 +73,10 @@ fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
         NavigatorMode::parse("canvases"),
         Some(NavigatorMode::Canvases)
     );
+    // Its chord is the seventh slot's, where it sits by default.
     assert_eq!(
-        NavigatorMode::Canvases.shortcut(),
-        Some(koru_keys::ShortcutId::ShowCanvases)
+        view.rail_shortcut(NavigatorMode::Canvases),
+        Some(koru_keys::ShortcutId::ShowRailView7)
     );
     assert_eq!(
         NavigatorMode::Canvases.label(),
@@ -85,7 +86,7 @@ fn the_canvases_mode_is_the_seventh_icon_and_answers_to_alt_7() {
         ExploreView::navigator_mode_icon(NavigatorMode::Canvases),
         koru_draw::icons::CANVAS
     );
-    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowCanvases).chord;
+    let chord = koru_keys::registry::get(koru_keys::ShortcutId::ShowRailView7).chord;
     assert!(chord.matches(
         &winit::keyboard::Key::Character("7".into()),
         Some("7"),

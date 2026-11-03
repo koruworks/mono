@@ -144,30 +144,31 @@ pub enum ShortcutId {
     /// Global search in this window.
     Search,
     ToggleExplore,
-    /// The explore column's views, `Alt+1` to `Alt+8` — the order the
-    /// icons at its head sit in. Plain Alt, not the primary modifier:
-    /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a tab, and the digits
-    /// are free under Alt alone on every layer.
-    /// Home is first and takes its letter, `Alt+H` (the CTO's note, E69):
-    /// `Alt+0` stays free.
+    /// Home, by its letter, `Alt+H` (the CTO's note, E69) — the one view
+    /// with a chord of its own. Hidden for now (`koru_features::HOME_SHOWN`),
+    /// so it resolves to nothing and is taught nowhere.
     ShowHome,
-    ShowDocuments,
-    ShowFiles,
-    ShowTasks,
-    /// The Chats view: every chat newest first, with who answered it
-    /// (AGENTUX I5). Right of Tasks, so `Alt+4`; Agents and Artifacts moved
-    /// up one digit to make room (decision R3).
-    ShowChats,
-    ShowAgents,
-    /// The Artifacts column: what the delegated runs of this workspace
-    /// produced, and what they left that is not a result yet (P1.13).
-    ShowArtifacts,
-    /// The Canvases section: every canvas in this workspace, one flat list.
-    /// The seventh icon, so `Alt+7` (CANVAS P1.3).
-    ShowCanvases,
-    /// The Socials navigator: drafts, channel queues and the publishing
-    /// schedule. The eighth icon, so `Alt+8` (after Canvases took `Alt+7`).
-    ShowSocials,
+    /// **The rail's slots, not its views** (the user, 2026-11-03: "the Alt+X
+    /// shortcuts are per slot, not per app"). `Alt+1` shows whatever view
+    /// sits first down the rail, `Alt+2` the second, through `Alt+8`; drag
+    /// Chats to the top and it is `Alt+1`. A view the build hides takes no
+    /// slot, so the digits count only what is drawn. [`RAIL_SLOTS`] is the
+    /// list and [`rail_slot`] the lookup every surface teaching a view's
+    /// chord goes through.
+    ///
+    /// Plain Alt (⌃⌘ on a Mac, [`crate::VIEW`]), not the primary modifier:
+    /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a tab, and the digits
+    /// are free under Alt alone on every layer. `Alt+0` and `Alt+9` stay
+    /// free: eight is every view this build can show with Home hidden, and a
+    /// view past the eighth slot has no digit.
+    ShowRailView1,
+    ShowRailView2,
+    ShowRailView3,
+    ShowRailView4,
+    ShowRailView5,
+    ShowRailView6,
+    ShowRailView7,
+    ShowRailView8,
     ToggleContext,
     ToggleAiPane,
     /// Bring back the tab that was closed last, as a browser does.
@@ -662,51 +663,51 @@ pub const REGISTRY: &[Shortcut] = &[
         Chord::new(On::Letter('h'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowDocuments,
+        ShortcutId::ShowRailView1,
         Layer::Container,
-        "Documents",
+        "Rail view 1",
         Chord::new(On::Letter('1'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowFiles,
+        ShortcutId::ShowRailView2,
         Layer::Container,
-        "Files",
+        "Rail view 2",
         Chord::new(On::Letter('2'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowTasks,
+        ShortcutId::ShowRailView3,
         Layer::Container,
-        "Tasks",
+        "Rail view 3",
         Chord::new(On::Letter('3'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowChats,
+        ShortcutId::ShowRailView4,
         Layer::Container,
-        "Chats",
+        "Rail view 4",
         Chord::new(On::Letter('4'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowAgents,
+        ShortcutId::ShowRailView5,
         Layer::Container,
-        "Agents",
+        "Rail view 5",
         Chord::new(On::Letter('5'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowArtifacts,
+        ShortcutId::ShowRailView6,
         Layer::Container,
-        "Artifacts",
+        "Rail view 6",
         Chord::new(On::Letter('6'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowCanvases,
+        ShortcutId::ShowRailView7,
         Layer::Container,
-        "Canvases",
+        "Rail view 7",
         Chord::new(On::Letter('7'), crate::VIEW),
     ),
     s(
-        ShortcutId::ShowSocials,
+        ShortcutId::ShowRailView8,
         Layer::Container,
-        "Socials",
+        "Rail view 8",
         Chord::new(On::Letter('8'), crate::VIEW),
     ),
     s(
@@ -1142,23 +1143,41 @@ impl ShortcutId {
         match self {
             // Home is hidden for now, by a constant (`koru_features::HOME_SHOWN`).
             Self::ShowHome => koru_features::home(),
-            Self::ShowTasks => koru_features::tasks(),
-            Self::ShowChats
-            | Self::ToggleAiPane
+            Self::ToggleAiPane
             | Self::Delegate
             | Self::CycleAgentMode
             | Self::JumpToLatest
             | Self::PreviousChat
             | Self::NextChat
             | Self::AddSelectionToChat => koru_features::ai(),
-            Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),
-            Self::ShowCanvases => koru_features::canvas(),
-            Self::ShowSocials => koru_features::socials(),
+            // The rail's slots (`ShowRailView1`…) are never hidden by a
+            // switch: a slot's chord is taught by whichever view sits in it,
+            // and a slot with no view in it is never asked (`rail_slot`).
             _ => true,
         }
     }
+}
+
+/// The rail's slots, top to bottom: `Alt+1` … `Alt+8` (⌃⌘ on a Mac). The
+/// chord belongs to the slot, never to the view in it — see
+/// [`ShortcutId::ShowRailView1`].
+pub const RAIL_SLOTS: [ShortcutId; 8] = [
+    ShortcutId::ShowRailView1,
+    ShortcutId::ShowRailView2,
+    ShortcutId::ShowRailView3,
+    ShortcutId::ShowRailView4,
+    ShortcutId::ShowRailView5,
+    ShortcutId::ShowRailView6,
+    ShortcutId::ShowRailView7,
+    ShortcutId::ShowRailView8,
+];
+
+/// The chord of the view in rail slot `index`, counted from zero down the
+/// views the rail draws. `None` past the eighth: that view has no digit.
+pub fn rail_slot(index: usize) -> Option<ShortcutId> {
+    RAIL_SLOTS.get(index).copied()
 }
 
 /// The entry for `id`. Panics if the table has no such row, which can only be a

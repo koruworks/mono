@@ -250,16 +250,18 @@ fn only_the_navigation_keys_are_claimed() {
     assert_eq!(Press::of(&Key::Named(NamedKey::F2)), None);
 }
 
-/// The column's own shortcut is in the registry, with the label the
-/// navigator's tooltip prints.
+/// **The column has no chord of its own.** The rail's digits belong to its
+/// slots (the user, 2026-11-03), so the column is `Alt+n` for whichever slot
+/// the person has put it in — the container's to say, not this crate's — and
+/// no registry row carries its name.
 #[test]
-fn the_column_has_one_shortcut_and_it_is_in_the_registry() {
-    let entry = koru_keys::REGISTRY
-        .iter()
-        .find(|entry| entry.id == koru_keys::ShortcutId::ShowArtifacts)
-        .expect("ShowArtifacts is in the registry");
-    assert_eq!(entry.layer, koru_keys::Layer::Container);
-    assert_eq!(entry.label, "Artifacts");
+fn the_column_has_no_chord_of_its_own() {
+    assert!(
+        !koru_keys::REGISTRY
+            .iter()
+            .any(|entry| entry.label == "Artifacts"),
+        "a row named for the column would be a chord that cannot follow it"
+    );
 }
 
 /// Nothing on the open path builds a reader, so nothing in a test build

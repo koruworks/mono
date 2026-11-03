@@ -70,7 +70,7 @@ pub struct Features {
     /// their restore, the tray's Agents submenu. Shell sessions are not an
     /// agent.
     pub agents: bool,
-    /// Explore's Agents and Artifacts views (`Alt+5`, `Alt+6`), and every
+    /// Explore's Agents and Artifacts views (their rail slots), and every
     /// way into them: revealing a run or a schedule, opening a result from
     /// the Artifacts column. Shown only with [`Self::agents`] on as well —
     /// see [`agent_views`].
@@ -283,8 +283,8 @@ pub fn socials() -> bool {
 /// Upcoming, Recent) and its `Alt+H`. Hidden (the user, 2026-11-03): "we
 /// don't have anything functional for now". With it off the rail starts at
 /// Documents, `Alt+H` does nothing and is taught nowhere, a window that last
-/// showed Home reopens on Documents, and nothing opens the Home tab. The
-/// other views keep their `Alt+digit`.
+/// showed Home reopens on Documents, and nothing opens the Home tab. Home
+/// takes no rail slot, so `Alt+1` is the first view drawn.
 pub const HOME_SHOWN: bool = false;
 
 /// **The composer's private-chat button** — the detective mask at the left

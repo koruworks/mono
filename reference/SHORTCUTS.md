@@ -43,14 +43,14 @@ Chords are shown as this platform writes them.
 | `Ctrl+P` | Search |
 | `Ctrl+Shift+E` | Explore |
 | `Alt+H` | Home |
-| `Alt+1` | Documents |
-| `Alt+2` | Files |
-| `Alt+3` | Tasks |
-| `Alt+4` | Chats |
-| `Alt+5` | Agents |
-| `Alt+6` | Artifacts |
-| `Alt+7` | Canvases |
-| `Alt+8` | Socials |
+| `Alt+1` | Rail view 1 |
+| `Alt+2` | Rail view 2 |
+| `Alt+3` | Rail view 3 |
+| `Alt+4` | Rail view 4 |
+| `Alt+5` | Rail view 5 |
+| `Alt+6` | Rail view 6 |
+| `Alt+7` | Rail view 7 |
+| `Alt+8` | Rail view 8 |
 | `Ctrl+J` | Context |
 | `Ctrl+Shift+J` | Koru AI pane |
 | `Ctrl+Shift+T` | Reopen closed tab |

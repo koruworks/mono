@@ -46,10 +46,16 @@ pub enum Chord {
     /// Rename what is under the pointer in the pane, or the document showing.
     /// F2, which is what every file list on this platform uses.
     Rename,
-    /// `Alt+1`, `Alt+2`, `Alt+3` — the explore column's Documents, Files and
-    /// Tasks, in the order the icons at its head sit. Opens the column if it
-    /// is closed: a view you asked for by name is a view you meant to see.
+    /// `Alt+H` — Home, the one view with a chord of its own (E69). Opens the
+    /// column if it is closed: a view you asked for by name is a view you
+    /// meant to see.
     ShowNavigator(NavigatorMode),
+    /// `Alt+1` … `Alt+8` — the view in that slot down the rail, counted from
+    /// zero here, **whichever view the person has put there** (the user,
+    /// 2026-11-03: the chords are per slot, not per app). Which view that is
+    /// is the rail's to say (`ExploreView::rail_mode_at`), so the container
+    /// answers it; a slot with no view in it is not claimed at all.
+    ShowRailSlot(usize),
     /// Ctrl+Shift+O — the workspace manager. `O` is free at every level: the
     /// editor binds neither it nor its shifted form.
     ManageWorkspaces,
@@ -98,12 +104,12 @@ impl Chord {
     /// not resolve at all, so the key falls through to the tab underneath
     /// exactly as an unbound key would.
     ///
-    /// **The view digits skip rather than renumber.** `Alt+3` is Tasks
-    /// whether or not Tasks is shown; with it hidden `Alt+3` does nothing and
-    /// `Alt+4` is still Chats. The digit is the registry's chord and the
-    /// shortcut sheet's, and a digit that meant a different view per build
-    /// would make both lie. Home's `Alt+H` is the same: with Home hidden for
-    /// now (`koru_features::HOME_SHOWN`) it does nothing.
+    /// **The view digits count only what the rail draws.** They are the
+    /// rail's slots, and a view this build hides takes no slot: with Tasks
+    /// hidden, `Alt+3` is whatever sits third. So no switch hides a digit
+    /// here; a digit past the last view falls through at the container
+    /// (`MainView::key`), as an unbound key would. Home's `Alt+H` is its own:
+    /// with Home hidden for now (`koru_features::HOME_SHOWN`) it does nothing.
     pub fn shown_in_product(self) -> bool {
         match self {
             Chord::ShowNavigator(mode) => mode.shown_in_product(),
@@ -156,14 +162,9 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
         return match digit? {
             // Home is its letter, not a digit (the CTO's note, E69).
             'h' | 'H' => Some(Chord::ShowNavigator(NavigatorMode::Home)),
-            '1' => Some(Chord::ShowNavigator(NavigatorMode::Documents)),
-            '2' => Some(Chord::ShowNavigator(NavigatorMode::Files)),
-            '3' => Some(Chord::ShowNavigator(NavigatorMode::Tasks)),
-            '4' => Some(Chord::ShowNavigator(NavigatorMode::Chats)),
-            '5' => Some(Chord::ShowNavigator(NavigatorMode::Agents)),
-            '6' => Some(Chord::ShowNavigator(NavigatorMode::Artifacts)),
-            '7' => Some(Chord::ShowNavigator(NavigatorMode::Canvases)),
-            '8' => Some(Chord::ShowNavigator(NavigatorMode::Socials)),
+            // The rail's slots: `Alt+1` is the first view down it. `Alt+0`
+            // and `Alt+9` are nobody's (`koru_keys::RAIL_SLOTS`).
+            d @ '1'..='8' => Some(Chord::ShowRailSlot(d as usize - '1' as usize)),
             _ => None,
         };
     }
