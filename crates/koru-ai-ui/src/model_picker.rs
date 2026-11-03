@@ -14,6 +14,12 @@
 //! rows below become the new model's at once. A press outside the picker,
 //! or Esc, closes it.
 //!
+//! **Search spans every agent** (D67, the user: *search models should be
+//! across all models, not just the scoped selection*): with a query, the
+//! list holds what it finds in every entry on the rail, in the rail's
+//! order, each under a heading with the entry's mark and name; an empty
+//! query is the rail's selected entry again.
+//!
 //! A model row is one line, the model's name; a ☆ at its end stars it
 //! (D46): the rail then leads with *Favorites*, the starred models of every
 //! agent turned on, each beside its agent's mark. Only a click stars a
@@ -287,14 +293,24 @@ pub(crate) enum Row {
     /// in a flyout (D11). Only while not searching; a search shows them
     /// inline instead.
     LegacyMore,
+    /// **A search's heading for an entry** (D67): its mark and name, above
+    /// what the query found in its list.
+    EntryHeading(RailEntry),
+    /// **A row a search found in an entry's list** (D67): the row as that
+    /// entry lists it, which it is named, chosen and starred by — the
+    /// entry need not be the one selected on the rail.
+    Found(RailEntry, Box<Row>),
 }
 
 impl Row {
     fn choosable(&self) -> bool {
-        matches!(
-            self,
-            Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyMore
-        )
+        match self {
+            Self::Found(_, row) => row.choosable(),
+            other => matches!(
+                other,
+                Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyMore
+            ),
+        }
     }
 }
 
@@ -572,6 +588,7 @@ impl crate::ChatSurface {
         row: &Row,
     ) -> Option<(AiProviderId, String)> {
         match (entry, row) {
+            (_, Row::Found(entry, row)) => self.row_favorite(entry, row),
             (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
                 agent_key(agent)
                     .is_some()
@@ -737,73 +754,90 @@ impl crate::ChatSurface {
     }
 
     /// Whether `agent` has a model the query finds, for the rail's dimming
-    /// while typing (S3).
+    /// while typing (S3): what its group in the search would hold.
     fn agent_matches_query(&self, agent: &AiProviderId, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-        let models = self.listed_agent_models(agent);
-        let default = default_model_label(models, self.lang);
-        matches(query, &[&default])
-            || listed_models(models).any(|model| {
-                let group = group_label(models, &model.group);
-                matches(
-                    query,
-                    &[
-                        &model_label(model),
-                        &model.id,
-                        &group,
-                        model.description.as_deref().unwrap_or_default(),
-                    ],
-                )
-            })
+        query.is_empty()
+            || self
+                .agent_model_rows(agent, query)
+                .iter()
+                .any(|row| !matches!(row, Row::Note(_)))
     }
 
-    /// Whether the query finds a favorite: in its model's name, id, group
-    /// and description, or its agent's name.
-    fn favorite_matches(&self, agent: &AiProviderId, id: &str, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.as_slice())
-            .unwrap_or_default();
-        let name = crate::agents::agent_label(agents, agent);
-        let models = self.listed_agent_models(agent);
-        match models.iter().find(|model| model.id == id) {
-            Some(model) => matches(
-                query,
-                &[
-                    &model_label(model),
-                    &model.id,
-                    &group_label(models, &model.group),
-                    model.description.as_deref().unwrap_or_default(),
-                    &name,
-                ],
-            ),
-            None => matches(query, &[id, &name]),
+    /// An entry's name, as its heading in a search and its rail mark's
+    /// tooltip read.
+    fn entry_name(&self, entry: &RailEntry) -> String {
+        match entry {
+            RailEntry::Favorites => t(self.lang, Key::AiPickerFavorites).to_owned(),
+            RailEntry::Agent(agent) => {
+                let agents = self
+                    .settings
+                    .as_ref()
+                    .map(|settings| settings.agents.as_slice())
+                    .unwrap_or_default();
+                crate::agents::agent_label(agents, agent)
+            }
+            RailEntry::Provider(provider) => provider_name(provider),
         }
     }
 
-    /// **The list for the selected entry** (§9.2): the agent's *Default*,
-    /// then its models — by group with a heading when it has more than one
-    /// — the query applied; or the one word its state calls for.
+    /// **The list** (§9.2): with a query, what it finds across every entry
+    /// ([`Self::search_rows`], D67); without one, the selected entry's.
     pub(crate) fn picker_rows(&self) -> Vec<Row> {
+        let query = self.picker_query();
+        if !query.is_empty() {
+            return self.search_rows(&query);
+        }
         let Some(entry) = self.picker_entry() else {
             return Vec::new();
         };
-        let query = self.picker_query();
+        self.entry_rows(&entry, &query)
+    }
+
+    /// **A search across every entry** (D67): each agent on the rail — the
+    /// ones turned on, and the chat's own — and a begun chat's built-in
+    /// provider, in the rail's order, with what `query` finds in its list
+    /// under a heading of its own; an entry where it finds nothing is left
+    /// out. *Favorites* is not searched apart: its models are the agents'.
+    /// The rows are the entry's own, so whether one can be chosen is what
+    /// that entry says, as on its own list.
+    fn search_rows(&self, query: &str) -> Vec<Row> {
+        let mut rows = Vec::new();
+        for entry in self.picker_rail() {
+            if entry == RailEntry::Favorites {
+                continue;
+            }
+            // Its words — loading, checking, nothing found — and its own
+            // group headings stay on its own list.
+            let found: Vec<Row> = self
+                .entry_rows(&entry, query)
+                .into_iter()
+                .filter(|row| !matches!(row, Row::Note(_) | Row::Heading(_)))
+                .map(|row| Row::Found(entry.clone(), Box::new(row)))
+                .collect();
+            if found.is_empty() {
+                continue;
+            }
+            rows.push(Row::EntryHeading(entry));
+            rows.extend(found);
+        }
+        if rows.is_empty() {
+            rows.push(Row::Note(t(self.lang, Key::AiModelsNoMatch).to_owned()));
+        }
+        rows
+    }
+
+    /// **The list for `entry`** (§9.2): the agent's *Default*, then its
+    /// models — by group with a heading when it has more than one — the
+    /// query applied; or the one word its state calls for.
+    fn entry_rows(&self, entry: &RailEntry, query: &str) -> Vec<Row> {
         let note = |key: Key| Row::Note(t(self.lang, key).to_owned());
-        match &entry {
-            // Every agent's starred models, each found by its own words
-            // and by its agent's name.
+        match entry {
+            // Every agent's starred models; a query searches every agent's
+            // list instead (D67).
             RailEntry::Favorites => {
                 let rows: Vec<Row> = self
                     .picker_favorites()
                     .into_iter()
-                    .filter(|(agent, id)| self.favorite_matches(agent, id, &query))
                     .map(|(agent, id)| Row::Favorite(agent, id))
                     .collect();
                 if rows.is_empty() {
@@ -813,6 +847,7 @@ impl crate::ChatSurface {
                 }
             }
             RailEntry::Provider(provider) => {
+                let name = provider_name(provider);
                 let models = if provider.as_str() == AiProviderId::KORU {
                     vec![AiProviderId::KORU_HOSTED_MODEL.to_owned()]
                 } else {
@@ -820,7 +855,9 @@ impl crate::ChatSurface {
                 };
                 let rows: Vec<Row> = models
                     .into_iter()
-                    .filter(|model| matches(&query, &[model, &self.provider_model_label(model)]))
+                    .filter(|model| {
+                        matches(query, &[model, &self.provider_model_label(model), &name])
+                    })
                     .map(Row::Model)
                     .collect();
                 if rows.is_empty() && !query.is_empty() {
@@ -844,18 +881,24 @@ impl crate::ChatSurface {
                         None | Some(AgentModels::Loading) => vec![note(Key::AiAgentModelsLoading)],
                         Some(AgentModels::Failed) => {
                             let mut rows = vec![note(Key::AiAgentModelsFailed)];
-                            if matches(&query, &[&default_model_label(&[], self.lang)]) {
+                            if matches(
+                                query,
+                                &[
+                                    &default_model_label(&[], self.lang),
+                                    &self.entry_name(entry),
+                                ],
+                            ) {
                                 rows.push(Row::Default);
                             }
                             rows
                         }
-                        Some(AgentModels::Listed(_)) => self.agent_model_rows(agent, &query),
+                        Some(AgentModels::Listed(_)) => self.agent_model_rows(agent, query),
                     },
                     // A list kept from the last run, dimmed, under *Checking…*.
                     AgentStatus::Checking if known => {
                         let mut rows = vec![note(Key::TerminalChecking)];
                         rows.extend(
-                            self.agent_model_rows(agent, &query)
+                            self.agent_model_rows(agent, query)
                                 .into_iter()
                                 .filter(|row| !matches!(row, Row::Note(_))),
                         );
@@ -871,9 +914,14 @@ impl crate::ChatSurface {
         }
     }
 
-    /// An agent's listed models as rows, the query applied.
+    /// An agent's listed models as rows, the query applied: a model is
+    /// found by its name, id, group and description — the description is
+    /// matched though no row shows it (D43) — and by its agent's name, so
+    /// a search across every agent can be narrowed to one (as *Favorites*
+    /// was searched, D46).
     fn agent_model_rows(&self, agent: &AiProviderId, query: &str) -> Vec<Row> {
         let models = self.listed_agent_models(agent);
+        let name = self.entry_name(&RailEntry::Agent(agent.clone()));
         let mut rows = Vec::new();
         let default = models.iter().find(|model| model.id == AGENT_DEFAULT_MODEL);
         if matches(
@@ -883,6 +931,7 @@ impl crate::ChatSurface {
                 default
                     .and_then(|model| model.description.as_deref())
                     .unwrap_or_default(),
+                &name,
             ],
         ) {
             rows.push(Row::Default);
@@ -905,6 +954,7 @@ impl crate::ChatSurface {
                             &model.id,
                             &heading,
                             model.description.as_deref().unwrap_or_default(),
+                            &name,
                         ],
                     )
                 })
@@ -938,6 +988,7 @@ impl crate::ChatSurface {
                                 &model.id,
                                 &heading,
                                 model.description.as_deref().unwrap_or_default(),
+                                &name,
                             ],
                         )
                     })
@@ -953,6 +1004,7 @@ impl crate::ChatSurface {
     /// Whether row `row` of `entry` is a model its agent marks as older.
     fn row_is_legacy(&self, entry: &RailEntry, row: &Row) -> bool {
         match (entry, row) {
+            (_, Row::Found(entry, row)) => self.row_is_legacy(entry, row),
             (RailEntry::Agent(agent), Row::Model(id)) => self
                 .listed_agent_models(agent)
                 .iter()
@@ -1062,7 +1114,7 @@ impl crate::ChatSurface {
     }
 
     /// Which rows can be chosen now. A favorite can be when its own agent's
-    /// rows could be.
+    /// rows could be, and a search's row when its entry's could (D67).
     fn picker_choosable(&self, rows: &[Row]) -> Vec<bool> {
         let entry_choosable = self
             .picker_entry()
@@ -1070,6 +1122,8 @@ impl crate::ChatSurface {
         rows.iter()
             .map(|row| match row {
                 Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
+                // A search's row can be chosen as on its own entry's list.
+                Row::Found(entry, found) => self.entry_choosable(entry) && found.choosable(),
                 _ => entry_choosable && row.choosable(),
             })
             .collect()
@@ -1081,6 +1135,8 @@ impl crate::ChatSurface {
     /// the next rows while choosing.
     fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> String {
         match (entry, row) {
+            (_, Row::Found(entry, row)) => self.picker_row_label(entry, row),
+            (_, Row::EntryHeading(entry)) => self.entry_name(entry),
             (_, Row::Heading(text) | Row::Note(text)) => text.clone(),
             (RailEntry::Provider(_), Row::Model(id)) => self.provider_model_label(id),
             (RailEntry::Provider(_) | RailEntry::Favorites, Row::Default | Row::Model(_)) => {
@@ -1139,6 +1195,9 @@ impl crate::ChatSurface {
         else {
             return false;
         };
+        if let Row::Found(entry, row) = row {
+            return self.picker_row_current(entry, row);
+        }
         // Whose row it is: the entry's, or a favorite's own agent.
         let (provider, id) = match (row, entry.provider()) {
             (Row::Favorite(agent, id), _) => (agent, Some(id)),
@@ -1231,8 +1290,14 @@ impl crate::ChatSurface {
         self.picker.offset = scroll_into_view(index, self.picker.offset, visible);
     }
 
+    /// **Show `entry`'s list**: a mark pressed on the rail, or stepped to
+    /// from it. A query is cleared, as its results span every entry (D67)
+    /// and would hide the list asked for.
     fn select_rail_entry(&mut self, entry: RailEntry) {
         self.picker.legacy = None;
+        if !self.picker.query.raw_text().is_empty() {
+            self.picker.query.set_text(&mut self.engine, "");
+        }
         // The lists the entry's rows are named from: the agent's, or under
         // *Favorites* every favorite's agent's.
         let agents: Vec<AiProviderId> = match &entry {
@@ -1272,7 +1337,11 @@ impl crate::ChatSurface {
         if *row == Row::LegacyMore {
             return self.open_legacy_menu(index);
         }
-        let row = row.clone();
+        // A search's row is its own entry's (D67).
+        let (entry, row) = match row.clone() {
+            Row::Found(entry, row) => (entry, *row),
+            row => (entry, row),
+        };
         self.picker.legacy = None;
         self.picker.highlight = Some(index);
         let chosen = match (entry, row) {
@@ -1485,22 +1554,13 @@ impl crate::ChatSurface {
             return None;
         }
         let rail = self.picker_rail();
-        let agents = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.as_slice())
-            .unwrap_or_default();
         for (index, rect) in rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
             .into_iter()
             .enumerate()
         {
             if rect.contains(x, y) {
                 let entry = &rail[index];
-                let name = match entry {
-                    RailEntry::Favorites => t(self.lang, Key::AiPickerFavorites).to_owned(),
-                    RailEntry::Agent(agent) => crate::agents::agent_label(agents, agent),
-                    RailEntry::Provider(provider) => provider_name(provider),
-                };
+                let name = self.entry_name(entry);
                 let word = entry
                     .provider()
                     .and_then(|provider| self.agent_status.get(provider))

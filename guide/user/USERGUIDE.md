@@ -1255,8 +1255,14 @@ the foot of that
 column, which opens **Settings → Coding → Agent providers**; the selected
 agent's models sit beside them under
 their own names, one line each, and a **Search models…** box above the
-list (typing narrows
-it; every word must match). The pointer is the usual arrow everywhere in the
+list. Typing searches the models of every agent in the left column, not only
+the selected one: what it finds is listed under each agent's icon and name, in
+the column's order, and an agent with nothing found is left out. Every word
+must match a model's name, its id, its group, its description or its agent's
+name, so adding an agent's name keeps the search to that agent. Clearing the box, or clicking an
+agent's icon, shows that agent's list again. A model found under another agent
+is chosen as from that agent's own list, so it switches the chat's agent only
+while the chat has no message yet. The pointer is the usual arrow everywhere in the
 picker except the search box. The list keeps the picker's size and scrolls
 when there is more than fits. The ↻ at the end of the search box asks the agent
 for its list again — after you connect a new provider in OpenCode, say. A

@@ -616,30 +616,206 @@ fn the_list_reads_each_agent_state() {
     );
 }
 
-/// §9.4 and S3: the query narrows the selected agent's list; an agent in
-/// the rail with no match is dimmed; nothing found says so.
+/// A row `entry` lists, as a search finds it (D67).
+fn found(entry: &RailEntry, row: Row) -> Row {
+    Row::Found(entry.clone(), Box::new(row))
+}
+
+/// The chat's first message: it has begun, and keeps its agent.
+fn begin(surface: &mut ChatSurface) {
+    let transcript = surface.transcript.as_mut().unwrap();
+    let chat = transcript.chat.id;
+    transcript.messages.push(koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: chat,
+        ordinal: 0,
+        role: koru_ai_core::ChatRole::User,
+        state: koru_ai_core::MessageState::Complete,
+        markdown: "hello".into(),
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: koru_ai_core::Timestamp::from_millis(1),
+        completed_at: None,
+    });
+}
+
+/// §9.4 and S3: the query narrows the list — under the agent's heading
+/// now, as it spans every agent (D67); an agent in the rail with no match
+/// is dimmed; a model is still found by its description; nothing found
+/// says so.
 #[test]
-fn typing_searches_the_selected_agent_and_dims_the_rest() {
+fn typing_searches_and_dims_the_agents_without_a_match() {
     let mut surface = surface();
     surface.lang = Lang::En;
     open(&mut surface);
-    surface.picker.rail = Some(RailEntry::Agent(agent("agent-claude")));
+    let claude = RailEntry::Agent(agent("agent-claude"));
+    surface.picker.rail = Some(claude.clone());
     type_query(&mut surface, "son");
     assert_eq!(surface.picker.query.raw_text(), "son");
-    assert_eq!(surface.picker_rows(), [Row::Model("sonnet".into())]);
+    assert_eq!(
+        surface.picker_rows(),
+        [
+            Row::EntryHeading(claude.clone()),
+            found(&claude, Row::Model("sonnet".into()))
+        ]
+    );
     assert!(surface.agent_matches_query(&agent("agent-claude"), "son"));
     assert!(!surface.agent_matches_query(&agent("agent-opencode"), "son"));
     type_query(&mut surface, " able");
     assert_eq!(
         surface.picker_rows(),
-        [Row::Model("sonnet".into())],
-        "by description"
+        [
+            Row::EntryHeading(claude.clone()),
+            found(&claude, Row::Model("sonnet".into()))
+        ],
+        "by description, which no row shows"
     );
     type_query(&mut surface, "x");
     assert_eq!(
         surface.picker_rows(),
         [Row::Note("No matching models".into())]
     );
+}
+
+/// **A search spans every agent** (D67, the user: *search models should be
+/// across all models, not just the scoped selection*): what it finds in
+/// each agent on the rail, in the rail's order, under a heading with the
+/// agent's mark and name — only agents with a match. Up and Down walk
+/// across the groups and never land on a heading; no rail mark reads as
+/// the list's meanwhile; a result from another agent is chosen as that
+/// agent's own list would choose it. Esc brings the selected agent's list
+/// back.
+#[test]
+fn a_search_spans_every_agent_under_a_heading_each() {
+    let mut surface = surface();
+    surface.lang = Lang::En;
+    open(&mut surface);
+    let claude = RailEntry::Agent(agent("agent-claude"));
+    let opencode = RailEntry::Agent(agent("agent-opencode"));
+    surface.select_rail_entry(claude.clone());
+    assert!(surface.picker_spec().marks.iter().any(|mark| mark.selected));
+
+    type_query(&mut surface, "beam");
+    assert_eq!(
+        surface.picker_rows(),
+        [
+            Row::EntryHeading(opencode.clone()),
+            found(&opencode, Row::Model("opencode/beam-free".into()))
+        ],
+        "found outside the selected agent; Claude has no match, no heading"
+    );
+    assert_eq!(surface.picker.highlight, Some(1), "past the heading");
+    assert_eq!(
+        surface.picker_row_label(&claude, &Row::EntryHeading(opencode.clone())),
+        "OpenCode"
+    );
+    assert_eq!(
+        surface.picker_row_label(&claude, &surface.picker_rows()[1]),
+        "Beam Free"
+    );
+    assert!(
+        surface
+            .picker_spec()
+            .marks
+            .iter()
+            .all(|mark| !mark.selected),
+        "no mark is the list's while searching"
+    );
+
+    press(&mut surface, NamedKey::Escape);
+    type_query(&mut surface, "o");
+    let rows = surface.picker_rows();
+    assert_eq!(
+        rows[0],
+        Row::EntryHeading(claude.clone()),
+        "the rail's order"
+    );
+    let second = rows
+        .iter()
+        .position(|row| *row == Row::EntryHeading(opencode.clone()))
+        .expect("both agents match");
+    assert!(second > 1);
+    let mut walked = vec![surface.picker.highlight.unwrap()];
+    for _ in 0..rows.len() {
+        press(&mut surface, NamedKey::ArrowDown);
+        walked.push(surface.picker.highlight.unwrap());
+    }
+    assert!(
+        walked
+            .iter()
+            .all(|index| matches!(rows[*index], Row::Found(..))),
+        "never on a heading"
+    );
+    assert!(walked.contains(&(second + 1)), "across into the next group");
+    assert_eq!(*walked.last().unwrap(), rows.len() - 1);
+
+    // The last row is OpenCode's: choosing it makes OpenCode the chat's.
+    assert_eq!(
+        rows[rows.len() - 1],
+        found(&opencode, Row::Model("deepseek/v4-pro".into()))
+    );
+    assert!(press(&mut surface, NamedKey::Enter));
+    let model = &surface.transcript.as_ref().unwrap().chat.current_model;
+    assert_eq!(model.provider, agent("agent-opencode"));
+    assert_eq!(model.requested_model, "deepseek/v4-pro");
+    assert!(surface.picker_row_current(&claude, &rows[rows.len() - 1]));
+
+    assert!(press(&mut surface, NamedKey::Escape), "clears the query");
+    assert_eq!(
+        surface.picker_rows()[0],
+        Row::Default,
+        "the selected agent's own list again"
+    );
+    assert!(surface.picker_spec().marks.iter().any(|mark| mark.selected));
+}
+
+/// **A begun chat keeps its agent in a search too** (D67): another
+/// agent's models are found and shown, and cannot be chosen — as on that
+/// agent's own list.
+#[test]
+fn a_search_in_a_begun_chat_finds_other_agents_and_keeps_its_own() {
+    let mut surface = surface();
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "sonnet",
+        ReasoningChoice::Default,
+    );
+    begin(&mut surface);
+    open(&mut surface);
+    type_query(&mut surface, "beam");
+    let rows = surface.picker_rows();
+    assert_eq!(rows.len(), 2);
+    assert!(surface.picker_choosable(&rows).iter().all(|can| !can));
+    assert_eq!(surface.picker.highlight, None);
+    let geometry = surface.picker_geometry().unwrap();
+    let row = surface.picker_row_rect(&geometry, 1).unwrap();
+    surface.picker_mouse_down(row.x + 20.0, row.y + row.h * 0.5);
+    let model = &surface.transcript.as_ref().unwrap().chat.current_model;
+    assert_eq!(model.provider, agent("agent-claude"), "the chat keeps it");
+    assert_eq!(model.requested_model, "sonnet");
+}
+
+/// A press on a rail mark while searching shows that agent's list: the
+/// query, which spans every agent, is cleared (D67).
+#[test]
+fn a_rail_mark_pressed_while_searching_clears_the_query() {
+    let mut surface = surface();
+    open(&mut surface);
+    type_query(&mut surface, "beam");
+    let geometry = surface.picker_geometry().unwrap();
+    let rail = surface.picker_rail();
+    let mark = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))[1];
+    surface.picker_mouse_down(mark.x + mark.w * 0.5, mark.y + mark.h * 0.5);
+    assert!(surface.picker.query.raw_text().is_empty());
+    assert_eq!(
+        surface.picker_entry(),
+        Some(RailEntry::Agent(agent("agent-opencode")))
+    );
+    assert_eq!(surface.picker_rows().len(), 5, "OpenCode's own list");
 }
 
 /// §9.5: type *son*, Down, Enter chooses and the picker stays open (D66);
@@ -655,7 +831,7 @@ fn the_keyboard_alone_chooses_a_model_and_moves_through_the_picker() {
     // Typing puts the keyboard on the first row the query leaves.
     let rows = surface.picker_rows();
     let first = surface.picker.highlight.unwrap();
-    assert!(matches!(rows[first], Row::Default | Row::Model(_)));
+    assert!(matches!(rows[first], Row::Found(..)), "past the heading");
     assert!(press(&mut surface, NamedKey::Escape), "clears the query");
     assert!(surface.chat_model_open);
     assert!(surface.picker.query.raw_text().is_empty());
@@ -955,10 +1131,14 @@ fn legacy_models_sit_behind_one_row_and_a_search_shows_them_inline() {
     let rows = surface.picker_rows();
     assert_eq!(
         rows,
-        [Row::Model("claude-2".into()), Row::Model("claude-1".into())],
+        [
+            Row::EntryHeading(claude.clone()),
+            found(&claude, Row::Model("claude-2".into())),
+            found(&claude, Row::Model("claude-1".into()))
+        ],
         "inline while searching"
     );
-    assert!(surface.row_is_legacy(&claude, &rows[0]));
+    assert!(surface.row_is_legacy(&claude, &rows[1]));
     // Today's agents mark nothing: no Legacy row.
     surface.picker.rail = Some(RailEntry::Agent(agent("agent-opencode")));
     surface.picker.query.set_text(&mut surface.engine, "");
@@ -1531,8 +1711,8 @@ fn the_primary_modifier_and_d_does_not_star_the_highlighted_row() {
 
 /// **Favorites leads the rail and lists every agent's starred models**
 /// (D46), in the rail's agent order, each with its own agent; choosing one
-/// makes that agent and model the chat's. Searching finds one by its
-/// agent's name too.
+/// makes that agent and model the chat's. A query searches every agent, as
+/// from any entry (D67), and finds a model by its agent's name too.
 #[test]
 fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
     let mut surface = surface();
@@ -1573,13 +1753,14 @@ fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
         "its star takes it off"
     );
 
-    type_query(&mut surface, "opencode");
+    type_query(&mut surface, "opencode deep");
+    let opencode = RailEntry::Agent(agent("agent-opencode"));
     assert_eq!(
         surface.picker_rows(),
-        [Row::Favorite(
-            agent("agent-opencode"),
-            "deepseek/v4-pro".into()
-        )]
+        [
+            Row::EntryHeading(opencode.clone()),
+            found(&opencode, Row::Model("deepseek/v4-pro".into()))
+        ]
     );
     press(&mut surface, NamedKey::Enter);
     assert!(surface.chat_model_open, "chosen, still open (D66)");

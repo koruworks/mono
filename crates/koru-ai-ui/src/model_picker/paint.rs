@@ -35,6 +35,9 @@ impl crate::ChatSurface {
         let rail = self.picker_rail();
         let dividers = rail_dividers(&rail);
         let selected = self.picker_entry();
+        // A query's results span every entry (D67): no mark reads as the
+        // list's while one is typed.
+        let searching = !self.picker_query().is_empty();
         let agents = self
             .settings
             .as_ref()
@@ -54,7 +57,7 @@ impl crate::ChatSurface {
                         RailEntry::Provider(provider) => MarkName::Content(provider_name(provider)),
                     },
                     divider_after: dividers.contains(&index),
-                    selected: selected.as_ref() == Some(entry),
+                    selected: !searching && selected.as_ref() == Some(entry),
                 })
                 .collect(),
             manage: self.agent_settings_offered,
@@ -232,9 +235,12 @@ impl crate::ChatSurface {
             .take(geometry.visible_rows())
             .map(|(index, row)| ListRow {
                 label: self.picker_row_label(&entry, row),
-                words: matches!(row, Row::Heading(_) | Row::Note(_)),
-                favorite: match row {
-                    Row::Favorite(agent, _) => Some(agent.clone()),
+                words: matches!(row, Row::Heading(_) | Row::Note(_) | Row::EntryHeading(_)),
+                mark: match row {
+                    Row::Favorite(agent, _) => Some((agent.clone(), true)),
+                    Row::EntryHeading(heading) => heading
+                        .provider()
+                        .map(|provider| (provider.clone(), matches!(heading, RailEntry::Agent(_)))),
                     _ => None,
                 },
                 current: self.picker_row_current(&entry, row),
@@ -383,8 +389,9 @@ struct ListRow {
     label: String,
     /// A heading or a note: words, not a model.
     words: bool,
-    /// A favorite's agent, whose mark leads the row (D46).
-    favorite: Option<AiProviderId>,
+    /// The mark that leads the row, and whether it is an agent's: a
+    /// favorite's agent (D46), or a search's heading's entry (D67).
+    mark: Option<(AiProviderId, bool)>,
     current: bool,
     can: bool,
     highlighted: bool,
@@ -432,8 +439,14 @@ fn paint_list(
                 &scene::rrect(rect.x, rect.y, rect.w, rect.h, 4.0),
             );
         }
-        let (style, colour, indent) = if row.words {
-            (theme::role::meta(), p.text_dim, 8.0)
+        // A favorite's agent mark, or a search heading's, comes first.
+        let indent = if row.mark.is_some() {
+            8.0 + ROW_MARK_ROOM
+        } else {
+            8.0
+        };
+        let (style, colour) = if row.words {
+            (theme::role::meta(), p.text_dim)
         } else {
             (
                 theme::role::row(),
@@ -441,12 +454,6 @@ fn paint_list(
                     p.text
                 } else {
                     p.text_dim
-                },
-                // A favorite's agent mark comes first (D46).
-                if row.favorite.is_some() {
-                    8.0 + ROW_MARK_ROOM
-                } else {
-                    8.0
                 },
             )
         };
@@ -507,8 +514,9 @@ fn paint_list(
         let line = engine.simple_layout(&shown, style);
         let name_y = rect.y + (rect.h - line.height()) * 0.5;
         scene::draw_layout_first_line(canvas, root, &line, rect.x + indent, name_y, Some(colour));
-        // A favorite's agent, by its mark, level with the name.
-        if let Some(agent) = &row.favorite {
+        // A favorite's agent, or a heading's entry, by its mark, level
+        // with the name.
+        if let Some((provider, agent)) = &row.mark {
             let mark = Rect::new(
                 rect.x + 8.0,
                 name_y + (line.height() - ROW_MARK) * 0.5,
@@ -516,7 +524,7 @@ fn paint_list(
                 ROW_MARK,
             );
             let tone = if row.can { p.text } else { p.text_dim };
-            draw_provider_mark(canvas, root, engine, agent, true, mark, tone);
+            draw_provider_mark(canvas, root, engine, provider, *agent, mark, tone);
         }
     }
     if let Some(bar) = scrollbar::ScrollbarGeom::for_content(
