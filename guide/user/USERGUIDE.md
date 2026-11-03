@@ -1529,7 +1529,12 @@ words are finished and stay in the box, and you send as usual. Press ✕ to
 throw away what you just dictated; anything you typed before stays. Typing a
 key, or clicking in the message box, also stops the recording; that key or
 click is not typed. Dictation runs on your device; the first time, Koru asks
-you to set up voice input and download the model. `Enter` sends
+you to set up voice input and download the model.
+
+The **1 space** chip under the message box shows how many workspaces the
+chat may read; click it to choose them. With more than five, type in **Filter
+workspaces** to narrow the list; drag the bar at the list's edge, or scroll,
+to see the rest. `Enter` sends
 and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
 grows to eight lines and then scrolls inside itself, independently of the
 conversation. Embedded questions include the active document by stable
