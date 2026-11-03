@@ -6136,16 +6136,29 @@ it the default for new chats.
 ## Finding a chat again
 
 Every chat is kept, and **Chats** in the left column (`Alt+4`, the sparkle
-icon right of Tasks) lists them all, newest first. Each row says the chat's
+icon right of Tasks) lists them all: chats you pinned first, under **Pinned**,
+then the rest by their latest message, so a chat moves up when you send in it
+and again when its reply arrives. Each row says the chat's
 title, who answered it — an agent by its name, and the model under it when you
 picked one; the model for OpenAI and Ollama; *Qwen3 8B* for Koru — and how long
 ago it last moved. A private chat wears the detective mark.
+
+A chat's tab and its row show what the chat is doing: a turning ring while it
+works, an amber dot when it is waiting for your answer, and a blue dot when a
+reply arrived that you haven't seen; unread chats have bold titles until you
+open them. Opening a chat with something new takes you to the first message
+you haven't read, under a **NEW** line. Which chats you have seen is
+remembered on this device only. Hover a row, or move to it with the keyboard,
+to show **⋯** (Rename…, Pin, Delete) and the pin; click the pin to pin or
+unpin the chat at once. In a chat, `Ctrl+Shift+↑` and `Ctrl+Shift+↓` (`⌘` on
+macOS) move to the chat above or below in the list, as long as your message
+box is empty.
 
 Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
 keyboard too: Up and Down move, Home and End jump to either end, Enter opens,
 **Delete asks** before deleting, and Escape hands the keyboard back. Right-click
-a row for **Rename…** and **Delete chat**. If the chat's agent could not be
+a row, or click its **⋯**, for **Rename…**, **Pin** and **Delete chat**. If the chat's agent could not be
 stopped, the chat stays and says so — delete it again.
 
 **Rename a chat in its row**: choose **Rename…**, or press **F2** with the
