@@ -9795,6 +9795,12 @@ impl MainView {
         // with nothing on screen to say why.
         let unfocused = hit != Hit::Sidebar && self.explore.clear_focus();
         let dismissed = dismissed || unfocused;
+        // A rail view still held at a fresh press lost its release (the
+        // button came up outside the window): it drops where it is, rather
+        // than following the next gesture.
+        if self.explore.rail_dragging() {
+            self.explore.rail_drag_release(self.rail_area());
+        }
         if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
             // The rail: an app, Settings, Help or the profile square. A press
             // on it is a press outside the popover, so the popover shuts
@@ -9973,6 +9979,11 @@ impl MainView {
                 self.relayout();
             }
             return true;
+        }
+        // A rail view drops into its slot wherever the pointer let go; its
+        // order reaches the session file at the next capture.
+        if self.explore.rail_dragging() {
+            return self.explore.rail_drag_release(self.rail_area());
         }
         if self.ai_visible() && self.ai_focused {
             return self.ai_chat.mouse_up();
@@ -13653,6 +13664,7 @@ impl View for MainView {
     fn restore(&mut self, ws: &Workspace, settings: &Settings) {
         koru_editor::emoji::restore_usage(&settings.emoji_recents);
         chat_status::restore(&settings.chat_seen);
+        self.explore.restore_rail_order(&settings.rail_order);
         koru_editor::emoji::set_preferred_skin_tone(koru_editor::emoji::parse_skin_tone(
             &settings.emoji_skin_tone,
         ));
@@ -13730,6 +13742,7 @@ impl View for MainView {
                 .to_owned();
         settings.navigator_mode = self.explore.navigator_mode().token().to_owned();
         settings.chat_seen = chat_status::capture();
+        settings.rail_order = self.explore.rail_order_storage();
         self.capture_session(settings);
     }
 
@@ -14472,6 +14485,12 @@ impl MainView {
             self.drop_slot = None;
             return true;
         }
+        // ...and a rail view's, which puts it back where the press found it.
+        if matches!(key, Key::Named(winit::keyboard::NamedKey::Escape))
+            && self.explore.rail_dragging()
+        {
+            return self.explore.cancel_rail_drag(self.rail_area());
+        }
         // **A recovery pill that `F6` has landed on**, asked beside the bell
         // because it is the same kind of thing: window chrome that owns no
         // blocker, standing while the document still has everything else. The
@@ -14496,8 +14515,11 @@ impl MainView {
         }
         // A sidebar chrome stop `F6` has landed on — lane, apps row or floor —
         // answers the arrows, an activation and Escape, and lets everything
-        // else through, the way the bell does (`chrome_focus.rs`).
-        if self.chrome_focus.is_some() && self.chrome_focus_key(ws, key) {
+        // else through, the way the bell does (`chrome_focus.rs`). On a rail
+        // view the move chords move it; asked here, they are answered before
+        // the chat's *Previous / Next chat* or an editor's line move is
+        // reached, and only while `F6` has put the keyboard on the rail.
+        if self.chrome_focus.is_some() && self.chrome_focus_key(ws, key, text, mods) {
             return true;
         }
         // An open popover takes Esc, the arrows and Enter — and **lets
@@ -16460,6 +16482,11 @@ impl MainView {
             let moved = self.panes.drag_divider(content, &d.path, pos);
             d.moved |= moved;
             return true;
+        }
+        // A view's square held on the rail follows the pointer wherever it
+        // goes, the way a carried tab does (`explore::apps_rail_drag`).
+        if self.explore.rail_dragging() {
+            return self.explore.rail_drag_move(self.rail_area(), y);
         }
         if self.workspace_rename.is_some() {
             // A row that is no longer there — the popover closed underneath —

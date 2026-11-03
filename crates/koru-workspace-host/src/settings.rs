@@ -1148,6 +1148,17 @@ pub struct Settings {
     /// it on its next save — every chat then reads as seen, which is the safe
     /// way to be wrong. Empty writes no line.
     pub chat_seen: String,
+    /// **The order of the views down the rail, on this device**: the
+    /// `rail_order=` line, a comma list of view tokens, opaque here —
+    /// `apps/koru`'s `panes::sidebar::rail_order` reads and writes it, and
+    /// merges it with the views that build knows. Device-local, like
+    /// [`chat_seen`](Self::chat_seen): how one machine's rail is arranged is
+    /// that machine's furniture.
+    ///
+    /// **An older build ignores the line** (`from_text`'s `_ => {}`), draws
+    /// its default order, and drops the line on its next save. Empty — the
+    /// default order — writes no line.
+    pub rail_order: String,
 }
 
 /// Settings loaded before the Store has supplied a real Profile identity.
@@ -1448,6 +1459,7 @@ impl Default for Settings {
             close_behavior: koru_window::CloseBehavior::default(),
             last_export_dir: None,
             chat_seen: String::new(),
+            rail_order: String::new(),
         }
     }
 }
@@ -2331,6 +2343,8 @@ impl Settings {
                 }
                 // Read whole and untouched: its reader is the Chats list's.
                 "chat_seen" => s.chat_seen = value.to_owned(),
+                // Read whole and untouched too: its reader is the rail's.
+                "rail_order" => s.rail_order = value.to_owned(),
                 _ => {}
             }
         }
@@ -2532,6 +2546,9 @@ impl Settings {
         }
         if !self.chat_seen.is_empty() {
             out.push_str(&format!("chat_seen={}\n", self.chat_seen));
+        }
+        if !self.rail_order.is_empty() {
+            out.push_str(&format!("rail_order={}\n", self.rail_order));
         }
         // One line per workspace, and none at all for a workspace with nothing
         // shut — so the file does not grow a row for every workspace you have
@@ -3791,6 +3808,40 @@ mod tests {
         assert_eq!(back.chat_seen, line);
         assert_eq!(back.ai_w, 420.0);
         assert!(!Settings::default().profile_body().contains("chat_seen="));
+    }
+
+    /// **The rail's order** rides the session file the same way: one opaque
+    /// line beside the tabs, none while the rail is in its default order.
+    ///
+    /// And what an older build makes of it, shown with a key *this* build does
+    /// not know: `from_text` passes over it, every other key still reads, and
+    /// the next save drops it. That is all a build from before `rail_order=`
+    /// does with the line — its rail draws the default order.
+    #[test]
+    fn the_rail_order_line_round_trips_and_a_build_that_does_not_know_it_ignores_it() {
+        let line = "chats,documents,files";
+        let s = Settings {
+            rail_order: line.into(),
+            ai_w: 420.0,
+            ..Settings::default()
+        };
+        let body = s.profile_body();
+        assert!(body.contains(&format!("rail_order={line}\n")), "{body}");
+        let back = Settings::from_text(&body);
+        assert_eq!(back.rail_order, line);
+        assert_eq!(back.ai_w, 420.0);
+        assert!(!Settings::default().profile_body().contains("rail_order="));
+
+        let newer = body.replace("rail_order=", "rail_order_from_a_newer_build=");
+        let older = Settings::from_text(&newer);
+        assert_eq!(older.ai_w, 420.0, "every other key still reads");
+        assert_eq!(older.rail_order, "", "the unknown line is passed over");
+        assert!(
+            !older
+                .profile_body()
+                .contains("rail_order_from_a_newer_build="),
+            "and dropped by the next save"
+        );
     }
 
     /// A ranking longer than the picker keeps is trimmed on the way in, so a

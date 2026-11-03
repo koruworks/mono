@@ -576,7 +576,7 @@ impl ExploreView {
         use super::ExploreChromeFocus;
         Some(match focus {
             ExploreChromeFocus::App(i) => {
-                let mode = *NavigatorMode::visible().get(i)?;
+                let mode = *self.rail_modes().get(i)?;
                 cx.surface(MODE, ControlPart::new(mode.token()))
             }
             ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),

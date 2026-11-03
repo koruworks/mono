@@ -1646,3 +1646,80 @@ fn taking_the_session_asks_and_only_the_host_grants_it() {
         "watching again: {sent:?}"
     );
 }
+
+// ------------------------------------------------------------- the rail order
+
+/// The square `mode` sits on in the rail now.
+fn rail_square(
+    v: &MainView,
+    mode: crate::panes::explore::NavigatorMode,
+) -> koru_draw::geometry::Rect {
+    v.explore
+        .apps_rail_rects(v.rail_area())
+        .apps
+        .into_iter()
+        .find(|(m, _)| *m == mode)
+        .map(|(_, r)| r)
+        .expect("the view is on the rail")
+}
+
+/// **The rail's order is this device's, and it survives a restart.** Dragged
+/// with the pointer through the window — press, carry half a square past its
+/// neighbour, release — it is in the session file at the next capture and
+/// comes back on the next launch.
+#[test]
+fn a_rail_order_dragged_with_the_pointer_survives_a_restart() {
+    use crate::panes::explore::NavigatorMode::{Documents, Files};
+    let (mut v, mut workspace) = on_document();
+    v.toggle_sidebar();
+    let (x, y) = rail_square(&v, Files).centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    assert_eq!(
+        v.explore.navigator_mode(),
+        Files,
+        "the press shows the view"
+    );
+    // Half a square and the gap above it: Files is half over Documents.
+    let half =
+        crate::panes::sidebar::apps_rail::SQUARE * 0.5 + crate::panes::sidebar::apps_rail::GAP;
+    v.mouse_move(x, y - half);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(&v.explore.rail_modes()[..2], &[Files, Documents]);
+
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert!(
+        settings.rail_order.contains("files,documents"),
+        "{}",
+        settings.rail_order
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(back.explore.rail_modes(), v.explore.rail_modes());
+}
+
+/// **Esc mid-drag puts the view back**, and the session has nothing to save.
+#[test]
+fn escape_mid_drag_leaves_the_rail_as_it_was() {
+    use crate::panes::explore::NavigatorMode::Files;
+    let (mut v, mut workspace) = on_document();
+    v.toggle_sidebar();
+    let before = v.explore.rail_modes();
+    let (x, y) = rail_square(&v, Files).centre();
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_move(x, y - 60.0);
+    assert_ne!(v.explore.rail_modes(), before, "carried past Documents");
+    assert!(v.key(
+        &mut workspace.ws,
+        &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        winit::keyboard::ModifiersState::empty(),
+    ));
+    assert!(!v.explore.rail_dragging());
+    assert_eq!(v.explore.rail_modes(), before);
+    // The release that follows has nothing left to drop.
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.explore.rail_modes(), before);
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(settings.rail_order, "");
+}

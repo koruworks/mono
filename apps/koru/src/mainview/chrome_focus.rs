@@ -15,11 +15,20 @@
 //! controls, Enter or Space activates the focused one, Escape returns the
 //! keyboard to the content, `F6` moves on. The focused control wears the
 //! `focus_ring`; a press anywhere moves the keyboard and clears it.
+//!
+//! **On a rail view, the move chords move it** — `Ctrl+Shift+↑`/`↓`, the
+//! registry's `MoveRowUp`/`MoveRowDown`, the same entries the Agent providers
+//! rows move with (D41) — and the keyboard goes with it. No row of its own in
+//! the registry: those two are what *move this* means wherever a list can be
+//! reordered, and a third row on the chord could not say which of the chat's
+//! and the editor's it overlaps. Asked here, it is answered only while `F6`
+//! has the keyboard on the rail; the document's line move and the chat's
+//! *Previous / Next chat* keep the chord everywhere else.
 
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::{MainView, WorkspaceDoc};
-use crate::panes::explore::{ExploreChromeFocus, NavigatorMode};
+use crate::panes::explore::ExploreChromeFocus;
 
 /// Where the keyboard is, when it is on the sidebar's chrome.
 /// The rail's controls after the apps: Help, Settings, the profile square.
@@ -120,7 +129,9 @@ impl MainView {
             }
             Stop::Apps => {
                 // Land on the active app, where the eye already is.
-                let i = NavigatorMode::visible()
+                let i = self
+                    .explore
+                    .rail_modes()
                     .iter()
                     .position(|m| *m == self.explore.navigator_mode())
                     .unwrap_or(0);
@@ -137,7 +148,13 @@ impl MainView {
 
     /// The keys a focused stop answers: the arrows within it, an activation,
     /// and Escape. Everything else falls through, the way the bell's do.
-    pub(super) fn chrome_focus_key(&mut self, ws: &mut WorkspaceDoc, key: &Key) -> bool {
+    pub(super) fn chrome_focus_key(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
         let Some(stop) = self.chrome_focus else {
             return false;
         };
@@ -145,6 +162,17 @@ impl MainView {
         // until it shuts; the stop takes over again after.
         if self.explore.popover_open() {
             return false;
+        }
+        if let ChromeStop::Apps(i) = stop
+            && i < self.explore.rail_modes().len()
+            && let Some(up) = move_chord(key, text, mods)
+        {
+            // Taken at either end too: the view is the keyboard's, and a
+            // chord that cannot move it still belongs to it (D41's rule).
+            if let Some(to) = self.explore.nudge_rail_view(self.rail_area(), i, up) {
+                self.chrome_focus = Some(ChromeStop::Apps(to));
+            }
+            return true;
         }
         match key {
             Key::Named(NamedKey::Escape) => {
@@ -203,7 +231,7 @@ impl MainView {
             ChromeStop::Apps(i) => {
                 // The apps, then the foot: Help, Settings, the profile
                 // square.
-                let n = NavigatorMode::visible().len() + RAIL_FOOT;
+                let n = self.explore.rail_modes().len() + RAIL_FOOT;
                 ChromeStop::Apps(if forward {
                     (i + 1) % n
                 } else {
@@ -230,7 +258,7 @@ impl MainView {
                 self.open_new_tab_menu_at(square);
             }
             ChromeStop::Apps(i) => {
-                let apps = NavigatorMode::visible();
+                let apps = self.explore.rail_modes();
                 if let Some(mode) = apps.get(i).copied() {
                     self.show_navigator(mode);
                 } else {
@@ -264,7 +292,7 @@ impl MainView {
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
             ChromeStop::Apps(i) => {
-                let apps = NavigatorMode::visible().len();
+                let apps = self.explore.rail_modes().len();
                 Some(if i < apps {
                     ExploreChromeFocus::App(i)
                 } else {
@@ -286,6 +314,19 @@ impl MainView {
             ChromeStop::Lane(control) => Some(control),
             _ => None,
         }
+    }
+}
+
+/// `Some(true)` for the move-up chord, `Some(false)` for move-down — the
+/// registry's, so the chord is the one the shortcut sheet prints.
+fn move_chord(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<bool> {
+    let is = |id| koru_keys::registry::get(id).chord.matches(key, text, mods);
+    if is(koru_keys::ShortcutId::MoveRowUp) {
+        Some(true)
+    } else if is(koru_keys::ShortcutId::MoveRowDown) {
+        Some(false)
+    } else {
+        None
     }
 }
 

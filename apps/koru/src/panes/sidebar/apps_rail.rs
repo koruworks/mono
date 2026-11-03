@@ -49,7 +49,8 @@ pub const PROFILE_TILE: f32 = super::floor::AVATAR;
 #[derive(Clone, PartialEq, Debug)]
 pub struct Rects {
     pub band: Rect,
-    /// One square per app the build shows, in `NavigatorMode::visible` order.
+    /// One square per app the build shows, in the person's order
+    /// (`rail_order::RailOrder::visible`).
     /// Nothing under the last: the *Manage apps* `+` is out until the
     /// manager lands (the CTO's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,

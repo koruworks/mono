@@ -265,6 +265,34 @@ fn the_projection_buttons_are_named_and_one_is_selected() {
     );
 }
 
+/// **The projection buttons are published in the rail's order**, the one the
+/// person dragged: what a screen reader walks is what the eye sees, top to
+/// bottom, each saying its place.
+#[test]
+fn the_projection_buttons_follow_the_order_the_rail_is_in() {
+    let (mut view, _) = pane(&["Brief"]);
+    view.restore_rail_order("chats,files,documents");
+    let published = nodes(&view, &cx(Lang::En));
+    let tabs: Vec<&SemanticNode> = published
+        .iter()
+        .filter(|node| node.role == Role::Tab)
+        .collect();
+    let tokens: Vec<String> = tabs
+        .iter()
+        .map(|node| node.occurrence.part.name().to_string())
+        .collect();
+    let want: Vec<String> = view
+        .rail_modes()
+        .iter()
+        .map(|mode| mode.token().to_string())
+        .collect();
+    assert_eq!(tokens, want);
+    assert_eq!(&tokens[..3], &["chats", "files", "documents"]);
+    for (i, node) in tabs.iter().enumerate() {
+        assert_eq!(node.position, Some(i), "{} says the wrong place", tokens[i]);
+    }
+}
+
 #[test]
 fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
     let (view, _) = pane(&["Brief"]);

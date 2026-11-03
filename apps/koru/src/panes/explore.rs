@@ -50,7 +50,9 @@ use super::fold;
 use super::{DropTarget, DropZone};
 use koru_shell_chrome::tabs::draw_icon;
 
+use crate::panes::sidebar::rail_order::RailOrder;
 use crate::panes::sidebar::{apps_rail, floor};
+use koru_app_shell::tabslide::TabSlides;
 use koru_shell_chrome::title_icon::{PAGE_ICON_SLOT, draw_page_emoji, split_leading_emoji};
 
 /// How far the pointer must travel before a press on a manifest row stops being
@@ -296,10 +298,15 @@ impl NavigatorMode {
     }
 
     /// [`ALL`](Self::ALL) minus the modes this build hides, in the same
-    /// order. What the icons, their rects, the hit test and the
-    /// accessibility tree are built from. A hidden mode leaves no gap: the
+    /// order: the rail's **default** order. A hidden mode leaves no gap: the
     /// icons close up, while its `Alt+digit` simply stops resolving
     /// (`mainview::keys::Chord::shown_in_product`).
+    ///
+    /// **Test-only now.** The icons, their rects, the hit test and the
+    /// accessibility tree are built from the person's order
+    /// (`sidebar::rail_order::RailOrder::visible`, which filters the same
+    /// way); the suites compare against this default.
+    #[cfg(test)]
     pub fn visible() -> Vec<Self> {
         Self::ALL
             .into_iter()
@@ -673,6 +680,14 @@ pub struct ExploreView {
     mode: NavigatorMode,
     /// Which rail control the pointer is on, if any.
     rail_hover: Option<apps_rail::Hit>,
+    /// The order the rail's views sit in, which the person drags
+    /// (`sidebar::rail_order`, `apps_rail_drag`).
+    rail_order: RailOrder,
+    /// A view's square held by the pointer.
+    rail_drag: Option<apps_rail_drag::RailDrag>,
+    /// The slide the rail's views ride when the order changes under them —
+    /// the tab strip's own.
+    rail_slides: TabSlides,
     /// Which floor control the pointer is on, if any.
     floor_hover: Option<floor::Hit>,
     /// Which part of the hovered popover row the pointer is on — the gear,
@@ -4073,9 +4088,10 @@ impl ExploreView {
     }
 
     /// The rail, laid out. One function for drawing, hit-testing and the
-    /// accessibility tree. Zero-width squares in a collapsed column.
+    /// accessibility tree. Zero-width squares in a collapsed column. The
+    /// views in the person's order ([`rail_modes`](Self::rail_modes)).
     pub fn apps_rail_rects(&self, rail: Rect) -> apps_rail::Rects {
-        apps_rail::solve(rail, &NavigatorMode::visible())
+        apps_rail::solve(rail, &self.rail_modes())
     }
 
     /// Where `F6` has the keyboard, for the ring. The window owns the focus;
@@ -4168,10 +4184,10 @@ impl ExploreView {
         button.w > 0.0 && button.contains(x, y)
     }
 
-    /// The apps' squares, top to bottom, in `ALL` order — the rail (the
-    /// CTO's artboard 11). Kept under its old name because the chords, the
-    /// tooltip and the accessibility tab list all read it; it takes the
-    /// **rail's** rect now, not the pane's.
+    /// The apps' squares, top to bottom, in the person's order — the rail
+    /// (the CTO's artboard 11; [`rail_modes`](Self::rail_modes)). Kept under
+    /// its old name because the chords, the tooltip and the accessibility tab
+    /// list all read it; it takes the **rail's** rect now, not the pane's.
     pub fn navigator_mode_rects(&self, rail: Rect) -> Vec<(NavigatorMode, Rect)> {
         self.apps_rail_rects(rail).apps
     }
@@ -4179,10 +4195,16 @@ impl ExploreView {
     /// A press in the rail: an app shows its nav; Settings, Help and the
     /// profile square are the container's destinations, except that the
     /// square's popover is this pane's own, hung beside the square.
+    ///
+    /// A press on an app also takes hold of its square, the way a press on a
+    /// tab both selects it and picks it up (`apps_rail_drag`).
     pub fn apps_rail_mouse_down(&mut self, rail: Rect, x: f32, y: f32) -> Outcome {
         let rects = self.apps_rail_rects(rail);
         match apps_rail::hit(&rects, x, y) {
             Some(apps_rail::Hit::App(mode)) => {
+                if let Some((_, square)) = rects.apps.iter().find(|(m, _)| *m == mode) {
+                    self.begin_rail_drag(mode, *square, y);
+                }
                 self.set_navigator_mode(mode);
                 if mode == NavigatorMode::Socials {
                     Outcome::OpenSocials
@@ -4305,7 +4327,29 @@ impl ExploreView {
             p.panel_border,
             &scene::rect(r.band.x + r.band.w - 1.0, r.band.y, 1.0, r.band.h),
         );
-        for (i, (mode, square)) in r.apps.iter().enumerate() {
+        // A held square is drawn on the pointer and **last**, over the views
+        // it passes; every other one eases from where it was into the slot
+        // it now has (`apps_rail_drag`).
+        let carried = self.rail_carried(&r);
+        let mut squares: Vec<(usize, NavigatorMode, Rect)> = r
+            .apps
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| carried.is_none_or(|(held, _)| held != *i))
+            .map(|(i, (mode, square))| {
+                let dy = self.rail_slides.offset(i);
+                (
+                    i,
+                    *mode,
+                    Rect::new(square.x, square.y + dy, square.w, square.h),
+                )
+            })
+            .collect();
+        if let Some((held, square)) = carried {
+            squares.push((held, r.apps[held].0, square));
+        }
+        for (i, mode, square) in &squares {
+            let (i, mode, square) = (*i, mode, square);
             let active = *mode == self.mode;
             if active {
                 scene::fill(
@@ -5702,6 +5746,7 @@ impl ExploreView {
             || self.drag_armed()
             || self.hold_reveal_pending()
             || self.rail.animating()
+            || self.rail_slides.animating()
             || self.runs_turning()
     }
 
@@ -5752,7 +5797,8 @@ impl ExploreView {
     /// whether anything moved. Called from the container's `advance` pass so
     /// every motion in the window runs off one `Instant`.
     pub fn advance_drag(&mut self, ws: &WorkspaceDoc, now: Instant) -> bool {
-        let mut moved = self.slides.advance(now) | self.rail.advance(now);
+        let mut moved =
+            self.slides.advance(now) | self.rail.advance(now) | self.rail_slides.advance(now);
         if !self.drag_armed() {
             self.drag_tick = Some(now);
             return moved;
@@ -8292,6 +8338,7 @@ fn icon_for(kind: Kind) -> char {
 /// gets a call, not another embedded subsystem (§7.10).
 pub(crate) mod accessibility;
 pub mod actions;
+mod apps_rail_drag;
 mod canvases;
 pub mod home_nav;
 pub mod rail;
