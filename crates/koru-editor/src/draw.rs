@@ -2330,8 +2330,30 @@ impl LinkCardGeom {
     }
 }
 
-/// The card's text, wrapped to what a surface `bounds_w` wide leaves beside
-/// the buttons.
+/// **The most a link card's text runs, in graphemes.** A longer address keeps
+/// its start and its end around a `…` (user, 2026-11-03: a full tracking URL
+/// stretched the card across the page); copy still copies the whole address.
+pub const LINK_CARD_LABEL_MAX: usize = 30;
+
+/// `text` cut to [`LINK_CARD_LABEL_MAX`] graphemes with the ellipsis in the
+/// middle, or unchanged when it fits.
+pub fn elide_link_label(text: &str) -> std::borrow::Cow<'_, str> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    if graphemes.len() <= LINK_CARD_LABEL_MAX {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let kept = LINK_CARD_LABEL_MAX - 1;
+    let head = kept.div_ceil(2);
+    let tail = kept - head;
+    let mut out = graphemes[..head].concat();
+    out.push('…');
+    out.push_str(&graphemes[graphemes.len() - tail..].concat());
+    std::borrow::Cow::Owned(out)
+}
+
+/// The card's text, elided in the middle to [`LINK_CARD_LABEL_MAX`] and
+/// wrapped to what a surface `bounds_w` wide leaves beside the buttons.
 pub fn link_card_label(
     engine: &mut TextEngine,
     text: &str,
@@ -2339,7 +2361,7 @@ pub fn link_card_label(
 ) -> parley::Layout<theme::Brush> {
     let buttons_w = LINK_CHIP_BTN * 2.0 + LINK_CHIP_GAP;
     let max_w = (bounds_w - 24.0 - buttons_w - LINK_CHIP_PAD).max(80.0);
-    engine.simple_layout_wrapped(text, theme::role::hint(), max_w)
+    engine.simple_layout_wrapped(&elide_link_label(text), theme::role::hint(), max_w)
 }
 
 /// A card for a `label_w`×`label_h` label, centred under `anchor` and
@@ -2651,6 +2673,27 @@ mod tests {
     use super::*;
 
     use koru_i18n::Lang;
+
+    /// **A long address is cut in the middle to 30 graphemes**, keeping its
+    /// start and its end; a short one, or one exactly 30 long, is unchanged.
+    #[test]
+    fn a_long_link_label_keeps_its_ends_around_an_ellipsis() {
+        let long = "https://www.jetbrains.com/help/rider/Navigate_editor_tabs_and_tool_windows.html?utm_source=chatgpt.com";
+        let cut = elide_link_label(long);
+        assert_eq!(cut, "https://www.jet…ce=chatgpt.com");
+        assert_eq!(cut.chars().count(), LINK_CARD_LABEL_MAX);
+        assert_eq!(
+            elide_link_label("https://example.com/a"),
+            "https://example.com/a"
+        );
+        let exact = "a".repeat(LINK_CARD_LABEL_MAX);
+        assert_eq!(elide_link_label(&exact), exact.as_str());
+        let accents = "é".repeat(40);
+        assert_eq!(
+            elide_link_label(&accents).chars().count(),
+            LINK_CARD_LABEL_MAX
+        );
+    }
 
     /// **The document's link card is the one it always was** — under the
     /// pill, overlapping it, flipped above it near the status bar, copy then
