@@ -81,6 +81,20 @@ pub struct RenameChatResponse {
     pub chat: Chat,
 }
 
+/// Pin a chat, or unpin it (AI schema 12). Pinning a chat already pinned
+/// keeps its pin time; like a rename it is not activity, so the chat keeps
+/// its place among the others.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PinChatRequest {
+    pub pinned: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PinChatResponse {
+    pub chat: Chat,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateChatModelRequest {

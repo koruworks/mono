@@ -129,6 +129,7 @@ Generated from the route catalog. Do not edit.
 - GET `/v1/ai/chats` — List AI chats (Public)
 - GET `/v1/ai/chats/{chat}` — Read an authoritative AI chat transcript (Public)
 - PATCH `/v1/ai/chats/{chat}` — Rename an AI chat (Public)
+- PATCH `/v1/ai/chats/{chat}/pin` — Pin or unpin an AI chat (Public)
 - PATCH `/v1/ai/chats/{chat}/model` — Change the model used by an AI chat (Public)
 - PATCH `/v1/ai/chats/{chat}/privacy` — Change whether agents and connected assistants can discover a chat (Public)
 - PATCH `/v1/ai/chats/{chat}/folder` — Choose the folder a chat's local agent works in (Public)

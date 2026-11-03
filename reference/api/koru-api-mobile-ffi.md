@@ -61,6 +61,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.list_chats` | `client.ai().list_chats` | GET /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.read_chat` | `client.ai().read_chat` | GET /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.rename_chat` | `client.ai().rename_chat` | PATCH /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |
+| `ai.pin_chat` | `client.ai().pin_chat` | PATCH /v1/ai/chats/{chat}/pin | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.update_chat_model` | `client.ai().update_chat_model` | PATCH /v1/ai/chats/{chat}/model | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.update_chat_privacy` | `client.ai().update_chat_privacy` | PATCH /v1/ai/chats/{chat}/privacy | Per-chat AI privacy is not yet exposed by a mobile chat host |
 | `ai.update_chat_folder` | `client.ai().update_chat_folder` | PATCH /v1/ai/chats/{chat}/folder | Local agents run on the desktop that installed them |

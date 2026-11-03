@@ -239,6 +239,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["chat"],
     },
     AiRoute {
+        operation_id: "ai_pin_chat",
+        method: "PATCH",
+        path: "/v1/ai/chats/{chat}/pin",
+        scope: AiScope::Chat,
+        summary: "Pin or unpin an AI chat",
+        returns: "The durable chat with its pin time, or none once unpinned; its activity timestamp is unchanged.",
+        handler: || patch(pin_chat),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::PinChatRequest>()
+        }),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::PinChatResponse>()
+        }),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
         operation_id: "ai_update_chat_model",
         method: "PATCH",
         path: "/v1/ai/chats/{chat}/model",
@@ -969,6 +986,26 @@ async fn rename_chat(
         Err(response) => return response,
     };
     answer(call(move || client.rename_chat(context, chat, request)).await)
+}
+
+async fn pin_chat(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    payload: Result<Json<koru_ai_wire::PinChatRequest>, JsonRejection>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.pin_chat(context, chat, request)).await)
 }
 
 async fn update_chat_model(

@@ -2905,10 +2905,10 @@ impl ChatSurface {
                     self.after_reply(chat);
                 }
             }
-            Update::Renamed(chat) => {
+            Update::Renamed(chat) | Update::Pinned(chat) => {
                 self.waiting = false;
-                // In place: a rename is not activity, and the list stays as
-                // it was ordered (the user's call, 2026-10-31).
+                // In place: a rename or a pin is not activity, and the list
+                // stays as it was ordered (the user's call, 2026-10-31).
                 self.remember_chat(&chat, false);
                 if let Some(transcript) = &mut self.transcript
                     && transcript.chat.id == chat.id

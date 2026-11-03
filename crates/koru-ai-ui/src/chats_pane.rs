@@ -549,6 +549,13 @@ impl ChatSurface {
         ))
     }
 
+    /// **Pin a chat, or unpin it** (AI schema 12): the service keeps it on
+    /// the chat and the list takes the answer in place, as a rename's. The
+    /// pane's Pinned group and its menu read `Chat::pinned_at`.
+    pub fn pin_chat(&mut self, chat: ChatId, pinned: bool) -> bool {
+        self.send_command(Command::Pin(chat, koru_ai_wire::PinChatRequest { pinned }))
+    }
+
     /// `F2` on the pane: open the field over the keyboard's chat.
     pub(crate) fn start_chats_rename(&mut self) -> bool {
         let Some(chat) = self.chats_pane.focused_chat() else {
@@ -809,6 +816,46 @@ mod tests {
         surface.apply_update(Update::Renamed(renamed));
         let titles: Vec<&str> = surface.chats.iter().map(|c| c.title.as_str()).collect();
         assert_eq!(titles, ["One", "Second"]);
+    }
+
+    /// **A pin goes through the pin command and lands in place** (AI
+    /// schema 12): the chat keeps its place, and the list reads its pin
+    /// time; unpinning clears it.
+    #[test]
+    fn a_pinned_chat_is_sent_and_kept_in_place() {
+        let (one, two) = (chat("One"), chat("Two"));
+        let (mut surface, commands, _updates) = pane_on(vec![one.clone(), two.clone()]);
+        surface.chats = vec![one.clone(), two.clone()];
+        assert!(surface.pin_chat(two.id, true));
+        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
+            Command::Pin(chat, request) => {
+                assert_eq!(chat, two.id);
+                assert!(request.pinned);
+            }
+            _ => panic!("the pin goes through the pin command"),
+        }
+        let mut pinned = two.clone();
+        pinned.pinned_at = Some(koru_ai_core::Timestamp::from_millis(9));
+        let update = Update::Pinned(pinned);
+        assert!(update.changes_chat_list(), "other views hear of it");
+        surface.apply_update(update);
+        let listed: Vec<_> = surface
+            .chats
+            .iter()
+            .map(|chat| (chat.title.as_str(), chat.pinned_at))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("One", None),
+                ("Two", Some(koru_ai_core::Timestamp::from_millis(9)))
+            ]
+        );
+        assert!(surface.pin_chat(two.id, false));
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+            Command::Pin(_, koru_ai_wire::PinChatRequest { pinned: false })
+        ));
     }
 
     /// The standalone window's pane, open on `chats` with the keyboard on

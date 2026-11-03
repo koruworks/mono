@@ -32,6 +32,8 @@ pub(crate) enum Command {
     Create(CreateChatRequest),
     Read(ChatId),
     Rename(ChatId, RenameChatRequest),
+    /// Pin the chat, or unpin it (AI schema 12).
+    Pin(ChatId, koru_ai_wire::PinChatRequest),
     UpdateModel(ChatId, UpdateChatModelRequest),
     UpdatePrivacy(ChatId, UpdateChatPrivacyRequest),
     /// The folder the chat's local agent works in.
@@ -77,6 +79,7 @@ impl Command {
             Self::Create(_) => "create",
             Self::Read(_) => "read",
             Self::Rename(_, _) => "rename",
+            Self::Pin(_, _) => "pin",
             Self::UpdateModel(_, _) => "update_model",
             Self::UpdatePrivacy(_, _) => "update_privacy",
             Self::UpdateFolder(_, _) => "update_folder",
@@ -131,6 +134,8 @@ pub(crate) enum Update {
     Created(ChatTranscript),
     Transcript(ChatTranscript),
     Renamed(koru_ai_core::Chat),
+    /// A chat pinned or unpinned, in place like a rename.
+    Pinned(koru_ai_core::Chat),
     ModelUpdated(koru_ai_core::Chat, Option<koru_ai_core::ReasoningControl>),
     PrivacyUpdated(koru_ai_core::Chat),
     FolderUpdated(koru_ai_core::Chat),
@@ -191,6 +196,7 @@ impl Update {
             Self::Boot { .. }
             | Self::Created(_)
             | Self::Renamed(_)
+            | Self::Pinned(_)
             | Self::ModelUpdated(..)
             | Self::PrivacyUpdated(_)
             | Self::HistoryChanged { .. } => true,
@@ -432,6 +438,15 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             Command::Rename(chat, request) => {
                 let update = match client.ai().rename_chat(chat, &request) {
                     Ok(response) => Update::Renamed(response.chat),
+                    Err(error) => Update::Failure(error.message),
+                };
+                if updates.send(update).is_err() {
+                    return;
+                }
+            }
+            Command::Pin(chat, request) => {
+                let update = match client.ai().pin_chat(chat, &request) {
+                    Ok(response) => Update::Pinned(response.chat),
                     Err(error) => Update::Failure(error.message),
                 };
                 if updates.send(update).is_err() {
@@ -1100,6 +1115,7 @@ fn refused_answer(
         }
         Command::Read(about)
         | Command::Rename(about, _)
+        | Command::Pin(about, _)
         | Command::UpdateModel(about, _)
         | Command::UpdatePrivacy(about, _)
         | Command::UpdateFolder(about, _)

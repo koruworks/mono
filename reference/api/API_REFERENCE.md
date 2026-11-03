@@ -524,6 +524,12 @@ Rename an AI chat
 
 Returns: The durable chat with its updated title and activity timestamp.
 
+## PATCH `/v1/ai/chats/{chat}/pin`
+
+Pin or unpin an AI chat
+
+Returns: The durable chat with its pin time, or none once unpinned; its activity timestamp is unchanged.
+
 ## PATCH `/v1/ai/chats/{chat}/model`
 
 Change the model used by an AI chat

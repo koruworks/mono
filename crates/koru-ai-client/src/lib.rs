@@ -120,6 +120,15 @@ impl Client {
         self.server.rename_chat(context, chat, request)
     }
 
+    pub fn pin_chat(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> Result<koru_ai_wire::PinChatResponse> {
+        self.server.pin_chat(context, chat, request)
+    }
+
     pub fn update_chat_model(
         &self,
         context: RequestContext,

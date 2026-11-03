@@ -552,6 +552,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn pin_chat(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> ApiResult<koru_ai_wire::PinChatResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::PinChat {
+            context,
+            chat,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn update_chat_model(
         &self,
         context: RequestContext,
@@ -1037,6 +1053,12 @@ enum WorkerCommand {
         request: RenameChatRequest,
         reply: SyncSender<ApiResult<RenameChatResponse>>,
     },
+    PinChat {
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::PinChatResponse>>,
+    },
     UpdateChatModel {
         context: RequestContext,
         chat: ChatId,
@@ -1221,6 +1243,7 @@ impl WorkerCommand {
             Self::ListChats { .. } => "list_chats",
             Self::ReadChat { .. } => "read_chat",
             Self::RenameChat { .. } => "rename_chat",
+            Self::PinChat { .. } => "pin_chat",
             Self::UpdateChatModel { .. } => "update_chat_model",
             Self::UpdateChatPrivacy { .. } => "update_chat_privacy",
             Self::UpdateChatFolder { .. } => "update_chat_folder",
@@ -1665,6 +1688,14 @@ impl WorkerState {
                 reply,
             } => {
                 let _ = reply.send(self.rename_chat(context, chat, request));
+            }
+            WorkerCommand::PinChat {
+                context,
+                chat,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.pin_chat(context, chat, request));
             }
             WorkerCommand::UpdateChatModel {
                 context,
@@ -2284,6 +2315,33 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(RenameChatResponse { chat })
+    }
+
+    /// **Pin a chat, or unpin it** (AI schema 12). A chat pinned again
+    /// keeps the time it was first pinned, so the pinned group's order —
+    /// oldest pin first — does not move under a repeated request. Not
+    /// activity: the chat keeps its place among the others.
+    fn pin_chat(
+        &mut self,
+        context: RequestContext,
+        chat_id: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> ApiResult<koru_ai_wire::PinChatResponse> {
+        authorize(&context, AiScope::Chat)?;
+        let chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if chat.pinned_at.is_some() == request.pinned {
+            return Ok(koru_ai_wire::PinChatResponse { chat });
+        }
+        let chat = self
+            .repository
+            .set_chat_pinned(chat_id, request.pinned.then(Timestamp::now))
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        Ok(koru_ai_wire::PinChatResponse { chat })
     }
 
     fn update_chat_model(

@@ -2794,6 +2794,56 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
     assert_eq!(after.agent_mode.as_deref(), Some("acceptEdits"));
 }
 
+/// **A pin is the chat's** (AI schema 12): listed with the chat, kept at
+/// its first pin time when pinned again, cleared by unpinning, and never
+/// moving the chat in the list.
+#[test]
+fn a_chat_is_pinned_and_unpinned_in_place() {
+    use koru_ai_wire::PinChatRequest;
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(DeterministicMockProvider::new("Answer.")),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = create_chat(&client);
+    let before = client.read_chat(context(), chat).unwrap().chat;
+    assert_eq!(before.pinned_at, None);
+    let pinned = client
+        .pin_chat(context(), chat, PinChatRequest { pinned: true })
+        .unwrap()
+        .chat;
+    let at = pinned.pinned_at.expect("pinned");
+    assert_eq!(pinned.updated_at, before.updated_at, "not activity");
+    let again = client
+        .pin_chat(context(), chat, PinChatRequest { pinned: true })
+        .unwrap()
+        .chat;
+    assert_eq!(again.pinned_at, Some(at), "the first pin time is kept");
+    let listed = client.list_chats(context()).unwrap().chats;
+    assert_eq!(listed[0].pinned_at, Some(at));
+    let unpinned = client
+        .pin_chat(context(), chat, PinChatRequest { pinned: false })
+        .unwrap()
+        .chat;
+    assert_eq!(unpinned.pinned_at, None);
+    assert_eq!(
+        client
+            .pin_chat(context(), ChatId::new(), PinChatRequest { pinned: true })
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+}
+
 /// An agent that says a status line before its reply and one within it
 /// (koru-ai D69).
 struct NoticeProvider;

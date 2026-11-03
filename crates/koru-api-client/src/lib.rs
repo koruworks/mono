@@ -800,6 +800,18 @@ impl AiClient<'_> {
         )
     }
 
+    pub fn pin_chat(
+        &self,
+        chat: ChatId,
+        request: &koru_ai_wire::PinChatRequest,
+    ) -> AiResult<koru_ai_wire::PinChatResponse> {
+        self.json(
+            reqwest::Method::PATCH,
+            format!("/v1/ai/chats/{chat}/pin"),
+            Some(json_body(request)?),
+        )
+    }
+
     pub fn update_chat_model(
         &self,
         chat: ChatId,

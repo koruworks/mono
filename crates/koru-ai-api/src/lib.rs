@@ -142,6 +142,12 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         request: RenameChatRequest,
     ) -> Result<RenameChatResponse>;
+    fn pin_chat(
+        &self,
+        context: RequestContext,
+        chat: ChatId,
+        request: koru_ai_wire::PinChatRequest,
+    ) -> Result<koru_ai_wire::PinChatResponse>;
     fn update_chat_model(
         &self,
         context: RequestContext,
