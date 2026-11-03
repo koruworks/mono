@@ -55,6 +55,9 @@ pub(crate) enum WorkHit {
     Toggle(ToolInvocationId),
     /// One of a call's links, by its place in the call's detail.
     Link(ToolInvocationId, usize),
+    /// One of a call's changed files, by its place in the call's detail
+    /// (D62).
+    Path(ToolInvocationId, usize),
 }
 
 pub(crate) struct WorkLine {
@@ -71,7 +74,7 @@ pub(crate) struct WorkLine {
     /// colors), and whether it sits on the code background.
     pub ink: Option<Option<Ink>>,
     pub panel: bool,
-    /// Where a link line goes.
+    /// Where a link line goes: a web address, or a changed file's path.
     pub url: Option<String>,
 }
 
@@ -227,6 +230,7 @@ pub(crate) fn build(
                                 let hit = line.hit.map(|hit| match hit {
                                     DetailHit::Toggle => WorkHit::Toggle(row.id),
                                     DetailHit::Link(index) => WorkHit::Link(row.id, index),
+                                    DetailHit::Path(index) => WorkHit::Path(row.id, index),
                                 });
                                 let gap = match detail.get(index + 1) {
                                     None => LINE_GAP + line.panel as u8 as f32 * PANEL_PAD,

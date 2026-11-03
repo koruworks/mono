@@ -52,6 +52,8 @@ impl AiChatView {
         surface.set_favorite_models(favorite_models());
         // Koru has a Settings tab: the picker's + opens *Agent providers*.
         surface.offer_agent_settings(true);
+        // A changed file's path shows the file in Explorer or Finder (D62).
+        surface.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
         Self {
             surface,
             face: ChatFace::default(),
@@ -228,6 +230,12 @@ impl AiChatView {
     /// Agent providers.
     pub fn take_agent_settings_request(&mut self) -> bool {
         self.surface.take_agent_settings_request()
+    }
+
+    /// A changed file's path was pressed for a file not opened directly
+    /// (D62): the container shows it in the file manager.
+    pub fn take_reveal_path_request(&mut self) -> Option<std::path::PathBuf> {
+        self.surface.take_reveal_path_request()
     }
 
     /// The models starred in the picker (D46), as the roaming setting holds

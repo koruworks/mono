@@ -1783,6 +1783,9 @@ impl MainView {
                 // Koru has a Settings tab: the picker's + opens *Agent
                 // providers*.
                 chat.offer_agent_settings(true);
+                // A changed file's path shows the file in Explorer or Finder
+                // (D62).
+                chat.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
                 chat
             },
             ai_focused: false,
@@ -14017,6 +14020,7 @@ impl View for MainView {
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
         let agent_settings_opened = self.open_agent_settings_from_chat();
+        self.reveal_paths_from_chat();
         // A star pressed in a chat's model picker: stored, roaming, and
         // handed to every other chat.
         let favorites_saved = self.save_favorite_models_from_chat();
@@ -15414,6 +15418,21 @@ impl MainView {
             disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
         });
         true
+    }
+
+    /// **A changed file's path was pressed in a chat** (D62) — in the pane
+    /// or in the active chat tab — for a file that is not opened directly:
+    /// show it in Explorer or Finder through the shell's one seam, the same
+    /// `PaneRequest::RevealPath` Runs' *Open location* sends.
+    fn reveal_paths_from_chat(&mut self) {
+        let pane = self.ai_chat.take_reveal_path_request();
+        let tab = match self.tabs_mut().active_view() {
+            TabView::AiChat(view) => view.take_reveal_path_request(),
+            _ => None,
+        };
+        for path in pane.into_iter().chain(tab) {
+            self.ask_pane(koru_workspace_host::PaneRequest::RevealPath(path));
+        }
     }
 
     /// The **+** at the end of a chat picker's agent rail was pressed — in

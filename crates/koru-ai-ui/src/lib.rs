@@ -524,6 +524,12 @@ pub struct ChatSurface {
     agent_settings_offered: bool,
     /// The **+** was pressed: the host opens Settings on Agent providers.
     agent_settings_request: bool,
+    /// The host can show a path in the file manager (D62). Off until a host
+    /// says so; without it a changed file's folder is opened instead.
+    reveal_paths_offered: bool,
+    /// A changed file's path was pressed for a file not opened directly:
+    /// the host shows this in the file manager.
+    reveal_path_request: Option<std::path::PathBuf>,
     /// The models starred in the picker (D46), by agent key and model id,
     /// as the host's roaming setting holds them.
     favorite_models: Vec<FavoriteModel>,
@@ -842,6 +848,8 @@ impl ChatSurface {
             agent_order: Vec::new(),
             agent_settings_offered: false,
             agent_settings_request: false,
+            reveal_paths_offered: false,
+            reveal_path_request: None,
             favorite_models: Vec::new(),
             favorite_models_request: None,
             openai_models: Vec::new(),
@@ -6790,6 +6798,19 @@ impl ChatSurface {
                     .and_then(|line| line.url.as_deref())
                 {
                     open_web_link(url);
+                }
+                return true;
+            }
+            // A changed file's path (D62): the file, or its folder.
+            work_view::WorkHit::Path(..) => {
+                if let Some(path) = self
+                    .work_layouts
+                    .iter()
+                    .flat_map(|work| &work.lines)
+                    .find(|line| line.hit == Some(hit))
+                    .and_then(|line| line.url.clone())
+                {
+                    self.open_changed_file(&path);
                 }
                 return true;
             }

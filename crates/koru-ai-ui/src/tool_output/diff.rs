@@ -10,6 +10,9 @@
 //! a diff per file, which its adapter heads with the file's path. A row
 //! written before either is `path` over the new text, and reads as that.
 //! A `` ```diff `` fence in any other output is drawn the same way.
+//!
+//! The path heading each file is a link that opens it, or shows it in its
+//! folder (D62, [`super::open_path`]).
 
 use koru_i18n::Lang;
 
@@ -229,10 +232,7 @@ pub(super) fn render(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<Rend
             });
             let skip = usize::from(header.is_some() && header.as_deref() == first);
             if let Some(path) = header {
-                pieces.push(Piece::Header {
-                    text: path,
-                    mono: false,
-                });
+                pieces.push(Piece::Path(path));
             }
             if let Some(output) = output {
                 let lines = output
@@ -252,7 +252,7 @@ pub(super) fn render(call: &Call<'_>, lang: Lang, expanded: bool) -> Option<Rend
     })
 }
 
-/// One file of a diff: its path as a header, then its lines.
+/// One file of a diff: its path, which opens it (D62), then its lines.
 pub(super) fn file_pieces(
     path: Option<String>,
     lines: &[DiffLine],
@@ -261,10 +261,7 @@ pub(super) fn file_pieces(
 ) -> Vec<Piece> {
     let mut pieces = Vec::new();
     if let Some(path) = path {
-        pieces.push(Piece::Header {
-            text: path,
-            mono: false,
-        });
+        pieces.push(Piece::Path(path));
     }
     // A hunk's `@@` line is drawn as a gap between hunks, with the
     // function it is in when the diff names one; the first one is not

@@ -23,6 +23,7 @@ mod command;
 mod diff;
 mod file;
 pub(crate) mod layout;
+pub(crate) mod open_path;
 mod search;
 mod structured;
 
@@ -68,6 +69,9 @@ pub(crate) enum Piece {
     Header { text: String, mono: bool },
     /// Monospace lines on the code background.
     Code(Vec<CodeLine>),
+    /// **A changed file's path, which opens the file** (D62): the line
+    /// heading its diff, in the link color ([`open_path`]).
+    Path(String),
     /// One result a person can open in the browser.
     Link {
         title: String,

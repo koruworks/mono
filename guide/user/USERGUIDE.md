@@ -1404,7 +1404,14 @@ applies to your next message, and the note beside the chip says so. When the
 agent leaves a mode by itself — Claude after you approve its plan — the chip
 follows. Whatever the mode, the agent asks for permission with its own choices,
 on a card in the reply. A proposed change waits on a card with **Approve** and
-**Deny**. The
+**Deny**. In the agent's work above a reply, a change to a file shows the
+file's path over its added and removed lines; the path is a link. Clicking it
+opens the file in its usual editor when it is text or source — Markdown,
+plain text, JSON, TOML, YAML, Rust, TypeScript and the like — and otherwise
+shows it selected in Explorer or Finder, so a script or a program is never
+started by a click; a file that is gone since shows the nearest folder that is
+still there. A path the agent gave relative to its folder is found in the
+chat's working folder. The
 composer footer keeps the
 incognito, globe and workspace controls against its left edge and approval plus
 model controls against its right edge. The send action is an arrow inside the

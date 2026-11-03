@@ -54,6 +54,7 @@ fn words(pieces: &[Piece]) -> Vec<String> {
             Piece::Meta(text)
             | Piece::Markdown(text)
             | Piece::Toggle(text)
+            | Piece::Path(text)
             | Piece::Header { text, .. } => text.clone(),
             Piece::Link { title, site, .. } => format!("{title} · {site}"),
             Piece::Code(lines) => lines
@@ -413,13 +414,7 @@ fn an_edit_from_acp_diff_content_reads_as_a_diff() {
         EDIT,
     );
     let pieces = pieces(&edit, Lang::En, NOW, false);
-    assert_eq!(
-        pieces[0],
-        Piece::Header {
-            text: "src/a.rs".into(),
-            mono: false
-        }
-    );
+    assert_eq!(pieces[0], Piece::Path("src/a.rs".into()));
     let Piece::Code(lines) = &pieces[1] else {
         panic!("{pieces:?}")
     };
@@ -450,11 +445,43 @@ fn a_diff_fence_in_text_output_renders_as_a_diff() {
         false,
     );
     assert_eq!(pieces[0], Piece::Markdown("Applied:".into()));
-    assert!(matches!(&pieces[1], Piece::Header { text, .. } if text == "src/a.rs"));
+    assert_eq!(pieces[1], Piece::Path("src/a.rs".into()));
     assert!(
         matches!(&pieces[2], Piece::Code(lines) if lines.iter().any(|line| line.ink == Ink::Added))
     );
     assert_eq!(pieces[3], Piece::Markdown("Done.".into()));
+}
+
+/// **A diff's path is a link that opens the file** (D62): in the link
+/// color, a press target of its own, carrying the path as the agent wrote
+/// it; each file of a diff its own.
+#[test]
+fn a_diffs_path_is_a_link_to_the_file() {
+    let two = format!("{EDIT}\n--- a/docs/b.md\n+++ b/docs/b.md\n@@ -1,1 +1,1 @@\n-old\n+new");
+    let edit = done("agent.file_change", "Edit", None, &two);
+    let pieces = pieces(&edit, Lang::En, NOW, false);
+    let paths: Vec<&Piece> = pieces
+        .iter()
+        .filter(|piece| matches!(piece, Piece::Path(_)))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            &Piece::Path("src/a.rs".into()),
+            &Piece::Path("docs/b.md".into())
+        ]
+    );
+    let mut engine = koru_draw::text::TextEngine::new();
+    let lines = layout::lay_out(&mut engine, &pieces, 400.0);
+    let links: Vec<_> = lines
+        .iter()
+        .filter(|line| matches!(line.hit, Some(layout::DetailHit::Path(_))))
+        .collect();
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].hit, Some(layout::DetailHit::Path(0)));
+    assert_eq!(links[1].hit, Some(layout::DetailHit::Path(1)));
+    assert_eq!(links[1].url.as_deref(), Some("docs/b.md"));
+    assert!(links.iter().all(|line| line.ink == Some(Ink::Link)));
 }
 
 /// A row from before Koru kept a diff (`path` over the new text) reads as

@@ -24,6 +24,8 @@ pub(crate) enum DetailHit {
     Toggle,
     /// Open the n-th link of the detail.
     Link(usize),
+    /// Open, or show in its folder, the n-th changed file's path (D62).
+    Path(usize),
 }
 
 /// One laid-out line of a detail.
@@ -34,7 +36,8 @@ pub(crate) struct DetailLine {
     /// Drawn on the code background.
     pub panel: bool,
     pub hit: Option<DetailHit>,
-    /// Where a link line goes.
+    /// Where a link line goes: a web address, or a changed file's path as
+    /// the agent wrote it.
     pub url: Option<String>,
 }
 
@@ -74,6 +77,7 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
     let width = width.max(1.0);
     let mut lines = Vec::new();
     let mut links = 0;
+    let mut paths = 0;
     let line = |layout: Layout<Brush>, ink: Option<Ink>| DetailLine {
         layout: Rc::new(layout),
         ink,
@@ -124,6 +128,17 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
                     )
                 });
                 links += 1;
+            }
+            Piece::Path(path) => {
+                lines.push(DetailLine {
+                    hit: Some(DetailHit::Path(paths)),
+                    url: Some(path.clone()),
+                    ..line(
+                        engine.simple_layout_wrapped(path, role::meta(), width),
+                        Some(Ink::Link),
+                    )
+                });
+                paths += 1;
             }
             Piece::Toggle(text) => lines.push(DetailLine {
                 hit: Some(DetailHit::Toggle),
