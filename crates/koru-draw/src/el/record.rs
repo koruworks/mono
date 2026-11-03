@@ -88,15 +88,32 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
     if el.gap.space != Space::S0 {
         record.property("gap", spacing_text(el.gap, profile), "El::gap");
     }
-    if el.radius != Radius::None {
-        let r = node.rect;
-        let value = el.radius.px(profile, r.w, r.h);
-        let authored = match el.radius {
+    let r = node.rect;
+    let radius_text = |radius: Radius| {
+        let value = radius.px(profile, r.w, r.h);
+        let authored = match radius {
             Radius::Metric(metric) => format!("metrics::{}", metric.name),
             Radius::Px(v) => format!("Radius::Px({v}) exception"),
             radius => format!("Radius::{}", radius.name()),
         };
-        record.property("radius", format!("{authored} -> {value}"), "El::radius");
+        format!("{authored} -> {value}")
+    };
+    let [top_start, top_end, bottom_end, bottom_start] = el.radius;
+    if el.radius.iter().all(|corner| *corner == top_start) {
+        if top_start != Radius::None {
+            record.property("radius", radius_text(top_start), "El::radius");
+        }
+    } else {
+        for (name, corner) in [
+            ("radius top-start", top_start),
+            ("radius top-end", top_end),
+            ("radius bottom-end", bottom_end),
+            ("radius bottom-start", bottom_start),
+        ] {
+            if corner != Radius::None {
+                record.property(name, radius_text(corner), "El::radius_start / _end");
+            }
+        }
     }
 
     // Colour and state.
@@ -128,7 +145,7 @@ pub(super) fn describe(frame: &Frame, index: usize, el: &El, record: &mut Record
             format!(
                 "{} -> {}",
                 surface.name(),
-                inspect::color(surface.of(palette))
+                inspect::color(cx.surface(surface))
             ),
             origin,
         );

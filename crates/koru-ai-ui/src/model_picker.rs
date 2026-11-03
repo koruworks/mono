@@ -1871,15 +1871,6 @@ impl crate::ChatSurface {
     }
 }
 
-/// **The rail's ground** (D45): the colour of the window's own left rail —
-/// Home, documents, folders, tasks, chats — which is the window's ground
-/// ([`theme::base_fill`]): the person's base colour for the theme on
-/// screen, or the theme's own. The agents' marks sit on the same ground as
-/// the app's, light or dark.
-pub(crate) fn rail_fill() -> vello::peniko::Color {
-    theme::base_fill()
-}
-
 /// Where the rail's dividers fall: after *Favorites* and after the chat's
 /// own built-in provider, each while an entry follows it.
 pub(crate) fn rail_dividers(rail: &[RailEntry]) -> Vec<usize> {

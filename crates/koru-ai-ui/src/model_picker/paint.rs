@@ -17,14 +17,14 @@ use koru_ui::icon_button::{IconButton, State as IconButtonState};
 use koru_ui::popover::PopoverShell;
 use koru_ui::scrollbar;
 use vello::Scene;
-use vello::kurbo::{Affine, RoundedRect, RoundedRectRadii};
+use vello::kurbo::Affine;
 
 use super::context::{ContextPaint, paint_context_row};
 use super::elements::{self, MarkName, MarkSpec, Paint, Part, Spec};
 use super::fast::{FastPaint, paint_fast_row};
 use super::{
     Geometry, PickerFocus, ROW_H, ROW_MARK, ROW_MARK_ROOM, RailEntry, Row, draw_mark,
-    draw_provider_mark, footer_words, provider_name, rail_dividers, rail_fill, reset_in, star_rect,
+    draw_provider_mark, footer_words, provider_name, rail_dividers, reset_in, star_rect,
 };
 use crate::agents::AgentStatus;
 use crate::effort;
@@ -111,7 +111,6 @@ impl crate::ChatSurface {
             radius,
         }
         .draw_containing(canvas, root, |canvas, root| {
-            paint_rail_ground(canvas, root, geometry.rail, radius);
             frame.paint(&tree, canvas, root, engine);
         });
     }
@@ -268,41 +267,6 @@ fn painter(
     paint: impl Fn(&mut Scene, Affine, &mut TextEngine, Rect, ElState) + 'static,
 ) -> Option<Paint> {
     Some(Box::new(paint))
-}
-
-/// **The rail's ground** (D45), under the marks: the window rail's colour
-/// inside the shell's hairline, rounded where the panel is. Painted by the
-/// host from the frame's rail, as a box's background can only be a surface
-/// token with one radius (QUESTIONS M2).
-fn paint_rail_ground(canvas: &mut Scene, root: Affine, rail: Rect, radius: f32) {
-    let _ground = inspect::scope(
-        "Agent rail ground",
-        "part",
-        root,
-        scene::rect(rail.x, rail.y, rail.w, rail.h),
-        |record| {
-            record.property(
-                "fill",
-                "theme::base_fill()",
-                "D45: the window rail's ground",
-            );
-            record.property("geometry", "the frame's Agent rail", "elements::RAIL");
-        },
-    );
-    let inset = 1.0;
-    let corner = f64::from((radius - inset).max(0.0));
-    scene::fill(
-        canvas,
-        root,
-        rail_fill(),
-        &RoundedRect::new(
-            f64::from(rail.x + inset),
-            f64::from(rail.y + inset),
-            f64::from(rail.x + rail.w),
-            f64::from(rail.y + rail.h - inset),
-            RoundedRectRadii::new(corner, 0.0, 0.0, corner),
-        ),
-    );
 }
 
 /// A rail mark's glyph — the agent's mark, *Favorites*' star — dimmed

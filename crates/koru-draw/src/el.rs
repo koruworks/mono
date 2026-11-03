@@ -271,6 +271,12 @@ impl FrameCx {
     pub fn palette(&self) -> &'static Palette {
         self.theme.palette(self.contrast)
     }
+
+    /// `surface`'s colour here: the palette's, or for `Surface::Ground`
+    /// the person's base colour for this theme ([`Surface::resolve`]).
+    pub fn surface(&self, surface: Surface) -> peniko::Color {
+        surface.resolve(self.theme, self.contrast)
+    }
 }
 
 /// A length an element is sized with, and where it came from.
@@ -462,7 +468,8 @@ pub struct El {
     pub(crate) align: Align,
     pub(crate) align_self: Option<Align>,
     pub(crate) bg: Option<Surface>,
-    pub(crate) radius: Radius,
+    /// Logical corners: top-start, top-end, bottom-end, bottom-start.
+    pub(crate) radius: [Radius; 4],
     pub(crate) states: Option<&'static StateRecipe>,
     pub(crate) theme: Option<&'static Theme>,
     pub(crate) key: Option<Key>,
@@ -505,7 +512,7 @@ fn element(name: &'static str, kind: Kind) -> El {
         align: Align::Stretch,
         align_self: None,
         bg: None,
-        radius: Radius::None,
+        radius: [Radius::None; 4],
         states: None,
         theme: None,
         key: None,
@@ -765,8 +772,39 @@ impl El {
         self
     }
 
+    /// Every corner.
     pub fn radius(mut self, radius: Radius) -> Self {
-        self.radius = radius;
+        self.radius = [radius; 4];
+        self
+    }
+
+    /// The two corners at the start edge — the left in a left-to-right
+    /// layout — leaving the end's as they were (a rail inside a rounded
+    /// panel).
+    pub fn radius_start(mut self, radius: Radius) -> Self {
+        self.radius[0] = radius;
+        self.radius[3] = radius;
+        self
+    }
+
+    /// The two corners at the end edge.
+    pub fn radius_end(mut self, radius: Radius) -> Self {
+        self.radius[1] = radius;
+        self.radius[2] = radius;
+        self
+    }
+
+    /// The two top corners.
+    pub fn radius_top(mut self, radius: Radius) -> Self {
+        self.radius[0] = radius;
+        self.radius[1] = radius;
+        self
+    }
+
+    /// The two bottom corners.
+    pub fn radius_bottom(mut self, radius: Radius) -> Self {
+        self.radius[2] = radius;
+        self.radius[3] = radius;
         self
     }
 

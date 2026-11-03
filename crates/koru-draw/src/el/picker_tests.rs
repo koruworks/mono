@@ -112,3 +112,83 @@ fn a_focus_ring_is_drawn_only_while_focused_and_moves_nothing() {
     assert_eq!(strokes(painted(&tree, &rest)), 0);
     assert_eq!(strokes(painted(&tree, &focused)), 1);
 }
+
+/// The element record named `name` in the paint of `tree`, as its
+/// properties.
+fn record_of(tree: &El, frame: &Frame, name: &str) -> Vec<(String, String)> {
+    let mut engine = engine();
+    let mut scene = vello::Scene::new();
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        crate::scene::rect(0.0, 0.0, 800.0, 600.0),
+    );
+    frame.paint(tree, &mut scene, Affine::IDENTITY, &mut engine);
+    capture
+        .finish()
+        .records
+        .into_iter()
+        .find(|record| record.name == name)
+        .map(|record| {
+            record
+                .properties
+                .into_iter()
+                .map(|p| (p.name.to_string(), p.value))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// **A box can sit on the window's ground, rounded at its start only**
+/// (M2): the fill is the theme's ground — the person's base colour when
+/// they chose one, which `theme/doc_size_tests.rs` holds — and the
+/// inspector names the two corners it rounds.
+#[test]
+fn a_rail_sits_on_the_ground_rounded_at_its_start() {
+    let mut engine = engine();
+    let mut cache = TextCache::default();
+    let tree = col("Rail")
+        .bg(Surface::Ground)
+        .radius_start(Radius::L)
+        .child(boxed("Mark").h(metrics::BUTTON_MIN));
+    for theme in themes::registered() {
+        let cx = FrameCx::new(theme, themes::Contrast::Standard);
+        let frame = tree.layout(
+            &mut engine,
+            &mut cache,
+            Rect::new(0.0, 0.0, 44.0, 300.0),
+            cx,
+        );
+        assert_eq!(frame.nodes[0].look.bg, Some(Surface::Ground));
+        let props = record_of(&tree, &frame, "Rail");
+        let value = |name: &str| {
+            props
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(
+            value("fill colour"),
+            Some(format!(
+                "Surface::Ground -> {}",
+                inspect::color(cx.surface(Surface::Ground))
+            ))
+        );
+        assert_eq!(value("radius top-start").as_deref(), Some("Radius::L -> 8"));
+        assert_eq!(
+            value("radius bottom-start").as_deref(),
+            Some("Radius::L -> 8")
+        );
+        assert_eq!(value("radius top-end"), None);
+        assert_eq!(value("radius"), None, "the corners differ");
+    }
+    let uniform = boxed("Plate").radius(Radius::M).bg(Surface::Hover);
+    let cx = FrameCx::root();
+    let frame = uniform.layout(&mut engine, &mut cache, Rect::new(0.0, 0.0, 30.0, 30.0), cx);
+    let props = record_of(&uniform, &frame, "Plate");
+    assert!(
+        props
+            .iter()
+            .any(|(n, v)| n == "radius" && v == "Radius::M -> 6")
+    );
+}

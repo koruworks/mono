@@ -141,7 +141,25 @@ fn each_theme_keeps_its_own_base_colour() {
     set_base_color(false, Some(0xDDE7F6));
     assert_eq!(base_color(false), Some(0xDDE7F6));
     assert_eq!(base_color(true), Some(0x18202E));
+    // An element's ground is the base colour of its own theme's
+    // appearance, whatever the root theme is (QUESTIONS M2).
+    for (theme, base) in [
+        (&themes::LIGHT_THEME, 0xDDE7F6),
+        (&themes::DARK_THEME, 0x18202E),
+    ] {
+        for contrast in themes::Contrast::ALL {
+            assert_eq!(Surface::Ground.resolve(theme, contrast), rgb_hex(base));
+        }
+    }
     set_base_color(true, None);
     set_base_color(false, None);
     assert_eq!(base_fill(), p().ground);
+    for theme in themes::registered() {
+        assert_eq!(
+            Surface::Ground.resolve(theme, themes::Contrast::Standard),
+            theme.standard.ground,
+            "{}: no choice is the theme's own ground",
+            theme.key
+        );
+    }
 }

@@ -299,24 +299,22 @@ impl Frame {
             |record| super::record::describe(self, index, el, record),
         );
         if let Some(surface) = node.look.bg {
-            let radius = el.radius.px(cx.profile, r.w, r.h);
             scene::fill(
                 scene,
                 transform,
-                surface.of(palette),
-                &scene::rrect(r.x, r.y, r.w, r.h, radius),
+                cx.surface(surface),
+                &corners(el, cx.profile, r),
             );
         }
         // Focus is decoration (§3.7): one hairline at the element's corners,
         // over its fill and under its content.
         if let Some(ring) = node.ring {
-            let radius = el.radius.px(cx.profile, r.w, r.h);
             scene::stroke(
                 scene,
                 transform,
                 ring.of(palette),
                 crate::theme::BORDER_W,
-                &scene::rrect(r.x, r.y, r.w, r.h, radius),
+                &corners(el, cx.profile, r),
             );
         }
         let [start, top, end, bottom] = el.pad.map(|spacing| spacing.px(cx.profile));
@@ -398,6 +396,20 @@ impl Frame {
             self.paint_el(child, next, scene, transform, engine);
         }
     }
+}
+
+/// `el`'s box `r` with its logical corners, start on the left: a layout is
+/// left to right today, and a right-to-left one mirrors here.
+fn corners(el: &El, profile: crate::theme::Profile, r: Rect) -> vello::kurbo::RoundedRect {
+    let [top_start, top_end, bottom_end, bottom_start] = el
+        .radius
+        .map(|radius| f64::from(radius.px(profile, r.w, r.h)));
+    scene::rect(r.x, r.y, r.w, r.h).to_rounded_rect(vello::kurbo::RoundedRectRadii::new(
+        top_start,
+        top_end,
+        bottom_end,
+        bottom_start,
+    ))
 }
 
 fn line_height(t: &TextEl) -> f32 {

@@ -7,8 +7,9 @@
 //!
 //! ```text
 //! row  Model picker                     the panel, gap RAIL_CONTENT_GAP
-//!   col  Agent rail                     PICKER_RAIL_W, marks centred
-//!     Rail mark · Rail gap · [Rail divider] · … · Manage agent providers
+//!   row  Agent rail                     PICKER_RAIL_W, inside the hairline
+//!     col  Agent rail column            on Surface::Ground, marks centred
+//!       Rail mark · Rail gap · [Rail divider] · … · Manage agent providers
 //!   col  Picker content                 fill, PICKER_PAD at top, end, foot
 //!     row  Search row                   PICKER_SEARCH_H
 //!       row  Search box                 Search field (fill) · Refresh models
@@ -56,8 +57,24 @@ pub(crate) const SEARCH_ROW_H: Metric = Metric::new("PICKER_SEARCH_H", SEARCH_H)
 pub(crate) const CONTENT_GAP: Tagged<Space> = Tagged::new("RAIL_CONTENT_GAP", Space::S2);
 /// The content's inset from the panel's top, end and foot ([`super::PAD`]).
 pub(crate) const PANEL_INSET: Tagged<Space> = Tagged::new("PICKER_PAD", Space::S1);
-/// The rail's inset above its first mark and below its last.
-pub(crate) const RAIL_INSET: Tagged<Space> = Tagged::new("PICKER_RAIL_INSET", Space::S2);
+/// The panel's hairline (`BORDER_W`): the rail's ground keeps inside it on
+/// its start, top and foot, so the shell's border stays whole.
+pub(crate) const HAIRLINE: Tagged<Space> = Tagged::new(
+    "PICKER_PANEL_HAIRLINE",
+    Space::Px(koru_draw::theme::BORDER_W as f32),
+);
+/// The rail's inset above its first mark and below its last, inside the
+/// hairline: with it, the 8 units (`Space::S2`) the marks always sat from
+/// the panel's edge.
+pub(crate) const GROUND_INSET: Tagged<Space> = Tagged::new(
+    "PICKER_RAIL_INSET",
+    Space::Px(8.0 - koru_draw::theme::BORDER_W as f32),
+);
+/// The ground's start corners: the panel's radius inside its hairline.
+pub(crate) const GROUND_RADIUS: Metric = Metric::new(
+    "PICKER_RAIL_GROUND_RADIUS",
+    10.0 - koru_draw::theme::BORDER_W as f32,
+);
 /// The room after each mark ([`super::RAIL_GAP`]).
 pub(crate) const MARK_GAP: Tagged<Space> = Tagged::new("PICKER_RAIL_GAP", Space::S1_5);
 /// A rail divider's inset on every side of its hairline: with the hairline,
@@ -76,6 +93,7 @@ pub(crate) const REFRESH_H: f32 = SEARCH_H - 12.0;
 /// what a screen reader hears is each control's translated name.
 pub(crate) const PICKER: &str = "Model picker";
 pub(crate) const RAIL: &str = "Agent rail";
+pub(crate) const RAIL_COLUMN: &str = "Agent rail column";
 pub(crate) const CONTENT: &str = "Picker content";
 pub(crate) const MARK: &str = "Rail mark";
 pub(crate) const MARK_GLYPH: &str = "Rail mark glyph";
@@ -203,9 +221,18 @@ impl Leaf for HostLeaf {
 
 /// **The rail**: its marks one under another, each followed by its room and,
 /// where one is set off, a divider — the same column for the picker and for
-/// [`super::rail_rects`].
+/// [`super::rail_rects`]. The column is on the window's ground (D45), its
+/// own background (QUESTIONS M2, approved by the user 2026-11-03): the
+/// person's base colour, rounded at its start corners where the panel is,
+/// inside the panel's hairline.
 pub(crate) fn rail_column(slots: impl IntoIterator<Item = (El, bool)>) -> El {
-    let mut rail = col(RAIL).w(RAIL_WIDTH).pad_y(RAIL_INSET).items_center();
+    let mut rail = col(RAIL_COLUMN)
+        .fill()
+        .bg(Surface::Ground)
+        .radius_start(Radius::Metric(GROUND_RADIUS))
+        .pad_end(HAIRLINE)
+        .pad_y(GROUND_INSET)
+        .items_center();
     for (mark, divider_after) in slots {
         rail = rail.child(mark).child(boxed("Rail gap").pad_top(MARK_GAP));
         if divider_after {
@@ -218,7 +245,11 @@ pub(crate) fn rail_column(slots: impl IntoIterator<Item = (El, bool)>) -> El {
             );
         }
     }
-    rail
+    row(RAIL)
+        .w(RAIL_WIDTH)
+        .pad_start(HAIRLINE)
+        .pad_y(HAIRLINE)
+        .child(rail)
 }
 
 /// **A rail mark's states** (QUESTIONS M3, approved by the user 2026-11-03):

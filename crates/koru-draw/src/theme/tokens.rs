@@ -15,6 +15,7 @@
 
 use peniko::Color;
 
+use super::themes::{Contrast, Theme};
 use super::{Palette, TextStyle, role};
 
 /// Which resolution of the dimension tokens applies. Fixed desktop now;
@@ -393,6 +394,28 @@ colour_roles! {
         /// entry, the list's current model. Verified in every registered
         /// theme (the user approved it on 2026-11-03, QUESTIONS M3).
         Selected => row_selected,
+        /// **The window's ground**: its rails, title bar and lanes, and the
+        /// model picker's agent rail (D45). The theme's `ground`, or the
+        /// person's base colour for the theme's appearance once they chose
+        /// one — which [`Surface::resolve`] applies and `of` cannot (the
+        /// user approved it on 2026-11-03, QUESTIONS M2).
+        Ground => ground,
+    }
+}
+
+impl Surface {
+    /// This role's colour under `theme` at `contrast`: the palette's own,
+    /// except [`Surface::Ground`], which is the person's base colour for
+    /// the theme's appearance when they chose one — what
+    /// `theme::base_fill()` is for the root theme. What an element paints.
+    pub fn resolve(self, theme: &Theme, contrast: Contrast) -> Color {
+        let palette = theme.palette(contrast);
+        match self {
+            Self::Ground => {
+                super::base_color(theme.is_dark()).map_or(palette.ground, super::rgb_hex)
+            }
+            other => other.of(palette),
+        }
     }
 }
 

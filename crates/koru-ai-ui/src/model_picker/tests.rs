@@ -1613,10 +1613,13 @@ fn the_picker_shows_the_arrow_and_its_search_the_ibeam() {
 /// screen, or the theme's ground — and not the panel's white or charcoal.
 #[test]
 fn the_rail_is_the_colour_of_the_windows_rail() {
-    assert_eq!(rail_fill(), theme::base_fill());
+    use koru_draw::el::FrameCx;
+    use koru_draw::theme::{Radius, Surface};
+    let cx = FrameCx::root();
+    assert_eq!(cx.surface(Surface::Ground), theme::base_fill());
     let p = theme::p();
     assert_ne!(
-        rail_fill(),
+        cx.surface(Surface::Ground),
         p.panel_bg,
         "the rail reads apart from the list"
     );
@@ -1627,6 +1630,28 @@ fn the_rail_is_the_colour_of_the_windows_rail() {
     assert_eq!(geometry.rail.x, geometry.panel.x);
     assert_eq!(geometry.rail.h, geometry.panel.h);
     assert!(geometry.rail.x + geometry.rail.w <= geometry.list.x + 0.5);
+    // It is the rail column's own background (M2): inside the panel's
+    // hairline on its start, top and foot, rounded at its start corners as
+    // the panel is inside that hairline.
+    let spec = surface.picker_spec();
+    let frame = elements::layout(&elements::tree(&spec, &mut |_| None), geometry.panel, cx);
+    let column = frame.named(elements::RAIL_COLUMN).next().unwrap();
+    assert_eq!(column.look.bg, Some(Surface::Ground));
+    let hairline = koru_draw::theme::BORDER_W as f32;
+    assert_same_rect(
+        column.rect,
+        Rect::new(
+            geometry.rail.x + hairline,
+            geometry.rail.y + hairline,
+            geometry.rail.w - hairline,
+            geometry.rail.h - hairline * 2.0,
+        ),
+        "the ground",
+    );
+    assert_eq!(
+        Radius::Metric(elements::GROUND_RADIUS).px(koru_draw::theme::Profile::Desktop, 1.0, 1.0),
+        theme::overlay::popover().radius - hairline
+    );
 }
 
 /// The primary modifier and D, which starred a model until D47 was taken
@@ -2090,11 +2115,17 @@ fn everything_drawn_inside_the_picker_nests_under_the_popover_surface() {
     // The tree: the picker, its rail column and its content column.
     let picker = one(elements::PICKER);
     let rail = one(elements::RAIL);
+    let column = one(elements::RAIL_COLUMN);
     let content = one(elements::CONTENT);
     assert_eq!(records[rail].parent, Some(picker));
+    assert_eq!(records[column].parent, Some(rail));
     assert_eq!(records[content].parent, Some(picker));
     for mark in named(elements::MARK) {
-        assert_eq!(records[mark].parent, Some(rail), "a mark is in the rail");
+        assert_eq!(
+            records[mark].parent,
+            Some(column),
+            "a mark is in the rail's column"
+        );
     }
     assert_eq!(named(elements::MARK).len(), surface.picker_rail().len());
     assert!(!named("Rail divider").is_empty(), "Favorites is set off");
