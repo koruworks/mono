@@ -619,6 +619,53 @@ fn chat_model_update_is_durable_and_does_not_touch_the_title() {
     );
 }
 
+/// **A reply that ends is activity** (koru-ai D85): the chat's place in the
+/// list moves to when its reply arrived, as it moved when the message was
+/// sent — whether the reply completed, failed or was stopped — and a late
+/// event for a reply already ended moves nothing.
+#[test]
+fn a_reply_that_ends_moves_its_chat_to_when_it_arrived() {
+    let (mut repository, chat_id) = repository_with_chat();
+    complete_turn(&mut repository, chat_id, 0, "Done", 10);
+    let chat = repository.chat(chat_id).unwrap().unwrap();
+    assert_eq!(chat.updated_at, at(12), "the completion, not the send");
+
+    let pending = turn(chat_id, Uuid::new_v4(), 20);
+    let attempt_id = pending.attempt.id;
+    repository.begin_turn(&pending).unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(20)
+    );
+    repository
+        .apply_event(
+            &AiEvent::Cancelled {
+                attempt_id,
+                at: at(25),
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(25)
+    );
+    repository
+        .apply_event(
+            &AiEvent::Cancelled {
+                attempt_id,
+                at: at(30),
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        repository.chat(chat_id).unwrap().unwrap().updated_at,
+        at(25),
+        "a reply already ended moves nothing"
+    );
+}
+
 #[test]
 fn chat_list_is_most_recent_first() {
     let mut repository = Repository::in_memory().unwrap();

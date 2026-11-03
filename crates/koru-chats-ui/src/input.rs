@@ -220,7 +220,7 @@ impl ChatsSurface {
                     self.ask_open(chat);
                 }
             }
-            Row::Notice(_) | Row::Note(_) => {}
+            Row::Notice(_) | Row::Note(_) | Row::PinnedHeading | Row::GroupGap => {}
         }
     }
 

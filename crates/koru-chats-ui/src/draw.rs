@@ -108,6 +108,21 @@ impl ChatsSurface {
             );
         }
         match row {
+            // *Pinned*, in the dim small label the navigator's other
+            // section headings wear (Home's *Recent*, Agents' *Projects*).
+            Row::PinnedHeading => {
+                let layout = engine.simple_layout(t(lang, Key::ChatsPinned), theme::role::hint());
+                self.work.layouts += 1;
+                scene::draw_layout_first_line(
+                    scene,
+                    root,
+                    &layout,
+                    parts.title.x,
+                    rect.y + (rect.h - scene::first_line_height(&layout)) * 0.5,
+                    Some(p.row_hint),
+                );
+            }
+            Row::GroupGap => {}
             Row::Notice(notice) => {
                 let key = match notice {
                     Notice::Loading => Key::ChatsLoading,

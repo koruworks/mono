@@ -2272,7 +2272,7 @@ fn complete_message(
     at: Timestamp,
 ) -> Result<(), AiError> {
     if let Some(message) = message {
-        connection
+        let ended = connection
             .execute(
                 "UPDATE messages
                     SET state = ?2, completed_at_ms = ?3, error_class = ?4
@@ -2285,6 +2285,20 @@ fn complete_message(
                 ],
             )
             .map_err(storage_failed)?;
+        // **A reply that ends is activity** (koru-ai D85): the Chats list is
+        // ordered by `updated_at_ms`, and a chat moves up when its reply
+        // arrives as it did when the message was sent. Only for a reply
+        // that ended now — a late event for one already ended moves nothing.
+        if ended != 0 {
+            connection
+                .execute(
+                    "UPDATE chats
+                        SET updated_at_ms = max(updated_at_ms, ?2)
+                      WHERE id = (SELECT chat_id FROM messages WHERE id = ?1)",
+                    params![message, at.millis()],
+                )
+                .map_err(storage_failed)?;
+        }
     }
     Ok(())
 }

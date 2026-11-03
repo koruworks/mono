@@ -71,6 +71,8 @@ struct Open {
     working: bool,
     needs_you: bool,
     arrived: bool,
+    /// A send was taken or a reply ended: the chat moves up its list.
+    moved: bool,
     newest: Option<MessageId>,
 }
 
@@ -106,6 +108,7 @@ impl MainView {
                 facts.working |= view.is_working();
                 facts.needs_you |= view.needs_you();
                 facts.arrived |= view.take_arrival();
+                facts.moved |= view.take_activity();
                 facts.newest = facts.newest.or(view.newest_seen_message());
             }
         }
@@ -118,6 +121,7 @@ impl MainView {
             facts.working |= self.ai_chat.is_working();
             facts.needs_you |= self.ai_chat.needs_you();
             facts.arrived |= self.ai_chat.take_arrival();
+            facts.moved |= self.ai_chat.take_activity();
             facts.newest = facts.newest.or(self.ai_chat.newest_seen_message());
         }
         self.ai_chat.set_reduced_motion(reduced);
@@ -205,6 +209,13 @@ impl MainView {
             changed |= self.ai_chat.show_new_from(chat, from);
         }
         let rows = self.explore.chats_mut();
+        // A chat that moved takes its place at once (D85); the listing the
+        // move also asks for is the authority when it comes.
+        for (chat, facts) in &open {
+            if facts.moved {
+                changed |= rows.touch(*chat, now_ms);
+            }
+        }
         changed |= rows.set_reduced_motion(reduced);
         changed |= rows.set_statuses(statuses);
         if self.explore.showing_chats() {

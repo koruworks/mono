@@ -22,6 +22,16 @@
 //! Koru — and **when**, as a relative time in the person's language. A private
 //! chat wears the detective mark the chat's own header wears.
 //!
+//! ## The order
+//!
+//! **Pinned chats first**, under a *Pinned* heading, the oldest pin first;
+//! then the rest by their **last activity** — the newest message, the
+//! person's or the agent's — newest first ([`sort_for_list`], koru-ai D85).
+//! A chat moves when a message is sent in it and again when its reply
+//! arrives: the host says so ([`ChatsSurface::touch`]) and the next listing
+//! confirms it, because the service moves `updated_at` on both. A rename and
+//! a pin are not activity.
+//!
 //! ## Three rules it is built under
 //!
 //! **No work while hidden, no polling.** The host calls [`refresh`] when the
@@ -174,7 +184,8 @@ pub struct ChatsSurface {
     /// crate has none, the discipline `koru_i18n::time` keeps.
     pub(crate) now_ms: i64,
     pub(crate) load: Load,
-    /// Newest first, by `updated_at`.
+    /// In the list's order ([`sort_for_list`]): pinned first, then the
+    /// rest by `updated_at`, newest first.
     pub(crate) chats: Vec<Chat>,
     pub(crate) agents: Vec<AgentProviderView>,
     /// The chat the host has open. It wears the card, the way the document
@@ -298,7 +309,7 @@ impl ChatsSurface {
         self.load
     }
 
-    /// Every chat, newest first.
+    /// Every chat, in the list's order: pinned, then newest first.
     pub fn chats(&self) -> &[Chat] {
         &self.chats
     }
@@ -476,13 +487,48 @@ impl ChatsSurface {
         }
     }
 
+    /// **A chat moved** (D85): a message was sent in it or its reply
+    /// arrived, at `at_ms`. It takes its new place now, without asking the
+    /// service again; the next listing is the authority. `true` when the
+    /// list changed.
+    pub fn touch(&mut self, chat: ChatId, at_ms: i64) -> bool {
+        let Some(found) = self.chats.iter_mut().find(|candidate| candidate.id == chat) else {
+            return false;
+        };
+        if found.updated_at.millis() >= at_ms {
+            return false;
+        }
+        found.updated_at = koru_ai_core::Timestamp::from_millis(at_ms);
+        let chats = std::mem::take(&mut self.chats);
+        self.replace_chats(chats);
+        true
+    }
+
+    /// **Pinned, or not, now** (D80, D85): the row moves into or out of the
+    /// Pinned group at once while the service is asked; its answer, and
+    /// the next listing, are the authority. A chat pinned again keeps its
+    /// first pin time, as the service keeps it. `true` when the list
+    /// changed.
+    pub fn set_pinned(&mut self, chat: ChatId, pinned: bool, at_ms: i64) -> bool {
+        let Some(found) = self.chats.iter_mut().find(|candidate| candidate.id == chat) else {
+            return false;
+        };
+        if found.pinned_at.is_some() == pinned {
+            return false;
+        }
+        found.pinned_at = pinned.then(|| koru_ai_core::Timestamp::from_millis(at_ms));
+        let chats = std::mem::take(&mut self.chats);
+        self.replace_chats(chats);
+        true
+    }
+
     /// Replace the rows, newest first, keeping the keyboard on the same chat
     /// — or, when that chat has gone, on **its neighbour**: the chat that took
     /// its place, else the one above it, else nowhere. A list that dropped
     /// the keyboard on a delete would send a keyboard-only person back to the
     /// top of it. The selection keeps what is still listed.
     fn replace_chats(&mut self, mut chats: Vec<Chat>) {
-        chats.sort_by(|a, b| b.updated_at.millis().cmp(&a.updated_at.millis()));
+        sort_for_list(&mut chats);
         if let Some(Focus::Chat(focused)) = self.focus
             && !chats.iter().any(|chat| chat.id == focused)
         {
@@ -680,6 +726,27 @@ impl ChatsSurface {
             None => name,
         })
     }
+}
+
+/// **The list's order** (D85), one function for every host and for the
+/// keys that step through it: the pinned chats first, the oldest pin
+/// first (D80), then the rest by their last activity — the newest message,
+/// the person's or the agent's — newest first. Pinning is not activity,
+/// and neither is a rename.
+pub fn sort_for_list(chats: &mut [Chat]) {
+    chats.sort_by(|a, b| match (a.pinned_at, b.pinned_at) {
+        (Some(a_pin), Some(b_pin)) => a_pin
+            .millis()
+            .cmp(&b_pin.millis())
+            .then_with(|| a.id.cmp(&b.id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b
+            .updated_at
+            .millis()
+            .cmp(&a.updated_at.millis())
+            .then_with(|| a.id.cmp(&b.id)),
+    });
 }
 
 #[cfg(test)]

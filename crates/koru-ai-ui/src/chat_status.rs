@@ -78,6 +78,25 @@ impl ChatSurface {
         ended || new_question
     }
 
+    /// **This chat moved** (D85) — a send the service took, or a reply that
+    /// ended — since the last ask. The host moves the chat to the top of its
+    /// Chats list on it, without asking the service again.
+    pub fn take_activity(&mut self) -> bool {
+        let moved = self.activity != self.activity_reported;
+        self.activity_reported = self.activity;
+        moved
+    }
+
+    /// Count a send or a reply's end, and move the chat up this window's
+    /// own Chats pane at once (the standalone window's).
+    pub(crate) fn note_activity(&mut self) {
+        self.activity = self.activity.wrapping_add(1);
+        if let Some(chat) = self.shown_chat_id() {
+            self.chats_pane
+                .touch(chat, koru_ai_core::Timestamp::now().millis());
+        }
+    }
+
     /// **The newest message the person can see here that is done** — what
     /// a look at this chat has seen up to. A reply still streaming is not
     /// it: a look before it ends has not seen how it ends.

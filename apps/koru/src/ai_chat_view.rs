@@ -88,6 +88,12 @@ impl AiChatView {
         self.surface.take_arrival()
     }
 
+    /// A send was taken or a reply ended since the window last asked: the
+    /// chat moves up its list (D85).
+    pub fn take_activity(&mut self) -> bool {
+        self.surface.take_activity()
+    }
+
     /// The newest finished message on screen — what a look has seen.
     pub fn newest_seen_message(&self) -> Option<koru_ai_ui::MessageId> {
         self.surface.newest_seen_message()

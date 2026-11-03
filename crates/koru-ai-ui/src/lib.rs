@@ -707,6 +707,11 @@ pub struct ChatSurface {
     /// whether a question was waiting then.
     arrivals_reported: u32,
     asked_reported: bool,
+    /// Sends the service took and replies that ended here, and the count
+    /// [`ChatSurface::take_activity`] last answered for (D85): the host
+    /// moves the chat up its Chats list on each.
+    activity: u32,
+    activity_reported: u32,
     /// A NEW divider above the first message the person has not seen, and
     /// the chat opened there (D84). Set by the host as the chat comes into
     /// view.
@@ -988,6 +993,8 @@ impl ChatSurface {
             replies_finished: 0,
             arrivals_reported: 0,
             asked_reported: false,
+            activity: 0,
+            activity_reported: 0,
             new_divider: None,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
@@ -3084,6 +3091,8 @@ impl ChatSurface {
                 self.pending_assistant_message_id = Some(accepted.assistant_message_id);
                 self.live_turn_started_ms = Some(koru_ai_core::Timestamp::now().millis());
                 self.messages_dirty = true;
+                // Sent: the chat moves up its list (D85).
+                self.note_activity();
             }
             Update::Event(event) => {
                 let terminal = event.event.is_terminal();
@@ -3158,6 +3167,8 @@ impl ChatSurface {
                     }
                     self.ended_attempt = self.attempt;
                     self.replies_finished = self.replies_finished.wrapping_add(1);
+                    // Its reply arrived: the chat moves up again (D85).
+                    self.note_activity();
                     self.pulse = None;
                     self.open_searches.clear();
                     self.reasoning_expanded = false;

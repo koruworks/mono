@@ -11,12 +11,13 @@ use koru_ai_wire::AgentProviderView;
 use koru_draw::geometry::Rect;
 use uuid::Uuid;
 
-use crate::{ChatsSurface, Listing, Row};
+use crate::{ChatsSurface, Listing, Press, Row};
 
 mod dependency;
 mod freshness;
 mod keys;
 mod locales;
+mod order;
 mod rows;
 mod status;
 

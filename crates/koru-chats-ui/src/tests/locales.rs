@@ -193,7 +193,7 @@ fn every_line_fits_its_row_in_every_language_at_a_narrow_width() {
                     parts.title,
                     koru_draw::theme::role::meta(),
                 )],
-                Row::Notice(_) => vec![],
+                Row::Notice(_) | Row::PinnedHeading | Row::GroupGap => vec![],
             };
             for (text, rect, style) in lines {
                 let shown = engine.elided(&text, style, rect.w);

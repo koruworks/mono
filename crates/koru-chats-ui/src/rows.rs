@@ -35,6 +35,10 @@ pub(crate) const END_W: f32 = 20.0;
 const END_GAP: f32 = 4.0;
 /// Air under the last row, so the list does not end flush against the edge.
 pub(crate) const FOOTER_PAD: f32 = 8.0;
+/// The *Pinned* heading's line.
+const HEADING_H: f32 = 24.0;
+/// Air between the pinned chats and the rest.
+const GROUP_GAP: f32 = 8.0;
 
 /// Which state the list is in, when it is in one rather than showing rows.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -51,6 +55,10 @@ pub enum Notice {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Row {
     Notice(Notice),
+    /// *Pinned*, over the pinned chats (koru-ai D85). Only when one is.
+    PinnedHeading,
+    /// Air between the pinned chats and the rest.
+    GroupGap,
     Chat(usize),
     /// The line under a chat whose delete is being sent or was refused.
     Note(usize),
@@ -67,6 +75,8 @@ impl Row {
             Self::Chat(_) => CHAT_H,
             Self::Note(_) => NOTE_H,
             Self::Notice(_) => NOTE_H * 2.0,
+            Self::PinnedHeading => HEADING_H,
+            Self::GroupGap => GROUP_GAP,
         }
     }
 
@@ -131,7 +141,21 @@ impl ChatsSurface {
             }
             return plan;
         }
+        // **Pinned first, under its heading** (D85) — the chats are already
+        // in that order (`sort_for_list`); the heading and the air after the
+        // group are only drawn when a chat is pinned.
+        let pinned = self
+            .chats
+            .iter()
+            .take_while(|chat| chat.pinned_at.is_some())
+            .count();
+        if pinned > 0 {
+            plan.push(Row::PinnedHeading);
+        }
         for (index, chat) in self.chats.iter().enumerate() {
+            if pinned > 0 && index == pinned {
+                plan.push(Row::GroupGap);
+            }
             plan.push(Row::Chat(index));
             if self.deleting.contains_key(&chat.id) {
                 plan.push(Row::Note(index));
