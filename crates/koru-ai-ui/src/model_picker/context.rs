@@ -80,12 +80,12 @@ impl crate::ChatSurface {
     }
 
     /// Choose the window: the longer one when `long`, else the model's own.
-    /// Read only once the chat has begun, as the level is.
+    /// Read only once the chat has begun: a live session keeps its model.
     pub(crate) fn choose_context(&mut self, long: bool) -> bool {
         let Some(choice) = self.picker_context() else {
             return false;
         };
-        if self.effort_locked() {
+        if self.model_locked() {
             self.status = Some(t(self.lang, Key::AiModelContextLockedAfterStart).to_owned());
             return true;
         }

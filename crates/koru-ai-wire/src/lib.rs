@@ -679,6 +679,12 @@ pub struct AgentModelsResponse {
     /// none runs in. Absent when the agent does not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_mode: Option<String>,
+    /// A begun chat's level can change, applied from its next message
+    /// (koru-ai D70): the agent's session host takes a level with each
+    /// message. `false` — the level stays the one the chat started at —
+    /// against an older host, and from an older service.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub levels_per_turn: bool,
 }
 
 /// One approval mode an agent offers: its own id, and what it says of it.

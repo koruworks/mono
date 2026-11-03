@@ -551,6 +551,10 @@ pub struct ChatSurface {
     approval_mode_chip_w: f32,
     /// Each agent's approval modes, from the same listing as its models.
     agent_modes: HashMap<AiProviderId, approval_modes::ListedModes>,
+    /// The agents whose level a begun chat can change, applied from the
+    /// next message (koru-ai D70): their listing said so — the session
+    /// host is v20. Every other agent chat keeps its level from its start.
+    levels_per_turn: HashSet<AiProviderId>,
     /// The coding agents turned off on this machine, by agent key
     /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
     /// them. Hidden from every choice; a chat already on one keeps it.
@@ -896,6 +900,7 @@ impl ChatSurface {
             approval_mode_focus: None,
             approval_mode_chip_w: 0.0,
             agent_modes: HashMap::new(),
+            levels_per_turn: HashSet::new(),
             hidden_agents: std::collections::HashSet::new(),
             agent_defaults: agents::AgentDefaults::default(),
             agent_order: Vec::new(),
@@ -3240,6 +3245,12 @@ impl ChatSurface {
                 // A new chat begun before its agent's modes were known
                 // starts from its default now (D39).
                 self.adopt_default_mode(&response.provider);
+                // Whether a begun chat's level can still change (D70).
+                if response.levels_per_turn {
+                    self.levels_per_turn.insert(response.provider.clone());
+                } else {
+                    self.levels_per_turn.remove(&response.provider);
+                }
                 self.agent_models.insert(
                     response.provider,
                     agents::AgentModels::Listed(response.models),
@@ -5306,14 +5317,29 @@ impl ChatSurface {
         effort::resolve(control, transcript.chat.current_model.default_reasoning)
     }
 
-    /// **An agent chat's level is chosen before its first message** (S5):
-    /// the agent starts at it, and a live session is not reconfigured, so
-    /// afterwards the picker's effort strip only shows it.
-    fn effort_locked(&self) -> bool {
+    /// **An agent chat's model is chosen before its first message**: the
+    /// agent starts on it, and a live session is not moved to another, so
+    /// afterwards the picker's *1M context* pill only shows it.
+    fn model_locked(&self) -> bool {
         self.transcript.as_ref().is_some_and(|transcript| {
             agents::is_agent_provider(&transcript.chat.current_model.provider)
                 && !transcript.messages.is_empty()
         })
+    }
+
+    /// **A begun agent chat's level changes from its next message**
+    /// (koru-ai D70), as Fast does — where its agent's listing says the
+    /// session host takes a level per message (protocol v20). Against an
+    /// older host the level stays the one the chat started at (S5), and the
+    /// picker's effort strip only shows it: a level such a host would
+    /// ignore is never sent.
+    fn effort_locked(&self) -> bool {
+        self.model_locked()
+            && self.transcript.as_ref().is_some_and(|transcript| {
+                !self
+                    .levels_per_turn
+                    .contains(&transcript.chat.current_model.provider)
+            })
     }
 
     /// Set the chat's effort: the persisted default the next turn uses.
@@ -11800,6 +11826,7 @@ mod tests {
             provider: claude.clone(),
             modes: Vec::new(),
             default_mode: None,
+            levels_per_turn: false,
             models: listed.clone(),
         }));
         surface.prefetch_agent_models();
@@ -11907,6 +11934,7 @@ mod tests {
             provider: AiProviderId::parse("agent-claude").unwrap(),
             modes: Vec::new(),
             default_mode: None,
+            levels_per_turn: false,
             models: vec![
                 model(
                     "opus",
@@ -12001,8 +12029,10 @@ mod tests {
         );
     }
 
-    /// **S5: after an agent chat's first message its level only shows**: the
-    /// agent started at it. A press on its effort strip says why instead.
+    /// **S5, against a v19 host: after an agent chat's first message its
+    /// level only shows** — the agent started at it, and such a host would
+    /// ignore a level sent with a message (D70). A press on its effort strip
+    /// says why instead.
     #[test]
     fn an_agent_chats_level_is_read_only_after_its_first_message() {
         let mut surface = ChatSurface::new(SurfaceMode::Standalone);
@@ -12052,6 +12082,92 @@ mod tests {
             !std::iter::from_fn(|| commands.try_recv().ok())
                 .any(|command| matches!(command, Command::UpdateModel(..)))
         );
+    }
+
+    /// **D70: where the agent's host takes a level per message, a begun
+    /// chat's level changes from its next message**, as Fast does; while a
+    /// reply runs the strip says so. The *1M context* pill stays the
+    /// start's: that is a model, and a live session keeps its model.
+    #[test]
+    fn a_begun_agent_chats_level_changes_from_its_next_message() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.settings = Some(unchosen_settings(&["agent-claude"]));
+        claude_listing(&mut surface);
+        let mut chat = transcript();
+        chat.chat.current_model = ModelSelection {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            requested_model: "opus".into(),
+            default_reasoning: ReasoningChoice::Level(ReasoningLevel::High),
+        };
+        chat.messages.push(koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: chat.chat.id,
+            ordinal: 0,
+            role: ChatRole::User,
+            state: MessageState::Complete,
+            markdown: "hi".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(1)),
+        });
+        surface.transcript = Some(chat);
+        assert!(surface.effort_locked(), "a v19 host keeps the lock");
+        // The listing says the host takes a level per message.
+        let mut listing = koru_ai_wire::AgentModelsResponse {
+            provider: AiProviderId::parse("agent-claude").unwrap(),
+            modes: Vec::new(),
+            default_mode: None,
+            levels_per_turn: true,
+            models: surface
+                .listed_agent_models(&AiProviderId::parse("agent-claude").unwrap())
+                .to_vec(),
+        };
+        surface.apply_update(Update::AgentModels(listing.clone()));
+        assert!(!surface.effort_locked());
+        assert!(surface.model_locked(), "the model stays the start's");
+
+        surface.composer_rect();
+        assert!(surface.open_model_picker());
+        while commands.try_recv().is_ok() {}
+        // A reply is running: the level is the next message's.
+        surface.attempt = Some(InferenceAttemptId::new());
+        let low = surface
+            .picker_segment_rect(ReasoningChoice::Level(ReasoningLevel::Low))
+            .expect("the strip shows Low");
+        assert!(surface.mouse_down(low.x + low.w * 0.5, low.y + low.h * 0.5));
+        let sent =
+            std::iter::from_fn(|| commands.try_recv().ok()).find_map(|command| match command {
+                Command::UpdateModel(_, request) => Some(request.model.default_reasoning),
+                _ => None,
+            });
+        assert_eq!(sent, Some(ReasoningChoice::Level(ReasoningLevel::Low)));
+        let note = surface.copy_feedback.label().unwrap_or_default().to_owned();
+        assert!(
+            note.contains(koru_i18n::t(
+                surface.lang,
+                effort::word_key(ReasoningChoice::Level(ReasoningLevel::Low))
+            )),
+            "{note}"
+        );
+        assert_ne!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::AiEffortLockedAfterStart
+            ))
+        );
+
+        // The listing of a v19 host locks it again.
+        listing.levels_per_turn = false;
+        surface.apply_update(Update::AgentModels(listing));
+        assert!(surface.effort_locked());
     }
 
     /// **An agent's notice is a grey line in front of its reply** (koru-ai

@@ -149,6 +149,14 @@ pub(crate) fn start(
         },
         |id| remove_session_copy(&client, ensured.session, lease, id),
     );
+    // The message's level (D70), to a host that takes one per message: a
+    // level chosen after the chat began reaches the agent with it. A v19
+    // host would ignore it, so it is never sent one.
+    let turn_reasoning = request
+        .options
+        .agent_turn_reasoning
+        .and_then(launch_reasoning)
+        .filter(|_| client.supports_turn_reasoning());
     let send = |attachment_ids: Vec<AttachmentId>| {
         client.send_pending_input(
             ensured.session,
@@ -159,7 +167,7 @@ pub(crate) fn start(
                 attachment_ids,
                 mode: mode.clone(),
                 fast,
-                reasoning: None,
+                reasoning: turn_reasoning,
             },
         )
     };
@@ -180,6 +188,18 @@ pub(crate) fn start(
         Err(error) => {
             for id in &delivered.native {
                 remove_session_copy(&client, ensured.session, lease, *id);
+            }
+            // The model does not change between messages: an agent refusing
+            // one is refusing the message's level (D70), said as D19 says it.
+            if turn_reasoning.is_some()
+                && matches!(&error, ClientError::Session(failure)
+                    if failure.code == ErrorCode::ProviderModelUnavailable)
+            {
+                return Err(AiError::new(
+                    AiErrorClass::ModelUnavailable,
+                    koru_ai_core::AGENT_REASONING_REJECTED,
+                    false,
+                ));
             }
             return Err(session_error("send", error));
         }

@@ -75,6 +75,9 @@ pub struct CodexControl {
     /// The reasoning effort the chat chose, in Codex's word (`none`, `low`,
     /// … `xhigh`), sent with every turn; `None` lets Codex decide.
     effort: Option<&'static str>,
+    /// The levels the thread's model lists, for a level chosen after the
+    /// start (koru-ai D70).
+    model_reasoning: Option<koru_session_protocol::ModelReasoning>,
     shut_down: bool,
 }
 
@@ -149,6 +152,7 @@ impl CodexControl {
             rerouted_models: BTreeMap::new(),
             fast_tier: None,
             effort: None,
+            model_reasoning: None,
             shut_down: false,
         }
     }
@@ -356,6 +360,7 @@ impl AgentControl for CodexControl {
             .and_then(|selection| selection.model.clone());
         let model = self.select_model(requested.as_ref())?;
         self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
+        self.model_reasoning = model.reasoning.clone();
         // The chat's level (agent-models D18): one the model lists, or the
         // session is refused rather than run at a level nobody chose.
         if let Some(level) = self
@@ -495,6 +500,20 @@ impl AgentControl for CodexControl {
                 ProviderDiagnostic::InvalidInput,
             )
         })?;
+        // A level chosen after the start (koru-ai D70) is this turn's and
+        // the ones after it, as `turn/start`'s `effort` is: one the model
+        // lists, or the turn is refused before anything is sent.
+        let effort = match input.reasoning {
+            Some(level) => Some(effort(self.model_reasoning.as_ref(), level).ok_or_else(|| {
+                tracing::warn!(target: "koru::codex", event = "codex.reasoning.rejected", level = level.as_str());
+                failure(
+                    ErrorCode::ProviderModelUnavailable,
+                    ProviderStage::Submit,
+                    ProviderDiagnostic::ReasoningRejected,
+                )
+            })?),
+            None => self.effort,
+        };
         let session_id = self.session_id.expect("started adapter has a session id");
         let mut provider_input = Vec::new();
         let mut resolved_attachments = Vec::new();
@@ -586,10 +605,11 @@ impl AgentControl for CodexControl {
         if let Some(tier) = self.service_tier(input.fast) {
             params["serviceTier"] = tier;
         }
-        if let Some(effort) = self.effort {
+        if let Some(effort) = effort {
             params["effort"] = json!(effort);
         }
         let response = self.call("turn/start", params, ProviderStage::Submit)?;
+        self.effort = effort;
         let native_id = response
             .pointer("/turn/id")
             .and_then(Value::as_str)

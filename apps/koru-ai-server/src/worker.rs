@@ -2432,6 +2432,28 @@ impl WorkerState {
         }
     }
 
+    /// **The level a local agent runs a message at** (koru-ai D70): the
+    /// chat's own, or for *Default* the level the model's listing names as
+    /// its default, so a chat moved back to *Default* after it began goes
+    /// back to the model's level rather than keeping the last one. `None`
+    /// for any other provider, and for *Default* on a model whose agent
+    /// names no default: the agent decides, and nothing is sent.
+    fn agent_turn_reasoning(
+        &self,
+        model: &koru_ai_core::ModelSelection,
+        reasoning: ReasoningChoice,
+    ) -> Option<ReasoningChoice> {
+        if !is_agent_provider(&model.provider) {
+            return None;
+        }
+        match reasoning {
+            ReasoningChoice::Default => self
+                .reasoning_control(model)
+                .and_then(|control| validate_reasoning(&control, reasoning).ok().flatten()),
+            chosen => Some(chosen),
+        }
+    }
+
     /// An agent's listing landed: its models' controls replace the ones
     /// kept from the last, so a model that lost its levels loses its slider.
     fn keep_agent_controls(
@@ -3256,6 +3278,7 @@ impl WorkerState {
                 working_folder: chat.agent_working_folder.clone(),
                 agent_mode: chat.agent_mode.clone(),
                 agent_fast: chat.agent_fast,
+                agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
                 ..AiRequestOptions::default()
             },
         };
@@ -3457,6 +3480,7 @@ impl WorkerState {
                 working_folder: chat.agent_working_folder.clone(),
                 agent_mode: chat.agent_mode.clone(),
                 agent_fast: chat.agent_fast,
+                agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
                 ..AiRequestOptions::default()
             },
         };

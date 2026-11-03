@@ -2700,3 +2700,75 @@ fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
         Err(ErrorCode::CapabilityNotNegotiated)
     );
 }
+
+/// **A level chosen after the start rides the next `turn/start`** (koru-ai
+/// D70) and the turns after it, as Codex keeps a turn's effort; a turn with
+/// no level keeps the last; one the model does not list refuses the turn
+/// as a refused level, before anything is sent.
+#[test]
+fn a_level_chosen_after_the_start_rides_the_next_turn() {
+    use koru_session_protocol::{LaunchReasoning, ProviderDiagnostic};
+    let mut frames = initialize_frames(false);
+    frames[1] = json!({
+        "id": 2,
+        "result": {
+            "data": [
+                { "isDefault": true, "model": "fixture-levels", "inputModalities": ["text"],
+                  "supportedReasoningEfforts": [{"reasoningEffort": "low"},
+                                                {"reasoningEffort": "xhigh"}],
+                  "defaultReasoningEffort": "low" }
+            ],
+            "nextCursor": null
+        }
+    });
+    for index in 0..3 {
+        frames.push(
+            json!({ "id": 4 + index, "result": { "turn": { "id": format!("turn-{index}") } } }),
+        );
+    }
+    let state = Arc::new(Mutex::new(ReplayState::default()));
+    let transport = ReplayTransport {
+        inbound: frames.into_iter().collect(),
+        state: Arc::clone(&state),
+    };
+    let selection = koru_session_protocol::LaunchSelection {
+        reasoning: Some(LaunchReasoning::Low),
+        ..Default::default()
+    };
+    let mut control = CodexControl::with_transport(
+        config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+        Some(Box::new(transport)),
+    );
+    control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap();
+    let input = |reasoning: Option<LaunchReasoning>| AgentInput {
+        turn_id: AgentTurnId::mint(),
+        text: "<prompt>".into(),
+        attachments: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning,
+    };
+    control.submit(input(None)).unwrap();
+    control.submit(input(Some(LaunchReasoning::XHigh))).unwrap();
+    control.submit(input(None)).unwrap();
+    let refused = control
+        .submit(input(Some(LaunchReasoning::Max)))
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::ProviderModelUnavailable);
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+    let efforts: Vec<_> = state
+        .lock()
+        .unwrap()
+        .sent
+        .iter()
+        .filter(|message| message["method"] == "turn/start")
+        .map(|message| message["params"]["effort"].clone())
+        .collect();
+    assert_eq!(efforts, [json!("low"), json!("xhigh"), json!("xhigh")]);
+}

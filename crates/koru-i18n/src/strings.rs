@@ -6742,7 +6742,9 @@ pub const ROWS: &[Row] = &[
         zh_hans: "代理未接受该推理级别",
         ja: "エージェントはこの推論レベルを受け付けませんでした",
     },
-    // An agent chat's level after its first message: the agent started at it.
+    // An agent chat's level after its first message, where its session host is
+    // older than protocol v20 and takes no level per message (koru-ai D70):
+    // the agent started at it.
     Row {
         key: Key::AiEffortLockedAfterStart,
         en: "The agent started at this level; it can be changed in a new chat",

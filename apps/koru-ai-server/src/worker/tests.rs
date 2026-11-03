@@ -2600,6 +2600,7 @@ fn an_agent_models_levels_become_its_effort_control() {
         provider: AiProviderId::parse("agent-claude").unwrap(),
         modes: Vec::new(),
         default_mode: None,
+        levels_per_turn: false,
         models: vec![
             koru_ai_wire::AgentModelView {
                 id: "opus".into(),

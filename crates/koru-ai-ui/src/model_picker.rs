@@ -122,6 +122,9 @@ const TOOLTIP_RAIL: u64 = 0x5049_0000;
 const TOOLTIP_REFRESH: u64 = 0x5049_1000;
 const TOOLTIP_LOCKED: u64 = 0x5049_1002;
 const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
+/// The note over the strip when a level is chosen during a reply (D70).
+const LEVEL_NOTE_KEY: u64 = 0x5049_1004;
+const LEVEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_millis(2200);
 
 /// **One favorite model** (D46): an agent, by its key (`claude`, `codex`,
 /// …), and the model id that agent takes — what the host's roaming
@@ -1421,8 +1424,9 @@ impl crate::ChatSurface {
                 .click(&mut self.engine, geometry.search, x, y);
             return Some(true);
         }
-        // The footer (D76): a level's segment, read only once an agent chat
-        // has begun — the press says why — and the pills.
+        // The footer (D76): a level's segment — read only once an agent
+        // chat has begun on an older session host, the press saying why
+        // (D70) — and the pills.
         if geometry.strip.is_some_and(|strip| strip.contains(x, y)) {
             self.picker.focus = PickerFocus::Effort;
             if self.effort_locked() {
@@ -1481,8 +1485,9 @@ impl crate::ChatSurface {
 
     /// **Choose a level on the strip** (D76): the model's own default level
     /// is the chat's *Default* — so a press on it is the way back to the
-    /// model's default, with no ↺ — and any other is that level. Read only
-    /// once an agent chat has begun.
+    /// model's default, with no ↺ — and any other is that level. In a begun
+    /// agent chat it applies from the next message (D70), read only where
+    /// the session host takes no level per message.
     pub(crate) fn choose_level(&mut self, choice: ReasoningChoice) -> bool {
         if self.effort_locked() {
             self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
@@ -1505,7 +1510,34 @@ impl crate::ChatSurface {
         if current == target {
             return true;
         }
-        self.choose_effort(target)
+        let chosen = self.choose_effort(target);
+        if chosen && self.attempt.is_some() {
+            self.announce_level_next_message(choice);
+        }
+        chosen
+    }
+
+    /// **The note over the strip while a reply runs** (D70): the level
+    /// applies to the next message — the one running keeps its own — in
+    /// the words the approval-mode chip uses for a mode. With no reply
+    /// running there is none: the strip already shows the level.
+    pub(crate) fn announce_level_next_message(&mut self, level: ReasoningChoice) {
+        let Some(anchor) = self
+            .picker_geometry()
+            .and_then(|geometry| geometry.strip)
+            .or_else(|| Some(self.chat_model_button()))
+        else {
+            return;
+        };
+        let label = koru_i18n::fill(
+            t(self.lang, Key::AiAgentModeNextMessage),
+            &[t(self.lang, effort::word_key(level))],
+        );
+        self.copy_feedback.show_transient(
+            TooltipContent::new(LEVEL_NOTE_KEY, anchor, label),
+            std::time::Instant::now(),
+            LEVEL_NOTE_HOLD,
+        );
     }
 
     /// The pointer moved with the picker open: a scrollbar drag, and the
@@ -1570,7 +1602,7 @@ impl crate::ChatSurface {
         }
         if let Some(context) = geometry.context
             && context.contains(x, y)
-            && self.effort_locked()
+            && self.model_locked()
         {
             return Some(TooltipContent::new(
                 TOOLTIP_CONTEXT_LOCKED,

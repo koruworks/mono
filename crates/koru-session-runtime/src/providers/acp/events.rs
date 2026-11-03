@@ -101,6 +101,8 @@ impl AcpControl {
                 // Claude's SDK may turn Fast mode off itself (D11).
                 if update.get("configOptions").is_some() {
                     self.fast = super::models::fast_option(update);
+                    // And the level it is at (D70).
+                    self.thought_level = super::models::thought_level(update);
                 }
                 let moved = self.follow_mode(super::modes::current(update));
                 return self.report_mode(moved);

@@ -1400,6 +1400,7 @@ fn codex_is_offered_with_its_models_levels_and_modes() {
             models: vec![leveled],
             modes: vec![mode("ask"), mode("auto-review"), mode("full-access")],
             default_mode: Some("ask".into()),
+            levels_per_turn: false,
         },
     ));
     open(&mut surface);

@@ -172,10 +172,14 @@ impl JsonRpcTransport for ModePeer {
                     "error":{"code":-32602,"message":"Invalid Mode"}}));
                 return Ok(());
             }
-            "session/set_config_option" if params["configId"] == "fast" => {
+            "session/set_config_option"
+                if params["configId"] == "fast" || params["configId"] == "effort" =>
+            {
                 let mut options = self.new_session["configOptions"].clone();
                 for option in options.as_array_mut().unwrap() {
-                    if option["id"] == "fast" && !script.refuse_fast {
+                    if option["id"] == params["configId"]
+                        && !(script.refuse_fast && option["id"] == "fast")
+                    {
                         option["currentValue"] = params["value"].clone();
                     }
                 }
@@ -506,4 +510,79 @@ fn fast_mode_is_ignored_without_the_option_and_a_refusal_refuses_the_turn() {
     on.fast = Some(true);
     assert!(control.submit(on).is_err());
     assert!(!methods(&script).contains(&"session/prompt".to_owned()));
+}
+
+fn level_sets(script: &Arc<Mutex<Script>>) -> Vec<Value> {
+    script
+        .lock()
+        .unwrap()
+        .sent
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session/set_config_option"
+                && frame["params"]["configId"] == "effort"
+        })
+        .map(|frame| frame["params"]["value"].clone())
+        .collect()
+}
+
+/// **A level chosen after the start reaches Claude before the next
+/// prompt** (koru-ai D70): set through its `thought_level` option and
+/// verified, only when the session is elsewhere; a level the model does not
+/// offer, or a model with no such option, refuses the turn as a refused
+/// level before any prompt.
+#[test]
+fn a_turns_level_is_set_through_the_thought_level_option() {
+    use koru_session_protocol::{LaunchReasoning, ProviderDiagnostic};
+    let (mut claude, script) = control(result(CLAUDE), None);
+    start(&mut claude).unwrap();
+    let leveled = |level: LaunchReasoning| AgentInput {
+        reasoning: Some(level),
+        ..turn(None)
+    };
+    claude.submit(leveled(LaunchReasoning::High)).unwrap();
+    events(&mut claude);
+    assert_eq!(level_sets(&script), [json!("high")]);
+    let sent = methods(&script);
+    let set = sent
+        .iter()
+        .rposition(|method| method == "session/set_config_option")
+        .unwrap();
+    let prompt = sent
+        .iter()
+        .rposition(|method| method == "session/prompt")
+        .unwrap();
+    assert!(set < prompt, "set before the prompt");
+    // Already there, or no level: no call.
+    claude.submit(leveled(LaunchReasoning::High)).unwrap();
+    events(&mut claude);
+    claude.submit(turn(None)).unwrap();
+    events(&mut claude);
+    assert_eq!(level_sets(&script), [json!("high")]);
+    claude.submit(leveled(LaunchReasoning::Low)).unwrap();
+    events(&mut claude);
+    assert_eq!(level_sets(&script), [json!("high"), json!("low")]);
+
+    let prompts = |script: &Arc<Mutex<Script>>| {
+        methods(script)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count()
+    };
+    let before = prompts(&script);
+    let refused = claude
+        .submit(leveled(LaunchReasoning::Minimal))
+        .unwrap_err();
+    assert_eq!(
+        refused.code,
+        koru_session_protocol::ErrorCode::ProviderModelUnavailable
+    );
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+    assert_eq!(prompts(&script), before);
+
+    let (mut plain, script) = control(json!({"sessionId":"s"}), None);
+    start(&mut plain).unwrap();
+    let refused = plain.submit(leveled(LaunchReasoning::High)).unwrap_err();
+    assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+    assert_eq!(prompts(&script), 0);
 }

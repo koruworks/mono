@@ -141,7 +141,8 @@ impl crate::ChatSurface {
                 label: super::context::pill_label(lang, context.tokens),
                 icon: None,
                 on: context.chosen_long,
-                disabled: locked,
+                // The window is a model, the start's in a begun chat.
+                disabled: self.model_locked(),
             }),
             readout: control
                 .map(|control| readout(&control, choice, lang))

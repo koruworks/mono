@@ -62,6 +62,11 @@ pub struct AcpControl {
     /// The session's model's Fast mode option, as the latest answer or
     /// update carried it; `None` for a model without one (D11).
     fast: Option<models::FastOption>,
+    /// The session's `thought_level` option as the latest answer or update
+    /// carried it — its id, its values and the level it is at — so a level
+    /// chosen after the start can be set (koru-ai D70); `None` for a model
+    /// without one.
+    thought_level: Option<models::ThoughtLevel>,
     /// Notices the agent said while no turn ran, said with the next turn
     /// (koru-ai D69; `Notice` belongs to a turn).
     unsaid_notices: Vec<String>,
@@ -147,6 +152,7 @@ impl AcpControl {
             mode_config: None,
             unreported_mode: None,
             fast: None,
+            thought_level: None,
             unsaid_notices: Vec::new(),
             next_request_id: 1,
             turns: BTreeMap::new(),
@@ -656,11 +662,64 @@ impl AcpControl {
                 json!({"sessionId":native_session, "configId":option.id, "value":value}),
             )
             .map_err(|_| rejected())?;
-        let reported = models::thought_level(&applied).and_then(|option| option.current);
-        if reported.as_deref() != Some(value.as_str()) {
+        let reported = models::thought_level(&applied);
+        if reported
+            .as_ref()
+            .and_then(|option| option.current.as_deref())
+            != Some(value.as_str())
+        {
             return Err(rejected());
         }
+        self.thought_level = reported;
         tracing::info!(target: "koru::acp", event = "acp.reasoning.selected", session_id = %session_id, applied = true);
+        Ok(())
+    }
+
+    /// **Move the session to the turn's level** (koru-ai D70), between
+    /// turns: through the same `thought_level` option the start sets,
+    /// verified from the answer the same way, and only when the session is
+    /// elsewhere. A session whose model has no such option, a level it does
+    /// not offer, or a set it refuses refuses the turn as a refused level
+    /// (D19) — never runs it at a level nobody chose.
+    fn apply_turn_reasoning(
+        &mut self,
+        native_session: &str,
+        level: koru_session_protocol::LaunchReasoning,
+    ) -> Result<(), ProviderFailure> {
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.reasoning.rejected", level = level.as_str(), stage = "submit");
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Submit,
+                ProviderDiagnostic::ReasoningRejected,
+            )
+        };
+        let Some(option) = &self.thought_level else {
+            return Err(rejected());
+        };
+        let Some(value) = option.value_for(level).map(str::to_owned) else {
+            return Err(rejected());
+        };
+        if option.current.as_deref() == Some(value.as_str()) {
+            return Ok(());
+        }
+        let id = option.id.clone();
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":id, "value":value}),
+            )
+            .map_err(|_| rejected())?;
+        let reported = models::thought_level(&applied);
+        if reported
+            .as_ref()
+            .and_then(|option| option.current.as_deref())
+            != Some(value.as_str())
+        {
+            return Err(rejected());
+        }
+        self.thought_level = reported;
+        tracing::info!(target: "koru::acp", event = "acp.reasoning.selected", level = level.as_str(), stage = "submit");
         Ok(())
     }
 
@@ -862,6 +921,8 @@ impl AcpControl {
             self.fast = models::fast_option(&selected);
             latest = Some(selected);
         }
+        // The session's level option, as the model now in it has it (D70).
+        self.thought_level = models::thought_level(latest.as_ref().unwrap_or(&session));
         if let Some(level) = self.config.requested_reasoning() {
             let options = latest.as_ref().unwrap_or(&session);
             self.apply_reasoning(&native_session, options, level, start.session_id)?;
@@ -987,6 +1048,11 @@ impl AgentControl for AcpControl {
         }
         if let (Some(on), Some(native_session)) = (input.fast, self.native_session.clone()) {
             self.apply_fast(&native_session, on, ProviderStage::Submit)?;
+        }
+        // A level chosen after the start (D70), likewise.
+        if let (Some(level), Some(native_session)) = (input.reasoning, self.native_session.clone())
+        {
+            self.apply_turn_reasoning(&native_session, level)?;
         }
         let params = json!({"sessionId":self.native_session,"prompt":prompt});
         let request_id = match self.send_request("session/prompt", params) {

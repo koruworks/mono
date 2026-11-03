@@ -104,6 +104,10 @@ pub struct AgentSessions {
 pub struct AgentCatalog {
     pub models: ProviderModels,
     pub modes: Option<koru_session_protocol::AgentModes>,
+    /// The session host takes a level with each message (protocol v20), so
+    /// a begun chat's level can change from its next message (koru-ai
+    /// D70). `false` against an older host.
+    pub levels_per_turn: bool,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -143,8 +147,10 @@ impl AgentSessions {
         refresh: bool,
     ) -> Result<AgentCatalog, ErrorCode> {
         let started = Instant::now();
+        let mut levels_per_turn = false;
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
+                levels_per_turn = client.supports_turn_reasoning();
                 if refresh {
                     client.refresh_provider(kind.kind.clone())?;
                     tracing::info!(
@@ -183,7 +189,11 @@ impl AgentSessions {
             elapsed_ms = started.elapsed().as_millis() as u64,
             "agent models listed"
         );
-        Ok(AgentCatalog { models, modes })
+        Ok(AgentCatalog {
+            models,
+            modes,
+            levels_per_turn,
+        })
     }
 
     /// Start the control thread for the session host at `endpoint`. The

@@ -402,6 +402,10 @@
             "nullable": true,
             "type": "string"
           },
+          "levels_per_turn": {
+            "description": "A begun chat's level can change, applied from its next message\n(koru-ai D70): the agent's session host takes a level with each\nmessage. `false` — the level stays the one the chat started at —\nagainst an older host, and from an older service.",
+            "type": "boolean"
+          },
           "models": {
             "items": {
               "$ref": "#/components/schemas/AgentModelView"

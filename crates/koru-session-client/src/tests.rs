@@ -225,3 +225,36 @@ fn negotiated_host_receives_the_exact_selected_choice() {
         decision: ApprovalDecision::Approve, choice: Some(id), ..
     } if id == selected));
 }
+
+/// **A turn's level never reaches a v19 host** (koru-ai D70): it would read
+/// and ignore it and run the turn at the old level, so the input is refused
+/// before any wire traffic. A v20 host takes it.
+#[test]
+fn a_turns_level_is_sent_only_to_a_v20_host() {
+    let input = || PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: "go on".into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: Some(koru_session_protocol::LaunchReasoning::High),
+    };
+    let (older, bytes) = approval_client(19, true, true);
+    assert!(!older.supports_turn_reasoning());
+    let refused =
+        older.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+    let (current, bytes) = approval_client(20, true, true);
+    assert!(current.supports_turn_reasoning());
+    let _ = current.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    let bytes = bytes.lock().unwrap();
+    let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
+    assert!(body.contains("\"reasoning\":\"high\""), "{body}");
+}

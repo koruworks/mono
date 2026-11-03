@@ -314,6 +314,13 @@ pub struct AiRequestOptions {
     /// (koru-ai D11); `None` leaves the model's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_fast: Option<bool>,
+    /// The level a local agent runs this message at (koru-ai D70): the
+    /// chat's own, or for *Default* the level the model's listing names as
+    /// its default; `None` when neither is known. Sent with the message to
+    /// a session host that takes it, so a level chosen after the chat began
+    /// applies from its next message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_turn_reasoning: Option<ReasoningChoice>,
 }
 
 impl Default for AiRequestOptions {
@@ -327,6 +334,7 @@ impl Default for AiRequestOptions {
             working_folder: None,
             agent_mode: None,
             agent_fast: None,
+            agent_turn_reasoning: None,
         }
     }
 }
