@@ -81,19 +81,26 @@ impl Agent {
         }
     }
 
-    /// What goes before the bridge: the agent's program and its `mcp add`,
-    /// or nothing for [`Agent::Other`].
-    fn prefix(self) -> &'static str {
-        match self {
-            Agent::ClaudeCode => "claude mcp add --scope user koru -- ",
-            Agent::Codex => "codex mcp add koru -- ",
-            Agent::Gemini => "gemini mcp add --scope user koru ",
-            Agent::Copilot => "copilot mcp add koru -- ",
-            Agent::Qwen => "qwen mcp add --scope user koru ",
-            Agent::Grok => "grok mcp add koru -- ",
-            Agent::Antigravity => "agy mcp add koru -- ",
-            Agent::Other => "",
-        }
+    /// What goes before the bridge: the agent's program and its `mcp add`
+    /// under [`koru_session_profiles::MCP_SERVER_NAME`] — the name a chat's
+    /// own bridge goes by, so an agent that imports this registration
+    /// replaces it with the chat's rather than running both (D55) — or
+    /// nothing for [`Agent::Other`].
+    fn prefix(self) -> String {
+        let (add, separator) = match self {
+            Agent::ClaudeCode => ("claude mcp add --scope user", " -- "),
+            Agent::Codex => ("codex mcp add", " -- "),
+            Agent::Gemini => ("gemini mcp add --scope user", " "),
+            Agent::Copilot => ("copilot mcp add", " -- "),
+            Agent::Qwen => ("qwen mcp add --scope user", " "),
+            Agent::Grok => ("grok mcp add", " -- "),
+            Agent::Antigravity => ("agy mcp add", " -- "),
+            Agent::Other => return String::new(),
+        };
+        format!(
+            "{add} {}{separator}",
+            koru_session_profiles::MCP_SERVER_NAME
+        )
     }
 }
 

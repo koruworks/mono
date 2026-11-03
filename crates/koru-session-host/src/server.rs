@@ -2130,17 +2130,32 @@ fn chat_bridge(
         );
         return None;
     }
+    Some(bridge_launch(command, explicit_root))
+}
+
+/// `koru-mcp serve --stdio [--root <root>]` at `command`, under Koru's server
+/// name.
+fn bridge_launch(
+    command: PathBuf,
+    explicit_root: Option<&Path>,
+) -> koru_session_runtime::providers::McpServerLaunch {
     let mut args: Vec<std::ffi::OsString> = vec!["serve".into(), "--stdio".into()];
     if let Some(root) = explicit_root {
         args.push("--root".into());
         args.push(root.as_os_str().to_owned());
     }
-    Some(koru_session_runtime::providers::McpServerLaunch {
-        name: "koru".into(),
+    koru_session_runtime::providers::McpServerLaunch {
+        // `koru`, the name the welcome page and `koru.bat mcp` / `koru.sh mcp`
+        // register the bridge under, and the key Devin (and any agent that
+        // imports other tools' MCP configuration) dedupes on: a session's
+        // server replaces an imported one of the same name, so a chat gets
+        // one `koru` on its own root rather than two copies of every tool
+        // (D55). Change it only together with those registrations.
+        name: koru_session_profiles::MCP_SERVER_NAME.into(),
         command: command.into_os_string(),
         args,
         env: Vec::new(),
-    })
+    }
 }
 
 /// The agents measured to follow `tools/list`'s `nextCursor` through the
@@ -2304,6 +2319,20 @@ mod bridge_pages_tests {
                 "{provider} reads page one only or is unmeasured"
             );
         }
+    }
+
+    /// The chat's bridge goes by the name every registration of `koru-mcp`
+    /// uses, so an agent that imports the person's own `koru` replaces it
+    /// with the chat's instead of listing Koru's tools twice (D55).
+    #[test]
+    fn the_chat_bridge_goes_by_the_registered_name() {
+        let bridge = bridge_launch(PathBuf::from("koru-mcp"), Some(Path::new("/data")));
+        assert_eq!(bridge.name, koru_session_profiles::MCP_SERVER_NAME);
+        assert_eq!(bridge.name, "koru");
+        assert_eq!(
+            bridge.args,
+            ["serve", "--stdio", "--root", "/data"].map(std::ffi::OsString::from)
+        );
     }
 }
 

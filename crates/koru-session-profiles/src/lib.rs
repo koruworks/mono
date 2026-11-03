@@ -21,6 +21,19 @@ use koru_session_protocol::{
     ProviderKind, SessionProfileId, SessionProfileKey, ShellQuoting, built_in_profile,
 };
 
+/// The name Koru's MCP bridge (`koru-mcp serve --stdio`) goes by, everywhere
+/// it is registered: the bridge a chat sends its agent (`chat_bridge` in
+/// `koru-session-host`), the welcome page's `mcp add` lines (`apps/koru`
+/// `welcome::mcp`) and the default of `koru.bat mcp` / `koru.sh mcp`.
+///
+/// **One name, because agents key MCP servers by it.** Devin imports the
+/// servers a person registered for other tools (`~/.claude.json`) and a
+/// `session/new` server of the same name *replaces* the imported one; under
+/// another name both run and every Koru tool is listed twice (D55). So with
+/// the defaults a chat has one `koru`, and it is the chat's, on the chat's
+/// root.
+pub const MCP_SERVER_NAME: &str = "koru";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileLabel {
     PlatformShell,

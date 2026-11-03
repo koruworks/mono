@@ -433,6 +433,46 @@ fn each_agent_gets_its_own_registration_command() {
     );
 }
 
+/// **One name for the bridge everywhere** (D55). The welcome page's
+/// registrations and the launchers' `mcp` default use the name a chat's own
+/// bridge goes by (`koru-session-host`'s `chat_bridge`), because agents that
+/// import other tools' MCP configuration (Devin) key servers by name: the
+/// same name means the chat's bridge replaces the person's, another means
+/// every Koru tool twice.
+#[test]
+fn every_registration_uses_the_chat_bridges_name() {
+    use std::path::Path;
+    let name = koru_session_profiles::MCP_SERVER_NAME;
+    assert_eq!(name, "koru");
+    let bridge = Path::new("koru-mcp");
+    for agent in mcp::Agent::ALL {
+        if agent == mcp::Agent::Other {
+            continue;
+        }
+        let line = mcp::agent_line(agent, bridge, None);
+        assert!(line.contains(" mcp add "), "{agent:?}: {line}");
+        let registered = line
+            .split(" mcp add ")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split_whitespace()
+                    .find(|word| !word.starts_with("--") && *word != "user")
+            })
+            .unwrap_or_default();
+        assert_eq!(registered, name, "{agent:?}: {line}");
+    }
+    let bat = include_str!("../../../../koru.bat");
+    assert!(
+        bat.contains(&format!("set \"MCP_NAME={name}\"")),
+        "koru.bat mcp registers under another default name"
+    );
+    let sh = include_str!("../../../../koru.sh");
+    assert!(
+        sh.contains(&format!("MCP_NAME=\"${{1:-{name}}}\"")),
+        "koru.sh mcp registers under another default name"
+    );
+}
+
 /// **The row asks which agent.** One chip per agent, Claude Code chosen
 /// first; picking another changes the command shown and the one *Copy* puts
 /// on the clipboard.
