@@ -1518,7 +1518,18 @@ newest first; keep pressing `Up` to go further back. Each comes back with the
 caret at its start and with its document chips and quotes. `Down` on its last
 line walks forward again, back to whatever you were typing, and `Esc` takes you
 straight back to it. A message you steered into a reply is in the list; one
-still waiting in the queue is not. `Enter` sends
+still waiting in the queue is not.
+
+**Dictate a message.** Click the microphone beside the send button, or press
+`Ctrl+Shift+D` (hold it, or press once if you set dictation to toggle). The
+bottom of the message box shows a moving level, a timer, ✕ and ■. Your words
+appear where the cursor is, in a lighter colour while Koru is still
+recognising them. Press ■, Esc, Enter or `Ctrl+Shift+D` to stop: the last
+words are finished and stay in the box, and you send as usual. Press ✕ to
+throw away what you just dictated; anything you typed before stays. Typing a
+key, or clicking in the message box, also stops the recording; that key or
+click is not typed. Dictation runs on your device; the first time, Koru asks
+you to set up voice input and download the model. `Enter` sends
 and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
 grows to eight lines and then scrolls inside itself, independently of the
 conversation. Embedded questions include the active document by stable
