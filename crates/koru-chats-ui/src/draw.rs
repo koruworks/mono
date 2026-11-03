@@ -135,6 +135,14 @@ impl ChatsSurface {
                 };
                 let private = chat.private;
                 let title = crate::text::title(lang, chat).to_owned();
+                let status = self.status(chat.id);
+                // An unread chat's title is semibold until it is opened
+                // (D83), in the ink its treatment gives every title.
+                let style = if status == crate::ChatStatus::Unread {
+                    theme::role::row().with_weight(theme::FontWeight::SemiBold)
+                } else {
+                    theme::role::row()
+                };
                 let ink = if treatment == "Card" {
                     p.text
                 } else {
@@ -146,15 +154,16 @@ impl ChatsSurface {
                 if private && parts.lead.w > 0.0 {
                     draw_icon(scene, root, engine, icons::DETECTIVE, parts.lead, ink);
                 }
-                self.line(
-                    scene,
-                    root,
-                    engine,
-                    parts.title,
-                    &title,
-                    theme::role::row(),
-                    ink,
-                );
+                self.line(scene, root, engine, parts.title, &title, style, ink);
+                // The mark at the row's end: the ring while it works, the
+                // amber dot while it waits on the person, the accent dot
+                // while something is unseen. One clock turns every ring.
+                let now = (!self.reduced_motion).then(std::time::Instant::now);
+                if parts.end.w > 0.0
+                    && let Some(mark) = status.mark(now)
+                {
+                    koru_shell_chrome::status_mark::draw(scene, root, parts.end, mark);
+                }
             }
             Row::Note(index) => {
                 let Some(state) = self

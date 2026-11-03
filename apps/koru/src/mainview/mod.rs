@@ -66,6 +66,7 @@ mod agent_providers;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
+mod chat_status;
 mod chrome_debug;
 mod chrome_focus;
 mod closed_tabs;
@@ -1130,6 +1131,10 @@ pub struct MainView {
     /// the fold lands at once and the fade is skipped. No preference of our
     /// own yet (QUESTIONS.md Q8).
     pub(super) reduced_motion: bool,
+    /// The chats the person was looking at on the last status pass
+    /// (`chat_status`, koru-ai D83): a look that began is marked seen, and
+    /// so is one that ended.
+    chats_looking: std::collections::HashSet<koru_ai_ui::ChatId>,
     /// How many times the window has been re-cut. The fold's contract is one
     /// reflow per toggle, and the layout tests count.
     #[cfg(test)]
@@ -1915,6 +1920,7 @@ impl MainView {
             chrome_focus: None,
             fold: None,
             reduced_motion: koru_workspace_host::environment::reduced_motion().unwrap_or(false),
+            chats_looking: std::collections::HashSet::new(),
             #[cfg(test)]
             relayouts: 0,
             help_headlines: None,
@@ -5806,6 +5812,9 @@ impl MainView {
     /// *Chats* button pressed inside a chat, which in this window means *show
     /// me the Chats view on this chat*.
     fn maintain_chats(&mut self) -> bool {
+        // Which chats work, wait or hold something unseen (D83), before the
+        // Chats view is asked again below.
+        let status_changed = self.maintain_chat_status();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
         let mut wants_view = self
             .ai_chat
@@ -5834,7 +5843,7 @@ impl MainView {
                 relabeled = true;
             }
         }
-        let mut changed = relabeled;
+        let mut changed = relabeled || status_changed;
         if let Some(chat) = wants_view {
             changed |= self.show_chats_on(chat);
         }
@@ -5859,6 +5868,7 @@ impl MainView {
         // error about something the person already chose to remove.
         for chat in self.explore.chats_mut().take_deleted_chats() {
             changed |= self.close_ai_chat_tabs(chat);
+            chat_status::forget(chat);
         }
         changed
     }
@@ -13567,6 +13577,7 @@ impl View for MainView {
 
     fn restore(&mut self, ws: &Workspace, settings: &Settings) {
         koru_editor::emoji::restore_usage(&settings.emoji_recents);
+        chat_status::restore(&settings.chat_seen);
         koru_editor::emoji::set_preferred_skin_tone(koru_editor::emoji::parse_skin_tone(
             &settings.emoji_skin_tone,
         ));
@@ -13643,6 +13654,7 @@ impl View for MainView {
             koru_editor::emoji::skin_tone_token(koru_editor::emoji::preferred_skin_tone())
                 .to_owned();
         settings.navigator_mode = self.explore.navigator_mode().token().to_owned();
+        settings.chat_seen = chat_status::capture();
         self.capture_session(settings);
     }
 
@@ -13703,6 +13715,10 @@ impl View for MainView {
             // **The countdown's four wakes, and `None` everywhere else** — an
             // idle window is never woken by the recorder.
             self.recording_deadline(),
+            // **A chat's ring, at the status frame, only while one turns on
+            // screen** — and a background chat tab's news only while its
+            // reply is on its way (D83). An idle window asks for nothing.
+            self.chat_status_deadline(),
         ]
         .into_iter()
         .flatten()

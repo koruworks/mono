@@ -2045,6 +2045,7 @@ impl<H: ShellHost> ShellState<H> {
                 // The shell's strip has no pin group, so no gap to keep out
                 // of a chip.
                 gap_after: 0.0,
+                status: None,
             })
             .collect();
         tabs::draw(

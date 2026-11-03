@@ -30,6 +30,11 @@ pub struct AiChatView {
     /// What the tab strip last read off the chat (D22), kept so the
     /// container's pass is a comparison and nothing more until it changes.
     face: ChatFace,
+    /// What the tab's mark says (D83), as the window's status pass last
+    /// decided — the tab strip draws it without asking again.
+    status: koru_chats_ui::ChatStatus,
+    /// Reduced motion: the ring holds still.
+    still: bool,
 }
 
 /// The few facts a chat tab is drawn from: whether the chat has started, its
@@ -60,7 +65,60 @@ impl AiChatView {
         Self {
             surface,
             face: ChatFace::default(),
+            status: koru_chats_ui::ChatStatus::Idle,
+            still: false,
         }
+    }
+
+    /// **Hear this chat's news while its tab is behind another** (D83):
+    /// the service's answers, folded in without drawing — a background tab
+    /// has to know its reply ended to stop its ring and mark it unread.
+    pub fn drain_in_background(&mut self) -> bool {
+        self.surface.drain_updates()
+    }
+
+    /// When a tab behind another should next hear its news: while a reply
+    /// it sent is on its way or running, and never otherwise.
+    pub fn background_deadline(&self) -> Option<std::time::Instant> {
+        self.surface.listing_deadline()
+    }
+
+    /// A reply ended, or a question came, since the window last asked.
+    pub fn take_arrival(&mut self) -> bool {
+        self.surface.take_arrival()
+    }
+
+    /// The newest finished message on screen — what a look has seen.
+    pub fn newest_seen_message(&self) -> Option<koru_ai_ui::MessageId> {
+        self.surface.newest_seen_message()
+    }
+
+    pub fn is_working(&self) -> bool {
+        self.surface.is_working()
+    }
+
+    pub fn needs_you(&self) -> bool {
+        self.surface.needs_you()
+    }
+
+    /// Take the status the window's pass decided; `true` when the mark
+    /// changed and the strip owes a repaint.
+    pub fn set_status(&mut self, status: koru_chats_ui::ChatStatus, reduced_motion: bool) -> bool {
+        self.surface.set_reduced_motion(reduced_motion);
+        let changed = self.status != status || self.still != reduced_motion;
+        self.status = status;
+        self.still = reduced_motion;
+        changed
+    }
+
+    pub fn status(&self) -> koru_chats_ui::ChatStatus {
+        self.status
+    }
+
+    /// The tab's mark, the ring turned to now unless motion is reduced.
+    pub fn status_mark(&self) -> Option<koru_shell_chrome::status_mark::StatusMark> {
+        self.status
+            .mark((!self.still).then(std::time::Instant::now))
     }
 
     pub fn new() -> Self {

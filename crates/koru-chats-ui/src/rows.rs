@@ -29,6 +29,10 @@ const NOTICE_GAP: f32 = 4.0;
 /// Documents label starts after its icon (the CTO's note).
 const LEAD_W: f32 = koru_shell_chrome::PAGE_ICON_SLOT;
 const LEAD_GAP: f32 = 4.0;
+/// The status mark's slot at a row's end (D83), an icon's width.
+pub(crate) const END_W: f32 = 20.0;
+/// Air between a title and the mark after it.
+const END_GAP: f32 = 4.0;
 /// Air under the last row, so the list does not end flush against the edge.
 pub(crate) const FOOTER_PAD: f32 = 8.0;
 
@@ -81,6 +85,9 @@ pub struct RowParts {
     pub lead: Rect,
     /// The title — a chat's title, a note's sentence.
     pub title: Rect,
+    /// The status mark's slot at the row's end (D83). Zero-width on a row
+    /// with nothing to show there, so a title keeps the whole width.
+    pub end: Rect,
 }
 
 impl ChatsSurface {
@@ -163,6 +170,15 @@ impl ChatsSurface {
             Row::Chat(index) => self.chats.get(index).is_some_and(|chat| chat.private),
             _ => false,
         };
+        let end_w = match row {
+            Row::Chat(index) => self
+                .chats
+                .get(index)
+                .filter(|chat| self.status(chat.id) != crate::ChatStatus::Idle)
+                .map_or(0.0, |_| END_W.min(inner_w)),
+            _ => 0.0,
+        };
+        let end = Rect::new(inner_x + inner_w - end_w, r.y, end_w, r.h);
         let lead_w = if private { LEAD_W.min(inner_w) } else { 0.0 };
         let lead = Rect::new(inner_x, r.y, lead_w, r.h);
         let text_x = if private {
@@ -170,10 +186,16 @@ impl ChatsSurface {
         } else {
             inner_x
         };
-        let text_w = (inner_x + inner_w - text_x).max(0.0);
+        let text_end = if end_w > 0.0 {
+            end.x - END_GAP
+        } else {
+            inner_x + inner_w
+        };
+        let text_w = (text_end - text_x).max(0.0);
         RowParts {
             lead,
             title: Rect::new(text_x, r.y, text_w, r.h),
+            end,
         }
     }
 

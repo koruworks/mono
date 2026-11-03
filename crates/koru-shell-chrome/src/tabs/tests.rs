@@ -478,6 +478,7 @@ fn an_icon_only_pin_centres_its_icon() {
         slide: 0.0,
         dragging: false,
         gap_after: 0.0,
+        status: None,
     };
     assert!(!titled.is_icon_only());
     let pin = Tab {

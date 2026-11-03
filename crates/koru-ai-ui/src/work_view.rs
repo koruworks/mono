@@ -287,8 +287,13 @@ pub(crate) fn build(
 /// (`crate::ChatSurface::images`).
 pub(crate) type PictureDrawer<'a> = dyn FnMut(&mut Scene, Affine, &str, Rect) + 'a;
 
+/// How wide the light that sweeps *Working for …* is, either side of its
+/// centre (koru-ai D83).
+const SWEEP_HALF_W: f32 = 28.0;
+
 /// Draw `work` with its top-left at `(x, y)`, `w` wide; a call's picture
-/// through `picture`.
+/// through `picture`. `sweep` is how far the light has crossed a running
+/// reply's header, `0..1`; `None` draws it still (reduced motion).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     canvas: &mut Scene,
@@ -300,6 +305,7 @@ pub(crate) fn draw(
     hover: Option<WorkHit>,
     focused: bool,
     now_ms: i64,
+    sweep: Option<f32>,
     picture: &mut PictureDrawer<'_>,
 ) {
     let p = theme::p();
@@ -328,6 +334,23 @@ pub(crate) fn draw(
             p.text_dim
         }),
     );
+    // **The light across *Working for 25s*** while the reply runs: from
+    // before the words' start to past their end, then again.
+    if work.live
+        && let Some(phase) = sweep
+    {
+        let travel = header.width() + SWEEP_HALF_W * 4.0;
+        scene::draw_layout_first_line_sweep(
+            canvas,
+            root,
+            header,
+            x,
+            header_y,
+            p.text,
+            x - SWEEP_HALF_W * 2.0 + travel * phase,
+            SWEEP_HALF_W,
+        );
+    }
     if !work.live {
         let caret = engine.icon_layout(
             if work.open {

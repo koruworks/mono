@@ -1110,6 +1110,12 @@ impl ExploreView {
         &mut self.chats
     }
 
+    /// Whether a Chats row's ring is turning (koru-ai D83) — the one reason
+    /// the view asks for frames.
+    pub fn chats_turning(&self) -> bool {
+        self.chats.animating()
+    }
+
     /// Whether the Chats view is what is showing.
     pub fn showing_chats(&self) -> bool {
         self.mode == NavigatorMode::Chats

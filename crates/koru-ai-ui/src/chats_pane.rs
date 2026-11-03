@@ -495,6 +495,17 @@ impl ChatSurface {
             }
             let current = self.current_chat_id();
             changed |= self.chats_pane.set_current(current);
+            // The open chat's mark (D83): this window holds one
+            // conversation, and it is the one whose work it can see. It is
+            // being looked at, so it is never unread here.
+            let statuses = current
+                .map(|chat| (chat, self.chat_status(false)))
+                .into_iter()
+                .collect();
+            changed |= self.chats_pane.set_statuses(statuses);
+            changed |= self.chats_pane.set_reduced_motion(self.reduced_motion);
+            // A turning ring is a frame owed.
+            changed |= self.chats_pane.animating();
         }
         self.chat_list_changed_for_pane = false;
         changed
@@ -503,6 +514,12 @@ impl ChatSurface {
     /// Whether the pane owes a wake: open, and waiting on its reader.
     pub(crate) fn chats_pane_awaiting(&self) -> bool {
         self.history_open && self.chats_pane.awaiting()
+    }
+
+    /// Whether the open pane shows a turning ring (D83): a frame owed at
+    /// the status frame, and none otherwise.
+    pub(crate) fn chats_pane_turning(&self) -> bool {
+        self.history_open && self.chats_pane.animating()
     }
 
     pub(crate) fn draw_chats_pane(&mut self, canvas: &mut Scene, root: Affine) {

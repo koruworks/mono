@@ -18,6 +18,7 @@ mod freshness;
 mod keys;
 mod locales;
 mod rows;
+mod status;
 
 /// The list as the navigator hands it over: 260 wide, rows starting a little
 /// under the mode row.

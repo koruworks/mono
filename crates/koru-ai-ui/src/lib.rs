@@ -15,15 +15,17 @@ use std::time::{Duration, Instant};
 use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
     DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageBlockId,
-    MessageId, MessageState, ModelSelection, ReasoningChoice, ReasoningControl, SourceLink,
-    ToolActivity, ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase,
-    WorkspaceId,
+    MessageState, ModelSelection, ReasoningChoice, ReasoningControl, SourceLink, ToolActivity,
+    ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
 };
 
 /// Re-exported so a host can name the id [`ChatSurface::open_link`] and
 /// [`ChatSurface::recent_chats`] carry without taking a `koru-ai-core`
 /// dependency of its own.
 pub use koru_ai_core::ChatId;
+/// Re-exported so a host can hold the message a person last saw without a
+/// `koru-ai-core` dependency of its own (D83).
+pub use koru_ai_core::MessageId;
 use koru_ai_wire::{
     BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, ModelPullEvent,
     ProviderSettingsResponse, ProviderValidationResponse, ProviderValidationStatus, PublicAiEvent,
@@ -61,6 +63,7 @@ pub(crate) fn chat_line_height() -> f32 {
 mod agents;
 mod approval_modes;
 mod attachments;
+mod chat_status;
 mod chats_pane;
 mod composer;
 mod doc_links;
@@ -693,6 +696,16 @@ pub struct ChatSurface {
     /// Steered messages the service took, shown under the running reply
     /// until the transcript read at its end carries them.
     steered: Vec<(ChatId, String)>,
+    /// The person asked for less motion: the light over *Working for …*
+    /// holds still and asks for no frames (D83).
+    reduced_motion: bool,
+    /// How many replies have ended here, for a host noticing an arrival in
+    /// a chat nobody is looking at (`chat_status`).
+    replies_finished: u32,
+    /// The count [`ChatSurface::take_arrival`] last answered for, and
+    /// whether a question was waiting then.
+    arrivals_reported: u32,
+    asked_reported: bool,
     lang: koru_i18n::Lang,
 }
 
@@ -966,6 +979,10 @@ impl ChatSurface {
             sending_queued: false,
             steering: None,
             steered: Vec::new(),
+            reduced_motion: false,
+            replies_finished: 0,
+            arrivals_reported: 0,
+            asked_reported: false,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -1263,6 +1280,10 @@ impl ChatSurface {
                 .checked_add(POLL_INTERVAL)
                 .unwrap_or_else(Instant::now)
         });
+        // The pane's ring for the chat in this window, while it turns.
+        let chats_pane_ring = self
+            .chats_pane_turning()
+            .then(|| Instant::now() + koru_chats_ui::status::FRAME);
         // The stop hint goes away when its window closes.
         let stop_hint = self
             .stop_armed_at
@@ -1272,6 +1293,7 @@ impl ChatSurface {
             highlight,
             image,
             chats_pane,
+            chats_pane_ring,
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
             self.web_search_tooltip.maintenance_deadline(),
@@ -1309,7 +1331,8 @@ impl ChatSurface {
             changed = true;
         }
         changed |= self.maintain_images();
-        // A running reply's *Working for 6s* moves on once a second.
+        // A running reply's *Working for 6s* moves on once a second, and
+        // its light sweeps at the status frame (D83).
         if self
             .work_tick_deadline()
             .is_some_and(|deadline| _now >= deadline)
@@ -3128,6 +3151,7 @@ impl ChatSurface {
                         self.reply_end = Some((chat, end));
                     }
                     self.ended_attempt = self.attempt;
+                    self.replies_finished = self.replies_finished.wrapping_add(1);
                     self.pulse = None;
                     self.open_searches.clear();
                     self.reasoning_expanded = false;
@@ -3162,6 +3186,7 @@ impl ChatSurface {
                     );
                     return true;
                 }
+                self.replies_finished = self.replies_finished.wrapping_add(1);
                 if let Some(chat) = self.shown_chat_id() {
                     self.reply_end = Some((
                         chat,
@@ -6926,6 +6951,9 @@ impl ChatSurface {
             }
         }
         let now_ms = koru_ai_core::Timestamp::now().millis();
+        // How far the light has crossed a running reply's header (D83):
+        // still under reduced motion.
+        let sweep = (!self.reduced_motion).then(|| chat_status::sweep_phase(now_ms));
         let images = &self.images;
         let mut picture = |canvas: &mut Scene, root: Affine, key: &str, rect: Rect| {
             if let Some(loaded) = images.get(key).and_then(|image| image.ready.as_ref()) {
@@ -6966,6 +6994,7 @@ impl ChatSurface {
                 self.work_hover,
                 self.focus == Focus::Work(work.message),
                 now_ms,
+                sweep,
                 &mut picture,
             );
         }
@@ -7224,11 +7253,18 @@ impl ChatSurface {
         }
     }
 
-    /// When a running reply's *Working for …* moves on next.
+    /// When a running reply's *Working for …* moves on next: once a second
+    /// for its count, or at the status frame while its light sweeps
+    /// (koru-ai D83) — never while no reply runs.
     fn work_tick_deadline(&self) -> Option<Instant> {
+        let step = if self.reduced_motion {
+            Duration::from_secs(1)
+        } else {
+            koru_chats_ui::status::FRAME
+        };
         self.work_layouts.iter().any(|work| work.live).then(|| {
             self.work_ticked_at
-                .map_or_else(Instant::now, |at| at + Duration::from_secs(1))
+                .map_or_else(Instant::now, |at| at + step)
         })
     }
 
@@ -13197,5 +13233,151 @@ mod tests {
             "the box's fill and stroke are inside it"
         );
         assert!(primitives.into_iter().all(under));
+    }
+
+    /// **What a chat is doing, for the marks outside it** (D83): working
+    /// from the send until the stream ends, needs you while a call waits
+    /// for an approval, and one arrival per reply that ends — however many
+    /// times the host asks.
+    #[test]
+    fn a_chat_says_it_works_waits_and_finished_once() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let (reader, _commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        let transcript = transcript();
+        surface.transcript = Some(transcript.clone());
+        assert!(!surface.is_working());
+        assert_eq!(surface.chat_status(false), koru_chats_ui::ChatStatus::Idle);
+        assert_eq!(surface.chat_status(true), koru_chats_ui::ChatStatus::Unread);
+        assert!(!surface.take_arrival());
+
+        let attempt_id = InferenceAttemptId::new();
+        surface.pending_user = Some("Plan the launch".into());
+        surface.apply_update(Update::Accepted(koru_ai_wire::SendTurnAccepted {
+            attempt_id,
+            user_message_id: MessageId::new(),
+            assistant_message_id: MessageId::new(),
+            replayed: false,
+        }));
+        assert!(surface.is_working());
+        assert_eq!(
+            surface.chat_status(true),
+            koru_chats_ui::ChatStatus::Working
+        );
+
+        surface.upsert_tool_activity(ToolActivity {
+            id: ToolInvocationId::new(),
+            attempt_id,
+            chat_id: transcript.chat.id,
+            assistant_message_id: MessageId::new(),
+            tool_name: "edit_document".into(),
+            read_only: false,
+            status: ToolActivityStatus::ApprovalRequired,
+            approval: ToolApproval::Pending,
+            proposed_at: koru_ai_core::Timestamp::from_millis(2),
+            started_at: None,
+            completed_at: None,
+            result_bytes: None,
+            error_code: None,
+            target_workspace_id: None,
+            target_document_id: None,
+            error_message: None,
+            agent_label: None,
+            agent_summary: None,
+            agent_input: None,
+            agent_output: None,
+            text_offset: None,
+            display_target: None,
+            live: None,
+        });
+        assert!(surface.needs_you());
+        assert_eq!(
+            surface.chat_status(false),
+            koru_chats_ui::ChatStatus::NeedsYou
+        );
+        assert!(surface.take_arrival(), "a question arrived");
+        assert!(!surface.take_arrival(), "once");
+
+        surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+            version: koru_ai_wire::AI_STREAM_VERSION,
+            sequence: 1,
+            event: PublicAiEvent::Completed {
+                attempt_id,
+                stop_reason: None,
+                at: koru_ai_core::Timestamp::from_millis(3),
+            },
+        }));
+        assert!(!surface.is_working(), "the stream ended");
+        assert_eq!(surface.finished_replies(), 1);
+        assert!(surface.take_arrival(), "a reply ended");
+        assert!(!surface.take_arrival(), "once");
+    }
+
+    /// What a look has seen is the newest message that is done: a reply
+    /// still streaming is not it.
+    #[test]
+    fn the_newest_seen_message_skips_a_reply_still_running() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut transcript = transcript();
+        let message = |ordinal, state| koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: transcript.chat.id,
+            ordinal,
+            role: ChatRole::User,
+            state,
+            markdown: "Hi".into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: None,
+        };
+        let (first, running) = (
+            message(0, MessageState::Complete),
+            message(1, MessageState::Pending),
+        );
+        transcript.messages = vec![first.clone(), running];
+        surface.transcript = Some(transcript);
+        assert_eq!(surface.newest_seen_message(), Some(first.id));
+    }
+
+    /// Reduced motion holds the light over *Working for …* still: the work
+    /// view ticks once a second for its count, not at the status frame.
+    #[test]
+    fn reduced_motion_ticks_the_work_header_once_a_second() {
+        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        assert!(surface.work_tick_deadline().is_none(), "no reply runs");
+        surface.work_layouts.push(work_view::build(
+            &mut surface.engine,
+            koru_i18n::Lang::En,
+            300.0,
+            work_view::WorkInput {
+                message: MessageId::new(),
+                live: true,
+                started_ms: 0,
+                worked_ms: 0,
+                items: Vec::new(),
+                groups: Vec::new(),
+            },
+            &work_view::Opened {
+                replies: &HashSet::new(),
+                groups: &HashSet::new(),
+                calls: &HashSet::new(),
+            },
+            &mut |_, _, _| Rc::new(Vec::new()),
+        ));
+        let now = Instant::now();
+        surface.work_ticked_at = Some(now);
+        assert_eq!(
+            surface.work_tick_deadline(),
+            Some(now + koru_chats_ui::status::FRAME)
+        );
+        surface.set_reduced_motion(true);
+        assert_eq!(
+            surface.work_tick_deadline(),
+            Some(now + Duration::from_secs(1))
+        );
     }
 }

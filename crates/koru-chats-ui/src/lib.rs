@@ -68,6 +68,8 @@ mod gateway;
 mod input;
 mod reader;
 mod rows;
+pub mod seen;
+pub mod status;
 pub mod text;
 
 pub use draw::MODE_ICON;
@@ -75,6 +77,8 @@ pub use draw::MODE_ICON;
 /// `koru-ai-core` dependency of its own.
 pub use koru_ai_core::ChatId;
 pub use rows::{Notice, Row, RowParts};
+pub use seen::{SeenBook, SeenMark};
+pub use status::ChatStatus;
 
 /// What the surface built, so a test can assert a count rather than a wall
 /// clock. Both are per call, reset at the start of each.
@@ -203,6 +207,12 @@ pub struct ChatsSurface {
     /// A refresh has been sent and not answered — the one reason a host keeps
     /// its wake clock running for this surface.
     pub(crate) in_flight: bool,
+    /// Each chat's status as the host last said (D83): working, needs you,
+    /// unread. A chat not in the map is idle. The host derives it
+    /// ([`ChatStatus::of`]); the list only draws and announces it.
+    pub(crate) statuses: HashMap<ChatId, ChatStatus>,
+    /// The person asked for less motion: a working chat's ring holds still.
+    pub(crate) reduced_motion: bool,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -259,6 +269,8 @@ impl ChatsSurface {
             scroll: 0.0,
             work: Work::default(),
             in_flight: false,
+            statuses: HashMap::new(),
+            reduced_motion: false,
             reader_link: None,
             seq: 0,
         }
@@ -320,6 +332,41 @@ impl ChatsSurface {
 
     pub fn current(&self) -> Option<ChatId> {
         self.current
+    }
+
+    /// **Every chat's status, as the host derived it** (D83) — idle chats
+    /// left out. `true` when a row's mark changed and a repaint is owed.
+    pub fn set_statuses(&mut self, mut statuses: HashMap<ChatId, ChatStatus>) -> bool {
+        statuses.retain(|_, status| *status != ChatStatus::Idle);
+        if statuses == self.statuses {
+            return false;
+        }
+        self.statuses = statuses;
+        true
+    }
+
+    pub fn status(&self, chat: ChatId) -> ChatStatus {
+        self.statuses.get(&chat).copied().unwrap_or_default()
+    }
+
+    /// The person asked for less motion (the system setting): a working
+    /// chat's ring holds still and asks for no frames.
+    pub fn set_reduced_motion(&mut self, reduced: bool) -> bool {
+        let changed = self.reduced_motion != reduced;
+        self.reduced_motion = reduced;
+        changed
+    }
+
+    /// **Whether a row's ring is turning** — the one reason this list wants
+    /// frames, paced by the host at `status_mark::FRAME`. `false` for an idle
+    /// list, under reduced motion, and when no listed chat is working.
+    pub fn animating(&self) -> bool {
+        !self.reduced_motion
+            && self.chats.iter().any(|chat| {
+                self.statuses
+                    .get(&chat.id)
+                    .is_some_and(|status| status.animating(false))
+            })
     }
 
     /// How far a delete of `chat` has got, if one was confirmed.
@@ -626,12 +673,12 @@ impl ChatsSurface {
     /// is private, when it is.
     pub fn accessible_name(&self, chat: ChatId) -> Option<String> {
         let found = self.chats.iter().find(|candidate| candidate.id == chat)?;
-        Some(text::accessible_name(
-            self.lang,
-            found,
-            &self.agents,
-            self.now_ms,
-        ))
+        let name = text::accessible_name(self.lang, found, &self.agents, self.now_ms);
+        // What the row's mark says, said after its name (D83).
+        Some(match self.status(chat).spoken(self.lang) {
+            Some(status) => format!("{name}, {status}"),
+            None => name,
+        })
     }
 }
 

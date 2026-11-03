@@ -531,6 +531,55 @@ pub fn glyph_pass(
         );
 }
 
+/// **A soft band of light across a line**, over the same line already drawn:
+/// its glyphs again, in a horizontal gradient that is `peak` at `centre_x`
+/// and fades to nothing `half_w` either side, so only the band adds ink.
+/// The chat's *Working for 25s* wears it while a reply runs (koru-ai D83).
+///
+/// Only the first line, and only glyph runs: the line it shimmers is one
+/// short label. `centre_x` is in the same coordinates as `ox`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_layout_first_line_sweep(
+    scene: &mut Scene,
+    root: Affine,
+    layout: &Layout<Brush>,
+    ox: f32,
+    oy: f32,
+    peak: Color,
+    centre_x: f32,
+    half_w: f32,
+) {
+    let Some(line) = layout.lines().next() else {
+        return;
+    };
+    let local = (centre_x - ox) as f64;
+    let half = half_w.max(1.0) as f64;
+    let clear = peak.multiply_alpha(0.0);
+    let sweep = peniko::Gradient::new_linear((local - half, 0.0), (local + half, 0.0))
+        .with_stops([(0.0, clear), (0.5, peak), (1.0, clear)]);
+    let transform = root * Affine::translate((ox as f64, oy as f64));
+    for item in line.items() {
+        if let PositionedLayoutItem::GlyphRun(gr) = item {
+            let run = gr.run();
+            scene
+                .draw_glyphs(run.font())
+                .transform(transform)
+                .font_size(run.font_size())
+                .normalized_coords(run.normalized_coords())
+                .brush(&sweep)
+                .hint(true)
+                .draw(
+                    StyleRef::Fill(Fill::NonZero),
+                    gr.positioned_glyphs().map(|g: PGlyph| vello::Glyph {
+                        id: g.id,
+                        x: g.x,
+                        y: g.y,
+                    }),
+                );
+        }
+    }
+}
+
 /// parley computes decoration offset and thickness; drawing them is ours.
 pub fn draw_decorations(
     scene: &mut Scene,

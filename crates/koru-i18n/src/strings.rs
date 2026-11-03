@@ -2719,6 +2719,13 @@ pub enum Key {
     /// Under a chat's rename field in the Chats list, when Enter is pressed
     /// on an empty title: the field stays open with the text you can fix.
     ChatsNameNeeded,
+    /// A Chats row's status, said after its name to a screen reader (koru-ai
+    /// D83): a reply is running.
+    ChatsStatusWorking,
+    /// …a reply stopped to ask for an approval or a permission.
+    ChatsStatusNeedsYou,
+    /// …something arrived that the person has not seen.
+    ChatsStatusUnread,
     /// The coding-agent CLI cards: "{} update available", with the CLI's
     /// brand name.
     AgentCliUpdateAvailable,
@@ -2807,7 +2814,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1961] = [
+    pub const ALL: [Key; 1964] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4719,6 +4726,9 @@ impl Key {
         Key::ChatsDeleteMany,
         Key::ChatsDeleteManyBody,
         Key::ChatsNameNeeded,
+        Key::ChatsStatusWorking,
+        Key::ChatsStatusNeedsYou,
+        Key::ChatsStatusUnread,
         Key::AgentCliUpdateAvailable,
         Key::AgentCliVersions,
         Key::AgentCliVersion,
@@ -15105,6 +15115,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ja: "{} 件のチャットとそのメッセージは削除されます。いずれかでローカルエージェントが応答している場合は、先にそのエージェントを停止します。",
     },
     Row { key: Key::ChatsNameNeeded, en: "A chat needs a name", es: "Un chat necesita un nombre", pt_br: "Uma conversa precisa de um nome", de: "Ein Chat braucht einen Namen", fr: "Une discussion a besoin d’un nom", ar: "تحتاج المحادثة إلى اسم", zh_hans: "对话需要一个名称", ja: "チャットには名前が必要です" },
+    Row { key: Key::ChatsStatusWorking, en: "working", es: "trabajando", pt_br: "trabalhando", de: "arbeitet", fr: "en cours", ar: "قيد العمل", zh_hans: "正在处理", ja: "作業中" },
+    Row { key: Key::ChatsStatusNeedsYou, en: "needs you", es: "te necesita", pt_br: "precisa de você", de: "braucht dich", fr: "a besoin de vous", ar: "يحتاج إليك", zh_hans: "需要你处理", ja: "対応が必要" },
+    Row { key: Key::ChatsStatusUnread, en: "unread", es: "sin leer", pt_br: "não lido", de: "ungelesen", fr: "non lu", ar: "غير مقروءة", zh_hans: "未读", ja: "未読" },
     Row { key: Key::AgentCliUpdateAvailable, en: "{} update available", es: "Actualización de {} disponible", pt_br: "Atualização do {} disponível", de: "Update für {} verfügbar", fr: "Mise à jour de {} disponible", ar: "يتوفر تحديث لـ {}", zh_hans: "{} 有可用更新", ja: "{} のアップデートがあります" },
     Row { key: Key::AgentCliVersions, en: "v{} → v{}", es: "v{} → v{}", pt_br: "v{} → v{}", de: "v{} → v{}", fr: "v{} → v{}", ar: "v{} → v{}", zh_hans: "v{} → v{}", ja: "v{} → v{}" },
     Row { key: Key::AgentCliVersion, en: "v{}", es: "v{}", pt_br: "v{}", de: "v{}", fr: "v{}", ar: "v{}", zh_hans: "v{}", ja: "v{}" },

@@ -297,6 +297,7 @@ impl TabGroup {
             slide,
             dragging,
             gap_after,
+            status: t.view.status_mark(),
         }
     }
 

@@ -48,6 +48,10 @@ pub struct Tab<'a> {
     /// Drawn as chip, it made the last pin six pixels wider than its
     /// neighbours and its icon sit left of centre (the CTO's note).
     pub gap_after: f32,
+    /// A chat's status (koru-ai D83): a turning ring **in place of** the
+    /// icon while it works, a dot on the icon's corner when it needs the
+    /// person or holds something unseen. `None` on every other tab.
+    pub status: Option<crate::status_mark::StatusMark>,
 }
 
 impl Tab<'_> {
@@ -610,7 +614,17 @@ fn draw_tab(
     let label_bl = label
         .as_ref()
         .and_then(|l| l.lines().next().map(|line| y + line.metrics().baseline));
-    match tab.icon {
+    // A working chat's ring takes the icon's slot; the icon comes back when
+    // the work ends (koru-ai D83).
+    let icon_slot = Rect::new(icon_x, pill.y, crate::PAGE_ICON_SLOT, pill.h);
+    let spinning = matches!(
+        tab.status,
+        Some(crate::status_mark::StatusMark::Spinner { .. })
+    );
+    if let Some(mark @ crate::status_mark::StatusMark::Spinner { .. }) = tab.status {
+        crate::status_mark::draw(scene, root, icon_slot, mark);
+    }
+    match tab.icon.filter(|_| !spinning) {
         Some(TabIcon::Emoji(icon)) => {
             crate::draw_page_emoji(scene, root, engine, icon, icon_x, pill, label_bl)
         }
@@ -661,6 +675,17 @@ fn draw_tab(
             brand,
         ),
         None => {}
+    }
+    // The dot sits on the icon's corner, over the mark at its visible size.
+    if let Some(crate::status_mark::StatusMark::Dot(dot)) = tab.status {
+        let side = theme::CAPTION_ICON;
+        let mark = Rect::new(
+            icon_slot.x + (icon_slot.w - side) * 0.5,
+            icon_slot.y + (icon_slot.h - side) * 0.5,
+            side,
+            side,
+        );
+        crate::status_mark::draw_badge(scene, root, mark, dot);
     }
     if let Some(label) = &label {
         scene::draw_layout_first_line(scene, root, label, text_x, y, Some(colour));

@@ -382,6 +382,16 @@ impl TabView {
         }
     }
 
+    /// What a chat tab's mark says about its chat (koru-ai D83): a ring in
+    /// place of the mark while it works, a dot on it when it needs the
+    /// person or holds something unseen. `None` on every other tab.
+    pub fn status_mark(&self) -> Option<koru_shell_chrome::status_mark::StatusMark> {
+        match self {
+            Self::AiChat(a) => a.status_mark(),
+            _ => None,
+        }
+    }
+
     pub fn root(&self) -> Option<NodeId> {
         match self {
             Self::Welcome(_)

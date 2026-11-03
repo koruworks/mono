@@ -1139,6 +1139,15 @@ pub struct Settings {
     /// Follows the user in `preferences.conf`. Absent until the first successful
     /// export; cancel does not write it.
     pub last_export_dir: Option<PathBuf>,
+    /// **What the person has seen of each AI chat, on this device** (koru-ai
+    /// D83): the `chat_seen=` line, opaque here — `koru_chats_ui::SeenBook`
+    /// reads and writes it. Device-local by the person's choice, so it lives
+    /// in this session file beside the tabs rather than in a synced setting.
+    ///
+    /// **An older build ignores the line** (`from_text`'s `_ => {}`) and drops
+    /// it on its next save — every chat then reads as seen, which is the safe
+    /// way to be wrong. Empty writes no line.
+    pub chat_seen: String,
 }
 
 /// Settings loaded before the Store has supplied a real Profile identity.
@@ -1438,6 +1447,7 @@ impl Default for Settings {
             emoji_skin_tone: String::new(),
             close_behavior: koru_window::CloseBehavior::default(),
             last_export_dir: None,
+            chat_seen: String::new(),
         }
     }
 }
@@ -2319,6 +2329,8 @@ impl Settings {
                 "last_export_dir" => {
                     s.last_export_dir = (!value.is_empty()).then(|| PathBuf::from(value));
                 }
+                // Read whole and untouched: its reader is the Chats list's.
+                "chat_seen" => s.chat_seen = value.to_owned(),
                 _ => {}
             }
         }
@@ -2517,6 +2529,9 @@ impl Settings {
         }
         if let Some(directory) = &self.last_export_dir {
             out.push_str(&format!("last_export_dir={}\n", directory.display()));
+        }
+        if !self.chat_seen.is_empty() {
+            out.push_str(&format!("chat_seen={}\n", self.chat_seen));
         }
         // One line per workspace, and none at all for a workspace with nothing
         // shut — so the file does not grow a row for every workspace you have
@@ -3756,6 +3771,26 @@ mod tests {
         let empty = Settings::default().profile_body();
         assert!(!empty.contains("emoji_recents="), "{empty}");
         assert!(!empty.contains("last_export_dir="), "{empty}");
+    }
+
+    /// **The AI chats' seen marks** (koru-ai D83) ride the session file as
+    /// one opaque line, beside the tabs, and none is written while there are
+    /// none. A file carrying it still opens every other key as before — the
+    /// tolerance an older build's `from_text` gives a key it does not know.
+    #[test]
+    fn the_chat_seen_line_round_trips_and_is_absent_when_empty() {
+        let line = "8b0c4d1e-0000-4000-8000-000000000001:12:-:u";
+        let s = Settings {
+            chat_seen: line.into(),
+            ai_w: 420.0,
+            ..Settings::default()
+        };
+        let body = s.profile_body();
+        assert!(body.contains(&format!("chat_seen={line}\n")), "{body}");
+        let back = Settings::from_text(&body);
+        assert_eq!(back.chat_seen, line);
+        assert_eq!(back.ai_w, 420.0);
+        assert!(!Settings::default().profile_body().contains("chat_seen="));
     }
 
     /// A ranking longer than the picker keeps is trimmed on the way in, so a
