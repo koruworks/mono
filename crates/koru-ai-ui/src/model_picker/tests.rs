@@ -139,6 +139,30 @@ fn the_geometry_fits_narrow_wide_and_middling_composers() {
     assert!(rail_bound >= rail_height(8, 1));
 }
 
+/// The rail's marks are never flush against the content beside them: the
+/// search row, the list, and every footer row start [`RAIL_CONTENT_GAP`]
+/// right of the rail, and the picker keeps its one height.
+#[test]
+fn the_content_column_keeps_a_gap_from_the_rail() {
+    assert!(RAIL_CONTENT_GAP >= 8.0);
+    let (w, h) = size(360.0, rail_height(3, 1));
+    let geometry = geometry(Rect::new(10.0, 20.0, w, h), true, true, true);
+    let rail_end = geometry.rail.x + geometry.rail.w;
+    let footer = geometry.footer.unwrap();
+    let context = geometry.context.unwrap();
+    let fast = geometry.fast.unwrap();
+    for column in [geometry.search, geometry.list, footer, context, fast] {
+        assert!((column.x - (rail_end + RAIL_CONTENT_GAP)).abs() < 0.01);
+        assert!(column.x + column.w <= geometry.panel.x + geometry.panel.w);
+    }
+    assert_eq!(h, size(360.0, rail_height(3, 1)).1, "the height is fixed");
+    assert_eq!(
+        size(360.0, 0.0).1,
+        size(280.0, 0.0).1,
+        "the gap takes width, never height"
+    );
+}
+
 /// D13: one size — search, six rows, the Context row and the level's
 /// footer — whatever the agent lists: a short list leaves room, a long one
 /// scrolls, and a model without either row gives its room to the list.

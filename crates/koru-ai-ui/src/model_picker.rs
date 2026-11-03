@@ -48,6 +48,11 @@ pub(crate) use fast::FAST_H;
 
 /// The rail's width, and the square of each of its marks.
 pub(crate) const RAIL_W: f32 = 44.0;
+/// **Air between the rail and the picker's content** — the search row, the
+/// list and the footer all start this far right of the rail, so its marks
+/// are not flush against them (the composer's toolbar keeps the same 8 px
+/// between its controls).
+pub(crate) const RAIL_CONTENT_GAP: f32 = 8.0;
 const RAIL_BUTTON: f32 = 32.0;
 const RAIL_GAP: f32 = 6.0;
 /// The room a divider takes after the chat's own built-in provider (S1).
@@ -274,8 +279,8 @@ pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
 /// that when `fast`, and the list in what is left — so a model with both
 /// rows gives a list row of the fixed height to the second.
 pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
-    let inner_x = panel.x + RAIL_W;
-    let inner_w = (panel.w - RAIL_W - PAD).max(1.0);
+    let inner_x = panel.x + RAIL_W + RAIL_CONTENT_GAP;
+    let inner_w = (panel.w - RAIL_W - RAIL_CONTENT_GAP - PAD).max(1.0);
     let mut bottom = panel.y + panel.h - PAD;
     let footer_rect = levels.then(|| {
         bottom -= FOOTER_H;
