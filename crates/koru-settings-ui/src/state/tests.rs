@@ -89,9 +89,20 @@ fn an_attention_row_names_the_agents_command_when_it_has_one() {
     let words = |why| AgentProviderStatus::NeedsAttention(why).words(lang);
     assert_eq!(
         words(AgentAttention::UnsupportedVersion {
-            update: Some("devin update".into())
+            update: Some("devin update".into()),
+            desktop_app: None,
         }),
         "Needs attention — This version isn't one Koru supports yet. Run `devin update` to update it."
+    );
+    // An agent whose desktop app carries its own copy says so after the
+    // command (D63).
+    assert_eq!(
+        words(AgentAttention::UnsupportedVersion {
+            update: Some("devin update".into()),
+            desktop_app: Some("Devin".into()),
+        }),
+        "Needs attention — This version isn't one Koru supports yet. Run `devin update` to update it. \
+         If you use the Devin desktop app, its copy updates with the app."
     );
     assert_eq!(
         words(AgentAttention::SignedOut {
@@ -100,8 +111,11 @@ fn an_attention_row_names_the_agents_command_when_it_has_one() {
         "Needs attention — Signed out. Run `devin auth login` to sign in."
     );
     assert!(
-        words(AgentAttention::UnsupportedVersion { update: None })
-            .ends_with("This version isn't one Koru supports yet.")
+        words(AgentAttention::UnsupportedVersion {
+            update: None,
+            desktop_app: None,
+        })
+        .ends_with("This version isn't one Koru supports yet.")
     );
     assert!(
         words(AgentAttention::SignedOut { sign_in: None })

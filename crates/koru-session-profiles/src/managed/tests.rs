@@ -160,6 +160,7 @@ fn fixture_registration() -> ManagedProviderRegistration {
         minimum_host_capability: capability::MANAGED_SESSIONS,
         update_command: None,
         sign_in_command: None,
+        desktop_app: None,
     }
 }
 

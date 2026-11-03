@@ -33,6 +33,7 @@ fn rows() -> Vec<AgentProviderRow> {
             "Codex",
             AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
                 update: None,
+                desktop_app: None,
             }),
             true,
         ),

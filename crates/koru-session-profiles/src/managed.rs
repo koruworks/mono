@@ -29,6 +29,12 @@ pub struct ManagedProviderRegistration {
     /// The command a person runs to sign the agent in, named on the page
     /// when it reports itself signed out; `None` where Koru knows none.
     pub sign_in_command: Option<&'static str>,
+    /// The agent's desktop app, by name, when that app installs a copy of
+    /// the agent's CLI of its own and keeps it up to date: beside
+    /// `update_command` the page then says that copy updates with the app,
+    /// so a person who has only the app is not sent to a command that
+    /// updates a different copy. `None` for an agent with no such app.
+    pub desktop_app: Option<&'static str>,
 }
 
 pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -39,6 +45,7 @@ pub const CODEX_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegis
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 
 pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -49,6 +56,7 @@ pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegi
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 
 pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
@@ -59,6 +67,7 @@ pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRe
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "kimi",
@@ -68,6 +77,7 @@ pub const KIMI_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "grok",
@@ -77,6 +87,7 @@ pub const GROK_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegist
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 
 /// Google's official Antigravity ACP server (AGENTUX I9). It is a separate
@@ -91,6 +102,7 @@ pub const ANTIGRAVITY_REGISTRATION: ManagedProviderRegistration = ManagedProvide
     minimum_host_capability: capability::MANAGED_SESSIONS,
     update_command: None,
     sign_in_command: None,
+    desktop_app: None,
 };
 
 /// Cognition's Devin CLI as an ACP server over stdio (`devin acp`). The same
@@ -106,6 +118,8 @@ pub const DEVIN_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegis
     // Both as Devin's bundled docs give them.
     update_command: Some("devin update"),
     sign_in_command: Some("devin auth login"),
+    // Devin's desktop app carries its own `devin` and updates it itself.
+    desktop_app: Some("Devin"),
 };
 
 /// Registration grants neither managed readiness nor delegation's live verdict.

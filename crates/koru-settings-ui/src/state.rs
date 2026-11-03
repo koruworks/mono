@@ -261,8 +261,13 @@ pub enum AgentProviderStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentAttention {
     /// A version Koru's managed route does not accept yet; `update` is the
-    /// command that updates it, named on the row when the agent has one.
-    UnsupportedVersion { update: Option<String> },
+    /// command that updates it, named on the row when the agent has one,
+    /// and `desktop_app` the agent's desktop app, whose own copy updates
+    /// with the app — said after the command.
+    UnsupportedVersion {
+        update: Option<String>,
+        desktop_app: Option<String>,
+    },
     /// Signed out; `sign_in` is the command that signs it in, when known.
     SignedOut { sign_in: Option<String> },
     /// The check itself failed.
@@ -292,14 +297,22 @@ impl AgentProviderStatus {
             Self::NeedsAttention(why) => detail(
                 Key::SettingsAgentNeedsAttention,
                 match why {
-                    AgentAttention::UnsupportedVersion { update: None } => {
+                    AgentAttention::UnsupportedVersion { update: None, .. } => {
                         t(lang, Key::SettingsAgentUnsupportedVersion).to_owned()
                     }
                     AgentAttention::UnsupportedVersion {
                         update: Some(command),
+                        desktop_app: None,
                     } => fill(
                         t(lang, Key::SettingsAgentUnsupportedVersionUpdate),
                         &[command],
+                    ),
+                    AgentAttention::UnsupportedVersion {
+                        update: Some(command),
+                        desktop_app: Some(app),
+                    } => fill(
+                        t(lang, Key::SettingsAgentUnsupportedVersionUpdateDesktopApp),
+                        &[command, app],
                     ),
                     AgentAttention::SignedOut { sign_in: None } => {
                         t(lang, Key::SettingsAgentSignedOut).to_owned()

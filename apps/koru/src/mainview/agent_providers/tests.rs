@@ -68,7 +68,10 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
     assert_eq!(status("claude", Some(true)), AgentProviderStatus::Ready);
     assert_eq!(
         status("codex", Some(true)),
-        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion { update: None })
+        AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
+            update: None,
+            desktop_app: None,
+        })
     );
     assert_eq!(
         status("kimi", Some(true)),
@@ -98,8 +101,9 @@ fn an_agents_status_comes_from_the_probe_and_the_readiness_row() {
 }
 
 /// **Devin's rows name the command to run**: an unsupported version names
-/// `devin update`, signed out names `devin auth login`, from its
-/// registration; an agent with no such command keeps today's words.
+/// `devin update` and says the desktop app's copy updates with the app,
+/// signed out names `devin auth login`, from its registration; an agent
+/// with no such command keeps today's words.
 #[test]
 fn devins_attention_rows_name_the_command_to_run() {
     let incompatible = ExecutableAvailability::Incompatible {
@@ -120,10 +124,15 @@ fn devins_attention_rows_name_the_command_to_run() {
             Some(&[readiness("devin", incompatible.clone())])
         ),
         AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
-            update: Some("devin update".into())
+            update: Some("devin update".into()),
+            desktop_app: Some("Devin".into()),
         })
     );
     assert!(words("devin", &incompatible).contains("Run `devin update` to update it."));
+    assert!(
+        words("devin", &incompatible)
+            .ends_with("If you use the Devin desktop app, its copy updates with the app.")
+    );
     assert!(words("devin", &signed_out).contains("Run `devin auth login` to sign in."));
     // Codex knows no such command here: the row reads as it always did.
     assert!(words("codex", &incompatible).ends_with("This version isn't one Koru supports yet."));

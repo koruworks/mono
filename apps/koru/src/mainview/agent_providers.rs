@@ -120,6 +120,7 @@ pub(crate) fn agent_status(
         ExecutableAvailability::Incompatible { .. } => {
             AgentProviderStatus::NeedsAttention(AgentAttention::UnsupportedVersion {
                 update: registration.update_command.map(str::to_owned),
+                desktop_app: registration.desktop_app.map(str::to_owned),
             })
         }
         ExecutableAvailability::Failed { .. } => {
