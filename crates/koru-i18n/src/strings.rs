@@ -2726,6 +2726,9 @@ pub enum Key {
     ChatsStatusNeedsYou,
     /// …something arrived that the person has not seen.
     ChatsStatusUnread,
+    /// The divider above the first message the person has not seen in a
+    /// chat (koru-ai D84): a short word in capitals where the script has them.
+    AiNewMessages,
     /// The coding-agent CLI cards: "{} update available", with the CLI's
     /// brand name.
     AgentCliUpdateAvailable,
@@ -2814,7 +2817,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1964] = [
+    pub const ALL: [Key; 1965] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4729,6 +4732,7 @@ impl Key {
         Key::ChatsStatusWorking,
         Key::ChatsStatusNeedsYou,
         Key::ChatsStatusUnread,
+        Key::AiNewMessages,
         Key::AgentCliUpdateAvailable,
         Key::AgentCliVersions,
         Key::AgentCliVersion,
@@ -15118,6 +15122,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ChatsStatusWorking, en: "working", es: "trabajando", pt_br: "trabalhando", de: "arbeitet", fr: "en cours", ar: "قيد العمل", zh_hans: "正在处理", ja: "作業中" },
     Row { key: Key::ChatsStatusNeedsYou, en: "needs you", es: "te necesita", pt_br: "precisa de você", de: "braucht dich", fr: "a besoin de vous", ar: "يحتاج إليك", zh_hans: "需要你处理", ja: "対応が必要" },
     Row { key: Key::ChatsStatusUnread, en: "unread", es: "sin leer", pt_br: "não lido", de: "ungelesen", fr: "non lu", ar: "غير مقروءة", zh_hans: "未读", ja: "未読" },
+    Row { key: Key::AiNewMessages, en: "NEW", es: "NUEVO", pt_br: "NOVO", de: "NEU", fr: "NOUVEAU", ar: "جديد", zh_hans: "新消息", ja: "新着" },
     Row { key: Key::AgentCliUpdateAvailable, en: "{} update available", es: "Actualización de {} disponible", pt_br: "Atualização do {} disponível", de: "Update für {} verfügbar", fr: "Mise à jour de {} disponible", ar: "يتوفر تحديث لـ {}", zh_hans: "{} 有可用更新", ja: "{} のアップデートがあります" },
     Row { key: Key::AgentCliVersions, en: "v{} → v{}", es: "v{} → v{}", pt_br: "v{} → v{}", de: "v{} → v{}", fr: "v{} → v{}", ar: "v{} → v{}", zh_hans: "v{} → v{}", ja: "v{} → v{}" },
     Row { key: Key::AgentCliVersion, en: "v{}", es: "v{}", pt_br: "v{}", de: "v{}", fr: "v{}", ar: "v{}", zh_hans: "v{}", ja: "v{}" },

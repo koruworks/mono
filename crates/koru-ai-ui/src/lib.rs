@@ -71,6 +71,7 @@ mod effort;
 mod layout_cache;
 mod live_markdown;
 mod model_picker;
+mod new_divider;
 mod privacy;
 mod queue;
 mod quote_pills;
@@ -706,6 +707,10 @@ pub struct ChatSurface {
     /// whether a question was waiting then.
     arrivals_reported: u32,
     asked_reported: bool,
+    /// A NEW divider above the first message the person has not seen, and
+    /// the chat opened there (D84). Set by the host as the chat comes into
+    /// view.
+    new_divider: Option<new_divider::NewDivider>,
     lang: koru_i18n::Lang,
 }
 
@@ -983,6 +988,7 @@ impl ChatSurface {
             replies_finished: 0,
             arrivals_reported: 0,
             asked_reported: false,
+            new_divider: None,
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -6590,7 +6596,19 @@ impl ChatSurface {
         for notice in &mut self.notice_layouts {
             notice.top = f32::NAN;
         }
+        // The NEW divider's band, in front of the first unseen message and
+        // its work (D84).
+        let divider_at = self.new_divider_index();
+        if let Some(divider) = &mut self.new_divider {
+            divider.top = None;
+        }
         for message_index in 0..self.message_layouts.len() {
+            if Some(message_index) == divider_at
+                && let Some(divider) = &mut self.new_divider
+            {
+                divider.top = Some(top);
+                top += new_divider::NEW_DIVIDER_H + CARD_GAP;
+            }
             if let Some(message_id) = self.message_layouts[message_index].id {
                 top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
             }
@@ -6728,6 +6746,13 @@ impl ChatSurface {
                     .conversation_scroll
                     .min((self.conversation_extent - area.h).max(0.0));
             }
+            // **An unread chat opens on its NEW divider** (D84), not at its
+            // end: once, the first layout that finds the message.
+            if let Some(scroll) = self.take_new_divider_scroll() {
+                self.follow_tail = false;
+                self.scroll_loaded_chat_to_bottom = false;
+                self.conversation_scroll = scroll.min((self.conversation_extent - area.h).max(0.0));
+            }
             if let Some((target, _)) = self.highlight
                 && let Some(index) = self
                     .message_layouts
@@ -6747,6 +6772,7 @@ impl ChatSurface {
             (area.y + area.h) as f64,
         );
         canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
+        self.draw_new_divider(canvas, root, area);
         let p = theme::p();
         let now = Instant::now();
         let mut card_tiles: Vec<(Rect, attachments::Tile)> = Vec::new();
@@ -13341,6 +13367,94 @@ mod tests {
         transcript.messages = vec![first.clone(), running];
         surface.transcript = Some(transcript);
         assert_eq!(surface.newest_seen_message(), Some(first.id));
+    }
+
+    /// **An unread chat opens on its NEW divider** (D84): the band goes in
+    /// front of the first message after the one seen last, the chat opens
+    /// there rather than at its end — once — and a look with nothing new
+    /// puts the divider away.
+    #[test]
+    fn an_unread_chat_opens_on_its_divider_above_the_first_unseen_message() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut transcript = transcript();
+        for ordinal in 0..24 {
+            transcript.messages.push(koru_ai_core::Message {
+                id: MessageId::new(),
+                chat_id: transcript.chat.id,
+                ordinal,
+                role: if ordinal % 2 == 0 {
+                    ChatRole::User
+                } else {
+                    ChatRole::Assistant
+                },
+                state: MessageState::Complete,
+                markdown: format!("message {ordinal}"),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: koru_ai_core::Timestamp::from_millis(ordinal as i64 + 1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(ordinal as i64 + 1)),
+            });
+        }
+        let chat = transcript.chat.id;
+        let seen = transcript.messages[11].id;
+        let first_new = transcript.messages[12].id;
+        surface.transcript = Some(transcript);
+        surface.viewport = Rect::new(0.0, 0.0, 480.0, 360.0);
+        surface.scroll_loaded_chat_to_bottom = true;
+        assert!(surface.show_new_from(chat, Some(seen)));
+
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+
+        let index = surface.new_divider_index().expect("a message came after");
+        assert_eq!(surface.message_layouts[index].id, Some(first_new));
+        let top = surface
+            .new_divider
+            .as_ref()
+            .and_then(|divider| divider.top)
+            .expect("placed");
+        assert!(top > surface.message_layouts[index - 1].top);
+        assert!(
+            top + new_divider::NEW_DIVIDER_H <= surface.message_layouts[index].top,
+            "a band of its own, covering no message"
+        );
+        let bottom = (surface.conversation_extent - surface.conversation_rect().h).max(0.0);
+        assert!(
+            surface.conversation_scroll < bottom,
+            "opened on the divider, not at the end"
+        );
+        assert!(surface.conversation_scroll <= top);
+        assert!(!surface.scroll_loaded_chat_to_bottom);
+
+        // Once: a later layout leaves the reader where they scrolled.
+        surface.conversation_scroll = 0.0;
+        surface.messages_dirty = true;
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+        assert_eq!(surface.conversation_scroll, 0.0);
+
+        // Nothing new the next time: the divider goes, and its band with it.
+        assert!(surface.show_new_from(chat, None));
+        assert!(!surface.show_new_from(chat, None), "already gone");
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+        assert!(surface.new_divider_index().is_none());
+    }
+
+    /// A divider over the last message has nothing to go above.
+    #[test]
+    fn a_divider_after_the_newest_message_shows_nothing() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut transcript = transcript();
+        let only = user_message(&transcript, "Hello");
+        transcript.messages.push(only.clone());
+        let chat = transcript.chat.id;
+        surface.transcript = Some(transcript);
+        surface.viewport = Rect::new(0.0, 0.0, 480.0, 360.0);
+        surface.show_new_from(chat, Some(only.id));
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+        assert!(surface.new_divider_index().is_none());
+        assert!(surface.new_divider.as_ref().unwrap().top.is_none());
     }
 
     /// Reduced motion holds the light over *Working for …* still: the work

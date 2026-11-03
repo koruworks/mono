@@ -111,6 +111,12 @@ impl AiChatView {
         changed
     }
 
+    /// Open the chat on what the person has not seen, under a NEW divider,
+    /// or put a divider away (`None`) — D84.
+    pub fn show_new_from(&mut self, chat: ChatId, after: Option<koru_ai_ui::MessageId>) -> bool {
+        self.surface.show_new_from(chat, after)
+    }
+
     pub fn status(&self) -> koru_chats_ui::ChatStatus {
         self.status
     }

@@ -49,6 +49,32 @@ fn an_arrival_behind_another_tab_is_unread_until_its_tab_is_chosen() {
     assert_eq!(tab_status(&v, behind), ChatStatus::Idle, "still seen");
 }
 
+/// **A chat that comes into view unread opens on its NEW divider**, after
+/// the message seen last; one that comes into view with nothing new puts
+/// its divider away (D84).
+#[test]
+fn an_unread_chat_coming_into_view_gets_its_divider_from_the_last_seen_message() {
+    let (mut v, _ws) = container();
+    let (behind, front) = (ChatId::new(), ChatId::new());
+    v.open_ai_chat_tab_for(behind);
+    let behind_index = v.tabs().active();
+    v.open_ai_chat_tab_for(front);
+    v.maintain_chat_status();
+    let last = MessageId::new();
+    with_book(|book| book.arrived(behind, epoch_millis(), Some(last)));
+    v.maintain_chat_status();
+    // Coming into view, it is asked to open from `last`.
+    v.select(behind_index);
+    let from = with_book(|book| {
+        book.is_unread(behind, None)
+            .then(|| book.last_seen(behind))
+            .flatten()
+    });
+    assert_eq!(from, Some(last), "read before the look marks it seen");
+    v.maintain_chat_status();
+    assert!(with_book(|book| !book.is_unread(behind, None)));
+}
+
 /// **An idle window asks for no frames**: chat tabs that neither work nor
 /// wait leave the status deadline empty, unread or not.
 #[test]

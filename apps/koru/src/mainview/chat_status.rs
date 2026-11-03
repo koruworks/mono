@@ -131,10 +131,19 @@ impl MainView {
             .map(|chat| (chat.id, chat.updated_at.millis()))
             .collect();
         let was_looking = std::mem::take(&mut self.chats_looking);
+        // A chat that came into view, and where its NEW divider goes: after
+        // the message seen last, when something arrived since (D84). Read
+        // before the look marks it seen.
+        let mut came_into_view: Vec<(ChatId, Option<MessageId>)> = Vec::new();
         let statuses = with_book(|book| {
             for (chat, facts) in &open {
                 if looking.contains(chat) {
                     if !was_looking.contains(chat) {
+                        let from = book
+                            .is_unread(*chat, listed.get(chat).copied())
+                            .then(|| book.last_seen(*chat))
+                            .flatten();
+                        came_into_view.push((*chat, from));
                         book.seen(*chat, now_ms, facts.newest);
                     } else if let Some(newest) = facts.newest {
                         book.saw_message(*chat, newest);
@@ -165,11 +174,24 @@ impl MainView {
             statuses
         });
         self.chats_looking = looking;
+        let divider_for = |chat: Option<ChatId>| {
+            chat.and_then(|chat| {
+                came_into_view
+                    .iter()
+                    .find(|(seen, _)| *seen == chat)
+                    .map(|(_, from)| (chat, *from))
+            })
+        };
 
         let mut turning = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
                 if let TabView::AiChat(view) = &mut tab.view {
+                    // Opened on what is new, or the divider of a look
+                    // before put away.
+                    if let Some((chat, from)) = divider_for(view.chat_id()) {
+                        changed |= view.show_new_from(chat, from);
+                    }
                     let status = view
                         .chat_id()
                         .and_then(|chat| statuses.get(&chat).copied())
@@ -178,6 +200,9 @@ impl MainView {
                     turning |= status.animating(reduced);
                 }
             }
+        }
+        if let Some((chat, from)) = divider_for(self.ai_chat.current_chat_id()) {
+            changed |= self.ai_chat.show_new_from(chat, from);
         }
         let rows = self.explore.chats_mut();
         changed |= rows.set_reduced_motion(reduced);
