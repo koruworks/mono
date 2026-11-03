@@ -192,6 +192,25 @@ impl AiChatView {
         self.surface.current_chat_id()
     }
 
+    /// Where the chat is scrolled to — what the window's history records
+    /// when the person leaves this tab (D102).
+    pub fn conversation_scroll(&self) -> f32 {
+        self.surface.conversation_scroll()
+    }
+
+    /// Put a chat this tab was just opened on back where history left it,
+    /// once its read lands, rather than at its end.
+    pub fn restore_conversation_scroll(&mut self, scroll: f32) {
+        self.surface.restore_conversation_scroll(scroll);
+    }
+
+    /// A reply running in this tab's chat, as a send the service took
+    /// leaves it.
+    #[cfg(test)]
+    pub fn pretend_reply_running(&mut self) {
+        self.surface.pretend_reply_running();
+    }
+
     /// Recent chats this surface has listed, most recent first. Empty until
     /// it has booted.
     pub fn recent_chats(&self, limit: usize) -> Vec<(ChatId, String)> {

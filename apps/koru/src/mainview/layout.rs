@@ -837,6 +837,9 @@ impl MainView {
         if !koru_features::ai() {
             return false;
         }
+        // Where the person was is where Back returns from the new chat — the
+        // new tab's rule (Ctrl+T); the chat becomes a place once it is sent.
+        self.record_jump();
         self.tabs_mut().push(Tab::ai_chat());
         true
     }
@@ -991,9 +994,21 @@ impl MainView {
     }
 
     /// Open a recent chat as a tab, focusing one already showing it.
+    ///
+    /// **A jump, written down here** (D102) — the Chats list, `Ctrl+Shift+↑`/
+    /// `↓` and *Recent chats* all come through this door, and so does Back
+    /// reopening a chat whose tab was closed, which `restoring` keeps from
+    /// recording itself. Shaped as `open_run_tab`: `select` records only when
+    /// the active tab changes, and a pushed tab is already active, so the
+    /// path that opens a new tab would otherwise record nothing.
     pub(super) fn open_ai_chat_tab_for(&mut self, id: koru_ai_ui::ChatId) -> bool {
         if !koru_features::ai() {
             return false;
+        }
+        // Standing still is not a jump.
+        if matches!(&self.tabs().active_tab().view, TabView::AiChat(view) if view.chat_id() == Some(id))
+        {
+            return true;
         }
         let showing = self.panes.iter_groups().find_map(|(path, group)| {
             group
@@ -1005,10 +1020,12 @@ impl MainView {
                 .map(|index| (path, index))
         });
         if let Some((path, index)) = showing {
+            self.record_jump();
             self.panes.set_focus(path);
             let _ = self.select(index);
             return true;
         }
+        self.record_jump();
         self.tabs_mut().push(Tab::ai_chat_existing(id));
         true
     }

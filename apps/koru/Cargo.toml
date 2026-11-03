@@ -217,7 +217,7 @@ tempfile.workspace = true
 koru-diagram = { path = "../../crates/koru-diagram" }
 koru-workspace-host = { path = "../../crates/koru-workspace-host", features = ["no-model-reader"] }
 koru-ai-core = { path = "../../crates/koru-ai-core" }
-koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client"] }
+koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client", "test-support"] }
 koru-socials-ui = { path = "../../crates/koru-socials-ui", features = ["no-reader"] }
 # **The same crate, with `no-reader` on.** A `SearchSurface` built in a test must
 # not dial the store a developer has running, and `cfg(test)` inside
