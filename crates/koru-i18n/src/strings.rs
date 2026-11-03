@@ -295,6 +295,7 @@ pub enum Key {
     AiEffortShortMax,
     AiModelsLegacy,
     AiModelsLegacyTag,
+    AiJumpToLatest,
     // The composer's tool-approval chip and panel, and a tool's approval card.
     AiToolApprovalHeading,
     AiToolModeManualApproval,
@@ -2804,7 +2805,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1958] = [
+    pub const ALL: [Key; 1959] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -2995,6 +2996,7 @@ impl Key {
         Key::AiEffortShortMax,
         Key::AiModelsLegacy,
         Key::AiModelsLegacyTag,
+        Key::AiJumpToLatest,
         Key::AiToolApprovalHeading,
         Key::AiToolModeManualApproval,
         Key::AiToolModeAutomatic,
@@ -6916,6 +6918,18 @@ pub const ROWS: &[Row] = &[
         ar: "قديم",
         zh_hans: "旧版",
         ja: "レガシー",
+    },
+    // The round ↓ over a chat scrolled up from its end: back to the newest message (and Ctrl+End).
+    Row {
+        key: Key::AiJumpToLatest,
+        en: "Jump to latest",
+        es: "Ir a lo más reciente",
+        pt_br: "Ir para o mais recente",
+        de: "Zur neuesten Nachricht",
+        fr: "Aller au plus récent",
+        ar: "الانتقال إلى الأحدث",
+        zh_hans: "跳到最新",
+        ja: "最新へ移動",
     },
     // The tool-approval panel's heading, above its two modes.
     Row {

@@ -110,6 +110,13 @@ const BLOCK_GAP: f32 = 8.0;
 const USAGE_GAP: f32 = 4.0;
 const HIGHLIGHT_FOR: Duration = Duration::from_secs(2);
 const CONVERSATION_SCROLL_SPEED: f32 = 1.8;
+/// ↓'s diameter (D77), its gap above the composer's edge of the transcript,
+/// its arrow, and how far from the end the transcript may sit and still
+/// count as at it.
+const JUMP_D: f32 = 32.0;
+const JUMP_GAP: f32 = 12.0;
+const JUMP_ICON: f32 = 16.0;
+const JUMP_SLACK: f32 = 1.0;
 const CONTENT_MAX_W: f32 = 800.0;
 const USER_MESSAGE_MAX_FRACTION: f32 = 0.70;
 /// The composer's toolbar row — the private mark, the spaces, the mode, the
@@ -482,6 +489,12 @@ pub struct ChatSurface {
     conversation_scroll: f32,
     conversation_extent: f32,
     conversation_scroll_drag: Option<f32>,
+    /// **Following the newest message** (D77): set by ↓ or `Ctrl+End`,
+    /// so a reply that streams in keeps the transcript at its end; any
+    /// scroll the person makes upward, a question walked to or a highlight
+    /// lets go of it. Off otherwise: streaming never pulls a reader to the
+    /// tail on its own.
+    follow_tail: bool,
     scroll_to_pending_question: bool,
     scroll_loaded_chat_to_bottom: bool,
     pending_question_anchor: Option<f32>,
@@ -826,6 +839,7 @@ impl ChatSurface {
             conversation_scroll: 0.0,
             conversation_extent: 0.0,
             conversation_scroll_drag: None,
+            follow_tail: false,
             scroll_to_pending_question: false,
             scroll_loaded_chat_to_bottom: false,
             pending_question_anchor: None,
@@ -1326,6 +1340,14 @@ impl ChatSurface {
         if let Some(cursor) = self.picker_cursor(p.0, p.1) {
             return cursor;
         }
+        // ↓ floats over the transcript's text: the arrow, as every press
+        // target has (ADR-215).
+        if self
+            .jump_button()
+            .is_some_and(|button| button.contains(p.0, p.1))
+        {
+            return CursorIcon::Default;
+        }
         if self
             .composer
             .picker_rect()
@@ -1460,6 +1482,15 @@ impl ChatSurface {
                 }
             ));
             return self.navigate_questions(matches!(key, Key::Named(NamedKey::ArrowDown)));
+        }
+        // **Ctrl+End jumps to the newest message** (D77) — unless there is
+        // text in the composer for it to move the caret through.
+        if koru_keys::registry::get(koru_keys::ShortcutId::JumpToLatest)
+            .chord
+            .matches(key, text, mods)
+            && self.jump_key_is_ours()
+        {
+            return self.jump_to_latest();
         }
         if let Focus::Work(message) = self.focus
             && let Some(handled) = self.work_key(message, key, mods)
@@ -1734,9 +1765,16 @@ impl ChatSurface {
         if self.pill_mouse_down(x, y) {
             return true;
         }
+        if self
+            .jump_button()
+            .is_some_and(|button| button.contains(x, y))
+        {
+            return self.jump_to_latest();
+        }
         if let Some(scrollbar) = self.conversation_scrollbar()
             && scrollbar.in_gutter(x, y)
         {
+            self.follow_tail = false;
             if scrollbar.on_thumb(x, y) {
                 // Preserve the exact grab point so the thumb does not jump
                 // underneath the pointer when the drag begins.
@@ -2305,8 +2343,100 @@ impl ChatSurface {
         let max = (self.conversation_extent - self.conversation_rect().h).max(0.0);
         let next = (self.conversation_scroll - dy).clamp(0.0, max);
         let changed = (next - self.conversation_scroll).abs() > f32::EPSILON;
+        // Scrolling up lets go of the newest message (D77).
+        if next < self.conversation_scroll {
+            self.follow_tail = false;
+        }
         self.conversation_scroll = next;
         changed
+    }
+
+    /// **↓, back to the newest message** (D77): a round button centred over
+    /// the transcript, just above the composer, while the transcript is
+    /// scrolled up away from its end. `None` at the end, and where there is
+    /// no transcript.
+    fn jump_button(&self) -> Option<Rect> {
+        if self.showing_setup() || self.transcript.is_none() {
+            return None;
+        }
+        let area = self.conversation_hit_rect;
+        let max = (self.conversation_extent - area.h).max(0.0);
+        if max - self.conversation_scroll <= JUMP_SLACK {
+            return None;
+        }
+        Some(Rect::new(
+            area.x + (area.w - JUMP_D) * 0.5,
+            area.y + area.h - JUMP_D - JUMP_GAP,
+            JUMP_D,
+            JUMP_D,
+        ))
+    }
+
+    /// **Jump to the newest message** (D77): ↓ pressed, or `Ctrl+End`. The
+    /// transcript scrolls to its end — at once: it has no smooth scroll —
+    /// and follows a reply that is still streaming from there on.
+    pub fn jump_to_latest(&mut self) -> bool {
+        let area = self.conversation_rect();
+        self.question_navigation = None;
+        self.conversation_scroll = (self.conversation_extent - area.h).max(0.0);
+        self.follow_tail = true;
+        true
+    }
+
+    /// Whether `Ctrl+End` is the chat's (D77): while the message is empty,
+    /// or the keyboard is not in the composer. In a message with text it is
+    /// the editor's caret to the end of the text, as ever.
+    fn jump_key_is_ours(&self) -> bool {
+        self.focus != Focus::Composer || self.composer.text().trim().is_empty()
+    }
+
+    /// Draw ↓ while it shows: the popover's surface and hairline, lifted,
+    /// the arrow in it, lit under the pointer.
+    fn draw_jump_button(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some(button) = self.jump_button() else {
+            return;
+        };
+        let name = koru_i18n::t(self.lang, koru_i18n::Key::AiJumpToLatest);
+        let _record = koru_draw::inspect::scope(
+            "Jump to latest",
+            "part",
+            root,
+            scene::rect(button.x, button.y, button.w, button.h),
+            |record| record.property("name", name, "koru_i18n::Key::AiJumpToLatest"),
+        );
+        let p = theme::p();
+        scene::floating_panel(
+            canvas,
+            root,
+            button.x,
+            button.y,
+            button.w,
+            button.h,
+            &scene::Panel::popover(button.w * 0.5),
+        );
+        if button.contains(self.pointer.0, self.pointer.1) {
+            scene::fill(
+                canvas,
+                root,
+                p.hover_tint,
+                &scene::rrect(button.x, button.y, button.w, button.h, button.w * 0.5),
+            );
+        }
+        // The catalog's ↑, turned about its centre: there is no ↓.
+        let arrow = self.engine.icon_layout(icons::ARROW_UP, JUMP_ICON);
+        let (cx, cy) = (
+            f64::from(button.x + button.w * 0.5),
+            f64::from(button.y + button.h * 0.5),
+        );
+        let turned = root * Affine::rotate_about(std::f64::consts::PI, (cx, cy));
+        scene::draw_layout(
+            canvas,
+            turned,
+            &arrow,
+            button.x + (button.w - arrow.width()) * 0.5,
+            button.y + (button.h - arrow.height()) * 0.5,
+            Some(p.text),
+        );
     }
 
     pub fn draw(&mut self, canvas: &mut Scene, root: Affine) {
@@ -3690,6 +3820,7 @@ impl ChatSurface {
     /// text-editing operation. The final downward step returns keyboard focus
     /// to the fixed composer.
     fn navigate_questions(&mut self, down: bool) -> bool {
+        self.follow_tail = false;
         let area = self.conversation_rect();
         if self.messages_dirty || (self.message_width - area.w).abs() > 0.5 {
             self.rebuild_messages(area.w);
@@ -5336,6 +5467,12 @@ impl ChatSurface {
             None
         } else {
             if self
+                .jump_button()
+                .is_some_and(|button| button.contains(x, y))
+            {
+                return Some((17, 0));
+            }
+            if self
                 .privacy_button()
                 .is_some_and(|button| button.contains(x, y))
             {
@@ -6330,9 +6467,17 @@ impl ChatSurface {
             // Streaming grows the document below the current reading
             // position. Never pull the reader to the new tail; only clamp a
             // position that became invalid because content got shorter.
+            if anchored_question {
+                // A new question is anchored at the top: following ends.
+                self.follow_tail = false;
+            }
             if self.scroll_loaded_chat_to_bottom {
                 self.conversation_scroll = (self.conversation_extent - area.h).max(0.0);
                 self.scroll_loaded_chat_to_bottom = false;
+            } else if self.follow_tail {
+                // Jumped to the newest message (D77): a streaming reply
+                // keeps it there.
+                self.conversation_scroll = (self.conversation_extent - area.h).max(0.0);
             } else if !anchored_question {
                 self.conversation_scroll = self
                     .conversation_scroll
@@ -6345,6 +6490,7 @@ impl ChatSurface {
                     .position(|message| message.blocks.iter().any(|block| block.id == target))
             {
                 let top = self.message_layouts[index].top;
+                self.follow_tail = false;
                 self.conversation_scroll =
                     (top - area.h * 0.25).clamp(0.0, (self.conversation_extent - area.h).max(0.0));
             }
@@ -6680,6 +6826,7 @@ impl ChatSurface {
                 || scrollbar.in_gutter(self.pointer.0, self.pointer.1);
             koru_ui::scrollbar::draw(canvas, root, scrollbar, active);
         }
+        self.draw_jump_button(canvas, root);
         self.draw_destination_picker(canvas, root);
         self.copy_feedback.draw(
             canvas,
@@ -10127,6 +10274,111 @@ mod tests {
         let expected_scroll = (surface.conversation_extent - conversation_height).max(0.0);
         assert_eq!(surface.conversation_scroll, expected_scroll,);
         assert!(!surface.scroll_loaded_chat_to_bottom);
+    }
+
+    /// **↓ and Ctrl+End jump to the newest message** (D77): the button shows
+    /// only while the transcript is scrolled up from its end, centred above
+    /// the composer; a press or Ctrl+End scrolls to the end and follows a
+    /// reply that keeps growing, until the person scrolls up again. In a
+    /// composer with text Ctrl+End stays the editor's.
+    #[test]
+    fn jump_to_latest_shows_off_the_end_and_follows_the_reply() {
+        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut transcript = transcript();
+        transcript.tool_policy.chat_id = transcript.chat.id;
+        let message = |chat, ordinal: u32, markdown: String| koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id: chat,
+            ordinal,
+            role: if ordinal % 2 == 0 {
+                ChatRole::User
+            } else {
+                ChatRole::Assistant
+            },
+            state: MessageState::Complete,
+            markdown,
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(i64::from(ordinal) + 1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(i64::from(ordinal) + 1)),
+        };
+        let chat = transcript.chat.id;
+        for ordinal in 0..24 {
+            transcript
+                .messages
+                .push(message(chat, ordinal, format!("message {ordinal}")));
+        }
+        surface.transcript = Some(transcript);
+        surface.viewport = Rect::new(0.0, 0.0, 480.0, 360.0);
+        surface.messages_dirty = true;
+        surface.scroll_loaded_chat_to_bottom = true;
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+        let max = |surface: &ChatSurface| {
+            (surface.conversation_extent - surface.conversation_hit_rect.h).max(0.0)
+        };
+        assert!(surface.jump_button().is_none(), "at the end: no button");
+
+        // Scrolled up: the button, centred over the transcript, above the
+        // composer.
+        surface.scroll_by(MouseScrollDelta::LineDelta(0.0, 3.0));
+        assert!(surface.conversation_scroll < max(&surface));
+        let button = surface.jump_button().expect("scrolled up: the button");
+        let area = surface.conversation_hit_rect;
+        assert_eq!((button.w, button.h), (32.0, 32.0));
+        assert!((button.x + button.w * 0.5 - (area.x + area.w * 0.5)).abs() < 0.01);
+        assert!(button.y + button.h <= area.y + area.h);
+        surface.pointer = (button.x + 16.0, button.y + 16.0);
+        assert_eq!(surface.cursor_icon(), CursorIcon::Default, "the arrow");
+
+        assert!(surface.mouse_down(button.x + 16.0, button.y + 16.0));
+        assert_eq!(surface.conversation_scroll, max(&surface));
+        assert!(surface.jump_button().is_none());
+
+        // A reply that keeps growing is followed.
+        let grow = |surface: &mut ChatSurface, ordinal: u32| {
+            let transcript = surface.transcript.as_mut().unwrap();
+            transcript.messages.push(message(
+                chat,
+                ordinal,
+                "A longer reply\n\nwith more\n\nparagraphs".into(),
+            ));
+            surface.messages_dirty = true;
+            surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+        };
+        let before = surface.conversation_scroll;
+        grow(&mut surface, 25);
+        assert!(surface.conversation_scroll > before, "followed");
+        assert_eq!(surface.conversation_scroll, max(&surface));
+
+        // Scrolling up lets go: the next growth stays where the reader is.
+        surface.scroll_by(MouseScrollDelta::LineDelta(0.0, 2.0));
+        let reading = surface.conversation_scroll;
+        grow(&mut surface, 27);
+        assert_eq!(surface.conversation_scroll, reading, "not pulled down");
+
+        // Ctrl+End with an empty composer jumps; with text it is the editor's.
+        let end = Key::Named(NamedKey::End);
+        let primary = if cfg!(target_os = "macos") {
+            ModifiersState::SUPER
+        } else {
+            ModifiersState::CONTROL
+        };
+        surface.composer.set_text("draft");
+        surface.key(&end, None, primary);
+        assert_eq!(
+            surface.conversation_scroll, reading,
+            "the caret's, not ours"
+        );
+        surface.composer.set_text("");
+        assert!(surface.key(&end, None, primary));
+        assert_eq!(surface.conversation_scroll, max(&surface));
+        assert_eq!(
+            koru_keys::registry::get(koru_keys::ShortcutId::JumpToLatest).layer,
+            koru_keys::Layer::Chat
+        );
     }
 
     #[test]

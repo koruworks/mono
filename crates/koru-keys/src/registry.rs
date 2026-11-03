@@ -360,6 +360,14 @@ pub enum ShortcutId {
     /// and tables, so in a message there never is, and the key falls
     /// through to the chat.
     CycleAgentMode,
+    /// **Jump to the newest message** (koru-ai D77): the transcript scrolled
+    /// to its end, following a streaming reply from there, as the ↓ above
+    /// the composer does. In the composer `Ctrl+End` is the editor's *caret
+    /// to the end of the text*, and it stays that wherever there is text:
+    /// the chat takes the key only while the message is empty or the
+    /// keyboard is not in the composer. The editor's caret keys are not
+    /// rows of this table, so no row is shared.
+    JumpToLatest,
 }
 
 /// One row of the table.
@@ -1060,6 +1068,12 @@ pub const REGISTRY: &[Shortcut] = &[
             Chord::new(named(NamedKey::Tab), SHIFT),
         )
     },
+    s(
+        ShortcutId::JumpToLatest,
+        Layer::Chat,
+        "Jump to latest",
+        Chord::new(named(NamedKey::End), PRIMARY),
+    ),
 ];
 
 impl ShortcutId {
@@ -1075,9 +1089,11 @@ impl ShortcutId {
     pub fn shown_in_product(self) -> bool {
         match self {
             Self::ShowTasks => koru_features::tasks(),
-            Self::ShowChats | Self::ToggleAiPane | Self::Delegate | Self::CycleAgentMode => {
-                koru_features::ai()
-            }
+            Self::ShowChats
+            | Self::ToggleAiPane
+            | Self::Delegate
+            | Self::CycleAgentMode
+            | Self::JumpToLatest => koru_features::ai(),
             Self::ShowAgents | Self::ShowArtifacts => koru_features::agent_views(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),

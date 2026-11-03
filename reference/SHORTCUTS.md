@@ -126,3 +126,4 @@ Chords are shown as this platform writes them.
 | | |
 | --- | --- |
 | `Shift+Tab` | Next approval mode |
+| `Ctrl+End` | Jump to latest |
