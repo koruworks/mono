@@ -531,9 +531,14 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
     // ordinary case, since a caret move inside a paragraph republishes that
     // paragraph and nothing else. The question is whether the client holds it
     // *anywhere*, which is what `known` answers and what a single update
-    // cannot.
-    let holds =
-        |id: &NodeId| projection.occurrences.contains_key(id) || (!whole && known.contains_key(id));
+    // cannot. **Less what this update retires**: `known` is the map *before*
+    // it, and a control the delta takes away is gone once the client applies
+    // it — naming it as the focus panics AccessKit (switching profile retired
+    // the focused row and took the window down).
+    let holds = |id: &NodeId| {
+        projection.occurrences.contains_key(id)
+            || (!whole && known.contains_key(id) && !projection.retired.contains(id))
+    };
     let focus = match semantics.focus {
         None => root_id,
         Some(occurrence) => {
