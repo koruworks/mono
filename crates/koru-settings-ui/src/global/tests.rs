@@ -751,8 +751,8 @@ fn document_fonts_links_to_the_sample_document() {
     assert_eq!(surface.take_requests(), vec![Request::OpenSampleDocument]);
 }
 
-/// A host that cannot open a sample — the standalone Koru AI and Terminal
-/// windows — gets the plain title and no link that would do nothing.
+/// A host that cannot open a sample gets the plain title and no link that
+/// would do nothing.
 #[test]
 fn a_host_without_a_sample_document_draws_no_link() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());

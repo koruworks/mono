@@ -8697,7 +8697,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::OpenSupport => self.open_support(event_loop),
             PaneRequest::OpenChatLink { chat, block } => {
-                self.host.open_chat_link(chat, block);
+                self.open_chat(&chat, block.as_deref());
             }
             PaneRequest::Navigate {
                 target,
@@ -13511,6 +13511,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
+    /// **Open a chat as a tab in the container window** — a chat hit in a
+    /// search window, or a `koru://chat/…` link or overlay hit the Agent
+    /// routed to this process. The container is the window that holds chat
+    /// tabs; it comes forward with the chat.
+    fn open_chat(&mut self, chat: &str, block: Option<&str>) {
+        self.show_from_tray();
+        if let Some(id) = self.container_pane()
+            && let Some(pane) = self.panes.get_mut(&id)
+            && pane.view.open_chat_tab(chat, block)
+        {
+            pane.window.focus_window();
+            pane.window.request_redraw();
+        }
+        activate_app();
+    }
+
     /// The pane an Agents ask lands in when no pane names a better one: the
     /// primary while it is a tab container, else the first container pane.
     /// `None` on a shell with only special windows (search, feedback), where
@@ -17781,9 +17797,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         if let Some(message) = self.host.take_global_search_notice() {
             self.report(ErrorReport::new("Global search shortcut", message));
         }
-        if let Some(report) = self.host.take_agent_notice() {
-            self.report(report);
-        }
         #[cfg(target_os = "macos")]
         for url in crate::macos_urls::take_pending() {
             if let Err(message) = self.host.open_external_url(url) {
@@ -17806,9 +17819,6 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         // A Jump List *Search* click. The overlay is the agent's window, so the
         // host performs the whole ask; nothing here needs to focus or draw.
         let _ = self.host.take_search_activation();
-        // AI Chat is also agent-owned and singleton. The taskbar listener only
-        // wakes this loop; the host passes the foreground grant and request on.
-        let _ = self.host.take_ai_chat_activation();
         for id in self.host.take_unpinned_documents() {
             for pane in self.panes.values_mut() {
                 let _ = pane.view.unpin_document(id);

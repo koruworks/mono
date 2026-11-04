@@ -166,7 +166,7 @@ pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest
         koru_search_ui::Target::Chat { chat, block, .. } => {
             return Some(PaneRequest::OpenChatLink {
                 chat: chat.to_string(),
-                block: block.to_string(),
+                block: Some(block.to_string()),
             });
         }
     };

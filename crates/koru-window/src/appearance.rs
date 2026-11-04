@@ -4,7 +4,8 @@
 //!
 //! This replaces `user_preferences.rs`, which held two independent parsers of
 //! `preferences.conf` — `AppearancePreferences` and `CaretPreferences` — read
-//! by the standalone AI chat window and by the Agent's search overlay. They
+//! by the standalone AI chat window (since retired) and by the Agent's search
+//! overlay. They
 //! were the second of the three parsers ADR-266 removes: they disagreed with
 //! the shell about what a value meant, they could not be pointed at a test
 //! directory, and each read the file again at a moment nobody could predict.
@@ -12,8 +13,8 @@
 //! **Nothing here opens a file.** A section arrives from
 //! `koru_api_client::GlobalLink`, and this is the projection of it onto the
 //! process globals `koru-draw` actually draws from. It lives in this crate
-//! because two apps need it and this is the crate they share — the same
-//! argument that put `DesktopPreferences` here.
+//! because the windows that need it share it — the same argument that put
+//! `DesktopPreferences` here.
 //!
 //! [`Appearance::default`] is the registry's defaults, which is what a window
 //! shows before the authority has answered and what it goes on showing if the

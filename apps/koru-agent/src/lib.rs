@@ -51,7 +51,6 @@
 
 pub mod account;
 pub mod agents_menu;
-pub mod ai_chat;
 pub mod app;
 pub mod build_stamp;
 pub mod cli;

@@ -5,12 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "The Chats surface: every AI chat, newest first, with who answered it — one component for the workspace navigator and the standalone chat window."
+description = "The Chats surface: every AI chat, newest first, with who answered it — the workspace navigator's Chats view."
 
 # **The dependency list is the point**, as it is for `koru-artifacts-ui`.
-# One component, two hosts (AGENTUX I5): the workspace window's navigator and
-# the standalone chat window's floating pane. So it may not name either
-# host — no `koru-ai-ui` (which hosts it, and would be a cycle), no
+# One component (AGENTUX I5), shown by the workspace window's navigator and
+# speaking the list's vocabulary to the chat surface. So it may name neither
+# — no `koru-ai-ui` (which depends on it, and would be a cycle), no
 # `koru-workspace`, no `koru-editor`, no `koru-workspace-host`.
 # `src/tests/dependency.rs` pins that.
 [features]

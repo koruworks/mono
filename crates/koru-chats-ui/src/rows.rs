@@ -359,25 +359,6 @@ impl ChatsSurface {
             .find(|(_, r)| y >= r.y && y < r.y + r.h)
     }
 
-    /// Where a chat's title sits, as the row is drawn now. Inside the band
-    /// only, for the hit test's reason: `None` when the list does not hold
-    /// the chat or its row is scrolled out of view. A rename field goes over
-    /// [`rename_rect`](Self::rename_rect) instead, which does not shrink for
-    /// buttons the renamed row no longer shows.
-    pub fn title_rect(&self, area: Rect, top: f32, chat: crate::ChatId) -> Option<Rect> {
-        let index = self
-            .chats
-            .iter()
-            .position(|candidate| candidate.id == chat)?;
-        let band = self.band(area, top);
-        let (row, rect) = self
-            .layout(area, top)
-            .into_iter()
-            .find(|(row, _)| *row == Row::Chat(index))?;
-        (rect.y + rect.h > band.y && rect.y < band.y + band.h)
-            .then(|| self.row_parts(row, rect).title)
-    }
-
     /// **Where a host's rename field goes** (D89): the row's whole text
     /// area — from where the title starts to the row's end pad, because
     /// the row drops its status mark, pin and ⋯ while it is renamed — the

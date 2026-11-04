@@ -260,13 +260,20 @@ impl AiChatView {
         self.surface.setup_open()
     }
 
-    /// Open an existing chat in this tab instead of starting a fresh one.
-    pub fn existing(id: ChatId) -> Self {
+    /// Move this tab's chat to `block` — a chat link or a search hit naming a
+    /// chat this tab already shows. The block is highlighted where it is.
+    pub fn open_link(&mut self, chat: ChatId, block: Option<koru_ai_ui::MessageBlockId>) -> bool {
+        self.surface.open_link(chat, block)
+    }
+
+    /// Open an existing chat in this tab instead of starting a fresh one,
+    /// at `block` when there is one — a chat link or a search hit.
+    pub fn existing(id: ChatId, block: Option<koru_ai_ui::MessageBlockId>) -> Self {
         let mut surface = Box::new(ChatSurface::new_at(
             koru_workspace_host::cli::root_from_args(),
         ));
         surface.activate();
-        surface.open_link(id, None);
+        surface.open_link(id, block);
         Self::over(surface)
     }
 

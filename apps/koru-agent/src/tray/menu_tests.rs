@@ -17,12 +17,10 @@ fn full() -> MenuState {
     MenuState {
         lang: koru_i18n::Lang::En,
         surfaces: Surfaces {
-            ai: true,
             reminders: true,
             agents: true,
         },
         shortcut: Shortcut::Unknown,
-        ai_shortcut: None,
         store_running: None,
         // Installed with a worker holding the model, so every voice action is
         // pressable — the state that offers the most.
@@ -111,7 +109,6 @@ fn labels(rows: &[MenuRow]) -> Vec<&str> {
 fn quit_is_last_and_offered_in_every_state() {
     let mut bare = full();
     bare.surfaces = Surfaces {
-        ai: false,
         reminders: false,
         agents: false,
     };
@@ -184,7 +181,6 @@ fn the_top_level_follows_imps_order() {
     assert_eq!(
         labels(&rows),
         [
-            "Koru AI Chat",
             "Search",
             koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::ReminderAll),
             "Voice input",
@@ -211,12 +207,11 @@ fn the_top_level_follows_imps_order() {
 fn a_hidden_surface_has_no_row() {
     let mut state = full();
     state.surfaces = Surfaces {
-        ai: false,
         reminders: false,
         agents: false,
     };
     let asks = asks(&linux_menu(&state));
-    for hidden in [TrayAsk::AiChat, TrayAsk::Reminders, TrayAsk::NewAgent] {
+    for hidden in [TrayAsk::Reminders, TrayAsk::NewAgent] {
         assert!(!asks.iter().any(|(ask, _)| *ask == hidden), "{hidden:?}");
     }
     assert!(
@@ -280,27 +275,6 @@ fn every_shortcut_the_hotkey_can_register_is_one_dbusmenu_can_carry() {
     }
     assert_eq!(dbus_shortcut("K"), None, "a key alone is not a chord");
     assert_eq!(dbus_shortcut("Ctrl+"), None);
-}
-
-#[test]
-fn the_ai_chat_row_says_whether_its_shortcut_is_held() {
-    let row = |available: Option<bool>| {
-        let mut state = full();
-        state.ai_shortcut = available;
-        linux_menu(&state).remove(0)
-    };
-    assert!(matches!(
-        row(None),
-        MenuRow::Item { label, shortcut: None, ask: Some(TrayAsk::AiChat), .. } if label == "Koru AI Chat"
-    ));
-    assert!(matches!(
-        row(Some(true)),
-        MenuRow::Item { label, shortcut: Some(_), .. } if label == "Koru AI Chat"
-    ));
-    assert!(matches!(
-        row(Some(false)),
-        MenuRow::Item { label, shortcut: None, .. } if label == "Koru AI Chat (no global shortcut)"
-    ));
 }
 
 /// What a switched-off installation reads — the state Linux is in until its

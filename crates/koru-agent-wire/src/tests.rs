@@ -434,7 +434,10 @@ fn every_message_round_trips() {
         Request::NotificationControl {
             operation: NotificationOperation::Repair,
         },
-        Request::OpenAiChat,
+        Request::OpenChatLink {
+            chat: "00000000-0000-4000-8000-000000000001".into(),
+            block: None,
+        },
     ] {
         let framed = FromShell::Request { id: 7, body };
         assert_eq!(
@@ -589,7 +592,7 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // Literal numbers rather than an inequality, so that bumping one is a
     // deliberate edit here as well as there -- which is what caught the
     // `OpenLink` bump that took the protocol to 8 and left the frame alone.
-    assert_eq!(PROTOCOL_VERSION, 44);
+    assert_eq!(PROTOCOL_VERSION, 45);
     assert_eq!(FRAME_VERSION, 1);
 }
 
@@ -921,28 +924,22 @@ fn profile_lifecycle_commands_and_results_are_typed_and_debug_redacted() {
 }
 
 #[test]
-fn ai_chat_control_is_typed_and_keeps_exact_link_ids() {
-    let request = AiChatRequest::OpenChat {
-        chat: "00000000-0000-4000-8000-000000000001".into(),
-        block: Some("00000000-0000-4000-8000-000000000002".into()),
-    };
-    let text = json(&request);
-    assert!(text.contains(r#""kind":"open_chat""#), "{text}");
-    assert!(text.contains(r#""chat":"00000000-0000-4000-8000-000000000001""#));
-    assert_eq!(
-        serde_json::from_str::<AiChatRequest>(&text).unwrap(),
-        request
-    );
-
-    let response = AiChatResponse::Accepted {
-        pid: 42,
-        focused: true,
-    };
-    assert_eq!(
-        serde_json::from_str::<AiChatResponse>(&json(&response)).unwrap(),
-        response
-    );
-    assert_eq!(AI_CHAT_PROTOCOL_VERSION, 1);
+fn a_chat_push_is_typed_and_keeps_exact_link_ids() {
+    for block in [
+        Some("00000000-0000-4000-8000-000000000002".to_owned()),
+        None,
+    ] {
+        let pushed = FromAgent::Push {
+            body: Push::OpenChat {
+                chat: "00000000-0000-4000-8000-000000000001".into(),
+                block,
+            },
+        };
+        let text = json(&pushed);
+        assert!(text.contains(r#""kind":"open_chat""#), "{text}");
+        assert!(text.contains(r#""chat":"00000000-0000-4000-8000-000000000001""#));
+        assert_eq!(serde_json::from_str::<FromAgent>(&text).unwrap(), pushed);
+    }
 }
 
 #[test]

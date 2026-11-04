@@ -165,3 +165,42 @@ fn a_step_away_from_a_running_reply_leaves_it_running() {
     assert_eq!(chat_in_front(&v), Some(chat));
     assert!(front_chat_view(&mut v).is_working());
 }
+
+/// **A chat link or a search hit opens the chat as a tab** (the retired
+/// standalone window's door, 2026-11-03): at its block, in a new tab the
+/// first time, in the tab already showing it after that — and an id that
+/// is not a uuid opens nothing.
+#[test]
+fn a_chat_link_opens_its_chat_as_a_tab_and_finds_it_again() {
+    let (mut v, mut w) = container();
+    let page = a_document(&mut w.ws, "Page");
+    v.open_node(&w.ws, page);
+    let chat = ChatId::new();
+    let block = koru_ai_ui::MessageBlockId::new();
+    let chat_tabs = |v: &MainView| {
+        v.tabs()
+            .iter()
+            .filter(|tab| matches!(&tab.view, TabView::AiChat(_)))
+            .count()
+    };
+
+    assert!(View::open_chat_tab(
+        &mut v,
+        &chat.to_string(),
+        Some(&block.to_string())
+    ));
+    assert_eq!(chat_in_front(&v), Some(chat));
+    assert_eq!(chat_tabs(&v), 1);
+
+    assert!(v.open_node(&w.ws, page));
+    assert!(View::open_chat_tab(&mut v, &chat.to_string(), None));
+    assert_eq!(chat_in_front(&v), Some(chat), "the open tab comes forward");
+    assert_eq!(chat_tabs(&v), 1, "and no second tab opens");
+
+    assert!(!View::open_chat_tab(&mut v, "not-a-chat", None));
+    assert!(!View::open_chat_tab(
+        &mut v,
+        &chat.to_string(),
+        Some("not-a-block")
+    ));
+}

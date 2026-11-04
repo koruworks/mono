@@ -8,7 +8,7 @@ use koru_settings::{
 
 /// **What an independent window shows before it has heard anything.** These are
 /// the values `AppearancePreferences::default()` gave when `preferences.conf`
-/// could not be read, and they have to stay exactly that: the AI chat window
+/// could not be read, and they have to stay exactly that: the search overlay
 /// opens on them, on the main thread, before any window exists.
 #[test]
 fn the_fallback_appearance_is_unchanged_from_the_parser_it_replaces() {

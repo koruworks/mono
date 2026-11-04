@@ -256,8 +256,8 @@ fn now() -> Instant {
 
 /// An agent alone in the notification area has nothing to wait for.
 #[test]
-fn with_no_windows_open_the_handoff_goes_straight_to_chat() {
-    assert_eq!(Handoff::begin(0, now()), Handoff::StoppingChat);
+fn with_no_windows_open_the_handoff_goes_straight_to_sessions() {
+    assert_eq!(Handoff::begin(0, now()), Handoff::StoppingSessions);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn the_handoff_advances_as_windows_close() {
         Handoff::AskingShells { remaining: 1, .. }
     ));
     handoff.shell_gone(0, now());
-    assert_eq!(handoff, Handoff::StoppingChat);
+    assert_eq!(handoff, Handoff::StoppingSessions);
 }
 
 /// **The wait is per window, not for the whole pass.** Every window puts up its
@@ -332,7 +332,6 @@ fn only_waiting_on_windows_has_a_deadline() {
     assert!(Handoff::begin(1, now()).deadline().is_some());
     assert!(Handoff::Idle.deadline().is_none());
     assert!(Handoff::StoppingSessions.deadline().is_none());
-    assert!(Handoff::StoppingChat.deadline().is_none());
     assert!(Handoff::StoppingStore.deadline().is_none());
     assert!(Handoff::Aborted("no".into()).deadline().is_none());
 }
@@ -343,7 +342,7 @@ fn only_waiting_on_windows_has_a_deadline() {
 fn an_abort_does_not_block_the_next_attempt() {
     let aborted = Handoff::Aborted("unsaved work".into());
     assert!(!aborted.in_progress());
-    assert_eq!(Handoff::begin(0, now()), Handoff::StoppingChat);
+    assert_eq!(Handoff::begin(0, now()), Handoff::StoppingSessions);
 }
 
 #[test]
@@ -372,7 +371,6 @@ fn abort_recovery_keeps_only_windows_that_actually_closed() {
             (profile.to_storage(), still_open.to_storage()),
             (profile.to_storage(), closed.to_storage()),
         ],
-        ai_chat: true,
         ..Reopen::default()
     };
 
@@ -382,7 +380,6 @@ fn abort_recovery_keeps_only_windows_that_actually_closed() {
         reopen.windows,
         vec![(profile.to_storage(), closed.to_storage())]
     );
-    assert!(reopen.ai_chat);
 }
 
 /// **The list has to outlive the process that wrote it.** The agent that closes
@@ -399,7 +396,6 @@ fn the_windows_to_reopen_survive_the_process_that_recorded_them() {
             ("profile-a".into(), "workspace-1".into()),
             ("profile-a".into(), "workspace-2".into()),
         ],
-        ai_chat: true,
         ..Reopen::default()
     };
     recorded.save(&paths).unwrap();
@@ -515,18 +511,26 @@ fn an_empty_list_writes_nothing() {
     assert!(Reopen::load(&paths).is_empty());
 }
 
+/// **The retired Koru AI window is not reopened.** An older build recorded
+/// whether it was open as `ai_chat`; the record still reads, the flag is
+/// read past, and a record that owed only the window owes nothing.
 #[test]
-fn chat_only_reopen_state_is_not_empty_and_round_trips() {
+fn an_older_records_ai_chat_flag_is_read_past() {
     let directory = tempfile::tempdir().unwrap();
     let paths = crate::Paths::for_root(directory.path().to_path_buf());
-    let recorded = Reopen {
-        windows: Vec::new(),
-        ai_chat: true,
-        ..Reopen::default()
-    };
-    assert!(!recorded.is_empty());
-    recorded.save(&paths).unwrap();
-    assert_eq!(Reopen::load(&paths), recorded);
+    let path = Reopen::file(&paths);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, br#"{"windows": [], "ai_chat": true}"#).unwrap();
+    assert!(Reopen::load(&paths).is_empty());
+    std::fs::write(
+        &path,
+        br#"{"windows": [["profile-a", "workspace-1"]], "ai_chat": true}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        Reopen::load(&paths).windows,
+        vec![("profile-a".to_string(), "workspace-1".to_string())]
+    );
 }
 
 #[test]
@@ -535,12 +539,10 @@ fn rewriting_reopen_state_is_atomic_and_leaves_the_latest_record() {
     let paths = crate::Paths::for_root(directory.path().to_path_buf());
     let first = Reopen {
         windows: vec![("profile-a".into(), "workspace-1".into())],
-        ai_chat: false,
         ..Reopen::default()
     };
     let second = Reopen {
         windows: vec![("profile-b".into(), "workspace-2".into())],
-        ai_chat: true,
         ..Reopen::default()
     };
 
@@ -566,8 +568,7 @@ fn reopen_persistence_reports_an_unwritable_parent() {
     let paths = crate::Paths::for_root(directory.path().to_path_buf());
     std::fs::write(paths.agent_dir(), b"not a directory").unwrap();
     let recorded = Reopen {
-        windows: Vec::new(),
-        ai_chat: true,
+        windows: vec![("profile-a".into(), "workspace-1".into())],
         ..Reopen::default()
     };
 
@@ -592,7 +593,6 @@ fn the_legacy_bare_window_vector_remains_readable() {
                 ("profile-a".into(), "workspace-1".into()),
                 ("profile-b".into(), "workspace-2".into()),
             ],
-            ai_chat: false,
             ..Reopen::default()
         }
     );

@@ -3,18 +3,11 @@
 //! **The Chats surface** — every AI chat, newest first, with who answered it.
 //!
 //! A chat is kept (AGENTUX §1): it has a home of its own, revealed the way a
-//! document is. This crate is that home, and it is **one component with two
-//! hosts** (I5):
-//!
-//! - the workspace window's navigator, as the *Chats* view right of Tasks
-//!   (`Alt+4` while it sits fourth on the rail), where a row opens the chat
-//!   as a tab;
-//! - the standalone chat window, as the floating pane its *Chats* button
-//!   opens, where a row reads the chat in place.
-//!
-//! Both hosts get the same rows, the same keys and the same accessibility
-//! names, because both draw *this* — the old popover inside the chat is gone
-//! (R1), and a second list would be a second answer to drift.
+//! document is. This crate is that home (I5): the workspace window's
+//! navigator shows it as the *Chats* view right of Tasks (`Alt+4` while it
+//! sits fourth on the rail), where a row opens the chat as a tab. The old
+//! popover inside the chat is gone (R1), and a second list would be a second
+//! answer to drift.
 //!
 //! ## What a row says
 //!

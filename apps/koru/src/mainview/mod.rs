@@ -13235,6 +13235,20 @@ impl View for MainView {
         self.open_new_tab_menu()
     }
 
+    /// A chat to open as a tab — a search hit, a `koru://chat/…` link, an
+    /// overlay hit. Ids that are not uuids are refused rather than guessed at.
+    fn open_chat_tab(&mut self, chat: &str, block: Option<&str>) -> bool {
+        let Ok(chat) = uuid::Uuid::parse_str(chat) else {
+            return false;
+        };
+        let block = match block.map(uuid::Uuid::parse_str) {
+            None => None,
+            Some(Ok(block)) => Some(koru_ai_ui::MessageBlockId::from_uuid(block)),
+            Some(Err(_)) => return false,
+        };
+        self.open_ai_chat_tab_at(koru_ai_ui::ChatId::from_uuid(chat), block)
+    }
+
     /// Open `doc` as a tab — the receiving end of a popped-out window's "restore
     /// as a tab". The same path a document pill takes, so a restored tab lands
     /// exactly where opening it fresh would.

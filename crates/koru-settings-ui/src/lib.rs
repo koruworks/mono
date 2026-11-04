@@ -139,9 +139,8 @@ pub(crate) fn title_style() -> theme::TextStyle {
 
 /// **Which sections this host shows.**
 ///
-/// Koru shows every page. The two other constructors remain for the
-/// standalone Terminal and AI windows until they are removed; they are not
-/// designed for.
+/// Koru shows every page. The other constructor remains for the standalone
+/// Terminal window until it is removed; it is not designed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sections {
     pub global: bool,
@@ -163,17 +162,6 @@ impl Sections {
             terminal: true,
             reminders: true,
             agents: true,
-        }
-    }
-
-    /// Koru AI's window: what applies to the app, and its own providers.
-    pub fn koru_ai() -> Self {
-        Self {
-            global: true,
-            ai: true,
-            terminal: false,
-            reminders: false,
-            agents: false,
         }
     }
 

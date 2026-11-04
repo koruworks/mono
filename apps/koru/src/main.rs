@@ -75,9 +75,6 @@ struct Manager {
     /// A taskbar *Search* task was chosen on a cold launch — this process is the
     /// one that has to ask the agent for its overlay.
     search: bool,
-    /// A taskbar *AI Chat* task was chosen on a cold launch. Once the Agent is
-    /// connected, ask it to open or focus the singleton standalone chat.
-    ai_chat: bool,
     /// A document a taskbar Recent entry named, when this process is the one
     /// that has to open it — a cold launch, with no Koru already running to
     /// hand it to.
@@ -300,10 +297,6 @@ impl Host for Manager {
         self.agent.take_trouble()
     }
 
-    fn take_agent_notice(&self) -> Option<koru_workspace_host::ErrorReport> {
-        self.agent.take_notice()
-    }
-
     /// A Jump List click asks this window to come forward. The shell focuses
     /// its own window; the taskbar module only signals that one is owed.
     fn take_activation_focus(&self) -> bool {
@@ -329,17 +322,6 @@ impl Host for Manager {
         }
     }
 
-    fn take_ai_chat_activation(&self) -> bool {
-        if crate::taskbar::take_ai_chat() {
-            tracing::info!(target: "koru::taskbar", "AI Chat activation drained");
-            self.agent.grant_foreground();
-            self.agent.open_ai_chat();
-            true
-        } else {
-            false
-        }
-    }
-
     fn open_uri(&self, url: &str) {
         let url = url.to_owned();
         let _ = std::thread::Builder::new()
@@ -347,10 +329,6 @@ impl Host for Manager {
             .spawn(move || {
                 let _ = koru_window::open_uri(&url);
             });
-    }
-
-    fn open_chat_link(&self, chat: String, block: String) {
-        self.agent.open_chat_link(chat, block);
     }
 
     fn open_external_url(&self, url: String) -> Result<(), String> {
@@ -403,6 +381,16 @@ impl Host for Manager {
                 }
                 agent::FromTheAgent::NewAgentSession => {
                     Some(koru_workspace_host::AgentAsk::NewAgentSession)
+                }
+                // A chat to open as a tab: the same request a chat hit in this
+                // window's own search makes.
+                agent::FromTheAgent::OpenChat { chat, block } => {
+                    Some(koru_workspace_host::AgentAsk::Open(Box::new(
+                        koru_workspace_host::PaneRequest::OpenChatLink {
+                            chat: chat.to_string(),
+                            block: block.map(|block| block.to_string()),
+                        },
+                    )))
                 }
                 agent::FromTheAgent::ShowSupport => {
                     Some(koru_workspace_host::AgentAsk::ShowSupport)
@@ -546,10 +534,6 @@ impl Host for Manager {
         if std::mem::take(&mut self.search) {
             self.agent.grant_foreground();
             self.agent.show_overlay();
-        }
-        if std::mem::take(&mut self.ai_chat) {
-            self.agent.grant_foreground();
-            self.agent.open_ai_chat();
         }
         // Deferred until after `View::restore`: the shell restores the previous
         // session *after* `initial`, and opening here would be wiped by that
@@ -723,9 +707,6 @@ fn main() {
     let new_document = run && std::env::args().any(|arg| arg == "--new-document");
     // `--search` is how the taskbar's *Search* task asks for the global overlay.
     let search = run && std::env::args().any(|arg| arg == "--search");
-    // `--ai-chat` is how the taskbar's *AI Chat* task asks for the singleton
-    // standalone chat window.
-    let ai_chat = run && std::env::args().any(|arg| arg == "--ai-chat");
     // `--open <id>` is how a Recent entry names its document. Read here rather
     // than in the shell because it is the taskbar's business, and the shell's
     // parser has already accepted or rejected the whole line above.
@@ -758,18 +739,16 @@ fn main() {
         target: "koru::taskbar",
         run,
         search,
-        ai_chat,
         new_document,
         open = open.is_some(),
         force_new_window,
         "taskbar launch parsed"
     );
-    let request = match (search, ai_chat, new_document, open_document, open) {
-        (true, _, _, _, _) => Some(taskbar::Activation::Search),
-        (_, true, _, _, _) => Some(taskbar::Activation::AiChat),
-        (_, _, true, _, _) => Some(taskbar::Activation::NewDocument),
-        (_, _, _, Some(id), _) => Some(taskbar::Activation::OpenDocument(id)),
-        (_, _, _, _, Some(id)) => Some(taskbar::Activation::Open(id)),
+    let request = match (search, new_document, open_document, open) {
+        (true, _, _, _) => Some(taskbar::Activation::Search),
+        (_, true, _, _) => Some(taskbar::Activation::NewDocument),
+        (_, _, Some(id), _) => Some(taskbar::Activation::OpenDocument(id)),
+        (_, _, _, Some(id)) => Some(taskbar::Activation::Open(id)),
         _ => None,
     };
     let span = koru_core::timing::Span::start("taskbar");
@@ -851,7 +830,6 @@ fn main() {
         Manager {
             new_document,
             search,
-            ai_chat,
             open,
             open_document,
             trash_root,

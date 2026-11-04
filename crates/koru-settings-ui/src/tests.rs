@@ -430,19 +430,13 @@ fn koru_lists_every_page_in_sidebar_order() {
             PageId::AgentProviders,
         ]
     );
-    // The standalone hosts, while they last: no Reminders, and the Terminal
-    // page only where the terminal is. Neither lists the coding agents.
-    assert!(
-        !Sections::koru_ai()
-            .pages()
-            .contains(&PageId::AgentProviders)
-    );
+    // The standalone Terminal host, while it lasts: no Reminders, and no
+    // coding agents.
     assert!(
         !Sections::terminal()
             .pages()
             .contains(&PageId::AgentProviders)
     );
-    assert!(!Sections::koru_ai().pages().contains(&PageId::Terminal));
     assert!(!Sections::terminal().pages().contains(&PageId::Reminders));
 }
 
@@ -523,7 +517,10 @@ fn a_page_that_is_not_showing_has_no_pressable_rect() {
 
 #[test]
 fn a_page_this_host_does_not_have_is_refused() {
-    let mut surface = SettingsSurface::new(Sections::koru_ai());
+    let mut surface = SettingsSurface::new(Sections {
+        terminal: false,
+        ..Sections::koru()
+    });
     assert!(!surface.show_page(PageId::Terminal));
     assert_ne!(surface.page(), PageId::Terminal);
 }

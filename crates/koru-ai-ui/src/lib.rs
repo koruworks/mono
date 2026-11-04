@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::{
     AiErrorClass, AiProviderId, AiSurface, AiUsage, Chat, ChatRole, ContextRef,
-    DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageBlockId,
-    MessageState, ModelSelection, ReasoningChoice, ReasoningControl, SourceLink, ToolActivity,
+    DocumentDestination, DocumentExportId, DocumentId, InferenceAttemptId, MessageState,
+    ModelSelection, ReasoningChoice, ReasoningControl, SourceLink, ToolActivity,
     ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
 };
 
@@ -23,6 +23,9 @@ use koru_ai_core::{
 /// [`ChatSurface::recent_chats`] carry without taking a `koru-ai-core`
 /// dependency of its own.
 pub use koru_ai_core::ChatId;
+/// Re-exported so a host can open a chat at one of its blocks — a chat link
+/// or a search hit — without a `koru-ai-core` dependency of its own.
+pub use koru_ai_core::MessageBlockId;
 /// Re-exported so a host can hold the message a person last saw without a
 /// `koru-ai-core` dependency of its own (D83).
 pub use koru_ai_core::MessageId;

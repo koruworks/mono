@@ -91,8 +91,9 @@ use serde::{Deserialize, Serialize};
 /// `koru-session-wire`.
 /// 15 also adds [`Request::OpenChatLink`] so the Agent can route AI deep links
 /// without pretending a chat is a Store document.
-/// 16 adds [`Request::OpenAiChat`] so a workspace caption can ask the Agent to
-/// launch the standalone host without manufacturing a chat identity.
+/// 16 adds `Request::OpenAiChat` so a workspace caption can ask the Agent to
+/// launch the standalone host without manufacturing a chat identity (removed
+/// in 45, with the standalone host).
 /// 17 projects the live session list into the Agent menu and lets it ask a
 /// Terminal window to select one. Terminal traffic still never crosses here.
 /// Version 17 also lets an update-reopened workspace host return the durable
@@ -222,7 +223,13 @@ use serde::{Deserialize, Serialize};
 /// 44 adds the coding-agent CLI update conversation — [`Push::AgentClis`]
 /// and [`Request::AgentCliChoice`]: which of the installed agent CLIs are
 /// behind their own channel, and the card buttons that run their updaters.
-pub const PROTOCOL_VERSION: u32 = 44;
+/// 45 retires the standalone Koru AI window (2026-11-03): it removes
+/// `Request::OpenAiChat`, which asked the Agent to launch it, and adds
+/// [`Push::OpenChat`], with which the Agent asks a Koru window to open a
+/// chat as a tab — a `koru://chat/…` link from outside Koru, or a chat hit in
+/// the Agent's search overlay. A 44 window would send a request a 45 Agent
+/// cannot read, and could not read the push; the handshake refuses it.
+pub const PROTOCOL_VERSION: u32 = 45;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -230,33 +237,6 @@ pub const PROTOCOL_VERSION: u32 = 44;
 /// changes only if the *framing* changes, which is a thing that has never
 /// happened and would break every local endpoint at once.
 pub const FRAME_VERSION: u8 = 1;
-
-/// The private standalone AI-chat control stream's frame/semantic version.
-/// It is deliberately separate from [`PROTOCOL_VERSION`]: the Agent-to-shell
-/// conversation and the singleton window's lifecycle can evolve independently.
-pub const AI_CHAT_PROTOCOL_VERSION: u8 = 1;
-
-/// A private machine-local request to the standalone AI chat host.
-///
-/// Chat and block ids remain strings so this leaf does not acquire the AI
-/// model. The receiving host validates them before navigating.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AiChatRequest {
-    Activate,
-    OpenChat { chat: String, block: Option<String> },
-    Status,
-    Exit,
-}
-
-/// The standalone host's answer. `pid` is trustworthy to the Agent because it
-/// came from the local endpoint owner, rather than from an Agent-shell peer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AiChatResponse {
-    Accepted { pid: u32, focused: bool },
-    Failed { code: String, message: String },
-}
 
 // ------------------------------------------------------------------ handshake
 
@@ -512,18 +492,14 @@ pub enum Request {
         document: String,
         node: Option<String>,
     },
-    /// Follow a canonical AI chat link. Chat and block identities remain
-    /// strings on this process boundary so the Agent does not link AI models.
+    /// Follow a canonical AI chat link — `koru://chat/<id>[#<block>]` from
+    /// outside Koru. The Agent answers `Ok` and routes it to a Koru window as
+    /// [`Push::OpenChat`]. Chat and block identities remain strings on this
+    /// process boundary so the Agent does not link AI models.
     OpenChatLink {
         chat: String,
         block: Option<String>,
     },
-    /// Open the standalone AI chat at its ordinary landing state.
-    ///
-    /// Kept distinct from [`OpenChatLink`](Self::OpenChatLink): opening the app
-    /// must not mint or guess a durable chat merely to satisfy a process-launch
-    /// request.
-    OpenAiChat,
     /// The person answered the update banner. See [`UpdateChoice`].
     ///
     /// **The consent is shown here and acted on there.** The agent owns
@@ -1015,6 +991,15 @@ pub enum Push {
     /// Show this result. See [`Target`].
     Open {
         target: Target,
+    },
+    /// **Open this chat as a tab**, scrolled to `block` when there is one: a
+    /// `koru://chat/…` link from outside Koru, or a chat hit in the Agent's
+    /// search overlay. The receiving window focuses a tab already showing the
+    /// chat. Strings, as on [`Request::OpenChatLink`]; the window parses them
+    /// and refuses ids it cannot read.
+    OpenChat {
+        chat: String,
+        block: Option<String>,
     },
     /// Open the validated reminder entity and begin its semantic snooze flow.
     ///

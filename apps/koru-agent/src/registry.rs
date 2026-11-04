@@ -292,8 +292,8 @@ impl Registry {
     }
 
     /// The Koru window the person used most recently, independent of profile
-    /// or workspace. Used when the standalone AI window toggles back to the
-    /// workspace rather than naming a destination of its own.
+    /// or workspace. Used for an ask that names no destination of its own: a
+    /// tray Agents row, or a chat to open as a tab.
     pub fn most_recent(&self) -> Option<&Shell> {
         self.shells()
             .into_iter()

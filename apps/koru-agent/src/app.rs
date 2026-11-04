@@ -130,7 +130,6 @@ fn starts_work_while_quiescing(request: &Request) -> bool {
                 | Request::Route { .. }
                 | Request::OpenLink { .. }
                 | Request::OpenChatLink { .. }
-                | Request::OpenAiChat
                 | Request::ReminderActivation { .. }
                 | Request::NotificationControl { .. }
                 | Request::StartPairing
@@ -154,7 +153,6 @@ fn starts_process_during_restart(request: &Request) -> bool {
             | Request::Route { .. }
             | Request::OpenLink { .. }
             | Request::OpenChatLink { .. }
-            | Request::OpenAiChat
             | Request::ReminderActivation { .. }
             | Request::NotificationControl { .. }
     )
@@ -567,6 +565,10 @@ pub struct Agent {
     /// the next Workspace `Hello`, the `feedback_owed` shape: the window the
     /// ask is addressed to is the one the launch below is producing.
     pending_workspace_session: Option<Option<koru_session_protocol::SessionId>>,
+    /// A chat to open as a tab — a `koru://chat/…` link or an overlay hit —
+    /// asked for while no Workspace window was connected. Spent by the next
+    /// Workspace `Hello`, as [`Self::pending_workspace_session`] is.
+    pending_workspace_chat: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
     /// The last session-host catalog the agents-menu watcher read — what the
     /// tray's Agents submenu is projected from. Stored whole so the wake path
     /// only reads; every IPC read happened on the watcher's thread.
@@ -622,7 +624,6 @@ pub struct Agent {
     /// confirms Commit or Rollback. Retain the requested label so the Voice
     /// surface never calls the old durable chord current in that interval.
     hotkey_settling: Option<(u64, String)>,
-    ai_shortcut: bool,
     /// Global dictation lives on its own worker. `None` in unit tests and for
     /// launches that did not opt into machine-wide input.
     global_dictation: Option<Box<dyn GlobalDictationSink>>,
@@ -718,8 +719,6 @@ pub struct Agent {
     reopen_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Repeated readiness events schedule at most one replay worker.
     reopen_replay_running: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Result of the blocking Chat exit-and-wait worker.
-    chat_stopping: Option<HandoffSlot<bool>>,
     /// Set by the worker that stopped the store, read by the handoff. A slot
     /// rather than an event, because `UpdateChanged` is raised by the update
     /// worker too and could otherwise walk the handoff past this step — and it
@@ -1004,6 +1003,7 @@ impl Agent {
             search_geometry,
             deferred_open: None,
             pending_workspace_session: None,
+            pending_workspace_chat: None,
             agents_catalog: crate::agents_menu::AgentsCatalog::default(),
             agents_menu_kick: None,
             event_waker: None,
@@ -1025,7 +1025,6 @@ impl Agent {
             hotkey_generation: 0,
             hotkey_preparing: None,
             hotkey_settling: None,
-            ai_shortcut: false,
             global_dictation: None,
             global_dictation_snapshot: crate::dictation_coordinator::Snapshot::default(),
             agent_dictation_route: None,
@@ -1045,7 +1044,6 @@ impl Agent {
             reopen_claims: HashMap::new(),
             reopen_pending: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(reopen_pending)),
             reopen_replay_running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            chat_stopping: None,
             store_stopping: None,
             session_lifecycle: None,
             session_catalog: crate::session_host::CatalogFact {
@@ -3340,71 +3338,6 @@ impl Agent {
                     self.advance_handoff();
                 }
             }
-            Handoff::StoppingChat => match &self.chat_stopping {
-                Some(done) => {
-                    let result = done.lock().ok().and_then(|mut result| result.take());
-                    let Some(result) = result else {
-                        return;
-                    };
-                    self.chat_stopping = None;
-                    match result {
-                        Ok(was_live) => {
-                            self.reopen.ai_chat = was_live;
-                            self.handoff = Handoff::StoppingSessions;
-                            self.routing_log.event(format_args!(
-                                "install handoff AI chat stopped was_live={was_live}"
-                            ));
-                            self.advance_handoff();
-                        }
-                        Err(error) => {
-                            self.handoff = Handoff::Aborted(error);
-                            self.advance_handoff();
-                        }
-                    }
-                }
-                None => {
-                    let Some(waker) = self.event_waker.clone() else {
-                        return;
-                    };
-                    let done = std::sync::Arc::new(std::sync::Mutex::new(None));
-                    self.chat_stopping = Some(done.clone());
-                    if cfg!(test) {
-                        return;
-                    }
-                    let root = self.paths.explicit_root().map(Path::to_path_buf);
-                    let paths = self.paths.clone();
-                    let reopen_io = self.reopen_io.clone();
-                    let worker_done = done.clone();
-                    let worker_waker = waker.clone();
-                    if let Err(error) = std::thread::Builder::new()
-                        .name("koru-agent update AI chat handoff".into())
-                        .spawn(move || {
-                            let result = crate::ai_chat::stop_for_update(
-                                root.as_deref(),
-                                Duration::from_secs(15),
-                                || {
-                                    let _guard = reopen_io.lock().map_err(|_| {
-                                        "the reopen persistence lock was poisoned".to_string()
-                                    })?;
-                                    let mut durable = crate::update::Reopen::load(&paths);
-                                    durable.ai_chat = true;
-                                    durable.save(&paths)
-                                },
-                            );
-                            if let Ok(mut slot) = worker_done.lock() {
-                                *slot = Some(result);
-                            }
-                            worker_waker.wake(crate::event::AgentEvent::UpdateChanged);
-                        })
-                    {
-                        self.chat_stopping = None;
-                        self.handoff = Handoff::Aborted(format!(
-                            "Koru AI chat close worker could not start: {error}"
-                        ));
-                        self.advance_handoff();
-                    }
-                }
-            },
             Handoff::StoppingStore => {
                 // **The flag, not the event, is what says the store has gone.**
                 // `UpdateChanged` is raised by the controller's own worker too —
@@ -3553,10 +3486,8 @@ impl Agent {
                 let _ = why;
                 self.handoff = Handoff::Idle;
                 self.broadcast_update();
-                // The chat stop worker persists intent before asking the
-                // process to exit. If its wait then fails, its cloned record
-                // can be newer than this in-memory copy; merge rather than
-                // overwrite that evidence during abort recovery.
+                // Merge with the durable record rather than overwrite it
+                // during abort recovery: what it holds is evidence too.
                 {
                     let persist = self
                         .reopen_io
@@ -3564,7 +3495,6 @@ impl Agent {
                         .map_err(|_| "the reopen persistence lock was poisoned".to_string());
                     if let Ok(_guard) = persist {
                         let durable = crate::update::Reopen::load(&self.paths);
-                        self.reopen.ai_chat |= durable.ai_chat;
                         for window in durable.windows {
                             if !self.reopen.windows.contains(&window) {
                                 self.reopen.windows.push(window);
@@ -4106,6 +4036,8 @@ impl Agent {
                 // An Agents-menu ask made while there was no window to send it
                 // to — the launch this Hello answers.
                 self.push_workspace_session_to(connection);
+                // And a chat link or overlay hit that came in meanwhile.
+                self.push_workspace_chat_to(connection);
                 // A hosted commit survives both processes. Reconnect the
                 // shell to that durable workflow before it can treat the
                 // Profile as an ordinary active one again.
@@ -4316,31 +4248,24 @@ impl Agent {
                 }
             }
             // **A build that hides Koru AI opens nothing**, whoever asks: the
-            // tray row, the chord and the in-document link were gated in the
-            // shells, but a `koru://chat/…` from Mail or Safari (LaunchServices
-            // on a Mac, `koru-agent koru://…` on Windows) reached these two
-            // arms and opened the hidden chat. `Ok` is silent in the shell, so
-            // the link simply does nothing (koru-features, M39).
-            Request::OpenChatLink { .. } | Request::OpenAiChat if !koru_features::ai() => {
+            // in-document link is gated in the shells, but a `koru://chat/…`
+            // from Mail or Safari (LaunchServices on a Mac, `koru-agent
+            // koru://…` on Windows) reaches this arm. `Ok` is silent in the
+            // shell, so the link simply does nothing (koru-features, M39).
+            Request::OpenChatLink { .. } if !koru_features::ai() => {
                 self.reply(connection, id, Response::Ok);
             }
+            // **A chat opens as a tab in a Koru window.** Answered at once:
+            // the window it lands in is chosen, and launched if need be, by
+            // `show_workspace_chat`, as the tray's Agents rows are.
             Request::OpenChatLink { chat, block } => {
                 let parsed = uuid::Uuid::parse_str(&chat)
                     .ok()
                     .zip(block.as_deref().map(uuid::Uuid::parse_str).transpose().ok());
                 match parsed {
                     Some((chat, block)) => {
-                        let reply = self.connection(connection).map(Connection::sender);
-                        let open = crate::ai_chat::Open::Chat { chat, block };
-                        if let Some(sender) = reply {
-                            crate::ai_chat::open_off_thread(
-                                self.paths.explicit_root().map(Path::to_path_buf),
-                                open,
-                                crate::ai_chat::OpenCompletion::Shell { sender, id },
-                            );
-                        } else {
-                            self.open_ai_chat_for_agent(open);
-                        }
+                        self.reply(connection, id, Response::Ok);
+                        self.show_workspace_chat(chat, block);
                     }
                     None => self.reply(
                         connection,
@@ -4350,18 +4275,6 @@ impl Agent {
                             message: "a chat link whose ids are not uuids".into(),
                         },
                     ),
-                }
-            }
-            Request::OpenAiChat => {
-                let reply = self.connection(connection).map(Connection::sender);
-                if let Some(sender) = reply {
-                    crate::ai_chat::open_off_thread(
-                        self.paths.explicit_root().map(Path::to_path_buf),
-                        crate::ai_chat::Open::Landing,
-                        crate::ai_chat::OpenCompletion::Shell { sender, id },
-                    );
-                } else {
-                    self.open_ai_chat_for_agent(crate::ai_chat::Open::Landing);
                 }
             }
             Request::Status => {
@@ -4736,6 +4649,8 @@ impl Agent {
                 Some(_) => "show_session".to_string(),
                 None => "show_session new".to_string(),
             },
+            // Whether it names a block; never which chat — routing data.
+            Push::OpenChat { block, .. } => format!("open_chat block_present={}", block.is_some()),
             Push::Open { target } => format!(
                 "open profile={} workspace={} document={} node_present={}",
                 target.profile,
@@ -5337,10 +5252,6 @@ impl Agent {
         &self.dictation_shortcut
     }
 
-    pub(crate) fn ai_shortcut(&self) -> bool {
-        self.ai_shortcut
-    }
-
     /// **Tell every window whether there is an icon to come back from**, when
     /// that has changed. A window hides behind the icon only while this says
     /// so; on Linux the icon's host can come and go under a running Agent.
@@ -5681,15 +5592,20 @@ impl Agent {
         }
     }
 
-    /// Start or activate standalone chat for a gesture owned by Agent itself.
+    /// **Open a chat as a tab in a Koru window** — a `koru://chat/…` link
+    /// from outside Koru, or a chat hit in the overlay — scrolled to `block`
+    /// when there is one.
     ///
-    /// Unlike a shell request there is no socket waiting for the result. The
-    /// worker therefore returns through the event mailbox, so failure can use
-    /// Agent's existing warning surface and this thread never waits on process
-    /// discovery or launch.
-    fn open_ai_chat_for_agent(&mut self, open: crate::ai_chat::Open) {
-        // The tray row and the global chord are both absent in a build that
-        // hides Koru AI; this is the same answer at the door (koru-features).
+    /// **Which window is one decision, in [`Self::chat_window`]**: the most
+    /// recently active Workspace window today. Chats are about to belong to a
+    /// profile; when they do, that function is what learns to pick the
+    /// chat's profile's window, and nothing else here changes. With no
+    /// Workspace connected the ask is latched and a window is launched, the
+    /// way the tray's Agents rows do it; the next `Hello` spends it.
+    fn show_workspace_chat(&mut self, chat: uuid::Uuid, block: Option<uuid::Uuid>) {
+        // The in-document link and the overlay's chat hits are both absent in
+        // a build that hides Koru AI; this is the same answer at the door
+        // (koru-features).
         if !koru_features::ai() {
             return;
         }
@@ -5697,17 +5613,53 @@ impl Agent {
             self.show_restart_gate_warning();
             return;
         }
-        let Some(waker) = self.event_waker.clone() else {
-            tracing::error!(
-                "Koru AI chat could not be opened: the Agent event loop is unavailable"
-            );
+        match self.chat_window() {
+            Some((connection, pid)) => {
+                let foreground = pid.map(foreground);
+                let foreground = foreground
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "unavailable".into());
+                self.routing_log.event(format_args!(
+                    "chat decision focus connection={} pid={pid:?} foreground={foreground}",
+                    connection.0
+                ));
+                // Permission before the push: receiving it is what makes the
+                // shell focus itself.
+                self.push(connection, open_chat(chat, block));
+            }
+            None => {
+                self.routing_log.event(format_args!("chat decision launch"));
+                self.pending_workspace_chat = Some((chat, block));
+                match spawn_shell_bare(self.paths.explicit_root()) {
+                    Ok(pid) => {
+                        koru_ipc::ipc_debug!("chat: opened a Workspace window (pid {pid})");
+                    }
+                    // The latch keeps the ask for a window that does arrive.
+                    Err(error) => {
+                        koru_ipc::ipc_debug!("chat: could not open a Workspace window: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// **The Workspace window a chat opens in**: the most recently active one,
+    /// as for the tray's Agents rows. The seam for profile-owned chats — the
+    /// chat's profile's window, once a chat has one — is here and only here.
+    fn chat_window(&self) -> Option<(ConnectionId, Option<u32>)> {
+        self.registry
+            .most_recent()
+            .map(|shell| (shell.connection, shell.pid))
+    }
+
+    /// Hand a latched chat to the window that just arrived. Taken, not read,
+    /// so it reaches exactly one window.
+    fn push_workspace_chat_to(&mut self, connection: ConnectionId) {
+        let Some((chat, block)) = self.pending_workspace_chat.take() else {
             return;
         };
-        crate::ai_chat::open_off_thread(
-            self.paths.explicit_root().map(Path::to_path_buf),
-            open,
-            crate::ai_chat::OpenCompletion::Agent(waker),
-        );
+        self.push(connection, open_chat(chat, block));
     }
 
     /// A result the person chose in the overlay.
@@ -5728,10 +5680,7 @@ impl Agent {
                 ..
             } => (*profile, *workspace, *document, node.is_some()),
             koru_search_ui::Target::Chat { chat, block, .. } => {
-                self.open_ai_chat_for_agent(crate::ai_chat::Open::Chat {
-                    chat: chat.as_uuid(),
-                    block: Some(block.as_uuid()),
-                });
+                self.show_workspace_chat(chat.as_uuid(), Some(block.as_uuid()));
                 return;
             }
         };
@@ -6126,7 +6075,7 @@ fn replay_reopen(
     use std::sync::atomic::Ordering;
 
     let root = paths.explicit_root().map(Path::to_path_buf);
-    let chat_owed = {
+    {
         let Ok(_guard) = io.lock() else {
             koru_ipc::ipc_debug!("update: reopen persistence lock was poisoned");
             running.store(false, Ordering::Release);
@@ -6175,55 +6124,17 @@ fn replay_reopen(
             }
         }
         pending.store(persistence_failed || !reopen.is_empty(), Ordering::Release);
-        reopen.ai_chat
-    };
-
-    if chat_owed {
-        match crate::ai_chat::launch(root.as_deref(), None) {
-            Ok(pid) => {
-                koru_ipc::ipc_debug!(
-                    "update: launched Koru AI chat pid={pid}; awaiting singleton readiness"
-                );
-                let started = Instant::now();
-                let mut acknowledged = false;
-                while started.elapsed() < Duration::from_secs(10) {
-                    if crate::ai_chat::status(root.as_deref(), Duration::from_millis(200)).is_some()
-                    {
-                        let Ok(_guard) = io.lock() else {
-                            break;
-                        };
-                        let mut reopen = crate::update::Reopen::load(&paths);
-                        reopen.ai_chat = false;
-                        let persistence_failed = match reopen.save(&paths) {
-                            Ok(()) => {
-                                koru_ipc::ipc_debug!(
-                                    "update: reopened Koru AI chat bound its singleton endpoint"
-                                );
-                                false
-                            }
-                            Err(error) => {
-                                koru_ipc::ipc_debug!(
-                                    "update: could not persist the chat reopen acknowledgement: {error}"
-                                );
-                                true
-                            }
-                        };
-                        pending.store(persistence_failed || !reopen.is_empty(), Ordering::Release);
-                        acknowledged = true;
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                if !acknowledged {
-                    koru_ipc::ipc_debug!(
-                        "update: Koru AI chat did not bind its singleton endpoint before the reopen deadline"
-                    );
-                }
-            }
-            Err(error) => koru_ipc::ipc_debug!("update: could not reopen Koru AI chat: {error}"),
-        }
     }
+
     running.store(false, Ordering::Release);
+}
+
+/// The push that opens `chat` as a tab, its ids in their wire spelling.
+fn open_chat(chat: uuid::Uuid, block: Option<uuid::Uuid>) -> Push {
+    Push::OpenChat {
+        chat: chat.to_string(),
+        block: block.map(|block| block.to_string()),
+    }
 }
 
 fn ids(profile: &str, workspace: &str) -> Option<(ProfileId, WorkspaceId)> {
@@ -7027,60 +6938,6 @@ impl WindowApp for Agent {
                 false
             }
             AgentEvent::Dictation => self.service_dictation(),
-            AgentEvent::AiHotkey if !koru_features::ai() => false,
-            AgentEvent::AiHotkey => {
-                if self.restart_gate_pending() {
-                    self.show_restart_gate_warning();
-                    return true;
-                }
-                if let Some(waker) = self.event_waker.clone() {
-                    crate::ai_chat::probe_off_thread(
-                        self.paths.explicit_root().map(Path::to_path_buf),
-                        waker,
-                    );
-                }
-                true
-            }
-            AgentEvent::AiChatProbed { process } => {
-                if self.restart_gate_pending() {
-                    self.show_restart_gate_warning();
-                    return true;
-                }
-                match process {
-                    Some(process) if process.focused => {
-                        if let Some((connection, pid)) = self
-                            .registry
-                            .most_recent()
-                            .map(|shell| (shell.connection, shell.pid))
-                        {
-                            if let Some(pid) = pid {
-                                let _ = foreground(pid);
-                            }
-                            self.push(connection, Push::Restore);
-                        } else if let Err(error) = spawn_shell_bare(self.paths.explicit_root()) {
-                            tracing::error!(%error, "Koru workspace could not be opened");
-                        }
-                    }
-                    _ => {
-                        self.open_ai_chat_for_agent(crate::ai_chat::Open::Landing);
-                    }
-                }
-                true
-            }
-            AgentEvent::AiChatOpened { error } => {
-                let Some(error) = error else { return false };
-                let was_closed = self.overlay.is_none();
-                self.open_overlay();
-                let changed = self
-                    .overlay
-                    .as_mut()
-                    .is_some_and(|surface| surface.set_host_warning(Some(ai_chat_warning(&error))));
-                was_closed || changed
-            }
-            AgentEvent::Tray(TrayAsk::AiChat) => {
-                self.open_ai_chat_for_agent(crate::ai_chat::Open::Landing);
-                true
-            }
             AgentEvent::Hotkey(crate::event::HotkeyPress::Search { trigger }) => {
                 // **A toggle, not an idempotent open.** Pressing it again with
                 // the overlay already up did nothing visible, which reads as
@@ -7398,10 +7255,6 @@ impl WindowApp for Agent {
                 self.apply_global_dictation_settings();
                 false
             }
-            AgentEvent::AiHotkeyRegistered { available } => {
-                self.ai_shortcut = available;
-                false
-            }
             AgentEvent::NotificationArea { present } => {
                 self.set_notification_area(present);
                 false
@@ -7702,6 +7555,10 @@ impl WindowApp for Agent {
                     Some(target) => self.open_target(target),
                     None => koru_ipc::ipc_debug!("link: the Store placed it somewhere unparseable"),
                 }
+                false
+            }
+            AgentEvent::ChatLink { chat, block } => {
+                self.show_workspace_chat(chat, block);
                 false
             }
             AgentEvent::Tray(ask @ (TrayAsk::RegisterUrlScheme | TrayAsk::UnregisterUrlScheme)) => {
@@ -8341,15 +8198,6 @@ fn shell_warning(error: &std::io::Error) -> String {
         "Koru app was not found beside Koru Agent. Build or install it, then try again.".into()
     } else {
         "Koru could not open a window for that result. Check the installation and try again.".into()
-    }
-}
-
-fn ai_chat_warning(error: &str) -> String {
-    let lang = koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
-    if error.contains("is not beside this executable") {
-        koru_i18n::t(lang, koru_i18n::Key::AiChatAppMissing).into()
-    } else {
-        koru_i18n::t(lang, koru_i18n::Key::AiChatOpenFailed).into()
     }
 }
 

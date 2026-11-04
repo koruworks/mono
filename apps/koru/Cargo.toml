@@ -52,8 +52,7 @@ koru-search-ui = { path = "../../crates/koru-search-ui" }
 # node and no workspace document, hosted here as a mode of the explore
 # column (ADR-352).
 koru-artifacts-ui = { path = "../../crates/koru-artifacts-ui" }
-# The Chats view (AGENTUX I5): every AI chat, newest first. The same surface
-# the standalone chat window hosts as its floating pane.
+# The Chats view (AGENTUX I5): every AI chat, newest first.
 koru-chats-ui = { path = "../../crates/koru-chats-ui" }
 # Talking to the Koru Agent: the endpoint and the framing (`koru-ipc`), and
 # every message that travels over it (`koru-agent-wire`). **Not `koru-agent`

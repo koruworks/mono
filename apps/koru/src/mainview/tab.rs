@@ -1177,7 +1177,16 @@ impl Tab {
 
     /// A Koru AI chat tab seated on an existing conversation.
     pub fn ai_chat_existing(id: koru_ai_ui::ChatId) -> Self {
-        Self::ai_chat_view(AiChatView::existing(id))
+        Self::ai_chat_existing_at(id, None)
+    }
+
+    /// A Koru AI chat tab on an existing conversation, scrolled to `block`
+    /// when there is one — a chat link or a search hit.
+    pub fn ai_chat_existing_at(
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> Self {
+        Self::ai_chat_view(AiChatView::existing(id, block))
     }
 
     fn ai_chat_view(mut view: AiChatView) -> Self {

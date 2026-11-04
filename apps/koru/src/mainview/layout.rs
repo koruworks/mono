@@ -1002,12 +1002,25 @@ impl MainView {
     /// the active tab changes, and a pushed tab is already active, so the
     /// path that opens a new tab would otherwise record nothing.
     pub(super) fn open_ai_chat_tab_for(&mut self, id: koru_ai_ui::ChatId) -> bool {
+        self.open_ai_chat_tab_at(id, None)
+    }
+
+    /// **Open `id` as a tab, at `block` when there is one** — a chat hit in
+    /// search, or a `koru://chat/…` link or overlay hit the Agent routed to
+    /// this window. A tab already showing the chat is focused and moved to
+    /// the block; a new tab opens there.
+    pub(super) fn open_ai_chat_tab_at(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> bool {
         if !koru_features::ai() {
             return false;
         }
         // Standing still is not a jump.
         if matches!(&self.tabs().active_tab().view, TabView::AiChat(view) if view.chat_id() == Some(id))
         {
+            self.move_active_chat_to(id, block);
             return true;
         }
         let showing = self.panes.iter_groups().find_map(|(path, group)| {
@@ -1023,11 +1036,26 @@ impl MainView {
             self.record_jump();
             self.panes.set_focus(path);
             let _ = self.select(index);
+            self.move_active_chat_to(id, block);
             return true;
         }
         self.record_jump();
-        self.tabs_mut().push(Tab::ai_chat_existing(id));
+        self.tabs_mut().push(Tab::ai_chat_existing_at(id, block));
         true
+    }
+
+    /// Move the active chat tab, which shows `id`, to `block`. Nothing when
+    /// there is no block: a tab already showing the chat stays where it is.
+    fn move_active_chat_to(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) {
+        if block.is_some()
+            && let TabView::AiChat(view) = &mut self.tabs_mut().active_mut().view
+        {
+            view.open_link(id, block);
+        }
     }
 
     /// Open a recent document, focusing a tab that already shows it.

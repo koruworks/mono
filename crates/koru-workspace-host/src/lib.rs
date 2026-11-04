@@ -867,6 +867,15 @@ pub trait View {
         false
     }
 
+    /// Open a chat as a tab — focusing a tab that already shows it — at
+    /// `block` when there is one ([`PaneRequest::OpenChatLink`]). `chat` and
+    /// `block` are uuids as the wire spells them; a view refuses ones it
+    /// cannot read. Default `false`: only a container with chat tabs
+    /// implements it.
+    fn open_chat_tab(&mut self, _chat: &str, _block: Option<&str>) -> bool {
+        false
+    }
+
     /// A document a popped-out window asked to **restore as a tab** before it
     /// closes. Cleared by the asking. The shell routes it to a container pane
     /// via [`restore_tab`](Self::restore_tab).
@@ -2244,11 +2253,13 @@ pub enum PaneRequest {
     /// Open or reveal the singleton support window — the Help row, the
     /// tray, the floating icon and the reply notice all send this one.
     OpenSupport,
-    /// Ask the embedding host's Agent link to open one exact AI chat block.
-    /// Strings keep this generic shell independent of the AI domain model.
+    /// Open a chat as a tab in the container window, at `block` when there
+    /// is one — a chat hit in search, or a `koru://chat/…` link or overlay hit
+    /// the Agent routed here ([`View::open_chat_tab`]). Strings keep this
+    /// generic shell independent of the AI domain model.
     OpenChatLink {
         chat: String,
-        block: String,
+        block: Option<String>,
     },
     /// Navigate to stable content. Every document target is resolved through
     /// Store here; views never decide which profile/workspace currently owns it.
@@ -3249,14 +3260,6 @@ pub trait Host {
         None
     }
 
-    /// A correlated failure returned by the host's Agent connection.
-    ///
-    /// The blocking work and pipe read have already happened on worker
-    /// threads; the shell only places this report into the active view.
-    fn take_agent_notice(&self) -> Option<ErrorReport> {
-        None
-    }
-
     /// A taskbar activation (a Jump List *Search* / *New document* / Recent
     /// click) landed and the window should come forward.
     ///
@@ -3280,19 +3283,9 @@ pub trait Host {
         false
     }
 
-    /// A Jump List *AI Chat* click: open or focus the agent-owned standalone
-    /// chat window. As with Search, the host owns the Agent connection and
-    /// performs the request when the shell drains this hook.
-    fn take_ai_chat_activation(&self) -> bool {
-        false
-    }
-
     /// Open one fixed application-owned URI through the desktop's registered
     /// handler. HTTPS goes to the browser; `mailto:` goes to the mail app.
     fn open_uri(&self, _uri: &str) {}
-
-    /// Route an exact AI chat block through the host-owned Agent connection.
-    fn open_chat_link(&self, _chat: String, _block: String) {}
 
     /// Route one URL delivered by the platform application delegate. The Koru
     /// desktop host validates and forwards `koru://` through its Agent link;

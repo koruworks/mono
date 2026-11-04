@@ -673,13 +673,10 @@ pub fn run(
                 koru_store_core::ids::DocumentId::from_uuid(document),
                 node.map(|node| node.to_string()),
             ),
+            // Opened as a tab in a Koru window, which the loop picks or
+            // launches once it runs.
             koru_link::KoruLink::Chat { chat, block } => {
-                if let Err(error) = crate::ai_chat::open(
-                    paths_for_producers.explicit_root(),
-                    &crate::ai_chat::Open::Chat { chat, block },
-                ) {
-                    tracing::error!(error = %error, "AI chat link could not be launched");
-                }
+                waker.wake(crate::event::AgentEvent::ChatLink { chat, block });
             }
             koru_link::KoruLink::Node(_) => {}
         }
@@ -1046,7 +1043,6 @@ impl koru_window::WindowApp for Host {
                 // guarantee of another wake to deliver it afterwards.
                 tray.set_shortcut(agent.shortcut());
                 tray.set_dictation_shortcut(agent.dictation_shortcut());
-                tray.set_ai_shortcut(agent.ai_shortcut());
             }
             if !present {
                 // Not fatal. An agent that refused to run because it could not
@@ -1161,7 +1157,6 @@ impl koru_window::WindowApp for Host {
             store_running,
             shortcut,
             dictation_shortcut,
-            ai_shortcut,
             voice,
         ) = match locked(&self.agent) {
             Ok(mut agent) => {
@@ -1183,7 +1178,6 @@ impl koru_window::WindowApp for Host {
                     agent.store_running(),
                     agent.shortcut().clone(),
                     agent.dictation_shortcut().clone(),
-                    agent.ai_shortcut(),
                     Some(agent.voice().clone()),
                 )
             }
@@ -1194,7 +1188,6 @@ impl koru_window::WindowApp for Host {
                 None,
                 crate::tray::Shortcut::Unknown,
                 crate::tray::Shortcut::Unknown,
-                false,
                 // Nothing is known through a poisoned lock, and a row
                 // relabelled on no information is worse than a stale one.
                 None,
@@ -1208,7 +1201,6 @@ impl koru_window::WindowApp for Host {
             }
             tray.set_shortcut(&shortcut);
             tray.set_dictation_shortcut(&dictation_shortcut);
-            tray.set_ai_shortcut(ai_shortcut);
             // A held value and an enum compare -- the row is only re-labelled
             // when the state has actually moved. Deciding it is the agent's
             // and happens off this path; see `Agent::voice`.

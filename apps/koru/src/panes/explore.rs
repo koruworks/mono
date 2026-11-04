@@ -161,10 +161,8 @@ pub enum NavigatorMode {
     /// **Every AI chat, newest first**, with who answered it (AGENTUX I5).
     /// Right of Tasks (R3). Like Artifacts its rows are not the manifest:
     /// they are the AI service's, read through the gateway by
-    /// [`koru_chats_ui::ChatsSurface`] — the same component the standalone
-    /// chat window hosts as its floating pane. Opening, starting and the
-    /// question before a delete are reported as outcomes; the container
-    /// answers them.
+    /// [`koru_chats_ui::ChatsSurface`]. Opening, starting and the question
+    /// before a delete are reported as outcomes; the container answers them.
     Chats,
     Agents,
     /// What the workspace's delegated runs produced, and what they left in

@@ -1721,6 +1721,13 @@ impl View for ManagerView {
         }
     }
 
+    fn open_chat_tab(&mut self, chat: &str, block: Option<&str>) -> bool {
+        match self {
+            Self::Container(v) => v.open_chat_tab(chat, block),
+            Self::Document(_) => false,
+        }
+    }
+
     fn take_wants_restore_tab(&mut self) -> Option<NodeId> {
         match self {
             Self::Container(v) => v.take_wants_restore_tab(),

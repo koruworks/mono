@@ -290,8 +290,6 @@ mod imp {
         /// Held rather than forgotten, because the chord beside it is not known
         /// when the menu is built. See [`Tray::set_shortcut`].
         search: MenuItem,
-        ai_chat: MenuItem,
-        ai_shortcut: Option<bool>,
         /// What that row currently claims, so a repeated report is not a
         /// repeated native call.
         shortcut: Shortcut,
@@ -397,7 +395,6 @@ mod imp {
             // was right for the first agent on a machine and a plain lie for
             // every other one, told by the only surface a person can consult.
             let search = MenuItem::new("Search", true, None);
-            let ai_chat = MenuItem::new("Koru AI Chat", true, None);
             // **The one surface that is there when no window is**, so it is
             // where somebody who has never read a release note finds out that
             // dictation exists, where a model is installed from, and where
@@ -573,8 +570,7 @@ mod imp {
             let about_id = about_build.id().0.clone();
             let feedback_id = feedback.id().0.clone();
             let check_updates_id = check_updates.id().0.clone();
-            let (ai_chat_id, search_id, open_id, location_id, local_data_id, shared_id, quit_id) = (
-                ai_chat.id().0.clone(),
+            let (search_id, open_id, location_id, local_data_id, shared_id, quit_id) = (
                 search.id().0.clone(),
                 open_workspace.id().0.clone(),
                 location.id().0.clone(),
@@ -593,18 +589,15 @@ mod imp {
             let store_stats_id = store_stats.id().0.clone();
             let store_location_id = store_location.id().0.clone();
             let store_backup_id = store_backup.id().0.clone();
+            menu.append(&search).ok()?;
             // **A surface this build hides is never appended** (koru-features):
             // a detached item raises no menu event, so the handler below keeps
             // one shape — the same rule the macOS-only backup row follows.
-            if koru_features::ai() {
-                menu.append(&ai_chat).ok()?;
-            }
-            menu.append(&search).ok()?;
             if koru_features::reminders() {
                 menu.append(&reminders).ok()?;
             }
-            // Beside Search and Koru AI Chat: the three things a person does
-            // from here, above the diagnostics.
+            // Beside Search: the three things a person does from here, above
+            // the diagnostics.
             menu.append(&voice).ok()?;
             menu.append(&workspaces).ok()?;
             if koru_features::agents() {
@@ -659,7 +652,6 @@ mod imp {
                 let input_routes = input_routes_for_handler;
                 let agents_routes = Arc::clone(&agents_routes);
                 let (
-                    ai_chat_id,
                     search_id,
                     reminders_id,
                     open_id,
@@ -682,7 +674,6 @@ mod imp {
                     voice_release_id,
                     voice_stop_id,
                 ) = (
-                    ai_chat_id.clone(),
                     search_id.clone(),
                     reminders_id.clone(),
                     open_id.clone(),
@@ -709,8 +700,6 @@ mod imp {
                     let id = &event.id().0;
                     let ask = if *id == quit_id {
                         TrayAsk::Quit
-                    } else if *id == ai_chat_id {
-                        TrayAsk::AiChat
                     } else if *id == search_id {
                         TrayAsk::Search
                     } else if *id == reminders_id {
@@ -825,8 +814,6 @@ mod imp {
             Some(Self {
                 _icon: built,
                 search,
-                ai_chat,
-                ai_shortcut: None,
                 shortcut: Shortcut::Unknown,
                 store_status,
                 store_running: None,
@@ -1123,23 +1110,6 @@ mod imp {
             }
             self.shortcut = shortcut.clone();
         }
-
-        pub fn set_ai_shortcut(&mut self, available: bool) {
-            if self.ai_shortcut == Some(available) {
-                return;
-            }
-            let _ = self.ai_chat.set_accelerator(if available {
-                "Ctrl+Shift+I".parse::<Accelerator>().ok()
-            } else {
-                None
-            });
-            self.ai_chat.set_text(if available {
-                "Koru AI Chat"
-            } else {
-                "Koru AI Chat (no global shortcut)"
-            });
-            self.ai_shortcut = Some(available);
-        }
     }
 }
 
@@ -1364,12 +1334,10 @@ mod linux {
             let state = MenuState {
                 lang,
                 surfaces: Surfaces {
-                    ai: koru_features::ai(),
                     reminders: koru_features::reminders(),
                     agents: koru_features::agents(),
                 },
                 shortcut: Shortcut::Unknown,
-                ai_shortcut: None,
                 store_running: None,
                 voice: super::voice_state(root, koru_voice::InputChoice::SystemDefault),
                 dictation_shortcut: Shortcut::Unknown,
@@ -1486,14 +1454,6 @@ mod linux {
             self.push();
         }
 
-        pub fn set_ai_shortcut(&mut self, available: bool) {
-            if self.state.ai_shortcut == Some(available) {
-                return;
-            }
-            self.state.ai_shortcut = Some(available);
-            self.push();
-        }
-
         /// A no-op: Linux has no Links submenu (see [`super::linux_menu`]).
         /// Kept so the loop calls every platform's tray the same way.
         pub fn set_url_scheme(&mut self, _state: &koru_url_scheme::Registration) {}
@@ -1538,7 +1498,6 @@ mod stub {
         pub fn set_relay_status(&mut self, _state: koru_network_iroh::RelayConnectionStatus) {}
         pub fn set_shortcut(&mut self, _shortcut: &super::Shortcut) {}
         pub fn set_dictation_shortcut(&mut self, _shortcut: &super::Shortcut) {}
-        pub fn set_ai_shortcut(&mut self, _available: bool) {}
         pub fn set_url_scheme(&mut self, _state: &koru_url_scheme::Registration) {}
     }
 }
@@ -1677,7 +1636,6 @@ fn session_row_label(session: &koru_session_protocol::SessionSummary) -> String 
 /// always offered, which is the rule this module exists to keep.
 #[cfg(test)]
 pub(crate) const OFFERED: &[TrayAsk] = &[
-    TrayAsk::AiChat,
     TrayAsk::Search,
     TrayAsk::Reminders,
     // Offered on every platform and in every state. On an installation with
@@ -2530,8 +2488,6 @@ pub(crate) struct MenuState {
     /// like `imp`'s.
     pub(crate) surfaces: Surfaces,
     pub(crate) shortcut: Shortcut,
-    /// `None` until the hotkey thread reports, like `imp`'s `ai_shortcut`.
-    pub(crate) ai_shortcut: Option<bool>,
     /// `None` until supervision first reports — *Checking…*.
     pub(crate) store_running: Option<bool>,
     pub(crate) voice: VoiceMenu,
@@ -2553,7 +2509,6 @@ pub(crate) struct MenuState {
 #[cfg(any(target_os = "linux", test))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Surfaces {
-    pub(crate) ai: bool,
     pub(crate) reminders: bool,
     pub(crate) agents: bool,
 }
@@ -2633,9 +2588,6 @@ impl MenuRow {
 pub(crate) fn linux_menu(state: &MenuState) -> Vec<MenuRow> {
     let lang = state.lang;
     let mut rows = Vec::new();
-    if state.surfaces.ai {
-        rows.push(ai_chat_row(state.ai_shortcut));
-    }
     rows.push(search_row(&state.shortcut));
     if state.surfaces.reminders {
         rows.push(MenuRow::action(
@@ -2765,24 +2717,6 @@ fn search_row(shortcut: &Shortcut) -> MenuRow {
         label,
         enabled: true,
         ask: Some(TrayAsk::Search),
-        shortcut,
-    }
-}
-
-/// The Koru AI Chat row, saying what `imp::Tray::set_ai_shortcut` makes it
-/// say. `None` is *not reported yet* and draws the plain label, as `imp`'s
-/// freshly built row does.
-#[cfg(any(target_os = "linux", test))]
-fn ai_chat_row(available: Option<bool>) -> MenuRow {
-    let (label, shortcut) = match available {
-        None => ("Koru AI Chat", None),
-        Some(true) => ("Koru AI Chat", dbus_shortcut("Ctrl+Shift+I")),
-        Some(false) => ("Koru AI Chat (no global shortcut)", None),
-    };
-    MenuRow::Item {
-        label: label.to_owned(),
-        enabled: true,
-        ask: Some(TrayAsk::AiChat),
         shortcut,
     }
 }
