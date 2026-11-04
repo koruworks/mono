@@ -6195,9 +6195,15 @@ In a chat, as in a document, `Alt+←` / `Alt+→` (`⌘[` / `⌘]` on a Mac) or
 your mouse's Back and Forward buttons return to what you were looking at: the
 chat you were in before, or the page you opened from a link in a reply. It
 works while you're typing a message, and your message stays where you left
-it; going back never stops a reply that is still being written. In the Koru
-AI window, Back and Forward step through the chats you've opened there, each
-one back where you had scrolled.
+it; going back never stops a reply that is still being written.
+
+**Chats belong to a profile.** A chat stays in the profile it was started in,
+and the Chats list, Pinned, Recent chats and chat search show only the chats
+of the profile you are in; switching profile switches the list. A chat reads
+only that profile's workspaces, even if it was once given one from another
+profile. A link to another profile's chat opens it in a window of that
+profile. Chats from before profiles were kept apart were placed in the
+profile of the workspace they last read, or in your first profile.
 
 Click a row to open the chat as a tab; if a tab already shows it, that tab
 comes forward. **New chat** at the top starts one. The list works from the
