@@ -5,6 +5,42 @@
         "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
         "type": "string"
       },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
+      },
       "AgentTurnId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -168,6 +204,145 @@
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "SessionFailure": {
         "description": "A content-free developer diagnostic. UI maps `code` to localized copy.",
@@ -695,6 +870,63 @@
           "text"
         ],
         "type": "object"
+      },
+      {
+        "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+        "properties": {
+          "blocking": {
+            "default": true,
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "questions_required",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/$defs/AgentQuestion"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "$ref": "#/$defs/QuestionRequestId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "request_id",
+          "questions"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+        "properties": {
+          "kind": {
+            "const": "questions_resolved",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/$defs/QuestionsOutcome"
+          },
+          "request_id": {
+            "$ref": "#/$defs/QuestionRequestId"
+          },
+          "turn_id": {
+            "$ref": "#/$defs/AgentTurnId"
+          }
+        },
+        "required": [
+          "kind",
+          "turn_id",
+          "request_id",
+          "outcome"
+        ],
+        "type": "object"
       }
     ],
     "title": "AgentEvent"
@@ -1133,12 +1365,105 @@
               "text"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+            "properties": {
+              "blocking": {
+                "default": true,
+                "type": "boolean"
+              },
+              "kind": {
+                "const": "questions_required",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/$defs/AgentQuestion"
+                },
+                "type": "array"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+            "properties": {
+              "kind": {
+                "const": "questions_resolved",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/QuestionsOutcome"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "outcome"
+            ],
+            "type": "object"
           }
         ]
       },
       "AgentModeId": {
         "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
         "type": "string"
+      },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
       },
       "AgentTurnId": {
         "format": "uuid",
@@ -1303,6 +1628,145 @@
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "SequencedAgentEvent": {
         "properties": {
@@ -1565,6 +2029,61 @@
       "modes"
     ],
     "title": "AgentModes",
+    "type": "object"
+  },
+  "AgentQuestion": {
+    "$defs": {
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+    "properties": {
+      "allow_other": {
+        "default": false,
+        "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+        "type": "boolean"
+      },
+      "header": {
+        "type": "string"
+      },
+      "id": {
+        "type": "string"
+      },
+      "options": {
+        "description": "In the agent's order: the first is the one it recommends.",
+        "items": {
+          "$ref": "#/$defs/QuestionOption"
+        },
+        "type": "array"
+      },
+      "question": {
+        "type": "string"
+      },
+      "secret": {
+        "default": false,
+        "description": "The answer is a secret: typed into a masked box and never repeated.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "question"
+    ],
+    "title": "AgentQuestion",
     "type": "object"
   },
   "AgentTurnId": {
@@ -6070,6 +6589,279 @@
     "title": "ProviderStage",
     "type": "string"
   },
+  "QuestionAnswer": {
+    "$defs": {
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One question's answer, by the question's id.",
+    "properties": {
+      "question_id": {
+        "type": "string"
+      },
+      "value": {
+        "$ref": "#/$defs/QuestionAnswerValue"
+      }
+    },
+    "required": [
+      "question_id",
+      "value"
+    ],
+    "title": "QuestionAnswer",
+    "type": "object"
+  },
+  "QuestionAnswerValue": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "What a question was answered with.",
+    "oneOf": [
+      {
+        "description": "One of its options, by label.",
+        "properties": {
+          "kind": {
+            "const": "option",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+        "properties": {
+          "kind": {
+            "const": "text",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+        "properties": {
+          "kind": {
+            "const": "withheld",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "QuestionAnswerValue"
+  },
+  "QuestionOption": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "label": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "label"
+    ],
+    "title": "QuestionOption",
+    "type": "object"
+  },
+  "QuestionRequestId": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "format": "uuid",
+    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "title": "QuestionRequestId",
+    "type": "string"
+  },
+  "QuestionsOutcome": {
+    "$defs": {
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "How a set of questions ended.",
+    "oneOf": [
+      {
+        "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/$defs/QuestionAnswer"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "const": "answered",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "answers"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "The person skipped the set; the agent was told so.",
+        "properties": {
+          "kind": {
+            "const": "skipped",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+        "properties": {
+          "kind": {
+            "const": "expired",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "QuestionsOutcome"
+  },
   "RawCommand": {
     "$defs": {
       "GridSize": {
@@ -8874,12 +9666,105 @@
               "text"
             ],
             "type": "object"
+          },
+          {
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+            "properties": {
+              "blocking": {
+                "default": true,
+                "type": "boolean"
+              },
+              "kind": {
+                "const": "questions_required",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/$defs/AgentQuestion"
+                },
+                "type": "array"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+            "properties": {
+              "kind": {
+                "const": "questions_resolved",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/$defs/QuestionsOutcome"
+              },
+              "request_id": {
+                "$ref": "#/$defs/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/$defs/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "outcome"
+            ],
+            "type": "object"
           }
         ]
       },
       "AgentModeId": {
         "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
         "type": "string"
+      },
+      "AgentQuestion": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/$defs/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
       },
       "AgentTurnId": {
         "format": "uuid",
@@ -9044,6 +9929,145 @@
       "ProviderKind": {
         "description": "Provider category, never a provider-native identity.",
         "type": "string"
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/$defs/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "answered",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "const": "skipped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "SessionFailure": {
         "description": "A content-free developer diagnostic. UI maps `code` to localized copy.",
