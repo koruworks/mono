@@ -139,6 +139,12 @@ pub(crate) struct Shared {
     /// *before* the generation filter, because that filter is about which
     /// dictation an event belongs to and a query belongs to none.
     pub(crate) queries: Mutex<HashMap<SessionId, std::sync::mpsc::Sender<Vec<InputDevice>>>>,
+    /// **The level meter this client asked for, and the last level it
+    /// heard.** Like a device query it arms no dictation: its levels are
+    /// answered out of the reader before the generation filter, into this
+    /// one value rather than the inbox — a meter wants the latest level, not
+    /// a queue of them.
+    meter: Mutex<Option<(Live, LevelBucket)>>,
     generation: AtomicU64,
     link: Mutex<Option<(u64, link::Link)>>,
     link_epoch: AtomicU64,
@@ -326,6 +332,16 @@ impl Shared {
                 _ => None,
             }
         };
+        // The worker closes a meter whose connection ended, so the bar goes
+        // empty rather than holding the last level it heard.
+        if let Some((_, level)) = self
+            .meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_mut()
+        {
+            *level = LevelBucket::SILENT;
+        }
         let live = expected.or(bound);
         if let Some(live) = live
             && self.take_live(live)
@@ -358,6 +374,38 @@ impl Shared {
             Some(tx) => tx.send(devices).is_ok(),
             None => false,
         }
+    }
+
+    /// **Hand a meter's event to the meter**, if it is the meter's: its level
+    /// becomes the one [`VoiceClient::meter_level`] answers, and a refusal —
+    /// a busy microphone, a device that would not open — empties the bar
+    /// and is noted. `false` when the event is not the meter's.
+    pub(crate) fn answer_meter(&self, event: &Event) -> bool {
+        let refused = {
+            let mut held = self.meter.lock().unwrap_or_else(|error| error.into_inner());
+            let Some((live, level)) = held.as_mut() else {
+                return false;
+            };
+            if event.session() != live.session || event.generation() != live.generation {
+                return false;
+            }
+            match event {
+                Event::Level { bucket, .. } => {
+                    *level = *bucket;
+                    None
+                }
+                Event::Refused { code, .. } => {
+                    *level = LevelBucket::SILENT;
+                    Some(*code)
+                }
+                _ => None,
+            }
+        };
+        if let Some(code) = refused {
+            self.note(code);
+        }
+        self.wake();
+        true
     }
 
     pub(crate) fn note(&self, code: ErrorCode) {
@@ -400,6 +448,7 @@ impl VoiceClient {
             live: Mutex::new(None),
             live_link: Mutex::new(None),
             queries: Mutex::new(HashMap::new()),
+            meter: Mutex::new(None),
             // Seeded from the clock so two clients of one worker do not
             // collide on the worker's strictly-increasing rule. See the
             // module note.
@@ -608,6 +657,69 @@ impl VoiceClient {
         answered
     }
 
+    /// **Open this microphone for a level meter**, or move the running meter
+    /// to it. Recognises nothing and loads no model; the worker answers with
+    /// a level whenever it moves, and [`Self::meter_level`] is the latest.
+    ///
+    /// **It never blocks.** The request is enqueued on the same transport
+    /// worker a dictation's are — so a `stop_meter` and then a `begin` reach
+    /// the worker in that order — and it may start a worker through the
+    /// host's ensure route, as a device picker's question may.
+    ///
+    /// **An older worker simply gives no meter.** One that does not speak
+    /// this protocol refuses the greeting, and the level stays silent: there
+    /// is no event and nothing for the host to report.
+    pub fn meter(&self, input: InputChoice) -> Result<(), VoiceError> {
+        let live = Live {
+            session: SessionId::new(),
+            generation: self.next_generation(),
+        };
+        *self
+            .shared
+            .meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some((live, LevelBucket::SILENT));
+        self.enqueue(
+            koru_voice::Request::Meter {
+                session: live.session,
+                generation: live.generation,
+                input,
+            },
+            None,
+        )
+    }
+
+    /// **Close the meter's microphone.** A no-op when there is no meter.
+    /// Never blocks, for the reason [`Self::meter`] gives.
+    pub fn stop_meter(&self) -> Result<(), VoiceError> {
+        let Some((live, _)) = self
+            .shared
+            .meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        else {
+            return Ok(());
+        };
+        self.enqueue(
+            koru_voice::Request::MeterStop {
+                session: live.session,
+                generation: live.generation,
+            },
+            None,
+        )
+    }
+
+    /// The meter's latest level, while this client runs one. Silent until
+    /// the worker has said otherwise.
+    pub fn meter_level(&self) -> Option<LevelBucket> {
+        self.shared
+            .meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .map(|(_, level)| level)
+    }
+
     /// Everything the worker has said since this was last called.
     ///
     /// Events for a generation this client is not running are already gone --
@@ -672,6 +784,12 @@ impl VoiceClient {
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = None;
         self.shared.clear_live();
+        // A dropped link closes the worker's meter too.
+        *self
+            .shared
+            .meter
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
     }
 
     /// The next generation this client will use.

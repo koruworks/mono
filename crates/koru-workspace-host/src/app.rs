@@ -15723,6 +15723,48 @@ impl<H: Host> App<H> {
         self.report_agent_dictation_state(false);
     }
 
+    /// **Hold the voice worker's level meter open while a window's
+    /// microphone picker is**, on the person's chosen microphone, and hand
+    /// each such window the level it hears.
+    ///
+    /// Asked on every pass, and free when no picker is open: a `bool` per
+    /// pane and an `Option` compare in the controller, which dials — on its
+    /// transport worker, never here — only when the answer changes. That one
+    /// comparison is the whole lifecycle: Escape, a press elsewhere, a
+    /// recording taking the footer, a tab switched away, the window closing
+    /// or hiding in the notification area — every route by which a window
+    /// loses its panel ends with no pane answering `true`, and the meter
+    /// closes on that pass. A choice of device moves `voice_prefs::input`,
+    /// and with it the meter. A dictation
+    /// wins: none opens while one runs, and its press closed any that was
+    /// open. Levels arrive on `Wake::Voice`, at most ten a second and only
+    /// when they move, and a window redraws only when its bar does.
+    fn sync_voice_meter(&mut self) {
+        // Hidden in the notification area is not looking at a bar, whatever
+        // the panel was left as.
+        let wanted = !koru_dictation::disabled()
+            && !self.in_tray
+            && !self.dictation.is_live()
+            && self
+                .panes
+                .values()
+                .any(|pane| pane.view.voice_meter_wanted());
+        self.dictation.meter(wanted.then(crate::voice_prefs::input));
+        let Some(level) = self.dictation.meter_level() else {
+            return;
+        };
+        let level = level.step();
+        let moved: Vec<WindowId> = self
+            .panes
+            .iter_mut()
+            .filter(|(_, pane)| pane.view.voice_meter_wanted())
+            .filter_map(|(id, pane)| pane.view.voice_meter_level(level).then_some(*id))
+            .collect();
+        for id in moved {
+            self.request_redraw(id);
+        }
+    }
+
     /// **Hand the listening surface what it draws**, and take it away again.
     ///
     /// Free when nothing is running and nothing was: both the current pane and
@@ -17728,6 +17770,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
             // **A `bool` per pane and nothing else when nobody asked.**
             self.begin_commanded_dictations();
             self.service_dictation();
+            // A chat's microphone picker's level meter (koru-ai D103):
+            // after the dictation drain, so a press that began one this pass
+            // is seen and no meter opens beside it.
+            self.sync_voice_meter();
         }
         if let Some(activation) = self.host.take_global_search_request() {
             self.open_search(event_loop, Some(PhysicalKey::Code(activation.trigger)));

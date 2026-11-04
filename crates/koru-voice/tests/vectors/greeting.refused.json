@@ -1,7 +1,7 @@
 {
   "kind": "refused",
   "what": "protocol",
-  "ours": 3,
+  "ours": 4,
   "theirs": 99,
   "message": "this worker speaks protocol 1"
 }

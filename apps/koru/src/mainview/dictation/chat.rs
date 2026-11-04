@@ -189,6 +189,32 @@ impl MainView {
         }
     }
 
+    /// **Whether a chat in this window shows its microphone panel**, so the
+    /// shell holds the voice worker's level meter open: the pane's while the
+    /// pane shows, or the showing chat tab of any group. A `bool` per
+    /// surface — the shell asks on every pass.
+    pub(crate) fn chat_meter_wanted(&self) -> bool {
+        (self.ai_visible() && self.ai_chat.microphone_meter_wanted())
+            || self.panes.iter_groups().any(|(_, group)| {
+                matches!(
+                    &group.active_tab().view,
+                    TabView::AiChat(view) if view.dictation_surface().microphone_meter_wanted()
+                )
+            })
+    }
+
+    /// **The level the meter heard**, to every chat whose panel shows it.
+    /// Answers whether a bar moved.
+    pub(crate) fn push_chat_meter_level(&mut self, level: u8) -> bool {
+        let mut changed = self.ai_chat.set_microphone_level(level);
+        for (_, group) in self.panes.iter_groups_mut() {
+            if let TabView::AiChat(view) = group.active_view() {
+                changed |= view.dictation_surface_mut().set_microphone_level(level);
+            }
+        }
+        changed
+    }
+
     /// **Hand every chat in this window what its microphone panel shows**:
     /// the pane's surface and each chat tab's. Answers whether any open panel
     /// changed.

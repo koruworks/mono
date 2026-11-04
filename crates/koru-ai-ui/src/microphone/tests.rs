@@ -179,12 +179,14 @@ fn the_chevron_opens_the_devices_with_default_first() {
         .map(|node| node.rect)
         .collect();
     assert_eq!(rows.len(), 3);
+    let level = frame.rect_of(elements::LEVEL_ROW).unwrap();
     let divider = frame.rect_of(elements::DIVIDER).unwrap();
     let hold = frame.rect_of(elements::HOLD_ROW).unwrap();
+    assert!(level.y + level.h <= rows[0].y, "the level first");
     assert!(rows[2].y + rows[2].h <= divider.y, "the divider after them");
     assert!(divider.y + divider.h <= hold.y, "Hold to record last");
     near(
-        hold.y + hold.h + (rows[0].y - panel.y),
+        hold.y + hold.h + (level.y - panel.y),
         panel.y + panel.h,
         "the panel ends with it",
     );
@@ -203,7 +205,8 @@ fn the_chevron_opens_the_devices_with_default_first() {
 }
 
 /// **A device chosen is the Voice preference**: the host is asked to keep
-/// it, the ✓ moves, and the panel closes. *Default* goes back to the system.
+/// it, the ✓ moves, and the panel stays open so its level bar shows the new
+/// device. *Default* goes back to the system.
 #[test]
 fn choosing_a_device_asks_the_host_and_moves_the_check() {
     let mut surface = surface();
@@ -219,10 +222,9 @@ fn choosing_a_device_asks_the_host_and_moves_the_check() {
         [MicrophoneAsk::Choose(Some(name.into()))]
     );
     assert!(
-        !surface.microphone_panel_open(),
-        "a choice closes the panel"
+        surface.microphone_panel_open(),
+        "a choice leaves the panel open"
     );
-    open(&mut surface);
     assert_eq!(checked(&surface), [false, false, true]);
 
     let (_, _, frame) = surface.microphone_frame().unwrap();
@@ -279,7 +281,8 @@ fn hold_to_record_flips_and_stays_open() {
 }
 
 /// **The keys are the approval-mode list's**: Down and Up move from the
-/// device recorded from and wrap, Enter acts on the row lit, Escape closes.
+/// device recorded from and wrap, Enter acts on the row lit and leaves the
+/// panel open, Escape closes.
 #[test]
 fn arrows_enter_and_escape_work_the_panel() {
     let mut surface = surface();
@@ -303,9 +306,13 @@ fn arrows_enter_and_escape_work_the_panel() {
         surface.take_microphone_asks(),
         [MicrophoneAsk::Choose(Some(name.into()))]
     );
-    assert!(!surface.microphone_panel_open());
+    assert!(surface.microphone_panel_open());
+    assert_eq!(
+        surface.dictation.microphone.focus,
+        Some(2),
+        "the keyboard stays on the row it chose"
+    );
 
-    open(&mut surface);
     assert!(key(&mut surface, NamedKey::Escape));
     assert!(!surface.microphone_panel_open());
 }
@@ -391,10 +398,98 @@ fn everything_drawn_inside_the_panel_nests_under_the_floating_panel() {
     }
     for name in [
         elements::PANEL,
+        elements::LEVEL_ROW,
         elements::DEVICE_ROW,
         elements::HOLD_ROW,
         "KoruToggle",
     ] {
         assert!(records.iter().any(|r| r.name == name), "{name} is drawn");
     }
+}
+
+// ------------------------------------------------------------ the input level
+
+/// **The level row heads the panel**: the microphone glyph, then a thin
+/// rounded bar the rest of the row's width, at its token thickness; the bar
+/// shows what the host pushed, clamped, and a push that moves nothing asks
+/// for no redraw.
+#[test]
+fn the_level_bar_heads_the_panel_and_shows_the_pushed_level() {
+    let mut surface = surface();
+    open(&mut surface);
+    assert_eq!(surface.microphone_spec().level, 0, "empty when it opens");
+
+    let (_, _, frame) = surface.microphone_frame().unwrap();
+    let row = frame.rect_of(elements::LEVEL_ROW).unwrap();
+    let glyph = frame.rect_of(elements::LEVEL_ICON).unwrap();
+    let bar = frame.rect_of(elements::LEVEL_BAR).unwrap();
+    let first = frame.named(elements::DEVICE_ROW).next().unwrap().rect;
+    near(row.h, elements::ROW_HEIGHT.value, "a row's height");
+    assert!(row.y + row.h <= first.y, "above the devices");
+    assert!(glyph.x + glyph.w <= bar.x, "the glyph, then the bar");
+    near(
+        bar.h,
+        elements::LEVEL_BAR_HEIGHT.value,
+        "the bar's thickness",
+    );
+    near(
+        bar.x + bar.w,
+        first.x + first.w - elements::ROW_INSET.token.px(Profile::Desktop),
+        "to the row's end inset",
+    );
+    assert!(
+        frame.hit_at(bar.x + 1.0, bar.y + 1.0).is_none(),
+        "the bar is not a row to press"
+    );
+
+    assert!(surface.set_microphone_level(4), "it moved: redraw");
+    assert_eq!(surface.microphone_spec().level, 4);
+    assert!(!surface.set_microphone_level(4), "nothing moved");
+    surface.set_microphone_level(200);
+    assert_eq!(
+        surface.microphone_spec().level,
+        crate::dictation::LEVEL_MAX,
+        "louder than a bucket is a full bar"
+    );
+}
+
+/// **The meter is wanted exactly while the panel is open**: not before, not
+/// once Escape or a press elsewhere closed it, and not once a recording took
+/// the footer. A level pushed while it is shut redraws nothing, and the next
+/// opening starts empty.
+#[test]
+fn the_meter_is_wanted_only_while_the_panel_is_open() {
+    let mut surface = surface();
+    assert!(!surface.microphone_meter_wanted());
+    open(&mut surface);
+    assert!(surface.microphone_meter_wanted());
+    surface.set_microphone_level(6);
+
+    // Choosing another device keeps it wanted, and empties the bar until
+    // that device is heard.
+    let (_, _, frame) = surface.microphone_frame().unwrap();
+    let (x, y) = centre(frame.named(elements::DEVICE_ROW).nth(1).unwrap().rect);
+    surface.mouse_down(x, y);
+    assert!(surface.microphone_meter_wanted());
+    assert_eq!(surface.microphone_spec().level, 0);
+
+    assert!(key(&mut surface, NamedKey::Escape));
+    assert!(!surface.microphone_meter_wanted(), "Escape");
+    assert!(!surface.set_microphone_level(3), "no bar to redraw");
+
+    open(&mut surface);
+    assert_eq!(surface.microphone_spec().level, 0, "nothing from before");
+    surface.mouse_down(5.0, 5.0);
+    assert!(!surface.microphone_meter_wanted(), "a press elsewhere");
+
+    open(&mut surface);
+    surface.show_dictation(
+        Some(DictationShown {
+            level: 0,
+            listening: false,
+            finishing: false,
+        }),
+        Instant::now(),
+    );
+    assert!(!surface.microphone_meter_wanted(), "a recording began");
 }

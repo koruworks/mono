@@ -369,6 +369,11 @@ fn read_events(shared: &Weak<Shared>, id: u64, read: &mut (impl std::io::Read + 
             }
             continue;
         }
+        // **A meter's level is not a dictation's either**, for the same
+        // reason, and it goes to the meter rather than the inbox.
+        if shared.answer_meter(&event) {
+            continue;
+        }
         // **Dropped on the generation, the same rule the worker applies on the
         // way out.** Belt and braces across a socket that can reorder nothing
         // but can certainly deliver late: a decoder still running after a
@@ -414,6 +419,6 @@ fn request_live(request: &Request) -> Option<crate::Live> {
             session: *session,
             generation: *generation,
         }),
-        Request::Devices { .. } => None,
+        Request::Devices { .. } | Request::Meter { .. } | Request::MeterStop { .. } => None,
     }
 }

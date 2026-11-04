@@ -671,3 +671,70 @@ fn routed_press_adopts_only_the_exact_native_gesture_and_never_hijacks() {
     assert_eq!(routed_press(Some(7), 7, Stage::Live, false), Continue);
     assert_eq!(routed_press(Some(8), 7, Stage::Live, true), Ignore);
 }
+
+// ------------------------------------------------------------ the level meter
+
+/// **The meter follows what the host wants, and dials only on a change**:
+/// opened on a device, moved to another, left alone while nothing moves, and
+/// closed. The level is silent until a worker says otherwise.
+#[test]
+fn the_meter_opens_moves_and_closes_with_what_the_host_wants() {
+    let mut d = consenting();
+    assert_eq!(d.metering(), None);
+    assert_eq!(d.meter_level(), None);
+
+    assert!(d.meter(Some(InputChoice::SystemDefault)), "it opened");
+    assert_eq!(d.metering(), Some(&InputChoice::SystemDefault));
+    assert_eq!(d.meter_level(), Some(LevelBucket::SILENT));
+    assert!(
+        !d.meter(Some(InputChoice::SystemDefault)),
+        "the same device asked again on the next pass dials nothing"
+    );
+
+    let yeti = InputChoice::named("Yeti Nano");
+    assert!(d.meter(Some(yeti.clone())), "another device moves it");
+    assert_eq!(d.metering(), Some(&yeti));
+
+    assert!(d.meter(None), "the panel closed");
+    assert_eq!(d.metering(), None);
+    assert_eq!(d.meter_level(), None);
+    assert!(!d.meter(None), "closing nothing dials nothing");
+}
+
+/// **A dictation wins the microphone.** The press closes a running meter
+/// before it begins, and while the dictation runs no meter opens however
+/// often the host asks; once it is over, the next pass may open one again.
+#[test]
+fn a_dictation_closes_the_meter_and_none_opens_while_it_runs() {
+    let mut d = consenting();
+    d.meter(Some(InputChoice::SystemDefault));
+    let now = Instant::now();
+    d.press(now).expect("a press opens a session");
+    d.began(true);
+    assert_eq!(d.metering(), None, "the meter outlived the press");
+
+    assert!(!d.meter(Some(InputChoice::SystemDefault)));
+    assert_eq!(d.metering(), None, "a meter opened beside a dictation");
+
+    d.interrupt(Interruption::Escape);
+    assert!(d.meter(Some(InputChoice::SystemDefault)));
+    assert_eq!(d.metering(), Some(&InputChoice::SystemDefault));
+}
+
+/// **No consent, no meter.** It opens a microphone, which is half of what
+/// the record is for — even though it loads no model.
+#[test]
+fn a_controller_with_no_consent_opens_no_meter() {
+    let mut d = Dictation::new();
+    assert!(!d.meter(Some(InputChoice::SystemDefault)));
+    assert_eq!(d.metering(), None);
+
+    let mut d = consenting();
+    d.meter(Some(InputChoice::SystemDefault));
+    d.set_consent(None);
+    assert!(
+        d.meter(Some(InputChoice::SystemDefault)),
+        "taken back: closed"
+    );
+    assert_eq!(d.metering(), None);
+}

@@ -7,6 +7,9 @@
 //!
 //! ```text
 //! col  Microphone panel                   the panel, MIC_PANEL_PAD round
+//!   row  Microphone level row             MIC_ROW_H
+//!     Microphone level icon               the microphone glyph, secondary ink
+//!     Microphone level bar                MIC_LEVEL_BAR_H, round, filled to the level
 //!   row  Microphone row                   MIC_ROW_H: Default – <name> first
 //!     Microphone name                     row role, elided
 //!     col  Check lane                     TRAILING_LANE_W, the ✓ at its end
@@ -19,7 +22,9 @@
 //! ```
 //!
 //! A row lights on the hover plate under the pointer, and stays lit while
-//! the keyboard is on it; the device recorded from has the accent ✓. Every
+//! the keyboard is on it; the device recorded from has the accent ✓. The
+//! level bar is the dictation footer's waveform made one bar: its track a
+//! divider line, its fill the primary ink the footer's lit bars use. Every
 //! value is a token or a tagged metric ([`super::tokens`]); this file is on
 //! the source scan's migrated list (`koru_draw::theme::ui_scan`).
 
@@ -28,9 +33,9 @@ use koru_draw::el::{
     text,
 };
 use koru_draw::geometry::Rect;
-use koru_draw::icons;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{IconSize, Ink, Line, Radius, Surface, metrics, roles};
+use koru_draw::{icons, scene};
 use koru_ui::toggle::Toggle;
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -39,6 +44,9 @@ pub(crate) use super::tokens::*;
 
 /// The developer names the panel reads its geometry back by.
 pub(crate) const PANEL: &str = "Microphone panel";
+pub(crate) const LEVEL_ROW: &str = "Microphone level row";
+pub(crate) const LEVEL_ICON: &str = "Microphone level icon";
+pub(crate) const LEVEL_BAR: &str = "Microphone level bar";
 pub(crate) const DEVICE_ROW: &str = "Microphone row";
 pub(crate) const DEVICE_NAME: &str = "Microphone name";
 pub(crate) const CHECK_LANE: &str = "Check lane";
@@ -72,6 +80,8 @@ pub(crate) struct DeviceSpec {
 
 /// What the panel shows.
 pub(crate) struct Spec {
+    /// The input level, `0..=`[`LEVEL_MAX`](crate::dictation::LEVEL_MAX).
+    pub(crate) level: u8,
     /// *Default – …* first, then a row a device.
     pub(crate) devices: Vec<DeviceSpec>,
     pub(crate) hold_label: String,
@@ -172,7 +182,73 @@ impl Leaf for HoldSwitch {
     }
 }
 
-/// **The panel as one tree**: the devices, a divider, and *Hold to record*.
+/// **The input level bar**: a rounded track the panel's width, filled from
+/// its start to the level.
+struct LevelBar {
+    level: u8,
+}
+
+impl Leaf for LevelBar {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, LEVEL_BAR_HEIGHT.value)
+    }
+
+    fn paint(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        _engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        let palette = cx.palette();
+        let round = at.h * 0.5;
+        scene::fill(
+            canvas,
+            root,
+            Line::Divider.of(palette),
+            &scene::rrect(at.x, at.y, at.w, at.h, round),
+        );
+        let max = crate::dictation::LEVEL_MAX;
+        let share = f32::from(self.level.min(max)) / f32::from(max);
+        if share > 0.0 {
+            // Never narrower than it is tall, so the quietest level is still
+            // a round end rather than a sliver.
+            let filled = (at.w * share).max(at.h);
+            scene::fill(
+                canvas,
+                root,
+                Ink::Primary.of(palette),
+                &scene::rrect(at.x, at.y, filled, at.h, round),
+            );
+        }
+    }
+}
+
+/// **The level row**: the microphone glyph, then the bar.
+fn level_row(level: u8) -> El {
+    row(LEVEL_ROW)
+        .h(ROW_HEIGHT)
+        .pad_x(ROW_INSET)
+        .gap(ROW_GAP)
+        .items_center()
+        .child(
+            icon(icons::MICROPHONE, IconSize::S)
+                .decorative()
+                .ink(Ink::Secondary)
+                .named(LEVEL_ICON),
+        )
+        .child(
+            leaf(LEVEL_BAR, LevelBar { level })
+                .decorative()
+                .fill()
+                .named(LEVEL_BAR),
+        )
+}
+
+/// **The panel as one tree**: the input level, the devices, a divider, and
+/// *Hold to record*.
 pub(crate) fn tree(spec: &Spec) -> El {
     let hold = row(HOLD_ROW)
         .h(ROW_HEIGHT)
@@ -202,6 +278,7 @@ pub(crate) fn tree(spec: &Spec) -> El {
         .pad(PANEL_INSET)
         .semantics(Role::Menu)
         .name(koru_i18n::Key::AiMicrophoneChoose)
+        .child(level_row(spec.level))
         .children(spec.devices.iter().map(device_row))
         .child(
             col(DIVIDER)

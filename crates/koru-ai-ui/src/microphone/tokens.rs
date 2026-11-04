@@ -30,3 +30,7 @@ pub(crate) const ROW_GAP: Tagged<Space> = Tagged::new("MIC_ROW_GAP", Space::S2);
 
 /// The space above and below the divider before *Hold to record*.
 pub(crate) const DIVIDER_GAP: Tagged<Space> = Tagged::new("MIC_DIVIDER_GAP", Space::S1);
+
+/// The input level bar's thickness: a thin rule with round ends, read beside
+/// the microphone glyph rather than as a control.
+pub(crate) const LEVEL_BAR_HEIGHT: Metric = Metric::new("MIC_LEVEL_BAR_H", 4.0);

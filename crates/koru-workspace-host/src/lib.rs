@@ -1975,6 +1975,24 @@ pub trait View {
         false
     }
 
+    /// **Whether a microphone picker in this window is open and showing an
+    /// input level** — a chat composer's microphone panel (koru-ai D103).
+    ///
+    /// The shell asks every window on every pass and holds the voice
+    /// worker's level meter open on the person's chosen microphone while any
+    /// answers `true` and no dictation runs; it closes the meter the pass
+    /// none does. So it must be free: a `bool` read, never a walk.
+    fn voice_meter_wanted(&self) -> bool {
+        false
+    }
+
+    /// **The level the meter heard**, `0..=8`, pushed while
+    /// [`voice_meter_wanted`](Self::voice_meter_wanted) holds and whenever it
+    /// moves. Answers whether anything drawn changed.
+    fn voice_meter_level(&mut self, _level: u8) -> bool {
+        false
+    }
+
     /// **What is installed has changed** — a model finished downloading, or one
     /// was deleted. Answers whether anything redrew.
     ///

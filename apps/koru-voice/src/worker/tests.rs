@@ -602,6 +602,215 @@ fn a_model_store_failure_becomes_one_of_four_session_codes() {
     );
 }
 
+// ------------------------------------------------------------ the level meter
+
+/// A meter request under a fresh correlation pair.
+fn meter_request(input: koru_voice::InputChoice) -> (SessionId, u64, Request) {
+    let session = SessionId::new();
+    (
+        session,
+        7,
+        Request::Meter {
+            session,
+            generation: 7,
+            input,
+        },
+    )
+}
+
+/// **A meter hears the microphone and loads nothing.** With no model
+/// installed at all — a dictation would be refused `model_missing` — the
+/// meter still sends the recording's level, under its own correlation pair,
+/// and the engine is never built.
+#[test]
+fn a_meter_reports_a_level_with_no_model_installed() {
+    let script = Script::new();
+    let mut config = fixtures::config(&script, fixtures::store());
+    config.store = Arc::new(MemoryModelStore::new(Vec::new()));
+    let drive = Driver::new(config);
+    let mut seen = Vec::new();
+
+    let (session, generation, request) = meter_request(koru_voice::InputChoice::named("Yeti Nano"));
+    drive.send(request);
+    let level = drive.wait_for(&mut seen, |event| matches!(event, Event::Level { .. }));
+    match level {
+        Event::Level {
+            session: said,
+            generation: at,
+            bucket,
+        } => {
+            assert_eq!((said, at), (session, generation));
+            // The fixture's constant sample, -18 dBFS, through the dictation's
+            // own bucketing.
+            assert_eq!(bucket, crate::capture::level_of(&[fixtures::SAMPLE]));
+            assert!(bucket.step() > 0, "{bucket:?}");
+        }
+        other => panic!("expected a level, got {other:?}"),
+    }
+
+    let report = drive.status();
+    assert_eq!(script.opens(), 0, "a meter built a speech engine");
+    assert!(!report.model_loaded, "a meter loaded a model");
+    assert_eq!(report.session.sessions, 0, "a meter began a dictation");
+    assert_eq!(report.state, State::Idle);
+    drive.send(Request::MeterStop {
+        session,
+        generation,
+    });
+}
+
+/// **Start, replace, stop, and a dictation wins** — the meter's lifecycle on
+/// the inference thread itself, stepped by hand so each transition is a fact
+/// rather than a race.
+#[test]
+fn a_meter_is_replaced_stopped_and_yields_to_a_dictation() {
+    let script = Script::new();
+    let mut worker = Worker::new(fixtures::config(&script, fixtures::store()));
+    let (sink, events) = channel();
+    let levels = |events: &Receiver<Outgoing>| -> Vec<(SessionId, u8)> {
+        let mut found = Vec::new();
+        while let Ok(message) = events.try_recv() {
+            if let Outgoing::Event(Event::Level {
+                session, bucket, ..
+            }) = message
+            {
+                found.push((session, bucket.step()));
+            }
+        }
+        found
+    };
+
+    // Started: the first pump sends what the device heard.
+    let (first, _, request) = meter_request(koru_voice::InputChoice::SystemDefault);
+    worker.handle_request(1, sink.clone(), request);
+    worker.pump();
+    let heard = levels(&events);
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert_eq!(heard[0].0, first);
+    assert!(heard[0].1 > 0);
+
+    // Replaced: another device is the same microphone asked again, and the
+    // first meter's pair is never heard from after.
+    let (second, generation, request) = meter_request(koru_voice::InputChoice::named("Yeti Nano"));
+    worker.handle_request(1, sink.clone(), request);
+    assert_eq!(
+        worker.meter.as_ref().map(|meter| meter.session),
+        Some(second)
+    );
+    worker.pump();
+    assert!(
+        levels(&events)
+            .iter()
+            .all(|(session, _)| *session == second)
+    );
+
+    // A stop for a meter that is not this one changes nothing.
+    worker.handle_request(
+        1,
+        sink.clone(),
+        Request::MeterStop {
+            session: first,
+            generation,
+        },
+    );
+    assert!(worker.meter.is_some(), "a stale stop closed the live meter");
+
+    // Stopped.
+    worker.handle_request(
+        1,
+        sink.clone(),
+        Request::MeterStop {
+            session: second,
+            generation,
+        },
+    );
+    assert!(worker.meter.is_none());
+    worker.pump();
+    assert_eq!(levels(&events), Vec::new(), "a stopped meter spoke");
+
+    // A dictation takes the microphone from a running meter...
+    let (_, _, request) = meter_request(koru_voice::InputChoice::SystemDefault);
+    worker.handle_request(1, sink.clone(), request);
+    assert!(worker.meter.is_some());
+    worker.handle_request(
+        2,
+        sink.clone(),
+        Request::Begin {
+            session: SessionId::new(),
+            generation: 100,
+            language: Requested::Fixed(VoiceLanguage::En),
+            tier: ModelTier::Compact,
+            model: None,
+            input: koru_voice::InputChoice::SystemDefault,
+        },
+    );
+    assert!(worker.meter.is_none(), "a dictation began beside a meter");
+    assert_ne!(worker.session.state(), State::Idle);
+
+    // ...and a meter asked for while it runs is told the microphone is busy.
+    let (third, _, request) = meter_request(koru_voice::InputChoice::SystemDefault);
+    let (other, refusals) = channel();
+    worker.handle_request(3, other, request);
+    assert!(worker.meter.is_none());
+    match refusals.try_recv() {
+        Ok(Outgoing::Event(Event::Refused { session, code, .. })) => {
+            assert_eq!(session, third);
+            assert_eq!(code, ErrorCode::Busy);
+        }
+        Ok(_) => panic!("expected a refusal"),
+        Err(error) => panic!("expected a refusal, got {error:?}"),
+    }
+}
+
+/// **A meter's client going away closes its microphone**, as a dictation's
+/// does — and another client's going away does not.
+#[test]
+fn a_meter_closes_when_its_client_goes_away() {
+    let script = Script::new();
+    let mut worker = Worker::new(fixtures::config(&script, fixtures::store()));
+    let (sink, _events) = channel();
+    let (_, _, request) = meter_request(koru_voice::InputChoice::SystemDefault);
+    worker.handle_request(4, sink, request);
+
+    worker.handle_disconnect(5);
+    assert!(
+        worker.meter.is_some(),
+        "another client's exit closed the meter"
+    );
+    worker.handle_disconnect(4);
+    assert!(worker.meter.is_none());
+}
+
+/// A meter keeps the worker awake: it is somebody looking at a bar, and the
+/// idle deadline that would end the process is not for that.
+#[test]
+fn a_running_meter_is_not_idle() {
+    let script = Script::new();
+    let mut worker = Worker::new(fixtures::config(&script, fixtures::store()));
+    let (sink, _events) = channel();
+    let (_, _, request) = meter_request(koru_voice::InputChoice::SystemDefault);
+    worker.handle_request(1, sink, request);
+    // The fixture's idle deadlines are zero: with nothing running, this
+    // would answer `None`, which ends the process.
+    assert_eq!(worker.next_wait(), Some(LEVEL_INTERVAL));
+}
+
+/// A meter's `Debug` is its verb, like every other request's.
+#[test]
+fn a_meter_command_prints_its_verb_and_nothing_else() {
+    let (sink, _events) = channel();
+    let (_, _, request) = meter_request(koru_voice::InputChoice::named("Steven's AirPods"));
+    let printed = format!(
+        "{:?}",
+        Command::Request {
+            client: 2,
+            request,
+            sink,
+        }
+    );
+    assert_eq!(printed, "Request(meter from 2)");
+}
+
 /// **The enabled build's proof that a person can dictate.** See its own note:
 /// it is the only place in this tree where a waveform becomes a transcript.
 mod dictating;

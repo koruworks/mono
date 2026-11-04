@@ -10268,6 +10268,15 @@ impl View for MainView {
         MainView::report_dictation_refusal(self, refusal) || changed
     }
 
+    /// A chat's microphone panel shows an input level (D103).
+    fn voice_meter_wanted(&self) -> bool {
+        self.chat_meter_wanted()
+    }
+
+    fn voice_meter_level(&mut self, level: u8) -> bool {
+        self.push_chat_meter_level(level)
+    }
+
     /// A model was installed or deleted, so every Settings tab in this window
     /// takes another reading of the cache.
     fn voice_models_changed(&mut self) -> bool {

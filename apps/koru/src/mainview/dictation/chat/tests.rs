@@ -316,5 +316,130 @@ fn the_panes_microphone_chooser_keeps_the_voice_preference() {
         chosen,
         koru_workspace_host::voice_prefs::InputChoice::named("Test Microphone")
     );
-    assert!(!v.ai_chat.microphone_panel_open(), "a choice closes it");
+    assert!(
+        v.ai_chat.microphone_panel_open(),
+        "a choice leaves it open, its level bar on the new device"
+    );
+}
+
+/// Open the pane's microphone panel the way a person does.
+fn open_microphone_panel(v: &mut MainView, w: &mut koru_workspace::Workspace) {
+    let (x, y) = centre(v.ai_chat.microphone_for_host_test().unwrap());
+    v.ai_chat.mouse_move(x, y);
+    let chevron = v
+        .ai_chat
+        .microphone_chooser_for_host_test()
+        .expect("the chevron shows on the microphone");
+    let (x, y) = centre(chevron);
+    v.ai_chat.mouse_move(x, y);
+    assert!(View::mouse_down(v, &mut w.ws, x, y, false));
+    View::mouse_up(v, &mut w.ws);
+    assert!(v.ai_chat.microphone_panel_open());
+}
+
+/// The shell's half of the meter, as `App::sync_voice_meter` does it on
+/// every pass: open while a window wants it and no dictation runs.
+fn sync_meter(v: &MainView, controller: &mut Dictation) {
+    let wanted = !controller.is_live() && View::voice_meter_wanted(v);
+    controller.meter(wanted.then_some(koru_dictation::InputChoice::SystemDefault));
+}
+
+/// **The level meter lives exactly while the panel is open**: the shell
+/// opens it the pass the panel opens, a level it pushes moves the bar (and
+/// asks for a redraw only when it moves), Escape closes the panel and the
+/// meter with it, and a recording begun from the microphone closes both —
+/// the press closes the panel, and the controller's press closes the meter
+/// before the dictation is asked for.
+#[test]
+fn the_panes_level_meter_lives_while_its_panel_is_open() {
+    let (mut v, mut w) = on_document();
+    assert!(v.toggle_ai());
+    v.ai_chat.offer_dictation(true);
+    v.ai_chat.offer_microphone_choice(true);
+    frame(&mut v, &w);
+    let mut controller = consenting_dictation();
+
+    sync_meter(&v, &mut controller);
+    assert_eq!(controller.metering(), None, "no panel, no microphone");
+    assert!(!View::voice_meter_level(&mut v, 5), "no bar to move");
+
+    open_microphone_panel(&mut v, &mut w);
+    assert!(View::voice_meter_wanted(&v));
+    sync_meter(&v, &mut controller);
+    assert!(
+        controller.metering().is_some(),
+        "the panel opened the meter"
+    );
+    assert!(View::voice_meter_level(&mut v, 5), "the bar moved: redraw");
+    assert!(!View::voice_meter_level(&mut v, 5), "nothing moved");
+
+    View::key(
+        &mut v,
+        &mut w.ws,
+        &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        winit::keyboard::ModifiersState::empty(),
+    );
+    assert!(!View::voice_meter_wanted(&v), "Escape closed the panel");
+    sync_meter(&v, &mut controller);
+    assert_eq!(controller.metering(), None, "and the meter with it");
+
+    // Open again, then press the microphone: a dictation wins.
+    open_microphone_panel(&mut v, &mut w);
+    sync_meter(&v, &mut controller);
+    assert!(controller.metering().is_some());
+    let (x, y) = centre(v.ai_chat.microphone_for_host_test().unwrap());
+    View::mouse_down(&mut v, &mut w.ws, x, y, false);
+    View::mouse_up(&mut v, &mut w.ws);
+    assert!(View::take_wants_dictation(&mut v), "the microphone asked");
+    let action = controller.press(Instant::now()).expect("a session opens");
+    assert_eq!(controller.metering(), None, "the press closed the meter");
+    let accepted = View::dictate(&mut v, &mut w.ws, &action);
+    controller.began(accepted);
+    say(&mut controller, |session, generation| Event::State {
+        session,
+        generation,
+        state: State::Listening,
+    });
+    service(&mut v, &mut w, &mut controller);
+    assert!(
+        !View::voice_meter_wanted(&v),
+        "the recording took the footer"
+    );
+    sync_meter(&v, &mut controller);
+    assert_eq!(controller.metering(), None, "none opens beside it");
+}
+
+/// **A chat tab's panel wants the meter too**, while its tab is the one
+/// showing — and the level reaches its bar.
+#[test]
+fn a_chat_tabs_panel_wants_the_meter_while_it_shows() {
+    let (mut v, mut w) = on_document();
+    v.tabs_mut().push(Tab::ai_chat());
+    if let crate::mainview::tab::TabView::AiChat(view) = &mut v.tabs_mut().active_mut().view {
+        view.dictation_surface_mut().offer_dictation(true);
+        view.dictation_surface_mut().offer_microphone_choice(true);
+    }
+    frame(&mut v, &w);
+    assert!(!View::voice_meter_wanted(&v));
+    let origin = v.focused_view_rect();
+    let chevron = match &mut v.tabs_mut().active_mut().view {
+        crate::mainview::tab::TabView::AiChat(view) => {
+            let surface = view.dictation_surface_mut();
+            let (x, y) = centre(surface.microphone_for_host_test().unwrap());
+            surface.mouse_move(x, y);
+            surface
+                .microphone_chooser_for_host_test()
+                .expect("the chevron shows on the tab's microphone")
+        }
+        _ => panic!("a chat tab"),
+    };
+    let (x, y) = centre(chevron);
+    if let crate::mainview::tab::TabView::AiChat(view) = &mut v.tabs_mut().active_mut().view {
+        view.dictation_surface_mut().mouse_move(x, y);
+    }
+    View::mouse_down(&mut v, &mut w.ws, x + origin.x, y + origin.y, false);
+    View::mouse_up(&mut v, &mut w.ws);
+    assert!(View::voice_meter_wanted(&v), "the tab's panel is open");
+    assert!(View::voice_meter_level(&mut v, 3), "its bar moved");
 }

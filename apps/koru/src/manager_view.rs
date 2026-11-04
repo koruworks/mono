@@ -1850,6 +1850,20 @@ impl View for ManagerView {
         }
     }
 
+    fn voice_meter_wanted(&self) -> bool {
+        match self {
+            Self::Container(v) => v.voice_meter_wanted(),
+            Self::Document(v) => v.voice_meter_wanted(),
+        }
+    }
+
+    fn voice_meter_level(&mut self, level: u8) -> bool {
+        match self {
+            Self::Container(v) => v.voice_meter_level(level),
+            Self::Document(v) => v.voice_meter_level(level),
+        }
+    }
+
     // The download surface, and the same trap: with these defaulted the
     // consent step could be answered and then nothing would report progress,
     // because the trait falls back to a plain notice or to nothing at all.

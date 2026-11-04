@@ -5,6 +5,7 @@
 //! ```text
 //!   idle, hovered   … [model]   ⌄ 🎤  ↑
 //!                               └ opens, above the composer:
+//!                                   🎤 ━━━━━━━━──────────────────
 //!                                   Default – Microphone (USB)   ✓
 //!                                   Microphone (USB)
 //!                                   Headset (Bluetooth)
@@ -34,11 +35,22 @@
 //! (`koru_voice::input::resolve`). The choice is left as it was, so the
 //! device is used again when it comes back.
 //!
-//! ## Not here: the input level
+//! **Choosing a device keeps the panel open**, so the level bar at its top
+//! can be watched moving to the new microphone; Escape, the chevron or a
+//! press elsewhere closes it.
 //!
-//! The voice worker reports a level only while a dictation records, so the
-//! panel has no live level bar: showing one would mean opening the microphone
-//! outside a dictation, which the voice wire cannot ask for.
+//! ## The input level, and who opens the microphone for it
+//!
+//! The top row is the microphone glyph and a thin bar filled to the input
+//! level. **Nothing here opens a microphone either.** While the panel is open
+//! the surface says so ([`ChatSurface::microphone_meter_wanted`]); the host
+//! opens the voice worker's level meter — which recognises nothing and loads
+//! no model — on the chosen device, closes it when the panel closes or a
+//! dictation starts, and pushes each level it hears
+//! ([`ChatSurface::set_microphone_level`]). The bar is redrawn when a pushed
+//! level moves, at most the worker's ten a second, and never while the panel
+//! is shut. A worker too old to meter pushes nothing, and the bar stays
+//! empty.
 
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
@@ -134,6 +146,10 @@ pub(crate) struct Panel {
     focus: Option<usize>,
     known: Microphones,
     asks: Vec<MicrophoneAsk>,
+    /// The input level the host last pushed, `0..=`
+    /// [`LEVEL_MAX`](crate::dictation::LEVEL_MAX). Empty whenever the panel
+    /// opens or shuts, so a bar never shows a level from before.
+    level: u8,
 }
 
 /// What a row of the panel does.
@@ -175,6 +191,28 @@ impl ChatSurface {
     /// Whether the microphone panel is open.
     pub fn microphone_panel_open(&self) -> bool {
         self.dictation.microphone.open
+    }
+
+    /// **Whether the host should hold a level meter open for this panel**:
+    /// while it is open, and never while the composer records — a dictation
+    /// has the microphone. The host meters the chosen device, so a choice
+    /// moves the meter with it.
+    pub fn microphone_meter_wanted(&self) -> bool {
+        self.dictation.microphone.open && !self.dictating()
+    }
+
+    /// **The input level the host's meter heard**, `0..=8` as the worker
+    /// buckets it; louder is clamped. Answers whether the open panel's bar
+    /// moved, so the host redraws only then.
+    pub fn set_microphone_level(&mut self, level: u8) -> bool {
+        let level = level.min(crate::dictation::LEVEL_MAX);
+        let shown = self.microphone_meter_wanted();
+        let panel = &mut self.dictation.microphone;
+        if panel.level == level {
+            return false;
+        }
+        panel.level = level;
+        shown
     }
 
     /// The chevron's slot, just left of the microphone, while nothing
@@ -256,6 +294,7 @@ impl ChatSurface {
             }
         }));
         elements::Spec {
+            level: self.dictation.microphone.level,
             hold_lit: focus == Some(devices.len()),
             devices,
             hold_label: t(lang, Words::AiMicrophoneHoldToRecord).to_owned(),
@@ -282,7 +321,7 @@ impl ChatSurface {
             FrameCx::root(),
         );
         let hold = measured.rect_of(elements::HOLD_ROW)?;
-        let top = measured.named(elements::DEVICE_ROW).next()?.rect.y;
+        let top = measured.rect_of(elements::LEVEL_ROW)?.y;
         let height = hold.y + hold.h + top;
         Some(self.above_composer(mic.x + mic.w - width, width, height))
     }
@@ -317,6 +356,7 @@ impl ChatSurface {
         let panel = &mut self.dictation.microphone;
         panel.open = true;
         panel.focus = None;
+        panel.level = 0;
         panel.asks.push(MicrophoneAsk::List);
         true
     }
@@ -326,11 +366,13 @@ impl ChatSurface {
         let was = panel.open;
         panel.open = false;
         panel.focus = None;
+        panel.level = 0;
         was
     }
 
-    /// **Act on a row**: a device is recorded from from now on, and the
-    /// panel closes; *Hold to record* flips and the panel stays.
+    /// **Act on a row**: a device is recorded from from now on, *Hold to
+    /// record* flips, and the panel stays open either way — after a choice,
+    /// so the level bar shows the new device hearing.
     fn press_microphone_row(&mut self, index: usize) -> bool {
         let Some(row) = self.microphone_rows().into_iter().nth(index) else {
             return false;
@@ -338,17 +380,20 @@ impl ChatSurface {
         let panel = &mut self.dictation.microphone;
         match row {
             Row::Device(name) => {
-                // Shown at once; the host's next push confirms it.
+                // Shown at once; the host's next push confirms it. The bar
+                // starts empty: the level it held was the last device's.
+                if panel.known.chosen != name {
+                    panel.level = 0;
+                }
                 panel.known.chosen = name.clone();
                 panel.asks.push(MicrophoneAsk::Choose(name));
-                self.close_microphones();
             }
             Row::Hold => {
                 panel.known.hold = !panel.known.hold;
                 panel.asks.push(MicrophoneAsk::Hold(panel.known.hold));
-                panel.focus = Some(index);
             }
         }
+        panel.focus = Some(index);
         true
     }
 
