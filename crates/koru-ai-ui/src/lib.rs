@@ -129,7 +129,14 @@ const CONVERSATION_SCROLL_SPEED: f32 = 1.8;
 const JUMP_D: f32 = 32.0;
 const JUMP_GAP: f32 = 12.0;
 const JUMP_ICON: f32 = 16.0;
-const JUMP_SLACK: f32 = 1.0;
+/// **How far the conversation's end must be out of sight before ↓ shows**,
+/// as a share of the conversation viewport's height: the bottom of the last
+/// item has to sit more than this far below the composer's top edge. A last
+/// line just tucked under the composer is a glance away, not something to
+/// jump to (the user: *only show the go to bottom when the last item in the
+/// chat crosses the composer by 20% viewport size*). `Ctrl+End` jumps
+/// whatever this says.
+const JUMP_THRESHOLD: f32 = 0.2;
 /// Between the end of *Stored “…” in Koru.* and its *Open* (D78).
 const STORED_OPEN_GAP: f32 = 6.0;
 const CONTENT_MAX_W: f32 = 800.0;
@@ -2720,15 +2727,17 @@ impl ChatSurface {
 
     /// **↓, back to the newest message** (D77): a round button centred over
     /// the transcript, just above the composer, while the transcript is
-    /// scrolled up away from its end. `None` at the end, and where there is
-    /// no transcript.
+    /// scrolled up far enough that its last item ends more than
+    /// [`JUMP_THRESHOLD`] of the viewport below the composer's top edge.
+    /// `None` short of that, and where there is no transcript.
     fn jump_button(&self) -> Option<Rect> {
         if self.showing_setup() || self.transcript.is_none() {
             return None;
         }
         let area = self.conversation_hit_rect;
-        let max = (self.conversation_extent - area.h).max(0.0);
-        if max - self.conversation_scroll <= JUMP_SLACK {
+        // Where the last item ends on screen: the content's end, scrolled.
+        let last_bottom = area.y - self.conversation_scroll + self.conversation_content_extent();
+        if last_bottom - self.composer_hit_rect.y <= area.h * JUMP_THRESHOLD {
             return None;
         }
         Some(Rect::new(
@@ -11089,6 +11098,75 @@ mod tests {
             koru_keys::registry::get(koru_keys::ShortcutId::JumpToLatest).layer,
             koru_keys::Layer::Chat
         );
+    }
+
+    /// **↓ waits until the end is well out of sight** ([`JUMP_THRESHOLD`];
+    /// the user: *only show the go to bottom when the last item in the chat
+    /// crosses the composer by 20% viewport size*): the last item's bottom a
+    /// few pixels under the composer's top, or just short of a fifth of the
+    /// conversation viewport under it, shows no button; just past it, the
+    /// button. `Ctrl+End` jumps either way.
+    #[test]
+    fn jump_to_latest_waits_for_a_fifth_of_the_viewport_under_the_composer() {
+        let mut surface = ChatSurface::new();
+        let mut transcript = transcript();
+        transcript.tool_policy.chat_id = transcript.chat.id;
+        let chat = transcript.chat.id;
+        for ordinal in 0..24_u32 {
+            transcript.messages.push(koru_ai_core::Message {
+                id: MessageId::new(),
+                chat_id: chat,
+                ordinal,
+                role: if ordinal % 2 == 0 {
+                    ChatRole::User
+                } else {
+                    ChatRole::Assistant
+                },
+                state: MessageState::Complete,
+                markdown: format!("message {ordinal}"),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: koru_ai_core::Timestamp::from_millis(i64::from(ordinal) + 1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(i64::from(ordinal) + 1)),
+            });
+        }
+        surface.transcript = Some(transcript);
+        surface.viewport = Rect::new(0.0, 0.0, 480.0, 720.0);
+        surface.messages_dirty = true;
+        surface.scroll_loaded_chat_to_bottom = true;
+        surface.draw_messages(&mut Scene::new(), Affine::IDENTITY);
+
+        let area = surface.conversation_hit_rect;
+        let composer_top = surface.composer_hit_rect.y;
+        assert!(composer_top >= area.y + area.h, "the composer is below");
+        let extent = surface.conversation_content_extent();
+        // The scroll at which the last item's bottom is `under` below the
+        // composer's top.
+        let scroll_for = |under: f32| area.y + extent - composer_top - under;
+        let threshold = area.h * JUMP_THRESHOLD;
+        let max = (surface.conversation_extent - area.h).max(0.0);
+        assert!(scroll_for(threshold + 1.0) > 0.0 && scroll_for(4.0) < max);
+
+        // The screenshot: the last line just behind where ↓ would be.
+        surface.conversation_scroll = scroll_for(4.0);
+        assert!(surface.jump_button().is_none(), "a few pixels under");
+        surface.conversation_scroll = scroll_for(threshold - 1.0);
+        assert!(surface.jump_button().is_none(), "just under the threshold");
+        surface.conversation_scroll = scroll_for(threshold + 1.0);
+        assert!(surface.jump_button().is_some(), "just over it");
+
+        // Under the threshold, Ctrl+End still jumps.
+        surface.conversation_scroll = scroll_for(threshold - 1.0);
+        let primary = if cfg!(target_os = "macos") {
+            ModifiersState::SUPER
+        } else {
+            ModifiersState::CONTROL
+        };
+        assert!(surface.key(&Key::Named(NamedKey::End), None, primary));
+        assert_eq!(surface.conversation_scroll, max);
     }
 
     #[test]
