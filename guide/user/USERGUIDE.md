@@ -1531,8 +1531,15 @@ key, or clicking in the message box, also stops the recording; that key or
 click is not typed. Dictation runs on your device; the first time, Koru asks
 you to set up voice input and download the model.
 
-The **1 space** chip under the message box shows how many workspaces the
-chat may read; click it to choose them. With more than five, type in **Filter
+To change the microphone, rest the pointer on the microphone button and click
+the small arrow that appears beside it. Pick a device from the list —
+**Default** follows your system's choice — or turn **Hold to record** on or
+off. These are the same settings as in Settings → Voice. If the microphone
+you chose is unplugged, Koru uses the default until it is back.
+
+The **1 space** chip under the message box shows how many of this
+profile's workspaces the chat may read; click it to choose them. The list
+shows only the workspaces of the profile you are in. With more than five, type in **Filter
 workspaces** to narrow the list; drag the bar at the list's edge, or scroll,
 to see the rest.
 
@@ -5795,23 +5802,6 @@ turning it on tells us what matters most to you.
 Turning it off takes effect at once and deletes anything not yet sent. Nothing
 recorded while it was off is ever sent, even after you turn it on. The choice belongs to this device: another computer of yours has
 its own switch. The phone apps send no usage data.
-
-## The tasks in this document
-
-Open the context column with `Ctrl+J` and choose the checklist icon. It lists the
-tasks of **the document you are reading** — every row that carries a task marker
-or a due date, in the order they appear on the page, with the due date at the
-right and completed ones dimmed and struck through. A late one is warm, the same
-colour the sidebar and the Tasks tab use.
-
-Clicking a row takes you to it in the document. Nothing here changes a task: the
-ways to do that are the row itself under your caret, and the Tasks tab.
-
-It says **No tasks in this document.** when there are none, and it costs nothing
-while the column is closed or on another section.
-
-The Tasks **tab** is the other question — every task in the workspace, wherever
-it lives — and it is the sidebar's rail that opens it.
 
 ## Document history
 
