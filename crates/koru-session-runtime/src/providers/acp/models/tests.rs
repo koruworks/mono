@@ -232,6 +232,7 @@ fn model_is_applied_before_prompt_and_never_claimed_as_reported() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let frames = sent.lock().unwrap();

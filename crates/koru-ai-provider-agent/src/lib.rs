@@ -626,6 +626,7 @@ mod tests {
             capability::SESSION_ORIGIN,
             capability::LAUNCH_SELECTION,
             capability::MANAGED_QUESTIONS,
+            capability::AGENT_COMMANDS,
         ] {
             assert!(offer.capabilities.supports(name), "{name} is not offered");
         }

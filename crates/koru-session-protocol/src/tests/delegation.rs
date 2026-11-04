@@ -25,8 +25,9 @@ fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
     // The thirty-first, `launch-resume`, rides no version: it gates a defaulted
     // `resume` flag on a creation (ADR-474). The thirty-second,
     // `managed-questions`, rides v21: the creating peer draws an agent's
-    // questions (koru-ai D108).
-    assert_eq!(capability::ALL.len(), 32);
+    // questions (koru-ai D108). The thirty-third, `agent-commands`, rides
+    // v21 too: an agent's skills listed and named with an input (D121).
+    assert_eq!(capability::ALL.len(), 33);
     assert_eq!(
         capability::DELEGATION
             .parse::<CapabilityName>()

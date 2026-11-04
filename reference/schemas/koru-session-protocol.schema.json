@@ -1,4 +1,92 @@
 {
+  "AgentCommand": {
+    "$defs": {
+      "AgentCommandKind": {
+        "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+        "oneOf": [
+          {
+            "const": "repo_skill",
+            "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+            "type": "string"
+          },
+          {
+            "const": "user_skill",
+            "description": "A skill of the person's own (`user`).",
+            "type": "string"
+          },
+          {
+            "const": "system_skill",
+            "description": "A skill the agent ships with (`system`).",
+            "type": "string"
+          },
+          {
+            "const": "admin_skill",
+            "description": "A skill an administrator installed (`admin`).",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**One entry an agent offers.** `name` is what the person's message says\nand what goes back; `description` is one line about it, empty when the\nagent gave none; `display_name` is the agent's own name to show, when it\ngives one.",
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "display_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "input_hint": {
+        "description": "What the entry takes after its name, in the agent's words, when it\nsays. No skill has one; it is the ACP command's `input.hint`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "kind": {
+        "$ref": "#/$defs/AgentCommandKind"
+      },
+      "name": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "kind"
+    ],
+    "title": "AgentCommand",
+    "type": "object"
+  },
+  "AgentCommandKind": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**Where an entry comes from**: the folder's own, the person's, what the\nagent ships, what an administrator set. A picker lists the first two\ngroups first and the last two together ([`AgentCommandKind::group`]).",
+    "oneOf": [
+      {
+        "const": "repo_skill",
+        "description": "A skill of the folder the agent works in (Codex's `repo` scope).",
+        "type": "string"
+      },
+      {
+        "const": "user_skill",
+        "description": "A skill of the person's own (`user`).",
+        "type": "string"
+      },
+      {
+        "const": "system_skill",
+        "description": "A skill the agent ships with (`system`).",
+        "type": "string"
+      },
+      {
+        "const": "admin_skill",
+        "description": "A skill an administrator installed (`admin`).",
+        "type": "string"
+      }
+    ],
+    "title": "AgentCommandKind"
+  },
   "AgentEvent": {
     "$defs": {
       "AgentModeId": {
@@ -5549,6 +5637,13 @@
           }
         ],
         "description": "v20 (koru-ai D70): the reasoning level this turn runs at. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when the agent cannot take it. `None` leaves\nthe level as it is. Sent only to a v20 host: a v19 host would read\nand ignore it, and run the turn at the old level."
+      },
+      "skills": {
+        "description": "v21 (koru-ai D121): the skills the person picked, by the name the\nagent listed them under, in the order they appear; the text says\n`$name` where each was. The adapter names each to the agent beside\nthe text, and sends the text alone for one it no longer lists. Only\nto a host that negotiated `agent-commands`: an older one would read\npast it.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
       },
       "text": {
         "type": "string"

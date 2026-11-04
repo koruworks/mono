@@ -8,6 +8,7 @@ mod modes;
 mod normalize;
 mod probe;
 mod questions;
+mod skills;
 
 pub use config::CodexConfig;
 pub use launch::{KORU_MCP_SERVER_NAME, mcp_server_overrides};
@@ -86,6 +87,10 @@ pub struct CodexControl {
     /// The levels the thread's model lists, for a level chosen after the
     /// start (koru-ai D70).
     model_reasoning: Option<koru_session_protocol::ModelReasoning>,
+    /// The session's skills by name, with the path Codex reads each from
+    /// (koru-ai D121): read at the first turn that names one, and again
+    /// after `skills/changed`. `None` until then.
+    skills: Option<BTreeMap<String, String>>,
     shut_down: bool,
 }
 
@@ -163,6 +168,7 @@ impl CodexControl {
             fast_tier: None,
             effort: None,
             model_reasoning: None,
+            skills: None,
             shut_down: false,
         }
     }
@@ -350,6 +356,9 @@ impl CodexControl {
                 Err(unknown_submit_outcome())
             };
         }
+        // Resolved before anything of the turn is recorded: a listing read
+        // now is a request of its own (koru-ai D121).
+        let skill_items = self.skill_items(&input.skills);
         let capabilities = self.capabilities.as_ref().ok_or_else(|| {
             failure(
                 ErrorCode::ProviderFailed,
@@ -387,6 +396,8 @@ impl CodexControl {
         if !input.text.is_empty() {
             provider_input.push(json!({ "type": "text", "text": input.text }));
         }
+        // Each picked skill beside the text that says `$name` for it.
+        provider_input.extend(skill_items);
         for attachment in &input.attachments {
             if attachment.kind != AttachmentKind::Image
                 || !attachment.media_type.starts_with("image/")
@@ -507,7 +518,9 @@ impl CodexControl {
                 ProviderDiagnostic::InvalidState,
             )
         };
-        if !input.attachments.is_empty() {
+        // A steer carries text alone: a picked skill rides a turn of its own
+        // (koru-ai D121), where Codex reads it with the turn's input.
+        if !input.attachments.is_empty() || !input.skills.is_empty() {
             return Err(failure(
                 ErrorCode::DeliveryUnsupported,
                 ProviderStage::Submit,
@@ -914,6 +927,12 @@ fn input_fingerprint(input: &AgentInput) -> blake3::Hash {
         }]);
         hasher.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hasher.update(attachment.media_type.as_bytes());
+    }
+    // The skills a turn names are part of what it asks (koru-ai D121).
+    for skill in &input.skills {
+        hasher.update(b"skill\0");
+        hasher.update(&(skill.len() as u64).to_le_bytes());
+        hasher.update(skill.as_bytes());
     }
     hasher.finalize()
 }

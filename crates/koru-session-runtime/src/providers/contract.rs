@@ -184,6 +184,18 @@ pub trait ManagedProviderFactory: Send + Sync + 'static {
         ))
     }
 
+    /// **What the agent can be told to do by name in a folder** (koru-ai
+    /// D121): Codex's skills, in a picker's order. Off the answering
+    /// threads, like the models. An agent with nothing to offer answers an
+    /// empty list, which is every agent but Codex today.
+    fn discover_commands(
+        &self,
+        _executable: OsString,
+        _working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        Ok(Vec::new())
+    }
+
     /// Construct a fresh probe. The host calls this off its answering threads.
     fn compatibility_probe(
         &self,
@@ -283,12 +295,18 @@ pub struct AgentInput {
     /// cannot take it for is refused, never run at another level. `None`
     /// leaves the level as it is.
     pub reasoning: Option<koru_session_protocol::LaunchReasoning>,
+    /// The skills the person picked, by name (koru-ai D121); the text says
+    /// `$name` where each was. An adapter names each to its agent beside
+    /// the text, resolving where it lives from the agent's own listing; one
+    /// that has no skills ignores them, and the text goes as typed.
+    pub skills: Vec<String>,
 }
 
 impl AgentInput {
     pub fn validate(&self, maximum_text_bytes: usize) -> Result<(), ProviderFailure> {
         if (self.text.is_empty() && self.attachments.is_empty())
             || self.text.len() > maximum_text_bytes
+            || !koru_session_protocol::valid_input_skills(&self.skills)
         {
             return Err(ProviderFailure::new(
                 ErrorCode::InvalidRequest,
@@ -318,6 +336,7 @@ impl fmt::Debug for AgentInput {
             .field("mode", &self.mode)
             .field("fast", &self.fast)
             .field("reasoning", &self.reasoning)
+            .field("skill_count", &self.skills.len())
             .finish()
     }
 }

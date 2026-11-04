@@ -371,6 +371,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap_err();
     assert_eq!(failure.code, ErrorCode::UnsupportedMedia);
@@ -411,6 +412,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let first = control.submit(input.clone()).unwrap_err();
     assert_eq!(first.code, ErrorCode::ProviderUnavailable);
@@ -440,6 +442,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
         ..input
     };
     let conflict = control.submit(changed_kind).unwrap_err();
@@ -774,6 +777,7 @@ fn offline_replay(
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     control.submit(input.clone()).unwrap();
     control.submit(input.clone()).unwrap();
@@ -782,6 +786,7 @@ fn offline_replay(
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
         ..input
     };
     assert_eq!(
@@ -999,6 +1004,7 @@ fn offline_replay(
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     assert_eq!(
@@ -1190,6 +1196,24 @@ fn checked_in_schema_evidence_matches_the_adapter_boundary() {
             !listed("additive_server_requests_unhandled"),
             "{version} handles requestUserInput"
         );
+        // `$` skills (koru-ai D121) have no version gate: every supported
+        // version lists them, reads their change, and takes the item.
+        for (key, token) in [
+            ("skill_client_methods", skills::LIST_METHOD),
+            ("skill_server_notifications", skills::CHANGED_NOTIFICATION),
+            ("skill_input_items", "skill"),
+        ] {
+            assert!(
+                evidence[key]
+                    .as_array()
+                    .is_some_and(|entries| entries.contains(&json!(token))),
+                "{version} names {token} under {key}"
+            );
+        }
+        assert!(
+            evidence["recording_provenance"]["skills"].is_string(),
+            "{version} says where its skills evidence came from"
+        );
         // A steer rides `turn/steer`; the newest evidence names it, and the
         // async question item the adapter reads.
         if version == "0.166.0" {
@@ -1280,6 +1304,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -1460,6 +1485,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let reports = drain_usage(&mut control);
@@ -1513,6 +1539,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     control.cancel(second).unwrap();
@@ -1551,6 +1578,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let reports = drain_usage(&mut fresh);
@@ -1647,6 +1675,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -2390,6 +2419,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
 
@@ -2401,6 +2431,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap();
     let sent = state.lock().unwrap().sent.clone();
@@ -2422,6 +2453,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap_err();
     assert_eq!(stranger.code, ErrorCode::InvalidTransition);
@@ -2434,6 +2466,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         })
         .unwrap_err();
     assert_eq!(finished.code, ErrorCode::InvalidTransition);
@@ -2486,6 +2519,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     control.submit(turn(Some("full-access"))).unwrap();
     control.submit(turn(None)).unwrap();
@@ -2612,6 +2646,7 @@ fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
                     mode: None,
                     fast: *fast,
                     reasoning: None,
+                    skills: Vec::new(),
                 })
                 .unwrap();
         }
@@ -2695,6 +2730,7 @@ fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
                     mode: None,
                     fast: None,
                     reasoning: None,
+                    skills: Vec::new(),
                 })
                 .unwrap();
         }
@@ -2772,6 +2808,7 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
         mode: None,
         fast: None,
         reasoning,
+        skills: Vec::new(),
     };
     control.submit(input(None)).unwrap();
     control.submit(input(Some(LaunchReasoning::XHigh))).unwrap();
@@ -2792,5 +2829,7 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
     assert_eq!(efforts, [json!("low"), json!("xhigh"), json!("xhigh")]);
 }
 
+/// Codex's skills under `$` (koru-ai D121).
+mod codex_skills;
 /// An agent's questions (koru-ai D108).
 mod questions;

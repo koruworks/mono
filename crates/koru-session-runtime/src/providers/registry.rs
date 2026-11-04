@@ -140,6 +140,25 @@ impl ManagedProviderRegistry {
             .discover_models(entry.registration.executable.into(), working_directory)
     }
 
+    /// What `kind` can be told to do by name in `working_directory`
+    /// (koru-ai D121); empty for an agent with nothing to offer.
+    pub fn discover_commands(
+        &self,
+        kind: &ProviderKind,
+        working_directory: std::path::PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let entry = self.entries.get(kind).ok_or_else(|| {
+            ProviderFailure::new(
+                ErrorCode::CapabilityNotNegotiated,
+                ProviderStage::Discovery,
+                ProviderDiagnostic::HandshakeRejected,
+            )
+        })?;
+        entry
+            .factory
+            .discover_commands(entry.registration.executable.into(), working_directory)
+    }
+
     pub fn create(
         &self,
         request: ManagedProviderRequest,

@@ -277,6 +277,7 @@ impl PendingInputModel {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         };
         self.submitting = true;
         self.last_submission = Some(input.clone());

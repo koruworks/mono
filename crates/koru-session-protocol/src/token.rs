@@ -194,6 +194,12 @@ pub mod capability {
     /// agent and a terminal tab's are never asked anything they cannot
     /// answer, and decline as before.
     pub const MANAGED_QUESTIONS: &str = "managed-questions";
+    /// What an agent can be told to do by name (protocol v21, koru-ai
+    /// D121): `discover_provider_commands`, and the skills an input names
+    /// (`PendingInput::skills`). Gated because an older host would refuse
+    /// the request and read past the skills, sending `$name` as words with
+    /// nothing behind it.
+    pub const AGENT_COMMANDS: &str = "agent-commands";
 
     pub const ALL: &[&str] = &[
         CONTROLLER_LEASES,
@@ -228,5 +234,6 @@ pub mod capability {
         LAUNCH_SELECTION,
         LAUNCH_RESUME,
         MANAGED_QUESTIONS,
+        AGENT_COMMANDS,
     ];
 }

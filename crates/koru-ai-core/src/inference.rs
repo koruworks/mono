@@ -327,6 +327,12 @@ pub struct AiRequestOptions {
     /// sends them in place of the message; the API providers ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_answers: Option<crate::NextMessageAnswers>,
+    /// The skills the person picked for a local agent (koru-ai D121), by
+    /// the name the agent lists each under; the message says `$name` where
+    /// each was. The agent's provider names them to the agent beside the
+    /// text; the API providers ignore them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_skills: Vec<String>,
 }
 
 impl Default for AiRequestOptions {
@@ -342,6 +348,7 @@ impl Default for AiRequestOptions {
             agent_fast: None,
             agent_turn_reasoning: None,
             agent_answers: None,
+            agent_skills: Vec::new(),
         }
     }
 }

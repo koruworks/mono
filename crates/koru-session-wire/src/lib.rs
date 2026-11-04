@@ -343,6 +343,14 @@ pub enum Request {
         provider: koru_session_protocol::ProviderKind,
         working_directory: PathBuf,
     },
+    /// Protocol v21 (koru-ai D121): what the agent can be told to do by
+    /// name in `working_directory` — Codex's skills for the folder, from
+    /// its own `skills/list` — in a picker's order. An agent with none
+    /// answers an empty list. Requires `agent-commands`.
+    DiscoverProviderCommands {
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    },
     RefreshProvider {
         #[serde(rename = "provider")]
         kind: koru_session_protocol::ProviderKind,
@@ -699,6 +707,10 @@ pub enum Response {
         /// sends none and an older client leaves them unread.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         modes: Option<koru_session_protocol::AgentModes>,
+    },
+    /// The answer to `DiscoverProviderCommands` (protocol v21).
+    ProviderCommands {
+        commands: Vec<koru_session_protocol::AgentCommand>,
     },
     Health {
         health: HostHealth,

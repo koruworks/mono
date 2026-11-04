@@ -118,6 +118,37 @@ impl ManagedProviderFactory for CodexFactory {
         CodexControl::new(config).discover_models()
     }
 
+    /// The folder's skills from the app-server's own `skills/list` (koru-ai
+    /// D121), from a process started for the question and shut down after
+    /// it.
+    fn discover_commands(
+        &self,
+        executable: OsString,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ProviderFailure> {
+        let executable = crate::providers::resolve_probe_executable(&executable)?;
+        let probe = CodexCompatibilityProbe::new(
+            executable.clone(),
+            working_directory.clone(),
+            Arc::clone(&self.attachment_paths),
+        );
+        let version = probe.version(self.limits)?;
+        if !SUPPORTED_CODEX_VERSIONS.contains(&version.as_str()) {
+            return Err(failure(
+                ErrorCode::ProviderIncompatible,
+                ProviderStage::Version,
+                ProviderDiagnostic::VersionRejected,
+            ));
+        }
+        let config = CodexConfig::new(
+            executable,
+            working_directory,
+            version,
+            Arc::clone(&self.attachment_paths),
+        )?;
+        CodexControl::new(config).discover_commands()
+    }
+
     /// Codex advertises no modes; Koru gives it three (koru-ai D7).
     fn fixed_modes(&self) -> Option<koru_session_protocol::AgentModes> {
         Some(super::modes::offered())

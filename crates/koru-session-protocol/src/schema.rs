@@ -155,6 +155,8 @@ define_catalogue!(
     QuestionsOutcome,
     QuestionsDelivery,
     QuestionsReply,
+    AgentCommandKind,
+    AgentCommand,
     AgentEvent,
     SequencedAgentEvent,
     AgentEventObservation,

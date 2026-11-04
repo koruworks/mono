@@ -92,6 +92,7 @@ fn logs_capture_lifecycle_counts_without_provider_content_and_coalesce_streams()
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             })
             .unwrap();
         h.control

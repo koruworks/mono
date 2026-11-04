@@ -664,7 +664,51 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        // Skills named with the input are `agent-commands`: an older host
+        // would read past them and send `$name` as words alone (koru-ai
+        // D121).
+        if input.needs_agent_commands() && !self.supports_agent_commands() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         self.send_input(session_id, controller_lease, input, None)
+    }
+
+    /// Whether the host lists what an agent can be told to do and takes
+    /// the skills an input names (protocol v21, koru-ai D121).
+    pub fn supports_agent_commands(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::AGENT_COMMANDS_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::AGENT_COMMANDS)
+    }
+
+    /// **What an agent can be told to do by name in a folder** (protocol
+    /// v21, koru-ai D121) — Codex's skills — in a picker's order. Refused
+    /// before it is sent to a host that did not negotiate `agent-commands`.
+    pub fn discover_provider_commands(
+        &self,
+        provider: koru_session_protocol::ProviderKind,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ClientError> {
+        if !self.supports_agent_commands() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        match self.request_with_timeout(
+            Request::DiscoverProviderCommands {
+                provider,
+                working_directory,
+            },
+            Duration::from_secs(30),
+        )? {
+            Response::ProviderCommands { commands } => Ok(commands),
+            _ => Err(ClientError::UnexpectedResponse),
+        }
     }
 
     /// **Send a set's answers as the person's next message** (protocol

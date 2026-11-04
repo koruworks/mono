@@ -315,6 +315,7 @@ fn text_input(text: &str) -> AgentInput {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     }
 }
 

@@ -129,6 +129,12 @@ impl CodexControl {
             | "hook/completed"
             | "account/rateLimits/updated"
             | "remoteControl/status/changed" => Ok(()),
+            // The listing the session's skills were resolved from is out of
+            // date (koru-ai D121): the next turn that names one lists again.
+            super::skills::CHANGED_NOTIFICATION => {
+                self.forget_skills();
+                Ok(())
+            }
             "model/rerouted" => self.handle_rerouted(params),
             "item/agentMessage/delta" => {
                 let Some(turn_id) = self.koru_turn(params.get("turnId")) else {

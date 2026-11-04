@@ -165,6 +165,16 @@ impl ConnectionProtocol {
                 .capabilities
                 .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
     }
+
+    /// **This peer lists what an agent can be told to do and names skills
+    /// with its input** (protocol v21, koru-ai D121): it negotiated the
+    /// version and `agent-commands`.
+    fn agent_commands(&self) -> bool {
+        self.version >= koru_session_protocol::AGENT_COMMANDS_PROTOCOL_VERSION
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::AGENT_COMMANDS)
+    }
 }
 
 struct AttachmentResourceLifecycle {
@@ -614,7 +624,10 @@ async fn serve_connection(
         if version != FRAME_VERSION || frame.id == 0 {
             break;
         }
-        let pool = if matches!(frame.request, Request::DiscoverProviderModels { .. }) {
+        let pool = if matches!(
+            frame.request,
+            Request::DiscoverProviderModels { .. } | Request::DiscoverProviderCommands { .. }
+        ) {
             &state.model_asks
         } else {
             &state.control_slots
@@ -941,6 +954,10 @@ fn handle_request(
                 // Answers as the next message are v21 and `managed-questions`
                 // (koru-ai D108): only a peer that draws questions has any.
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if input.needs_agent_commands() && !protocol.agent_commands() {
+                // Skills named with the input are v21 and `agent-commands`
+                // (koru-ai D121).
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
                 with_session(state, session_id, |session| {
                     match answers {
@@ -976,6 +993,24 @@ fn handle_request(
                         models,
                         modes: state.catalog.modes(&provider),
                     })
+                    .map_err(failure)
+            }
+        }
+        Request::DiscoverProviderCommands {
+            provider,
+            working_directory,
+        } => {
+            if !protocol.agent_commands() {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if !working_directory.is_absolute() {
+                Err(failure(ErrorCode::InvalidRequest))
+            } else {
+                // Asked of the agent for the folder, never cached (koru-ai
+                // D121): Codex's own `skills/list` from a process of its own.
+                state
+                    .catalog
+                    .discover_commands(&provider, working_directory)
+                    .map(|commands| Response::ProviderCommands { commands })
                     .map_err(failure)
             }
         }

@@ -96,6 +96,14 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// `request_user_input_async`) is answered by the person's next message:
 /// `send_pending_input` carries its `answers` beside the input, again only
 /// for a `managed-questions` peer.
+///
+/// v21 also adds what an agent can be told to do by name (koru-ai D121),
+/// behind the `agent-commands` capability: the `discover_provider_commands`
+/// request — an agent's skills for a folder, Codex's `skills/list` — and the
+/// defaulted `skills` on a turn's pending input, the skills the person
+/// picked, by name. An older host would read past the field and send
+/// `$name` as words alone, so a client sends it only to a host that
+/// negotiated the capability, and the host refuses it from any other peer.
 pub const MAX_PROTOCOL_VERSION: u32 = 21;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
@@ -120,6 +128,9 @@ pub const TURN_REASONING_PROTOCOL_VERSION: u32 = 20;
 /// The first version whose agent events may carry `questions_required` and
 /// `questions_resolved`, and that takes `answer_questions`.
 pub const QUESTIONS_PROTOCOL_VERSION: u32 = 21;
+/// The first version that takes `discover_provider_commands` and whose
+/// pending input may name skills. The same version as the questions.
+pub const AGENT_COMMANDS_PROTOCOL_VERSION: u32 = 21;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

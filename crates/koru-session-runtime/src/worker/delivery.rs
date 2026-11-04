@@ -230,10 +230,13 @@ impl SessionHandle {
             require_lease(&state, lease)?;
             let running = matches!(state.summary.mode, SessionMode::Managed { .. })
                 && state.summary.process == koru_session_protocol::ProcessState::Running;
+            // A steer carries text: an input that names a skill (koru-ai
+            // D121) waits for a turn of its own, as one with attachments does.
             match state.summary.active_turn_id {
                 Some(active)
                     if running
                         && input.attachment_ids.is_empty()
+                        && input.skills.is_empty()
                         && !state.pending_inputs.contains_key(&input.idempotency_key) =>
                 {
                     active
@@ -252,6 +255,7 @@ impl SessionHandle {
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
             answers.cloned(),
         )?;
@@ -537,6 +541,7 @@ impl SessionHandle {
                 mode: input.mode.clone(),
                 fast: input.fast,
                 reasoning: input.reasoning,
+                skills: input.skills.clone(),
             },
             answers,
         );
@@ -644,6 +649,9 @@ fn validate_input(input: &PendingInput, answers: bool) -> Result<(), ErrorCode> 
     if input.text.len() > crate::MAX_QUEUED_WRITE_BYTES {
         return Err(ErrorCode::InputTooLarge);
     }
+    if !koru_session_protocol::valid_input_skills(&input.skills) {
+        return Err(ErrorCode::InvalidRequest);
+    }
     Ok(())
 }
 
@@ -718,6 +726,13 @@ fn input_fingerprint(input: &PendingInput, answers: Option<&QuestionsReply>) -> 
     hasher.update(&(input.attachment_ids.len() as u64).to_le_bytes());
     for attachment_id in &input.attachment_ids {
         hasher.update(attachment_id.as_uuid().as_bytes());
+    }
+    // The skills it names are part of what it asks (koru-ai D121). An input
+    // with none hashes as it always has.
+    for skill in &input.skills {
+        hasher.update(b"skill\0");
+        hasher.update(&(skill.len() as u64).to_le_bytes());
+        hasher.update(skill.as_bytes());
     }
     // A set's answers are the input's content: the same key with other
     // answers is a conflict, never a replay (D108).

@@ -11,6 +11,7 @@
 //! retained but not enabled unless both peers advertise it, and an unknown
 //! error code remains an error.
 
+mod agent_commands;
 mod approval;
 mod attachment;
 mod command;
@@ -32,6 +33,7 @@ mod terminal;
 mod token;
 mod tool;
 
+pub use agent_commands::*;
 pub use approval::*;
 pub use attachment::*;
 pub use command::*;

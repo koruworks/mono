@@ -243,6 +243,7 @@ fn answers_as_the_next_message_need_managed_questions() {
             mode: None,
             fast: None,
             reasoning: None,
+            skills: Vec::new(),
         },
         koru_session_protocol::QuestionsReply {
             request_id: koru_session_protocol::QuestionRequestId::mint(),
@@ -251,6 +252,46 @@ fn answers_as_the_next_message_need_managed_questions() {
     );
     assert!(matches!(
         refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+}
+
+/// **Skills named with an input, and an agent's skills listed, need
+/// `agent-commands`** (koru-ai D121): to any other host they are refused
+/// before the wire — it would read past the skills and send `$name` as
+/// words alone.
+#[test]
+fn skills_need_agent_commands() {
+    let (client, bytes) = approval_client(21, true, true);
+    assert!(!client.supports_agent_commands());
+    let refused = client.send_pending_input(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        PendingInput {
+            idempotency_key: IdempotencyKey::mint(),
+            text: "Use $review".into(),
+            attachment_ids: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+            skills: vec!["review".into()],
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    let listed = client
+        .discover_provider_commands("codex".parse().unwrap(), std::path::PathBuf::from("/work"));
+    assert!(matches!(
+        listed,
         Err(ClientError::Session(SessionFailure {
             code: ErrorCode::CapabilityNotNegotiated,
             ..
@@ -271,6 +312,7 @@ fn a_turns_level_is_sent_only_to_a_v20_host() {
         mode: None,
         fast: None,
         reasoning: Some(koru_session_protocol::LaunchReasoning::High),
+        skills: Vec::new(),
     };
     let (older, bytes) = approval_client(19, true, true);
     assert!(!older.supports_turn_reasoning());

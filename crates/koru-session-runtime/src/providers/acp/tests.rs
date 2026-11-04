@@ -113,6 +113,7 @@ fn input(turn_id: AgentTurnId) -> AgentInput {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     }
 }
 fn drain(control: &mut AcpControl) -> Vec<AgentEvent> {

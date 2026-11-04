@@ -394,6 +394,7 @@ impl CodexControl {
                         mode: None,
                         fast: None,
                         reasoning: None,
+                        skills: Vec::new(),
                     })?;
                 }
             }

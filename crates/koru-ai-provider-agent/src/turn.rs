@@ -210,6 +210,21 @@ pub(crate) fn start(
             request_id: set.request,
             answers: answers.clone(),
         });
+    // The skills the person picked (koru-ai D121), by name, to a host that
+    // takes them; the text says `$name` for each either way, so against an
+    // older host the message goes as typed.
+    let skills = if answering.is_some() || request.options.agent_skills.is_empty() {
+        Vec::new()
+    } else if client.supports_agent_commands() {
+        request.options.agent_skills.clone()
+    } else {
+        tracing::info!(
+            target: "koru_ai::agent",
+            skills = request.options.agent_skills.len(),
+            "the session host takes no skills; the message goes as typed"
+        );
+        Vec::new()
+    };
     let send = |attachment_ids: Vec<AttachmentId>| {
         let input = PendingInput {
             idempotency_key: IdempotencyKey::mint(),
@@ -218,6 +233,7 @@ pub(crate) fn start(
             mode: mode.clone(),
             fast,
             reasoning: turn_reasoning,
+            skills: skills.clone(),
         };
         match &reply {
             Some(reply) => {
@@ -810,6 +826,7 @@ impl TurnStream {
                     mode: None,
                     fast: None,
                     reasoning: None,
+                    skills: Vec::new(),
                 },
             );
             let outcome = match sent {

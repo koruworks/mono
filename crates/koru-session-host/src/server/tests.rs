@@ -68,6 +68,28 @@ fn questions_need_protocol_twenty_one_and_their_capability() {
     );
 }
 
+/// **Only a v21 peer that offered `agent-commands` lists an agent's skills
+/// or names them with an input** (koru-ai D121); the host offers it.
+#[test]
+fn agent_commands_need_protocol_twenty_one_and_their_capability() {
+    let with_commands = |version: u32| {
+        let mut peer = protocol(version, true, false);
+        peer.capabilities = CapabilitySet::new(vec![
+            CapabilityName::from_str(capability::AGENT_COMMANDS).unwrap(),
+        ]);
+        peer
+    };
+    assert!(with_commands(21).agent_commands());
+    assert!(!with_commands(20).agent_commands(), "a v20 peer has none");
+    assert!(!protocol(21, true, true).agent_commands(), "not offered");
+    assert!(
+        crate::protocol_offer()
+            .capabilities
+            .supports(capability::AGENT_COMMANDS),
+        "the host offers it"
+    );
+}
+
 fn events() -> Vec<SequencedAgentEvent> {
     let turn_id = AgentTurnId::mint();
     let approval_id = ApprovalId::mint();

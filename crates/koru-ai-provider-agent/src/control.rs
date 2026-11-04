@@ -196,6 +196,47 @@ impl AgentSessions {
         })
     }
 
+    /// **What an agent can be told to do by name in `folder`** (koru-ai
+    /// D121) — Codex's skills — on a connection of its own, as the models
+    /// are. `None` is the home folder a chat's agent starts in. A host too
+    /// old to list them answers an empty list, and nothing is kept here:
+    /// the agent is asked each time.
+    pub fn discover_commands(
+        &self,
+        kind: &AgentProviderKind,
+        folder: Option<std::path::PathBuf>,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ErrorCode> {
+        let started = Instant::now();
+        let folder = folder.unwrap_or_else(default_working_directory);
+        let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-commands", offer())
+            .and_then(|client| client.discover_provider_commands(kind.kind.clone(), folder));
+        let commands = match listed {
+            Ok(commands) => commands,
+            Err(ClientError::Session(failure))
+                if failure.code == ErrorCode::CapabilityNotNegotiated =>
+            {
+                Vec::new()
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "koru_ai::agent",
+                    provider = %kind.kind,
+                    error = %error,
+                    "listing an agent's skills failed"
+                );
+                return Err(client_code(&error));
+            }
+        };
+        tracing::info!(
+            target: "koru_ai::agent",
+            provider = %kind.kind,
+            count = commands.len(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "agent skills listed"
+        );
+        Ok(commands)
+    }
+
     /// Start the control thread for the session host at `endpoint`. The
     /// connection is made on first use, so a host that is not up yet costs
     /// nothing until a person picks an agent.
@@ -326,6 +367,9 @@ pub(crate) fn offer() -> ProtocolOffer {
         // The chat draws an agent's questions and answers them (koru-ai
         // D108): its sessions' agents may ask.
         capability::MANAGED_QUESTIONS,
+        // The composer offers an agent's skills under `$`, and a message
+        // names the ones picked (koru-ai D121).
+        capability::AGENT_COMMANDS,
         // A turn is `SendPendingInput`, which the host answers only to a peer
         // that negotiated attachments (protocol v4); the first live turn
         // failed for its absence here.

@@ -114,6 +114,7 @@ fn pending_input_preserves_attachment_order_and_unicode() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let json = serde_json::to_string(&input).unwrap();
     let back: PendingInput = serde_json::from_str(&json).unwrap();
@@ -133,6 +134,7 @@ fn a_turns_level_is_written_only_when_chosen() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let plain = serde_json::to_value(&input).unwrap();
     assert!(plain.get("reasoning").is_none());

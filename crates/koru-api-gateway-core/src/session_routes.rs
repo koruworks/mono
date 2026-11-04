@@ -497,6 +497,7 @@ async fn send_pending(
                     mode: None,
                     fast: None,
                     reasoning: None,
+                    skills: Vec::new(),
                 },
             )
             .await,

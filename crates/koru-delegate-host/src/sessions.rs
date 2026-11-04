@@ -374,6 +374,7 @@ impl Sessions for HostSessions {
                     mode: None,
                     fast: None,
                     reasoning: None,
+                    skills: Vec::new(),
                 },
             )
             .map_err(|error| session_error("submit", error))?;

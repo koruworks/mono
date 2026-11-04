@@ -67,3 +67,18 @@ the answers as the person's next message: Codex's own reply envelope
 answered_question.rs` at `rust-v0.166.0`). `schema-evidence.json` now lists
 `item/tool/requestUserInput` as handled for a session that draws questions,
 and the async item as a question item.
+
+**Skills under `$`** (koru-ai D121, session protocol v21, 2026-11-03).
+`skills-list.result.json` is a `SkillsListResponse` — the result of
+`skills/list` for one folder — written from the schema regenerated from the
+installed 0.166.0 (same digest) and validated against it: the folder's skill,
+the person's (one with an `interface` display name and short line, one the
+folder's shadows, one disabled), a plugin's, the agent's own and an
+administrator's, with neutral names and paths. A picked skill goes as
+`{"type": "skill", "name", "path"}` beside the text item in `turn/start`'s
+`input` (`UserInput::Skill`). Every supported version has `skills/list`,
+`skills/changed` and that item outside the experimental API — read from each
+version's tag of the Codex source, recorded in its `schema-evidence.json` — so
+there is no version gate. A live no-prompt probe against the installed CLI
+(`initialize`, `skills/list` for this repository, no thread) answered in 0.5 s
+with the repository's skills first; no turn naming a skill has been run.

@@ -369,6 +369,7 @@ fn quoted_path_submission_is_ordered_partial_retryable_and_idempotent() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -458,6 +459,7 @@ fn unsupported_delivery_stays_pending_visible_and_does_not_write_binary() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let result = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -499,6 +501,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let first_result = handle
         .send_pending_input(attached.lease.token, first.clone())
@@ -514,6 +517,7 @@ fn pending_input_idempotency_survives_the_whole_live_session() {
                     mode: None,
                     fast: None,
                     reasoning: None,
+                    skills: Vec::new(),
                 },
             )
             .unwrap();
@@ -564,6 +568,7 @@ fn native_delivery_uses_only_an_advertised_adapter_and_retries_the_same_turn() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let initial = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -633,6 +638,7 @@ fn native_profile_without_the_negotiated_capability_never_calls_the_adapter() {
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -658,6 +664,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let accepted = handle
         .send_pending_input(attached.lease.token, input.clone())
@@ -681,6 +688,7 @@ fn managed_text_without_images_preserves_the_accepted_turn_until_immediate_cance
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     assert_eq!(
         handle
@@ -735,6 +743,7 @@ fn managed_text_does_not_smuggle_unsupported_images_into_the_provider() {
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -763,6 +772,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     assert_eq!(
         handle
@@ -788,6 +798,7 @@ fn a_refused_managed_text_submission_retries_without_replacing_another_turn() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let first = handle
         .send_pending_input(attached.lease.token, other.clone())
@@ -854,6 +865,7 @@ fn an_accepted_managed_submission_survives_lease_loss_before_its_reply() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     let sender = handle.clone();
     let submitted = input.clone();
@@ -899,6 +911,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -910,6 +923,7 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     // A provider with no steer call says what it has always said.
     assert_eq!(
@@ -990,6 +1004,7 @@ fn answers_sent_as_the_next_message_reach_the_adapter_as_input() {
         mode: None,
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     };
     assert_eq!(
         handle.send_pending_input(lease, input()).unwrap_err(),
@@ -1039,4 +1054,84 @@ fn answers_sent_as_the_next_message_reach_the_adapter_as_input() {
     assert_eq!(inner.answered.len(), 2);
     assert!(inner.answered[1].2);
     assert_eq!(inner.answered[1].0.turn_id, accepted.turn_id);
+}
+
+/// **The skills an input names reach the adapter with it** (koru-ai D121):
+/// a new turn carries them by name beside the text; an input naming one is
+/// never steered into a running turn — it waits for a turn of its own, and
+/// is refused meanwhile as any second turn is — and the same key naming
+/// other skills is a conflict, never a replay.
+#[test]
+fn an_inputs_skills_reach_the_adapter_and_never_ride_a_steer() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    {
+        let mut inner = harness.state.inner.lock().unwrap();
+        inner.hold_events = true;
+        inner.steerable = true;
+    }
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let lease = attached.lease.token;
+    let input = |text: &str, skills: &[&str]| PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: text.into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+    };
+    let first = input("Use $review-pr then $lint", &["review-pr", "lint"]);
+    let accepted = handle.send_pending_input(lease, first.clone()).unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.calls.len(), 1);
+        assert_eq!(inner.calls[0].skills, vec!["review-pr", "lint"]);
+        assert_eq!(inner.calls[0].text, "Use $review-pr then $lint");
+    }
+    let mut other = first.clone();
+    other.skills = vec!["lint".into()];
+    assert_eq!(
+        handle.send_pending_input(lease, other).unwrap_err(),
+        ErrorCode::IdempotencyConflict
+    );
+
+    // While the turn runs, text alone steers and a skill does not.
+    assert_eq!(
+        handle
+            .send_pending_input(lease, input("now $lint", &["lint"]))
+            .unwrap_err(),
+        ErrorCode::InvalidTransition
+    );
+    handle
+        .send_pending_input(lease, input("and this", &[]))
+        .unwrap();
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert_eq!(inner.steered.len(), 1);
+        assert!(inner.steered[0].skills.is_empty());
+        assert_eq!(inner.calls.len(), 1, "no second turn");
+    }
+    assert_eq!(
+        handle
+            .send_pending_input(lease, input("x", &["a", "a"]))
+            .unwrap_err(),
+        ErrorCode::InvalidRequest,
+        "a skill named twice"
+    );
+    handle
+        .cancel_turn(
+            lease,
+            IdempotencyKey::mint(),
+            accepted.turn_id,
+            CancelReason::Run,
+        )
+        .unwrap();
+    harness.state.inner.lock().unwrap().hold_events = false;
+    harness.state.ready.notify_one();
+    eventually(|| handle.summary().active_turn_id.is_none());
 }

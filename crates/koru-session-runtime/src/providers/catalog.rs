@@ -399,6 +399,34 @@ impl ProviderCatalogCache {
         read.or_else(|| self.registry.fixed_modes(kind))
     }
 
+    /// **`DiscoverProviderCommands`** (koru-ai D121): what `kind` can be
+    /// told to do by name in `working_directory` — Codex's skills for the
+    /// folder. Asked of the agent every time and kept nowhere: a folder's
+    /// skills change while a person works, and Codex lists them from a
+    /// process of its own in under a second. The listing holds one of the
+    /// two model slots, so a burst of asks never starts a burst of agents;
+    /// with both taken it is refused at once with `Backpressure`, and the
+    /// picker asks again the next time it opens.
+    pub fn discover_commands(
+        &self,
+        kind: &ProviderKind,
+        working_directory: PathBuf,
+    ) -> Result<Vec<koru_session_protocol::AgentCommand>, ErrorCode> {
+        let Some(_slot) = self.slots.try_acquire() else {
+            return Err(ErrorCode::Backpressure);
+        };
+        let started = Instant::now();
+        let result = self
+            .registry
+            .discover_commands(kind, working_directory)
+            .map_err(|failure| failure.code);
+        tracing::info!(target: "koru::provider_models", event = "commands.listing.finished",
+            provider = %kind, success = result.is_ok(),
+            count = result.as_ref().map_or(0, Vec::len),
+            elapsed_ms = started.elapsed().as_millis() as u64);
+        result
+    }
+
     fn observe_row(
         &self,
         readiness: &koru_session_protocol::ProviderReadiness,

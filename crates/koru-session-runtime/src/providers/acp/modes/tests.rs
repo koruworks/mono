@@ -290,6 +290,7 @@ fn turn(mode: Option<&str>) -> AgentInput {
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
         reasoning: None,
+        skills: Vec::new(),
     }
 }
 
@@ -538,6 +539,7 @@ fn a_turns_level_is_set_through_the_thought_level_option() {
     start(&mut claude).unwrap();
     let leveled = |level: LaunchReasoning| AgentInput {
         reasoning: Some(level),
+        skills: Vec::new(),
         ..turn(None)
     };
     claude.submit(leveled(LaunchReasoning::High)).unwrap();

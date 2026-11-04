@@ -160,9 +160,22 @@ pub struct PendingInput {
     /// and ignore it, and run the turn at the old level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<crate::LaunchReasoning>,
+    /// v21 (koru-ai D121): the skills the person picked, by the name the
+    /// agent listed them under, in the order they appear; the text says
+    /// `$name` where each was. The adapter names each to the agent beside
+    /// the text, and sends the text alone for one it no longer lists. Only
+    /// to a host that negotiated `agent-commands`: an older one would read
+    /// past it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 impl PendingInput {
+    /// Whether only an `agent-commands` host can honor it.
+    pub fn needs_agent_commands(&self) -> bool {
+        !self.skills.is_empty()
+    }
+
     /// Whether only a v19 host can honor it.
     pub fn needs_agent_modes(&self) -> bool {
         self.mode.is_some() || self.fast.is_some()
