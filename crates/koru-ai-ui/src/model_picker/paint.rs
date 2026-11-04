@@ -38,9 +38,10 @@ use crate::effort;
 impl crate::ChatSurface {
     /// What the open picker's tree declares: its marks — named, the
     /// selected one marked — the **+**, ↻, the list's rows and the rows
-    /// under the list.
+    /// under the list. A begun chat's has no rail: no marks and no **+**.
     pub(super) fn picker_spec(&self) -> Spec {
-        let rail = self.picker_rail();
+        let hide_rail = self.picker_rail_hidden();
+        let rail = self.picker_marks();
         let dividers = rail_dividers(&rail);
         let selected = self.picker_entry();
         let query = self.picker_query();
@@ -53,6 +54,7 @@ impl crate::ChatSurface {
             .map(|settings| settings.agents.as_slice())
             .unwrap_or_default();
         Spec {
+            hide_rail,
             marks: rail
                 .iter()
                 .enumerate()
@@ -81,7 +83,7 @@ impl crate::ChatSurface {
                     selected: !searching && selected.as_ref() == Some(entry),
                 })
                 .collect(),
-            manage: self.agent_settings_offered,
+            manage: self.agent_settings_offered && !hide_rail,
             refresh: match &selected {
                 Some(RailEntry::Agent(agent)) => Some(!self.refresh_enabled(agent)),
                 _ => None,

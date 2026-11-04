@@ -808,12 +808,16 @@ fn a_search_spans_every_agent_under_a_heading_each() {
     assert!(surface.picker_spec().marks.iter().any(|mark| mark.selected));
 }
 
-/// **A begun chat keeps its agent in a search too** (D67): another
-/// agent's models are found and shown, and cannot be chosen — as on that
-/// agent's own list.
+/// **A begun chat searches only its own agent** (the user: *once the chat
+/// is running, hide the model rail since we don't support switching
+/// models*): another agent's models are not found, and the chat's own are
+/// its own list narrowed — no heading over them, as there is no rail to
+/// tell them apart from. Its agent's models are shown, not chosen: a live
+/// agent session is not moved to another model.
 #[test]
-fn a_search_in_a_begun_chat_finds_other_agents_and_keeps_its_own() {
+fn a_search_in_a_begun_chat_looks_only_at_its_own_agent() {
     let mut surface = surface();
+    surface.lang = Lang::En;
     on_agent(
         &mut surface,
         "agent-claude",
@@ -823,8 +827,20 @@ fn a_search_in_a_begun_chat_finds_other_agents_and_keeps_its_own() {
     begin(&mut surface);
     open(&mut surface);
     type_query(&mut surface, "beam");
+    assert_eq!(
+        surface.picker_rows(),
+        [Row::Note("No matching models".into())],
+        "OpenCode's Beam Free is not found"
+    );
+    press(&mut surface, NamedKey::Escape);
+    type_query(&mut surface, "o");
     let rows = surface.picker_rows();
-    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .all(|row| matches!(row, Row::Default | Row::Model(_))),
+        "Claude's own rows, no heading and nothing found elsewhere: {rows:?}"
+    );
+    assert!(rows.contains(&Row::Model("opus".into())));
     assert!(surface.picker_choosable(&rows).iter().all(|can| !can));
     assert_eq!(surface.picker.highlight, None);
     let geometry = surface.picker_geometry().unwrap();
@@ -833,6 +849,172 @@ fn a_search_in_a_begun_chat_finds_other_agents_and_keeps_its_own() {
     let model = &surface.transcript.as_ref().unwrap().chat.current_model;
     assert_eq!(model.provider, agent("agent-claude"), "the chat keeps it");
     assert_eq!(model.requested_model, "sonnet");
+}
+
+/// **The rail shows until the chat begins, and then it is gone** (the
+/// user: *once the chat is running, hide the model rail since we don't
+/// support switching models*). A new chat has every agent, *Favorites* and
+/// the **+**; from the first message the picker is the chat's own agent's
+/// list alone, in the rail's room — the panel keeps its size — with its
+/// footer as before, and no press, tooltip, Tab or arrow reaches a rail.
+#[test]
+fn the_rail_is_hidden_once_the_chat_has_begun() {
+    let mut surface = picker_with_everything();
+    surface.lang = Lang::En;
+    // A new chat: nothing changes.
+    assert!(!surface.picker_rail_hidden());
+    let before = surface.picker_geometry().unwrap();
+    assert_eq!(before.rail.w, RAIL_W);
+    assert_eq!(
+        surface.picker_rail(),
+        [
+            RailEntry::Favorites,
+            RailEntry::Agent(agent("agent-claude")),
+            RailEntry::Agent(agent("agent-opencode")),
+        ]
+    );
+    assert_eq!(surface.picker_marks(), surface.picker_rail());
+    let plus = surface.picker_manage_rect(&before).unwrap();
+    let mark = rail_rects(before.rail, 3, &[0])[2];
+    let spec = surface.picker_spec();
+    assert!(!spec.hide_rail && spec.manage && spec.marks.len() == 3);
+    let tabs = |surface: &mut ChatSurface| -> Vec<PickerFocus> {
+        surface.picker.focus = PickerFocus::Search;
+        (0..6)
+            .map(|_| {
+                press(surface, NamedKey::Tab);
+                surface.picker.focus
+            })
+            .collect()
+    };
+    assert!(tabs(&mut surface).contains(&PickerFocus::Rail));
+
+    // The first message: the rail, Favorites and the + are gone.
+    begin(&mut surface);
+    assert!(surface.picker_rail_hidden());
+    assert_eq!(
+        surface.picker_rail(),
+        [RailEntry::Agent(agent("agent-claude"))],
+        "the chat's own agent alone"
+    );
+    assert!(surface.picker_marks().is_empty());
+    assert_eq!(
+        surface.picker_entry(),
+        Some(RailEntry::Agent(agent("agent-claude")))
+    );
+    let spec = surface.picker_spec();
+    assert!(spec.hide_rail && !spec.manage && spec.marks.is_empty());
+    let after = surface.picker_geometry().unwrap();
+    assert_eq!(after.panel, before.panel, "the picker keeps its size");
+    assert_eq!(after.rail.w, 0.0);
+    assert!(surface.picker_manage_rect(&after).is_none());
+    // The list takes the rail's room: inset from the panel's start as
+    // from its end.
+    assert!((after.list.x - (after.panel.x + PAD)).abs() < 0.01);
+    assert!((after.search.x - (after.panel.x + PAD)).abs() < 0.01);
+    assert!(
+        (after.list.w - (before.list.w + RAIL_W + RAIL_CONTENT_GAP - PAD)).abs() < 0.01,
+        "{} after {}",
+        after.list.w,
+        before.list.w
+    );
+    assert!(
+        (after.list.x + after.list.w - (before.list.x + before.list.w)).abs() < 0.01,
+        "the end where it was"
+    );
+    // Its footer as before: the level, Fast and the window.
+    assert!(after.strip.is_some() && after.fast.is_some() && after.context.is_some());
+    assert_eq!(
+        surface.picker_rows()[..3],
+        [
+            Row::Default,
+            Row::Model("opus".into()),
+            Row::Model("sonnet".into())
+        ],
+        "Claude's own list"
+    );
+
+    // Where the marks were, a press chooses no other agent, and nothing
+    // raises a rail mark's tooltip.
+    let (x, y) = (mark.x + mark.w * 0.5, mark.y + mark.h * 0.5);
+    assert!(surface.picker_tooltip_at(&after, x, y).is_none());
+    assert_eq!(surface.picker_mouse_down(x, y), Some(true));
+    assert_eq!(
+        surface.picker_entry(),
+        Some(RailEntry::Agent(agent("agent-claude")))
+    );
+    assert_ne!(surface.picker.focus, PickerFocus::Rail);
+    surface.picker_mouse_down(plus.x + plus.w * 0.5, plus.y + plus.h * 0.5);
+    assert!(!surface.take_agent_settings_request(), "no + to press");
+    assert!(surface.chat_model_open);
+
+    // Tab walks search → list → the footer, never the rail.
+    assert_eq!(
+        tabs(&mut surface)[..5],
+        [
+            PickerFocus::List,
+            PickerFocus::Effort,
+            PickerFocus::Fast,
+            PickerFocus::Context,
+            PickerFocus::Search,
+        ]
+    );
+    // The keyboard left on the rail as the chat began is on the list: an
+    // arrow does not step to another agent.
+    surface.picker.focus = PickerFocus::Rail;
+    press(&mut surface, NamedKey::ArrowDown);
+    assert_eq!(surface.picker.focus, PickerFocus::List);
+    assert_eq!(
+        surface.picker_entry(),
+        Some(RailEntry::Agent(agent("agent-claude")))
+    );
+}
+
+/// **A begun chat on a built-in provider keeps its own models, and may
+/// move between them** (S1): no rail — so no agent to switch to — its
+/// models choosable as before, and a search finding only them.
+#[test]
+fn a_begun_built_in_chat_has_no_rail_and_still_switches_its_own_models() {
+    let mut surface = surface();
+    surface.lang = Lang::En;
+    surface.ollama_models = vec!["qwen3".into(), "llama3".into()];
+    on_agent(
+        &mut surface,
+        AiProviderId::OLLAMA,
+        "llama3",
+        ReasoningChoice::Default,
+    );
+    open(&mut surface);
+    assert!(!surface.picker_rail_hidden(), "a new chat keeps its rail");
+    assert!(!surface.picker_marks().is_empty());
+    surface.close_picker();
+
+    begin(&mut surface);
+    open(&mut surface);
+    let ollama = RailEntry::Provider(agent(AiProviderId::OLLAMA));
+    assert_eq!(surface.picker_rail(), [ollama.clone()]);
+    assert!(surface.picker_marks().is_empty());
+    assert_eq!(surface.picker_entry(), Some(ollama));
+    let rows = surface.picker_rows();
+    assert_eq!(
+        rows,
+        [Row::Model("qwen3".into()), Row::Model("llama3".into())],
+        "Ollama's own models, in their sorted order"
+    );
+    assert!(
+        surface.picker_choosable(&rows).iter().all(|can| *can),
+        "a built-in provider's chat moves between its own models"
+    );
+    type_query(&mut surface, "qw");
+    assert_eq!(surface.picker_rows(), [Row::Model("qwen3".into())]);
+    assert_eq!(surface.picker.highlight, Some(0));
+    press(&mut surface, NamedKey::Escape);
+    type_query(&mut surface, "sonnet");
+    assert_eq!(
+        surface.picker_rows(),
+        [Row::Note("No matching models".into())],
+        "Claude's Sonnet is not found"
+    );
 }
 
 /// A press on a rail mark while searching shows that agent's list: the
@@ -2362,6 +2544,130 @@ fn the_pickers_tree_has_named_buttons_and_no_diagnostics() {
         plus,
         "the +",
     );
+}
+
+/// **A begun chat's picker has no rail in its tree** (the user: *once the
+/// chat is running, hide the model rail*): drawn with the inspector on,
+/// there is no rail, rail column, mark or **+** record; the content column
+/// is the picker's only child, still inside the *Popover surface*, and
+/// fills the panel. Its semantics name ↻, the levels and the pills — no
+/// mark — and the tree has no layout diagnostic.
+#[test]
+fn a_begun_chats_picker_tree_has_no_rail() {
+    use koru_draw::el::{Name, Role};
+    use koru_draw::inspect;
+    let mut surface = picker_with_everything();
+    begin(&mut surface);
+    let geometry = surface.picker_geometry().unwrap();
+
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
+    );
+    let mut scene = Scene::new();
+    surface.draw_model_picker(&mut scene, Affine::IDENTITY);
+    let snapshot = capture.finish();
+    let records = &snapshot.records;
+    let named = |name: &str| {
+        records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.name == name)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>()
+    };
+    let one = |name: &str| {
+        let found = named(name);
+        assert_eq!(found.len(), 1, "one {name}: {found:?}");
+        found[0]
+    };
+    let under = |mut index: usize, ancestor: usize| loop {
+        match records[index].parent {
+            Some(parent) if parent == ancestor => return true,
+            Some(parent) => index = parent,
+            None => return false,
+        }
+    };
+    for gone in [
+        elements::RAIL,
+        elements::RAIL_COLUMN,
+        elements::MARK,
+        elements::MANAGE_NAME,
+        "Rail divider",
+    ] {
+        assert!(named(gone).is_empty(), "no {gone}");
+    }
+    let shell = one("Popover surface");
+    for (index, record) in records.iter().enumerate() {
+        if index != shell {
+            assert!(
+                under(index, shell),
+                "{} · {} lies outside the Popover surface",
+                record.name,
+                record.kind
+            );
+        }
+    }
+    let picker = one(elements::PICKER);
+    let content = one(elements::CONTENT);
+    assert_eq!(records[content].parent, Some(picker));
+    let panel = geometry.panel;
+    assert_eq!(
+        records[content].bounds,
+        [
+            f64::from(panel.x),
+            f64::from(panel.y),
+            f64::from(panel.x + panel.w),
+            f64::from(panel.y + panel.h),
+        ],
+        "the content fills the panel"
+    );
+    for part in [elements::SEARCH_ROW, elements::LIST, elements::FOOTER] {
+        assert_eq!(records[one(part)].parent, Some(content), "{part}");
+    }
+
+    let spec = surface.picker_spec();
+    let frame = elements::layout(
+        &elements::tree(&spec, elements::Painted::default()),
+        panel,
+        FrameCx::root(),
+    );
+    assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+    fn every(nodes: Vec<koru_draw::el::SemNode>, out: &mut Vec<koru_draw::el::SemNode>) {
+        for mut node in nodes {
+            let children = std::mem::take(&mut node.children);
+            out.push(node);
+            every(children, out);
+        }
+    }
+    let mut all = Vec::new();
+    every(frame.semantics(), &mut all);
+    let buttons: Vec<_> = all
+        .into_iter()
+        .filter(|node| node.role == Role::Button)
+        .collect();
+    // ↻; Low and High; Fast and 1M context. No mark, no +.
+    assert_eq!(buttons.len(), 5, "{buttons:?}");
+    assert_eq!(
+        buttons[0].name,
+        Some(Name::Key(koru_i18n::Key::AiModelsRefresh))
+    );
+    assert!(buttons.iter().all(|button| {
+        button.name != Some(Name::Key(koru_i18n::Key::AiPickerManageAgents))
+            && button.name != Some(Name::Key(koru_i18n::Key::AiPickerFavorites))
+            && button.name != Some(Name::Text("Claude".into()))
+    }));
+    for entry in [
+        RailEntry::Favorites,
+        RailEntry::Agent(agent("agent-claude")),
+        RailEntry::Agent(agent("agent-opencode")),
+    ] {
+        assert!(
+            frame.node(elements::mark_key(&entry)).is_none(),
+            "{entry:?}"
+        );
+    }
 }
 
 /// **The list is rows of elements** (M1, approved by the user 2026-11-03):

@@ -10033,7 +10033,8 @@ mod tests {
 
     /// The picker of a chat with no model offers only the local agents:
     /// Koru AI, OpenAI and Ollama are not on its rail, a saved OpenAI key or
-    /// not. A chat that has begun on one leads the rail with it (S1).
+    /// not. A chat that has begun on one keeps it alone, the rail hidden
+    /// (S1; the user: *we don't support switching models*).
     #[test]
     fn the_picker_of_a_chat_with_no_model_offers_only_the_agents() {
         let mut surface = ChatSurface::new();
@@ -10047,7 +10048,7 @@ mod tests {
         let claude = AiProviderId::parse("agent-claude").unwrap();
         assert_eq!(
             surface.picker_rail(),
-            vec![model_picker::RailEntry::Agent(claude.clone())]
+            vec![model_picker::RailEntry::Agent(claude)]
         );
         // A chat that has begun on OpenAI lists its own provider's models.
         let mut begun = transcript();
@@ -10071,11 +10072,10 @@ mod tests {
         let openai = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
         assert_eq!(
             surface.picker_rail(),
-            vec![
-                model_picker::RailEntry::Provider(openai.clone()),
-                model_picker::RailEntry::Agent(claude),
-            ]
+            vec![model_picker::RailEntry::Provider(openai.clone())],
+            "not Claude: the chat keeps its provider"
         );
+        assert!(surface.picker_rail_hidden());
         assert_eq!(
             surface.picker_initial_entry(),
             Some(model_picker::RailEntry::Provider(openai))

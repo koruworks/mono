@@ -27,6 +27,13 @@
 //! agent turned on, each beside its agent's mark. Only a click stars a
 //! model: there is no key for it (D47, taken back by the user).
 //!
+//! **Once the chat has begun there is no rail** (the user: *once the chat
+//! is running, hide the model rail since we don't support switching
+//! models*): from its first message a chat keeps its provider, so the
+//! picker shows that provider's list alone — no rail, no *Favorites*, no
+//! **+** — and a search looks only there
+//! (`ChatSurface::picker_rail_hidden`).
+//!
 //! **The chrome is an element tree** (D64, [`elements`]): the rail and the
 //! content column, the search row, the list and the rows under it are
 //! laid out by `koru_draw::el`, and [`Geometry`] is read back from that
@@ -387,13 +394,19 @@ pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
 /// their own: the rail is as tall as the panel.
 #[cfg(test)]
 pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
-    geometry_with(panel, elements::Footer::shape(levels, context, fast))
+    geometry_with(panel, elements::Footer::shape(levels, context, fast), false)
 }
 
-/// The picker's parts inside `panel` with `footer` at its foot.
-pub(crate) fn geometry_with(panel: Rect, footer: Option<elements::Footer>) -> Geometry {
+/// The picker's parts inside `panel` with `footer` at its foot — and no
+/// rail at its start when `hide_rail`, the content in its room.
+pub(crate) fn geometry_with(
+    panel: Rect,
+    footer: Option<elements::Footer>,
+    hide_rail: bool,
+) -> Geometry {
     let spec = elements::Spec {
         footer,
+        hide_rail,
         ..elements::Spec::default()
     };
     let tree = elements::tree(&spec, elements::Painted::default());
@@ -544,7 +557,7 @@ impl crate::ChatSurface {
     /// The **+** at the rail's end, while the host offers it: one more
     /// square after the last mark.
     pub(crate) fn picker_manage_rect(&self, geometry: &Geometry) -> Option<Rect> {
-        if !self.agent_settings_offered {
+        if !self.agent_settings_offered || self.picker_rail_hidden() {
             return None;
         }
         let rail = self.picker_rail();
@@ -683,6 +696,10 @@ impl crate::ChatSurface {
     /// (the user's call, 2026-10-31). An agent turned off on *Agent
     /// providers* is left out, unless it is the chat's own: that chat keeps
     /// its agent, and keeps working.
+    ///
+    /// **A begun chat's rail is its own entry alone**, and is not drawn
+    /// ([`Self::picker_rail_hidden`]): the chat keeps its provider, so the
+    /// list, the search and the keyboard know only that one.
     pub(crate) fn picker_rail(&self) -> Vec<RailEntry> {
         let current = self
             .transcript
@@ -706,7 +723,36 @@ impl crate::ChatSurface {
                 .filter(|agent| self.agent_shown(&agent.id) || Some(&agent.id) == current)
                 .map(|agent| RailEntry::Agent(agent.id.clone())),
         );
+        if self.picker_rail_hidden() {
+            rail.retain(|entry| entry.provider() == current);
+        }
         rail
+    }
+
+    /// **Whether the rail is hidden: the chat has begun** (the user: *once
+    /// the chat is running, hide the model rail since we don't support
+    /// switching models*). From its first message a chat belongs to its
+    /// provider (AGENTUX D1-2) — the same test by which
+    /// [`Self::choose_agent_model`] refuses another agent and
+    /// [`Self::entry_choosable`] dims every agent's rows — so the rail
+    /// would offer only what cannot be chosen. The picker then shows the
+    /// chat's own provider's list with no rail, *Favorites* or **+**, and
+    /// its search looks only there. A new chat with no message, or no chat
+    /// yet, keeps the rail.
+    pub(crate) fn picker_rail_hidden(&self) -> bool {
+        self.transcript
+            .as_ref()
+            .is_some_and(|transcript| !transcript.messages.is_empty())
+    }
+
+    /// The marks the rail draws, presses and steps through: its entries,
+    /// or none while it is hidden.
+    pub(crate) fn picker_marks(&self) -> Vec<RailEntry> {
+        if self.picker_rail_hidden() {
+            Vec::new()
+        } else {
+            self.picker_rail()
+        }
     }
 
     /// **The rail's entry on open** (§9.1): the chat's own provider; else
@@ -807,10 +853,12 @@ impl crate::ChatSurface {
     }
 
     /// **The list** (§9.2): with a query, what it finds across every entry
-    /// ([`Self::search_rows`], D67); without one, the selected entry's.
+    /// ([`Self::search_rows`], D67); without one, the selected entry's. In
+    /// a begun chat, with no rail ([`Self::picker_rail_hidden`]), a query
+    /// narrows the chat's own provider's list and finds nothing elsewhere.
     pub(crate) fn picker_rows(&self) -> Vec<Row> {
         let query = self.picker_query();
-        if !query.is_empty() {
+        if !query.is_empty() && !self.picker_rail_hidden() {
             return self.search_rows(&query);
         }
         let Some(entry) = self.picker_entry() else {
@@ -1222,8 +1270,9 @@ impl crate::ChatSurface {
         if !self.chat_model_open {
             return None;
         }
-        let rail = self.picker_rail();
-        let marks = rail.len() + usize::from(self.agent_settings_offered);
+        let hide_rail = self.picker_rail_hidden();
+        let rail = self.picker_marks();
+        let marks = rail.len() + usize::from(self.agent_settings_offered && !hide_rail);
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let (w, h) = size(self.composer_hit_rect.w, rail_h);
         let chip = self.chat_model_button();
@@ -1233,7 +1282,7 @@ impl crate::ChatSurface {
             PopoverShell::anchored(chip, self.viewport, w, h, PopoverAlign::End).rect
         };
         // The footer as it is drawn: its pills are as wide as their words.
-        Some(geometry_with(panel, self.picker_footer()))
+        Some(geometry_with(panel, self.picker_footer(), hide_rail))
     }
 
     /// The list's scrollbar, as the frame draws it (M1: the shared bar).
@@ -1425,7 +1474,7 @@ impl crate::ChatSurface {
             }
             return Some(true);
         }
-        let rail = self.picker_rail();
+        let rail = self.picker_marks();
         if let Some(index) = rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
             .iter()
             .position(|rect| rect.contains(x, y))
@@ -1594,7 +1643,7 @@ impl crate::ChatSurface {
         if !geometry.panel.contains(x, y) {
             return None;
         }
-        let rail = self.picker_rail();
+        let rail = self.picker_marks();
         for (index, rect) in rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
             .into_iter()
             .enumerate()
@@ -1695,6 +1744,8 @@ impl crate::ChatSurface {
     /// Enter toggles a pill (D76); Tab and Shift+Tab move between search,
     /// rail, list, the strip and the pills; Esc clears the query, else
     /// closes. Starring a model is a click on its ☆ only (D47 taken back). `None` when the picker is closed.
+    /// With the rail hidden in a begun chat, neither Tab nor an arrow lands
+    /// on it: the keyboard goes from the search to the list.
     pub(crate) fn picker_key(
         &mut self,
         key: &WinitKey,
@@ -1703,6 +1754,11 @@ impl crate::ChatSurface {
     ) -> Option<bool> {
         if !self.chat_model_open {
             return None;
+        }
+        let hide_rail = self.picker_rail_hidden();
+        // The chat began with the keyboard on the rail: it is on the list.
+        if hide_rail && self.picker.focus == PickerFocus::Rail {
+            self.picker.focus = PickerFocus::List;
         }
         let levels = self.effort_control().is_some();
         let context = self.picker_context().is_some();
@@ -1718,7 +1774,11 @@ impl crate::ChatSurface {
                 return Some(true);
             }
             WinitKey::Named(NamedKey::Tab) => {
-                let mut order = vec![PickerFocus::Search, PickerFocus::Rail, PickerFocus::List];
+                let mut order = vec![PickerFocus::Search];
+                if !hide_rail {
+                    order.push(PickerFocus::Rail);
+                }
+                order.push(PickerFocus::List);
                 if levels {
                     order.push(PickerFocus::Effort);
                 }
@@ -1745,7 +1805,7 @@ impl crate::ChatSurface {
         match self.picker.focus {
             PickerFocus::Rail => match key {
                 WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
-                    let rail = self.picker_rail();
+                    let rail = self.picker_marks();
                     let at = self
                         .picker_entry()
                         .and_then(|entry| rail.iter().position(|candidate| *candidate == entry));

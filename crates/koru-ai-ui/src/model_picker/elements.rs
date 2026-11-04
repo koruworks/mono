@@ -7,10 +7,12 @@
 //!
 //! ```text
 //! row  Model picker                     the panel, gap RAIL_CONTENT_GAP
-//!   row  Agent rail                     PICKER_RAIL_W, inside the hairline
+//!   row  Agent rail                     PICKER_RAIL_W, inside the hairline;
+//!                                       none once the chat has begun
 //!     col  Agent rail column            on Surface::Ground, marks centred
 //!       Rail mark · Rail gap · [Rail divider] · … · Manage agent providers
 //!   col  Picker content                 fill, PICKER_PAD at top, end, foot
+//!                                       (and start, with no rail)
 //!     row  Search row                   PICKER_SEARCH_H
 //!       row  Search box                 Search field (fill) · Refresh models
 //!     scroll  Model list                fill, a row a step, the scrollbar
@@ -219,6 +221,9 @@ pub(crate) struct ListRow {
 /// What the picker shows, as far as its layout and its declarations go.
 #[derive(Default)]
 pub(crate) struct Spec {
+    /// **No rail**: the chat has begun and keeps its provider, so the
+    /// content takes the rail's room, inset at its start as at its end.
+    pub(crate) hide_rail: bool,
     pub(crate) marks: Vec<MarkSpec>,
     /// The **+** at the rail's end (D29).
     pub(crate) manage: bool,
@@ -844,6 +849,11 @@ pub(crate) fn tree(spec: &Spec, painted: Painted) -> El {
     // Under the list: the strip and the pills (D76).
     if let Some(spec) = &spec.footer {
         content = content.child(footer(spec));
+    }
+    if spec.hide_rail {
+        // The content in the rail's room, as far from the panel's start
+        // as from its end.
+        return row(PICKER).child(content.pad_start(PANEL_INSET));
     }
     row(PICKER)
         .gap(CONTENT_GAP)
