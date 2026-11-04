@@ -169,6 +169,9 @@ pub struct RunsSurface {
     /// answers; `false` until it does, so *Open location* is never on
     /// screen where pressing it would fail.
     can_reveal: bool,
+    /// Whether this build lets a person start a delegation, which is what
+    /// *Re-run* does. The host answers; `false` until it does.
+    can_re_run: bool,
     /// The session tab this surface has already asked the host to open, so
     /// a repeated read does not ask twice.
     opened: Option<SessionId>,
@@ -225,6 +228,7 @@ impl RunsSurface {
             hover: None,
             focus: None,
             can_reveal: false,
+            can_re_run: false,
             opened: None,
             response_requested: false,
         }
@@ -306,6 +310,23 @@ impl RunsSurface {
     pub fn set_can_reveal(&mut self, can: bool) {
         if self.can_reveal != can {
             self.can_reveal = can;
+            self.stale = true;
+        }
+    }
+
+    /// **Whether this build lets a person start a delegation**, which is
+    /// all *Re-run* does: it hands a seed to the window's one delegation
+    /// surface. The host answers (`koru_features::delegate`, which this
+    /// crate is chartered not to link), and a build that hides Delegate
+    /// must not lay out a control the window would refuse. The run itself —
+    /// its status, activity, result and every other control — is shown
+    /// either way.
+    ///
+    /// Defaults to `false`, as [`Self::set_can_reveal`] does: a surface
+    /// nobody has told promises nothing.
+    pub fn set_can_re_run(&mut self, can: bool) {
+        if self.can_re_run != can {
+            self.can_re_run = can;
             self.stale = true;
         }
     }
@@ -633,6 +654,7 @@ impl RunsSurface {
                         availability: self.availability,
                         note_differs: self.note.value() != self.stored_note,
                         can_reveal: self.can_reveal,
+                        can_re_run: self.can_re_run,
                     };
                     match self.tab {
                         Tab::Overview => context.overview(&mut column),

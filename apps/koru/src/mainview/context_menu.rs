@@ -963,8 +963,10 @@ impl MenuAction {
                         .nth(index)
                         .is_none_or(|profile| profile.kind != ProfileKind::Agent)
             }
-            // Koru AI chat and Delegate, with the runs and schedules Delegate
-            // makes.
+            // Starting Delegate: with Koru AI *and* the agent views.
+            Self::Delegate | Self::TaskDelegate => f::delegate(),
+            // Koru AI chat, with the runs and schedules Delegate has made —
+            // those keep their menus whether or not a new one can be started.
             Self::NewAiChat
             | Self::OpenInChat
             | Self::Chats
@@ -973,8 +975,6 @@ impl MenuAction {
             | Self::RenameAiChat
             | Self::PinAiChat
             | Self::UnpinAiChat
-            | Self::Delegate
-            | Self::TaskDelegate
             | Self::OpenRunResult(_)
             | Self::RunHasNoResults
             | Self::DeleteRun

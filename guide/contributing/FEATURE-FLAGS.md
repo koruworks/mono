@@ -19,9 +19,9 @@ decision record is ADR-450.
 | --- | --- | --- | --- |
 | `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | off | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
 | `ENABLE_AGENTS` | `KORU_ENABLE_AGENTS` | **on** | Agent sessions as tabs: the `+` menu's *Agents ▸*, agent tabs and their restore, the tray's Agents submenu. **Shell sessions are always shown** |
-| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them. Needs `ENABLE_AGENTS` on as well |
+| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them — **and every way to start Delegate** (with `ENABLE_AI` on). Needs `ENABLE_AGENTS` on as well |
 | `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | off | The Tasks view and every way into it. **`/due` stays** and still creates a task |
-| `ENABLE_AI` | `KORU_ENABLE_AI` | off | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers |
+| `ENABLE_AI` | `KORU_ENABLE_AI` | off | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers. *Starting* a delegation also needs `ENABLE_AGENT_VIEWS` |
 | `ENABLE_REMINDERS` | `KORU_ENABLE_REMINDERS` | off | The reminders UI. The reminder worker still runs, so an existing reminder can still notify |
 | `ENABLE_CANVAS` | `KORU_ENABLE_CANVAS` | off | Canvases: the Canvases view, its `+` flyout, canvas tabs, canvas search results and canvases in the Manage tab's document counts. With agents off as well, a shown canvas is cards and images only |
 | `ENABLE_SOCIALS` | `KORU_ENABLE_SOCIALS` | off | Socials: the Socials view, its `+` row, *New social post* and the Socials tab — **and the publisher in Koru Agent**, which starts only with the flag on; off, a scheduled post waits |
@@ -30,8 +30,10 @@ decision record is ADR-450.
 
 All of it is in one leaf crate, [`crates/koru-features`](../../crates/koru-features/src/lib.rs):
 `koru_features::features()` (a `&'static Features` latched in a `OnceLock`) and
-one accessor per flag — `cloud_sync()`, `agents()`, `tasks()`, `ai()`,
-`reminders()`, `canvas()`, `socials()`.
+one accessor per flag — `cloud_sync()`, `agents()`, `agent_views()`,
+`tasks()`, `ai()`, `reminders()`, `canvas()`, `socials()`. Two answer for
+more than one flag: `agent_views()` is `agents && agent_views`, and
+`delegate()` — whether Delegate can be *started* — is `ai() && agent_views()`.
 
 1. **Baked in.** Each `ENABLE_*` constant is `option_env!("KORU_ENABLE_*")`
    read through koru-env's truthiness rule when `koru-features` is compiled.
@@ -133,8 +135,29 @@ ship, the views over their runs and results do not.
 - **Ways in**: revealing a run or a schedule in the Agents view does nothing,
   the Agents tree's *Delete project* row is not offered, and a result opens
   from Delegate only (with `ENABLE_AI`), not from the Artifacts column.
+- **Delegate cannot be started**, with Koru AI on or off — see the next
+  section. Runs already made still show.
 - The `+` menu's *Agents ▸*, agent tabs and the tray are `ENABLE_AGENTS` and
   unaffected.
+
+### `ENABLE_AGENT_VIEWS` off with `ENABLE_AI` on (starting Delegate)
+
+The default. Starting a delegation is hidden with the agent views (the user,
+2026-11-03), so it follows `KORU_ENABLE_AGENT_VIEWS` with agents and Koru AI
+on: `koru_features::delegate()` is `ai() && agent_views()`. Koru AI chat is
+unaffected.
+
+- No `/delegate` (`koru-editor` `command_menu::product_shows`), no `+`
+  *Delegate*, no document-selection *Delegate…* (`apps/koru-document`
+  `context_menu`), no Tasks-view *Delegate…* (`MenuAction::TaskDelegate`).
+- No *Re-run* on a finished run's Overview, and no note about it: the host
+  answers `koru_runs_ui::RunsSurface::set_can_re_run`.
+- The modal's `Ctrl+Enter` (*Delegate the work*) is not advertised.
+- `begin_delegation` — the one door into the modal — refuses every origin.
+- **Runs already made show as they do today**: their pills open the Run tab,
+  results open, and the run and schedule menus (*Delete run*, a schedule's
+  *Rename*, *Edit…*, *Pause*, *Resume*, *Delete*) are unchanged — those stay
+  on `ENABLE_AI` alone. Background workers, as with every flag, still run.
 
 ### `ENABLE_TASKS` off
 
@@ -173,7 +196,8 @@ and `OpenAiChat` with a silent `Ok` when Koru AI is hidden. The Windows
 - **Delegate**: no `/delegate`, no `+` *Delegate*, no document-menu *Delegate*,
   no tasks-view *Delegate…*; `begin_delegation` — the one door into the modal —
   refuses. No Run tab and no Result tab can open (a Result tab still can with
-  agents on, for the Artifacts column).
+  agents on, for the Artifacts column). With `ENABLE_AI` on, starting Delegate
+  still needs `ENABLE_AGENT_VIEWS` (above).
 - **Run and schedule pills already inside a document still draw** — they are
   document content — but pressing or right-clicking one opens nothing.
 

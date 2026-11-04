@@ -1143,8 +1143,10 @@ impl ShortcutId {
         match self {
             // Home is hidden for now, by a constant (`koru_features::HOME_SHOWN`).
             Self::ShowHome => koru_features::home(),
+            // The delegation modal's chord: starting Delegate follows the
+            // agent views as well as Koru AI.
+            Self::Delegate => koru_features::delegate(),
             Self::ToggleAiPane
-            | Self::Delegate
             | Self::CycleAgentMode
             | Self::JumpToLatest
             | Self::PreviousChat

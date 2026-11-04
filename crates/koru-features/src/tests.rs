@@ -106,6 +106,41 @@ fn agent_views_need_agents_and_are_off_by_default() {
     testing::with(both, || assert!(agent_views()));
 }
 
+/// Starting Delegate follows the agent views: Koru AI alone shows chat and
+/// the runs already made, not a way to start one.
+#[test]
+fn delegate_needs_ai_and_the_agent_views() {
+    let ai_and_agents = Features {
+        ai: true,
+        agents: true,
+        ..Features::ALL_OFF
+    };
+    testing::with(ai_and_agents, || {
+        assert!(ai() && !delegate(), "the agent views are off")
+    });
+    testing::with(
+        Features {
+            agent_views: true,
+            ..ai_and_agents
+        },
+        || assert!(delegate()),
+    );
+    testing::with(
+        Features {
+            ai: false,
+            ..Features::ALL_ON
+        },
+        || assert!(agent_views() && !delegate(), "Koru AI is off"),
+    );
+    testing::with(
+        Features {
+            agents: false,
+            ..Features::ALL_ON
+        },
+        || assert!(ai() && !delegate(), "agent views need agents"),
+    );
+}
+
 #[test]
 fn an_unset_agents_flag_is_on_and_a_set_one_follows_the_rule() {
     assert!(switch_value_or(None, true), "unset: agents ship");

@@ -570,7 +570,8 @@ pub fn product_shows(command: Command) -> bool {
             koru_features::tasks()
         }
         Command::Remind => koru_features::reminders(),
-        Command::Delegate => koru_features::ai(),
+        // Starting Delegate follows the agent views as well as Koru AI.
+        Command::Delegate => koru_features::delegate(),
         _ => true,
     }
 }
@@ -1138,6 +1139,32 @@ mod tests {
                 assert!(all.contains(&Command::Task) && all.contains(&Command::Priority));
                 assert!(!all.contains(&Command::Remind) && !all.contains(&Command::Delegate));
             },
+        );
+    }
+
+    /// **`/delegate` goes with the agent views**, not with Koru AI alone: the
+    /// build that ships chat (AI and agents on, agent views off) offers no
+    /// way to start a delegation, and turning the views on brings it back.
+    #[test]
+    fn delegate_is_hidden_with_the_agent_views_while_ai_is_on() {
+        use koru_features::Features;
+        let chat_ships = Features {
+            agent_views: false,
+            ..Features::ALL_ON
+        };
+        koru_features::testing::with(chat_ships, || {
+            assert!(koru_features::ai(), "Koru AI is on");
+            assert!(!product_shows(Command::Delegate));
+            assert!(!matching("", &ALL_ALLOWED).contains(&Command::Delegate));
+            assert!(matching("delegate", &ALL_ALLOWED).is_empty());
+            assert!(!matching("d", &ALL_ALLOWED).contains(&Command::Delegate));
+        });
+        koru_features::testing::with(
+            Features {
+                agent_views: true,
+                ..chat_ships
+            },
+            || assert_eq!(matching("deleg", &ALL_ALLOWED), vec![Command::Delegate]),
         );
     }
 

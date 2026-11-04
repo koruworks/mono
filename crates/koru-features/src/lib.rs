@@ -10,9 +10,9 @@
 //! | --- | --- | --- |
 //! | [`ENABLE_CLOUD_SYNC`] | `KORU_ENABLE_CLOUD_SYNC` | Koru Cloud: sign-in, OAuth, the Cloud page, subscribe pointers |
 //! | [`ENABLE_AGENTS`] | `KORU_ENABLE_AGENTS` | agent sessions as tabs (shell sessions stay); **on unless set off** |
-//! | [`ENABLE_AGENT_VIEWS`] | `KORU_ENABLE_AGENT_VIEWS` | Explore's Agents and Artifacts views (need agents on as well) |
+//! | [`ENABLE_AGENT_VIEWS`] | `KORU_ENABLE_AGENT_VIEWS` | Explore's Agents and Artifacts views (need agents on as well), and every way to start Delegate ([`delegate`]) |
 //! | [`ENABLE_TASKS`] | `KORU_ENABLE_TASKS` | the Tasks view and its entry points (`/due` stays) |
-//! | [`ENABLE_AI`] | `KORU_ENABLE_AI` | Koru AI chat and Delegate (runs and results) |
+//! | [`ENABLE_AI`] | `KORU_ENABLE_AI` | Koru AI chat and Delegate (runs, results, and starting one with agent views on) |
 //! | [`ENABLE_REMINDERS`] | `KORU_ENABLE_REMINDERS` | the reminders UI (the worker still runs) |
 //! | [`ENABLE_CANVAS`] | `KORU_ENABLE_CANVAS` | canvases: the Canvases view and canvas tabs |
 //! | [`ENABLE_SOCIALS`] | `KORU_ENABLE_SOCIALS` | Socials, and the Agent's Socials publisher |
@@ -73,11 +73,13 @@ pub struct Features {
     /// Explore's Agents and Artifacts views (their rail slots), and every
     /// way into them: revealing a run or a schedule, opening a result from
     /// the Artifacts column. Shown only with [`Self::agents`] on as well —
-    /// see [`agent_views`].
+    /// see [`agent_views`]. With [`Self::ai`] on too, every way to *start*
+    /// Delegate — see [`delegate`].
     pub agent_views: bool,
     /// The Tasks view and every way into it.
     pub tasks: bool,
-    /// Koru AI chat and Delegate.
+    /// Koru AI chat, and the runs and schedules Delegate has made. Starting
+    /// Delegate needs [`Self::agent_views`] as well — see [`delegate`].
     pub ai: bool,
     /// The reminders UI.
     pub reminders: bool,
@@ -195,7 +197,7 @@ pub const ENABLE_CLOUD_SYNC: bool = switch_value(option_env!("KORU_ENABLE_CLOUD_
 pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"), true);
 /// Explore's Agents and Artifacts views, as baked into this build. Off when
 /// unset: agent *tabs* ship, the views over their runs and results do not
-/// (maintainers, 2026-10-16).
+/// (maintainers, 2026-10-16). Starting Delegate follows it too ([`delegate`]).
 pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT_VIEWS"));
 /// The Tasks view and its entry points, as baked into this build. **On when
 /// unset** (the CTO's note, 2026-10-26, QUESTIONS.md E52): the view ships;
@@ -203,7 +205,8 @@ pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT
 pub const ENABLE_TASKS: bool = switch_value_or(option_env!("KORU_ENABLE_TASKS"), true);
 /// Koru AI chat and Delegate, as baked into this build. **On when unset**
 /// (the CTO's note, 2026-10-26, QUESTIONS.md E54: enable Chats): the Chats
-/// view, the chat tab and Delegate ship; `KORU_ENABLE_AI=0` bakes them off.
+/// view, the chat tab and Delegate's runs ship; `KORU_ENABLE_AI=0` bakes them
+/// off. Starting Delegate also needs [`ENABLE_AGENT_VIEWS`] ([`delegate`]).
 pub const ENABLE_AI: bool = switch_value_or(option_env!("KORU_ENABLE_AI"), true);
 /// The reminders UI, as baked into this build.
 pub const ENABLE_REMINDERS: bool = switch_value(option_env!("KORU_ENABLE_REMINDERS"));
@@ -252,9 +255,21 @@ pub fn agent_views() -> bool {
 pub fn tasks() -> bool {
     features().tasks
 }
-/// Koru AI chat and Delegate are shown.
+/// Koru AI chat is shown, and so are the runs and schedules Delegate has
+/// made — their pills, Run tabs and menus. Whether a *new* delegation can be
+/// started is [`delegate`].
 pub fn ai() -> bool {
     features().ai
+}
+/// **Delegate can be started**: `/delegate`, the `+` menu's *Delegate*, a
+/// task's and a document selection's *Delegate…*, a finished run's *Re-run*,
+/// and the modal they all open (`begin_delegation`, its one door). Hidden
+/// with the agent views (the user, 2026-11-03), so it follows
+/// `KORU_ENABLE_AGENT_VIEWS` — off by default — and needs Koru AI and agents
+/// on as well. Runs that already exist keep showing as [`ai`] says; only the
+/// ways to start one go.
+pub fn delegate() -> bool {
+    ai() && agent_views()
 }
 /// The reminders UI is shown.
 pub fn reminders() -> bool {

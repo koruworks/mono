@@ -199,10 +199,11 @@ impl MainView {
     /// context. First use subscribes through the backend worker, and explicit
     /// Retry requests a new probe without waiting in this call.
     pub(crate) fn begin_delegation(&mut self, origin: DelegationOrigin) -> bool {
-        // **The one door into the modal**, so a build that hides Koru AI
-        // (Delegate included) refuses every gesture here once — the `+` row,
-        // `/delegate`, a task's and a selection's menu (koru-features).
-        if !koru_features::ai() {
+        // **The one door into the modal**, so a build that hides Delegate —
+        // Koru AI off, or the agent views off — refuses every gesture here
+        // once: the `+` row, `/delegate`, a task's and a selection's menu, a
+        // run's *Re-run* (koru-features).
+        if !koru_features::delegate() {
             return false;
         }
         // One outstanding receiver must stay owned until its answer is

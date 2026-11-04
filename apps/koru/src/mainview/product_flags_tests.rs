@@ -265,3 +265,65 @@ fn with_every_surface_on_socials_and_canvases_are_offered() {
     assert!(v.open_socials_tab());
     assert!(matches!(v.tabs().active_tab().view, TabView::Socials(_)));
 }
+
+/// **Delegate goes with the agent views** (`koru_features::delegate`): the
+/// build that ships Koru AI chat with the Agents and Artifacts views hidden
+/// offers no way to start a delegation — no `+` row, no task or selection
+/// row, no chord, and the one door refuses every origin — while chat stays,
+/// and so do the menus over runs and schedules already made.
+#[test]
+fn delegate_is_hidden_with_the_agent_views_while_ai_is_on() {
+    use crate::mainview::delegate::{DelegationOrigin, TaskSubject};
+    let chat_ships = Features {
+        agent_views: false,
+        ..Features::ALL_ON
+    };
+    testing::with(chat_ships, || {
+        let (mut v, _workspace) = on_document();
+        assert!(v.open_new_tab_menu());
+        let items = v.menu.as_ref().expect("the menu opened").items().to_vec();
+        assert!(items.contains(&MenuAction::NewAiChat), "chat stays");
+        assert!(!items.contains(&MenuAction::Delegate));
+        v.menu = None;
+
+        assert!(!MenuAction::Delegate.shown_in_product());
+        assert!(!MenuAction::TaskDelegate.shown_in_product());
+        assert!(!koru_document::context_menu::Choice::Delegate.shown_in_product());
+        assert!(!koru_keys::ShortcutId::Delegate.shown_in_product());
+        for kept in [
+            MenuAction::OpenRunResult(0),
+            MenuAction::DeleteRun,
+            MenuAction::ScheduleEdit,
+            MenuAction::NewAiChat,
+        ] {
+            assert!(kept.shown_in_product(), "{kept:?} stays");
+        }
+
+        assert!(!v.run_menu_action(MenuSubject::NewTab, MenuAction::Delegate));
+        let document = koru_core::DocumentId::new();
+        let node = koru_core::NodeId::new();
+        for origin in [
+            DelegationOrigin::PlusMenu,
+            DelegationOrigin::SlashCommand {
+                document,
+                block: Some(node),
+                objective: "Write the release notes".into(),
+            },
+            DelegationOrigin::TaskContextMenu {
+                task: TaskSubject {
+                    document,
+                    node,
+                    title: "Write the release notes".into(),
+                },
+            },
+            DelegationOrigin::SelectionContextMenu {
+                document,
+                selection: Some(node),
+                objective: String::new(),
+            },
+        ] {
+            assert!(!v.begin_delegation(origin.clone()), "{origin:?}");
+        }
+        assert!(!v.delegation_open());
+    });
+}

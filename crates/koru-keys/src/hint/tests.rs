@@ -94,3 +94,22 @@ fn a_hidden_surfaces_chord_is_not_advertised() {
         assert!(id.shown_in_product(), "{id:?} with every surface on");
     }
 }
+
+/// **Delegate's chord goes with the agent views**, while Koru AI's own
+/// chords stay: the build that ships chat with the views off teaches no way
+/// to delegate.
+#[test]
+fn the_delegate_chord_is_hidden_with_the_agent_views_while_ai_is_on() {
+    let chat_ships = koru_features::Features {
+        agent_views: false,
+        ..koru_features::Features::ALL_ON
+    };
+    koru_features::testing::with(chat_ships, || {
+        assert!(!ShortcutId::Delegate.shown_in_product());
+        for section in [Section::Menu, Section::Tooltip, Section::Guide] {
+            assert_eq!(show_hint(ShortcutId::Delegate, section), None);
+        }
+        assert!(ShortcutId::ToggleAiPane.shown_in_product(), "chat stays");
+        let _ = registry::get(ShortcutId::Delegate);
+    });
+}
