@@ -95,7 +95,7 @@ fn an_alt_click_opens_the_chooser_at_the_press_on_the_middle() {
     alt_click(&mut v, Reference::Node(brief), (400.0, 300.0));
 
     let ask = v.place_chooser.as_ref().expect("the chooser is up");
-    assert_eq!(ask.reference, Reference::Node(brief));
+    assert_eq!(ask.target, Reference::Node(brief).into());
     assert_eq!(
         &ask.pane,
         v.panes.focused_path(),

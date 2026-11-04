@@ -78,8 +78,9 @@ pub struct PressMods {
     pub ctrl: bool,
     /// Extends the selection from its anchor.
     pub shift: bool,
-    /// Alone, on a document, canvas or chat row: ask where it opens — the
-    /// place chooser a reference in a document shows (ADR-58).
+    /// Alone, on a document, canvas or chat row, or a Tasks rail row: ask
+    /// where it opens — the place chooser a reference in a document shows
+    /// (ADR-58).
     pub alt: bool,
 }
 
@@ -4776,8 +4777,9 @@ impl ExploreView {
     /// container. Shift arrives through `View::set_mods`, while Ctrl is part of
     /// the shell's established pointer vocabulary.
     /// …and with every key the press reads, Alt among them: alone, on a
-    /// document, canvas or chat row it means *ask where it opens* — the
-    /// place chooser, at the press — rather than select or open here.
+    /// document, canvas or chat row, or a Tasks rail row, it means *ask where
+    /// it opens* — the place chooser, at the press — rather than select or
+    /// open here.
     pub fn mouse_down_with(
         &mut self,
         area: Rect,
@@ -4867,6 +4869,15 @@ impl ExploreView {
         // through to the view beside the column.
         if self.mode == NavigatorMode::Tasks {
             let top = self.rows_top(area);
+            // Alt alone on a queue, a list or Reminders asks where its page
+            // opens, as a document row does (ADR-58). Asked before the rail
+            // sees the press, so nothing is selected and no list drag is
+            // armed.
+            if mods.asks_where()
+                && let Some(target) = self.rail.target_at(area, top, x, y)
+            {
+                return Outcome::Tasks(rail::TasksRailRequest::ChoosePlace { target, at: (x, y) });
+            }
             return match self.rail.mouse_down(area, top, x, y, ctrl) {
                 Some(request) => Outcome::Tasks(request),
                 None => Outcome::Consumed,

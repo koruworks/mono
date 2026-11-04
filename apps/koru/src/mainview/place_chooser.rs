@@ -14,6 +14,15 @@
 //! Alt+clicked in Explore (`Outcome::ChoosePlace`), which takes the same
 //! five outcomes for that row.
 //!
+//! **And for tasks** (the user's decision, 2026-11-04: *"Alt + clicking
+//! tasks should also open the split component"*): a queue, a list or the
+//! Reminders row in the Tasks rail asks where its page opens, and a task row
+//! on the Tasks page or Home's *Due today* asks where the task's node opens
+//! in its document. What was asked for is a [`PlaceTarget`]: a reference, a
+//! task, or a Tasks page — the two that are not a [`Reference`] are the
+//! window's own, because a rail page is a tab the editor knows nothing of,
+//! and a task is a reference whose open is latched against a row gone stale.
+//!
 //! **The cross is KoruUI's** ([`koru_ui::place_chooser`]): its layout,
 //! hit-testing, hover, keys, drawing and the shape a screen reader hears.
 //! It answers a [`Place`] and knows nothing of what is opening. This file is
@@ -32,6 +41,7 @@
 use std::time::Instant;
 
 use koru_core::schema::WorkspaceDoc;
+use koru_core::{DocumentId, NodeId};
 use koru_editor::{OpenWhere, Reference, SplitSide};
 use koru_ui::place_chooser::{Outcome, Place, PlaceChooser};
 use vello::Scene;
@@ -42,6 +52,7 @@ use winit::window::CursorIcon;
 use super::MainView;
 use super::panes::{self, PanePath, SplitDir};
 use super::tab::TabView;
+use crate::panes::explore::rail::RailTarget;
 
 #[cfg(test)]
 mod tests;
@@ -75,11 +86,35 @@ pub(crate) fn split_dir(side: SplitSide) -> SplitDir {
     }
 }
 
+/// What the chooser was opened for — what each place opens.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PlaceTarget {
+    /// A reference in a document, or an Explore document, canvas or chat
+    /// row: opened through [`MainView::open_reference`].
+    Reference(Reference),
+    /// A task row: the task's node in its document, flashed when it lands.
+    /// A `Reference::Document` with the node, opened the same way — after
+    /// the latch the row's own open sets (`MainView::open_task_node`), so a
+    /// row whose task was unmarked since the page was fetched is refused
+    /// rather than opening the paragraph underneath it (SPEC §3).
+    Task { document: DocumentId, node: NodeId },
+    /// A Tasks rail row: the queue, list or Reminders page it opens. Not a
+    /// reference — a Tasks page is a tab the window makes, not something a
+    /// document can name.
+    TasksPage(RailTarget),
+}
+
+impl From<Reference> for PlaceTarget {
+    fn from(reference: Reference) -> Self {
+        Self::Reference(reference)
+    }
+}
+
 /// One opening of the chooser, and what it was opened for.
 #[derive(Clone, Debug)]
 pub(crate) struct PlaceAsk {
     /// What was Alt+clicked.
-    pub reference: Reference,
+    pub target: PlaceTarget,
     /// The pane a split divides: the one the click was in, or for an
     /// Explore row — Explore has no pane of its own — the focused one.
     pub pane: PanePath,
@@ -88,15 +123,19 @@ pub(crate) struct PlaceAsk {
 }
 
 impl MainView {
-    /// Open the chooser for `reference` at `at`, over the focused pane. Any
+    /// Open the chooser for `target` at `at`, over the focused pane. Any
     /// menu goes: the chooser is the newest thing asked for.
-    pub(super) fn open_place_chooser(&mut self, reference: Reference, at: (f32, f32)) -> bool {
+    pub(super) fn open_place_chooser(
+        &mut self,
+        target: impl Into<PlaceTarget>,
+        at: (f32, f32),
+    ) -> bool {
         self.nested = None;
         self.submenu = None;
         self.menu = None;
         self.tooltip.clear();
         self.place_chooser = Some(PlaceAsk {
-            reference,
+            target: target.into(),
             pane: self.panes.focused_path().clone(),
             chooser: PlaceChooser::open(at),
         });
@@ -115,7 +154,7 @@ impl MainView {
         }
     }
 
-    /// Open the reference at `place`, and close the chooser.
+    /// Open what was asked for at `place`, and close the chooser.
     ///
     /// The pane the chooser was opened over takes the focus back first, when
     /// it is still there, so a split divides the pane the person was looking
@@ -131,7 +170,14 @@ impl MainView {
         koru_ui::keys::debug::write(format_args!(
             "[Koru][input] view place-chooser chose={place:?}"
         ));
-        self.open_reference(ws, ask.reference, where_(place));
+        let where_ = where_(place);
+        match ask.target {
+            PlaceTarget::Reference(reference) => self.open_reference(ws, reference, where_),
+            PlaceTarget::Task { document, node } => {
+                self.open_task_where(ws, document, node, where_)
+            }
+            PlaceTarget::TasksPage(target) => self.open_tasks_page_where(target, where_),
+        };
         true
     }
 

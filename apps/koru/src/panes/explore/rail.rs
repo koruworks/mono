@@ -205,6 +205,14 @@ pub enum TasksRailRequest {
     OpenReminders {
         new_tab: bool,
     },
+    /// Alt alone on a queue, a list or the Reminders row: ask where its page
+    /// opens, with the place chooser at `at` (window coordinates) — the one
+    /// a reference in a document shows (ADR-58). Nothing is selected and no
+    /// drag is armed: the chooser is the answer.
+    ChoosePlace {
+        target: RailTarget,
+        at: (f32, f32),
+    },
     /// A list row was dragged to index `to` in the Lists section. The rows
     /// are already in that order here; what the container owes is the write
     /// that makes the table agree.
@@ -777,6 +785,24 @@ impl TasksRail {
         }
     }
 
+    /// The page a press here would open — a queue, a list or the Reminders
+    /// row — without opening it: nothing is selected, no drag is armed and
+    /// the keyboard position stays. What the column asks before giving a
+    /// modified press a meaning of its own (Alt, which asks where the page
+    /// opens). The heading's `+` and the "+ New list" row name no page.
+    pub fn target_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<RailTarget> {
+        let (row, _) = self
+            .rows(area, top)
+            .into_iter()
+            .find(|(_, r)| r.contains(x, y))?;
+        match row {
+            RailRow::Bucket(bucket) => Some(RailTarget::Bucket(bucket)),
+            RailRow::Reminders => Some(RailTarget::Reminders),
+            RailRow::List(i) => Some(RailTarget::List(self.lists.get(i)?.id)),
+            RailRow::ListsHeading | RailRow::NewList => None,
+        }
+    }
+
     /// A right-click in the column while the rail is showing.
     ///
     /// **Every row that names a page has a menu; the furniture does not.** A
@@ -793,16 +819,7 @@ impl TasksRail {
     /// rename something is a side effect nobody asked for — unlike the library's
     /// `…`, where the menu's verbs *are* about what is selected.
     pub fn context_menu(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<TasksRailRequest> {
-        let (row, _) = self
-            .rows(area, top)
-            .into_iter()
-            .find(|(_, r)| r.contains(x, y))?;
-        let target = match row {
-            RailRow::Bucket(bucket) => RailTarget::Bucket(bucket),
-            RailRow::Reminders => RailTarget::Reminders,
-            RailRow::List(i) => RailTarget::List(self.lists.get(i)?.id),
-            RailRow::ListsHeading | RailRow::NewList => return None,
-        };
+        let target = self.target_at(area, top, x, y)?;
         Some(TasksRailRequest::RowMenu { target, at: (x, y) })
     }
 

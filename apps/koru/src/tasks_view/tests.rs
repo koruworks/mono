@@ -506,6 +506,111 @@ fn a_double_click_goes_to_the_origin_in_a_new_tab() {
     );
 }
 
+/// Where a row's text column is pressed, the row's own open target.
+fn row_text_centre(view: &TasksView, row: usize) -> (f32, f32) {
+    let line = view.line_of_task_for_test(row).expect("a line");
+    let text = view.parts_for_test(view.line_rect_for_test(line)).text;
+    (text.x + text.w * 0.5, text.y + text.h * 0.5)
+}
+
+/// **Alt alone on a row asks where the task opens** (ADR-58): the place
+/// chooser's request, at the press, naming what the row's open names. The
+/// row is selected as any press selects it; nothing opens here.
+#[test]
+fn an_alt_click_on_a_row_asks_where_it_opens() {
+    let row = entry("Ask me", None);
+    let (document, node) = (row.document, row.node);
+    let mut view = view_on(RailTarget::Bucket(Bucket::Today), vec![row]);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    let (x, y) = row_text_centre(&view, 0);
+
+    view.set_mods(ModifiersState::ALT);
+    assert!(koru_workspace_host::View::mouse_down(
+        &mut view, &mut doc, x, y, false
+    ));
+
+    assert_eq!(
+        view.take_request(),
+        Some(Request::ChoosePlace {
+            document,
+            node,
+            at: (x, y),
+        })
+    );
+    assert_eq!(view.selected_for_test(), Some(0), "the row it is about");
+}
+
+/// **Alt with Ctrl or Shift is that key's press** — on this page a plain
+/// select — and never the chooser, as in a document.
+#[test]
+fn alt_with_ctrl_or_shift_on_a_row_does_not_ask() {
+    for (mods, ctrl) in [
+        (ModifiersState::ALT | ModifiersState::CONTROL, true),
+        (ModifiersState::ALT | ModifiersState::SHIFT, false),
+    ] {
+        let mut view = view_on(RailTarget::Bucket(Bucket::Today), vec![entry("x", None)]);
+        let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+            .expect("an in-memory document");
+        let (x, y) = row_text_centre(&view, 0);
+        view.set_mods(mods);
+        koru_workspace_host::View::mouse_down(&mut view, &mut doc, x, y, ctrl);
+        assert_eq!(view.take_request(), None, "{mods:?}: nothing asked");
+        assert_eq!(view.selected_for_test(), Some(0), "{mods:?}: selected");
+    }
+}
+
+/// **A row's own controls keep their meaning under Alt**: the tick still
+/// ticks and the `…` still opens the row's menu. Only the row asks.
+#[test]
+fn alt_on_a_rows_controls_keeps_their_meaning() {
+    let row = entry("Tick me", None);
+    let (document, node) = (row.document, row.node);
+    let mut view = view_on(RailTarget::Bucket(Bucket::Today), vec![row]);
+    let mut doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test")
+        .expect("an in-memory document");
+    let line = view.line_of_task_for_test(0).expect("a line");
+    let parts = view.parts_for_test(view.line_rect_for_test(line));
+    view.set_mods(ModifiersState::ALT);
+
+    let control = parts.control;
+    koru_workspace_host::View::mouse_down(
+        &mut view,
+        &mut doc,
+        control.x + control.w * 0.5,
+        control.y + control.h * 0.5,
+        false,
+    );
+    assert_eq!(
+        view.take_request(),
+        Some(Request::Complete {
+            document,
+            node,
+            completed: true,
+        }),
+        "the tick"
+    );
+
+    // A fresh page: the tick's echo has already moved this one.
+    let mut view = view_on(
+        RailTarget::Bucket(Bucket::Today),
+        vec![entry("Menu me", None)],
+    );
+    view.set_mods(ModifiersState::ALT);
+    let dots = parts.dots;
+    koru_workspace_host::View::mouse_down(
+        &mut view,
+        &mut doc,
+        dots.x + dots.w * 0.5,
+        dots.y + dots.h * 0.5,
+        false,
+    );
+    assert!(
+        matches!(view.take_request(), Some(Request::RowMenu { .. })),
+        "the row's menu"
+    );
+}
+
 /// A double click on the chips, the header or empty space is not a row's
 /// gesture and asks for nothing — the hit test is the gate, exactly as it is
 /// for the single click.

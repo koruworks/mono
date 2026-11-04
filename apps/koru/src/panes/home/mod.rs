@@ -36,7 +36,7 @@ use crate::tasks_view::query::TaskListPanel;
 
 /// What the page asks the container for. Every want is an existing command;
 /// the page only names it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HomeWant {
     /// *Add task*: the Tasks page on Today with the caret in its capture row.
     AddTask,
@@ -44,6 +44,14 @@ pub enum HomeWant {
     OpenDocument(DocumentId),
     /// A Due today row: the task's node in its document.
     OpenTask { document: DocumentId, node: NodeId },
+    /// Alt alone on a Due today row: ask where the task opens, with the
+    /// place chooser at `at` (the page's coordinates) — the one a reference
+    /// in a document shows (ADR-58).
+    ChooseTaskPlace {
+        document: DocumentId,
+        node: NodeId,
+        at: (f32, f32),
+    },
     /// An Agents row, or its *Review*.
     OpenRun(koru_delegate_core::RunId),
 }
@@ -95,6 +103,9 @@ pub struct HomePage {
     /// against.
     drawn: Vec<(Target, Rect)>,
     wants: Vec<HomeWant>,
+    /// The keys held, pushed by the container: Alt alone on a Due today row
+    /// asks where it opens.
+    mods: ModifiersState,
 }
 
 impl Default for HomePage {
@@ -120,6 +131,7 @@ impl HomePage {
             focus: None,
             drawn: Vec::new(),
             wants: Vec::new(),
+            mods: ModifiersState::empty(),
         }
     }
 
@@ -726,10 +738,28 @@ impl View for HomePage {
         }
     }
 
-    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, _ctrl: bool) -> bool {
+    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.pointer = (x, y);
         self.focus = None;
+        // Alt alone on a Due today row asks where the task opens (ADR-58);
+        // Alt with Ctrl or Shift is that press, which opens it as a click.
+        let asks_where = self.mods.alt_key()
+            && !ctrl
+            && !self.mods.control_key()
+            && !self.mods.shift_key()
+            && !self.mods.super_key();
         match self.target_at(x, y) {
+            Some(Target::Task(i)) if asks_where => {
+                if let Some(row) = self.due_rows().get(i) {
+                    let (document, node) = (row.document, row.node);
+                    self.wants.push(HomeWant::ChooseTaskPlace {
+                        document,
+                        node,
+                        at: (x, y),
+                    });
+                }
+                true
+            }
             Some(target) => {
                 self.activate(target);
                 true
@@ -762,6 +792,10 @@ impl View for HomePage {
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
         };
         self.scroll = (self.scroll - lines).clamp(0.0, self.max_scroll());
+    }
+
+    fn set_mods(&mut self, mods: ModifiersState) {
+        self.mods = mods;
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
@@ -860,5 +894,84 @@ mod tests {
         assert_eq!(page.take_wants(), vec![HomeWant::AddTask]);
         assert!(View::mouse_move(&mut page, 10.0, 10.0));
         assert_eq!(page.hover, Some(Target::AddTask));
+    }
+
+    /// A page with one open task due today, drawn at `row`.
+    fn with_a_due_task(row: Rect) -> (HomePage, DocumentId, NodeId) {
+        let mut page = HomePage::new();
+        let workspace = koru_store_core::ids::WorkspaceId::new();
+        let document = koru_store_core::ids::DocumentId::new();
+        let node = NodeId::new();
+        let answered = koru_store_wire::tasks::TaskQueryResponse {
+            rows: vec![koru_store_wire::tasks::TaskRow {
+                workspace,
+                document,
+                node: node.to_storage(),
+                task: format!(
+                    "task:{}:{}:{}",
+                    workspace.to_storage(),
+                    document.to_storage(),
+                    node.to_storage()
+                ),
+                node_kind: "paragraph".to_owned(),
+                lifecycle: "open".to_owned(),
+                document_trashed: false,
+                in_trash: false,
+                breadcrumb: "Notes".to_owned(),
+                title: "Ship it".to_owned(),
+                attributes: Vec::new(),
+            }],
+            definitions: Vec::new(),
+            tags: Vec::new(),
+            groups: Vec::new(),
+            projected: true,
+            updating_workspaces: Vec::new(),
+            limit: 100,
+            next_after: None,
+            restarted: false,
+            covered: None,
+        };
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 4).expect("a real day");
+        page.panel_mut().accept_for_test(&answered, today, 0);
+        let (document, node) = {
+            let rows = page.due_rows();
+            let row = rows.first().expect("the task is due");
+            (row.document, row.node)
+        };
+        page.drawn = vec![(Target::Task(0), row)];
+        (page, document, node)
+    }
+
+    /// **Alt alone on a Due today row asks where the task opens** (ADR-58):
+    /// the place chooser's want, at the press, for what the row's own press
+    /// opens. Alt with Ctrl or Shift is that press, which opens it.
+    #[test]
+    fn an_alt_click_on_a_due_task_asks_where_it_opens() {
+        let (mut page, document, node) = with_a_due_task(Rect::new(0.0, 40.0, 300.0, 44.0));
+        let mut doc = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t").unwrap();
+
+        View::set_mods(&mut page, ModifiersState::ALT);
+        assert!(View::mouse_down(&mut page, &mut doc, 10.0, 50.0, false));
+        assert_eq!(
+            page.take_wants(),
+            vec![HomeWant::ChooseTaskPlace {
+                document,
+                node,
+                at: (10.0, 50.0),
+            }]
+        );
+
+        for (mods, ctrl) in [
+            (ModifiersState::ALT | ModifiersState::CONTROL, true),
+            (ModifiersState::ALT | ModifiersState::SHIFT, false),
+        ] {
+            View::set_mods(&mut page, mods);
+            assert!(View::mouse_down(&mut page, &mut doc, 10.0, 50.0, ctrl));
+            assert_eq!(
+                page.take_wants(),
+                vec![HomeWant::OpenTask { document, node }],
+                "{mods:?}: the row's own press"
+            );
+        }
     }
 }

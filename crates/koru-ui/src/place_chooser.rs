@@ -8,8 +8,9 @@
 //! is being opened or what a side means; it answers a [`Place`], and the
 //! host does the rest.
 //!
-//! Consumers: Alt+click on a reference in a document, and on a document or
-//! chat row in the workspace navigator (ADR-58's amendment). The host
+//! Consumers: Alt+click on a reference in a document, on a document or
+//! chat row in the workspace navigator, on a queue or list in the Tasks rail
+//! and on a task row (ADR-58's amendment). The host
 //! owns the modal plumbing (the blocker layer, the split preview over the
 //! pane an arm would divide, the tooltip it names a target in) and what each
 //! answer opens.

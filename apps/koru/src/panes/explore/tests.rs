@@ -4036,6 +4036,74 @@ fn a_press_on_a_rail_row_reports_the_bucket() {
     );
 }
 
+/// **Alt+click on a rail row asks where its page opens** (ADR-58), as it
+/// does on a document row: the place chooser for that queue, list or the
+/// Reminders page, at the press — with nothing selected and no list drag
+/// armed. Ctrl+Alt is Ctrl's press, a new tab; the `+` keeps its meaning.
+#[test]
+fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
+    let mut view = ExploreView::new();
+    view.show_tasks();
+    let list = koru_core::ids::ListId::new();
+    view.rail_mut().set_lists(vec![rail::RailList {
+        id: list,
+        name: "Bike".to_owned(),
+        color: None,
+        count: 0,
+        overdue: 0,
+    }]);
+    let a = area();
+    let top = view.rail_top(a);
+    let alt = PressMods {
+        alt: true,
+        ..PressMods::default()
+    };
+    let rows = view.rail().rows(a, top);
+    let at = |want: rail::RailRow| {
+        rows.iter()
+            .find(|(row, _)| *row == want)
+            .map(|(_, r)| r.centre())
+            .unwrap_or_else(|| panic!("the rail has {want:?}"))
+    };
+    let mut cases = vec![
+        (
+            rail::RailRow::Bucket(rail::Bucket::Next),
+            rail::RailTarget::Bucket(rail::Bucket::Next),
+        ),
+        (rail::RailRow::List(0), rail::RailTarget::List(list)),
+    ];
+    // Absent, not dimmed, in a build that hides reminders.
+    if koru_features::reminders() {
+        cases.push((rail::RailRow::Reminders, rail::RailTarget::Reminders));
+    }
+    for (row, target) in cases {
+        let (x, y) = at(row);
+        assert_eq!(
+            view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
+            Outcome::Tasks(rail::TasksRailRequest::ChoosePlace { target, at: (x, y) }),
+            "{row:?}"
+        );
+        assert_eq!(view.rail().selected(), None, "{row:?}: nothing selected");
+        assert!(!view.rail().dragging(), "{row:?}: no drag armed");
+    }
+
+    let (x, y) = at(rail::RailRow::Bucket(rail::Bucket::Next));
+    assert_eq!(
+        view.mouse_down_with(a, (1200.0, 800.0), x, y, PressMods { ctrl: true, ..alt }),
+        Outcome::Tasks(rail::TasksRailRequest::OpenBucket {
+            bucket: rail::Bucket::Next,
+            new_tab: true
+        }),
+        "Ctrl's press"
+    );
+    let (x, y) = at(rail::RailRow::NewList);
+    assert_eq!(
+        view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
+        Outcome::Tasks(rail::TasksRailRequest::BeginNewList),
+        "a row that names no page keeps its meaning"
+    );
+}
+
 /// The rail draws — every row of it, with a field open and with counts on —
 /// and leaves the scene balanced.
 ///

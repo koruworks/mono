@@ -3474,7 +3474,7 @@ fn an_alt_click_on_a_row_opens_the_place_chooser_at_the_press() {
     alt_press(&mut v, &mut workspace.ws, at);
 
     let ask = v.place_chooser.as_ref().expect("the chooser is up");
-    assert_eq!(ask.reference, koru_editor::Reference::Node(other));
+    assert_eq!(ask.target, koru_editor::Reference::Node(other).into());
     assert_eq!(ask.chooser.at(), at, "at the press");
     assert_eq!(&ask.pane, v.panes.focused_path(), "over the focused pane");
     assert_eq!(
@@ -11921,6 +11921,162 @@ fn right_clicking_a_task_row_opens_its_menu_on_that_press() {
     ));
     let menu = v.menu.as_ref().expect("the row's menu, on this press");
     assert_eq!(menu.subject, MenuSubject::Task { document, node });
+}
+
+// --------------------------------------------- Alt+click on tasks (ADR-58)
+//
+// The user's decision (2026-11-04): "Alt + clicking tasks should also open the
+// split component." The Tasks rail's rows and the Tasks page's rows ask where
+// they open, with the chooser a reference in a document shows.
+
+/// The split an arm makes: its axis, and the new, focused pane's side.
+fn arm_split(place: koru_ui::place_chooser::Place) -> Option<(SplitAxis, Vec<u8>)> {
+    use koru_ui::place_chooser::Place;
+    match place {
+        Place::Up => Some((SplitAxis::Horizontal, vec![0])),
+        Place::Down => Some((SplitAxis::Horizontal, vec![1])),
+        Place::Left => Some((SplitAxis::Vertical, vec![0])),
+        Place::Right => Some((SplitAxis::Vertical, vec![1])),
+        Place::Middle => None,
+    }
+}
+
+/// Where the seeded task row's own open target is pressed, in the window.
+fn task_row_at(v: &MainView) -> (f32, f32) {
+    let page = v.focused_view_rect();
+    let TabView::Tasks(tab) = &v.tabs().active_tab().view else {
+        panic!("a Tasks tab is open");
+    };
+    let (x, y) = tab
+        .task_row_rect_for_test(0)
+        .expect("the seeded row is drawn")
+        .centre();
+    (page.x + x, page.y + y)
+}
+
+/// **Alt+click on a queue asks where its page opens**, and each place opens
+/// it there: an arm, a Tasks page of its own in a new pane on that side, the
+/// document it was asked over still in the other; the middle, a new tab in
+/// front with no split. Nothing is selected until a place is chosen; then
+/// the rail cards the page in front.
+#[test]
+fn an_alt_click_on_a_rail_row_opens_its_page_where_it_is_chosen() {
+    use crate::mainview::place_chooser::PlaceTarget;
+    use crate::panes::explore::rail::{Bucket, RailRow, RailTarget};
+    use koru_ui::place_chooser::Place;
+    let upcoming = RailTarget::Bucket(Bucket::Upcoming);
+    for place in Place::ALL {
+        let (mut v, mut w) = on_tasks();
+        let notes = v.document_root().expect("a document in front");
+        let tabs = v.tabs().len();
+        let at = rail_row(&v, RailRow::Bucket(Bucket::Upcoming)).centre();
+        alt_press(&mut v, &mut w.ws, at);
+
+        let ask = v.place_chooser.as_ref().expect("the chooser is up");
+        assert_eq!(ask.target, PlaceTarget::TasksPage(upcoming));
+        assert_eq!(ask.chooser.at(), at, "at the press");
+        assert_eq!(v.tasks_selection(), None, "nothing selected yet");
+        assert_eq!(v.tabs().len(), tabs, "nothing opens until it is chosen");
+
+        assert!(v.choose_place(&w.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        let TabView::Tasks(page) = &v.tabs().active_tab().view else {
+            panic!("{place:?}: the Tasks page in front")
+        };
+        assert_eq!(page.target(), upcoming, "{place:?}");
+        assert_eq!(v.tasks_selection(), Some(upcoming), "{place:?}: carded");
+        assert_eq!(split_shape(&v), arm_split(place), "{place:?}");
+        match arm_split(place) {
+            None => assert_eq!(v.tabs().len(), tabs + 1, "a new tab"),
+            Some((_, side)) => {
+                let beside = PanePath::root().child(1 - side[0] as usize);
+                assert_eq!(
+                    v.panes
+                        .group(&beside)
+                        .and_then(|group| group.active_tab().view.root()),
+                    Some(notes),
+                    "{place:?}: the document stays in the pane it was asked over"
+                );
+            }
+        }
+    }
+}
+
+/// **Alt+click on a task row asks where the task opens**, and each place
+/// opens what the row's own open names — its node in its document, flashed
+/// when it lands — there: an arm splits the Tasks page's pane when the
+/// document lands, pinned to this window; the middle is a new tab. The open
+/// is latched like the row's own, so a task gone since the page was fetched
+/// is refused at the landing.
+#[test]
+fn an_alt_click_on_a_task_row_opens_the_task_where_it_is_chosen() {
+    use crate::mainview::place_chooser::{PlaceTarget, where_};
+    use koru_ui::place_chooser::Place;
+    for place in Place::ALL {
+        let (mut v, mut w, document, node) = on_a_task_row(Vec::new());
+        let at = task_row_at(&v);
+        while View::take_pane_request(&mut v).is_some() {}
+        let lands = v.pending_lands.len();
+        alt_press(&mut v, &mut w.ws, at);
+
+        let ask = v.place_chooser.as_ref().expect("the chooser is up");
+        assert_eq!(ask.target, PlaceTarget::Task { document, node });
+        assert_eq!(ask.chooser.at(), at, "at the press");
+        assert_eq!(&ask.pane, v.panes.focused_path(), "over the page's pane");
+        assert!(
+            View::take_pane_request(&mut v).is_none(),
+            "nothing opens until a place is chosen"
+        );
+
+        assert!(v.choose_place(&w.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        assert_eq!(v.pending_lands.len(), lands + 1, "{place:?}");
+        assert_eq!(
+            v.pending_lands.back().copied(),
+            Some((document, where_(place))),
+            "{place:?}: the landing knows where"
+        );
+        let disposition = match place {
+            Place::Middle => koru_workspace_host::SearchTargetDisposition::CurrentWindow,
+            _ => koru_workspace_host::SearchTargetDisposition::SourceWindow,
+        };
+        assert_eq!(
+            View::take_pane_request(&mut v),
+            Some(koru_workspace_host::PaneRequest::Navigate {
+                target: koru_workspace_host::NavigationTarget::Document {
+                    document,
+                    node: Some(node),
+                },
+                match_text: Some(String::new()),
+                disposition,
+            }),
+            "{place:?}"
+        );
+        assert!(
+            matches!(v.pending_task_open, Some((d, n, _)) if d == document && n == node),
+            "{place:?}: latched against a task that has gone"
+        );
+    }
+}
+
+/// **Alt with Ctrl or Shift on a task row is that press**, never the chooser.
+#[test]
+fn alt_with_ctrl_or_shift_on_a_task_row_does_not_ask() {
+    use winit::keyboard::ModifiersState;
+    for (mods, ctrl) in [
+        (ModifiersState::ALT | ModifiersState::CONTROL, true),
+        (ModifiersState::ALT | ModifiersState::SHIFT, false),
+    ] {
+        let (mut v, mut w, _, _) = on_a_task_row(Vec::new());
+        let (x, y) = task_row_at(&v);
+        v.set_mods(mods);
+        v.mouse_down(&mut w.ws, x, y, ctrl);
+        v.mouse_up(&mut w.ws);
+        v.set_mods(ModifiersState::empty());
+        assert!(v.place_chooser.is_none(), "{mods:?}: no chooser");
+    }
 }
 
 /// **A right-click on a queue opens one row.** It used to open nothing, on the

@@ -143,6 +143,15 @@ pub enum Request {
         node: NodeId,
         new_tab: bool,
     },
+    /// Alt alone on a row: ask where the task opens, with the place chooser
+    /// at `at` (this page's coordinates) — the one a reference in a document
+    /// shows (ADR-58). The arms and the middle open what [`Open`](Self::Open)
+    /// would.
+    ChoosePlace {
+        document: DocumentId,
+        node: NodeId,
+        at: (f32, f32),
+    },
     /// The row's `…`, or a right-click on the row.
     ///
     /// `native` is a task typed into this page — it lives in the workspace's
@@ -578,7 +587,10 @@ impl TasksView {
                 node,
                 list,
             } => (*document, *node, Patch::List(*list)),
-            Request::Open { .. } | Request::RowMenu { .. } | Request::OpenList { .. } => return,
+            Request::Open { .. }
+            | Request::ChoosePlace { .. }
+            | Request::RowMenu { .. }
+            | Request::OpenList { .. } => return,
         };
         crate::tasks::debug_line(format_args!(
             "page: echo pushed by this page ({} standing)",
@@ -2356,7 +2368,8 @@ impl TasksView {
 
     // ------------------------------------------------------------- input
 
-    fn press(&mut self, x: f32, y: f32) -> bool {
+    /// `asks_where` is Alt alone: on a row it asks where the task opens.
+    fn press(&mut self, x: f32, y: f32, asks_where: bool) -> bool {
         // One panel at a time, and the picker is the one that can be up over a
         // row: a press inside it chooses, a press outside dismisses it and does
         // nothing more — every menu in this app.
@@ -2462,8 +2475,22 @@ impl TasksView {
             // a row to act on with the keyboard, or pressing near a row's edge
             // all threw the page away and replaced it with a document. Leaving
             // is now something asked for by name, on the row's own menu.
+            //
+            // **Alt alone asks where it opens** (the user's decision,
+            // 2026-11-04; ADR-58): the place chooser at the press, for what
+            // the row's open names — its node in its document. The row is
+            // selected as any press selects it, so the chooser is plainly
+            // about this one. The tick, the `…` and the list chip are above,
+            // and keep their meaning under Alt.
             Some(Hit::Row(i)) => {
                 self.select_row(i);
+                if asks_where && let Some(row) = self.rows.get(i) {
+                    self.pending = Some(Request::ChoosePlace {
+                        document: row.document,
+                        node: row.node,
+                        at: (x, y),
+                    });
+                }
                 true
             }
             None => false,
@@ -2796,8 +2823,15 @@ impl View for TasksView {
         }
     }
 
-    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, _ctrl: bool) -> bool {
-        self.press(x, y)
+    fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        // Alt with nothing else is the place chooser's press (ADR-58); Alt
+        // with Ctrl or Shift is that key's press, as in a document.
+        let asks_where = self.mods.alt_key()
+            && !ctrl
+            && !self.mods.control_key()
+            && !self.mods.shift_key()
+            && !self.mods.super_key();
+        self.press(x, y, asks_where)
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {

@@ -8600,6 +8600,12 @@ impl MainView {
                 self.close_list_field();
                 self.open_tasks_tab(crate::panes::explore::rail::RailTarget::Reminders, new_tab)
             }
+            // Alt+click on a queue, a list or Reminders: the place chooser at
+            // the press, whose answer opens that page (ADR-58).
+            Request::ChoosePlace { target, at } => {
+                self.close_list_field();
+                self.open_place_chooser(place_chooser::PlaceTarget::TasksPage(target), at)
+            }
             Request::BeginNewList => {
                 let color = self.explore.rail().suggested_color().to_owned();
                 self.close_list_field();
@@ -9929,15 +9935,25 @@ impl MainView {
         }
         let (lx, ly) = self.to_leaf(x, y);
         let page_icon_commit = self.tabs().active_tab().view.is_setting_page_icon();
+        // The keys held, pushed again to a page that reads Alt off them: the
+        // press may have just focused its pane, and the keys only ever went
+        // to the view that was in front then.
+        let mods = self.mods;
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.mouse_down(doc, lx, ly, ctrl),
             TabView::Manage(w) => View::mouse_down(w, doc, lx, ly, ctrl),
             TabView::Trash(t) => View::mouse_down(t, doc, lx, ly, ctrl),
-            TabView::Tasks(t) => View::mouse_down(t, doc, lx, ly, ctrl),
+            TabView::Tasks(t) => {
+                View::set_mods(t, mods);
+                View::mouse_down(t, doc, lx, ly, ctrl)
+            }
             TabView::Reminders(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Settings(s) => View::mouse_down(s, doc, lx, ly, ctrl),
-            TabView::Home(h) => View::mouse_down(h, doc, lx, ly, ctrl),
+            TabView::Home(h) => {
+                View::set_mods(h, mods);
+                View::mouse_down(h, doc, lx, ly, ctrl)
+            }
             TabView::Feedback(f) => View::mouse_down(f, doc, lx, ly, ctrl),
             TabView::Diff(d) => View::mouse_down(d, doc, lx, ly, ctrl),
             TabView::AiChat(a) => View::mouse_down(a, doc, lx, ly, ctrl),
@@ -11168,6 +11184,7 @@ impl View for MainView {
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
             TabView::Tasks(t) => View::set_mods(t, mods),
+            TabView::Home(h) => View::set_mods(h, mods),
             TabView::Reminders(r) => View::set_mods(r, mods),
             TabView::Leaf(l) => View::set_mods(l, mods),
             TabView::Canvas(c) => View::set_mods(c, mods),
@@ -16281,6 +16298,15 @@ impl MainView {
                 }
                 HomeWant::OpenTask { document, node } => {
                     self.open_document_at(document, node);
+                }
+                // Alt+click on a Due today row: the place chooser at the
+                // press, over Home's pane, whose answer opens the task.
+                HomeWant::ChooseTaskPlace { document, node, at } => {
+                    let page = self.focused_view_rect();
+                    self.open_place_chooser(
+                        place_chooser::PlaceTarget::Task { document, node },
+                        (at.0 + page.x, at.1 + page.y),
+                    );
                 }
                 HomeWant::OpenRun(run) => {
                     self.open_run_tab(run);

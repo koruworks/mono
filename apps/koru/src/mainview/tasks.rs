@@ -146,6 +146,11 @@ impl MainView {
                 self.relayout();
             }
         }
+        self.tasks_page_in_front(target)
+    }
+
+    /// The page on `target` is the active tab now: name it and card the rail.
+    fn tasks_page_in_front(&mut self, target: RailTarget) -> bool {
         // **The strip names the page**, so it moves when the page does. This is
         // the pressed half; a list renamed underneath the tab is caught by
         // MainView::refresh_labels, which runs on the tick nobody pressed.
@@ -158,6 +163,68 @@ impl MainView {
         // the tab was restored from a session rather than pressed for.
         self.explore.rail_mut().set_selected(Some(target));
         true
+    }
+
+    /// **A Tasks rail row's page, where the place chooser said** — Alt+click
+    /// on a queue, a list or the Reminders row (ADR-58). An arm puts a page of
+    /// its own in a new pane split off the focused one; the middle opens one
+    /// in a new tab, in front. Neither re-points the tab already on a page: a
+    /// page you asked to put somewhere is a page you parked, the reason
+    /// Ctrl+click opens a second one. The rail cards it, because it is the tab
+    /// in front.
+    ///
+    /// The other dispositions are the rail's own gestures, so they go through
+    /// [`open_tasks_tab`](Self::open_tasks_tab); a page has no window of its
+    /// own to open in.
+    pub(super) fn open_tasks_page_where(
+        &mut self,
+        target: RailTarget,
+        where_: koru_editor::OpenWhere,
+    ) -> bool {
+        use koru_editor::OpenWhere;
+        match where_ {
+            OpenWhere::Reuse | OpenWhere::SameTab => return self.open_tasks_tab(target, false),
+            OpenWhere::BackgroundTab => return self.open_tasks_tab(target, true),
+            OpenWhere::NewWindow => return false,
+            OpenWhere::NewTab | OpenWhere::Split(_) => {}
+        }
+        // The product flags, answered at this door as `open_tasks_tab`
+        // answers them at its own.
+        if !rail_target_shown(target) {
+            return false;
+        }
+        match where_ {
+            OpenWhere::Split(side) => self.split_with(Tab::tasks(target), side),
+            _ => {
+                self.tabs_mut().push(Tab::tasks(target));
+                self.slides_mut().clear();
+                self.relayout();
+            }
+        }
+        self.tasks_page_in_front(target)
+    }
+
+    /// **A task's node, where the place chooser said** — Alt+click on a task
+    /// row (ADR-58). The latch [`open_task_node`](Self::open_task_node) sets,
+    /// so a row whose task has gone is refused at the landing; then the door
+    /// every reference goes through, with the node, so the landing flashes
+    /// the row it arrives on as the row's own open does.
+    pub(super) fn open_task_where(
+        &mut self,
+        ws: &koru_core::schema::WorkspaceDoc,
+        document: DocumentId,
+        node: NodeId,
+        where_: koru_editor::OpenWhere,
+    ) -> bool {
+        self.pending_task_open = Some((document, node, Self::gesture_deadline()));
+        self.open_reference(
+            ws,
+            koru_editor::Reference::Document(koru_editor::trigger::DocumentTarget {
+                document,
+                node: Some(node),
+            }),
+            where_,
+        )
     }
 
     /// What the Tasks tab asked for.
@@ -187,6 +254,15 @@ impl MainView {
                 new_tab,
             } => {
                 self.open_task_node(document, node, new_tab);
+            }
+            // Alt+click on a row: the place chooser at the press, over the
+            // pane the page is in, whose answer opens the task (ADR-58).
+            crate::tasks_view::Request::ChoosePlace { document, node, at } => {
+                let page = self.focused_view_rect();
+                self.open_place_chooser(
+                    super::place_chooser::PlaceTarget::Task { document, node },
+                    (at.0 + page.x, at.1 + page.y),
+                );
             }
             crate::tasks_view::Request::RowMenu {
                 document,
