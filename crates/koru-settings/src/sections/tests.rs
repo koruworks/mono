@@ -100,9 +100,57 @@ fn every_global_default_is_the_one_the_current_reader_produces() {
         settings.body_font,
         settings.headings_font,
         settings.code_font,
+        settings.chat_font,
     ] {
         assert_eq!(role, FontSetting::FollowDefault);
     }
+}
+
+/// **A section with no Chat font reads as following the app font**
+/// (koru-ai D79): every section a build before it answers, and every
+/// settings file written before it, lacks the field — and the chat then
+/// looks exactly as it did.
+#[test]
+fn a_global_section_without_a_chat_font_follows_the_app_font() {
+    let mut older = serde_json::to_value(GlobalSettings {
+        ui_font: FontSetting::Chosen(FontFamily::Lora),
+        ..GlobalSettings::default()
+    })
+    .unwrap();
+    assert!(
+        older.as_object_mut().unwrap().remove("chat_font").is_some(),
+        "the section carries it now"
+    );
+    let read: GlobalSettings = serde_json::from_value(older).unwrap();
+    assert_eq!(read.chat_font, FontSetting::FollowDefault);
+    assert_eq!(read.ui_font, FontSetting::Chosen(FontFamily::Lora));
+}
+
+/// A chosen Chat font travels through a patch and back out of the section,
+/// and *follow* takes it back.
+#[test]
+fn a_chosen_chat_font_round_trips_and_follow_takes_it_back() {
+    let patch: GlobalPatch =
+        serde_json::from_str(r#"{"chat_font":{"chosen":"sourceserif4"}}"#).unwrap();
+    assert!(patch.touches_roaming() && !patch.touches_device());
+    patch.validate().unwrap();
+    let mut settings = GlobalSettings::default();
+    patch.apply(&mut settings);
+    assert_eq!(
+        settings.chat_font,
+        FontSetting::Chosen(FontFamily::SourceSerif4)
+    );
+    assert_eq!(settings.ui_font, FontSetting::FollowDefault, "untouched");
+    let wire = serde_json::to_string(&settings).unwrap();
+    let back: GlobalSettings = serde_json::from_str(&wire).unwrap();
+    assert_eq!(back.chat_font, settings.chat_font);
+
+    GlobalPatch {
+        chat_font: Some(FontSetting::FollowDefault),
+        ..GlobalPatch::default()
+    }
+    .apply(&mut settings);
+    assert_eq!(settings.chat_font, FontSetting::FollowDefault);
 }
 
 #[test]
@@ -435,7 +483,7 @@ fn a_global_section_with_an_unknown_field_reads_and_keeps_what_it_knows() {
     })
     .unwrap();
     let object = newer.as_object_mut().unwrap();
-    object.insert("chat_font".into(), serde_json::json!("follow"));
+    object.insert("a_later_font".into(), serde_json::json!("follow"));
     object.insert(
         "a_later_setting".into(),
         serde_json::json!({ "nested": [1, 2] }),
@@ -473,7 +521,7 @@ fn the_terminal_and_ai_sections_ignore_an_unknown_field_too() {
 /// than a write that silently did nothing.
 #[test]
 fn every_patch_still_refuses_an_unknown_field() {
-    assert!(serde_json::from_str::<GlobalPatch>(r#"{"chat_font":"follow"}"#).is_err());
+    assert!(serde_json::from_str::<GlobalPatch>(r#"{"chat_fnt":"follow_default"}"#).is_err());
     assert!(serde_json::from_str::<TerminalPatch>(r#"{"fontt":"mono"}"#).is_err());
     assert!(serde_json::from_str::<AiPatch>(r#"{"openai_modle":"x"}"#).is_err());
 }

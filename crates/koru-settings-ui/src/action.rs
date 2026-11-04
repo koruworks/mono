@@ -19,21 +19,30 @@ use koru_settings::{
     ViewModeChoice,
 };
 
-/// Which of the four font roles a chip belongs to.
+/// Which of the five font roles a chip belongs to.
 ///
-/// The order is welcome's, and it is the order the roles are drawn in: app,
-/// body, headings, code.
+/// The first four are welcome's, in the order they are drawn: app, body,
+/// headings, code. The chat's is drawn beside the app's, and is the one
+/// role whose default is another role — the app font, followed live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontRole {
     App,
     Body,
     Headings,
     Code,
+    /// The AI chat's messages and composer.
+    Chat,
 }
 
 impl FontRole {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 4] = [Self::App, Self::Body, Self::Headings, Self::Code];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::App,
+        Self::Body,
+        Self::Headings,
+        Self::Code,
+        Self::Chat,
+    ];
 
     /// The label welcome drew, carried across unchanged.
     #[cfg(test)]
@@ -43,6 +52,7 @@ impl FontRole {
             Self::Body => "Body font",
             Self::Headings => "Headings font",
             Self::Code => "Code font",
+            Self::Chat => "Chat font",
         }
     }
 
@@ -54,11 +64,12 @@ impl FontRole {
             Self::Body => koru_i18n::t(lang, koru_i18n::Key::SettingsBody),
             Self::Headings => koru_i18n::t(lang, koru_i18n::Key::SettingsHeadings),
             Self::Code => koru_i18n::t(lang, koru_i18n::Key::SettingsCode),
+            Self::Chat => koru_i18n::t(lang, koru_i18n::Key::SettingsChatFont),
         }
     }
 
     /// The font chosen for this role: what its list ticks, never the one
-    /// being previewed.
+    /// being previewed. For the chat while it follows, the app font's.
     pub(crate) fn current(self) -> FontChoice {
         koru_draw::theme::chosen_font(self.slot())
     }
@@ -71,6 +82,7 @@ impl FontRole {
             Self::Body => FontSlot::Body,
             Self::Headings => FontSlot::Headings,
             Self::Code => FontSlot::Code,
+            Self::Chat => FontSlot::Chat,
         }
     }
 
@@ -80,6 +92,7 @@ impl FontRole {
             Self::Body => koru_draw::theme::set_body_font(family),
             Self::Headings => koru_draw::theme::set_headings_font(family),
             Self::Code => koru_draw::theme::set_code_font(family),
+            Self::Chat => koru_draw::theme::set_chat_font(family),
         }
     }
 }

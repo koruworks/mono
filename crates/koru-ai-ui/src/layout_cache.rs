@@ -171,7 +171,7 @@ pub(crate) fn reconcile(
         // A streaming answer is drawn from its blocks; laying all of its
         // text out again on every delta is what the blocks spare.
         let layout = if input.state == MessageState::Pending && !input.blocks.is_empty() {
-            engine.simple_layout_wrapped("", theme::role::ui(), input.wrap_width)
+            crate::chat_text_layout(engine, "", input.wrap_width)
         } else {
             display_layout(engine, &input.display, &input.links, input.wrap_width)
         };
@@ -216,7 +216,7 @@ pub(crate) fn display_layout(
         start += line.len();
     }
     if links.is_empty() && quoted.is_empty() {
-        return engine.simple_layout_wrapped(display, theme::role::ui(), wrap_width);
+        return crate::chat_text_layout(engine, display, wrap_width);
     }
     let style = theme::role::ui();
     let ranges: Vec<koru_draw::text::RangeStyle> = quoted
@@ -232,9 +232,10 @@ pub(crate) fn display_layout(
             strikethrough: false,
         }))
         .collect();
-    engine.styled_layout(
+    engine.styled_layout_in(
         display,
         style.metrics,
+        theme::chat_stack(),
         style.weight.value(),
         wrap_width,
         None,

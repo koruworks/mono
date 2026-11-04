@@ -230,6 +230,14 @@ fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
             PreviewSlot::Font(role.slot()),
             theme::font_preview_value(*family),
         )),
+        // *Follow app* on the chat's list shows the face it would follow.
+        Action::FontSetting(role, koru_settings::FontSetting::FollowDefault) => Some((
+            PreviewSlot::Font(role.slot()),
+            theme::font_preview_value(theme::resolve_font(
+                role.slot(),
+                &koru_settings::FontSetting::FollowDefault,
+            )),
+        )),
         Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u16::from(*px))),
         Action::IconPack(choice) => Some((
             PreviewSlot::IconPack,
@@ -1065,13 +1073,14 @@ impl SettingsSurface {
     }
 
     /// Every slot a list can preview, as it reads now.
-    fn previews_shown() -> [Option<u16>; 6] {
+    fn previews_shown() -> [Option<u16>; 7] {
         use theme::FontSlot;
         [
             PreviewSlot::Font(FontSlot::Ui),
             PreviewSlot::Font(FontSlot::Body),
             PreviewSlot::Font(FontSlot::Headings),
             PreviewSlot::Font(FontSlot::Code),
+            PreviewSlot::Font(FontSlot::Chat),
             PreviewSlot::DocTextSize,
             PreviewSlot::IconPack,
         ]

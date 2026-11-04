@@ -131,6 +131,65 @@ fn a_font_role_keeps_its_setting_apart_from_its_face() {
     set_font_setting(FontSlot::Headings, was);
 }
 
+/// **The chat font follows the app font until chosen** (koru-ai D79) — live,
+/// not as a copy taken when it was set: an App font change, and a preview of
+/// one, carry an unchosen chat with them; a chosen one stays put; and a
+/// chosen family missing here draws the app font, keeping its name.
+#[test]
+fn the_chat_font_follows_the_app_font_until_chosen() {
+    use koru_settings::{FamilyName, FontFamily, FontSetting};
+    let _serial = super::preview::SERIAL
+        .lock()
+        .unwrap_or_else(|held| held.into_inner());
+    let (was_ui, was_chat) = (font_setting(FontSlot::Ui), font_setting(FontSlot::Chat));
+
+    set_font_setting(FontSlot::Chat, FontSetting::FollowDefault);
+    set_ui_font(FontChoice::Poppins);
+    assert_eq!(chat_font(), FontChoice::Poppins);
+    set_ui_font(FontChoice::Nunito);
+    assert_eq!(chat_font(), FontChoice::Nunito, "followed, not copied");
+    assert_eq!(chosen_font(FontSlot::Chat), FontChoice::Nunito);
+    assert_eq!(chat_stack(), FontChoice::Nunito.stack());
+    {
+        let _preview = Preview::new(
+            PreviewSlot::Font(FontSlot::Ui),
+            font_preview_value(FontChoice::Lora),
+        );
+        assert_eq!(chat_font(), FontChoice::Lora, "an App font preview too");
+    }
+
+    set_chat_font(FontChoice::SourceSerif4);
+    assert_eq!(
+        font_setting(FontSlot::Chat),
+        FontSetting::Chosen(FontFamily::SourceSerif4)
+    );
+    set_ui_font(FontChoice::Inter);
+    assert_eq!(chat_font(), FontChoice::SourceSerif4, "a choice stays put");
+    assert_eq!(ui_font(), FontChoice::Inter, "and the app font is its own");
+    {
+        let _preview = Preview::new(
+            PreviewSlot::Font(FontSlot::Chat),
+            font_preview_value(FontChoice::Manrope),
+        );
+        assert_eq!(chat_font(), FontChoice::Manrope);
+        assert_eq!(chosen_font(FontSlot::Chat), FontChoice::SourceSerif4);
+        assert_eq!(ui_font(), FontChoice::Inter, "a chat preview is the chat's");
+    }
+
+    let missing = FontSetting::Installed(FamilyName::new("No Such Face 9000").unwrap());
+    set_font_setting(FontSlot::Chat, missing.clone());
+    assert_eq!(font_setting(FontSlot::Chat), missing, "the name is kept");
+    set_ui_font(FontChoice::Poppins);
+    assert_eq!(chat_font(), FontChoice::Poppins);
+    assert_eq!(
+        missing_font(FontSlot::Chat).as_deref(),
+        Some("No Such Face 9000")
+    );
+
+    set_font_setting(FontSlot::Ui, was_ui);
+    set_font_setting(FontSlot::Chat, was_chat);
+}
+
 /// Each theme keeps its own base colour; neither is derived from the other,
 /// and no choice is the theme's own ground.
 #[test]

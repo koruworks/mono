@@ -2513,6 +2513,8 @@ pub enum Key {
     SettingsCaret,
     SettingsShape,
     SettingsAppFont,
+    SettingsChatFont,
+    SettingsChatFontHint,
     SettingsBody,
     SettingsHeadings,
     SettingsCode,
@@ -2871,7 +2873,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2001] = [
+    pub const ALL: [Key; 2003] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4605,6 +4607,8 @@ impl Key {
         Key::SettingsCaret,
         Key::SettingsShape,
         Key::SettingsAppFont,
+        Key::SettingsChatFont,
+        Key::SettingsChatFontHint,
         Key::SettingsBody,
         Key::SettingsHeadings,
         Key::SettingsCode,
@@ -15220,6 +15224,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsCaret, en: "Caret", es: "Cursor de texto", pt_br: "Cursor de texto", de: "Textcursor", fr: "Curseur de texte", ar: "مؤشر النص", zh_hans: "文本光标", ja: "テキストカーソル" },
     Row { key: Key::SettingsShape, en: "Shape", es: "Forma", pt_br: "Forma", de: "Form", fr: "Forme", ar: "الشكل", zh_hans: "形状", ja: "形状" },
     Row { key: Key::SettingsAppFont, en: "App font", es: "Fuente de la aplicación", pt_br: "Fonte do aplicativo", de: "App-Schrift", fr: "Police de l’application", ar: "خط التطبيق", zh_hans: "应用字体", ja: "アプリのフォント" },
+    Row { key: Key::SettingsChatFont, en: "Chat font", es: "Fuente del chat", pt_br: "Fonte do chat", de: "Chat-Schrift", fr: "Police des discussions", ar: "خط المحادثة", zh_hans: "聊天字体", ja: "チャットのフォント" },
+    Row { key: Key::SettingsChatFontHint, en: "Messages in a chat and the box you type in.", es: "Los mensajes de un chat y el cuadro de texto.", pt_br: "As mensagens de um chat e a caixa de texto.", de: "Nachrichten im Chat und das Eingabefeld.", fr: "Les messages d’une discussion et la zone de saisie.", ar: "رسائل المحادثة ومربع الكتابة.", zh_hans: "聊天中的消息和输入框。", ja: "チャットのメッセージと入力欄。" },
     Row { key: Key::SettingsBody, en: "Body", es: "Cuerpo", pt_br: "Corpo", de: "Fließtext", fr: "Corps", ar: "المتن", zh_hans: "正文", ja: "本文" },
     Row { key: Key::SettingsHeadings, en: "Headings", es: "Encabezados", pt_br: "Títulos", de: "Überschriften", fr: "Titres", ar: "العناوين", zh_hans: "标题", ja: "見出し" },
     Row { key: Key::SettingsCode, en: "Code", es: "Código", pt_br: "Código", de: "Code", fr: "Code", ar: "الكود", zh_hans: "代码", ja: "コード" },

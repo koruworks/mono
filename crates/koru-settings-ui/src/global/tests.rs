@@ -12,7 +12,8 @@ use crate::tests::{
     GLOBALS, flip, goto, is_active, koru, labels, lines, page_lines, press, press_rect, rect_of,
     surface, swatches, switch_on,
 };
-use crate::{Availability, PageId, Request, Sections, VoiceFacts};
+use crate::{Availability, PageId, Request, Sections, SettingsSurface, VoiceFacts};
+use koru_draw::geometry::Rect;
 use koru_draw::theme;
 use koru_settings::{
     CloseBehaviorChoice, DictationGesture, DictationInput, DictationLanguage, DictationTier,
@@ -281,37 +282,151 @@ fn an_older_menu_cannot_overwrite_or_clear_a_newer_preview() {
     icons::set_icon_pack(was);
 }
 
+/// The dropdown that sets `role`'s family.
+fn font_field(surface: &SettingsSurface, role: FontRole) -> Rect {
+    surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            dropdown.options.iter().any(|(action, _)| {
+                matches!(action, crate::action::Action::Font(found, _) if *found == role)
+            })
+        })
+        .expect("each font role has its own dropdown")
+        .field
+}
+
+/// Press the option labelled `label` in `role`'s list.
+fn choose_in(surface: &mut SettingsSurface, role: FontRole, label: &str) {
+    surface.relayout();
+    assert!(press_rect(surface, font_field(surface, role)));
+    let open = surface.open.as_ref().expect("the list is open");
+    let item = open
+        .menu
+        .items()
+        .iter()
+        .position(|option| option.label == label)
+        .unwrap_or_else(|| panic!("{role:?} offers {label}"));
+    let (x, y) = open.menu.item_rect(surface.viewport, item).centre();
+    assert!(surface.mouse_down(x, y));
+}
+
 /// Each font role is its own dropdown; choosing in one moves that role only.
+/// Compared as settings: the chat's *face* follows the app font's until it
+/// is chosen, and that is not the chat's setting moving.
 #[test]
 fn every_font_picker_moves_its_own_role_and_no_other() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
-    let before: Vec<_> = FontRole::ALL.iter().map(|role| role.current()).collect();
+    let setting = |role: FontRole| theme::font_setting(role.slot());
+    let before: Vec<_> = FontRole::ALL.into_iter().map(setting).collect();
     let mut surface = koru();
     surface.show_page(PageId::Appearance);
     let wanted = theme::FontChoice::Lora;
     for (index, role) in FontRole::ALL.into_iter().enumerate() {
-        surface.relayout();
-        let field = surface.laid.dropdowns.iter().find(|dropdown| {
-            matches!(dropdown.options.first(), Some((crate::action::Action::Font(found, _), _)) if *found == role)
-        }).expect("each font role has its own dropdown").field;
-        assert!(press_rect(&mut surface, field));
-        let open = surface.open.as_ref().expect("the list is open");
-        let item = open
-            .menu
-            .items()
-            .iter()
-            .position(|option| option.label == wanted.label())
-            .expect("every role offers every family");
-        let (x, y) = open.menu.item_rect(surface.viewport, item).centre();
-        assert!(surface.mouse_down(x, y));
+        choose_in(&mut surface, role, wanted.label());
         assert_eq!(role.current(), wanted, "{role:?}");
         for (other, was) in FontRole::ALL.into_iter().zip(&before).skip(index + 1) {
-            assert_eq!(other.current(), *was, "{other:?} moved with {role:?}");
+            assert_eq!(setting(other), *was, "{other:?} moved with {role:?}");
         }
     }
     for (role, was) in FontRole::ALL.into_iter().zip(before) {
-        role.set(was);
+        theme::set_font_setting(role.slot(), was);
     }
+}
+
+/// **The Chat font row** (koru-ai D79): beside the App font, *Follow app*
+/// first and ticked until a family is chosen; while it follows, the chat
+/// draws the app font and moves with it; a family chosen holds whatever the
+/// app font does; and *Follow app* takes it back.
+#[test]
+fn the_chat_font_follows_the_app_font_until_a_family_is_chosen() {
+    use koru_settings::FontSetting;
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = (
+        theme::font_setting(theme::FontSlot::Ui),
+        theme::font_setting(theme::FontSlot::Chat),
+    );
+    theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+    theme::set_ui_font(theme::FontChoice::Inter);
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+
+    let drawn = lines(&surface);
+    let app = drawn
+        .iter()
+        .position(|line| line == "App font")
+        .expect("App font");
+    let chat = drawn
+        .iter()
+        .position(|line| line == "Chat font")
+        .expect("Chat font");
+    assert!(chat > app, "beside the app font, after it: {drawn:?}");
+    let chat_list = surface
+        .laid
+        .dropdowns
+        .iter()
+        .find(|dropdown| {
+            matches!(
+                dropdown.options.first(),
+                Some((
+                    crate::action::Action::FontSetting(FontRole::Chat, FontSetting::FollowDefault),
+                    _
+                ))
+            )
+        })
+        .expect("the chat's list opens with Follow app");
+    let ticked: Vec<_> = chat_list
+        .options
+        .iter()
+        .filter(|(_, option)| option.selected)
+        .map(|(_, option)| option.label.as_str())
+        .collect();
+    assert_eq!(ticked, ["Follow app"], "not the face it happens to draw");
+
+    choose_in(
+        &mut surface,
+        FontRole::App,
+        theme::FontChoice::Poppins.label(),
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Poppins, "it follows");
+    assert_eq!(
+        theme::font_setting(theme::FontSlot::Chat),
+        FontSetting::FollowDefault
+    );
+
+    choose_in(
+        &mut surface,
+        FontRole::Chat,
+        theme::FontChoice::Lora.label(),
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Lora);
+    assert_eq!(
+        theme::ui_font(),
+        theme::FontChoice::Poppins,
+        "the app keeps its own"
+    );
+    choose_in(
+        &mut surface,
+        FontRole::App,
+        theme::FontChoice::Nunito.label(),
+    );
+    assert_eq!(
+        theme::chat_font(),
+        theme::FontChoice::Lora,
+        "a choice holds"
+    );
+
+    choose_in(&mut surface, FontRole::Chat, "Follow app");
+    assert_eq!(
+        theme::font_setting(theme::FontSlot::Chat),
+        FontSetting::FollowDefault
+    );
+    assert_eq!(theme::chat_font(), theme::FontChoice::Nunito);
+
+    theme::set_font_setting(theme::FontSlot::Ui, was.0);
+    theme::set_font_setting(theme::FontSlot::Chat, was.1);
 }
 
 /// Font options are set in their own face — the point of a font picker.

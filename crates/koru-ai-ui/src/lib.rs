@@ -61,10 +61,17 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
 /// One line of the composer's text: the app's text line at the current
-/// density ([`theme::DocMetrics::ui`]). The document text size does not
+/// density ([`theme::DocMetrics::chat`]). The document text size does not
 /// reach the chat, so this does not follow it.
 pub(crate) fn chat_line_height() -> f32 {
-    theme::DocMetrics::ui().line
+    theme::DocMetrics::chat().line
+}
+
+/// A run of the chat's own text — a message, or what stands in for one —
+/// wrapped at `max_w`: the app's size, in the chat font
+/// ([`theme::chat_stack`], the app font until a person chooses another).
+pub(crate) fn chat_text_layout(engine: &mut TextEngine, text: &str, max_w: f32) -> Layout<Brush> {
+    engine.simple_layout_wrapped_in(text, role::ui(), theme::chat_stack(), max_w)
 }
 
 mod agents;
@@ -6791,11 +6798,7 @@ impl ChatSurface {
                 display: markdown.clone(),
                 links: Vec::new(),
                 wrap_width: (width - PAD * 2.0).max(1.0),
-                layout: self.engine.simple_layout_wrapped(
-                    &markdown,
-                    role::ui(),
-                    (width - PAD * 2.0).max(1.0),
-                ),
+                layout: chat_text_layout(&mut self.engine, &markdown, (width - PAD * 2.0).max(1.0)),
                 usage_text: None,
                 usage: None,
                 sources: None,
@@ -6866,34 +6869,28 @@ impl ChatSurface {
                 laid.pop()
             });
             // Under the running reply's id, so its work is placed above it.
-            messages.push(live.unwrap_or_else(|| {
-                MessageLayout {
-                    id: running,
-                    top: 0.0,
-                    role: ChatRole::Assistant,
-                    state: MessageState::Pending,
-                    markdown: self.draft.clone(),
-                    links: Vec::new(),
-                    wrap_width: assistant_width,
-                    layout: self.engine.simple_layout_wrapped(
-                        &display,
-                        role::ui(),
-                        assistant_width,
-                    ),
-                    display,
-                    usage: usage_text.as_ref().map(|line| {
-                        self.engine
-                            .simple_layout_wrapped(line, role::hint(), assistant_width)
-                    }),
-                    usage_text,
-                    sources: sources::layout_sources(
-                        &mut self.engine,
-                        &self.live_sources,
-                        assistant_width,
-                    ),
-                    blocks: Vec::new(),
-                    attachments: Vec::new(),
-                }
+            messages.push(live.unwrap_or_else(|| MessageLayout {
+                id: running,
+                top: 0.0,
+                role: ChatRole::Assistant,
+                state: MessageState::Pending,
+                markdown: self.draft.clone(),
+                links: Vec::new(),
+                wrap_width: assistant_width,
+                layout: chat_text_layout(&mut self.engine, &display, assistant_width),
+                display,
+                usage: usage_text.as_ref().map(|line| {
+                    self.engine
+                        .simple_layout_wrapped(line, role::hint(), assistant_width)
+                }),
+                usage_text,
+                sources: sources::layout_sources(
+                    &mut self.engine,
+                    &self.live_sources,
+                    assistant_width,
+                ),
+                blocks: Vec::new(),
+                attachments: Vec::new(),
             }));
         }
         self.message_layouts = messages;
@@ -9180,7 +9177,7 @@ fn render_chat_block(
             id,
             markdown: markdown.to_owned(),
             wrap_width: max_w,
-            layout: engine.simple_layout_wrapped(&image.alt, role::ui(), max_w),
+            layout: chat_text_layout(engine, &image.alt, max_w),
             text: image.alt.clone(),
             links: Vec::new(),
             table: None,
@@ -9189,7 +9186,7 @@ fn render_chat_block(
     }
     // A bare `https://…` in a reply is a link (D95): the chat follows
     // what it draws as one.
-    let styles = koru_markdown::Styles::ui().with_bare_links();
+    let styles = koru_markdown::Styles::chat().with_bare_links();
     match koru_markdown::render_block(engine, markdown, max_w, &styles) {
         koru_markdown::Rendered::Text {
             text,
@@ -9210,7 +9207,7 @@ fn render_chat_block(
             markdown: markdown.to_owned(),
             wrap_width: max_w,
             text: String::new(),
-            layout: engine.simple_layout_wrapped("", role::ui(), max_w),
+            layout: chat_text_layout(engine, "", max_w),
             links: Vec::new(),
             table: Some(table),
             image: None,
@@ -9220,7 +9217,7 @@ fn render_chat_block(
             markdown: markdown.to_owned(),
             wrap_width: max_w,
             text: alt.clone(),
-            layout: engine.simple_layout_wrapped(&alt, role::ui(), max_w),
+            layout: chat_text_layout(engine, &alt, max_w),
             links: Vec::new(),
             table: None,
             image: Some(ImageSpec { url, alt }),
@@ -9231,7 +9228,7 @@ fn render_chat_block(
                 id,
                 markdown: markdown.to_owned(),
                 wrap_width: max_w,
-                layout: engine.simple_layout_wrapped(&text, role::ui(), max_w),
+                layout: chat_text_layout(engine, &text, max_w),
                 text,
                 links: Vec::new(),
                 table: None,
@@ -10822,6 +10819,143 @@ mod tests {
         assert_eq!(surface.last_rebuild_stats.blocks_reused, 0);
         assert_eq!(surface.last_rebuild_stats.messages_laid_out, 1);
         assert_eq!(surface.last_rebuild_stats.blocks_laid_out, 1);
+    }
+
+    /// The chat font is a process global; the tests that set it take this.
+    static CHAT_FONT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const WORDS: &str = "The quick brown fox jumps over the lazy dog";
+
+    /// A transcript with one finished question and one finished answer, both
+    /// [`WORDS`].
+    fn question_and_answer() -> ChatTranscript {
+        let mut transcript = transcript();
+        for (ordinal, role) in [ChatRole::User, ChatRole::Assistant]
+            .into_iter()
+            .enumerate()
+        {
+            let message_id = MessageId::new();
+            transcript.messages.push(koru_ai_core::Message {
+                id: message_id,
+                chat_id: transcript.chat.id,
+                ordinal: ordinal as u32,
+                role,
+                state: MessageState::Complete,
+                markdown: WORDS.into(),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: koru_ai_core::Timestamp::from_millis(1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+            });
+            if role == ChatRole::Assistant {
+                transcript.blocks.push(koru_ai_core::MessageBlock {
+                    id: MessageBlockId::new(),
+                    message_id,
+                    ordinal: 0,
+                    kind: koru_ai_core::MessageBlockKind::Paragraph,
+                    markdown: WORDS.into(),
+                    plain_text: WORDS.into(),
+                });
+            }
+        }
+        transcript
+    }
+
+    /// The width [`WORDS`] takes on one line in `face`, at the chat's size
+    /// and the weight `weight`.
+    fn words_width(face: theme::FontChoice, weight: theme::FontWeight) -> f32 {
+        TextEngine::new()
+            .simple_layout_wrapped_in(
+                WORDS,
+                role::ui().with_weight(weight),
+                face.stack(),
+                f32::MAX,
+            )
+            .width()
+    }
+
+    /// The laid-out widths of the question's text and the answer's block.
+    fn drawn_widths(surface: &ChatSurface) -> (f32, f32) {
+        let question = surface
+            .message_layouts
+            .iter()
+            .find(|message| message.role == ChatRole::User)
+            .expect("the question");
+        let answer = surface
+            .message_layouts
+            .iter()
+            .find(|message| message.role == ChatRole::Assistant)
+            .expect("the answer");
+        (
+            question.layout.width(),
+            answer.blocks.first().expect("its block").layout.width(),
+        )
+    }
+
+    /// **The chat draws in the Chat font** (koru-ai D79): a person's
+    /// message and the agent's answer are both set in it, not in the app
+    /// font, which stays as it was.
+    #[test]
+    fn the_chat_draws_in_the_chat_font() {
+        let _serial = CHAT_FONT.lock().unwrap_or_else(|held| held.into_inner());
+        let was = theme::font_setting(theme::FontSlot::Chat);
+        theme::set_chat_font(theme::FontChoice::JetBrainsMono);
+        let mono = theme::FontChoice::JetBrainsMono;
+        assert_ne!(theme::ui_font(), mono, "a face the app is not set in");
+
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(question_and_answer());
+        surface.rebuild_messages(1200.0);
+        let (question, answer) = drawn_widths(&surface);
+        theme::set_font_setting(theme::FontSlot::Chat, was);
+
+        assert_eq!(question, words_width(mono, theme::FontWeight::Medium));
+        assert_ne!(
+            question,
+            words_width(theme::ui_font(), theme::FontWeight::Medium),
+            "not the app font"
+        );
+        let answer_weight = mono.weight_for(None);
+        let in_mono = TextEngine::new()
+            .simple_layout_at_weight(WORDS, role::ui().metrics, mono.stack(), answer_weight)
+            .width();
+        assert_eq!(answer, in_mono);
+    }
+
+    /// **A Chat font change lays the finished messages out again** (D82's
+    /// path, which an App font change takes): reused while nothing changes,
+    /// laid out afresh after the host's `invalidate`, and drawn in the new
+    /// face.
+    #[test]
+    fn a_chat_font_change_lays_finished_messages_out_again() {
+        let _serial = CHAT_FONT.lock().unwrap_or_else(|held| held.into_inner());
+        let was = theme::font_setting(theme::FontSlot::Chat);
+        let mono = theme::FontChoice::JetBrainsMono;
+        theme::set_chat_font(theme::FontChoice::Lora);
+
+        let mut surface = ChatSurface::new();
+        surface.transcript = Some(question_and_answer());
+        surface.rebuild_messages(1200.0);
+        surface.rebuild_messages(1200.0);
+        assert_eq!(surface.last_rebuild_stats.messages_reused, 2);
+        let in_lora = drawn_widths(&surface).0;
+
+        theme::set_chat_font(mono);
+        surface.invalidate();
+        surface.rebuild_messages(1200.0);
+        let stats = surface.last_rebuild_stats;
+        let (question, _) = drawn_widths(&surface);
+        theme::set_font_setting(theme::FontSlot::Chat, was);
+
+        assert_eq!(stats.messages_reused, 0);
+        assert_eq!(stats.blocks_reused, 0);
+        assert_eq!(stats.messages_laid_out, 2);
+        assert_eq!(stats.blocks_laid_out, 1);
+        assert_eq!(question, words_width(mono, theme::FontWeight::Medium));
+        assert_ne!(question, in_lora, "the new face, not the kept layout");
     }
 
     #[test]

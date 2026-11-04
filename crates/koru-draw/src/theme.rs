@@ -1164,13 +1164,16 @@ pub fn ui_font() -> FontChoice {
 // what is saved does not ([`chosen_font`]), so a preview that is never chosen
 // leaves nothing behind, even if the app closes mid-preview.
 
-/// The four font globals, as a preview names one.
+/// The five font globals, as a preview names one.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FontSlot {
     Ui,
     Body,
     Headings,
     Code,
+    /// The AI chat's messages and composer ([`chat_font`]). Its default is
+    /// the app font, followed live rather than copied.
+    Chat,
 }
 
 /// The value a font preview, or a role global, carries for `font`: a bundled
@@ -1210,8 +1213,12 @@ pub fn chosen_font(slot: FontSlot) -> FontChoice {
         FontSlot::Body => (&BODY_FONT, FontChoice::default()),
         FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
         FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
+        FontSlot::Chat => (&CHAT_FONT, FontChoice::default()),
     };
-    font_of_value(global.load(Ordering::Relaxed)).unwrap_or(fallback)
+    match global.load(Ordering::Relaxed) {
+        FOLLOWS_APP => chosen_font(FontSlot::Ui),
+        value => font_of_value(value).unwrap_or(fallback),
+    }
 }
 
 /// Callers must invalidate laid-out text afterwards — the font, like the
@@ -1230,19 +1237,23 @@ pub fn set_ui_font(font: FontChoice) {
 // to, and what Settings saves and ticks is the setting, never read back from
 // the face (DOCFONTSIZE D12, D14).
 
-static FONT_SETTINGS: Mutex<[koru_settings::FontSetting; 4]> = Mutex::new([
+static FONT_SETTINGS: Mutex<[koru_settings::FontSetting; 5]> = Mutex::new([
+    koru_settings::FontSetting::FollowDefault,
     koru_settings::FontSetting::FollowDefault,
     koru_settings::FontSetting::FollowDefault,
     koru_settings::FontSetting::FollowDefault,
     koru_settings::FontSetting::FollowDefault,
 ]);
 
+/// The face a role draws when its setting does not name one here. The
+/// chat's is **the app font's choice**, not a face of its own.
 fn role_default(slot: FontSlot) -> FontChoice {
     match slot {
         FontSlot::Ui => default_ui_font(),
         FontSlot::Body => default_body_font(),
         FontSlot::Headings => default_headings_font(),
         FontSlot::Code => default_code_font(),
+        FontSlot::Chat => chosen_font(FontSlot::Ui),
     }
 }
 
@@ -1252,6 +1263,7 @@ fn role_global(slot: FontSlot) -> &'static AtomicU16 {
         FontSlot::Body => &BODY_FONT,
         FontSlot::Headings => &HEADINGS_FONT,
         FontSlot::Code => &CODE_FONT,
+        FontSlot::Chat => &CHAT_FONT,
     }
 }
 
@@ -1309,7 +1321,21 @@ fn note_missing(slot: FontSlot, name: &str) {
 /// Callers must invalidate laid-out text afterwards.
 pub fn set_font_setting(slot: FontSlot, setting: koru_settings::FontSetting) {
     let face = resolve_font(slot, &setting);
-    role_global(slot).store(font_preview_value(face), Ordering::Relaxed);
+    // A chat that draws its default draws the app font as it is *now*, so
+    // it holds the mark rather than a copy that the next App font change
+    // would leave behind.
+    let follows_app = slot == FontSlot::Chat
+        && match &setting {
+            koru_settings::FontSetting::FollowDefault => true,
+            koru_settings::FontSetting::Installed(_) => !matches!(face, FontChoice::Installed(_)),
+            koru_settings::FontSetting::Chosen(_) => false,
+        };
+    let value = if follows_app {
+        FOLLOWS_APP
+    } else {
+        font_preview_value(face)
+    };
+    role_global(slot).store(value, Ordering::Relaxed);
     FONT_SETTINGS
         .lock()
         .unwrap_or_else(|held| held.into_inner())[slot as usize] = setting;
@@ -1396,6 +1422,43 @@ pub fn set_headings_font(font: FontChoice) {
 }
 pub fn set_code_font(font: FontChoice) {
     set_font_setting(FontSlot::Code, setting_of(font));
+}
+
+// ------------------------------------------------------------ the chat font
+//
+// The AI chat's messages and composer (koru-ai D79). Not a document role and
+// not the chrome: a person may want to read answers in a serif and keep the
+// menus in a sans. **Until chosen it is the app font, followed rather than
+// copied** — so a person who never touches it sees no change, and an App
+// font change, or a preview of one, carries the chat with it.
+
+/// The chat's role global while it follows the app font: a mark past every
+/// face [`font_preview_value`] can produce, not a face of its own.
+const FOLLOWS_APP: u16 = u16::MAX;
+
+static CHAT_FONT: AtomicU16 = AtomicU16::new(FOLLOWS_APP);
+
+/// The typeface the AI chat's messages and composer are set in: a preview
+/// of it, the person's choice, or — while it follows — [`ui_font`], preview
+/// included. A code block or inline code keeps the code font.
+pub fn chat_font() -> FontChoice {
+    previewed(FontSlot::Chat).unwrap_or_else(|| {
+        if CHAT_FONT.load(Ordering::Relaxed) == FOLLOWS_APP {
+            ui_font()
+        } else {
+            chosen_font(FontSlot::Chat)
+        }
+    })
+}
+
+/// The stack the AI chat's text is set in now.
+pub fn chat_stack() -> &'static str {
+    chat_font().stack()
+}
+
+/// Callers must invalidate laid-out text afterwards.
+pub fn set_chat_font(font: FontChoice) {
+    set_font_setting(FontSlot::Chat, setting_of(font));
 }
 
 pub fn body_stack() -> &'static str {
@@ -1777,7 +1840,7 @@ pub const ICON_SIZE: f32 = 17.0;
 
 /// A typeface the user can pick.
 ///
-/// **Four independent things choose from this list**, and they are deliberately
+/// **Five independent things choose from this list**, and they are deliberately
 /// not the same setting:
 ///
 /// - the **app font** — the chrome, via [`ui_font`] / [`set_ui_font`], persisted
@@ -1785,6 +1848,9 @@ pub const ICON_SIZE: f32 = 17.0;
 /// - the **body** font of a document — `theme::body_font()`;
 /// - the **headings** font of a document — `theme::headings_font()`;
 /// - the **code** font (code blocks and inline code) — `theme::code_font()`.
+///
+/// - the **chat** font — the AI chat's messages and composer, via
+///   [`chat_font`], which follows the app font until chosen.
 ///
 /// Sharing the list is the point: whatever role a face can fill, any role can.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
@@ -2230,8 +2296,9 @@ pub enum TextFace {
     /// The document font roles: body, headings, code.
     #[default]
     Document,
-    /// The app font ([`ui_font`]); a code block keeps the code font.
-    Ui,
+    /// The chat font ([`chat_font`]), which is the app font until chosen; a
+    /// code block keeps the code font.
+    Chat,
 }
 
 /// The checkbox and its column, a bullet, the gap after a list marker, a code
@@ -2283,13 +2350,13 @@ impl DocMetrics {
         }
     }
 
-    /// **The app's own text**, for an editor that is part of the app rather
-    /// than a document — the chat composer: the app font, at the size the
+    /// **The chat's own text**, for an editor that is part of the app rather
+    /// than a document — the chat composer: the chat font, at the size the
     /// app's text is set at for the current density ([`role::ui`]), so what
     /// is typed reads like the messages above it.
-    pub fn ui() -> Self {
+    pub fn chat() -> Self {
         Self {
-            face: TextFace::Ui,
+            face: TextFace::Chat,
             ..Self::at(role::ui().metrics.size / FONT_SIZE)
         }
     }

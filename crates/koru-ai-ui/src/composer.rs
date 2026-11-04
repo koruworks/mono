@@ -1004,10 +1004,10 @@ fn fresh() -> (WorkspaceDoc, NodeId, Editor) {
     .expect("a paragraph in a fresh document");
     ws.enable_undo();
     let mut editor = Editor::rooted_at(&ws, root, true);
-    // A chat message is not a document: it is set in the app's font and
-    // size, like the messages above it, and no document font, size or
-    // preview of one reaches it.
-    editor.body.text_scale = koru_editor::TextScale::Ui;
+    // A chat message is not a document: it is set in the chat font — the
+    // app font until chosen — at the app's size, like the messages above
+    // it, and no document font, size or preview of one reaches it.
+    editor.body.text_scale = koru_editor::TextScale::Chat;
     editor.body.title_row = false;
     editor.body.rebuild(&ws);
     editor.view.apply_policy(Policy::Composer);

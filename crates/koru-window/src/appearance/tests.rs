@@ -21,6 +21,7 @@ fn the_fallback_appearance_is_unchanged_from_the_parser_it_replaces() {
     assert_eq!(appearance.body_font, theme::default_body_font());
     assert_eq!(appearance.headings_font, theme::default_headings_font());
     assert_eq!(appearance.code_font, theme::default_code_font());
+    assert_eq!(appearance.chat_font, None, "the chat follows the app font");
     assert_eq!(appearance.density, Density::Normal);
     assert_eq!(appearance.zoom, 1.0);
     assert!(
@@ -45,11 +46,13 @@ fn every_appearance_value_comes_from_the_section() {
         body_font: FontSetting::Chosen(FontFamily::SourceSerif4),
         headings_font: FontSetting::Chosen(FontFamily::Lora),
         code_font: FontSetting::Chosen(FontFamily::SourceCodePro),
+        chat_font: FontSetting::Chosen(FontFamily::Nunito),
         density: DensityChoice::Compact,
         zoom: Zoom::new(1.25).unwrap(),
         ..GlobalSettings::default()
     };
     let appearance = Appearance::from_section(&section);
+    assert_eq!(appearance.chat_font, Some(FontChoice::Nunito));
     assert_eq!(appearance.theme, ThemePreference::Dark);
     assert_eq!(
         appearance.icon_pack,

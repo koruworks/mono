@@ -45,6 +45,7 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     into.body_font = section.body_font.clone();
     into.headings_font = section.headings_font.clone();
     into.code_font = section.code_font.clone();
+    into.chat_font = section.chat_font.clone();
     into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
     into.base_color_light = section.base_color_light.map(RgbColor::rgb);
     into.base_color_dark = section.base_color_dark.map(RgbColor::rgb);
@@ -115,6 +116,13 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
             &settings.code_font,
             &authoritative.code_font,
             &mut patch.code_font,
+        ),
+        // Back to following the app font is a change like any other, and
+        // is sent as `follow_default`.
+        (
+            &settings.chat_font,
+            &authoritative.chat_font,
+            &mut patch.chat_font,
         ),
     ] {
         // **The setting, compared as a setting.** Not the face it draws: a
@@ -255,6 +263,7 @@ type Preferences = (
         FontSetting,
         FontSetting,
         FontSetting,
+        FontSetting,
         Option<u8>,
     ),
     (Density, String, ViewMode, Option<[u8; 4]>),
@@ -288,6 +297,7 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.body_font.clone(),
             settings.headings_font.clone(),
             settings.code_font.clone(),
+            settings.chat_font.clone(),
             settings.doc_text_size,
         ),
         (

@@ -162,6 +162,17 @@ pub const REGISTRY: &[SettingSpec] = &[
               deliberately not the terminal's font.",
     },
     SettingSpec {
+        field: "chat_font",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Font,
+        doc: "The AI chat's typeface — its messages and the box a person types \
+              in. `follow_default` follows the app font (`ui_font`), now and \
+              later, rather than a default of its own, and persists as no key. \
+              A code block or inline code in a message keeps the code font.",
+    },
+    SettingSpec {
         field: "density",
         section: Section::Global,
         storage: StorageClass::Roaming,

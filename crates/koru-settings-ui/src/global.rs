@@ -136,6 +136,14 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
         FontRole::App,
         Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
     );
+    // Beside the app font, whose size it shares: the chat has no size of
+    // its own, as the app font has none.
+    font_row(
+        b,
+        lang,
+        FontRole::Chat,
+        Some(koru_i18n::t(lang, Key::SettingsChatFontHint)),
+    );
     base_row(b, lang, false);
     base_row(b, lang, true);
 
@@ -267,21 +275,37 @@ fn doc_size_row(b: &mut Builder<'_>, lang: Lang) {
 }
 
 /// One font role: a dropdown of every family, each set in its own face.
+///
+/// The chat's list starts with *Follow app*: its default is the app font,
+/// followed rather than copied, so following is a choice of its own — ticked
+/// instead of the face it happens to draw, and the way back once a family
+/// was chosen.
 fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>) {
+    use koru_settings::FontSetting;
     let current = role.current();
+    let follows =
+        role == FontRole::Chat && theme::font_setting(role.slot()) == FontSetting::FollowDefault;
     // An installed family set for this role but not installed here: the
     // default draws, and the row says why rather than ticking the default.
     let missing = theme::missing_font(role.slot());
-    let mut options: Vec<(Action, DropdownOption)> = theme::FontChoice::ALL
-        .iter()
-        .map(|family| {
-            (
-                Action::Font(role, *family),
-                DropdownOption::new(family.label(), missing.is_none() && *family == current)
-                    .in_face(family.stack()),
+    let mut options: Vec<(Action, DropdownOption)> = Vec::new();
+    if role == FontRole::Chat {
+        options.push((
+            Action::FontSetting(role, FontSetting::FollowDefault),
+            DropdownOption::new(koru_i18n::t(lang, Key::SettingsFollowApp), follows)
+                .in_face(theme::chosen_font(theme::FontSlot::Ui).stack()),
+        ));
+    }
+    options.extend(theme::FontChoice::ALL.iter().map(|family| {
+        (
+            Action::Font(role, *family),
+            DropdownOption::new(
+                family.label(),
+                !follows && missing.is_none() && *family == current,
             )
-        })
-        .collect();
+            .in_face(family.stack()),
+        )
+    }));
     if let Some(name) = missing {
         options.push((
             Action::FontSetting(role, theme::font_setting(role.slot())),
@@ -290,9 +314,12 @@ fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>)
                 true,
             ),
         ));
-    } else if let theme::FontChoice::Installed(_) = current {
+    } else if let theme::FontChoice::Installed(_) = current
+        && !follows
+    {
         // The installed family in force, listed after the bundled ones, ticked
-        // and drawn in its own face.
+        // and drawn in its own face. Not while the chat follows the app font,
+        // which is what *Follow app* already ticks.
         options.push((
             Action::Font(role, current),
             DropdownOption::new(current.label(), true).in_face(current.stack()),

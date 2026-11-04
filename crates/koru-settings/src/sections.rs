@@ -131,8 +131,9 @@ impl FavoriteModel {
 /// [`GlobalPatch`], which still refuses an unknown field, so the service
 /// answers a typo with a 400 rather than storing nothing. A field added
 /// here is also `#[serde(default)]`, so a newer client reads an older
-/// service. (The user's call, 2026-11-03: this reader ships before any new
-/// Global field does — koru-ai D79's Chat font is the first that waits.)
+/// service. (The user's call, 2026-11-03: this reader shipped before any new
+/// Global field did. koru-ai D79's `chat_font` was the first to wait, and
+/// landed once the user ruled, 2026-11-04, that an older Koru may ignore it.)
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GlobalSettings {
     // Roaming — `preferences.conf`.
@@ -148,6 +149,15 @@ pub struct GlobalSettings {
     pub body_font: FontSetting,
     pub headings_font: FontSetting,
     pub code_font: FontSetting,
+    /// **The typeface the AI chat is set in** — its messages and the box a
+    /// person types in. `follow_default` follows the **app font** (`ui_font`),
+    /// now and later, rather than a build default of its own: a person who
+    /// never chooses sees the chat exactly as before, and a later change to
+    /// the app font carries the chat with it. Persisted as no key while it
+    /// follows, like every font role. `#[serde(default)]` so a section from a
+    /// build without it reads as following the app font.
+    #[serde(default)]
+    pub chat_font: FontSetting,
     /// The document body size. Follows the build's default until chosen.
     #[serde(default)]
     pub document_text_size: DocTextSizeSetting,
@@ -263,6 +273,8 @@ impl Default for GlobalSettings {
             body_font: FontSetting::FollowDefault,
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
+            // The app font's, whatever it is.
+            chat_font: FontSetting::FollowDefault,
             document_text_size: DocTextSizeSetting::FollowDefault,
             base_color_light: None,
             base_color_dark: None,
@@ -336,6 +348,9 @@ pub struct GlobalPatch {
     pub headings_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_font: Option<FontSetting>,
+    /// `follow_default` puts the chat back on the app font.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_text_size: Option<DocTextSizeSetting>,
     /// `#rrggbb` sets the light theme's base color; `null` puts the theme's
@@ -437,6 +452,7 @@ impl GlobalPatch {
             || self.body_font.is_some()
             || self.headings_font.is_some()
             || self.code_font.is_some()
+            || self.chat_font.is_some()
             || self.document_text_size.is_some()
             || !self.base_color_light.is_unchanged()
             || !self.base_color_dark.is_unchanged()
@@ -628,6 +644,7 @@ impl GlobalPatch {
             body_font,
             headings_font,
             code_font,
+            chat_font,
             document_text_size,
             density,
             default_view_mode,

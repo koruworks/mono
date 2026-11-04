@@ -238,9 +238,10 @@ pub enum TextScale {
     Follow,
     /// This factor of the base ramp, whatever the setting says.
     Fixed(f32),
-    /// The app's own text — its font and size, following density — for an
-    /// editor that is part of the app, not a document: the chat composer.
-    Ui,
+    /// The chat's own text — the chat font, at the app's size following
+    /// density — for an editor that is part of the app, not a document: the
+    /// chat composer.
+    Chat,
 }
 
 impl Body {
@@ -254,7 +255,7 @@ impl Body {
         match self.text_scale {
             TextScale::Follow => theme::DocMetrics::at(theme::doc_scale()),
             TextScale::Fixed(scale) => theme::DocMetrics::at(scale),
-            TextScale::Ui => theme::DocMetrics::ui(),
+            TextScale::Chat => theme::DocMetrics::chat(),
         }
     }
 

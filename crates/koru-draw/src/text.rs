@@ -732,12 +732,36 @@ impl TextEngine {
         base: Option<peniko::Color>,
         ranges: &[RangeStyle],
     ) -> Layout<Brush> {
+        self.styled_layout_in(
+            text,
+            metrics,
+            theme::ui_stack(),
+            weight,
+            max_w,
+            base,
+            ranges,
+        )
+    }
+
+    /// [`styled_layout`](Self::styled_layout) in an explicit font stack —
+    /// the chat's messages, set in the chat font.
+    #[allow(clippy::too_many_arguments)]
+    pub fn styled_layout_in(
+        &mut self,
+        text: &str,
+        metrics: theme::TextMetrics,
+        stack: &str,
+        weight: f32,
+        max_w: f32,
+        base: Option<peniko::Color>,
+        ranges: &[RangeStyle],
+    ) -> Layout<Brush> {
         let size = metrics.size;
         let mut b = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, text, 1.0, true);
         b.push_default(StyleProperty::FontFamily(FontFamily::Source(
-            Cow::Borrowed(theme::ui_stack()),
+            Cow::Borrowed(stack),
         )));
         b.push_default(StyleProperty::FontSize(size));
         b.push_default(StyleProperty::LineHeight(LineHeight::Absolute(

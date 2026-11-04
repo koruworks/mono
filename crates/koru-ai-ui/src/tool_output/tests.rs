@@ -77,7 +77,7 @@ fn rendered(markdown: &str) -> Vec<String> {
                 &mut engine,
                 &block.markdown,
                 400.0,
-                &koru_markdown::Styles::ui(),
+                &koru_markdown::Styles::chat(),
             ) {
                 koru_markdown::Rendered::Text { text, .. } => text,
                 _ => String::new(),

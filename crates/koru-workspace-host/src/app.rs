@@ -291,6 +291,7 @@ fn apply_settings(settings: &Settings) {
     theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
     theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
     theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
+    theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
@@ -330,6 +331,7 @@ fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     theme::set_font_setting(theme::FontSlot::Body, settings.body_font.clone());
     theme::set_font_setting(theme::FontSlot::Headings, settings.headings_font.clone());
     theme::set_font_setting(theme::FontSlot::Code, settings.code_font.clone());
+    theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     apply_base_colors(settings.base_color_light, settings.base_color_dark);
     theme::set_density(settings.density);
@@ -13422,6 +13424,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.body_font = theme::font_setting(theme::FontSlot::Body);
         self.runtime.settings.headings_font = theme::font_setting(theme::FontSlot::Headings);
         self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
+        // Following the app font stays following: the setting, not the face.
+        self.runtime.settings.chat_font = theme::font_setting(theme::FontSlot::Chat);
         // The size chosen, not one Settings is previewing; `None` follows.
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.base_color_light = theme::base_color(false);
@@ -19366,6 +19370,52 @@ mod tests {
         assert_eq!(theme::base_color(true), None);
     }
 
+    /// **A Chat font change lays every window out again** (koru-ai D79), as
+    /// an App font change does — the chat's finished messages included,
+    /// which `ChatSurface::invalidate` lays out afresh — and it is a choice
+    /// to save. While the chat follows the App font, an App font change
+    /// moves the chat's face with it. The only test in this crate that moves
+    /// the font globals, so it needs no lock of its own.
+    #[test]
+    fn a_chat_font_change_lays_every_window_out_again() {
+        use koru_settings::FontSetting;
+        let was_ui = theme::font_setting(theme::FontSlot::Ui);
+        let was_chat = theme::font_setting(theme::FontSlot::Chat);
+        theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+        theme::set_ui_font(theme::FontChoice::Inter);
+
+        let before = AppearanceShown::now();
+        theme::set_chat_font(theme::FontChoice::Lora);
+        let after = AppearanceShown::now();
+        assert!(after.typography_moved(&before));
+        assert!(after.choice_moved(&before));
+        assert_eq!(after.faces[4], theme::FontChoice::Lora);
+        assert_eq!(
+            after.faces[0],
+            theme::FontChoice::Inter,
+            "the app keeps its own"
+        );
+
+        theme::set_font_setting(theme::FontSlot::Chat, FontSetting::FollowDefault);
+        let following = AppearanceShown::now();
+        theme::set_ui_font(theme::FontChoice::Nunito);
+        let moved = AppearanceShown::now();
+        assert!(moved.typography_moved(&following));
+        assert_eq!(
+            moved.faces[4],
+            theme::FontChoice::Nunito,
+            "the chat followed"
+        );
+        assert_eq!(
+            theme::font_setting(theme::FontSlot::Chat),
+            FontSetting::FollowDefault,
+            "and still follows: nothing was chosen for it"
+        );
+
+        theme::set_font_setting(theme::FontSlot::Ui, was_ui);
+        theme::set_font_setting(theme::FontSlot::Chat, was_chat);
+    }
+
     #[test]
     fn reminder_startup_facts_are_projected_from_the_global_authority() {
         let section = koru_settings::GlobalSettings {
@@ -20443,7 +20493,9 @@ fn reveal_due(
 /// separate before-and-after copies on every event path.
 #[derive(Clone, PartialEq)]
 struct AppearanceShown {
-    faces: [theme::FontChoice; 4],
+    /// App, body, headings, code and the chat's — the chat's as drawn, so
+    /// an App font change moves it too while it follows.
+    faces: [theme::FontChoice; 5],
     doc_text_size: f32,
     density: theme::Density,
     icon_paint: koru_draw::icons::IconPack,
@@ -20451,7 +20503,7 @@ struct AppearanceShown {
     /// a saved choice, which the icons' artwork is not.
     base: [Option<u32>; 2],
     choices: (
-        [koru_settings::FontSetting; 4],
+        [koru_settings::FontSetting; 5],
         Option<u8>,
         Option<koru_draw::icons::IconPack>,
     ),
@@ -20466,6 +20518,7 @@ impl AppearanceShown {
                 theme::body_font(),
                 theme::headings_font(),
                 theme::code_font(),
+                theme::chat_font(),
             ],
             doc_text_size: theme::doc_text_size(),
             density: theme::density(),
@@ -20477,6 +20530,7 @@ impl AppearanceShown {
                     theme::font_setting(FontSlot::Body),
                     theme::font_setting(FontSlot::Headings),
                     theme::font_setting(FontSlot::Code),
+                    theme::font_setting(FontSlot::Chat),
                 ],
                 theme::chosen_doc_text_size(),
                 koru_draw::icons::chosen_pack(),

@@ -19,6 +19,9 @@ pub mod table;
 #[derive(Copy, Clone)]
 enum StyleRole {
     Ui,
+    /// The app's text size in the chat font (`theme::chat_font`), which is
+    /// the app font until a person chooses another.
+    Chat,
     Document,
 }
 
@@ -32,6 +35,13 @@ impl Styles {
     pub const fn ui() -> Self {
         Self {
             role: StyleRole::Ui,
+            bare_links: false,
+        }
+    }
+    /// The AI chat's: the app's size, in the chat font.
+    pub const fn chat() -> Self {
+        Self {
+            role: StyleRole::Chat,
             bare_links: false,
         }
     }
@@ -52,19 +62,21 @@ impl Styles {
     }
     fn metrics(self) -> theme::TextMetrics {
         match self.role {
-            StyleRole::Ui => theme::role::ui().metrics,
+            StyleRole::Ui | StyleRole::Chat => theme::role::ui().metrics,
             StyleRole::Document => theme::role::body().metrics,
         }
     }
     fn stack(self) -> &'static str {
         match self.role {
             StyleRole::Ui => theme::ui_stack(),
+            StyleRole::Chat => theme::chat_stack(),
             StyleRole::Document => theme::body_font().stack(),
         }
     }
     fn weight(self) -> f32 {
         match self.role {
             StyleRole::Ui => theme::ui_font().weight_for(None),
+            StyleRole::Chat => theme::chat_font().weight_for(None),
             StyleRole::Document => theme::body_font().weight(),
         }
     }

@@ -18,7 +18,6 @@
 
 use koru_ai_core::{MessageBlockId, MessageId};
 use koru_draw::text::TextEngine;
-use koru_draw::theme::role;
 
 use crate::layout_cache::BlockLayout;
 
@@ -96,7 +95,7 @@ pub(crate) fn plain_block(
         markdown: text.to_owned(),
         wrap_width: width,
         text: text.to_owned(),
-        layout: engine.simple_layout_wrapped(text, role::ui(), width),
+        layout: crate::chat_text_layout(engine, text, width),
         links: Vec::new(),
         table: None,
         image: None,

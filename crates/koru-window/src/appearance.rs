@@ -67,6 +67,10 @@ pub struct Appearance {
     pub body_font: FontChoice,
     pub headings_font: FontChoice,
     pub code_font: FontChoice,
+    /// The AI chat's face, or `None` while it follows the app font — kept a
+    /// state rather than a face, so a window that applies it goes on
+    /// following an App font change.
+    pub chat_font: Option<FontChoice>,
     pub density: Density,
     pub zoom: f32,
 }
@@ -93,6 +97,16 @@ impl Appearance {
             body_font: theme::resolve_font(theme::FontSlot::Body, &section.body_font),
             headings_font: theme::resolve_font(theme::FontSlot::Headings, &section.headings_font),
             code_font: theme::resolve_font(theme::FontSlot::Code, &section.code_font),
+            // A family missing here follows the app font too.
+            chat_font: match &section.chat_font {
+                koru_settings::FontSetting::FollowDefault => None,
+                chosen @ koru_settings::FontSetting::Chosen(_) => {
+                    Some(theme::resolve_font(theme::FontSlot::Chat, chosen))
+                }
+                koru_settings::FontSetting::Installed(name) => {
+                    koru_draw::installed_fonts::resolve(name.as_str()).map(FontChoice::Installed)
+                }
+            },
             density: Density::parse(section.density.token()),
             zoom: section.zoom.get(),
         }
@@ -108,6 +122,13 @@ impl Appearance {
         theme::set_body_font(self.body_font);
         theme::set_headings_font(self.headings_font);
         theme::set_code_font(self.code_font);
+        match self.chat_font {
+            Some(face) => theme::set_chat_font(face),
+            None => theme::set_font_setting(
+                theme::FontSlot::Chat,
+                koru_settings::FontSetting::FollowDefault,
+            ),
+        }
         theme::set_density(self.density);
         theme::set_zoom(self.zoom);
     }

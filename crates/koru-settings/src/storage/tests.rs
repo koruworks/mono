@@ -145,6 +145,31 @@ fn absent_font_keys_mean_follow_the_app_and_stay_absent() {
     assert!(!written.contains("headings_font="));
     assert!(!written.contains("code_font="));
     assert!(written.contains("body_font=lora"));
+    // The Chat font too: a file from before it existed follows the app font,
+    // and writes no key for it.
+    assert_eq!(settings.chat_font, FontSetting::FollowDefault);
+    assert!(!written.contains("chat_font="));
+}
+
+/// **A chosen Chat font survives the file**, a bundled family and an
+/// installed one alike, and following the app font writes no key.
+#[test]
+fn a_chosen_chat_font_round_trips_through_the_file() {
+    for chosen in [
+        FontSetting::Chosen(FontFamily::Lora),
+        FontSetting::Installed(crate::FamilyName::new("Georgia").unwrap()),
+    ] {
+        let settings = GlobalSettings {
+            chat_font: chosen.clone(),
+            ..GlobalSettings::default()
+        };
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(written.contains("chat_font="), "{written}");
+        let mut back = GlobalSettings::default();
+        apply_preferences(&written, &mut back);
+        assert_eq!(back.chat_font, chosen);
+        assert_eq!(back.ui_font, FontSetting::FollowDefault, "untouched");
+    }
 }
 
 #[test]
@@ -217,6 +242,7 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         body_font: FontSetting::Chosen(FontFamily::Lora),
         headings_font: FontSetting::Chosen(FontFamily::Nunito),
         code_font: FontSetting::Chosen(FontFamily::Mono),
+        chat_font: FontSetting::Chosen(FontFamily::SourceSerif4),
         // A pack that follows the default is absent on purpose, like a font.
         icon_pack: Some(crate::IconPackChoice::Lucide),
         // So is a document size that follows the default.

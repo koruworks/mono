@@ -201,7 +201,7 @@ fn a_section_body_from_a_newer_service_still_decodes() {
         ..GlobalSettings::default()
     }))
     .unwrap();
-    body["chat_font"] = serde_json::json!("follow");
+    body["a_later_setting"] = serde_json::json!("follow");
     let read: SectionBody = serde_json::from_value(body).unwrap();
     match read {
         SectionBody::Global(global) => assert!(!global.spellcheck_enabled),

@@ -184,10 +184,12 @@ pub(crate) fn build(
         for item in &input.items {
             match item {
                 WorkItem::Text(text) => {
+                    // What the agent said is the chat's text, in its font;
+                    // the grey summaries around it are the chrome's.
                     let plain = tool_groups::plain_text(text);
                     stack.push(
                         WorkLine::plain(
-                            engine.simple_layout_wrapped(&plain, role::ui(), width.max(1.0)),
+                            crate::chat_text_layout(engine, &plain, width.max(1.0)),
                             0.0,
                             None,
                             None,

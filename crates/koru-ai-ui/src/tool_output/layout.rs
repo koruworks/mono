@@ -76,6 +76,8 @@ pub(crate) fn fingerprint(pieces: &[Piece], width: f32) -> u64 {
     }
     theme::code_stack().hash(&mut hasher);
     theme::ui_stack().hash(&mut hasher);
+    // Markdown in an output is the chat's text, set in the chat font.
+    theme::chat_stack().hash(&mut hasher);
     // Markdown is set at the density-aware `ui` size; the rest at `meta`.
     for style in [theme::role::ui(), theme::role::meta()] {
         style.metrics.size.to_bits().hash(&mut hasher);
@@ -184,17 +186,15 @@ pub(crate) fn lay_out(engine: &mut TextEngine, pieces: &[Piece], width: f32) -> 
 
 /// One block of Markdown, through the chat's own renderer.
 fn markdown_block(engine: &mut TextEngine, markdown: &str, width: f32) -> Layout<Brush> {
-    match koru_markdown::render_block(engine, markdown, width, &koru_markdown::Styles::ui()) {
+    match koru_markdown::render_block(engine, markdown, width, &koru_markdown::Styles::chat()) {
         koru_markdown::Rendered::Text { layout, .. } => layout,
         // A table or a picture in a tool's output reads as its source.
         koru_markdown::Rendered::Table(_) => {
             engine.simple_layout_wrapped_in(markdown, role::meta(), theme::code_stack(), width)
         }
-        koru_markdown::Rendered::Image { alt, .. } => {
-            engine.simple_layout_wrapped(&alt, role::ui(), width)
-        }
+        koru_markdown::Rendered::Image { alt, .. } => crate::chat_text_layout(engine, &alt, width),
         koru_markdown::Rendered::Rule => {
-            engine.simple_layout_wrapped(&"\u{2500}".repeat(12), role::ui(), width)
+            crate::chat_text_layout(engine, &"\u{2500}".repeat(12), width)
         }
     }
 }

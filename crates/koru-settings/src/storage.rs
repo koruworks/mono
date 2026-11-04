@@ -85,6 +85,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "body_font",
     "headings_font",
     "code_font",
+    "chat_font",
     "doc_text_size",
     "base_color_light",
     "base_color_dark",
@@ -171,6 +172,8 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             "body_font" => into.body_font = FontSetting::parse_file_value(value),
             "headings_font" => into.headings_font = FontSetting::parse_file_value(value),
             "code_font" => into.code_font = FontSetting::parse_file_value(value),
+            // No v1 build wrote it, so no auto-written value to discount.
+            "chat_font" => into.chat_font = FontSetting::parse_file_value(value),
             "density" => into.density = DensityChoice::parse(value),
             "dictation_toggle" => into.dictation_gesture = DictationGesture::parse(value),
             "dictation_language" => into.dictation_language = DictationLanguage::parse(value),
@@ -228,6 +231,7 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
         ("body_font", &settings.body_font),
         ("headings_font", &settings.headings_font),
         ("code_font", &settings.code_font),
+        ("chat_font", &settings.chat_font),
     ] {
         if let Some(value) = setting.file_value() {
             line(key, &value);

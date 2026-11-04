@@ -933,6 +933,10 @@ pub struct Settings {
     pub headings_font: FontSetting,
     /// The typeface **code blocks and inline code** are set in.
     pub code_font: FontSetting,
+    /// The typeface the **AI chat**'s messages and composer are set in.
+    /// Following the default means following [`font`](Self::font), the
+    /// app font, live.
+    pub chat_font: FontSetting,
     /// The document body size the person chose, in px, or `None` while it
     /// follows the default. Documents only; the app's own text has density.
     pub doc_text_size: Option<u8>,
@@ -1187,6 +1191,7 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) body_font: FontSetting,
     pub(crate) headings_font: FontSetting,
     pub(crate) code_font: FontSetting,
+    pub(crate) chat_font: FontSetting,
     pub(crate) doc_text_size: Option<u8>,
     pub(crate) base_color_light: Option<u32>,
     pub(crate) base_color_dark: Option<u32>,
@@ -1233,6 +1238,7 @@ impl PreIdentitySettings {
             body_font: self.values.body_font.clone(),
             headings_font: self.values.headings_font.clone(),
             code_font: self.values.code_font.clone(),
+            chat_font: self.values.chat_font.clone(),
             doc_text_size: self.values.doc_text_size,
             base_color_light: self.values.base_color_light,
             base_color_dark: self.values.base_color_dark,
@@ -1411,6 +1417,8 @@ impl Default for Settings {
             body_font: FontSetting::FollowDefault,
             headings_font: FontSetting::FollowDefault,
             code_font: FontSetting::FollowDefault,
+            // The app font, whatever it is.
+            chat_font: FontSetting::FollowDefault,
             doc_text_size: None,
             base_color_light: None,
             base_color_dark: None,

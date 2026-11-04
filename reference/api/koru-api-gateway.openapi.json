@@ -5715,6 +5715,20 @@
               }
             ]
           },
+          "chat_font": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FontSetting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "`follow_default` puts the chat back on the app font."
+          },
           "close_behavior": {
             "anyOf": [
               {
@@ -6056,7 +6070,7 @@
         "type": "object"
       },
       "GlobalSettings": {
-        "description": "Everything that applies to Koru as a whole, whoever is consuming it.\n\n**Read tolerantly; written strictly.** A section is what the settings\nauthority *answers* — a client reads it — so it ignores a field it does\nnot know: an older Koru reading the section from a newer service keeps\nevery value it understands instead of failing the whole read and falling\nback to defaults. Nothing ever writes a section: a write is a\n[`GlobalPatch`], which still refuses an unknown field, so the service\nanswers a typo with a 400 rather than storing nothing. A field added\nhere is also `#[serde(default)]`, so a newer client reads an older\nservice. (The user's call, 2026-11-03: this reader ships before any new\nGlobal field does — koru-ai D79's Chat font is the first that waits.)",
+        "description": "Everything that applies to Koru as a whole, whoever is consuming it.\n\n**Read tolerantly; written strictly.** A section is what the settings\nauthority *answers* — a client reads it — so it ignores a field it does\nnot know: an older Koru reading the section from a newer service keeps\nevery value it understands instead of failing the whole read and falling\nback to defaults. Nothing ever writes a section: a write is a\n[`GlobalPatch`], which still refuses an unknown field, so the service\nanswers a typo with a 400 rather than storing nothing. A field added\nhere is also `#[serde(default)]`, so a newer client reads an older\nservice. (The user's call, 2026-11-03: this reader shipped before any new\nGlobal field did. koru-ai D79's `chat_font` was the first to wait, and\nlanded once the user ruled, 2026-11-04, that an older Koru may ignore it.)",
         "properties": {
           "agent_order": {
             "default": [],
@@ -6110,6 +6124,15 @@
           },
           "caret_width": {
             "$ref": "#/components/schemas/CaretWidthChoice"
+          },
+          "chat_font": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FontSetting"
+              }
+            ],
+            "default": "follow_default",
+            "description": "**The typeface the AI chat is set in** — its messages and the box a\nperson types in. `follow_default` follows the **app font** (`ui_font`),\nnow and later, rather than a build default of its own: a person who\nnever chooses sees the chat exactly as before, and a later change to\nthe app font carries the chat with it. Persisted as no key while it\nfollows, like every font role. `#[serde(default)]` so a section from a\nbuild without it reads as following the app font."
           },
           "close_behavior": {
             "$ref": "#/components/schemas/CloseBehaviorChoice"
