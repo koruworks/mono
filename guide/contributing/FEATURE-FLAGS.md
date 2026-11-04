@@ -186,12 +186,10 @@ unaffected.
   a restored session never reopens the pane.
 - No AI chat tab: no *New AI chat* or *Chats ▸* in `+`, no Explore *Chats*
   mode (`Alt+4`); the pane surface is not booted when `+` opens.
-- Koru Agent: no tray *Koru AI Chat*, the global `Ctrl+Shift+I` is not
-  registered at all, and `--ai-chat` / a chat link opens nothing — from inside a
-document, and from another app (LaunchServices on a Mac, `koru-agent
-koru://chat/…` on Windows), because the Agent itself answers `OpenChatLink`
-and `OpenAiChat` with a silent `Ok` when Koru AI is hidden. The Windows
-  jump list has no *AI Chat* task.
+- A chat link opens nothing — from inside a document, from the search
+  overlay, and from another app (LaunchServices on a Mac, `koru-agent
+  koru://chat/…` on Windows), because the Agent itself answers `OpenChatLink`
+  with a silent `Ok` and pushes no window a chat when Koru AI is hidden.
 - Settings › System has no Koru AI providers card; Welcome has no Koru AI row.
 - **Delegate**: no `/delegate`, no `+` *Delegate*, no document-menu *Delegate*,
   no tasks-view *Delegate…*; `begin_delegation` — the one door into the modal —

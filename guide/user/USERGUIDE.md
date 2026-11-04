@@ -1041,9 +1041,6 @@ wrong.
 
 **Right-click a document tab to pin it.** Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps that document** — clicking another page in the pane, or a link on the pin, never replaces it. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
 
-On Windows, the taskbar Jump List includes **AI Chat (Ctrl+Shift+I)**. It opens
-the standalone Koru AI chat, or brings the existing chat window forward.
-
 **`+` and `Ctrl+Shift+A` open Add…**. Documents offers **New** (`Ctrl+T`) and
 your ten most recent pages. Agents and Shell each offer **Active** when a
 session of that kind is running — pick one to switch to it — then the same
@@ -1569,8 +1566,8 @@ answer sees the saved revision rather
 than an older snapshot. **Chats** shows the left column's Chats view with this
 chat selected (see *Finding a chat again*) and **New chat** starts another
 thread. Closing the pane stops its background
-polling. The same durable chats open in the standalone `koru-ai-chat`
-application. Neither surface shows the chat's title above the conversation —
+polling. The same durable chats open in chat tabs too. Neither shows the
+chat's title above the conversation —
 its tab and the Chats list name it. To rename a chat, rename it in the Chats
 list (see *Finding a chat again*).
 
@@ -1585,24 +1582,15 @@ what you wrote about it. Remove a quote with Backspace, like a document chip.
 A message you queue while a reply is running keeps its quotes, and your sent
 message shows them with a bar beside the quoted lines.
 
-**Open Koru AI in its own window** from **Koru AI Chat** at the top of Koru
-Agent's right-click menu, **AI Chat** in Koru's `+` menu, or the global
-`Ctrl+Shift+I` shortcut. The menu row carries the sparkle icon and the same
-shortcut hint. Agent
-starts the sibling chat application when none exists and otherwise brings its
-active window forward. It uses the same gateway, provider settings, and durable
-conversations as the in-app pane. Its Koru-drawn caption
-supports drag, double-click maximize/restore, the shared window menu, minimize,
-maximize, and close. From that focused standalone chat, `Ctrl+Shift+I` returns
-to the most recently active Koru workspace (or opens Koru when no workspace is
-running), making the chord a toggle between the two surfaces.
-
-If the standalone application is missing or cannot start, a request made from
-a Koru workspace opens an in-window error that says the chat window was not
-opened and leaves the workspace and conversations unchanged. A request owned
-by Koru Agent — its menu, shortcut, or a chat result in Search — reopens
-Search with an installation warning. Reinstall or restore the standalone
-application for that Koru build, then try the action again.
+**A chat opens in a tab.** A row of the Chats view, a chat result in search
+and a chat link inside a document all open the chat as a tab, or bring forward
+the tab already showing it. A `koru://chat/…` link opened from another app,
+and a chat result in Koru Agent's search overlay, do the same in the Koru
+window you used last, scrolled to the linked passage; when no Koru window is
+open, Koru opens one first. Koru AI used to have a window of its own,
+`koru-ai-chat`, with the `Ctrl+Shift+I` shortcut, a row in Koru Agent's menu
+and an *AI Chat* task in the taskbar; that window was retired on 2026-11-03,
+and every chat it showed is in Koru.
 
 Type `/usage` by itself to show private local measurements without contacting
 the selected provider. The current chat appears first, followed by retained
@@ -1633,16 +1621,15 @@ containing the conversation through that response. Store asks for a
 profile/workspace and creates a complete Koru document with a backlink to the
 source response. A failed or interrupted response stays in the thread with a
 safe explanation and **Retry**; retry adds a new response below it. **Link**
-copies a durable link to the response block. Opening one starts Koru AI if
-needed, scrolls to the block, and briefly highlights it.
+copies a durable link to the response block. Opening one opens the chat as a
+tab, scrolls to the block, and briefly highlights it.
 
 **Right-click Koru in the taskbar for your recent documents.** The last ten you
 opened are listed under *Recent*, above *New document*; choosing one brings the
 running Koru forward with that document open, or starts it there if it was not
 running. An entry for a document you have since deleted does nothing.
 
-Above *Search* is *Koru AI Chat*: it opens or focuses the standalone chat and
-shows `Ctrl+Shift+I` when Agent owns that global shortcut. *Search* opens the same global search overlay the
+*Search* opens the same global search overlay the
 shortcut does, and its title names the shortcut this agent actually holds — for
 example *Search (Ctrl+Shift+K)*, or *Search (Ctrl+Alt+Space)* if the first choice
 was already taken. It reads the agent's answer rather than assuming, so it can
@@ -2168,10 +2155,10 @@ written while you are still speaking, so **one dictation is one undo step**:
 `Ctrl+Z` takes the whole sentence back, along with whatever was selected before
 you started.
 
-The dedicated global-search window (`Ctrl+Shift+K`) and the separate
-`koru-ai-chat` application host the same push-to-talk session themselves. They
-read the same consent and microphone/language/quality preferences as Koru and
-ask Agent for the same root-qualified voice worker. A future Koru Terminal host
+The dedicated global-search window (`Ctrl+Shift+K`) hosts the same
+push-to-talk session itself. It reads the same consent and
+microphone/language/quality preferences as Koru and asks Agent for the same
+root-qualified voice worker. A future Koru Terminal host
 has the same rule: speech may insert text, but must never submit or execute it.
 
 Dictation replaces a selection, exactly as typing does.
@@ -5288,9 +5275,8 @@ extract it wherever you like — a folder in your documents, a second drive, a
 memory stick — and run **`koru.bat`**, or `koru.exe` directly. No installer, no
 administrator, no registry.
 
-Inside the zip are seven programs and everything they need: `koru.exe`, which is
-the workspace window; `koru-ai-chat.exe`, the standalone profile-free AI Chat;
-`koru-agent.exe`, which owns the notification-area icon, global shortcuts,
+Inside the zip are six programs and everything they need: `koru.exe`, which is
+the workspace window; `koru-agent.exe`, which owns the notification-area icon, global shortcuts,
 networking, and updating — and also the public API and the Store worker that
 writes your content, which it runs as workers of itself;
 `koru-com-notification.exe`, the one-shot helper that catches a button press on
@@ -5306,17 +5292,17 @@ public API and its Store worker from further copies of itself, and it looks for
 its neighbours **in its own folder** rather than anywhere else on your machine —
 so a nightly copy can never end up running a stable one's service chain. If you
 open Task Manager you will therefore see several `koru-agent.exe`: that is one
-agent and its workers, not several agents. The seven go together: they are
+agent and its workers, not several agents. The six go together: they are
 built, signed and released as one thing.
 
 **Your content is not in that folder.** It lives under
 `%LOCALAPPDATA%\Koru\<channel>\`, with `store\` (your workspaces, documents and
 images) and `agent\` beside it. So the extracted folder can be moved, replaced
 or deleted without touching a word you have written — which is also why an
-update can replace all seven programs and leave your work where it is. If the
-standalone Koru AI Chat is open, the update closes it normally and reopens it
-afterward; its secure credential and independent window geometry remain in
-their ordinary stores rather than in the installation folder.
+update can replace all six programs and leave your work where it is. An
+update from a build that still had the standalone Koru AI window
+(`koru-ai-chat.exe`, retired on 2026-11-03) closes that window if it is open
+and removes the program; your chats are not touched.
 
 ## Updates
 
@@ -6117,7 +6103,6 @@ restart.
 | `Ctrl+Alt+K` | copy the Cloud sync section's facts to the clipboard |
 | `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
 | `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
-| `Ctrl+Shift+I` | open or foreground the standalone Koru AI chat |
 
 ## Chatting with a local agent
 
@@ -6226,12 +6211,6 @@ too, and the name never reaches the model.
 In a chat tab, **Ctrl+Shift+E** (or the chat's own **Chats** button) opens the
 list with that chat selected. A chat you start in a tab or in the Koru AI pane
 appears in the list straight away.
-
-In the standalone Koru AI window, **Chats** — or Ctrl+Shift+E — opens the same
-list as a small floating pane. Choosing a row reads that chat in the window;
-Escape or a click outside closes the pane. Right-click a row there for the
-same **Rename…** and **Delete chat**, and **F2** renames the row the keyboard
-is on, in the same box.
 
 ### Mentioning a document with @
 
