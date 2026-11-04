@@ -958,9 +958,10 @@ async fn run(
     let catalog = SqliteCatalog::open(&root.join(CATALOG_FILE))?;
     let mut store = Store::open(catalog, SqliteBackend::new(&root))?;
     tracing::info!("store startup: catalog and store opened");
-    const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
     let purged = store.purge_deleted(Timestamp::from_millis(
-        Timestamp::now().millis().saturating_sub(RETENTION_MS),
+        Timestamp::now()
+            .millis()
+            .saturating_sub(koru_store_core::TRASH_RETENTION_MS),
     ))?;
     if purged > 0 {
         tracing::info!(workspaces = purged, "purged expired deleted workspaces");

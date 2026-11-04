@@ -472,6 +472,13 @@ pub struct DocumentReport {
     pub updated_at: Timestamp,
 }
 
+/// How long a soft-deleted Workspace stays in the Trash before
+/// [`Store::purge_deleted`] removes it — 30 days. A Profile removed from
+/// this installation longer ago than this is past recovering its
+/// Workspaces, so its removal is final for what is kept beside it too
+/// ([`Store::profiles_removed_before`]).
+pub const TRASH_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+
 /// The key under which the store's peer id is kept.
 pub const K_PEER_ID: &str = "peer_id";
 /// A stable identifier for this installation. Not an account, not a machine.
@@ -843,6 +850,20 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             self.private_profiles.remove(&id);
         }
         Ok(result)
+    }
+
+    /// Profiles this installation removed at or before `before`, oldest
+    /// removal first.
+    ///
+    /// **Only a row this catalog holds and marks removed is ever named**: a
+    /// Profile it does not know is not one it knows is gone, so absence is
+    /// never an answer here. With `before` [`TRASH_RETENTION_MS`] ago this is
+    /// the Profiles whose removal is final — their Workspaces have left the
+    /// Trash — and data kept outside the Store for them (the AI chats) is
+    /// retired on it. A restore clears the marker, so a restored Profile
+    /// drops out of the answer.
+    pub fn profiles_removed_before(&self, before: Timestamp) -> Result<Vec<ProfileId>> {
+        self.catalog.profiles_removed_before(before)
     }
 
     /// Restore a locally removed Profile after validating its retained CRDT.
@@ -1711,6 +1732,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// Permanently remove soft-deleted workspaces whose retention window has
     /// elapsed. Backend bytes go first; a failed filesystem removal therefore
     /// leaves the catalog row available for a later retry.
+    ///
+    /// The Store's start-up calls this with [`TRASH_RETENTION_MS`] ago.
     pub fn purge_deleted(&mut self, before: Timestamp) -> Result<usize> {
         let expired: Vec<_> = self
             .catalog

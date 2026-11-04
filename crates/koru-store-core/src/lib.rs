@@ -91,7 +91,7 @@ pub use service::TransportModeChoice;
 pub mod sync_digest;
 pub use service::{
     Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ReminderCommitted,
-    SeededCreation, Store,
+    SeededCreation, Store, TRASH_RETENTION_MS,
 };
 pub use temporal::{CalendarDate, FloatingDateTime, TemporalValue, ZonedDateTime};
 pub use text::Locale;

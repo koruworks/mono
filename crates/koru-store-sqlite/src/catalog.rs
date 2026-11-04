@@ -437,6 +437,25 @@ impl Catalog for SqliteCatalog {
         Ok(LocalProfileRestoration::Restored)
     }
 
+    fn profiles_removed_before(&self, before: Timestamp) -> Result<Vec<ProfileId>> {
+        let mut stmt = self
+            .connection
+            .prepare(
+                "SELECT id FROM profiles
+                 WHERE removed_at IS NOT NULL AND removed_at <= ?1
+                 ORDER BY removed_at, id",
+            )
+            .map_err(sql_failed)?;
+        let rows = stmt
+            .query_map(params![before.millis()], |row| {
+                let profile = row.get::<_, String>(0)?;
+                Ok(ProfileId::parse(&profile)
+                    .ok_or_else(|| Error::new(Code::CorruptState, "invalid Profile id in catalog")))
+            })
+            .map_err(sql_failed)?;
+        collect(rows)
+    }
+
     fn profile_crdt(&self, id: ProfileId) -> Result<Option<ProfileCrdtState>> {
         self.connection
             .query_row(

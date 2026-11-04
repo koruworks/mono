@@ -197,6 +197,19 @@ impl StoreContextPort for StoreContextAdapter {
             .map_err(|_| context_unavailable())?
             .map_err(|_| context_unavailable())
     }
+
+    fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        // The window the Store's own purge keeps a deleted workspace for.
+        let before = koru_store_core::Timestamp::from_millis(
+            koru_store_core::Timestamp::now()
+                .millis()
+                .saturating_sub(koru_store_core::TRASH_RETENTION_MS),
+        );
+        self.client
+            .with_store(move |store| store.profiles_removed_before(before))
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
 }
 
 fn profiles_unavailable() -> AiError {

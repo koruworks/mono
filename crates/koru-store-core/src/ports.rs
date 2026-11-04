@@ -169,6 +169,13 @@ pub trait Catalog {
     -> Result<LocalProfileRemoval>;
     /// Atomically clear the explicit local-removal marker.
     fn restore_profile_local(&mut self, id: ProfileId) -> Result<LocalProfileRestoration>;
+    /// Every retained row whose local-removal marker is at or before
+    /// `before`, oldest removal first. A Profile this catalog holds no row
+    /// for is never named. Defaults to none, which is correct for any
+    /// backend that does not implement local removal at all.
+    fn profiles_removed_before(&self, _before: Timestamp) -> Result<Vec<ProfileId>> {
+        Ok(Vec::new())
+    }
     fn profile_crdt(&self, _id: ProfileId) -> Result<Option<ProfileCrdtState>> {
         Ok(None)
     }

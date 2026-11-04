@@ -228,4 +228,15 @@ pub trait StoreContextPort: Send + Sync {
     fn document_workspace(&self, _document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
         Ok(None)
     }
+    /// The profiles whose deletion from this computer is **final**: removed
+    /// longer ago than the Trash keeps their workspaces. A chat of one of
+    /// these goes with its profile.
+    ///
+    /// Only a profile the Store holds and records as removed is ever named.
+    /// One it does not know — not loaded, not synced, another root's — is
+    /// never in the answer: not knowing a profile is not knowing it is
+    /// gone. A port with no Store has none to give, and retires nothing.
+    fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        Ok(Vec::new())
+    }
 }

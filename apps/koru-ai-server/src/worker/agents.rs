@@ -15,7 +15,8 @@
 //!   session-control thread drains the chat's sessions, reports back as an
 //!   envelope, and only then is the row deleted and the held reply
 //!   completed. Clearing holds a worker-wide gate meanwhile so nothing new
-//!   can slip into its snapshot.
+//!   can slip into its snapshot. A profile whose deletion is final has its
+//!   chats retired the same way, at start-up.
 
 use std::collections::HashSet;
 
@@ -349,6 +350,115 @@ impl WorkerState {
             }
         };
         let _ = clearing.reply.send(answer);
+    }
+
+    // ----- a deleted profile's chats ------------------------------------
+
+    /// Retire the chats of every profile whose deletion is final
+    /// ([`koru_ai_core::StoreContextPort::retired_profiles`]): each the way a delete
+    /// retires one — an agent behind it drained first, then its rows, then
+    /// its folder on the cleanup thread.
+    ///
+    /// Nothing is recorded for it. Which profiles are final is the Store's
+    /// durable answer, asked again at every start, so a pass a crash cut
+    /// short finishes at the next one: the rows still there are retired
+    /// then, and the start-up sweep takes a folder whose rows already went.
+    /// A chat that is busy, or whose agent could not be stopped, is kept
+    /// for that next start. A profile the Store does not hold is never
+    /// retired, and a Store that does not answer retires nothing.
+    pub(super) fn retire_removed_profiles(&mut self) {
+        if !self.retiring {
+            return;
+        }
+        let Some(store) = self.store.clone() else {
+            self.retiring = false;
+            return;
+        };
+        let retired = match store.retired_profiles() {
+            Ok(retired) => retired,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, "a deleted profile's chats wait: the Store did not answer");
+                return;
+            }
+        };
+        if retired.is_empty() {
+            self.retiring = false;
+            return;
+        }
+        let chats = match self.repository.chats() {
+            Ok(chats) => chats,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, "a deleted profile's chats could not be read");
+                return;
+            }
+        };
+        self.retiring = false;
+        let mut now = Vec::new();
+        let mut draining = 0usize;
+        let mut kept = 0usize;
+        for chat in chats.iter().filter(|chat| {
+            chat.profile_id
+                .is_some_and(|profile| retired.contains(&profile))
+        }) {
+            if self.closing.contains_key(&chat.id)
+                || !matches!(self.chat_has_active_attempt(chat.id), Ok(false))
+            {
+                kept += 1;
+                continue;
+            }
+            let agents = self
+                .agents
+                .clone()
+                .filter(|_| is_agent_provider(&chat.current_model.provider));
+            let Some(agents) = agents else {
+                now.push(chat.id);
+                continue;
+            };
+            let output = self.output.clone();
+            let id = chat.id;
+            match agents.end_chat_sessions(
+                id,
+                Box::new(move |outcome| {
+                    let _ = output.send(Envelope::ChatSessionsEnded { chat: id, outcome });
+                }),
+            ) {
+                // Its row goes when the drain reports, as a delete's does;
+                // nobody waits on the answer.
+                Ok(()) => {
+                    self.closing.insert(
+                        id,
+                        ClosingChat {
+                            replies: Vec::new(),
+                        },
+                    );
+                    draining += 1;
+                }
+                Err(_) => kept += 1,
+            }
+        }
+        let deleted = if now.is_empty() {
+            0
+        } else {
+            match self.repository.delete_chats(&now) {
+                Ok(deleted) => {
+                    self.forget_chat_folders(&now);
+                    deleted
+                }
+                Err(error) => {
+                    tracing::warn!(class = ?error.class, "a deleted profile's chats could not be removed; the next start retries");
+                    0
+                }
+            }
+        };
+        if deleted > 0 || draining > 0 || kept > 0 {
+            tracing::info!(
+                profiles = retired.len(),
+                deleted,
+                draining,
+                kept,
+                "a deleted profile's chats went with it"
+            );
+        }
     }
 
     // ----- activity rows ----------------------------------------------

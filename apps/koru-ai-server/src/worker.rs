@@ -1377,6 +1377,10 @@ struct WorkerState {
     /// Whether a chat may still be waiting for a profile: until a pass over
     /// them places every one ([`WorkerState::place_unplaced_chats`]).
     unplaced: bool,
+    /// Whether the chats of profiles whose deletion is final are still to
+    /// be retired: until the Store has answered once in this process
+    /// ([`WorkerState::retire_removed_profiles`]).
+    retiring: bool,
     /// Steers handed to a running turn and not answered yet, by operation.
     steering: HashSet<Uuid>,
 }
@@ -1567,7 +1571,12 @@ fn run_worker(
         steering: HashSet::new(),
         store: placement_store,
         unplaced: true,
+        retiring: true,
     };
+    // **A deleted profile's chats go with it**, once its deletion is final,
+    // before any command is served; a Store that does not answer leaves
+    // them for the next pass, as placement does.
+    state.retire_removed_profiles();
     // **The chats written before AI schema 13 are given their profile
     // here**, before any command is served, with the Store this worker
     // already reads documents through; a Store that does not answer leaves
@@ -2947,6 +2956,7 @@ impl WorkerState {
     ) -> ApiResult<AiSearchResponse> {
         authorize(&context, AiScope::Chat)?;
         if request.profile.is_some() {
+            self.retire_removed_profiles();
             self.place_unplaced_chats();
         }
         if request.text.len() > 4_096 || request.text.chars().any(char::is_control) {
@@ -3344,6 +3354,7 @@ impl WorkerState {
     ) -> ApiResult<ListChatsResponse> {
         authorize(&context, AiScope::Chat)?;
         if profile.is_some() {
+            self.retire_removed_profiles();
             self.place_unplaced_chats();
         }
         let mut chats = self.repository.chats().map_err(ai_failure)?;
