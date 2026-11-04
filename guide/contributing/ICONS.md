@@ -29,14 +29,14 @@ python scripts/icons/sync-icon-pack.py --pack tabler
 python scripts/icons/sync-icon-pack.py --pack lucide --stroke-width 1.85
 python scripts/icons/sync-icon-pack.py --pack phosphor
 python scripts/icons/sync-icon-pack.py --pack remix
-cargo build -p koru -p koru-ai-chat
+cargo build -p koru
 ```
 
 The command verifies the archives pinned in `third-party/fetch.manifest`, using
 the standard fetcher if absent. It updates the compiled Rust catalog, bundled
-license notices, `assets/document.ico`, and all `assets/koru-ai-chat*.ico` and
-`.png` variants. Commit those outputs together. Ordinary builds use committed
-paths and images and need neither Python, Pillow, archives nor an icon font.
+license notices and `assets/document.ico`. Commit those outputs together.
+Ordinary builds use committed paths and images and need neither Python,
+Pillow, archives nor an icon font.
 Every regeneration compiles all four packs. `--pack` selects the packaged
 Windows document/taskbar assets and the renderer's bootstrap choice; saved
 settings take precedence for in-app icons. OS assets remain build-time artwork.

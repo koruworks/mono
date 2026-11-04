@@ -318,9 +318,9 @@ Koru — workspace editor
 usage: ./koru.sh <command> [cargo args...]
 
   run        launch the manager: documents in one process
-  run-all    start Agent, API Gateway and Koru; --ai also opens Koru AI Chat
+  run-all    start Agent, API Gateway and Koru
              (run and run-all read .env.production; with none, Koru Cloud is not configured)
-  stop-all   stop this worktree's Agent, services, voice worker, Koru and AI Chat
+  stop-all   stop this worktree's Agent, services, voice worker and Koru
   jank       ...with the stall watch on, logging to koru-jank.log
   release    launch an optimised build
   release-tool run any koru-release subcommand; dist-* ones get the fonts first
@@ -363,7 +363,7 @@ open real content from this tree, say so: `./koru.sh run -- --profile <path>`.
 To open at a size: `./koru.sh --window-size 1024x768`.
 
 `dist-local` builds exactly what a published release carries — on a Mac that is
-a Koru.app bundle holding the six binaries, the notification owner and the
+a Koru.app bundle holding the five binaries, the notification owner and the
 thirty fonts — and then
 stops. It takes a channel and an optional version:
 `./koru.sh dist-local beta 1.0.0-beta.0`. On macOS it signs through
@@ -406,8 +406,8 @@ voice_verb() {
 
 # The whole debug stack as one supervised set — the Unix half of
 # `koru.bat run-all` / `scripts/dev/run-all.ps1`, with the same shape: Agent first,
-# its supervised gateway second, then the requested UI processes. Services stay
-# up while either Koru or Koru AI Chat is open; Ctrl+C stops the complete set.
+# its supervised gateway second, then Koru. Services stay up while Koru is
+# open; Ctrl+C stops the complete set.
 # KORU_ROOT names an explicit channel root, exactly as on Windows.
 #
 # Agent is launched with SIGINT *ignored* — the disposition survives
@@ -439,7 +439,7 @@ stop_exact_image() {
 
 worktree_ui_running() {
   local bin="$1"
-  image_running "$bin/koru" || image_running "$bin/koru-ai-chat"
+  image_running "$bin/koru"
 }
 
 worktree_stack_running() {
@@ -464,13 +464,11 @@ run_all_stop() {
   # are roles of koru-agent, ended by their supervisor, so there is nothing left
   # to ask by name.
   "$bin/koru-agent" ${AGENT_ROOT_ARGS[@]+"${AGENT_ROOT_ARGS[@]}"} stop >/dev/null 2>&1 || true
-  "$bin/koru-ai-chat" ${CHAT_ROOT_ARGS[@]+"${CHAT_ROOT_ARGS[@]}"} stop >/dev/null 2>&1 || true
   # The voice worker is started by Agent on demand, so it is asked after it:
   # nothing is left to put one back.
   "$bin/koru-voice-worker" ${STORE_ROOT_ARGS[@]+"${STORE_ROOT_ARGS[@]}"} stop >/dev/null 2>&1 || true
   # Politeness has a deadline. The fallback matches full executable paths, so
-  # it also catches a chat opened later from the caption without reaching a
-  # sibling worktree or installed Koru.
+  # it never reaches a sibling worktree or installed Koru.
   local deadline=$((SECONDS + 5))
   while worktree_stack_running "$bin" && [ "$SECONDS" -lt "$deadline" ]; do
     sleep 0.1 || true
@@ -486,16 +484,15 @@ run_all_verb() {
   # builds into the same debug directory.
   # koru-agent hosts the gateway and the session host as roles of its own
   # image, so building it builds them.
-  local -a packages=(-p koru-agent -p koru -p koru-ai-chat)
+  local -a packages=(-p koru-agent -p koru)
   builds_voice_worker && packages+=(-p koru-voice-worker)
-  local mcp=0 ai=0
+  local mcp=0
   for arg in "$@"; do
     case "$arg" in
       --mcp) mcp=1; packages+=(-p koru-mcp) ;;
-      --ai) ai=1 ;;
       *)
-        echo "koru: $sub accepts only --mcp and --ai" >&2
-        echo "usage: ./koru.sh $sub [--mcp] [--ai]" >&2
+        echo "koru: $sub accepts only --mcp" >&2
+        echo "usage: ./koru.sh $sub [--mcp]" >&2
         exit 2 ;;
     esac
   done
@@ -510,7 +507,7 @@ run_all_verb() {
 
   local bin="$PWD/target/debug"
   local -a agent_start=(--console --tray) app_args=()
-  STORE_ROOT_ARGS=() AGENT_ROOT_ARGS=() CHAT_ROOT_ARGS=()
+  STORE_ROOT_ARGS=() AGENT_ROOT_ARGS=()
   RUN_ALL_SIGNALLED=0
   if [ -n "${KORU_ROOT:-}" ]; then
     local root
@@ -520,7 +517,6 @@ run_all_verb() {
     # the store's directory one level inside it.
     STORE_ROOT_ARGS=(--root "$root")
     AGENT_ROOT_ARGS=(--root "$root")
-    CHAT_ROOT_ARGS=(--root "$root")
     agent_start=(--root "$root" --console --tray)
     app_args=(--root "$root")
   fi
@@ -594,12 +590,6 @@ run_all_verb() {
     return 0
   fi
 
-  if [ "$ai" = 1 ]; then
-    "$bin/koru-ai-chat" ${CHAT_ROOT_ARGS[@]+"${CHAT_ROOT_ARGS[@]}"} &
-    local ai_pid=$!
-    echo "[Koru] Koru AI Chat started, pid $ai_pid"
-  fi
-
   echo "[Koru] API Gateway ready, Agent pid $agent_pid"
   echo "[Koru] launching Koru; Ctrl+C stops this worktree's complete stack"
   "$bin/koru" ${app_args[@]+"${app_args[@]}"} &
@@ -614,9 +604,8 @@ run_all_verb() {
     sleep 0.01 || true
   done
 
-  # A chat launched later by the workspace caption is not our child, so PIDs
-  # alone are insufficient. Keep Agent and Gateway available until no Koru UI
-  # from this exact target/debug directory remains.
+  # Keep Agent and Gateway available until no Koru UI from this exact
+  # target/debug directory remains.
   while worktree_ui_running "$bin"; do
     [ "$RUN_ALL_SIGNALLED" = 1 ] && break
     sleep 0.1 || true
@@ -624,20 +613,13 @@ run_all_verb() {
   run_all_stop
   trap - INT TERM
 
-  local app_exit=0 ai_exit=0
+  local app_exit=0
   wait "$app_pid" 2>/dev/null || app_exit=$?
-  if [ "$ai" = 1 ]; then
-    wait "$ai_pid" 2>/dev/null || ai_exit=$?
-  fi
   # A signal is the ordinary way this runner ends; cleanup deliberately hides
   # the UI exit codes it caused. Without one, preserve unexpected failures.
   if [ "$RUN_ALL_SIGNALLED" != 1 ] && [ "$app_exit" != 0 ]; then
     echo "koru: Koru exited with code $app_exit" >&2
     exit "$app_exit"
-  fi
-  if [ "$RUN_ALL_SIGNALLED" != 1 ] && [ "$ai_exit" != 0 ]; then
-    echo "koru: Koru AI Chat exited with code $ai_exit" >&2
-    exit "$ai_exit"
   fi
 }
 
@@ -652,13 +634,12 @@ stop_all_verb() {
     exit 2
   fi
   "$bin/koru-agent" stop >/dev/null 2>&1 || true
-  "$bin/koru-ai-chat" stop >/dev/null 2>&1 || true
   "$bin/koru-voice-worker" stop >/dev/null 2>&1 || true
   sleep 1
   for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-store-server; do
     stop_exact_image "$bin/$name"
   done
-  echo "[Koru] this worktree's Agent and its gateway and sessions workers, MCP, voice worker, diagnostic Store host, Koru and Koru AI Chat are stopped."
+  echo "[Koru] this worktree's Agent and its gateway and sessions workers, MCP, voice worker, diagnostic Store host and Koru are stopped."
 }
 
 # A stdio MCP server belongs to the client that starts it, so a detached launch

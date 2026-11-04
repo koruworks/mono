@@ -362,7 +362,6 @@ fn the_service_table_names_every_service_constant() {
         crate::SESSION_HOST,
         crate::EVENTS,
         crate::API_GATEWAY,
-        crate::AI_CHAT,
         crate::REOPEN_CLAIM,
         crate::AGENT_GATEWAY_BRIDGE,
         crate::VOICE,
@@ -373,5 +372,5 @@ fn the_service_table_names_every_service_constant() {
             "{service} is not in SERVICES, so no length budget covers it"
         );
     }
-    assert_eq!(crate::SERVICES.len(), 10);
+    assert_eq!(crate::SERVICES.len(), 9);
 }

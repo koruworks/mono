@@ -145,19 +145,13 @@ impl Resource {
 /// Stable keeps the untinted `koru.ico`; the others name the `koru-<segment>.ico`
 /// variants that `scripts/icons/set-logo.py` emits.
 pub fn channel_icon(assets: &Path) -> PathBuf {
-    channel_named_icon(assets, "koru")
-}
-
-/// The channel-specific icon for a Koru executable with its own icon family,
-/// such as `koru-ai-chat[-<segment>].ico`.
-pub fn channel_named_icon(assets: &Path, stem: &str) -> PathBuf {
     println!("cargo:rerun-if-env-changed=KORU_RELEASE_CHANNEL");
     let channel = env::var("KORU_RELEASE_CHANNEL").unwrap_or_else(|_| "internal".into());
     let channel = koru_channel::ReleaseChannel::from_build_channel(&channel);
     let debug = env::var("PROFILE").as_deref() == Ok("debug");
     match koru_channel::segment_of(channel, debug) {
-        "stable" => assets.join(format!("{stem}.ico")),
-        segment => assets.join(format!("{stem}-{segment}.ico")),
+        "stable" => assets.join("koru.ico"),
+        segment => assets.join(format!("koru-{segment}.ico")),
     }
 }
 

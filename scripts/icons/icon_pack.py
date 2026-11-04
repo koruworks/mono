@@ -279,7 +279,7 @@ def bundled_notice(pack, notice):
     }[pack]
     return (f"Component: {pack.title()} Icons (compiled vector artwork)\n"
             f"Version: {version}\nSource: {source}\n"
-            "Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png\n"
+            "Files: icon_pack_data.rs, document.ico\n"
             f"License: {license}\nPlatforms: windows, macos, linux\n---\n"
             "Koru converts the upstream SVG artwork into compiled vector paths.\n\n" + notice)
 

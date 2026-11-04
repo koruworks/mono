@@ -5,11 +5,11 @@ rem Task runner for Koru.
 rem
 rem   koru.bat run      build and launch (Koru Cloud settings from .env.production, if present)
 rem   koru.bat run-all  restart Agent (with its API Gateway) and Koru, with the same
-rem                     .env.production; --ai opens AI Chat, --profile gives only
+rem                     .env.production; --profile gives only
 rem                     the Koru workspace an explicit profile. Stops this
 rem                     checkout's stack first and, on the shared debug channel
 rem                     (no KORU_ROOT), every other checkout's debug stack too
-rem   koru.bat stop-all stop this worktree's Koru, AI Chat and services
+rem   koru.bat stop-all stop this worktree's Koru and services
 rem   koru.bat root     the same stack on one isolated root (.env.production too)
 rem   koru.bat build-root-signed  build/register a signed rooted Windows test
 rem   koru.bat run-root-signed    run the latest signed rooted Windows test
@@ -291,13 +291,12 @@ if defined RUN_RELEASE (
 cargo run%ROOTSEP%!PASS!
 exit /b %ERRORLEVEL%
 
-REM Restart this worktree's debug stack in dependency order. --ai opens the
-REM separately hosted chat after its gateway is ready.
+REM Restart this worktree's debug stack in dependency order.
 REM PowerShell owns startup so roots containing spaces remain one argument, the
 REM Agent can start hidden, its gateway worker starts with it, and readiness is
 REM observed rather than guessed with a fixed sleep. The runner remains in this
-REM console while either UI is open; closing both or pressing Ctrl+C stops the
-REM whole exact-path stack.
+REM console while Koru is open; closing it or pressing Ctrl+C stops the whole
+REM exact-path stack.
 REM The same file as `run`, for the same reason: the stack `run-all` brings up
 REM signs in and syncs like `run` does, so it must be just as impossible to
 REM point at the wrong Cloud without noticing. Without a file read here it
@@ -307,7 +306,6 @@ REM nothing, which means no Cloud at all, silently.
 set "KORU_RUN_ENV_FILE=.env.production"
 set "RUN_ALL_MCP="
 set "RUN_ALL_PERF="
-set "RUN_ALL_AI="
 set "RUN_ALL_PROFILE="
 set "RUN_ALL_PROFILE_NEXT="
 set "RUN_ALL_BAD="
@@ -319,8 +317,6 @@ for %%A in (%ARGS%) do (
     set "RUN_ALL_MCP= -Mcp"
   ) else if /i "%%A"=="--performance" (
     set "RUN_ALL_PERF= -Performance"
-  ) else if /i "%%A"=="--ai" (
-    set "RUN_ALL_AI= -Ai"
   ) else if /i "%%A"=="--profile" (
     set "RUN_ALL_PROFILE_NEXT=1"
   ) else (
@@ -329,8 +325,8 @@ for %%A in (%ARGS%) do (
 )
 if defined RUN_ALL_PROFILE_NEXT set "RUN_ALL_BAD=--profile"
 if defined RUN_ALL_BAD (
-  echo koru: %SUB% accepts only --mcp, --performance, --ai and --profile ^<name^|id^|path^>
-  echo usage: koru.bat %SUB% [--mcp] [--performance] [--ai] [--profile ^<name^|id^|path^>]
+  echo koru: %SUB% accepts only --mcp, --performance and --profile ^<name^|id^|path^>
+  echo usage: koru.bat %SUB% [--mcp] [--performance] [--profile ^<name^|id^|path^>]
   exit /b 2
 )
 call :ensure_fonts || exit /b 1
@@ -338,7 +334,7 @@ call :load_env_file "%KORU_RUN_ENV_FILE%" || exit /b 1
 call :ensure_voice_runtime || exit /b 1
 call :announce_environment
 call :stop_debug_channel || exit /b 1
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\run-all.ps1"%RUN_ALL_MCP%%RUN_ALL_PERF%%RUN_ALL_AI%%RUN_ALL_PROFILE%
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\run-all.ps1"%RUN_ALL_MCP%%RUN_ALL_PERF%%RUN_ALL_PROFILE%
 exit /b %ERRORLEVEL%
 
 REM Stop the supervised images under this checkout's target\debug and nothing else.
@@ -351,7 +347,7 @@ if not "%ARGS%"=="" (
   exit /b 2
 )
 call :stop_all_exact || exit /b 1
-echo [Koru] stopped this worktree's Koru, AI Chat, Agent - with its gateway and
+echo [Koru] stopped this worktree's Koru, Agent - with its gateway and
 echo        sessions workers - the voice worker, and any retired image still running.
 exit /b 0
 
@@ -874,12 +870,12 @@ echo.
 echo   run        launch the manager: documents in one process
 echo   run-all    restart Agent, Gateway and Koru against Koru Cloud (.env.production);
 echo              stops any other checkout's debug stack on the shared channel first
-echo              --ai opens AI Chat; --mcp checks MCP
+echo              --mcp checks MCP
 echo              --profile ^<name^|id^|path^> gives the Koru workspace an explicit profile
 echo              --performance runs the stall watch (capture-stalls' env plus
 echo              KORU_JANK) and logs Koru's output for a stall summary on exit
 echo              run, run-all and root with no .env.production start with Koru Cloud not configured
-echo   stop-all   stop this worktree's Koru, AI Chat, Agent and services
+echo   stop-all   stop this worktree's Koru, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
 echo              its interactive Agent registers real global shortcuts
@@ -931,7 +927,7 @@ echo build's. To open real content: koru.bat run -- --profile ^<path^>
 echo To open at a size: koru.bat --window-size 1024x768
 echo.
 echo "dist-local" builds exactly what a published release carries - koru.exe,
-echo koru-ai-chat.exe, koru-agent.exe, koru-com-notification.exe, koru-mcp.exe,
+echo koru-agent.exe, koru-com-notification.exe, koru-mcp.exe,
 echo koru-voice-worker.exe, koru-updater.exe and all thirty
 echo fonts - and
 echo stops. It takes a channel and an optional version. Internal is local-only:

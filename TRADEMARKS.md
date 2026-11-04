@@ -11,7 +11,7 @@ reserved and what you may do without asking.
 - The name **Koru**, and the product names built on it: Koru Cloud, Koru AI,
   Koru Agent and any other `Koru …` name.
 - The **Koru logo** and every **app icon** derived from it: `assets/logo*.png`,
-  `assets/koru*.ico`, `assets/koru*.icns`, `assets/koru-ai-chat*`, and the
+  `assets/koru*.ico`, `assets/koru*.icns`, and the
   icons in `apps/android/`, `apps/ios/` and `apps/macos/`.
 - The **domain names** `koru.do` and its subdomains, and the platform
   identifiers that name us: the `do.koru.*` application, bundle, package and

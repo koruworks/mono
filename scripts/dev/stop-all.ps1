@@ -56,7 +56,6 @@ function Stop-KoruProcessGroup([string] $Name, [string] $Label, [bool] $CloseWin
 
 Write-Host "[Koru] stopping every Koru process on this machine..."
 Stop-KoruProcessGroup "koru" "Koru" $true
-Stop-KoruProcessGroup "koru-ai-chat" "Koru AI Chat" $true
 Stop-KoruProcessGroup "koru-agent" "Agent" $false
 Stop-KoruProcessGroup "koru-voice-worker" "Voice worker" $false
 Stop-KoruProcessGroup "koru-com-notification" "notification COM broker" $false
@@ -64,7 +63,9 @@ Stop-KoruProcessGroup "koru-com-notification" "notification COM broker" $false
 # host are worker roles of koru-agent.exe now, so a current stack has no process
 # with either name - but this script stops every Koru on the *machine*, and an
 # installed pre-cutover build still runs both. Stopping by process name is what
-# reaches them; nothing else here would.
+# reaches them; nothing else here would. The standalone Koru AI window is
+# retired the same way: an installed older build may still have it open.
+Stop-KoruProcessGroup "koru-ai-chat" "Koru AI window (retired image)" $true
 Stop-KoruProcessGroup "koru-session-host" "Session Host (retired image)" $false
 Stop-KoruProcessGroup "koru-api-gateway" "API Gateway (retired image)" $false
 Stop-KoruProcessGroup "koru-mcp" "MCP" $false

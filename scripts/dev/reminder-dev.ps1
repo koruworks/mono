@@ -338,9 +338,9 @@ try {
         "koru-agent.exe",
         "koru-com-notification.exe",
         # Retired executables (the gateway and session host are now roles of
-        # koru-agent.exe; koru-terminal.exe is gone), kept because an older
-        # bundle in target/ still carries these images and this list is what
-        # stops one that is running.
+        # koru-agent.exe; koru-terminal.exe and koru-ai-chat.exe are gone),
+        # kept because an older bundle in target/ still carries these images
+        # and this list is what stops one that is running.
         "koru-api-gateway.exe",
         "koru-session-host.exe",
         "koru-voice-worker.exe",

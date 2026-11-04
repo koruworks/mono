@@ -173,7 +173,6 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru", koru_update::APP_EXE),
     ("koru-agent", koru_update::AGENT_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
-    ("koru-ai-chat", koru_update::AI_CHAT_EXE),
     // `crates/koru-voice` already holds the contract, so both the worker
     // package and its binary take the `-worker` suffix. The executable name
     // still comes from the shared release/updater inventory rather than a
@@ -187,7 +186,6 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru-agent", koru_update::AGENT_EXE),
     ("koru-com-notification", koru_update::COM_NOTIFICATION_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
-    ("koru-ai-chat", koru_update::AI_CHAT_EXE),
     ("koru-voice-worker", koru_update::VOICE_EXE),
 ];
 
@@ -200,7 +198,6 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru", koru_update::APP_EXE),
     ("koru-agent", koru_update::AGENT_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
-    ("koru-ai-chat", koru_update::AI_CHAT_EXE),
 ];
 
 #[cfg(any(target_os = "macos", test))]
@@ -660,8 +657,8 @@ pub fn build(
                  — the API Gateway, which contains the Store worker that owns \
                  your content, and the terminal session host. Both are the \
                  Agent's own program under a different role, so you will see \
-                 more than one koru-agent running. Sessions open as Workspace \
-                 tabs and Koru AI Chat opens on demand. Everything is started \
+                 more than one koru-agent running. Sessions and Koru AI chats \
+                 open as Workspace tabs. Everything is started \
                  for you; there is nothing to install or launch first.\r\n\r\n\
                  Your content is not in this folder. It lives under \
                  %LOCALAPPDATA%\\Koru\\, in a directory named for this build's \
@@ -2095,8 +2092,8 @@ fn linux_desktop_entry(channel: &str) -> (String, String) {
 /// mirrors the zip extractor, so it is the zip's exactly: no top-level
 /// directory, one regular-file entry per staged file, at the same
 /// `/`-separated path relative to the package root and in the same order.
-/// On Linux that is `koru`, `koru-agent`, `koru-mcp`, `koru-ai-chat` and
-/// `koru-updater` at the root beside `release-files.json`, `VERSION`,
+/// On Linux that is `koru`, `koru-agent`, `koru-mcp` and `koru-updater` at
+/// the root beside `release-files.json`, `VERSION`,
 /// `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.txt` and `RELEASE_NOTES.md`, with
 /// `assets/` and `docs/` beneath. No directory entries, links or devices: the
 /// zip has none, and `collect_files` refuses links while staging.
@@ -2616,10 +2613,6 @@ mod tests {
         catalogued.sort_unstable();
 
         assert_eq!(packaged, catalogued);
-        assert!(
-            CHANNEL_BINARIES.contains(&("koru-ai-chat", koru_update::AI_CHAT_EXE)),
-            "the standalone chat package and executable must stay paired"
-        );
         // `crates/koru-voice` holds the contract, so the worker package and
         // binary both use the `-worker` suffix. Getting either half wrong
         // builds nothing or stages nothing, and both fail long after this
@@ -2648,6 +2641,7 @@ mod tests {
             koru_update::GATEWAY_EXE,
             koru_update::SESSION_HOST_EXE,
             koru_update::TERMINAL_EXE,
+            koru_update::AI_CHAT_EXE,
             koru_update::LEGACY_STORE_EXE,
             koru_update::LEGACY_STORE_SERVER_EXE,
             koru_update::LEGACY_VOICE_EXE,
@@ -2722,7 +2716,6 @@ mod tests {
                 ("koru", koru_update::APP_EXE),
                 ("koru-agent", koru_update::AGENT_EXE),
                 ("koru-mcp", koru_update::MCP_EXE),
-                ("koru-ai-chat", koru_update::AI_CHAT_EXE),
             ]
         );
         assert_eq!(crate::host_target(), "linux-x86_64");

@@ -1,7 +1,7 @@
 Component: Tabler Icons (compiled vector artwork)
 Version: 3.31.0
 Source: https://github.com/tabler/tabler-icons
-Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png
+Files: icon_pack_data.rs, document.ico
 License: MIT
 Platforms: windows, macos, linux
 ---

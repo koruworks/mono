@@ -112,9 +112,6 @@ pub const EVENTS: &str = "koru-events";
 /// The public API gateway rendezvous. It is distinct from both Agent control
 /// and the private Store root claim so their credentials cannot be confused.
 pub const API_GATEWAY: &str = "koru-api-gateway";
-/// The standalone AI chat window's activation rendezvous. It carries no chat
-/// content; it only asks the existing companion window to come forward.
-pub const AI_CHAT: &str = "koru-ai-chat";
 /// A shell's short-lived update-reopen claim. The durable opaque token and
 /// installation root further qualify this service through
 /// [`Endpoint::for_service_claim`]. Holding the endpoint is process-level
@@ -180,7 +177,6 @@ pub const SERVICES: &[&str] = &[
     SESSION_HOST,
     EVENTS,
     API_GATEWAY,
-    AI_CHAT,
     REOPEN_CLAIM,
     AGENT_GATEWAY_BRIDGE,
     VOICE,

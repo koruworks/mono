@@ -1,7 +1,7 @@
 Component: Remix Icons (compiled vector artwork)
 Version: 4.6.0
 Source: https://github.com/Remix-Design/RemixIcon/tree/v4.6.0
-Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png
+Files: icon_pack_data.rs, document.ico
 License: Apache-2.0
 Platforms: windows, macos, linux
 ---

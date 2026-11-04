@@ -12,9 +12,7 @@ import sys
 from PIL import Image
 from icon_pack import ROOT, PACKS, SELECTABLE_PACKS, bundled_notice, catalog_notices, load_icons, rust_catalog
 
-SUFFIXES = ("", "-beta", "-nightly", "-internal-debug", "-internal-release")
-IMAGES = [ROOT / "assets/document.ico"] + [
-    ROOT / f"assets/koru-ai-chat{suffix}.{ext}" for suffix in SUFFIXES for ext in ("ico", "png")]
+IMAGES = [ROOT / "assets/document.ico"]
 ARTIFACTS = [ROOT / "crates/koru-draw/src/icon_pack_data.rs"] + [
     ROOT / f"crates/koru-release/licences/bundled/icons-{pack}.txt" for pack in PACKS] + IMAGES
 SIZES = {(size, size) for size in (16, 24, 32, 48, 64, 128, 256)}

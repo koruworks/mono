@@ -69,6 +69,9 @@ const STOP_SEQUENCE: &[(&str, bool)] = &[
     (koru_update::AGENT_EXE, false),
     (koru_update::SESSION_HOST_EXE, false),
     (koru_update::SESSION_HOST_EXE, true),
+    // **The retired Koru AI window** (2026-11-03). An installation upgrading
+    // from a build that shipped it may have it open; it has a `stop` verb,
+    // and its file leaves with the rest of the installed manifest.
     (koru_update::AI_CHAT_EXE, false),
     // **After the Agent, because the Agent is what starts one.** A voice worker
     // is started on demand and restarted by nothing, so once supervision is
@@ -2365,6 +2368,36 @@ mod tests {
 
     fn owned(files: &[&str]) -> BTreeSet<String> {
         files.iter().map(|file| (*file).to_string()).collect()
+    }
+
+    /// **The update that drops the Koru AI window removes its executable.**
+    /// The installed list still names `koru-ai-chat.exe`, so it is in the
+    /// owned union: the swap moves it aside with the old files, and the
+    /// incoming package does not put it back.
+    #[test]
+    fn an_update_removes_the_retired_koru_ai_window() {
+        let (_dir, install, staging, backup, incoming, _) = replacement_fixture();
+        fs::write(install.join(koru_update::AI_CHAT_EXE), b"old window").unwrap();
+        let installed = ReleaseFiles {
+            files: incoming
+                .files
+                .iter()
+                .cloned()
+                .chain(std::iter::once(koru_update::AI_CHAT_EXE.to_owned()))
+                .collect(),
+            ..incoming.clone()
+        };
+        let owned = owned_files(&incoming, Some(&installed));
+        assert!(owned.contains(koru_update::AI_CHAT_EXE));
+        assert!(STOP_SEQUENCE.contains(&(koru_update::AI_CHAT_EXE, false)));
+
+        let mut log = Log(None);
+        assert!(replace_owned(&install, &staging, &backup, &incoming, &owned, &mut log).is_ok());
+        assert!(
+            !install.join(koru_update::AI_CHAT_EXE).exists(),
+            "the retired window is not left in the installation"
+        );
+        assert!(backup.join(koru_update::AI_CHAT_EXE).is_file());
     }
 
     #[test]

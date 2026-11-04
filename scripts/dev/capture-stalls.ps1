@@ -14,14 +14,6 @@ Optional profile path to open. Use a copied profile when reproducing against
 real content is not required. A supplied path is passed directly to cargo, so
 paths containing spaces are supported.
 
-.PARAMETER Target
-The desktop surface to launch: `koru` (the default) or `koru-ai-chat`.
-Profile and NoSearch apply only to `koru`; Root applies only to `koru-ai-chat`.
-
-.PARAMETER Root
-Optional explicit Koru channel root for a `koru-ai-chat` capture. Supplying it
-keeps the chat, Agent, and gateway discovery on the intended isolated stack.
-
 .PARAMETER LogPath
 Optional output path. Relative paths are resolved from the directory where the
 script was invoked. The default is a timestamped file in the system temp folder.
@@ -35,19 +27,10 @@ and background indexing without modifying the existing local index.
 
 .EXAMPLE
 .\scripts\dev\capture-stalls.ps1 -Profile 'C:\profiles\my-profile'
-
-.EXAMPLE
-.\scripts\dev\capture-stalls.ps1 -Target koru-ai-chat
-
-.EXAMPLE
-.\scripts\dev\capture-stalls.ps1 -Target koru-ai-chat -Root 'C:\koru-soak'
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('koru', 'koru-ai-chat')]
-    [string]$Target = 'koru',
     [string]$Profile,
-    [string]$Root,
     [string]$LogPath,
     [switch]$NoSearch
 )
@@ -58,16 +41,8 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $invokedFrom = (Get-Location).Path
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-if ($Target -eq 'koru-ai-chat' -and
-    (-not [string]::IsNullOrWhiteSpace($Profile) -or $NoSearch)) {
-    throw 'Profile and NoSearch are Koru-only options; omit them for koru-ai-chat.'
-}
-if ($Target -eq 'koru' -and -not [string]::IsNullOrWhiteSpace($Root)) {
-    throw 'Root is a koru-ai-chat-only option; omit it for Koru.'
-}
-
 if ([string]::IsNullOrWhiteSpace($LogPath)) {
-    $LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "$Target-stall-$stamp.log"
+    $LogPath = Join-Path ([System.IO.Path]::GetTempPath()) "koru-stall-$stamp.log"
 } elseif (-not [System.IO.Path]::IsPathRooted($LogPath)) {
     $LogPath = Join-Path $invokedFrom $LogPath
 }
@@ -84,7 +59,7 @@ $hadFrameStats = Test-Path Env:KORU_FRAME_STATS
 $oldFrameStats = $env:KORU_FRAME_STATS
 $exitCode = 0
 
-Write-Host "$Target stall capture"
+Write-Host "koru stall capture"
 Write-Host "Log: $LogPath"
 Write-Host "Reproduce the pause, then close Koru to see the filtered results."
 Write-Host ""
@@ -102,13 +77,7 @@ try {
     $logWriter = $null
     try {
         $ErrorActionPreference = 'Continue'
-        if ($Target -eq 'koru-ai-chat') {
-            $nativeCommand = 'cargo'
-            $nativeArgs = @('run', '-p', 'koru-ai-chat')
-            if (-not [string]::IsNullOrWhiteSpace($Root)) {
-                $nativeArgs += @('--', '--root', $Root)
-            }
-        } elseif ([string]::IsNullOrWhiteSpace($Profile)) {
+        if ([string]::IsNullOrWhiteSpace($Profile)) {
             $nativeCommand = Join-Path $repoRoot 'koru.bat'
             $nativeArgs = @('run')
             if ($NoSearch) {

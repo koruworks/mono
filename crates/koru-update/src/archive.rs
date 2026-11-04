@@ -639,6 +639,7 @@ mod tests {
             crate::exe::GATEWAY,
             crate::exe::SESSION_HOST,
             crate::exe::TERMINAL,
+            crate::exe::AI_CHAT,
             crate::exe::LEGACY_STORE,
             crate::exe::LEGACY_STORE_SERVER,
             crate::exe::LEGACY_VOICE,

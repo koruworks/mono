@@ -448,7 +448,7 @@ pub const VARS: &[EnvVar] = &[
     switch_var(
         name::KORU_AI_PAYLOAD_DEBUG,
         "Logs one complete provider-neutral AI request JSON record and one terminal response JSON record per attempt, including authored context and provider output; never logs provider credentials. Also exposes the per-window system-prompt override in AI Settings.",
-        "koru.exe, koru-ai-chat, koru-ai-server, koru-api-gateway",
+        "koru.exe, koru-ai-server, koru-api-gateway",
     ),
     value_var(
         name::KORU_AI_HOST_ENDPOINT,
@@ -833,7 +833,7 @@ pub const VARS: &[EnvVar] = &[
         name::RUST_LOG,
         "a tracing filter directive",
         "Overrides a binary's default tracing filter — e.g. `koru_replication=debug`.",
-        "koru, koru-ai-chat, koru-api-gateway, koru-store-server, koru-agent, koru-mcp, koru-relay, koru-voice-worker",
+        "koru, koru-api-gateway, koru-store-server, koru-agent, koru-mcp, koru-relay, koru-voice-worker",
     ),
     value_var(
         name::WGPU_BACKEND,

@@ -32,8 +32,7 @@ def main():
             bundled_notice(pack, notice), encoding="utf-8", newline="\n")
     weight = "original outline/fill weights" if args.pack in ("phosphor", "remix") else f"stroke width {args.stroke_width:g}"
     print(f"Generated {len(icons)} {args.pack} icons with {weight}")
-    for script in ("make-document-icon.py", "make-ai-chat-icon.py"):
-        subprocess.run([sys.executable, str(ROOT / "scripts/icons" / script)], check=True)
+    subprocess.run([sys.executable, str(ROOT / "scripts/icons/make-document-icon.py")], check=True)
 
 
 if __name__ == "__main__":

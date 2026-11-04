@@ -27,7 +27,6 @@ pub(crate) const MACOS_PACKAGES: &[&str] = &[
     "koru",
     "koru-agent",
     "koru-mcp",
-    "koru-ai-chat",
     "koru-voice-worker",
     "koru-notification-owner",
     "koru-updater",

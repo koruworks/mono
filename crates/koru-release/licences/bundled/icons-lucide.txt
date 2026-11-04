@@ -1,7 +1,7 @@
 Component: Lucide Icons (compiled vector artwork)
 Version: 0.477.0
 Source: https://github.com/lucide-icons/lucide
-Files: icon_pack_data.rs, document.ico, koru-ai-chat*.ico, koru-ai-chat*.png
+Files: icon_pack_data.rs, document.ico
 License: ISC AND MIT
 Platforms: windows, macos, linux
 ---
