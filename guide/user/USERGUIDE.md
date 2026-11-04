@@ -1534,7 +1534,18 @@ you to set up voice input and download the model.
 The **1 space** chip under the message box shows how many workspaces the
 chat may read; click it to choose them. With more than five, type in **Filter
 workspaces** to narrow the list; drag the bar at the list's edge, or scroll,
-to see the rest. `Enter` sends
+to see the rest.
+
+**When an agent asks you questions.** A local agent (Codex, Claude Code) can
+stop and ask you something. Its questions appear as a card in its reply, and
+the chat shows the amber *needs you* dot until you answer. Each question lists
+the agent's options — its recommended one first. Pick one, or type your own
+answer under *Other…*; anything secret is typed into a box that hides it.
+Press **Submit** once every question has an answer, or **Skip** to tell the
+agent you'd rather not say. Tab moves through the card and Enter chooses. A
+message you send meanwhile waits in the queue until the reply ends.
+Afterwards the card shows what you answered (secrets as *(hidden)*), and it
+still does when you reopen the chat. `Enter` sends
 and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
 grows to eight lines and then scrolls inside itself, independently of the
 conversation. Embedded questions include the active document by stable
