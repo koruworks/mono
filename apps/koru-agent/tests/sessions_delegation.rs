@@ -685,6 +685,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -725,6 +726,7 @@ fn a_takeover_cancellation_is_stamped_on_the_turn_it_ended() {
                 mode: None,
                 fast: None,
                 reasoning: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
