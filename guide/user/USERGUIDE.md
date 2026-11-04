@@ -5623,11 +5623,13 @@ Workspaces to Trash; and **Continue offline** retains the local Profile and
 content but detaches it from the Koru identity so it cannot sync. Add it again
 reactivates only this device. Other devices rejoin through normal enrollment.
 
-**A removed Profile's AI chats go with it.** For 30 days — the same time its
-Workspaces stay in Trash — they are kept, and restoring the Profile brings its
-chats back. After that Koru deletes every chat of that Profile from this
-device, with its attachments, the next time it starts. Chats are never synced,
-so each device clears its own.
+**A removed Profile's AI chats go with it.** From the moment it is removed
+they are hidden everywhere — chat lists, search across Profiles, and outside
+apps connected through Koru's MCP server, which are told the chat does not
+exist. For 30 days — the same time its Workspaces stay in Trash — they are
+kept, and restoring the Profile brings its chats back at once. After that Koru
+deletes every chat of that Profile from this device, with its attachments, the
+next time it starts. Chats are never synced, so each device clears its own.
 
 After Google sign-in, onboarding lists every Profile authorized for that Koru
 identity and requires an explicit row selection even when there is only one.
