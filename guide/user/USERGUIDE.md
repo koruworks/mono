@@ -1269,7 +1269,13 @@ when there is more than fits. The ↻ at the end of the search box asks the agen
 for its list again — after you connect a new provider in OpenCode, say. Once a
 chat has its first message it stays with its agent, so the picker drops the
 row of agents (and ☆ and +) and lists only that agent's models; the search
-looks only there too. An agent that marks some of its
+looks only there too. **You can switch to another of that agent's models**:
+pick it, and it applies from your next message — a reply that is still
+running keeps its model — and a line in the chat, *Switched to <model>*,
+marks where it changed. The effort levels and Fast follow the new model. The
+agent's **Default** row can't be picked once the chat has begun; to go back to
+the agent's default, or to use a different agent, start a new chat. If your
+Koru agent service is older, the model stays the one the chat started with. An agent that marks some of its
 models as older ends its list with **Legacy models**, and how many there
 are: click it, or press Enter on it, to show them in the list under it, and
 again to hide them (Right and Left do the same from the keyboard); a search
