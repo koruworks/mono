@@ -293,6 +293,21 @@
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
       },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
+      },
       "QuestionsOutcome": {
         "description": "How a set of questions ended.",
         "oneOf": [
@@ -872,11 +887,14 @@
         "type": "object"
       },
       {
-        "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+        "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
         "properties": {
           "blocking": {
             "default": true,
             "type": "boolean"
+          },
+          "delivery": {
+            "$ref": "#/$defs/QuestionsDelivery"
           },
           "kind": {
             "const": "questions_required",
@@ -1367,11 +1385,14 @@
             "type": "object"
           },
           {
-            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
             "properties": {
               "blocking": {
                 "default": true,
                 "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/$defs/QuestionsDelivery"
               },
               "kind": {
                 "const": "questions_required",
@@ -1716,6 +1737,21 @@
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
       },
       "QuestionsOutcome": {
         "description": "How a set of questions ended.",
@@ -6739,6 +6775,23 @@
     "title": "QuestionRequestId",
     "type": "string"
   },
+  "QuestionsDelivery": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+    "oneOf": [
+      {
+        "const": "in_turn",
+        "description": "Answered on the request that asked, within its turn.",
+        "type": "string"
+      },
+      {
+        "const": "next_message",
+        "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+        "type": "string"
+      }
+    ],
+    "title": "QuestionsDelivery"
+  },
   "QuestionsOutcome": {
     "$defs": {
       "QuestionAnswer": {
@@ -6861,6 +6914,102 @@
       }
     ],
     "title": "QuestionsOutcome"
+  },
+  "QuestionsReply": {
+    "$defs": {
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "const": "option",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "const": "withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "**A set's answers sent as the person's next message** (koru-ai D108):\nthe input of a [`QuestionsDelivery::NextMessage`] set, checked against\nit like any answer. The agent's adapter writes the message in the\nagent's own form; the person's words and the set stay theirs.",
+    "properties": {
+      "answers": {
+        "items": {
+          "$ref": "#/$defs/QuestionAnswer"
+        },
+        "type": "array"
+      },
+      "request_id": {
+        "$ref": "#/$defs/QuestionRequestId"
+      }
+    },
+    "required": [
+      "request_id",
+      "answers"
+    ],
+    "title": "QuestionsReply",
+    "type": "object"
   },
   "RawCommand": {
     "$defs": {
@@ -9668,11 +9817,14 @@
             "type": "object"
           },
           {
-            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).",
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
             "properties": {
               "blocking": {
                 "default": true,
                 "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/$defs/QuestionsDelivery"
               },
               "kind": {
                 "const": "questions_required",
@@ -10017,6 +10169,21 @@
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "const": "in_turn",
+            "description": "Answered on the request that asked, within its turn.",
+            "type": "string"
+          },
+          {
+            "const": "next_message",
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "type": "string"
+          }
+        ]
       },
       "QuestionsOutcome": {
         "description": "How a set of questions ended.",
