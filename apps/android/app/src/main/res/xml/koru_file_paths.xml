@@ -9,4 +9,10 @@
 -->
 <paths>
     <cache-path name="koru-exports" path="shared-content/exports/" />
+    <!--
+      The nightly's verified update, and only that: the one APK the update
+      notice downloaded and checked, granted to the system package installer
+      for the install the person confirms there. Nothing else is written here.
+    -->
+    <cache-path name="koru-updates" path="updates/" />
 </paths>

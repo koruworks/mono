@@ -1,0 +1,136 @@
+title = "Koru for Linux, diagrams and callouts, and a sharper terminal"
+
+summary = [
+  "Koru's first stable release for Linux, beside Windows and macOS.",
+  "Mermaid diagrams draw in place in your documents, and callouts set a tip, a warning or a key point apart in a tinted box.",
+  "Terminals draw crisper text, pass every key to the program inside, and scroll back from the keyboard.",
+  "Windows has an installer that needs no administrator rights; Koru now updates from its GitHub releases.",
+]
+
+body = """
+Koru 0.1.4 is published on GitHub, for Linux, Windows and macOS together.
+Coming from 0.1.3 on Windows or 0.1.2 on a Mac, Koru updates itself to it as
+usual. Mac users also get everything in 0.1.3, listed at the end.
+
+## Diagrams
+
+A code block in the `mermaid` language now draws as a diagram: flowcharts,
+sequence diagrams and pie charts. Koru draws it itself, with no browser
+inside. Type `/diagram` or `/mermaid` to start from an example, or paste a
+fence from elsewhere. A Notion page with diagrams pastes in with every one of
+them.
+
+- Arrow onto a diagram and press Enter, or click the pencil, to edit its
+  text. The drawing follows as you type and keeps the last good drawing while
+  the text has a mistake, with the line named.
+- The bar at the block's corner opens the drawing in a full-window view
+  (Ctrl+wheel or pinch to zoom, drag to pan), copies it as a picture, and
+  saves it as PNG or SVG.
+- Other diagram kinds, such as Gantt charts, stay a code block and say they
+  are not drawn yet.
+
+## Callouts
+
+Type `/callout`, or select lines and press Ctrl+Shift+6 (Cmd+Shift+6 on a
+Mac), to put them in a
+tinted box with an emoji. Lists, links and formatting work inside it; click
+the icon to change the emoji and the color. Callouts survive copy and paste
+and Markdown export, and arrive from Notion and Evernote imports.
+
+The first callout you write into a workspace makes it read-only for older
+Koru builds, so update your other devices to 0.1.4 too.
+
+## Writing and tabs
+
+On a Mac, Cmd takes the place of Ctrl in these shortcuts.
+
+- Typing three backticks waits for Space or Enter before it starts a code
+  block, so ```` ```mermaid ```` can be typed as well as pasted.
+- Code blocks keep their language through copy and paste.
+- Ctrl+Shift+T reopens the last closed tab. Keep window on top moves to
+  Ctrl+Alt+A.
+- Ctrl+, opens Settings with the search box ready.
+- Opening a document while an agent tab is active opens a new tab instead of
+  replacing the agent.
+
+## Terminals
+
+- **Sharper text.** Terminal text is hinted for the screen, sits on whole
+  pixels and keeps its weight at small sizes. The dark theme's background is
+  a deeper black.
+- **Lines that join.** Box-drawing characters, the corners, junctions and
+  crosses that programs like Claude Code, htop and tree draw with, meet
+  exactly, with no gaps between rows.
+- **Every key arrives.** Home, End, Page Up, Page Down, Insert, Delete and F1
+  to F24 reach the program running in the terminal, and Ctrl+Space sends
+  what terminal programs expect.
+- **Scrolling back from the keyboard.** Shift+Page Up and Shift+Page Down
+  scroll through the output, and Shift+Home and Shift+End go to its top and
+  bottom. A full-screen program, such as an editor, gets those keys itself.
+  Ctrl+End brings the view back to the newest output.
+- Every visible terminal has its own connection, so two terminals draw at
+  once. A terminal tab's menu sets its own theme and font, from every font
+  installed, and can end its session.
+- When Koru's background service restarts under a running window, each
+  terminal tab offers Resume or Start new instead of closing.
+
+## Agents
+
+- Agent tabs get Koru's own tools, without changing your agent's
+  configuration.
+- Koru notices when an installed coding-agent CLI is out of date and offers
+  a card that runs its updater.
+- Codex (Embedded) is gone from the new tab's Agents menu. Codex is still
+  there, run in a terminal.
+
+## Linux
+
+This is Koru's first stable release for Linux (x86_64). Download the
+`linux-x86_64.tar.gz` archive and extract it into a folder of its own, since
+it has no top-level folder, for example `~/koru`. Then run `./koru` from that
+folder.
+
+- `koru.desktop` in the folder gives Koru an entry in the app list and its
+  own icon in the dock. The commands to copy it are at the top of the file.
+- The tray icon has the same menu as on Windows and macOS. Closing the
+  window keeps Koru in the tray when your desktop shows tray icons (KDE, or
+  GNOME with the AppIndicator extension); without one, closing quits.
+- Koru finds, checks and installs its own updates. It verifies each one's
+  signature first, and goes back to the previous build if the new one fails
+  to start.
+
+## Windows
+
+The download now includes an installer, `setup.exe`, beside the zip.
+
+- It installs Koru into your own programs folder
+  (`%LOCALAPPDATA%\\Programs\\Koru`), or another empty folder you choose,
+  without asking for administrator rights. It adds Start menu and desktop
+  shortcuts and lists Koru under Settings → Apps.
+- Uninstalling from Settings → Apps closes Koru and removes the program, its
+  shortcuts, `koru://` links and start-at-sign-in. **Your workspaces stay.**
+  Before it starts, it asks why you are leaving. That is optional: leave the
+  box empty and nothing is sent.
+- If you already run Koru from the zip, you don't need the installer: that
+  copy updates itself. The installer is English only for now.
+
+## macOS
+
+- Switching between light and dark theme redraws every window straight
+  away.
+- New in 0.1.3, for Macs coming from 0.1.2: Welcome shows the command that
+  connects an MCP client to Koru and copies it in one click; *Run an agent
+  in a terminal* opens the list of coding agents; rows with nothing ready
+  behind them are hidden; Koru no longer asks about usage data on first
+  start, and shares none unless you turn it on in Settings → System →
+  Privacy; and opening Koru from the disk image while an older copy sits in
+  Applications asks to replace it instead of opening the old one.
+
+## Everything else
+
+- In the tray, Quit now stays quit. Before, an open window started Koru's
+  background service again straight away.
+- Copy link code, when linking a device, copies only the code, without the
+  `https://koru.do/link-device#` in front. The QR code is unchanged, and a
+  code copied either way is accepted.
+"""

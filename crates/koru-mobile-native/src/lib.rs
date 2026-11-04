@@ -13,6 +13,7 @@ use jni::{Env, EnvUnowned};
 use prost::Message;
 
 mod document_observer;
+mod update;
 
 fn protobuf<Req, Res>(bytes: &[u8], call: fn(Req) -> Res) -> Result<Vec<u8>, String>
 where

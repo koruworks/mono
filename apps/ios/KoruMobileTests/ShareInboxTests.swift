@@ -14,6 +14,15 @@ final class ShareInboxTests: XCTestCase {
                 .appendingPathComponent("share-inbox-\(UUID().uuidString)", isDirectory: true))
     }
 
+    /// The group is the build's, never the code's: `KoruAppGroup` in the
+    /// app's Info.plist is `group.` + its bundle id, for Koru
+    /// (`group.do.koru.app`) and Koru Nightly (`group.do.koru.app.nightly`)
+    /// alike, which is the group both entitlements files name.
+    func testTheAppGroupIsTheBuildsOwn() throws {
+        let bundleId = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        XCTAssertEqual(ShareInbox.appGroup, "group.\(bundleId)")
+    }
+
     func testACommittedEntryRoundTrips() throws {
         let inbox = freshInbox()
         let entry = try inbox.begin()

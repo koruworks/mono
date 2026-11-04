@@ -77,6 +77,7 @@ import app.koru.mobile.services.LinkedDevice
 import app.koru.mobile.services.linkingBlocked
 import app.koru.mobile.services.RelayState
 import app.koru.mobile.services.RelayStatus
+import app.koru.mobile.services.UpdateNotice
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Bitmap
@@ -152,21 +153,34 @@ fun KoruApp(
             val visible by model.visibleProfiles.collectAsState()
             val account by model.account.collectAsState()
             val cloudSync by model.cloudSync.collectAsState()
-            ProfilesScreen(
-                visible.rows,
-                hiddenCount = visible.hiddenCount,
-                cloudSync = cloudSync,
-                activeAccountId = account.activeAccountId,
-                onOpen = { model.selectProfile(it); nav.navigate(Routes.workspaces(it)) },
-                onRename = model::renameProfile,
-                onSetCloudSync = { profile, enabled ->
-                    model.setProfileCloudSync(profile, enabled, account.activeScope)
-                },
-                onSyncStatus = { nav.navigate(Routes.cloudProgress(it)) },
-                onDevices = { nav.navigate(Routes.Devices) },
-                onSettings = { nav.navigate(Routes.Settings) },
-                onAccount = { nav.navigate(Routes.Account) },
-            )
+            // The nightly's update notice floats over the start screen only:
+            // it is news, not an interruption, so it never covers a document.
+            val updateNotice by model.updateNotice.collectAsState()
+            val context = LocalContext.current
+            Box(Modifier.fillMaxSize()) {
+                ProfilesScreen(
+                    visible.rows,
+                    hiddenCount = visible.hiddenCount,
+                    cloudSync = cloudSync,
+                    activeAccountId = account.activeAccountId,
+                    onOpen = { model.selectProfile(it); nav.navigate(Routes.workspaces(it)) },
+                    onRename = model::renameProfile,
+                    onSetCloudSync = { profile, enabled ->
+                        model.setProfileCloudSync(profile, enabled, account.activeScope)
+                    },
+                    onSyncStatus = { nav.navigate(Routes.cloudProgress(it)) },
+                    onDevices = { nav.navigate(Routes.Devices) },
+                    onSettings = { nav.navigate(Routes.Settings) },
+                    onAccount = { nav.navigate(Routes.Account) },
+                )
+                UpdateBanner(
+                    notice = updateNotice,
+                    onDownload = model::downloadUpdate,
+                    onInstall = { model.installUpdate(context) },
+                    onDismiss = model::dismissUpdate,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
         }
         composable(Routes.CloudProgress, arguments = listOf(navArgument("profileId") { type = NavType.StringType })) { entry ->
             val id = ProfileId(entry.arguments?.getString("profileId").orEmpty())
@@ -469,6 +483,70 @@ private fun LinkDeviceScreen(
                         )
                     },
                 )
+            }
+        }
+    }
+}
+
+/**
+ * **The nightly's update notice** (TECHNICAL.final §5.5): a card at the foot
+ * of the start screen. Download fetches and verifies the APK; Install hands it
+ * to the system installer, which asks; Not now hides this build until a newer
+ * one. Nothing at all in a build without updates, where the notice stays None.
+ */
+@Composable private fun UpdateBanner(
+    notice: UpdateNotice,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val offer = when (notice) {
+        is UpdateNotice.Available -> notice.offer
+        is UpdateNotice.Downloading -> notice.offer
+        is UpdateNotice.Ready -> notice.offer
+        is UpdateNotice.Failed -> notice.offer
+        UpdateNotice.None -> return
+    }
+    val uri = LocalUriHandler.current
+    Card(
+        modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(KoruSpacing.md)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(Modifier.padding(horizontal = KoruSpacing.md, vertical = KoruSpacing.sm)) {
+            Text(
+                when (notice) {
+                    is UpdateNotice.Downloading -> stringResource(R.string.update_downloading, offer.version)
+                    is UpdateNotice.Ready -> stringResource(R.string.update_ready, offer.version)
+                    is UpdateNotice.Failed -> stringResource(R.string.update_failed)
+                    else -> stringResource(R.string.update_available, offer.version)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (notice is UpdateNotice.Downloading) {
+                Spacer(Modifier.height(KoruSpacing.sm))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                offer.notesUrl?.let { url ->
+                    TextButton(onClick = { runCatching { uri.openUri(url) } }) {
+                        Text(stringResource(R.string.update_whats_new))
+                    }
+                }
+                if (notice !is UpdateNotice.Downloading) {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.update_not_now)) }
+                }
+                when (notice) {
+                    is UpdateNotice.Available -> TextButton(onClick = onDownload) { Text(stringResource(R.string.update_download)) }
+                    is UpdateNotice.Failed -> TextButton(onClick = onDownload) { Text(stringResource(R.string.update_retry)) }
+                    is UpdateNotice.Ready -> TextButton(onClick = onInstall) { Text(stringResource(R.string.update_install)) }
+                    else -> Unit
+                }
             }
         }
     }

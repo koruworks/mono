@@ -45,7 +45,8 @@ builds do not read the archives or require the legacy icon font. See the
 ## Rust crates
 
 The shipped binaries reach **647 third-party crates** on Windows, 656 on macOS
-(Apple silicon; 658 on Intel) and 496 in the iOS app, through normal
+(Apple silicon; 658 for an Intel build from source, which is not released)
+and 496 in the iOS app, through normal
 dependencies (2026-10-14). Proc-macros are excluded because they run in the
 compiler and none of their code is in a binary. No crate comes from git; all
 come from crates.io, `onenote_parser`, `sherpa-onnx`, `sherpa-onnx-sys` and
@@ -128,7 +129,7 @@ static and TTS-free, for every platform, so Koru links those and builds nothing:
 | --- | --- | --- |
 | Windows x64 | `sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib.tar.bz2` | `6c746e0f…` |
 | macOS arm64 | `sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib.tar.bz2` | `5df455ff…` |
-| macOS x64 | `sherpa-onnx-v1.13.6-osx-x64-static-no-tts-lib.tar.bz2` | `adcc1de3…` |
+| macOS x64 (source builds only; releases are Apple silicon) | `sherpa-onnx-v1.13.6-osx-x64-static-no-tts-lib.tar.bz2` | `adcc1de3…` |
 
 - **What is in them.** None has `espeak-ng`, `ucd` or `piper_phonemize`, and
   none contains eSpeak NG's code: a byte search of every library for its API
