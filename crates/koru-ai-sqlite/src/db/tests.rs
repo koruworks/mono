@@ -650,7 +650,7 @@ fn a_build_that_understands_only_schema_11_refuses_schema_12() {
         koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
         OpenError::SchemaTooNew {
             database: crate::DATABASE_FILE,
-            discovered: 12,
+            discovered: SCHEMA_VERSION,
             supported: 11,
         }
     );
@@ -680,7 +680,7 @@ fn a_v11_database_keeps_its_chats_unpinned_and_gains_agent_notices() {
 
     prepare(&mut connection).unwrap();
 
-    assert_eq!(user_version(&connection).unwrap(), 12);
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
     let (title, mode, pinned): (String, Option<String>, Option<i64>) = connection
         .query_row(
             "SELECT title, agent_mode, pinned_at_ms FROM chats WHERE id = 'chat'",
@@ -727,4 +727,94 @@ fn a_v11_database_keeps_its_chats_unpinned_and_gains_agent_notices() {
         "an offset is never negative"
     );
     insert("Hook failed", 0).unwrap();
+}
+
+/// **An older build refuses schema 13 cleanly** (koru-ai D120): a build
+/// that understands 12 meets a database this build has moved on and opens
+/// nothing — its AI service does not start.
+#[test]
+fn a_build_that_understands_only_schema_12_refuses_schema_13() {
+    let mut connection = open_in_memory().unwrap();
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 12,
+        migrations: &MIGRATIONS[..12],
+    };
+    assert_eq!(
+        koru_sqlite::prepare(&older, &mut connection).unwrap_err(),
+        OpenError::SchemaTooNew {
+            database: crate::DATABASE_FILE,
+            discovered: SCHEMA_VERSION,
+            supported: 12,
+        }
+    );
+}
+
+/// **Schema 13** (koru-ai D120): a schema-12 database keeps every chat and
+/// all it holds, each with no profile yet — the AI service places them, as
+/// the database cannot — and a profile is never an empty string.
+#[test]
+fn a_v12_database_keeps_its_chats_with_no_profile_yet() {
+    const V12: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 12,
+        migrations: MIGRATIONS.split_at(12).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V12).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), 12);
+    connection
+        .execute_batch(
+            "INSERT INTO chats (
+                id, title, current_provider, current_model, created_at_ms, updated_at_ms,
+                pinned_at_ms
+             ) VALUES ('pinned', 'kept', 'mock', 'default', 1, 3, 2),
+                      ('plain', 'also kept', 'mock', 'default', 1, 1, NULL);
+             INSERT INTO chat_workspace_grants (chat_id, workspace_id, granted_at_ms)
+             VALUES ('plain', 'workspace', 1);",
+        )
+        .unwrap();
+
+    prepare(&mut connection).unwrap();
+
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
+    let rows: Vec<(String, String, Option<i64>, Option<String>)> = connection
+        .prepare("SELECT id, title, pinned_at_ms, profile_id FROM chats ORDER BY id")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("pinned".into(), "kept".into(), Some(2), None),
+            ("plain".into(), "also kept".into(), None, None),
+        ]
+    );
+    let grants: i64 = connection
+        .query_row("SELECT count(*) FROM chat_workspace_grants", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(grants, 1, "nothing is deleted");
+    assert!(
+        connection
+            .execute("UPDATE chats SET profile_id = '' WHERE id = 'plain'", [])
+            .is_err(),
+        "a profile is an id, never empty"
+    );
+    let indexed: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'chats_by_profile')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(indexed);
+
+    // Reopened, it is already current and nothing runs again.
+    prepare(&mut connection).unwrap();
+    assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
 }

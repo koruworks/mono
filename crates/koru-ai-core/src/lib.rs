@@ -15,6 +15,7 @@ pub mod ids;
 pub mod inference;
 pub mod model;
 pub mod ports;
+pub mod profiles;
 pub mod provider;
 pub mod questions;
 pub mod reading_order;
@@ -40,6 +41,7 @@ pub use model::*;
 pub use ports::{
     AiPersistence, AiProvider, AiToolExecutionContext, AiToolExecutor, StoreContextPort,
 };
+pub use profiles::{ChatPlacementEvidence, ChatRead, ProfileCatalog, place_chat};
 pub use provider::*;
 pub use questions::{
     AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,

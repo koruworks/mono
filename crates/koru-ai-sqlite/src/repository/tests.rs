@@ -39,6 +39,7 @@ fn chat(id: ChatId, offset: i64) -> Chat {
         agent_mode: None,
         agent_fast: None,
         pinned_at: None,
+        profile_id: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -873,6 +874,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
         agent_mode: None,
         agent_fast: None,
         pinned_at: None,
+        profile_id: None,
         created_at: at(4),
         updated_at: at(4),
     };
@@ -1356,6 +1358,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             limit: 50,
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
+            profile: None,
         })
         .unwrap();
     assert_eq!(page.hits.len(), 1);
@@ -1375,6 +1378,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             limit: 50,
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
+            profile: None,
         })
         .unwrap();
     assert!(empty.hits.is_empty());
@@ -1738,6 +1742,7 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
                 limit: 10,
                 cursor: None,
                 visibility: ChatAccessLens::UserSurface,
+                profile: None,
             })
             .unwrap()
             .hits
@@ -1990,4 +1995,217 @@ fn a_steered_message_is_recorded_after_the_running_reply() {
     reply.id = MessageId::new();
     reply.role = ChatRole::Assistant;
     assert!(repository.append_user_message(&reply).is_err());
+}
+
+/// **Placing the chats of a schema-12 store** (AI schema 13, koru-ai D120):
+/// four chats written before profiles, read in two profiles' workspaces or
+/// in none. Each goes to the profile of the workspace it last read; a read
+/// beats a grant; with nothing at all, the first profile. Nothing is
+/// deleted, and a chat placed once is never moved.
+#[test]
+fn a_v12_stores_chats_are_placed_by_what_they_last_read() {
+    use koru_ai_core::{ChatRead, ProfileCatalog, place_chat};
+
+    const V12: koru_sqlite::Schema = koru_sqlite::Schema {
+        database: crate::DATABASE_FILE,
+        understood: 12,
+        migrations: crate::db::MIGRATIONS.split_at(12).0,
+    };
+    let mut connection = koru_sqlite::open_in_memory(&V12).unwrap();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let (home, office) = (WorkspaceId::new(), WorkspaceId::new());
+    let letter = DocumentId::new();
+    // A: a tool read the office after the home was granted.
+    // B: read the home's letter as context, though the office is granted.
+    // C: nothing at all.
+    // D: only granted the office.
+    let (a, b, c, d) = (ChatId::new(), ChatId::new(), ChatId::new(), ChatId::new());
+    let message = MessageId::new();
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO chats (id, title, current_provider, current_model,
+                                created_at_ms, updated_at_ms)
+             VALUES ('{a}', 'A', 'mock', 'default', 1, 1),
+                    ('{b}', 'B', 'mock', 'default', 2, 2),
+                    ('{c}', 'C', 'mock', 'default', 3, 3),
+                    ('{d}', 'D', 'mock', 'default', 4, 4);
+             INSERT INTO chat_workspace_grants (chat_id, workspace_id, granted_at_ms)
+             VALUES ('{a}', '{home}', 1), ('{b}', '{office}', 9), ('{d}', '{office}', 1);
+             INSERT INTO inference_attempts (
+                id, operation_id, chat_id, surface, provider, requested_model,
+                prompt_template_version, status, queued_at_ms
+             ) VALUES ('attempt', 'op', '{a}', 'standalone', 'mock', 'default',
+                       'v1', 'pending', 1);
+             INSERT INTO tool_invocations (
+                id, attempt_id, chat_id, tool_name, read_only, status, approval,
+                proposed_at_ms, completed_at_ms, target_workspace_id
+             ) VALUES ('denied', 'attempt', '{a}', 'read_document', 1, 'failed',
+                       'not_required', 8, 9, '{home}'),
+                      ('read', 'attempt', '{a}', 'read_document', 1, 'complete',
+                       'not_required', 4, 5, '{office}');
+             INSERT INTO messages (id, chat_id, ordinal, role, state, created_at_ms)
+             VALUES ('{message}', '{b}', 0, 'user', 'complete', 6);
+             INSERT INTO message_document_refs (
+                message_id, document_id, relation, display_title, source_revision, used_at_ms
+             ) VALUES ('{message}', '{letter}', 'context', 'Letter', X'00', 7);",
+            a = a.to_storage(),
+            b = b.to_storage(),
+            c = c.to_storage(),
+            d = d.to_storage(),
+            home = home.to_storage(),
+            office = office.to_storage(),
+            letter = letter.to_storage(),
+            message = message.to_storage(),
+        ))
+        .unwrap();
+    crate::db::prepare(&mut connection).unwrap();
+    let mut repository = Repository { connection };
+
+    let evidence = repository.unplaced_chats().unwrap();
+    assert_eq!(
+        evidence.iter().map(|chat| chat.chat_id).collect::<Vec<_>>(),
+        vec![a, b, c, d],
+        "every chat, oldest first"
+    );
+    assert_eq!(
+        evidence[0].reads,
+        vec![(Timestamp::from_millis(5), ChatRead::Workspace(office))],
+        "only a completed call is a read"
+    );
+    assert_eq!(
+        evidence[1].reads,
+        vec![(Timestamp::from_millis(7), ChatRead::Document(letter))]
+    );
+    assert!(evidence[2].reads.is_empty() && evidence[2].grants.is_empty());
+
+    let catalog = ProfileCatalog {
+        profiles: vec![private, work],
+        workspace_owners: [(home, private), (office, work)].into_iter().collect(),
+    };
+    for chat in &evidence {
+        let profile = place_chat(chat, &catalog, |document| {
+            (document == letter).then_some(home)
+        })
+        .unwrap();
+        assert!(
+            repository
+                .assign_chat_profile(chat.chat_id, profile)
+                .unwrap()
+        );
+    }
+    let placed = |repository: &Repository, chat| repository.chat(chat).unwrap().unwrap().profile_id;
+    assert_eq!(placed(&repository, a), Some(work));
+    assert_eq!(placed(&repository, b), Some(private));
+    assert_eq!(placed(&repository, c), Some(private), "the first profile");
+    assert_eq!(placed(&repository, d), Some(work));
+    assert!(repository.unplaced_chats().unwrap().is_empty());
+
+    // Placed once, never moved; and every grant is still there.
+    assert!(!repository.assign_chat_profile(a, private).unwrap());
+    assert_eq!(placed(&repository, a), Some(work));
+    assert_eq!(
+        repository
+            .chat_tool_policy(b)
+            .unwrap()
+            .unwrap()
+            .workspace_ids,
+        vec![office]
+    );
+    assert_eq!(repository.chats().unwrap().len(), 4);
+}
+
+/// **A chat's profile is stored, copied by a branch, and holds the search
+/// and a chat's own tools to it** (AI schema 13). The person's search names
+/// a profile or none; a chat's tools see only their own profile's chats,
+/// whatever the chats' privacy.
+#[test]
+fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
+    let mut repository = Repository::in_memory().unwrap();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let (home_chat, work_chat, calling) = (ChatId::new(), ChatId::new(), ChatId::new());
+    for (id, profile, offset) in [
+        (home_chat, private, 0),
+        (work_chat, work, 10),
+        (calling, private, 20),
+    ] {
+        let mut value = chat(id, offset);
+        value.profile_id = Some(profile);
+        repository.create_chat(&value).unwrap();
+        complete_turn(&mut repository, id, 0, "profileneedle answer", offset + 1);
+    }
+    assert_eq!(
+        repository.chat(work_chat).unwrap().unwrap().profile_id,
+        Some(work)
+    );
+
+    let search = |profile| {
+        repository
+            .search(&AiSearchQuery {
+                text: "profileneedle".into(),
+                limit: 50,
+                cursor: None,
+                visibility: ChatAccessLens::UserSurface,
+                profile,
+            })
+            .unwrap()
+            .hits
+    };
+    let everyone = search(None);
+    assert_eq!(everyone.len(), 3);
+    let work_hits = search(Some(work));
+    assert_eq!(work_hits.len(), 1);
+    assert_eq!(
+        (work_hits[0].chat_id, work_hits[0].profile_id),
+        (work_chat, Some(work))
+    );
+
+    let lens = ChatAccessLens::ToolSurface {
+        calling_chat: Some(calling),
+    };
+    let listed = list_chats(&repository, lens, ListChatsToolRequest::default())
+        .unwrap()
+        .chats
+        .into_iter()
+        .map(|chat| chat.chat_id)
+        .collect::<Vec<_>>();
+    assert_eq!(listed.len(), 2);
+    assert!(!listed.contains(&work_chat));
+    let searched = search_chats(
+        &repository,
+        lens,
+        SearchChatsToolRequest {
+            query: "profileneedle".into(),
+            cursor: None,
+            page_size: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(searched.hits.len(), 2);
+    assert!(searched.hits.iter().all(|hit| hit.chat_id != work_chat));
+    let read = |chat_id| {
+        read_chat(
+            &repository,
+            lens,
+            ReadChatToolRequest {
+                chat_id,
+                cursor: None,
+                page_size: None,
+            },
+        )
+    };
+    assert!(read(home_chat).is_ok());
+    assert_eq!(
+        read(work_chat).unwrap_err().public_message,
+        read(ChatId::new()).unwrap_err().public_message,
+        "another profile's chat is the same as no chat"
+    );
+
+    // An outside MCP client is no chat, and is not held to a profile.
+    let outside = list_chats(
+        &repository,
+        ChatAccessLens::ToolSurface { calling_chat: None },
+        ListChatsToolRequest::default(),
+    )
+    .unwrap();
+    assert_eq!(outside.chats.len(), 3);
 }

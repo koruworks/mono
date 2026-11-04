@@ -10,14 +10,14 @@ use koru_ai_core::{
     AgentNotice, AgentNoticeId, AgentToolKind, AiError, AiErrorClass, AiEvent, AiIntent,
     AiPersistence, AiProviderId, AiSearchHit, AiSearchPage, AiSearchQuery, AiSearchSpan,
     AiSettings, AiSurface, AiUsage, AttemptStatus, BranchCopy, BranchOrigin, Chat, ChatAccessLens,
-    ChatId, ChatOverview, ChatRole, ChatToolPolicy, ContextCommit, DocumentDestination,
-    DocumentExport, DocumentExportId, DocumentId, DocumentRelation, FeedbackEvent, FeedbackEventId,
-    FeedbackValue, InferenceAttempt, InferenceAttemptId, Message, MessageBlock,
-    MessageBlockContext, MessageBlockId, MessageBlockKind, MessageId, MessageState, ModelSelection,
-    OllamaSettings, OpenAiSettings, PendingRetry, PendingTurn, PinnedDocument, ReasoningChoice,
-    RecoveryCounts, SourceLink, Timestamp, ToolActivity, ToolActivityStatus, ToolApproval,
-    ToolErrorCode, ToolInvocationId, ToolMode, UsageClearResult, UsageGroup, UsageReport,
-    UsageSource, UsageTotals, WebSearchPhase, WorkspaceId,
+    ChatId, ChatOverview, ChatPlacementEvidence, ChatRead, ChatRole, ChatToolPolicy, ContextCommit,
+    DocumentDestination, DocumentExport, DocumentExportId, DocumentId, DocumentRelation,
+    FeedbackEvent, FeedbackEventId, FeedbackValue, InferenceAttempt, InferenceAttemptId, Message,
+    MessageBlock, MessageBlockContext, MessageBlockId, MessageBlockKind, MessageId, MessageState,
+    ModelSelection, OllamaSettings, OpenAiSettings, PendingRetry, PendingTurn, PinnedDocument,
+    ProfileId, ReasoningChoice, RecoveryCounts, SourceLink, Timestamp, ToolActivity,
+    ToolActivityStatus, ToolApproval, ToolErrorCode, ToolInvocationId, ToolMode, UsageClearResult,
+    UsageGroup, UsageReport, UsageSource, UsageTotals, WebSearchPhase, WorkspaceId,
 };
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -155,8 +155,9 @@ impl AiPersistence for Repository {
                 "INSERT INTO chats (
                     id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms,
+                    profile_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     chat.id.to_storage(),
                     chat.title,
@@ -172,6 +173,7 @@ impl AiPersistence for Repository {
                     chat.agent_mode,
                     chat.agent_fast,
                     chat.pinned_at.map(Timestamp::millis),
+                    chat.profile_id.map(|profile| profile.to_storage()),
                 ],
             )
             .map_err(storage_failed)?;
@@ -361,7 +363,7 @@ impl AiPersistence for Repository {
                 "SELECT id, title, current_provider, current_model, current_reasoning,
                         branched_from_chat_id, branched_from_message_id,
                         created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode,
-                        agent_fast, pinned_at_ms
+                        agent_fast, pinned_at_ms, profile_id
                    FROM chats
                   ORDER BY updated_at_ms DESC, id",
             )
@@ -372,12 +374,113 @@ impl AiPersistence for Repository {
         collect_rows(rows)
     }
 
+    // **What placing a chat reads** (AI schema 13): a tool's completed call
+    // in a workspace and a document read as context are reads, with when;
+    // the grants are the fallback, newest first. Only ids and times — the
+    // Store says which profile owns them.
+    fn unplaced_chats(&self) -> Result<Vec<ChatPlacementEvidence>, AiError> {
+        let mut chats = self
+            .connection
+            .prepare("SELECT id FROM chats WHERE profile_id IS NULL ORDER BY created_at_ms, id")
+            .map_err(storage_failed)?;
+        let ids = collect_rows(
+            chats
+                .query_map([], |row| required_id(row, 0, ChatId::parse, "ChatId"))
+                .map_err(storage_failed)?,
+        )?;
+        let mut tool_reads = self
+            .connection
+            .prepare(
+                "SELECT target_workspace_id, completed_at_ms
+                   FROM tool_invocations
+                  WHERE chat_id = ?1 AND status = 'complete'
+                    AND target_workspace_id IS NOT NULL AND completed_at_ms IS NOT NULL",
+            )
+            .map_err(storage_failed)?;
+        let mut document_reads = self
+            .connection
+            .prepare(
+                "SELECT reference.document_id, reference.used_at_ms
+                   FROM message_document_refs AS reference
+                   JOIN messages AS message ON message.id = reference.message_id
+                  WHERE message.chat_id = ?1 AND reference.relation = 'context'",
+            )
+            .map_err(storage_failed)?;
+        let mut grants = self
+            .connection
+            .prepare(
+                "SELECT workspace_id FROM chat_workspace_grants
+                  WHERE chat_id = ?1
+                  ORDER BY granted_at_ms DESC, workspace_id",
+            )
+            .map_err(storage_failed)?;
+        let mut evidence = Vec::with_capacity(ids.len());
+        for chat in ids {
+            let mut reads = collect_rows(
+                tool_reads
+                    .query_map([chat.to_storage()], |row| {
+                        Ok((
+                            Timestamp::from_millis(row.get(1)?),
+                            ChatRead::Workspace(required_id(
+                                row,
+                                0,
+                                WorkspaceId::parse,
+                                "WorkspaceId",
+                            )?),
+                        ))
+                    })
+                    .map_err(storage_failed)?,
+            )?;
+            reads.extend(collect_rows(
+                document_reads
+                    .query_map([chat.to_storage()], |row| {
+                        Ok((
+                            Timestamp::from_millis(row.get(1)?),
+                            ChatRead::Document(required_id(
+                                row,
+                                0,
+                                DocumentId::parse,
+                                "DocumentId",
+                            )?),
+                        ))
+                    })
+                    .map_err(storage_failed)?,
+            )?);
+            reads.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+            let granted = collect_rows(
+                grants
+                    .query_map([chat.to_storage()], |row| {
+                        required_id(row, 0, WorkspaceId::parse, "WorkspaceId")
+                    })
+                    .map_err(storage_failed)?,
+            )?;
+            evidence.push(ChatPlacementEvidence {
+                chat_id: chat,
+                reads,
+                grants: granted,
+            });
+        }
+        Ok(evidence)
+    }
+
+    fn assign_chat_profile(&mut self, chat: ChatId, profile: ProfileId) -> Result<bool, AiError> {
+        // Only a chat with none: a chat never moves between profiles here.
+        self.connection
+            .execute(
+                "UPDATE chats SET profile_id = ?2 WHERE id = ?1 AND profile_id IS NULL",
+                params![chat.to_storage(), profile.to_storage()],
+            )
+            .map(|updated| updated != 0)
+            .map_err(storage_failed)
+    }
+
     fn chat_overviews(&self) -> Result<Vec<ChatOverview>, AiError> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT chat.id, chat.title, chat.private,
-                        count(message.id), chat.created_at_ms, chat.updated_at_ms
+                        count(message.id), chat.created_at_ms, chat.updated_at_ms,
+                        chat.profile_id
                    FROM chats AS chat
                    LEFT JOIN messages AS message
                      ON message.chat_id = chat.id AND message.state = 'complete'
@@ -394,6 +497,7 @@ impl AiPersistence for Repository {
                     message_count: nonnegative_u32(row, 3)?,
                     created_at: Timestamp::from_millis(row.get(4)?),
                     updated_at: Timestamp::from_millis(row.get(5)?),
+                    profile_id: optional_id(row, 6, ProfileId::parse, "ProfileId")?,
                 })
             })
             .map_err(storage_failed)?;
@@ -460,7 +564,8 @@ impl AiPersistence for Repository {
                            snippet(message_blocks_fts, 0, char(1), char(2), ' ... ', 24) AS snippet,
                            bm25(message_blocks_fts) AS rank,
                            message.ordinal AS message_ordinal,
-                           block.ordinal AS block_ordinal
+                           block.ordinal AS block_ordinal,
+                           chat.profile_id AS profile_id
                       FROM message_blocks_fts
                       JOIN message_blocks AS block ON block.rowid = message_blocks_fts.rowid
                       JOIN messages AS message ON message.id = block.message_id
@@ -468,6 +573,11 @@ impl AiPersistence for Repository {
                      WHERE message_blocks_fts MATCH ?1
                        AND message.state = 'complete'
                        AND (?4 = 0 OR chat.private = 0 OR chat.id = ?5)
+                       AND (?6 IS NULL OR chat.profile_id = ?6)
+                       AND (?4 = 0 OR ?5 IS NULL OR chat.profile_id IS (
+                           SELECT calling.profile_id FROM chats AS calling
+                            WHERE calling.id = ?5
+                       ))
                 ), ranked AS (
                     SELECT *,
                            row_number() OVER (
@@ -476,7 +586,7 @@ impl AiPersistence for Repository {
                            ) AS response_rank
                       FROM matches
                 )
-                SELECT chat_id, message_id, block_id, chat_title, snippet, rank
+                SELECT chat_id, message_id, block_id, chat_title, snippet, rank, profile_id
                   FROM ranked
                  WHERE response_rank = 1
                  ORDER BY rank, message_ordinal DESC, block_ordinal, block_id
@@ -498,6 +608,7 @@ impl AiPersistence for Repository {
                     i64::try_from(offset).unwrap_or(i64::MAX),
                     tool_surface,
                     calling_chat,
+                    query.profile.map(|profile| profile.to_storage()),
                 ],
                 |row| {
                     let rank: f64 = row.get(5)?;
@@ -511,6 +622,7 @@ impl AiPersistence for Repository {
                         snippet,
                         spans,
                         score: (-rank) as f32,
+                        profile_id: optional_id(row, 6, ProfileId::parse, "ProfileId")?,
                     })
                 },
             )
@@ -701,7 +813,7 @@ impl AiPersistence for Repository {
         self.connection
             .query_row(
                 "SELECT message.chat_id, chat.private, message.id, block.id, message.role,
-                        block.markdown, message.created_at_ms
+                        block.markdown, message.created_at_ms, chat.profile_id
                    FROM message_blocks AS block
                    JOIN messages AS message ON message.id = block.message_id
                    JOIN chats AS chat ON chat.id = message.chat_id
@@ -711,6 +823,7 @@ impl AiPersistence for Repository {
                     Ok(MessageBlockContext {
                         chat_id: required_id(row, 0, ChatId::parse, "ChatId")?,
                         chat_private: row.get(1)?,
+                        chat_profile: optional_id(row, 7, ProfileId::parse, "ProfileId")?,
                         message_id: required_id(row, 2, MessageId::parse, "MessageId")?,
                         block_id: required_id(row, 3, MessageBlockId::parse, "MessageBlockId")?,
                         role: parse_role(&row.get::<_, String>(4)?)
@@ -1867,7 +1980,8 @@ fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiErr
         .query_row(
             "SELECT id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms
+                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms,
+                    profile_id
                FROM chats WHERE id = ?1",
             [id.to_storage()],
             chat_from_row,
@@ -1947,8 +2061,8 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
             "INSERT INTO chats (
             id, title, current_provider, current_model, current_reasoning,
             branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms, private,
-            agent_working_folder, agent_mode, agent_fast, pinned_at_ms
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            agent_working_folder, agent_mode, agent_fast, pinned_at_ms, profile_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 chat.id.to_storage(),
                 chat.title,
@@ -1964,6 +2078,7 @@ fn insert_chat(connection: &Connection, chat: &Chat) -> Result<(), AiError> {
                 chat.agent_mode,
                 chat.agent_fast,
                 chat.pinned_at.map(Timestamp::millis),
+                chat.profile_id.map(|profile| profile.to_storage()),
             ],
         )
         .map_err(storage_failed)?;
@@ -2328,6 +2443,7 @@ fn chat_from_row(row: &Row<'_>) -> rusqlite::Result<Chat> {
         agent_mode: row.get(11)?,
         agent_fast: row.get(12)?,
         pinned_at: row.get::<_, Option<i64>>(13)?.map(Timestamp::from_millis),
+        profile_id: optional_id(row, 14, ProfileId::parse, "ProfileId")?,
         created_at: Timestamp::from_millis(row.get(7)?),
         updated_at: Timestamp::from_millis(row.get(8)?),
     })

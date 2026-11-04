@@ -76,6 +76,7 @@ fn create_chat(client: &AiWorkerClient) -> ChatId {
             CreateChatRequest {
                 chat_id,
                 title: "Worker test".into(),
+                profile_id: None,
                 model: model(),
             },
         )
@@ -434,6 +435,7 @@ fn client_minted_chat_identity_is_retry_safe_but_not_reusable() {
     let request = CreateChatRequest {
         chat_id: ChatId::new(),
         title: "Retry-safe".into(),
+        profile_id: None,
         model: model(),
     };
     let first = client.create_chat(context(), request.clone()).unwrap();
@@ -445,6 +447,7 @@ fn client_minted_chat_identity_is_retry_safe_but_not_reusable() {
             CreateChatRequest {
                 chat_id: first.chat.id,
                 title: "Different".into(),
+                profile_id: None,
                 model: model(),
             },
         )
@@ -630,6 +633,7 @@ fn armed_web_search_is_audited_and_citations_reach_transcript_and_usage() {
             CreateChatRequest {
                 chat_id,
                 title: "Search test".into(),
+                profile_id: None,
                 model: ModelSelection {
                     provider: AiProviderId::parse(AiProviderId::OPENAI).unwrap(),
                     requested_model: "gpt-5.4".into(),
@@ -1258,6 +1262,7 @@ fn provider_can_read_its_own_private_chat_without_reentering_the_worker() {
             CreateChatRequest {
                 chat_id,
                 title: "Private self-read".into(),
+                profile_id: None,
                 model: model(),
             },
         )
@@ -1676,6 +1681,7 @@ fn unauthorized_or_expired_internal_context_is_rejected() {
     let request = CreateChatRequest {
         chat_id: ChatId::new(),
         title: "Denied".into(),
+        profile_id: None,
         model: model(),
     };
     let mut denied = context();
@@ -2174,6 +2180,7 @@ fn debug_lifecycle_logs_exclude_chat_content_titles_and_paths() {
             CreateChatRequest {
                 chat_id,
                 title: TITLE.into(),
+                profile_id: None,
                 model: model(),
             },
         )
@@ -2507,6 +2514,7 @@ fn a_working_folder_is_only_for_an_empty_agent_chat_and_rides_the_request() {
             CreateChatRequest {
                 chat_id: agent,
                 title: "Agent chat".into(),
+                profile_id: None,
                 model: koru_ai_core::ModelSelection {
                     provider: AiProviderId::parse("agent-codex").unwrap(),
                     requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
@@ -2648,6 +2656,7 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
             CreateChatRequest {
                 chat_id: agent,
                 title: "Agent chat".into(),
+                profile_id: None,
                 model: koru_ai_core::ModelSelection {
                     provider: AiProviderId::parse("agent-codex").unwrap(),
                     requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
@@ -2679,6 +2688,7 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
 }
 
 mod attachments;
+mod profiles;
 
 /// D14: an agent model's levels become the chat's effort control — Koru's
 /// order, the stated default when there is one, *off* when offered — and a
@@ -2798,6 +2808,7 @@ fn agent_chat(client: &AiWorkerClient, provider: &str) -> ChatId {
             CreateChatRequest {
                 chat_id: chat,
                 title: "Agent chat".into(),
+                profile_id: None,
                 model: koru_ai_core::ModelSelection {
                     provider: AiProviderId::parse(provider).unwrap(),
                     requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),

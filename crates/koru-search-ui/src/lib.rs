@@ -7766,6 +7766,7 @@ mod tests {
                                     snippet: "An answer".into(),
                                     spans: vec![koru_ai_core::AiSearchSpan { start: 3, end: 9 }],
                                     score: 1.0,
+                                    profile_id: None,
                                 },
                             }],
                             next_cursor: None,

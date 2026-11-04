@@ -96,6 +96,7 @@ fn create_chat(client: &Client) -> ChatId {
         .create_chat(&CreateChatRequest {
             chat_id,
             title: "Public vertical slice".into(),
+            profile_id: None,
             model: ModelSelection {
                 provider: AiProviderId::parse("mock").unwrap(),
                 requested_model: "deterministic-v1".into(),
@@ -379,6 +380,7 @@ fn gateway_rejects_ai_before_the_worker_when_scope_is_absent() {
         .create_chat(&CreateChatRequest {
             chat_id: ChatId::new(),
             title: "Denied".into(),
+            profile_id: None,
             model: ModelSelection {
                 provider: AiProviderId::parse("mock").unwrap(),
                 requested_model: "deterministic-v1".into(),

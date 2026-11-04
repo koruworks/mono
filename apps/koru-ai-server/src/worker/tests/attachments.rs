@@ -57,6 +57,7 @@ fn create_agent_chat(client: &AiWorkerClient) -> ChatId {
             CreateChatRequest {
                 chat_id: chat,
                 title: "Agent chat".into(),
+                profile_id: None,
                 model: koru_ai_core::ModelSelection {
                     provider: AiProviderId::parse("agent-codex").unwrap(),
                     requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),

@@ -1361,6 +1361,13 @@ struct WorkerState {
     cleanup: Cleanup,
     /// Branches whose attachment folders are being copied.
     branching: HashSet<ChatId>,
+    /// The Store, for the profiles: placing a chat written before AI schema
+    /// 13 and holding a chat to its profile's workspaces. `None` in a
+    /// harness with no Store, where no chat is placed.
+    store: Option<Arc<dyn StoreContextPort>>,
+    /// Whether a chat may still be waiting for a profile: until a pass over
+    /// them places every one ([`WorkerState::place_unplaced_chats`]).
+    unplaced: bool,
     /// Steers handed to a running turn and not answered yet, by operation.
     steering: HashSet<Uuid>,
 }
@@ -1470,6 +1477,7 @@ fn run_worker(
         TOOL_THREADS,
     )?;
     let store_context = config.store_context;
+    let placement_store = store_context.clone();
     let context_pool = ContextPool::spawn(
         store_context.clone(),
         provider_output.clone(),
@@ -1548,7 +1556,14 @@ fn run_worker(
         cleanup,
         branching: HashSet::new(),
         steering: HashSet::new(),
+        store: placement_store,
+        unplaced: true,
     };
+    // **The chats written before AI schema 13 are given their profile
+    // here**, before any command is served, with the Store this worker
+    // already reads documents through; a Store that does not answer leaves
+    // them for the next pass.
+    state.place_unplaced_chats();
     while !shutdown.load(Ordering::Acquire) {
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
@@ -2273,11 +2288,15 @@ impl WorkerState {
             agent_mode: None,
             agent_fast: None,
             pinned_at: None,
+            profile_id: request.profile_id,
             created_at: now,
             updated_at: now,
         };
         if let Some(existing) = self.repository.chat(chat.id).map_err(ai_failure)? {
-            if existing.title == chat.title && existing.current_model == chat.current_model {
+            if existing.title == chat.title
+                && existing.current_model == chat.current_model
+                && (chat.profile_id.is_none() || existing.profile_id == chat.profile_id)
+            {
                 return Ok(CreateChatResponse { chat: existing });
             }
             return Err(failure(
@@ -2287,7 +2306,78 @@ impl WorkerState {
             ));
         }
         self.repository.create_chat(&chat).map_err(ai_failure)?;
+        if chat.profile_id.is_some() {
+            return Ok(CreateChatResponse { chat });
+        }
+        // **An older client names no profile**: the chat is placed by the
+        // rule an old chat is — with nothing read yet, the first profile.
+        self.unplaced = true;
+        self.place_unplaced_chats();
+        let chat = self
+            .repository
+            .chat(chat.id)
+            .map_err(ai_failure)?
+            .unwrap_or(chat);
         Ok(CreateChatResponse { chat })
+    }
+
+    /// **Give every chat with no profile its profile** (AI schema 13) by
+    /// [`koru_ai_core::place_chat`]: the profile owning the workspace it
+    /// last read, else the one it was last granted, else the first. Asks
+    /// the Store once for the profiles and once per document read; nothing
+    /// when every chat already has one. A Store that does not answer, or
+    /// has no profile yet, leaves the rest for the next pass — before a
+    /// list, a search or a new chat — and they are listed nowhere until it
+    /// does.
+    fn place_unplaced_chats(&mut self) {
+        if !self.unplaced {
+            return;
+        }
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let evidence = match self.repository.unplaced_chats() {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, "AI chats waiting for a profile could not be read");
+                return;
+            }
+        };
+        if evidence.is_empty() {
+            self.unplaced = false;
+            return;
+        }
+        let catalog = match store.profile_catalog() {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                tracing::warn!(class = ?error.class, waiting = evidence.len(), "AI chats wait for a profile: the Store did not list them");
+                return;
+            }
+        };
+        let mut documents: HashMap<DocumentId, Option<WorkspaceId>> = HashMap::new();
+        let mut placed = 0usize;
+        for chat in &evidence {
+            let profile = koru_ai_core::place_chat(chat, &catalog, |document| {
+                *documents
+                    .entry(document)
+                    .or_insert_with(|| store.document_workspace(document).ok().flatten())
+            });
+            let Some(profile) = profile else {
+                break;
+            };
+            match self.repository.assign_chat_profile(chat.chat_id, profile) {
+                Ok(_) => placed += 1,
+                Err(error) => {
+                    tracing::warn!(chat = %chat.chat_id, class = ?error.class, "an AI chat could not be given its profile");
+                }
+            }
+        }
+        self.unplaced = placed < evidence.len();
+        tracing::info!(
+            placed,
+            waiting = evidence.len() - placed,
+            "AI chats placed in their profiles"
+        );
     }
 
     fn read_chat(&self, context: RequestContext, chat_id: ChatId) -> ApiResult<ChatTranscript> {
@@ -2862,6 +2952,7 @@ impl WorkerState {
                 limit: request.limit,
                 cursor: request.cursor,
                 visibility: ChatAccessLens::UserSurface,
+                profile: None,
             })
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
@@ -2988,6 +3079,8 @@ impl WorkerState {
             agent_mode: None,
             agent_fast: None,
             pinned_at: None,
+            // Its source's profile, whichever window asked (AI schema 13).
+            profile_id: source.profile_id,
             created_at: now,
             updated_at: now,
         };

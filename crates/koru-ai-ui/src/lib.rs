@@ -4061,6 +4061,7 @@ impl ChatSurface {
         if !self.queue_command(Command::Create(CreateChatRequest {
             chat_id: chat,
             title: stand_in.chat.title.clone(),
+            profile_id: None,
             model: stand_in.chat.current_model.clone(),
         })) {
             self.unmade_chat = Some(chat);
@@ -9344,6 +9345,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
             agent_mode: None,
             agent_fast: None,
             pinned_at: None,
+            profile_id: None,
             created_at: now,
             updated_at: now,
         },
@@ -9568,6 +9570,7 @@ mod tests {
                 agent_mode: None,
                 agent_fast: None,
                 pinned_at: None,
+                profile_id: None,
                 created_at: now,
                 updated_at: now,
             },

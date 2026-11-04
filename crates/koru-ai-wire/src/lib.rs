@@ -11,8 +11,9 @@ use koru_ai_core::{
     AiError, AiEvent, AiProviderId, AiSearchPage, AiSurface, AiUsage, AttemptStatus, Chat, ChatId,
     ChatToolPolicy, ContextRef, DocumentDestination, DocumentExport, DocumentExportId,
     FeedbackEvent, FeedbackEventId, FeedbackValue, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlock, MessageId, ModelDescriptor, ModelSelection, PinnedDocument, ReasoningChoice,
-    SourceLink, Timestamp, ToolActivity, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
+    MessageBlock, MessageId, ModelDescriptor, ModelSelection, PinnedDocument, ProfileId,
+    ReasoningChoice, SourceLink, Timestamp, ToolActivity, ToolMode, UsageReport, WebSearchPhase,
+    WorkspaceId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,12 @@ pub struct CreateChatRequest {
     pub chat_id: ChatId,
     pub title: String,
     pub model: ModelSelection,
+    /// **The profile the chat belongs to** (AI schema 13): the profile of
+    /// the window it is started in. An older client sends none, and the
+    /// service places the chat as it places one written before profiles —
+    /// with nothing read yet, in the first profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -964,6 +971,7 @@ mod tests {
                 agent_mode: None,
                 agent_fast: None,
                 pinned_at: None,
+                profile_id: None,
                 created_at: Timestamp::from_millis(1),
                 updated_at: Timestamp::from_millis(1),
             },

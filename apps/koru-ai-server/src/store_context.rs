@@ -3,8 +3,8 @@
 //! Narrow adapter from the AI context port to the bounded Store worker.
 
 use koru_ai_core::{
-    AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, StoreContextPort,
-    StoreRevision,
+    AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, ProfileCatalog,
+    StoreContextPort, StoreRevision, WorkspaceId,
 };
 use koru_core::WorkspaceDoc;
 use koru_export::NoBlobs;
@@ -153,6 +153,42 @@ impl StoreContextPort for StoreContextAdapter {
             .map_err(|_| export_unavailable())?
             .map_err(|_| export_unavailable())
     }
+
+    /// The live profiles in the Store's order — the order Koru lists them,
+    /// oldest first — and the owner of every workspace, those in the bin
+    /// too: a chat that last read a workspace since binned is still that
+    /// profile's.
+    fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
+        self.client
+            .with_store(|store| {
+                let profiles = store.profiles()?.into_iter().map(|profile| profile.id);
+                let owners = store
+                    .workspaces_including_deleted()?
+                    .into_iter()
+                    .map(|workspace| (workspace.id, workspace.owner));
+                Ok::<_, koru_store_core::Error>(ProfileCatalog {
+                    profiles: profiles.collect(),
+                    workspace_owners: owners.collect(),
+                })
+            })
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
+
+    fn document_workspace(&self, document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
+        self.client
+            .with_store(move |store| store.locate(document))
+            .map_err(|_| context_unavailable())?
+            .map_err(|_| context_unavailable())
+    }
+}
+
+fn profiles_unavailable() -> AiError {
+    AiError::new(
+        AiErrorClass::Storage,
+        "Koru's profiles are temporarily unavailable.",
+        true,
+    )
 }
 
 fn export_unavailable() -> AiError {

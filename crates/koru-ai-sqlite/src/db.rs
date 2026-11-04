@@ -11,9 +11,9 @@ use rusqlite::Connection;
 
 pub use koru_sqlite::OpenError;
 
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
-const MIGRATIONS: &[Migration] = &[
+pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         to: 1,
         name: "001_ai_initial_migration.sql",
@@ -86,6 +86,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/012_ai_agent_notices_and_pins_migration.sql"),
         columns: &[],
     },
+    Migration {
+        to: 13,
+        name: "013_ai_chat_profile_migration.sql",
+        sql: include_str!("../migrations/013_ai_chat_profile_migration.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -107,6 +113,28 @@ pub(crate) fn open_in_memory() -> Result<Connection, OpenError> {
 #[cfg(test)]
 pub(crate) fn prepare(connection: &mut Connection) -> Result<(), OpenError> {
     koru_sqlite::prepare(&SCHEMA, connection)
+}
+
+/// **An `ai.db` as an older build left it**, for a test above this crate
+/// that opens it with this build: the file at `path`, migrated to `version`
+/// and no further, with `sql` run in it. Behind the `fixtures` feature,
+/// which only dev-dependencies turn on.
+#[cfg(feature = "fixtures")]
+pub fn write_at_schema(path: &Path, version: i64, sql: &str) -> Result<(), OpenError> {
+    let steps = usize::try_from(version).unwrap_or(0).min(MIGRATIONS.len());
+    let older = Schema {
+        database: crate::DATABASE_FILE,
+        understood: version,
+        migrations: &MIGRATIONS[..steps],
+    };
+    let connection = koru_sqlite::open(&older, path)?;
+    connection
+        .execute_batch(sql)
+        .map_err(|error| OpenError::Storage {
+            database: crate::DATABASE_FILE,
+            operation: "write a fixture",
+            detail: error.to_string(),
+        })
 }
 
 pub(crate) fn user_version(connection: &Connection) -> Result<i64, OpenError> {

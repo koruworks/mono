@@ -9,6 +9,8 @@
 mod db;
 mod repository;
 
+#[cfg(feature = "fixtures")]
+pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION};
 pub use repository::{KnownAttachmentDirs, RemovedAttachment, Repository};
 

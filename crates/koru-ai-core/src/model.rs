@@ -41,6 +41,14 @@ pub struct Chat {
     /// not activity: the chat keeps its place among the others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<Timestamp>,
+    /// **The profile the chat belongs to** (AI schema 13, koru-ai D120): the
+    /// profile of the window it was started in, its source's for a branch.
+    /// Its list, its search hits and the workspaces it may read are that
+    /// profile's. `None` only for a chat written before schema 13 that the
+    /// service has not yet placed (it places each one as soon as the Store
+    /// answers: [`crate::place_chat`]), and on an older server's answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -357,6 +365,9 @@ pub struct DocumentContext {
 pub struct MessageBlockContext {
     pub chat_id: ChatId,
     pub chat_private: bool,
+    /// The profile of the chat the block is in (AI schema 13): a block is
+    /// context only for a chat of the same profile.
+    pub chat_profile: Option<ProfileId>,
     pub message_id: MessageId,
     pub block_id: MessageBlockId,
     pub role: ChatRole,
@@ -369,6 +380,7 @@ pub struct ChatOverview {
     pub chat_id: ChatId,
     pub title: String,
     pub private: bool,
+    pub profile_id: Option<ProfileId>,
     pub message_count: u32,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -661,6 +673,11 @@ pub struct AiSearchHit {
     pub snippet: String,
     pub spans: Vec<AiSearchSpan>,
     pub score: f32,
+    /// The profile the hit's chat belongs to (AI schema 13), so a surface
+    /// that lists every profile's hits opens one in its own profile's
+    /// window. `None` from an older server, or for a chat not yet placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -678,6 +695,11 @@ pub struct AiSearchQuery {
     pub cursor: Option<String>,
     #[serde(default)]
     pub visibility: ChatAccessLens,
+    /// Only this profile's chats (AI schema 13); `None` is every profile's.
+    /// A tool surface with a calling chat is held to that chat's profile
+    /// whatever this says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

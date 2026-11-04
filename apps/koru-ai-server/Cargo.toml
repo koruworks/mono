@@ -42,5 +42,6 @@ uuid.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"] }
 koru-log = { path = "../../crates/koru-log" }
 tempfile.workspace = true

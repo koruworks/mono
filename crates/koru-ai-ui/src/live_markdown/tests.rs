@@ -33,6 +33,7 @@ fn transcript() -> ChatTranscript {
             agent_mode: None,
             agent_fast: None,
             pinned_at: None,
+            profile_id: None,
             created_at: now,
             updated_at: now,
         },

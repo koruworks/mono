@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AiError, AiErrorClass, AiPersistence, AiSearchQuery, ChatAccessLens, ChatId, ChatRole,
-    MessageId, MessageState, Timestamp,
+    MessageId, MessageState, ProfileId, Timestamp,
 };
 
 const DEFAULT_LIST_PAGE_SIZE: u16 = 50;
@@ -117,10 +117,12 @@ pub fn list_chats(
             .unwrap_or(DEFAULT_LIST_PAGE_SIZE)
             .clamp(1, MAX_LIST_PAGE_SIZE),
     );
+    let scope = profile_scope(persistence, lens)?;
     let visible = persistence
         .chat_overviews()?
         .into_iter()
         .filter(|chat| lens_allows(lens, chat.chat_id, chat.private))
+        .filter(|chat| scope.is_none_or(|profile| chat.profile_id == profile))
         .collect::<Vec<_>>();
     let chats = visible
         .iter()
@@ -154,6 +156,8 @@ pub fn search_chats(
             .clamp(1, MAX_SEARCH_PAGE_SIZE),
         cursor: request.cursor,
         visibility: lens,
+        // A calling chat's own profile is applied by the search itself.
+        profile: None,
     })?;
     Ok(SearchChatsToolResponse {
         hits: page
@@ -176,9 +180,11 @@ pub fn read_chat(
     lens: ChatAccessLens,
     request: ReadChatToolRequest,
 ) -> Result<ReadChatToolResponse, AiError> {
+    let scope = profile_scope(persistence, lens)?;
     let chat = persistence
         .chat(request.chat_id)?
         .filter(|chat| lens_allows(lens, chat.id, chat.private))
+        .filter(|chat| scope.is_none_or(|profile| chat.profile_id == profile))
         .ok_or_else(chat_not_found)?;
     let before = ordinal_cursor(request.cursor.as_deref())?;
     let page_size = usize::from(
@@ -223,6 +229,24 @@ pub fn read_chat(
         messages,
         next_cursor,
     })
+}
+
+/// **A chat's tools see only its own profile's chats** (AI schema 13): the
+/// profile the calling chat is stored with, which no request can name.
+/// `None` where nothing narrows the list — the person's own surface, and an
+/// outside MCP client, which is not a chat.
+fn profile_scope(
+    persistence: &dyn AiPersistence,
+    lens: ChatAccessLens,
+) -> Result<Option<Option<ProfileId>>, AiError> {
+    match lens {
+        ChatAccessLens::ToolSurface {
+            calling_chat: Some(calling),
+        } => Ok(Some(
+            persistence.chat(calling)?.and_then(|chat| chat.profile_id),
+        )),
+        _ => Ok(None),
+    }
 }
 
 fn lens_allows(lens: ChatAccessLens, chat: ChatId, private: bool) -> bool {

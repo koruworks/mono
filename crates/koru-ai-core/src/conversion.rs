@@ -136,6 +136,7 @@ mod tests {
                 ContextItem::MessageBlock(MessageBlockContext {
                     chat_id: ChatId::new(),
                     chat_private: false,
+                    chat_profile: None,
                     message_id: MessageId::new(),
                     block_id: MessageBlockId::new(),
                     role: ChatRole::Assistant,

@@ -6321,6 +6321,7 @@ fn a_chat(n: u128, title: &str, updated_ms: i64) -> koru_ai_core::Chat {
         agent_mode: None,
         agent_fast: None,
         pinned_at: None,
+        profile_id: None,
         created_at: koru_ai_core::Timestamp::from_millis(updated_ms),
         updated_at: koru_ai_core::Timestamp::from_millis(updated_ms),
     }

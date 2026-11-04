@@ -7,11 +7,12 @@ use uuid::Uuid;
 use crate::{
     AiError, AiErrorClass, AiEvent, AiRequest, AiSearchPage, AiSearchQuery, AiSettings, AiToolCall,
     AiToolDefinition, AiToolResult, BranchCopy, Cancellation, Chat, ChatId, ChatOverview,
-    ChatToolPolicy, ContextCommit, DocumentContext, DocumentDestination, DocumentExport,
-    DocumentExportId, DocumentId, FeedbackEvent, InferenceAttempt, InferenceAttemptId, Message,
-    MessageBlock, MessageBlockContext, MessageId, ModelSelection, PendingRetry, PendingTurn,
-    PinnedDocument, ProviderStream, RecoveryCounts, SourceLink, Timestamp, ToolActivity,
-    ToolInvocationId, ToolMode, UsageClearResult, UsageReport, WorkspaceId,
+    ChatPlacementEvidence, ChatToolPolicy, ContextCommit, DocumentContext, DocumentDestination,
+    DocumentExport, DocumentExportId, DocumentId, FeedbackEvent, InferenceAttempt,
+    InferenceAttemptId, Message, MessageBlock, MessageBlockContext, MessageId, ModelSelection,
+    PendingRetry, PendingTurn, PinnedDocument, ProfileCatalog, ProfileId, ProviderStream,
+    RecoveryCounts, SourceLink, Timestamp, ToolActivity, ToolInvocationId, ToolMode,
+    UsageClearResult, UsageReport, WorkspaceId,
 };
 
 /// The only persistence surface visible to AI application behavior.
@@ -70,6 +71,14 @@ pub trait AiPersistence: Send {
     ) -> Result<Option<ChatToolPolicy>, AiError>;
     fn chat(&self, id: ChatId) -> Result<Option<Chat>, AiError>;
     fn chats(&self) -> Result<Vec<Chat>, AiError>;
+    /// Every chat with no profile yet (AI schema 13), with what the store
+    /// holds about where it was working: what it read and what it was
+    /// granted, for [`crate::place_chat`].
+    fn unplaced_chats(&self) -> Result<Vec<ChatPlacementEvidence>, AiError>;
+    /// Give a chat with no profile its profile. A chat that has one keeps
+    /// it — a chat never moves between profiles here — and answers `false`.
+    /// Not activity.
+    fn assign_chat_profile(&mut self, chat: ChatId, profile: ProfileId) -> Result<bool, AiError>;
     fn chat_overviews(&self) -> Result<Vec<ChatOverview>, AiError>;
     fn messages(&self, chat: ChatId) -> Result<Vec<Message>, AiError>;
     fn blocks(&self, chat: ChatId) -> Result<Vec<MessageBlock>, AiError>;
@@ -190,4 +199,19 @@ pub trait StoreContextPort: Send + Sync {
         destination: &DocumentDestination,
         markdown: &str,
     ) -> Result<DocumentId, AiError>;
+    /// Koru's profiles in their order and who owns each workspace: what
+    /// placing a chat and holding a chat to its profile read. A port with
+    /// no Store has none to give.
+    fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
+        Err(AiError::new(
+            AiErrorClass::Storage,
+            "Koru's profiles are not available.",
+            true,
+        ))
+    }
+    /// The workspace that holds `document`; `None` when the Store has no
+    /// such document.
+    fn document_workspace(&self, _document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
+        Ok(None)
+    }
 }
