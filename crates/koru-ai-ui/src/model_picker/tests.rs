@@ -2100,12 +2100,11 @@ fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
     assert_eq!(rail_dividers(&rail), [0], "set off from the agents");
 
     open(&mut surface);
-    assert_ne!(
+    assert_eq!(
         surface.picker_entry(),
         Some(RailEntry::Favorites),
-        "it is not where the picker opens"
+        "where the picker opens"
     );
-    surface.select_rail_entry(RailEntry::Favorites);
     assert_eq!(
         surface.picker_rows(),
         [
@@ -2138,12 +2137,54 @@ fn favorites_lists_models_across_agents_and_chooses_agent_and_model() {
     assert_eq!(model.provider, agent("agent-opencode"));
     assert_eq!(model.requested_model, "deepseek/v4-pro");
 
-    // Opened again, the favorite reads as the chat's.
+    // Opened again, the favorite reads as the chat's, and the keyboard is
+    // on it.
     open(&mut surface);
-    surface.select_rail_entry(RailEntry::Favorites);
+    assert_eq!(surface.picker_entry(), Some(RailEntry::Favorites));
     let rows = surface.picker_rows();
     assert!(surface.picker_row_current(&RailEntry::Favorites, &rows[2]));
     assert!(!surface.picker_row_current(&RailEntry::Favorites, &rows[0]));
+    assert_eq!(surface.picker.highlight, Some(2));
+}
+
+/// **The picker opens on *Favorites*** (the user: *by default, open
+/// favorites*), every time — an entry looked at before is not kept — and
+/// on the chat's own agent when there is no favorite. Once the chat has
+/// begun there is no rail, so no *Favorites*: the chat's own agent's list.
+#[test]
+fn the_picker_opens_on_favorites_until_the_chat_begins() {
+    let mut surface = surface();
+    on_agent(
+        &mut surface,
+        "agent-opencode",
+        "deepseek/v4-pro",
+        ReasoningChoice::Default,
+    );
+    let opencode = RailEntry::Agent(agent("agent-opencode"));
+    open(&mut surface);
+    assert_eq!(
+        surface.picker_entry(),
+        Some(opencode.clone()),
+        "no favorite"
+    );
+    surface.close_picker();
+
+    surface.set_favorite_models(vec![FavoriteModel::new("claude", "sonnet")]);
+    open(&mut surface);
+    assert_eq!(surface.picker_entry(), Some(RailEntry::Favorites));
+    surface.select_rail_entry(opencode.clone());
+    surface.close_picker();
+    open(&mut surface);
+    assert_eq!(
+        surface.picker_entry(),
+        Some(RailEntry::Favorites),
+        "each open starts there"
+    );
+    surface.close_picker();
+
+    begin(&mut surface);
+    open(&mut surface);
+    assert_eq!(surface.picker_entry(), Some(opencode));
 }
 
 /// **A turned-off agent's favorites are hidden, not lost** (D46): they
@@ -2411,6 +2452,8 @@ fn picker_with_everything() -> ChatSurface {
     );
     surface.unmade_chat = surface.transcript.as_ref().map(|t| t.chat.id);
     open(&mut surface);
+    // It opens on *Favorites*; what is drawn here is Claude's list.
+    surface.select_rail_entry(RailEntry::Agent(agent("agent-claude")));
     surface
 }
 

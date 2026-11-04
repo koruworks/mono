@@ -24,8 +24,10 @@
 //!
 //! A model row is one line, the model's name; a ☆ at its end stars it
 //! (D46): the rail then leads with *Favorites*, the starred models of every
-//! agent turned on, each beside its agent's mark. Only a click stars a
-//! model: there is no key for it (D47, taken back by the user).
+//! agent turned on, each beside its agent's mark — and the picker opens on
+//! it (the user: *by default, open favorites*), until the chat begins.
+//! Only a click stars a model: there is no key for it (D47, taken back by
+//! the user).
 //!
 //! **Once the chat has begun there is no rail** (the user: *once the chat
 //! is running, hide the model rail since we don't support switching
@@ -758,11 +760,16 @@ impl crate::ChatSurface {
         }
     }
 
-    /// **The rail's entry on open** (§9.1): the chat's own provider; else
-    /// the default agent from settings; else the first agent that is ready;
-    /// else the first.
+    /// **The rail's entry on open** (§9.1): *Favorites*, while there are
+    /// favorites and the rail shows (the user: *by default, open
+    /// favorites*); else the chat's own provider; else the default agent
+    /// from settings; else the first agent that is ready; else the first.
+    /// Every open starts here: the entry looked at last is not kept.
     pub(crate) fn picker_initial_entry(&self) -> Option<RailEntry> {
         let rail = self.picker_rail();
+        if !self.picker_rail_hidden() && rail.contains(&RailEntry::Favorites) {
+            return Some(RailEntry::Favorites);
+        }
         let current = self
             .transcript
             .as_ref()
@@ -778,21 +785,16 @@ impl crate::ChatSurface {
                 self.agent_status.get(provider).copied() == Some(AgentStatus::Ready)
             })
         };
-        // *Favorites* is never where the picker opens: it opens on whose
-        // models the chat is on.
-        let providers = || {
-            rail.iter()
-                .filter(|entry| !matches!(entry, RailEntry::Favorites))
-        };
-        providers()
+        // With no favorites — the rail then has no *Favorites* — it opens
+        // on whose models the chat is on.
+        rail.iter()
             .find(|entry| entry.provider() == current.as_ref())
             .or_else(|| {
-                providers().find(|entry| {
+                rail.iter().find(|entry| {
                     matches!(entry, RailEntry::Agent(_)) && entry.provider() == selected.as_ref()
                 })
             })
-            .or_else(|| providers().find(ready))
-            .or_else(|| providers().next())
+            .or_else(|| rail.iter().find(ready))
             .or_else(|| rail.first())
             .cloned()
     }
