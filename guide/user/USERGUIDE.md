@@ -1517,6 +1517,15 @@ line walks forward again, back to whatever you were typing, and `Esc` takes you
 straight back to it. A message you steered into a reply is in the list; one
 still waiting in the queue is not.
 
+**Use a Codex skill.** In a chat with Codex, type `$` to list the skills Codex
+has for this workspace — yours, the project's and its own — and keep typing to
+narrow the list. `Enter` or `Tab` picks one and it becomes a chip in your
+message; `Esc` closes the list and leaves the `$` as text, and `Backspace`
+removes a chip whole. Send as usual: Codex is told exactly which skill you
+meant. A message with a skill is not slipped into a reply that is still being
+written; it waits and goes when the reply ends. With other agents `$` is just a
+character.
+
 **Dictate a message.** Click the microphone beside the send button, or press
 `Ctrl+Shift+D` (hold it, or press once if you set dictation to toggle). The
 bottom of the message box shows a moving level, a timer, ✕ and ■. Your words
@@ -1592,13 +1601,9 @@ open, Koru opens one first. Koru AI used to have a window of its own,
 and an *AI Chat* task in the taskbar; that window was retired on 2026-11-03,
 and every chat it showed is in Koru.
 
-Type `/usage` by itself to show private local measurements without contacting
-the selected provider. The current chat appears first, followed by retained
-usage grouped by day, surface, provider, model, reasoning effort, outcome, and
-prompt version. A provider field it did not report says **unavailable**, not
-zero; the report also counts web-search calls, but Koru does not estimate
-monetary cost. Each history row can delete that
-chat, while Settings can clear all history or clear usage data. Deleting chat
+Typing `/usage` sends it to the agent like any other message, and whatever it
+answers appears in the reply. Settings can clear all chat history or clear
+usage data. Deleting chat
 history removes its content and AI-search results but keeps anonymous,
 text-free usage and feedback totals. Clearing usage removes those totals and
 feedback without deleting conversations. All three destructive actions ask
