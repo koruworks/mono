@@ -46,10 +46,13 @@ fn questions_ride_protocol_twenty_one_in_the_agents_order() {
         request_id: QuestionRequestId::mint(),
         questions: vec![question("pick", &["Recommended", "Second", "Third"])],
         blocking: true,
+        delivery: QuestionsDelivery::InTurn,
     };
     assert_eq!(required.minimum_protocol_version(), 21);
     let json = serde_json::to_value(&required).unwrap();
     assert_eq!(json["kind"], "questions_required");
+    // A set answered in its turn writes no delivery: the v21 shape as it was.
+    assert!(json.get("delivery").is_none());
     assert_eq!(json["questions"][0]["options"][0]["label"], "Recommended");
     assert_eq!(json["questions"][0]["options"][2]["label"], "Third");
     assert!(
@@ -90,6 +93,51 @@ fn a_set_blocks_unless_it_says_otherwise() {
     };
     assert!(blocking);
     assert!(questions[0].takes_text(), "no options takes text");
+}
+
+/// **A set the agent moved on from is answered by the next message**
+/// (koru-ai D108): it says so as `delivery: next_message`, a set that says
+/// nothing is answered in its turn, and the answers sent as input carry the
+/// set's id and the answers — never their words in a diagnostic.
+#[test]
+fn a_set_answered_by_the_next_message_says_so() {
+    let required = AgentEvent::QuestionsRequired {
+        turn_id: super::turn_id(),
+        request_id: QuestionRequestId::mint(),
+        questions: vec![question("pick", &["One"])],
+        blocking: false,
+        delivery: QuestionsDelivery::NextMessage,
+    };
+    let json = serde_json::to_value(&required).unwrap();
+    assert_eq!(json["delivery"], "next_message");
+    assert_eq!(
+        serde_json::from_value::<AgentEvent>(json).unwrap(),
+        required
+    );
+
+    let json = serde_json::json!({
+        "kind": "questions_required",
+        "turn_id": "33333333-3333-4333-8333-333333333333",
+        "request_id": "66666666-6666-4666-8666-666666666666",
+        "questions": [{"id": "q", "question": "Why?"}],
+    });
+    let AgentEvent::QuestionsRequired { delivery, .. } = serde_json::from_value(json).unwrap()
+    else {
+        panic!("a questions event");
+    };
+    assert_eq!(delivery, QuestionsDelivery::InTurn);
+
+    let reply = QuestionsReply {
+        request_id: QuestionRequestId::mint(),
+        answers: vec![answer("pick", text("private words"))],
+    };
+    let json = serde_json::to_value(&reply).unwrap();
+    assert_eq!(json["answers"][0]["question_id"], "pick");
+    assert_eq!(
+        serde_json::from_value::<QuestionsReply>(json).unwrap(),
+        reply
+    );
+    assert!(!format!("{reply:?}").contains("private"));
 }
 
 /// **A set is bounded and a blank one is nothing**: a question with no id,

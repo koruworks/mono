@@ -226,6 +226,39 @@ fn negotiated_host_receives_the_exact_selected_choice() {
     } if id == selected));
 }
 
+/// **A set's answers as the next message reach only a host that asks
+/// questions** (koru-ai D108): to any other the input is refused before the
+/// wire — it has no set to answer.
+#[test]
+fn answers_as_the_next_message_need_managed_questions() {
+    let (client, bytes) = approval_client(21, true, true);
+    assert!(!client.supports_questions());
+    let refused = client.send_pending_answers(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        PendingInput {
+            idempotency_key: IdempotencyKey::mint(),
+            text: String::new(),
+            attachment_ids: Vec::new(),
+            mode: None,
+            fast: None,
+            reasoning: None,
+        },
+        koru_session_protocol::QuestionsReply {
+            request_id: koru_session_protocol::QuestionRequestId::mint(),
+            answers: Vec::new(),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(ClientError::Session(SessionFailure {
+            code: ErrorCode::CapabilityNotNegotiated,
+            ..
+        }))
+    ));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+}
+
 /// **A turn's level never reaches a v19 host** (koru-ai D70): it would read
 /// and ignore it and run the turn at the old level, so the input is refused
 /// before any wire traffic. A v20 host takes it.

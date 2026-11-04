@@ -1179,8 +1179,27 @@ fn checked_in_schema_evidence_matches_the_adapter_boundary() {
         assert_eq!(evidence["cli_version"], version);
         assert_eq!(evidence["protocol_version"], CODEX_PROTOCOL_VERSION);
         assert_eq!(evidence["schema_sha256"], digest, "{version}");
-        // A steer rides `turn/steer`; the newest evidence names it.
+        // A question request is handled (D108) wherever the schema has one:
+        // never also listed as unhandled.
+        let listed = |key: &str| {
+            evidence[key]
+                .as_array()
+                .is_some_and(|entries| entries.contains(&json!("item/tool/requestUserInput")))
+        };
+        assert!(
+            !listed("additive_server_requests_unhandled"),
+            "{version} handles requestUserInput"
+        );
+        // A steer rides `turn/steer`; the newest evidence names it, and the
+        // async question item the adapter reads.
         if version == "0.166.0" {
+            assert!(listed("question_server_requests"));
+            assert!(
+                evidence["question_thread_items"]
+                    .as_array()
+                    .is_some_and(|items| items.len() == 1),
+                "{version} names the async question item"
+            );
             assert!(
                 evidence["required_client_methods"]
                     .as_array()

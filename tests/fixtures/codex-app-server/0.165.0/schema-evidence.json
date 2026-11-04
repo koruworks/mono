@@ -34,8 +34,10 @@
     "attestation/generate",
     "execCommandApproval",
     "item/tool/call",
-    "item/tool/requestUserInput",
     "mcpServer/elicitation/request"
+  ],
+  "question_server_requests": [
+    "item/tool/requestUserInput"
   ],
   "additive_notifications_ignored": [
     "thread/started",

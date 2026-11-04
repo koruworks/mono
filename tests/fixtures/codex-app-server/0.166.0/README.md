@@ -47,3 +47,23 @@ with options and *Other*, one with no options, one secret — and an answer
 each. They are written from the schema, not recorded from a turn: no model
 turn was started, and how a live Codex reads an *Other* answer or a skip
 (`{"answers": {}}`) is not established.
+
+**The root cause, corrected (2026-11-03).** The reply that read *Three
+questions are ready* and showed none was not this server request answered
+`-32601`. A live run with `gpt-6.1-sol` never called the synchronous tool: it
+called `request_user_input_async`, which answers its model at once and adds an
+`agentMessage` thread item with `delivery: "async"` and `questions` — in the
+stable 0.166.0 schema as `AgentMessageThreadItem.delivery` and
+`AsyncUserInputQuestion {title, options?}` — that streams no delta. The adapter
+took a message's words only from deltas and dropped the completed item, so
+the questions never reached the chat. `request-user-input-async.server.json`
+is that item's `item/completed` notification, written in the exact 0.166.0
+shape (`ItemCompletedNotification`: `threadId`, `turnId`, `completedAtMs`,
+`item`) with neutral content — not recorded from the run — and
+`request-user-input-async.client.json` is the input item the adapter sends with
+the answers as the person's next message: Codex's own reply envelope
+(`<send_user_message_question_reply>` around a compact JSON array of
+`{answer, question, questionItemId}`, from `codex-rs/context-fragments/src/
+answered_question.rs` at `rust-v0.166.0`). `schema-evidence.json` now lists
+`item/tool/requestUserInput` as handled for a session that draws questions,
+and the async item as a question item.

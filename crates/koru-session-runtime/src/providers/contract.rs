@@ -404,6 +404,40 @@ pub trait AgentControl: Send {
         ))
     }
 
+    /// **Start a turn whose input is a set's answers** (protocol v21,
+    /// koru-ai D108): the set is one the agent asked in its reply and moved
+    /// on from (`delivery: next_message`), and the adapter writes the
+    /// answers as the person's next message in the agent's own form.
+    /// `input` carries the turn's id and settings and no text of its own.
+    /// The answers are checked against the set; a set that is not pending
+    /// is `ApprovalStale`. An adapter that never asks so has none.
+    fn submit_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (input, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Submit,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
+
+    /// The same answers steered into the turn that is running.
+    fn steer_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (input, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Submit,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
+
     fn answer_approval(
         &mut self,
         approval_id: ApprovalId,

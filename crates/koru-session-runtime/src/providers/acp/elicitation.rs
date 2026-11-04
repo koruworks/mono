@@ -340,6 +340,7 @@ impl AcpControl {
             request_id: id,
             questions,
             blocking: true,
+            delivery: koru_session_protocol::QuestionsDelivery::InTurn,
         })
     }
 

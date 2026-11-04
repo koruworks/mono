@@ -664,10 +664,43 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        self.send_input(session_id, controller_lease, input, None)
+    }
+
+    /// **Send a set's answers as the person's next message** (protocol
+    /// v21, koru-ai D108): the input of a set the agent asked in its reply
+    /// and moved on from. The host starts a turn with them, or steers them
+    /// into the one running, as with any input. Refused before it is sent
+    /// to a host that did not negotiate questions.
+    pub fn send_pending_answers(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<SendPendingInputResult, ClientError> {
+        if !self.supports_questions()
+            || (input.needs_turn_reasoning() && !self.supports_turn_reasoning())
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        self.send_input(session_id, controller_lease, input, Some(answers))
+    }
+
+    fn send_input(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: Option<koru_session_protocol::QuestionsReply>,
+    ) -> Result<SendPendingInputResult, ClientError> {
         match self.request(Request::SendPendingInput {
             session_id,
             controller_lease,
             input,
+            answers,
         })? {
             Response::PendingInputSent { result } => Ok(result),
             _ => Err(ClientError::UnexpectedResponse),

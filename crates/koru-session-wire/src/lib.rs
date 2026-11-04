@@ -328,6 +328,13 @@ pub enum Request {
         session_id: SessionId,
         controller_lease: ControllerLeaseToken,
         input: PendingInput,
+        /// Protocol v21 (koru-ai D108): this input is the answers to a set
+        /// the agent asked in its reply and moved on from
+        /// (`delivery: next_message`); the adapter writes them as the
+        /// person's next message in the agent's own form. The input carries
+        /// no text or attachments of its own. Requires `managed-questions`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answers: Option<koru_session_protocol::QuestionsReply>,
     },
     /// Protocol v8 provider-neutral approval response.
     /// Requires negotiated provider-readiness; an old host cannot decode it.

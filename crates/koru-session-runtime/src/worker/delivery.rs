@@ -8,7 +8,8 @@ use koru_session_observability::{AttachmentDeliveredFact, InputSubmittedFact};
 use koru_session_protocol::{
     AgentTurnId, AttachmentDeliveryPolicy, AttachmentDeliveryResult, AttachmentId, CapabilitySet,
     ControllerLeaseToken, DeliveryMode, DeliveryState, ErrorCode, PendingInput, ProviderKind,
-    SendPendingInputResult, SessionFailure, SessionId, SessionMode, ShellQuoting, capability,
+    QuestionsReply, SendPendingInputResult, SessionFailure, SessionId, SessionMode, ShellQuoting,
+    capability,
 };
 use koru_terminal_emulator::encode_paste;
 
@@ -131,13 +132,42 @@ impl SessionHandle {
         lease: ControllerLeaseToken,
         input: PendingInput,
     ) -> Result<SendPendingInputResult, ErrorCode> {
-        validate_input(&input)?;
-        if let Some(result) = self.steer_running_turn(lease, &input)? {
+        self.send_input(lease, input, None)
+    }
+
+    /// **A set's answers as the person's next message** (protocol v21,
+    /// koru-ai D108): delivered as any input is — into the running turn
+    /// when one runs, as a new turn otherwise — and written by the adapter
+    /// in the agent's own form. The input carries no text or attachments
+    /// of its own, and only a managed session takes it.
+    pub fn send_pending_answers(
+        &self,
+        lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: QuestionsReply,
+    ) -> Result<SendPendingInputResult, ErrorCode> {
+        if !input.text.is_empty() || !input.attachment_ids.is_empty() {
+            return Err(ErrorCode::InvalidRequest);
+        }
+        if !matches!(self.shared.lock().summary.mode, SessionMode::Managed { .. }) {
+            return Err(ErrorCode::DeliveryUnsupported);
+        }
+        self.send_input(lease, input, Some(answers))
+    }
+
+    fn send_input(
+        &self,
+        lease: ControllerLeaseToken,
+        input: PendingInput,
+        answers: Option<QuestionsReply>,
+    ) -> Result<SendPendingInputResult, ErrorCode> {
+        validate_input(&input, answers.is_some())?;
+        if let Some(result) = self.steer_running_turn(lease, &input, answers.as_ref())? {
             return Ok(result);
         }
-        let (turn_id, report_input) = self.begin_pending_input(lease, &input)?;
+        let (turn_id, report_input) = self.begin_pending_input(lease, &input, answers.as_ref())?;
         if report_input {
-            let input_kind = input_kind(&input);
+            let input_kind = input_kind(&input, answers.is_some());
             let event = InputSubmittedFact {
                 session_id: self.shared.id,
                 input_kind,
@@ -147,8 +177,21 @@ impl SessionHandle {
         }
 
         let outcome = match &self.shared.attachment_delivery {
+            // Answers go only to a managed session's adapter (D108).
+            _ if answers.is_some() => {
+                let provider = match &self.shared.lock().summary.mode {
+                    SessionMode::Managed { provider } => Some(provider.clone()),
+                    SessionMode::RawPty => None,
+                };
+                match provider {
+                    Some(provider) => {
+                        self.deliver_native(lease, &input, turn_id, provider, answers)
+                    }
+                    None => Err(ErrorCode::DeliveryUnsupported),
+                }
+            }
             ResolvedDelivery::Native { provider } => {
-                self.deliver_native(lease, &input, turn_id, provider.clone())
+                self.deliver_native(lease, &input, turn_id, provider.clone(), None)
             }
             ResolvedDelivery::QuotedPath { shell } => {
                 self.deliver_raw(lease, &input, turn_id, Some(*shell))
@@ -164,7 +207,7 @@ impl SessionHandle {
                     SessionMode::Managed { provider } => provider.clone(),
                     SessionMode::RawPty => return Err(ErrorCode::DeliveryUnsupported),
                 };
-                self.deliver_native(lease, &input, turn_id, provider)
+                self.deliver_native(lease, &input, turn_id, provider, None)
             }
         };
 
@@ -180,6 +223,7 @@ impl SessionHandle {
         &self,
         lease: ControllerLeaseToken,
         input: &PendingInput,
+        answers: Option<&QuestionsReply>,
     ) -> Result<Option<SendPendingInputResult>, ErrorCode> {
         let active = {
             let state = self.shared.lock();
@@ -200,20 +244,23 @@ impl SessionHandle {
         let SessionIo::Managed(managed) = &self.shared.io else {
             return Ok(None);
         };
-        managed.steer(AgentInput {
-            turn_id: active,
-            text: input.text.clone(),
-            attachments: Vec::new(),
-            mode: None,
-            fast: None,
-            reasoning: None,
-        })?;
+        managed.steer(
+            AgentInput {
+                turn_id: active,
+                text: input.text.clone(),
+                attachments: Vec::new(),
+                mode: None,
+                fast: None,
+                reasoning: None,
+            },
+            answers.cloned(),
+        )?;
         // Recorded as sent, so the same key repeated is answered and not sent
         // twice. The running turn stays the session's active one.
         self.shared.lock().pending_inputs.insert(
             input.idempotency_key,
             PendingSubmission {
-                fingerprint: input_fingerprint(input),
+                fingerprint: input_fingerprint(input, answers),
                 turn_id: active,
                 command_sent: true,
                 in_flight: false,
@@ -222,7 +269,7 @@ impl SessionHandle {
         );
         let event = InputSubmittedFact {
             session_id: self.shared.id,
-            input_kind: input_kind(input),
+            input_kind: input_kind(input, answers.is_some()),
         }
         .commit(self.shared.trace);
         self.shared.lifecycle.publish(event.into());
@@ -236,13 +283,14 @@ impl SessionHandle {
         &self,
         lease: ControllerLeaseToken,
         input: &PendingInput,
+        answers: Option<&QuestionsReply>,
     ) -> Result<(AgentTurnId, bool), ErrorCode> {
         let mut state = self.shared.lock();
         require_lease(&state, lease)?;
         if state.summary.process != koru_session_protocol::ProcessState::Running {
             return Err(ErrorCode::SessionExited);
         }
-        let fingerprint = input_fingerprint(input);
+        let fingerprint = input_fingerprint(input, answers);
         if let Some(submission) = state.pending_inputs.get_mut(&input.idempotency_key) {
             if submission.fingerprint != fingerprint {
                 return Err(ErrorCode::IdempotencyConflict);
@@ -439,6 +487,7 @@ impl SessionHandle {
         input: &PendingInput,
         turn_id: AgentTurnId,
         provider: ProviderKind,
+        answers: Option<QuestionsReply>,
     ) -> Result<(), ErrorCode> {
         let candidates = {
             let mut state = self.shared.lock();
@@ -479,14 +528,18 @@ impl SessionHandle {
         let SessionIo::Managed(managed) = &self.shared.io else {
             return Err(ErrorCode::CapabilityNotNegotiated);
         };
-        let response = managed.submit(AgentInput {
-            turn_id,
-            text: input.text.clone(),
-            attachments: candidates.clone(),
-            mode: input.mode.clone(),
-            fast: input.fast,
-            reasoning: input.reasoning,
-        });
+        let answered = answers.is_some();
+        let response = managed.submit(
+            AgentInput {
+                turn_id,
+                text: input.text.clone(),
+                attachments: candidates.clone(),
+                mode: input.mode.clone(),
+                fast: input.fast,
+                reasoning: input.reasoning,
+            },
+            answers,
+        );
         let mut state = self.shared.lock();
         // The request was lease-authorized before dispatch. Losing that lease
         // after provider acceptance cannot undo the accepted command.
@@ -504,7 +557,7 @@ impl SessionHandle {
                         };
                     }
                 }
-                if !input.text.is_empty() || input.attachment_ids.is_empty() {
+                if answered || !input.text.is_empty() || input.attachment_ids.is_empty() {
                     Err(code)
                 } else {
                     Ok(())
@@ -582,8 +635,10 @@ impl SessionHandle {
     }
 }
 
-fn validate_input(input: &PendingInput) -> Result<(), ErrorCode> {
-    if input.text.is_empty() && input.attachment_ids.is_empty() {
+/// An input says something: text, attachments, or — with nothing of its
+/// own — a set's answers (D108).
+fn validate_input(input: &PendingInput, answers: bool) -> Result<(), ErrorCode> {
+    if input.text.is_empty() && input.attachment_ids.is_empty() && !answers {
         return Err(ErrorCode::InvalidRequest);
     }
     if input.text.len() > crate::MAX_QUEUED_WRITE_BYTES {
@@ -592,11 +647,13 @@ fn validate_input(input: &PendingInput) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-fn input_kind(input: &PendingInput) -> TerminalInputKind {
+fn input_kind(input: &PendingInput, answers: bool) -> TerminalInputKind {
     match (input.text.is_empty(), input.attachment_ids.is_empty()) {
         (false, true) => TerminalInputKind::Text,
         (true, false) => TerminalInputKind::Image,
         (false, false) => TerminalInputKind::Mixed,
+        // A set's answers are the person's words, sent as a message.
+        (true, true) if answers => TerminalInputKind::Text,
         (true, true) => unreachable!("empty input was rejected"),
     }
 }
@@ -653,7 +710,7 @@ fn failure(code: ErrorCode) -> SessionFailure {
     }
 }
 
-fn input_fingerprint(input: &PendingInput) -> blake3::Hash {
+fn input_fingerprint(input: &PendingInput, answers: Option<&QuestionsReply>) -> blake3::Hash {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"koru-session-pending-input-v1\0");
     hasher.update(&(input.text.len() as u64).to_le_bytes());
@@ -661,6 +718,15 @@ fn input_fingerprint(input: &PendingInput) -> blake3::Hash {
     hasher.update(&(input.attachment_ids.len() as u64).to_le_bytes());
     for attachment_id in &input.attachment_ids {
         hasher.update(attachment_id.as_uuid().as_bytes());
+    }
+    // A set's answers are the input's content: the same key with other
+    // answers is a conflict, never a replay (D108).
+    if let Some(answers) = answers {
+        hasher.update(b"answers\0");
+        hasher.update(answers.request_id.as_uuid().as_bytes());
+        let encoded = serde_json::to_vec(&answers.answers).unwrap_or_default();
+        hasher.update(&(encoded.len() as u64).to_le_bytes());
+        hasher.update(&encoded);
     }
     hasher.finalize()
 }

@@ -283,6 +283,7 @@ async fn an_older_reader_gets_an_empty_delta_for_questions() {
             secret: false,
         }],
         blocking: true,
+        delivery: koru_session_protocol::QuestionsDelivery::InTurn,
     };
     let closed = || AgentEvent::QuestionsResolved {
         turn_id,
@@ -296,7 +297,31 @@ async fn an_older_reader_gets_an_empty_delta_for_questions() {
         written_agent_event(closed(), 21).await["event"]["kind"],
         "questions_resolved"
     );
-    for event in [asked(), closed()] {
+    // A set answered by the next message (Codex's async questions) says so
+    // to a v21 reader, and is the same empty delta to a v20 one.
+    let next_message = || {
+        let AgentEvent::QuestionsRequired {
+            turn_id,
+            request_id,
+            questions,
+            ..
+        } = asked()
+        else {
+            unreachable!("a set")
+        };
+        AgentEvent::QuestionsRequired {
+            turn_id,
+            request_id,
+            questions,
+            blocking: false,
+            delivery: koru_session_protocol::QuestionsDelivery::NextMessage,
+        }
+    };
+    assert_eq!(
+        written_agent_event(next_message(), 21).await["event"]["delivery"],
+        "next_message"
+    );
+    for event in [asked(), closed(), next_message()] {
         let older = written_agent_event(event, 20).await;
         assert_eq!(older["sequence"], 7);
         assert_eq!(older["event"]["kind"], "message_delta");

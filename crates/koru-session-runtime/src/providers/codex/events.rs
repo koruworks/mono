@@ -139,6 +139,13 @@ impl CodexControl {
                     .get("delta")
                     .and_then(Value::as_str)
                     .ok_or_else(malformed_read)?;
+                // This message's words stream: its completion is not said
+                // again.
+                let item_id = params
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.streamed_messages.insert((turn_id, item_id.to_owned()));
                 self.queue(AgentEvent::MessageDelta {
                     turn_id,
                     text: text.to_owned(),
@@ -184,6 +191,9 @@ impl CodexControl {
             }
             return self.handle_image_view(turn_id, item, completed);
         }
+        if kind == "agentMessage" && completed {
+            return self.handle_agent_message(turn_id, item);
+        }
         let Some(tool) = normalize::tool_kind(kind) else {
             if !matches!(kind, "agentMessage" | "userMessage" | "reasoning" | "plan") {
                 self.mark_unknown();
@@ -224,6 +234,35 @@ impl CodexControl {
                 label: label.to_owned(),
                 input: normalize::item_input(item),
             })
+        }
+    }
+
+    /// **A completed message** (koru-ai D108). Its words reach the chat as
+    /// `item/agentMessage/delta`s; this is where a message that sent none
+    /// is caught. An async question set — Codex's `request_user_input_async`
+    /// — becomes a set answered by the next message, and its plain `text`,
+    /// which says the same, is not also the reply. Any other message that
+    /// streamed nothing has its `text` said whole, so nothing Codex said
+    /// vanishes; one that streamed is not said twice.
+    fn handle_agent_message(
+        &mut self,
+        turn_id: AgentTurnId,
+        item: &Value,
+    ) -> Result<(), ProviderFailure> {
+        let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let streamed = self
+            .streamed_messages
+            .remove(&(turn_id, item_id.to_owned()))
+            || self.streamed_messages.contains(&(turn_id, String::new()));
+        if self.handle_async_questions(turn_id, item)? || streamed {
+            return Ok(());
+        }
+        match item.get("text").and_then(Value::as_str) {
+            Some(text) if !text.is_empty() => self.queue(AgentEvent::MessageDelta {
+                turn_id,
+                text: text.to_owned(),
+            }),
+            _ => Ok(()),
         }
     }
 
@@ -397,6 +436,8 @@ impl CodexControl {
             .retain(|(tool_turn_id, _), _| *tool_turn_id != turn_id);
         self.attachment_paths
             .retain(|(attachment_turn_id, _), _| *attachment_turn_id != turn_id);
+        self.streamed_messages
+            .retain(|(message_turn_id, _)| *message_turn_id != turn_id);
         let status = turn
             .get("status")
             .and_then(Value::as_str)

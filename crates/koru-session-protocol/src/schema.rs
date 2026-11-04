@@ -153,6 +153,8 @@ define_catalogue!(
     QuestionAnswerValue,
     QuestionAnswer,
     QuestionsOutcome,
+    QuestionsDelivery,
+    QuestionsReply,
     AgentEvent,
     SequencedAgentEvent,
     AgentEventObservation,

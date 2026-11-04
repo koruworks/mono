@@ -91,7 +91,11 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// declines the agent's question as Koru always has (Codex is answered
 /// "unsupported", Claude is not offered its question tool). The events are
 /// new tags, so a host sends them only to a v21 peer and an older one gets
-/// an empty delta in their place, as with `notice`.
+/// an empty delta in their place, as with `notice`. A set the agent asked in
+/// its reply and moved on from (`delivery: next_message`, Codex's
+/// `request_user_input_async`) is answered by the person's next message:
+/// `send_pending_input` carries its `answers` beside the input, again only
+/// for a `managed-questions` peer.
 pub const MAX_PROTOCOL_VERSION: u32 = 21;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a

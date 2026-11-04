@@ -263,12 +263,22 @@ pub enum AgentEvent {
     /// on, and the set may be answered until the agent closes it. A new tag,
     /// so the host sends it only to a v21 peer; a session created by an
     /// older peer is never asked at all (the adapter declines for it).
+    ///
+    /// `delivery: next_message` is a set the agent asked in its reply and
+    /// moved on from (Codex's `request_user_input_async`): never blocking,
+    /// it outlives its turn, and its answers go as the person's next
+    /// message — [`crate::QuestionsReply`] on `send_pending_input`, or
+    /// `answer_questions` while its turn still runs, which steers them in.
+    /// A skip sends the agent nothing; another message passes it over and
+    /// it expires.
     QuestionsRequired {
         turn_id: AgentTurnId,
         request_id: crate::QuestionRequestId,
         questions: Vec<crate::AgentQuestion>,
         #[serde(default = "blocking_default")]
         blocking: bool,
+        #[serde(default, skip_serializing_if = "crate::QuestionsDelivery::is_in_turn")]
+        delivery: crate::QuestionsDelivery,
     },
     /// Protocol v21. How a set of questions ended: answered — a secret's
     /// answer withheld — skipped, or expired with its turn.

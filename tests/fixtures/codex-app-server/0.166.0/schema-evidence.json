@@ -35,8 +35,13 @@
     "attestation/generate",
     "execCommandApproval",
     "item/tool/call",
-    "item/tool/requestUserInput",
     "mcpServer/elicitation/request"
+  ],
+  "question_server_requests": [
+    "item/tool/requestUserInput"
+  ],
+  "question_thread_items": [
+    "agentMessage with delivery \"async\" and questions (request_user_input_async)"
   ],
   "additive_notifications_ignored": [
     "thread/started",
@@ -81,6 +86,7 @@
   "recording_provenance": {
     "schema": "Generated on Windows on 2026-11-02 with the normally installed codex-cli 0.166.0 through scripts/dev/probe-codex-app-server.ps1 (twice, same digest); every required token present. The server-request set is the 0.165.0 set unchanged (the three handled approvals and the seven unhandled requests listed here). The adapter's required notifications and model/rerouted are all present, and every additive notification listed for 0.165.0 is still there, all ignored. The model schema still carries serviceTiers, which the Fast row reads, and thread and turn params still take approvalsReviewer and serviceTier.",
     "handshake": "The opt-in no-prompt factory handshake (live_codex_no_prompt_handshake_lists_models_when_opted_in) completed initialize and model/list against the installed CLI (8 models, 1.0 s); no thread or prompt. See README.md for the run.",
-    "jsonl": "No replay fixtures for this version. The 0.154.0 replay set is the boundary fixture; a model turn under 0.166.0 has not been recorded."
+    "jsonl": "No replay fixtures for this version. The 0.154.0 replay set is the boundary fixture; a model turn under 0.166.0 has not been recorded.",
+    "questions": "Session protocol v21 (koru-ai D108), 2026-11-03: item/tool/requestUserInput is answered for a session whose creator draws questions (else -32601, as before), and the agentMessage item request_user_input_async adds (AgentMessageThreadItem.delivery \"async\", AsyncUserInputQuestion {title, options?}, both in the stable generated schema) becomes a set answered by the next message. Written from the schema and the rust-v0.166.0 source, not recorded: request-user-input*.json."
   }
 }

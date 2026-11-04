@@ -931,17 +931,26 @@ fn handle_request(
             session_id,
             controller_lease,
             input,
+            answers,
         } => {
             if protocol.version < 5 {
                 Err(failure(ErrorCode::ProtocolIncompatible))
             } else if let Err(error) = require_attachments(protocol.version, protocol.attachments) {
                 Err(error)
+            } else if answers.is_some() && !protocol.questions() {
+                // Answers as the next message are v21 and `managed-questions`
+                // (koru-ai D108): only a peer that draws questions has any.
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
                 with_session(state, session_id, |session| {
-                    session
-                        .send_pending_input(controller_lease, input)
-                        .map(|result| Response::PendingInputSent { result })
-                        .map_err(failure)
+                    match answers {
+                        Some(answers) => {
+                            session.send_pending_answers(controller_lease, input, answers)
+                        }
+                        None => session.send_pending_input(controller_lease, input),
+                    }
+                    .map(|result| Response::PendingInputSent { result })
+                    .map_err(failure)
                 })
             }
         }

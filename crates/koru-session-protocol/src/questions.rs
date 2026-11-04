@@ -102,6 +102,52 @@ pub enum QuestionsOutcome {
     Expired,
 }
 
+/// **How a set's answers reach the agent** (koru-ai D108).
+///
+/// Most agents ask and wait: the answer goes back on the request that
+/// asked, through `answer_questions`, while the asking turn is open. Some
+/// ask in their reply and move on — Codex's `request_user_input_async` —
+/// and take the answers as the person's next message: the set outlives its
+/// turn, an answer goes as input (`send_pending_input` with
+/// [`QuestionsReply`], or into the turn still running through
+/// `answer_questions`), and a skip sends the agent nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionsDelivery {
+    /// Answered on the request that asked, within its turn.
+    #[default]
+    InTurn,
+    /// Answered by the person's next message; the set stays answerable
+    /// after its turn ends, until it is answered, skipped, or passed over
+    /// by another message.
+    NextMessage,
+}
+
+impl QuestionsDelivery {
+    pub fn is_in_turn(&self) -> bool {
+        *self == Self::InTurn
+    }
+}
+
+/// **A set's answers sent as the person's next message** (koru-ai D108):
+/// the input of a [`QuestionsDelivery::NextMessage`] set, checked against
+/// it like any answer. The agent's adapter writes the message in the
+/// agent's own form; the person's words and the set stay theirs.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct QuestionsReply {
+    pub request_id: crate::QuestionRequestId,
+    pub answers: Vec<QuestionAnswer>,
+}
+
+impl std::fmt::Debug for QuestionsReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuestionsReply")
+            .field("request_id", &self.request_id)
+            .field("answers", &self.answers.len())
+            .finish()
+    }
+}
+
 /// Why answers were refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuestionAnswerError {

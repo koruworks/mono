@@ -20,6 +20,8 @@ const COMMAND_CAPACITY: usize = 32;
 enum ManagedCommand {
     Submit {
         input: AgentInput,
+        /// A set's answers sent as the person's next message (D108).
+        answers: Option<koru_session_protocol::QuestionsReply>,
         reply: SyncSender<Result<(), ProviderFailure>>,
     },
     Cancel {
@@ -28,6 +30,7 @@ enum ManagedCommand {
     },
     Steer {
         input: AgentInput,
+        answers: Option<koru_session_protocol::QuestionsReply>,
         reply: SyncSender<Result<(), ProviderFailure>>,
     },
     Approval {
@@ -75,15 +78,34 @@ pub(super) fn command_queue(wake: Arc<dyn ProviderWake>) -> (ManagedHandle, Mana
 }
 
 impl ManagedHandle {
-    pub(super) fn submit(&self, input: AgentInput) -> Result<(), ErrorCode> {
+    /// Start a turn with `input` — or, with `answers`, with a set's answers
+    /// as the person's next message (protocol v21, koru-ai D108).
+    pub(super) fn submit(
+        &self,
+        input: AgentInput,
+        answers: Option<koru_session_protocol::QuestionsReply>,
+    ) -> Result<(), ErrorCode> {
         let (reply, response) = mpsc::sync_channel(1);
-        self.send(ManagedCommand::Submit { input, reply })?;
+        self.send(ManagedCommand::Submit {
+            input,
+            answers,
+            reply,
+        })?;
         receive(response)
     }
 
-    pub(super) fn steer(&self, input: AgentInput) -> Result<(), ErrorCode> {
+    /// Steer `input` — or a set's answers — into the running turn.
+    pub(super) fn steer(
+        &self,
+        input: AgentInput,
+        answers: Option<koru_session_protocol::QuestionsReply>,
+    ) -> Result<(), ErrorCode> {
         let (reply, response) = mpsc::sync_channel(1);
-        self.send(ManagedCommand::Steer { input, reply })?;
+        self.send(ManagedCommand::Steer {
+            input,
+            answers,
+            reply,
+        })?;
         receive(response)
     }
 
@@ -223,14 +245,28 @@ fn managed_loop(control: &mut dyn AgentControl, receiver: ManagedReceiver, share
 
 fn handle_command(control: &mut dyn AgentControl, command: ManagedCommand) {
     match command {
-        ManagedCommand::Submit { input, reply } => {
-            let _ = reply.send(control.submit(input));
+        ManagedCommand::Submit {
+            input,
+            answers,
+            reply,
+        } => {
+            let _ = reply.send(match answers {
+                Some(answers) => control.submit_answers(input, answers),
+                None => control.submit(input),
+            });
         }
         ManagedCommand::Cancel { turn_id, reply } => {
             let _ = reply.send(control.cancel(turn_id));
         }
-        ManagedCommand::Steer { input, reply } => {
-            let _ = reply.send(control.steer(input));
+        ManagedCommand::Steer {
+            input,
+            answers,
+            reply,
+        } => {
+            let _ = reply.send(match answers {
+                Some(answers) => control.steer_answers(input, answers),
+                None => control.steer(input),
+            });
         }
         ManagedCommand::Approval {
             approval_id,

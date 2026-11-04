@@ -1,0 +1,25 @@
+{
+  "method": "item/completed",
+  "params": {
+    "threadId": "fixture-thread",
+    "turnId": "native-turn-1",
+    "completedAtMs": 1762214400000,
+    "item": {
+      "type": "agentMessage",
+      "id": "call_fixture_async",
+      "text": "Which database should the cache use?\n- SQLite (Recommended)\n- Redis\n\nWhat should the cache directory be called?",
+      "phase": "final_answer",
+      "memoryCitation": null,
+      "delivery": "async",
+      "questions": [
+        {
+          "title": "Which database should the cache use?",
+          "options": ["SQLite (Recommended)", "Redis"]
+        },
+        {
+          "title": "What should the cache directory be called?"
+        }
+      ]
+    }
+  }
+}

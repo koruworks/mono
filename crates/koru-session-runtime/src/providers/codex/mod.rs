@@ -13,7 +13,7 @@ pub use config::CodexConfig;
 pub use launch::{KORU_MCP_SERVER_NAME, mcp_server_overrides};
 pub use probe::{CodexCompatibilityProbe, CodexFactory};
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,11 @@ pub struct CodexControl {
     approvals: BTreeMap<ApprovalId, PendingApproval>,
     /// Question sets Codex asked and nobody has answered (D108).
     questions: BTreeMap<koru_session_protocol::QuestionRequestId, questions::PendingQuestions>,
+    /// The `agentMessage` items whose words streamed as deltas, by turn and
+    /// item id (an empty id where Codex named none). A completed message
+    /// that streamed none has its `text` read instead, so a message never
+    /// vanishes and one that streamed is never said twice.
+    streamed_messages: BTreeSet<(AgentTurnId, String)>,
     attachment_paths: BTreeMap<(AgentTurnId, String), AttachmentId>,
     events: VecDeque<AgentEvent>,
     diagnostics: ProviderDiagnostics,
@@ -147,6 +152,7 @@ impl CodexControl {
             tools: BTreeMap::new(),
             approvals: BTreeMap::new(),
             questions: BTreeMap::new(),
+            streamed_messages: BTreeSet::new(),
             attachment_paths: BTreeMap::new(),
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
@@ -325,152 +331,9 @@ impl CodexControl {
     }
 }
 
-impl AgentControl for CodexControl {
-    fn start(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
-        if let Some(capabilities) = &self.capabilities {
-            return if self.session_id == Some(start.session_id) {
-                Ok(capabilities.clone())
-            } else {
-                Err(failure(
-                    ErrorCode::InvalidTransition,
-                    ProviderStage::Initialize,
-                    ProviderDiagnostic::InvalidState,
-                ))
-            };
-        }
-        if self.shut_down
-            || !SUPPORTED_CODEX_VERSIONS.contains(&self.config.executable_version.as_str())
-        {
-            return Err(failure(
-                ErrorCode::ProviderIncompatible,
-                ProviderStage::Version,
-                ProviderDiagnostic::VersionRejected,
-            ));
-        }
-        if start.resume.is_some() {
-            // No native resume is declared, so no token was ever minted; one
-            // arriving here is a caller ignoring the declaration.
-            return Err(failure(
-                ErrorCode::InvalidRequest,
-                ProviderStage::Initialize,
-                ProviderDiagnostic::InvalidInput,
-            ));
-        }
-        self.initialize()?;
-        let requested = self
-            .config
-            .selection
-            .as_ref()
-            .and_then(|selection| selection.model.clone());
-        let model = self.select_model(requested.as_ref())?;
-        self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
-        self.model_reasoning = model.reasoning.clone();
-        // The chat's level (agent-models D18): one the model lists, or the
-        // session is refused rather than run at a level nobody chose.
-        if let Some(level) = self
-            .config
-            .selection
-            .as_ref()
-            .and_then(|selection| selection.reasoning)
-        {
-            self.effort = Some(effort(model.reasoning.as_ref(), level).ok_or_else(|| {
-                failure(
-                    ErrorCode::CapabilityNotNegotiated,
-                    ProviderStage::Initialize,
-                    ProviderDiagnostic::HandshakeRejected,
-                )
-            })?);
-        }
-        let cwd = self.config.working_directory.to_str().ok_or_else(|| {
-            failure(
-                ErrorCode::InvalidRequest,
-                ProviderStage::Initialize,
-                ProviderDiagnostic::InvalidInput,
-            )
-        })?;
-        // The chat's approval mode (koru-ai D7), Koru's default when it
-        // chose none. It overrides the person's `config.toml` (decided).
-        let policy = modes::Policy::of(
-            self.config
-                .selection
-                .as_ref()
-                .and_then(|selection| selection.mode.as_ref()),
-        )
-        .ok_or_else(|| {
-            failure(
-                ErrorCode::InvalidRequest,
-                ProviderStage::Initialize,
-                ProviderDiagnostic::InvalidInput,
-            )
-        })?;
-        let mut params = json!({
-            "cwd": cwd,
-            "ephemeral": true,
-            "model": model.model,
-            "approvalPolicy": policy.approval,
-            "sandbox": policy.sandbox,
-            "approvalsReviewer": policy.reviewer,
-        });
-        let fast = self
-            .config
-            .selection
-            .as_ref()
-            .and_then(|selection| selection.fast);
-        if let Some(tier) = self.service_tier(fast) {
-            params["serviceTier"] = tier;
-        }
-        let thread = self.call("thread/start", params, ProviderStage::Initialize)?;
-        policy.observe_thread(&thread);
-        let thread_id = thread
-            .pointer("/thread/id")
-            .and_then(Value::as_str)
-            .filter(|value| valid_native_id(value))
-            .ok_or_else(|| {
-                failure(
-                    ErrorCode::ProviderIncompatible,
-                    ProviderStage::Initialize,
-                    ProviderDiagnostic::HandshakeRejected,
-                )
-            })?
-            .to_owned();
-        // 0.153.4 names the model the thread runs on its result; 0.150.1 does
-        // not, and an absent name is an honest `None`, never the request.
-        self.thread_model = normalize::model_name(thread.pointer("/thread/model"));
-        let mut names = vec![
-            capability::MANAGED_EVENTS,
-            capability::MANAGED_CANCEL,
-            capability::MANAGED_APPROVAL,
-            capability::DYNAMIC_APPROVALS,
-            capability::MANAGED_USAGE,
-        ];
-        if model.image {
-            names.push(capability::NATIVE_ATTACHMENT_DELIVERY);
-        }
-        let capabilities = AgentCapabilities {
-            provider: provider_kind(),
-            executable_version: self.config.executable_version.clone(),
-            protocol_version: ProviderVersion::from_str(CODEX_PROTOCOL_VERSION)
-                .expect("static protocol version is valid"),
-            capabilities: CapabilitySet::new(names.into_iter().map(|name| {
-                CapabilityName::from_str(name).expect("registered capability is valid")
-            })),
-            delegation: self.delegation_facts(&model.model),
-        };
-        self.session_id = Some(start.session_id);
-        self.thread_id = Some(thread_id);
-        self.capabilities = Some(capabilities.clone());
-        self.queue(AgentEvent::ProviderState {
-            provider: provider_kind(),
-            state: koru_session_protocol::ManagedState::Idle,
-        })?;
-        Ok(capabilities)
-    }
-
-    fn capabilities(&self) -> Option<&AgentCapabilities> {
-        self.capabilities.as_ref()
-    }
-
-    fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+impl CodexControl {
+    /// Start a Koru-minted turn on the thread (`turn/start`).
+    fn start_turn(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
         input.validate(self.config.maximum_input_bytes)?;
         let fingerprint = input_fingerprint(&input);
         if let Some(existing) = self.turns.get(&input.turn_id) {
@@ -634,7 +497,8 @@ impl AgentControl for CodexControl {
         })
     }
 
-    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+    /// Add input to the running turn (`turn/steer`).
+    pub(super) fn steer_turn(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
         input.validate(self.config.maximum_input_bytes)?;
         let invalid_state = || {
             failure(
@@ -669,6 +533,179 @@ impl AgentControl for CodexControl {
             ProviderStage::Submit,
         )?;
         Ok(())
+    }
+}
+
+impl AgentControl for CodexControl {
+    fn start(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
+        if let Some(capabilities) = &self.capabilities {
+            return if self.session_id == Some(start.session_id) {
+                Ok(capabilities.clone())
+            } else {
+                Err(failure(
+                    ErrorCode::InvalidTransition,
+                    ProviderStage::Initialize,
+                    ProviderDiagnostic::InvalidState,
+                ))
+            };
+        }
+        if self.shut_down
+            || !SUPPORTED_CODEX_VERSIONS.contains(&self.config.executable_version.as_str())
+        {
+            return Err(failure(
+                ErrorCode::ProviderIncompatible,
+                ProviderStage::Version,
+                ProviderDiagnostic::VersionRejected,
+            ));
+        }
+        if start.resume.is_some() {
+            // No native resume is declared, so no token was ever minted; one
+            // arriving here is a caller ignoring the declaration.
+            return Err(failure(
+                ErrorCode::InvalidRequest,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::InvalidInput,
+            ));
+        }
+        self.initialize()?;
+        let requested = self
+            .config
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.model.clone());
+        let model = self.select_model(requested.as_ref())?;
+        self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
+        self.model_reasoning = model.reasoning.clone();
+        // The chat's level (agent-models D18): one the model lists, or the
+        // session is refused rather than run at a level nobody chose.
+        if let Some(level) = self
+            .config
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.reasoning)
+        {
+            self.effort = Some(effort(model.reasoning.as_ref(), level).ok_or_else(|| {
+                failure(
+                    ErrorCode::CapabilityNotNegotiated,
+                    ProviderStage::Initialize,
+                    ProviderDiagnostic::HandshakeRejected,
+                )
+            })?);
+        }
+        let cwd = self.config.working_directory.to_str().ok_or_else(|| {
+            failure(
+                ErrorCode::InvalidRequest,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::InvalidInput,
+            )
+        })?;
+        // The chat's approval mode (koru-ai D7), Koru's default when it
+        // chose none. It overrides the person's `config.toml` (decided).
+        let policy = modes::Policy::of(
+            self.config
+                .selection
+                .as_ref()
+                .and_then(|selection| selection.mode.as_ref()),
+        )
+        .ok_or_else(|| {
+            failure(
+                ErrorCode::InvalidRequest,
+                ProviderStage::Initialize,
+                ProviderDiagnostic::InvalidInput,
+            )
+        })?;
+        let mut params = json!({
+            "cwd": cwd,
+            "ephemeral": true,
+            "model": model.model,
+            "approvalPolicy": policy.approval,
+            "sandbox": policy.sandbox,
+            "approvalsReviewer": policy.reviewer,
+        });
+        let fast = self
+            .config
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.fast);
+        if let Some(tier) = self.service_tier(fast) {
+            params["serviceTier"] = tier;
+        }
+        let thread = self.call("thread/start", params, ProviderStage::Initialize)?;
+        policy.observe_thread(&thread);
+        let thread_id = thread
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .filter(|value| valid_native_id(value))
+            .ok_or_else(|| {
+                failure(
+                    ErrorCode::ProviderIncompatible,
+                    ProviderStage::Initialize,
+                    ProviderDiagnostic::HandshakeRejected,
+                )
+            })?
+            .to_owned();
+        // 0.153.4 names the model the thread runs on its result; 0.150.1 does
+        // not, and an absent name is an honest `None`, never the request.
+        self.thread_model = normalize::model_name(thread.pointer("/thread/model"));
+        let mut names = vec![
+            capability::MANAGED_EVENTS,
+            capability::MANAGED_CANCEL,
+            capability::MANAGED_APPROVAL,
+            capability::DYNAMIC_APPROVALS,
+            capability::MANAGED_USAGE,
+        ];
+        if model.image {
+            names.push(capability::NATIVE_ATTACHMENT_DELIVERY);
+        }
+        let capabilities = AgentCapabilities {
+            provider: provider_kind(),
+            executable_version: self.config.executable_version.clone(),
+            protocol_version: ProviderVersion::from_str(CODEX_PROTOCOL_VERSION)
+                .expect("static protocol version is valid"),
+            capabilities: CapabilitySet::new(names.into_iter().map(|name| {
+                CapabilityName::from_str(name).expect("registered capability is valid")
+            })),
+            delegation: self.delegation_facts(&model.model),
+        };
+        self.session_id = Some(start.session_id);
+        self.thread_id = Some(thread_id);
+        self.capabilities = Some(capabilities.clone());
+        self.queue(AgentEvent::ProviderState {
+            provider: provider_kind(),
+            state: koru_session_protocol::ManagedState::Idle,
+        })?;
+        Ok(capabilities)
+    }
+
+    fn capabilities(&self) -> Option<&AgentCapabilities> {
+        self.capabilities.as_ref()
+    }
+
+    fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        self.start_turn(input)?;
+        // Another message passes over a set Codex asked in a reply (D108).
+        self.pass_over_message_questions()
+    }
+
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        self.steer_turn(input)?;
+        self.pass_over_message_questions()
+    }
+
+    fn submit_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        self.send_answers(input, answers, false)
+    }
+
+    fn steer_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        self.send_answers(input, answers, true)
     }
 
     fn cancel(&mut self, turn_id: AgentTurnId) -> Result<(), ProviderFailure> {

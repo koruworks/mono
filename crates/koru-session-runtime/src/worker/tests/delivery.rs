@@ -51,6 +51,9 @@ struct NativeInner {
     /// A provider that takes text into the running turn.
     steerable: bool,
     steered: Vec<AgentInput>,
+    /// A set's answers sent as the next message (D108), and whether they
+    /// were steered into the running turn.
+    answered: Vec<(AgentInput, koru_session_protocol::QuestionsReply, bool)>,
 }
 
 struct NativeWake(Arc<NativeState>);
@@ -134,6 +137,35 @@ impl AgentControl for NativeControl {
             ));
         }
         inner.steered.push(input);
+        Ok(())
+    }
+
+    fn submit_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        let mut inner = self.state.inner.lock().unwrap();
+        inner.events.push_back(AgentEvent::TurnStarted {
+            turn_id: input.turn_id,
+        });
+        inner.answered.push((input, answers, false));
+        drop(inner);
+        self.state.ready.notify_one();
+        Ok(())
+    }
+
+    fn steer_answers(
+        &mut self,
+        input: AgentInput,
+        answers: koru_session_protocol::QuestionsReply,
+    ) -> Result<(), ProviderFailure> {
+        self.state
+            .inner
+            .lock()
+            .unwrap()
+            .answered
+            .push((input, answers, true));
         Ok(())
     }
 
@@ -924,4 +956,87 @@ fn text_sent_during_a_turn_steers_it_when_the_provider_can_and_is_refused_when_i
     harness.state.inner.lock().unwrap().hold_events = false;
     harness.state.ready.notify_one();
     eventually(|| handle.summary().active_turn_id.is_none());
+}
+
+/// **A set's answers go as the person's next message** (koru-ai D108): an
+/// input with nothing of its own reaches the adapter's answers call — a new
+/// turn when none runs, into the running one when one does — while an
+/// empty input without answers is refused as ever, and so are answers with
+/// words of their own. The same key with other answers is a conflict.
+#[test]
+fn answers_sent_as_the_next_message_reach_the_adapter_as_input() {
+    let capabilities = CapabilitySet::new([
+        capability::MANAGED_EVENTS.parse().unwrap(),
+        capability::MANAGED_CANCEL.parse().unwrap(),
+    ]);
+    let harness = managed_harness(capabilities);
+    harness.state.inner.lock().unwrap().hold_events = true;
+    let handle = &harness.handle;
+    let attached = handle.attach(viewport(1, 0, 6), 20).unwrap();
+    let lease = attached.lease.token;
+    let reply = koru_session_protocol::QuestionsReply {
+        request_id: koru_session_protocol::QuestionRequestId::mint(),
+        answers: vec![koru_session_protocol::QuestionAnswer {
+            question_id: "q".into(),
+            value: koru_session_protocol::QuestionAnswerValue::Text {
+                text: "words".into(),
+            },
+        }],
+    };
+    let input = || PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: String::new(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+    };
+    assert_eq!(
+        handle.send_pending_input(lease, input()).unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    let mut worded = input();
+    worded.text = "and words".into();
+    assert_eq!(
+        handle
+            .send_pending_answers(lease, worded, reply.clone())
+            .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+
+    let first = input();
+    let accepted = handle
+        .send_pending_answers(lease, first.clone(), reply.clone())
+        .unwrap();
+    assert_eq!(handle.summary().active_turn_id, Some(accepted.turn_id));
+    {
+        let inner = harness.state.inner.lock().unwrap();
+        assert!(inner.calls.is_empty(), "never an ordinary turn");
+        assert_eq!(inner.answered.len(), 1);
+        let (sent, answers, steered) = &inner.answered[0];
+        assert_eq!(sent.turn_id, accepted.turn_id);
+        assert!(sent.text.is_empty() && sent.attachments.is_empty());
+        assert_eq!(answers, &reply);
+        assert!(!steered);
+    }
+
+    let mut other = reply.clone();
+    other.answers[0].value = koru_session_protocol::QuestionAnswerValue::Text {
+        text: "other words".into(),
+    };
+    assert_eq!(
+        handle
+            .send_pending_answers(lease, first.clone(), other)
+            .unwrap_err(),
+        ErrorCode::IdempotencyConflict
+    );
+
+    let steered = handle
+        .send_pending_answers(lease, input(), reply.clone())
+        .unwrap();
+    assert_eq!(steered.turn_id, accepted.turn_id, "into the running turn");
+    let inner = harness.state.inner.lock().unwrap();
+    assert_eq!(inner.answered.len(), 2);
+    assert!(inner.answered[1].2);
+    assert_eq!(inner.answered[1].0.turn_id, accepted.turn_id);
 }
