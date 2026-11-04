@@ -11508,7 +11508,10 @@ fn on_a_context_column() -> (MainView, Workspace, NodeId) {
         .expect("the paragraph the fixture wrote");
     due_on(&mut w.ws, task, "2099-01-02");
     v.toggle_context();
-    v.context_view.select(crate::panes::context::Section::Tasks);
+    // Hidden for now (`koru_features::CONTEXT_TASKS_SHOWN`), so `select`
+    // refuses it; the section's machinery keeps its tests regardless.
+    v.context_view
+        .show_hidden_section(crate::panes::context::Section::Tasks);
     (v, w, task)
 }
 
@@ -11554,6 +11557,26 @@ fn a_shut_column_costs_nothing_and_keeps_its_flag() {
     View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
     assert!(v.context_view.tasks().is_empty());
     assert!(v.context_tasks_stale, "still owed when it opens");
+}
+
+/// **Tasks is hidden for now** (`koru_features::CONTEXT_TASKS_SHOWN`): the
+/// column opens on History, asking for Tasks by name is refused, and an open
+/// column never walks the document for tasks it cannot show.
+#[test]
+fn the_context_column_opens_on_history_while_tasks_is_hidden() {
+    use crate::panes::context::Section;
+    let (mut v, mut w) = on_document();
+    assert!(v.next_context_section(), "the keyboard opens the column");
+    assert!(v.context.is_open());
+    assert_eq!(v.context_view.section(), Section::History);
+    assert!(!v.context_view.select(Section::Tasks));
+    assert_eq!(v.context_view.section(), Section::History);
+    View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+    assert!(v.context_view.tasks().is_empty());
+    assert!(
+        v.context_tasks_stale,
+        "nothing was walked for a section nobody can see"
+    );
 }
 
 /// **A row reveals the task where it lives** — the ordinary navigation to a

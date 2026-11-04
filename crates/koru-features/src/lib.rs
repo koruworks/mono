@@ -295,6 +295,15 @@ pub const HOME_SHOWN: bool = false;
 /// Chats list; the footer's other controls start where the mask did.
 pub const PRIVATE_CHAT_BUTTON_SHOWN: bool = false;
 
+/// **The context column's Tasks section** — the checklist tab at the top of
+/// the column beside a document, which lists the tasks in that document.
+/// Hidden (the user, 2026-11-03): "Remove tasks from the page context." The
+/// Tasks *view* is untouched — its rail square, its page and its chord stay,
+/// under the `tasks` flag. With this off the column opens on History, draws no
+/// tab strip while History is its only section, and `Ctrl+Alt+J` steps past
+/// Tasks; nothing has a shortcut of its own to open it.
+pub const CONTEXT_TASKS_SHOWN: bool = false;
+
 /// Whether Home is shown ([`HOME_SHOWN`]).
 pub fn home() -> bool {
     HOME_SHOWN
@@ -304,6 +313,12 @@ pub fn home() -> bool {
 /// ([`PRIVATE_CHAT_BUTTON_SHOWN`]).
 pub fn private_chat_button() -> bool {
     PRIVATE_CHAT_BUTTON_SHOWN
+}
+
+/// Whether the context column offers its Tasks section
+/// ([`CONTEXT_TASKS_SHOWN`]). Asked beside [`tasks`]: the section needs both.
+pub fn context_tasks() -> bool {
+    CONTEXT_TASKS_SHOWN
 }
 
 /// `koru_env::switch_value`, as a `const fn` so a baked value is a constant:

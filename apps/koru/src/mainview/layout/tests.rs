@@ -934,10 +934,10 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     }
 }
 
-/// Four sections are visible (Tasks joined History when its model landed,
-/// Reminders when its own did, Cloud sync when the gateway learned to remember
-/// its passes), so the column has a tab row; a press on it switches the
-/// section and must still not fall through to the document behind the column.
+/// With every flag on three sections are visible (Reminders, History and
+/// Cloud sync; Tasks is hidden for now, `koru_features::CONTEXT_TASKS_SHOWN`),
+/// so the column has a tab row; a press on it switches the section and must
+/// still not fall through to the document behind the column.
 #[test]
 fn clicking_a_section_switches_it_without_reaching_the_document() {
     use crate::panes::context::{ContextView as CV, Section};
@@ -946,35 +946,28 @@ fn clicking_a_section_switches_it_without_reaching_the_document() {
     let area = v.regions.context;
     let sections = CV::section_rects(area);
     let [
-        (tasks, tasks_rect),
         (reminders, reminders_rect),
         (history, history_rect),
         (cloud, cloud_rect),
     ] = sections.as_slice()
     else {
-        panic!("Tasks, Reminders, History and Cloud sync should share the tab row")
+        panic!("Reminders, History and Cloud sync should share the tab row, without Tasks")
     };
     assert_eq!(
-        (*tasks, *reminders, *history, *cloud),
-        (
-            Section::Tasks,
-            Section::Reminders,
-            Section::History,
-            Section::CloudSync
-        )
+        (*reminders, *history, *cloud),
+        (Section::Reminders, Section::History, Section::CloudSync)
     );
-    assert_eq!(tasks_rect.y, history_rect.y);
-    assert_eq!(tasks_rect.x + tasks_rect.w, reminders_rect.x);
+    assert_eq!(reminders_rect.y, history_rect.y);
     assert_eq!(reminders_rect.x + reminders_rect.w, history_rect.x);
     assert_eq!(history_rect.x + history_rect.w, cloud_rect.x);
     assert_eq!(v.context_view.section(), Section::History);
-    // A press on the Tasks tab switches the column and is consumed by it.
+    // A press on the Reminders tab switches the column and is consumed by it.
     let (x, y) = (
-        tasks_rect.x + tasks_rect.w / 2.0,
-        tasks_rect.y + tasks_rect.h / 2.0,
+        reminders_rect.x + reminders_rect.w / 2.0,
+        reminders_rect.y + reminders_rect.h / 2.0,
     );
     assert!(v.mouse_down(&mut workspace.ws, x, y, false));
-    assert_eq!(v.context_view.section(), Section::Tasks);
+    assert_eq!(v.context_view.section(), Section::Reminders);
     // And the document never took a caret from any of it.
     let TabView::Leaf(l) = &v.tabs().active_tab().view else {
         panic!("leaf")
@@ -1001,13 +994,17 @@ fn the_context_sections_and_the_cloud_action_are_reachable_from_the_keyboard() {
     // From there it steps, and it comes back round.
     let start = v.context_view.section();
     let mut seen = vec![start];
-    for _ in 1..Section::VISIBLE.len() {
+    let visible = Section::visible();
+    for _ in 1..visible.len() {
         v.next_context_section();
         seen.push(v.context_view.section());
     }
-    for section in Section::VISIBLE {
+    for section in &visible {
         assert!(seen.contains(section), "{section:?} is unreachable");
     }
+    // And what this build hides is never stepped onto: Tasks is hidden for now
+    // (`koru_features::CONTEXT_TASKS_SHOWN`).
+    assert!(!seen.contains(&Section::Tasks), "Tasks is hidden for now");
     v.next_context_section();
     assert_eq!(v.context_view.section(), start, "the cycle closes");
 

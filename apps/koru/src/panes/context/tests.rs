@@ -18,12 +18,14 @@ fn rows(count: usize) -> Vec<HistoryRow> {
         .collect()
 }
 
-/// Four sections are visible — Tasks joined History when its model landed
+/// Four sections are offered — Tasks joined History when its model landed
 /// (V-5), Reminders when its own did, and Cloud sync when the gateway learned
 /// to remember what its passes had done; Comments and Assets stay parked
-/// (owner decision, 2026-08-31). The lone-tab rule ("a single visible section
-/// draws no tab row") survives in `section_rects`' guard and `tabs_extra`,
-/// waiting for the day the list is one again.
+/// (owner decision, 2026-08-31). Tasks is hidden for now
+/// (`koru_features::CONTEXT_TASKS_SHOWN`), so with every flag on the row holds
+/// three. The lone-tab rule ("a single visible section draws no tab row")
+/// lives in `section_rects`' guard and `tabs_extra`; a build without
+/// Reminders and Cloud sync is the one it applies to.
 #[test]
 fn the_visible_sections_are_tasks_reminders_history_and_cloud() {
     assert_eq!(
@@ -35,9 +37,15 @@ fn the_visible_sections_are_tasks_reminders_history_and_cloud() {
             Section::CloudSync
         ]
     );
+    assert_eq!(
+        Section::visible(),
+        [Section::Reminders, Section::History, Section::CloudSync],
+        "Tasks is hidden for now"
+    );
     let a = area();
     let sections = ContextView::section_rects(a);
-    assert_eq!(sections.len(), 4);
+    assert_eq!(sections.len(), 3);
+    assert!(sections.iter().all(|(s, _)| *s != Section::Tasks));
     // They share one row, left to right, with no gap between them.
     for pair in sections.windows(2) {
         let (_, left) = pair[0];
@@ -62,6 +70,30 @@ fn the_visible_sections_are_tasks_reminders_history_and_cloud() {
 #[test]
 fn the_default_section_is_visible() {
     assert!(Section::VISIBLE.contains(&Section::default()));
+    assert!(Section::visible().contains(&Section::default()));
+}
+
+/// **Tasks is hidden for now** (`koru_features::CONTEXT_TASKS_SHOWN`), and
+/// every way into it says no: it is not shown, `select` — the keyboard's door —
+/// refuses it, and no press anywhere in the column lands on it. The column
+/// opens on History.
+#[test]
+fn the_tasks_section_is_hidden_for_now() {
+    assert!(!Section::Tasks.shown_in_product());
+    let mut v = ContextView::new();
+    assert_eq!(v.section(), Section::History, "it opens on History");
+    assert!(!v.select(Section::Tasks));
+    assert_eq!(v.section(), Section::History);
+    let a = area();
+    let mut y = a.y;
+    while y < a.y + 60.0 {
+        let mut x = a.x;
+        while x < a.x + a.w {
+            assert_ne!(ContextView::section_at(a, x, y), Some(Section::Tasks));
+            x += 4.0;
+        }
+        y += 2.0;
+    }
 }
 
 /// A press on the column's background is still the column's — it must not fall
@@ -254,6 +286,10 @@ fn the_thumb_drags_the_list() {
 }
 
 // ------------------------------------------------------------- the Tasks section
+//
+// Hidden for now (`koru_features::CONTEXT_TASKS_SHOWN`), so these show it with
+// `show_hidden_section` rather than `select`, which refuses it: the section's
+// rows keep their tests while its tab is away.
 
 fn a_task(title: &str, due: Option<&str>) -> TaskRow {
     TaskRow {
@@ -271,7 +307,7 @@ fn a_task(title: &str, due: Option<&str>) -> TaskRow {
 fn every_task_row_hit_tests_back_to_itself() {
     let a = area();
     let mut v = ContextView::new();
-    v.select(Section::Tasks);
+    v.show_hidden_section(Section::Tasks);
     let rows = vec![a_task("One", Some("Sep 2")), a_task("Two", None)];
     assert!(v.set_tasks(rows.clone()));
     for (row, r) in rows.iter().zip(task_rects(a, rows.len())) {
@@ -297,7 +333,7 @@ fn a_task_row_is_only_pressable_while_its_section_is_showing() {
         !matches!(v.mouse_down(a, x, y), Outcome::RevealTask(_)),
         "History is showing, so the press belongs to History's chrome"
     );
-    v.select(Section::Tasks);
+    v.show_hidden_section(Section::Tasks);
     assert!(matches!(v.mouse_down(a, x, y), Outcome::RevealTask(_)));
 }
 
@@ -307,7 +343,7 @@ fn a_task_row_is_only_pressable_while_its_section_is_showing() {
 fn new_rows_drop_the_hover() {
     let a = area();
     let mut v = ContextView::new();
-    v.select(Section::Tasks);
+    v.show_hidden_section(Section::Tasks);
     v.set_tasks(vec![a_task("One", None), a_task("Two", None)]);
     let (x, y) = task_rects(a, 2)[1].centre();
     assert!(v.mouse_move(a, x, y));
