@@ -49,6 +49,10 @@ pub(crate) enum Command {
     /// Answer a local agent's questions (koru-ai D108): their row is
     /// approved with an answer per question. A skip is `DenyTool`.
     AnswerQuestions(ToolInvocationId, Vec<koru_ai_core::AgentAnswer>),
+    /// The private local usage report. Nothing asks for it since `/usage`
+    /// goes to the agent as a message (koru-ai D121); the report and its
+    /// card are left as they were, for the maintainers to keep or retire.
+    #[allow(dead_code)]
     Usage(ChatId),
     ClearHistory,
     ClearUsage(Option<ChatId>),

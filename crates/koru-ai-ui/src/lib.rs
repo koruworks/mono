@@ -4277,13 +4277,6 @@ impl ChatSurface {
             self.status = Some("The chat is still opening.".into());
             return true;
         };
-        if typed.trim() == "/usage" {
-            self.composer.clear();
-            self.usage_report = None;
-            self.messages_dirty = true;
-            self.status = Some("Loading private local usage…".into());
-            return self.send_command(Command::Usage(chat_id));
-        }
         let markdown = typed.trim().to_owned();
         if markdown.is_empty() && !self.has_strip() {
             return false;
@@ -13052,8 +13045,11 @@ mod tests {
         assert_eq!(surface.cursor_icon(), CursorIcon::Text);
     }
 
+    /// **`/usage` is a message like any other** (koru-ai D121): Koru no
+    /// longer reads it at send, so it goes to the chat's model or agent,
+    /// whose answer shows in the conversation.
     #[test]
-    fn usage_command_is_local_and_does_not_create_a_turn() {
+    fn usage_is_sent_to_the_agent_as_a_message() {
         let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
@@ -13069,13 +13065,17 @@ mod tests {
         ));
         assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
 
-        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::Usage(actual) => assert_eq!(actual, chat_id),
-            _ => panic!("/usage must not create a provider turn"),
-        }
+        let request = loop {
+            match commands.recv_timeout(Duration::from_millis(200)).unwrap() {
+                Command::Send(request) => break request,
+                Command::Usage(_) => panic!("/usage is no longer read by Koru"),
+                _ => continue,
+            }
+        };
+        assert_eq!(request.chat_id, chat_id);
+        assert_eq!(request.markdown, "/usage");
         assert!(surface.composer.is_blank());
-        assert!(surface.pending_user.is_none());
-        assert!(surface.staged_embedded_send.is_none());
+        assert_eq!(surface.pending_user.as_deref(), Some("/usage"));
     }
 
     #[test]
