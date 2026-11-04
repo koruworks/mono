@@ -119,7 +119,12 @@ impl Command {
 pub(crate) struct DestinationOption {
     pub profile_id: ProfileId,
     pub workspace_id: WorkspaceId,
+    /// *Profile / Workspace*: the name where every profile's workspaces are
+    /// listed together.
     pub label: String,
+    /// The workspace's own name, without its profile: what a list of one
+    /// profile's workspaces shows.
+    pub name: String,
 }
 
 #[derive(Debug)]
@@ -397,6 +402,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                                                 || workspace.name.clone(),
                                                 |profile| format!("{profile} / {}", workspace.name),
                                             ),
+                                            name: workspace.name,
                                         }
                                     })
                                     .collect(),

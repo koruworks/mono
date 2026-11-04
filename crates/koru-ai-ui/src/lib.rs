@@ -2153,7 +2153,7 @@ impl ChatSurface {
             self.tool_workspace_offset = 0;
             self.tool_access_open = !self.tool_access_open;
             self.workspace_search.set_text(&mut self.engine, "");
-            self.focus = if self.tool_access_open && self.destinations.len() > 5 {
+            self.focus = if self.tool_access_open && self.tool_access_filtered() {
                 Focus::WorkspaceSearch
             } else {
                 Focus::Composer
@@ -5736,7 +5736,7 @@ impl ChatSurface {
         let Some(transcript) = &self.transcript else {
             return koru_i18n::t(self.lang, Key::AiToolWorkspaceAccess).into();
         };
-        match transcript.tool_policy.workspace_ids.len() {
+        match self.granted_workspace_count(&transcript.tool_policy.workspace_ids) {
             1 => koru_i18n::t(self.lang, Key::AiToolSpaceOne).into(),
             count => koru_i18n::fill(
                 koru_i18n::t(self.lang, Key::AiToolSpaces),
@@ -9692,6 +9692,7 @@ mod tests {
             profile_id: ProfileId::new(),
             workspace_id,
             label: label.into(),
+            name: label.rsplit(" / ").next().unwrap_or(label).into(),
         }
     }
 

@@ -2,6 +2,7 @@
 
 //! Per-chat privacy and tool-access controls.
 
+use koru_ai_core::ProfileId;
 use koru_ai_wire::UpdateChatPrivacyRequest;
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_i18n::Key;
@@ -85,16 +86,74 @@ impl ChatSurface {
 
     fn tool_access_fixed_height(&self) -> f32 {
         WORKSPACE_PANEL_FIXED_H
-            + if self.destinations.len() > WORKSPACE_SEARCH_THRESHOLD {
+            + if self.tool_access_filtered() {
                 WORKSPACE_SEARCH_H + WORKSPACE_SEARCH_GAP
             } else {
                 0.0
             }
     }
 
+    /// **The profile this chat is in**: the one that owns the window's
+    /// workspace. `None` in the standalone Koru AI window, which is
+    /// machine-wide and belongs to no profile, and while the workspace
+    /// catalog has not placed the window's workspace.
+    pub(super) fn current_profile(&self) -> Option<ProfileId> {
+        let workspace = self.context_workspace?;
+        self.destinations
+            .iter()
+            .find(|destination| destination.workspace_id == workspace)
+            .map(|destination| destination.profile_id)
+    }
+
+    /// **The workspaces the access panel offers**, as indices into the
+    /// catalog: the current profile's only. Where there is no current
+    /// profile, every profile's.
+    ///
+    /// A grant to another profile's workspace is left in the chat's policy —
+    /// not shown, not counted, and kept, so it is there again in that
+    /// profile. It is not withheld from the chat's tools: the service reads
+    /// the stored policy and is not told which profile a window is in.
+    pub(super) fn scoped_workspace_indices(&self) -> Vec<usize> {
+        let profile = self.current_profile();
+        self.destinations
+            .iter()
+            .enumerate()
+            .filter(|(_, destination)| profile.is_none_or(|p| destination.profile_id == p))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// A workspace as its row names it: its own name in one profile's list,
+    /// *Profile / Workspace* where every profile's are listed together.
+    fn workspace_row_label(&self, destination: &DestinationOption, scoped: bool) -> String {
+        if scoped {
+            destination.name.clone()
+        } else {
+            destination.label.clone()
+        }
+    }
+
+    /// How many of the chat's workspaces the panel and the chip count: the
+    /// granted ones among those the panel offers. Where there is no current
+    /// profile, every grant — as before profiles scoped the list.
+    pub(super) fn granted_workspace_count(&self, granted: &[WorkspaceId]) -> usize {
+        if self.current_profile().is_none() {
+            return granted.len();
+        }
+        self.scoped_workspace_indices()
+            .into_iter()
+            .filter(|index| granted.contains(&self.destinations[*index].workspace_id))
+            .count()
+    }
+
+    /// Whether the panel has its filter field: over five workspaces offered.
+    pub(super) fn tool_access_filtered(&self) -> bool {
+        self.scoped_workspace_indices().len() > WORKSPACE_SEARCH_THRESHOLD
+    }
+
     /// The filter field, where the frame draws it: over five workspaces.
     pub(super) fn tool_access_search_rect(&self) -> Option<Rect> {
-        if self.destinations.len() <= WORKSPACE_SEARCH_THRESHOLD {
+        if !self.tool_access_filtered() {
             return None;
         }
         let (_, _, frame) = self.tool_access_frame()?;
@@ -109,8 +168,10 @@ impl ChatSurface {
         let policy = &self.transcript.as_ref()?.tool_policy;
         let lang = self.lang;
         let matching = self.matching_workspace_indices();
+        let offered = self.scoped_workspace_indices().len();
+        let scoped = self.current_profile().is_some();
         let empty = matching.is_empty().then(|| {
-            if self.destinations.is_empty() {
+            if offered == 0 {
                 self.workspace_catalog_error
                     .clone()
                     .unwrap_or_else(|| koru_i18n::t(lang, Key::AiToolWorkspacesNone).to_owned())
@@ -120,15 +181,18 @@ impl ChatSurface {
         });
         Some(elements::Spec {
             heading: koru_i18n::t(lang, Key::AiToolWorkspaceAccessHeading).to_owned(),
-            count: format!("{}/{}", policy.workspace_ids.len(), self.destinations.len()),
-            filter: self.destinations.len() > WORKSPACE_SEARCH_THRESHOLD,
+            count: format!(
+                "{}/{offered}",
+                self.granted_workspace_count(&policy.workspace_ids)
+            ),
+            filter: self.tool_access_filtered(),
             rows: matching
                 .iter()
                 .map(|index| {
                     let workspace = &self.destinations[*index];
                     elements::AccessRow {
                         key: elements::row_key(workspace.workspace_id),
-                        label: workspace.label.clone(),
+                        label: self.workspace_row_label(workspace, scoped),
                         chosen: policy.workspace_ids.contains(&workspace.workspace_id),
                     }
                 })
@@ -205,14 +269,19 @@ impl ChatSurface {
         Some(changed)
     }
 
+    /// The offered workspaces the filter lets through, matched on the name
+    /// their row shows.
     pub(super) fn matching_workspace_indices(&self) -> Vec<usize> {
         let query = self.workspace_search.raw_text().trim().to_lowercase();
-        self.destinations
-            .iter()
-            .enumerate()
-            .filter_map(|(index, workspace)| {
-                (query.is_empty() || workspace.label.to_lowercase().contains(&query))
-                    .then_some(index)
+        let scoped = self.current_profile().is_some();
+        self.scoped_workspace_indices()
+            .into_iter()
+            .filter(|index| {
+                query.is_empty()
+                    || self
+                        .workspace_row_label(&self.destinations[*index], scoped)
+                        .to_lowercase()
+                        .contains(&query)
             })
             .collect()
     }

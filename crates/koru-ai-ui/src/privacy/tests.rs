@@ -29,6 +29,7 @@ fn open_panel(count: usize) -> ChatSurface {
             profile_id: ProfileId::new(),
             workspace_id: WorkspaceId::new(),
             label: format!("Workspace {index}"),
+            name: format!("Workspace {index}"),
         })
         .collect();
     if let Some(second) = surface.destinations.get(1) {
@@ -38,6 +39,147 @@ fn open_panel(count: usize) -> ChatSurface {
     surface.composer_rect();
     surface.tool_access_open = true;
     surface
+}
+
+/// A chat in two profiles' worth of workspaces — *Private*'s Travel and
+/// Home, *Work*'s Project, Plan and Ops — granted Travel and Project, the
+/// access panel open. In a window whose workspace is Travel unless
+/// `standalone`, the machine-wide window, which has none.
+fn two_profiles(standalone: bool) -> (ChatSurface, [WorkspaceId; 5]) {
+    let mut surface = open_panel(0);
+    let private = ProfileId::new();
+    let work = ProfileId::new();
+    let ids = [(); 5].map(|_| WorkspaceId::new());
+    surface.destinations = [
+        (private, "Private", "Travel"),
+        (work, "Work", "Project"),
+        (private, "Private", "Home"),
+        (work, "Work", "Plan"),
+        (work, "Work", "Ops"),
+    ]
+    .into_iter()
+    .zip(ids)
+    .map(
+        |((profile_id, profile, name), workspace_id)| DestinationOption {
+            profile_id,
+            workspace_id,
+            label: format!("{profile} / {name}"),
+            name: name.into(),
+        },
+    )
+    .collect();
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .tool_policy
+        .workspace_ids = vec![ids[0], ids[1]];
+    if !standalone {
+        surface.context_workspace = Some(ids[0]);
+    }
+    (surface, ids)
+}
+
+/// The names the open panel's rows show, in order.
+fn row_labels(surface: &ChatSurface) -> Vec<String> {
+    let (_, spec, _) = surface.tool_access_frame().unwrap();
+    spec.rows.into_iter().map(|row| row.label).collect()
+}
+
+/// **Only the current profile's workspaces** (the user: *only show
+/// workspaces in the current profile*). In a window on Travel the panel
+/// lists *Private*'s two by their own names — no *Private /* — its frame
+/// draws a row for each and no more, and the heading and the chip count
+/// the one of them granted: the grant to *Work*'s Project is not counted.
+#[test]
+fn the_panel_lists_and_counts_only_the_current_profiles_workspaces() {
+    let (mut surface, ids) = two_profiles(false);
+    let private = surface.destinations[0].profile_id;
+    assert_eq!(surface.current_profile(), Some(private));
+    assert_eq!(row_labels(&surface), ["Travel", "Home"]);
+    let (_, spec, frame) = surface.tool_access_frame().unwrap();
+    assert_eq!(spec.count, "1/2");
+    assert!(!spec.filter, "two workspaces need no filter");
+    assert_eq!(frame.named(elements::ROW).count(), 2, "a row each");
+    assert_eq!(frame.named(elements::CHECK).count(), 1, "Travel's ✓");
+    assert!(spec.rows[0].chosen && !spec.rows[1].chosen);
+    assert!(
+        spec.rows.iter().all(|row| !row.label.contains(" / ")),
+        "no profile prefix"
+    );
+    surface.tool_access_open = false;
+    assert_eq!(surface.tool_access_label(), "1 space");
+    // The other profile's grant is still the chat's: in a window on Plan,
+    // *Work*'s three are listed and Project is the one counted.
+    surface.context_workspace = Some(ids[3]);
+    surface.tool_access_open = true;
+    assert_eq!(row_labels(&surface), ["Project", "Plan", "Ops"]);
+    let (_, spec, _) = surface.tool_access_frame().unwrap();
+    assert_eq!(spec.count, "1/3");
+}
+
+/// The filter matches the name a row shows: in one profile's list,
+/// *Private* finds nothing, and a name from another profile is not offered.
+#[test]
+fn the_filter_matches_only_the_current_profiles_names() {
+    let (mut surface, _) = two_profiles(false);
+    surface
+        .workspace_search
+        .set_text(&mut surface.engine, "Private");
+    assert!(row_labels(&surface).is_empty());
+    surface
+        .workspace_search
+        .set_text(&mut surface.engine, "Plan");
+    assert!(row_labels(&surface).is_empty(), "Plan is Work's");
+    let (_, spec, _) = surface.tool_access_frame().unwrap();
+    assert_eq!(spec.empty.as_deref(), Some("No matching workspaces."));
+    surface.workspace_search.set_text(&mut surface.engine, "ho");
+    assert_eq!(row_labels(&surface), ["Home"]);
+}
+
+/// **A grant out of view is kept, not deleted.** Choosing Home in a window
+/// on Travel sends the chat's whole policy back: Travel, Home and *Work*'s
+/// Project, which the panel did not show.
+#[test]
+fn choosing_a_workspace_keeps_another_profiles_grant() {
+    let (mut surface, ids) = two_profiles(false);
+    let (reader, commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    assert!(surface.toggle_tool_workspace(ids[2]));
+    match commands
+        .recv_timeout(std::time::Duration::from_millis(50))
+        .unwrap()
+    {
+        crate::reader::Command::UpdateToolPolicy(_, request) => {
+            let mut expected = vec![ids[0], ids[1], ids[2]];
+            expected.sort();
+            assert_eq!(request.workspace_ids, expected);
+        }
+        _ => panic!("a choice is a policy update"),
+    }
+}
+
+/// **The standalone Koru AI window belongs to no profile** (it is
+/// machine-wide): its panel lists every profile's workspaces as *Profile /
+/// Workspace* and counts every grant, as before.
+#[test]
+fn the_standalone_window_lists_every_profiles_workspaces() {
+    let (mut surface, _) = two_profiles(true);
+    assert_eq!(surface.current_profile(), None);
+    assert_eq!(
+        row_labels(&surface),
+        [
+            "Private / Travel",
+            "Work / Project",
+            "Private / Home",
+            "Work / Plan",
+            "Work / Ops"
+        ]
+    );
+    let (_, spec, _) = surface.tool_access_frame().unwrap();
+    assert_eq!(spec.count, "2/5");
+    surface.tool_access_open = false;
+    assert_eq!(surface.tool_access_label(), "2 spaces");
 }
 
 fn near(a: f32, b: f32, what: &str) {
