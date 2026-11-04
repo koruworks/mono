@@ -2,13 +2,16 @@
 
 //! The click rule for references, and the place chooser Alt+click opens:
 //! every gesture's destination, for a document reference and a chat link.
+//! The cross on its own — its geometry, keys and semantics — is pinned
+//! beside the component, in `koru_ui::place_chooser`'s tests.
 
 use koru_editor::{ChatTarget, Editing, OpenWhere, Reference, SplitSide};
+use koru_ui::place_chooser::Place;
 use koru_workspace_host::View;
 use koru_workspace_host::routing::{Blockers, ModalKind};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::{Place, PlaceChooser};
+use super::where_;
 use crate::mainview::MainView;
 use crate::mainview::harness::*;
 use crate::mainview::panes::{PaneNode, PanePath, SplitAxis};
@@ -72,75 +75,14 @@ fn chat_tab_on(v: &MainView, chat: ChatTarget) -> bool {
 
 #[test]
 fn each_target_names_where_it_opens() {
-    assert_eq!(Place::Up.where_(), OpenWhere::Split(SplitSide::Up));
-    assert_eq!(Place::Right.where_(), OpenWhere::Split(SplitSide::Right));
-    assert_eq!(Place::Down.where_(), OpenWhere::Split(SplitSide::Down));
-    assert_eq!(Place::Left.where_(), OpenWhere::Split(SplitSide::Left));
+    assert_eq!(where_(Place::Up), OpenWhere::Split(SplitSide::Up));
+    assert_eq!(where_(Place::Right), OpenWhere::Split(SplitSide::Right));
+    assert_eq!(where_(Place::Down), OpenWhere::Split(SplitSide::Down));
+    assert_eq!(where_(Place::Left), OpenWhere::Split(SplitSide::Left));
     assert_eq!(
-        Place::Middle.where_(),
+        where_(Place::Middle),
         OpenWhere::NewTab,
         "the middle is a new tab, and no split"
-    );
-    for place in Place::ALL {
-        assert!(!place.label(koru_i18n::Lang::En).is_empty(), "{place:?}");
-    }
-}
-
-/// The arrows move across the cross it draws: out from the middle, back to
-/// it from the arm opposite, round to a neighbour perpendicular — and never
-/// off the edge.
-#[test]
-fn the_arrows_walk_the_cross() {
-    use NamedKey::{ArrowDown as D, ArrowLeft as L, ArrowRight as R, ArrowUp as U};
-    for (from, key, to) in [
-        (Place::Middle, U, Place::Up),
-        (Place::Middle, R, Place::Right),
-        (Place::Middle, D, Place::Down),
-        (Place::Middle, L, Place::Left),
-        (Place::Up, D, Place::Middle),
-        (Place::Up, U, Place::Up),
-        (Place::Up, L, Place::Left),
-        (Place::Up, R, Place::Right),
-        (Place::Right, L, Place::Middle),
-        (Place::Right, R, Place::Right),
-        (Place::Right, D, Place::Down),
-        (Place::Down, U, Place::Middle),
-        (Place::Left, R, Place::Middle),
-        (Place::Left, U, Place::Up),
-    ] {
-        assert_eq!(from.step(key), to, "{from:?} {key:?}");
-    }
-}
-
-/// **Never clipped at the window's edge.** An Alt+click in a corner keeps
-/// the whole cross inside the window; in the open, the middle is under the
-/// press.
-#[test]
-fn the_chooser_stays_inside_the_window() {
-    let viewport = (1200.0, 700.0);
-    let reference = Reference::Node(koru_core::NodeId::new());
-    let inset = koru_draw::theme::overlay::popover().viewport_inset;
-    for at in [(0.0, 0.0), (1200.0, 700.0), (1199.0, 3.0), (2.0, 698.0)] {
-        let chooser = PlaceChooser::new(reference, PanePath::root(), at);
-        let panel = chooser.panel(viewport);
-        assert!(panel.x >= inset && panel.y >= inset, "{at:?}: {panel:?}");
-        assert!(
-            panel.x + panel.w <= viewport.0 - inset && panel.y + panel.h <= viewport.1 - inset,
-            "{at:?}: {panel:?}"
-        );
-        for place in Place::ALL {
-            let cell = chooser.cell_rect(viewport, place);
-            assert!(
-                cell.x >= panel.x && cell.x + cell.w <= panel.x + panel.w,
-                "{place:?} outside the panel"
-            );
-        }
-    }
-    let chooser = PlaceChooser::new(reference, PanePath::root(), (600.0, 350.0));
-    assert_eq!(
-        chooser.place_at(viewport, 600.0, 350.0),
-        Some(Place::Middle),
-        "a second press where the first was opens a new tab"
     );
 }
 
@@ -152,9 +94,15 @@ fn an_alt_click_opens_the_chooser_at_the_press_on_the_middle() {
 
     alt_click(&mut v, Reference::Node(brief), (400.0, 300.0));
 
-    let chooser = v.place_chooser.as_ref().expect("the chooser is up");
-    assert_eq!(chooser.highlight, Place::Middle);
-    assert_eq!(chooser.at, (400.0, 300.0));
+    let ask = v.place_chooser.as_ref().expect("the chooser is up");
+    assert_eq!(ask.reference, Reference::Node(brief));
+    assert_eq!(
+        &ask.pane,
+        v.panes.focused_path(),
+        "over the pane clicked in"
+    );
+    assert_eq!(ask.chooser.highlight(), Place::Middle);
+    assert_eq!(ask.chooser.at(), (400.0, 300.0));
     assert_eq!(v.blockers(), Blockers::Modal(ModalKind::PlaceChooser));
     assert_eq!(
         v.tabs().len(),
@@ -381,7 +329,7 @@ fn arrows_move_the_highlight_and_enter_opens_there() {
 
     assert!(v.key(&mut w.ws, &Key::Named(NamedKey::ArrowLeft), None, none));
     assert_eq!(
-        v.place_chooser.as_ref().map(|c| c.highlight),
+        v.place_chooser.as_ref().map(|c| c.chooser.highlight()),
         Some(Place::Left)
     );
     assert!(
@@ -422,7 +370,7 @@ fn a_press_outside_closes_it_and_a_press_on_a_target_opens_there() {
     let brief = a_document(&mut w.ws, "Brief");
     let tabs = v.tabs().len();
     alt_click(&mut v, Reference::Node(brief), (400.0, 300.0));
-    let panel = v.place_chooser.as_ref().unwrap().panel(v.viewport);
+    let panel = v.place_chooser.as_ref().unwrap().chooser.panel(v.viewport);
 
     assert!(v.mouse_down(&mut w.ws, panel.x + panel.w + 40.0, panel.y, false));
     assert!(v.place_chooser.is_none(), "closed");
@@ -434,6 +382,7 @@ fn a_press_outside_closes_it_and_a_press_on_a_target_opens_there() {
         .place_chooser
         .as_ref()
         .unwrap()
+        .chooser
         .cell_rect(viewport, Place::Up);
     assert!(v.mouse_down(&mut w.ws, up.x + up.w * 0.5, up.y + up.h * 0.5, false));
     assert_eq!(split_shape(&v), Some((SplitAxis::Horizontal, vec![0])));
@@ -449,6 +398,7 @@ fn hovering_a_target_highlights_it() {
         .place_chooser
         .as_ref()
         .unwrap()
+        .chooser
         .cell_rect(viewport, Place::Down);
 
     assert_eq!(
@@ -456,7 +406,7 @@ fn hovering_a_target_highlights_it() {
         Some(true)
     );
     assert_eq!(
-        v.place_chooser.as_ref().map(|c| c.highlight),
+        v.place_chooser.as_ref().map(|c| c.chooser.highlight()),
         Some(Place::Down)
     );
     assert_eq!(

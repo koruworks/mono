@@ -779,7 +779,7 @@ pub struct MainView {
     menu: Option<ContextMenu>,
     /// The place chooser an Alt+click on a reference opened, while it stands
     /// (`place_chooser`). Modal the way the menu is, and never up beside it.
-    place_chooser: Option<place_chooser::PlaceChooser>,
+    place_chooser: Option<place_chooser::PlaceAsk>,
     /// The modal opened by the taskbar's “New document” action. It is kept at
     /// container level so completing it can create a document and open its tab
     /// in one workspace edit.

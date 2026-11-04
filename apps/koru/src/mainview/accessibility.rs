@@ -466,10 +466,10 @@ impl MainView {
             }
         }
         // The place chooser: a new opening, or its highlight moving, is news.
-        match self.place_chooser.as_ref() {
+        match self.place_chooser.as_ref().map(|ask| &ask.chooser) {
             Some(chooser) => {
-                rev.u64(chooser.instance);
-                rev.u64(chooser.place_instance(chooser.highlight));
+                rev.u64(chooser.instance());
+                rev.u64(chooser.place_instance(chooser.highlight()));
             }
             None => {
                 rev.byte(0);
