@@ -1312,7 +1312,8 @@ click it to make the model a favorite (★, shown whether or not you hover),
 and click again to take it away. With at least one favorite, a **★
 Favorites** entry heads the picker's left column: it lists your favorites
 from every agent, each beside its agent's icon, and choosing one switches the
-chat to that agent and model. Favorites follow you to your other computers,
+chat to that agent and model. With favorites, the picker opens on this
+list; with none, it opens on your chat's agent. Favorites follow you to your other computers,
 like your theme. An agent you turn off on Agent providers keeps its
 favorites, hidden until you turn it back on.
 
