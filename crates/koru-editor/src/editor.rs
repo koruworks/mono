@@ -3887,6 +3887,12 @@ pub trait Editing {
                 koru_core::attributes::ROLE_QUOTE,
                 AttrValue::Text(spec.label.clone()),
             ),
+            // Nor a skill: the chat's composer writes one from its `$` list
+            // (koru-ai D121).
+            PillKind::Skill => Attr::new(
+                koru_core::attributes::ROLE_SKILL,
+                AttrValue::Text(spec.label.clone()),
+            ),
         }
     }
 

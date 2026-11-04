@@ -71,6 +71,9 @@ pub(crate) enum Command {
     DiscoverModels(AiProviderId),
     /// ↻: the agent's list rebuilt first, then listed (D13).
     RefreshModels(AiProviderId),
+    /// List a local agent's skills for a folder, for the composer's `$`
+    /// (D121); `None` is the home folder.
+    DiscoverCommands(AiProviderId, Option<String>),
     Pull(PullOllamaModelRequest),
     CancelPull,
     /// Titles for documents a sent chip names, for drawing it as a titled
@@ -110,6 +113,7 @@ impl Command {
             Self::Validate(_) => "validate",
             Self::DiscoverModels(_) => "discover_models",
             Self::RefreshModels(_) => "refresh_models",
+            Self::DiscoverCommands(..) => "discover_commands",
             Self::Pull(_) => "pull",
             Self::CancelPull => "cancel_pull",
             Self::DocumentTitles(_) => "document_titles",
@@ -176,6 +180,13 @@ pub(crate) enum Update {
     AgentModelsFailed(AiProviderId),
     /// The host is still building the agent's list.
     AgentModelsPending(AiProviderId),
+    /// An agent's skills for a folder (D121): `None` when they could not be
+    /// listed, and `$` then offers nothing until it is asked again.
+    AgentCommands {
+        provider: AiProviderId,
+        folder: Option<String>,
+        commands: Option<Vec<koru_ai_wire::AgentCommandView>>,
+    },
     Pull(ModelPullEvent),
     /// A reply stored as a Koru document: its title, and the document,
     /// which *Open* after the status line opens (D78).
@@ -701,6 +712,42 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     let _ = listing_updates.send(update);
                 });
             }
+            Command::DiscoverCommands(provider, folder) => {
+                // The agent lists its skills from a process of its own:
+                // never in front of a send.
+                let client = client.clone();
+                let listing_updates = updates.clone();
+                off_thread("koru-ai-ui-agent-commands", move || {
+                    let started = Instant::now();
+                    let commands = match client
+                        .ai()
+                        .discover_agent_commands(&provider, folder.as_deref())
+                    {
+                        Ok(response) => Some(response.commands),
+                        Err(failure) => {
+                            tracing::info!(
+                                target: "koru_ai::ui",
+                                provider = %provider,
+                                code = failure.code.as_str(),
+                                "AI UI agent skills not listed"
+                            );
+                            None
+                        }
+                    };
+                    tracing::info!(
+                        target: "koru_ai::ui",
+                        provider = %provider,
+                        count = commands.as_ref().map_or(0, Vec::len),
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                        "AI UI agent skills listed"
+                    );
+                    let _ = listing_updates.send(Update::AgentCommands {
+                        provider,
+                        folder,
+                        commands,
+                    });
+                });
+            }
             Command::Validate(provider) => {
                 let started = Instant::now();
                 tracing::info!(
@@ -1204,6 +1251,7 @@ mod tests {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             })
         };
         assert!(matches!(

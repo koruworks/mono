@@ -99,6 +99,7 @@ fn send(client: &AiWorkerClient, chat_id: ChatId, operation_id: Uuid) -> AiRespo
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap()
@@ -652,6 +653,7 @@ fn armed_web_search_is_audited_and_citations_reach_transcript_and_usage() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -731,6 +733,7 @@ fn unsupported_web_search_is_rejected_before_an_attempt_or_provider_call() {
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
             answers: None,
+            skills: Vec::new(),
         },
     ) {
         Ok(_) => panic!("unsupported web search unexpectedly started"),
@@ -806,6 +809,7 @@ fn document_and_message_block_context_reach_provider_with_durable_provenance() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -901,6 +905,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -928,6 +933,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 replace_pinned_documents: true,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -989,6 +995,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -1021,6 +1028,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -1046,6 +1054,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -1094,6 +1103,7 @@ fn context_failure_is_durable_and_never_calls_the_provider() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -2183,6 +2193,7 @@ fn debug_lifecycle_logs_exclude_chat_content_titles_and_paths() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -2267,6 +2278,7 @@ fn payload_debug_logs_one_marked_request_and_terminal_response() {
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
                 answers: None,
+                skills: Vec::new(),
             },
         )
         .unwrap();
@@ -2580,6 +2592,89 @@ fn a_working_folder_is_only_for_an_empty_agent_chat_and_rides_the_request() {
             .agent_working_folder
             .as_deref(),
         Some(folder.as_str())
+    );
+}
+
+/// **The skills a message names ride its request to a local agent**
+/// (koru-ai D121), by name, with its `$name` text; a chat with no local
+/// agent, or a skill named twice, is refused before anything is recorded.
+#[test]
+fn picked_skills_ride_an_agent_message_and_nothing_else() {
+    let directory = tempfile::tempdir().unwrap();
+    let (captured, requests) = sync_channel(8);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(DeterministicMockProvider::new("Answer.")),
+    );
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(CapturingProvider { requests: captured }),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let with_skills = |chat_id: ChatId, skills: &[&str]| SendTurnRequest {
+        operation_id: Uuid::new_v4(),
+        chat_id,
+        surface: AiSurface::Standalone,
+        markdown: "Use $review-pr".into(),
+        explicit_refs: Vec::new(),
+        web_search: false,
+        reasoning_override: None,
+        system_prompt_override: None,
+        replace_pinned_documents: false,
+        attachment_ids: Vec::new(),
+        answers: None,
+        skills: skills.iter().map(|name| (*name).to_owned()).collect(),
+    };
+
+    let plain = create_chat(&client);
+    let refused = client
+        .send_turn(context(), with_skills(plain, &["review-pr"]))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(refused.code, "invalid_request", "no local agent");
+
+    let agent = ChatId::new();
+    client
+        .create_chat(
+            context(),
+            CreateChatRequest {
+                chat_id: agent,
+                title: "Agent chat".into(),
+                model: koru_ai_core::ModelSelection {
+                    provider: AiProviderId::parse("agent-codex").unwrap(),
+                    requested_model: koru_ai_core::AGENT_DEFAULT_MODEL.into(),
+                    default_reasoning: ReasoningChoice::Default,
+                },
+            },
+        )
+        .unwrap();
+    let doubled = client
+        .send_turn(context(), with_skills(agent, &["review-pr", "review-pr"]))
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(doubled.code, "invalid_request", "a skill named twice");
+
+    let stream = client
+        .send_turn(context(), with_skills(agent, &["review-pr"]))
+        .unwrap();
+    let request = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(request.options.agent_skills, vec!["review-pr".to_owned()]);
+    assert_eq!(
+        request.messages.last().unwrap().markdown,
+        "Use $review-pr",
+        "the message keeps its $name text"
+    );
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
     );
 }
 
@@ -3482,6 +3577,7 @@ fn answers_as_a_message_are_refused_for_anything_but_an_open_set() {
                 },
             }],
         }),
+        skills: Vec::new(),
     };
     let worded = client
         .send_turn(context(), answers(set, "and words"))

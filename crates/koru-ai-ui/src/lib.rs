@@ -81,6 +81,7 @@ mod queue;
 mod quote_pills;
 mod reader;
 mod restored_scroll;
+mod skills;
 mod sources;
 mod tool_groups;
 mod tool_output;
@@ -365,7 +366,7 @@ struct SentMessage {
     /// What it said: a queued message refused by the service goes back to
     /// its queue with it (`queue`).
     markdown: String,
-    /// It named a document by chip.
+    /// It named a document or a skill by chip (D121).
     documents: bool,
     /// It came from the queue, so a refusal sends it back there rather than
     /// into the composer.
@@ -719,6 +720,9 @@ pub struct ChatSurface {
     /// Voice input in the composer (D103): the microphone, and the
     /// recording row while the host dictates into it (`dictation`).
     dictation: dictation::ComposerDictation,
+    /// The agent's skills under `$` in the composer (D121): the list it
+    /// last answered and whether it is open (`skills`).
+    skills: skills::SkillList,
     lang: koru_i18n::Lang,
 }
 
@@ -988,6 +992,7 @@ impl ChatSurface {
             restored_scroll: None,
             new_divider: None,
             dictation: dictation::ComposerDictation::default(),
+            skills: skills::SkillList::default(),
             lang: koru_i18n::Lang::for_system(
                 koru_window::system_locale::system_locale().as_deref(),
             ),
@@ -1416,6 +1421,14 @@ impl ChatSurface {
         {
             return CursorIcon::Default;
         }
+        // The `$` list floats over the transcript's text too: the arrow on
+        // its rows, never a hand (D121, ADR-215).
+        if self
+            .skill_panel()
+            .is_some_and(|panel| panel.contains(p.0, p.1))
+        {
+            return CursorIcon::Default;
+        }
         // *Add to chat* floats over the reply's text: the arrow (ADR-215).
         if self
             .add_pill
@@ -1623,6 +1636,12 @@ impl ChatSurface {
         self.question_navigation_anchor = None;
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
+        // **The `$` list's keys come first** (D121): while it is open, Up,
+        // Down, Enter, Tab and Escape choose or dismiss a skill; Enter sends
+        // only once it has closed.
+        if let Some(handled) = self.skill_key(key, mods) {
+            return handled;
+        }
         // **The `@` picker's keys come first.** While it is open, Up, Down,
         // Enter, Tab and Escape choose or dismiss a document; Enter sends only
         // once it has closed.
@@ -1697,6 +1716,8 @@ impl ChatSurface {
     /// thread (D9), and nothing is left armed for a later key.
     fn composer_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         let handled = self.composer.key(key, text, mods);
+        // A `$` typed, its query grown, or the caret moved out of it (D121).
+        let handled = self.sync_skill_list() || handled;
         if self.composer.take_wants_paste_attachment() {
             return self.begin_attachment_paste() || handled;
         }
@@ -1950,6 +1971,11 @@ impl ChatSurface {
         // The composer and every control on it are hit where they are now:
         // centred under an empty chat's greeting, or at the bottom.
         self.composer_rect();
+        // The `$` list floats over the conversation (D121): a press on it is
+        // its own, and one anywhere else shuts it and goes on.
+        if let Some(handled) = self.skill_mouse_down(x, y) {
+            return handled;
+        }
         // The model picker floats over the conversation and the composer:
         // a press on it is its own, and one outside it closes it.
         if let Some(handled) = self.picker_mouse_down(x, y) {
@@ -2234,7 +2260,10 @@ impl ChatSurface {
         if self.composer.contains(x, y) {
             self.focus = Focus::Composer;
             self.composer.set_focused(true);
-            return self.composer.mouse_down(x, y);
+            let handled = self.composer.mouse_down(x, y);
+            // The caret may have landed in a `$` token, or left one (D121).
+            self.sync_skill_list();
+            return handled;
         }
         false
     }
@@ -2607,6 +2636,9 @@ impl ChatSurface {
         // Over the composer's open picker, or over its own lines once they
         // overflow, the wheel is the composer's.
         let (px, py) = self.pointer;
+        if !self.showing_setup() && self.skill_scroll(px, py, delta) {
+            return true;
+        }
         if !self.showing_setup() && self.composer.scroll_by(px, py, delta) {
             return true;
         }
@@ -3448,6 +3480,13 @@ impl ChatSurface {
                     response.provider,
                     agents::AgentModels::Listed(response.models),
                 );
+            }
+            Update::AgentCommands {
+                provider,
+                folder,
+                commands,
+            } => {
+                self.skills_listed(provider, folder, commands);
             }
             Update::AgentModelsPending(provider) => {
                 // Listing models… stays, as does a list already on screen;
@@ -4348,7 +4387,7 @@ impl ChatSurface {
             composer: self.composer.stash(),
             attachments: sent_attachments,
             markdown: markdown.clone(),
-            documents: !chips.is_empty(),
+            documents: !chips.is_empty() || !message.skills.is_empty(),
             from_queue: self.sending_queued,
         });
         self.forget_input_walk();
@@ -4373,6 +4412,8 @@ impl ChatSurface {
             replace_pinned_documents: true,
             attachment_ids,
             answers: None,
+            // Each skill chip by name (D121); the text says `$name` for it.
+            skills: message.skills.clone(),
         };
         let sent = if self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
@@ -5876,6 +5917,9 @@ impl ChatSurface {
             if let Some(part) = self.microphone_hover_at(x, y) {
                 return Some(part);
             }
+            if let Some(part) = self.skill_hover_at(x, y) {
+                return Some(part);
+            }
             if self
                 .mic_chooser_button()
                 .is_some_and(|chevron| chevron.contains(x, y))
@@ -6236,6 +6280,7 @@ impl ChatSurface {
         );
         self.draw_dictation_tooltip(canvas, root);
         self.composer.draw_panels(canvas, root);
+        self.draw_skill_list(canvas, root);
     }
 
     /// An empty chat's greeting: one line at the title size, centred over

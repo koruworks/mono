@@ -1543,6 +1543,74 @@ pub(super) fn agent_models_failure(code: koru_session_protocol::ErrorCode) -> Fa
     }
 }
 
+/// **What an agent can be told to do by name in a folder** (koru-ai D121):
+/// Codex's skills for the composer's `$`, in the session host's order. The
+/// folder is the chat's — absent, the home folder its agent starts in — and
+/// must be an existing folder, as a chat's folder must be. An agent with
+/// nothing to offer, or a host too old to say, answers an empty list: `$`
+/// is then only a character.
+pub(super) fn agent_commands(
+    agents: &AgentSessions,
+    provider: AiProviderId,
+    folder: Option<String>,
+) -> ApiResult<koru_ai_wire::AgentCommandsResponse> {
+    let Some(kind) = agent_kind_of(&provider) else {
+        return Err(failure(
+            "invalid_request",
+            "The selected AI provider is not supported.",
+            false,
+        ));
+    };
+    let folder = match folder.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(folder) => {
+            let path = std::path::PathBuf::from(folder);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err(failure(
+                    "invalid_request",
+                    "The working folder must be an existing folder on this computer.",
+                    false,
+                ));
+            }
+            Some(path)
+        }
+    };
+    let commands = agents.discover_commands(&kind, folder).map_err(|code| {
+        if code == koru_session_protocol::ErrorCode::Backpressure {
+            failure(
+                "agent_commands_busy",
+                "The agent is busy listing; try again.",
+                true,
+            )
+        } else {
+            failure(
+                "agent_commands_failed",
+                "The agent could not list its skills.",
+                true,
+            )
+        }
+    })?;
+    use koru_ai_wire::AgentCommandKindView as Kind;
+    use koru_session_protocol::AgentCommandKind;
+    Ok(koru_ai_wire::AgentCommandsResponse {
+        provider,
+        commands: commands
+            .into_iter()
+            .map(|command| koru_ai_wire::AgentCommandView {
+                kind: match command.kind {
+                    AgentCommandKind::RepoSkill => Kind::RepoSkill,
+                    AgentCommandKind::UserSkill => Kind::UserSkill,
+                    AgentCommandKind::SystemSkill => Kind::SystemSkill,
+                    AgentCommandKind::AdminSkill => Kind::AdminSkill,
+                },
+                name: command.name,
+                description: command.description,
+                display_name: command.display_name,
+            })
+            .collect(),
+    })
+}
+
 /// The models an agent lists, in the picker's shape. An agent that lists
 /// none answers with an empty list, which the picker shows as no level.
 /// With `refresh`, the list is rebuilt first (the manual refresh).

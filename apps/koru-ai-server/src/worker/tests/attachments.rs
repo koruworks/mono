@@ -88,6 +88,7 @@ fn send_with(
             replace_pinned_documents: false,
             attachment_ids,
             answers: None,
+            skills: Vec::new(),
         },
     )
 }

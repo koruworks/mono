@@ -400,6 +400,14 @@ pub struct SendTurnRequest {
     /// refused (`questions_closed`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers: Option<koru_ai_core::NextMessageAnswers>,
+    /// **The skills the person picked** (koru-ai D121), by the name a
+    /// local agent lists each under (`POST /v1/ai/providers/{provider}/
+    /// commands`), in the order they appear; `markdown` says `$name` where
+    /// each was. The agent is told each by name beside the text; one it no
+    /// longer lists is left out, and the text goes as typed. Only an agent
+    /// chat takes any. Not stored: the message keeps its `$name` text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -731,6 +739,55 @@ pub struct AgentModeView {
     pub description: Option<String>,
 }
 
+/// **What a local agent can be told to do by name** (koru-ai D121): Codex's
+/// skills for the chat's folder, in a picker's order — the folder's, the
+/// person's, the agent's own, an administrator's, then by name — enabled
+/// ones only, each name once. Empty for an agent with none: a client then
+/// offers nothing under `$`. Where each lives stays with the agent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCommandsResponse {
+    pub provider: AiProviderId,
+    pub commands: Vec<AgentCommandView>,
+}
+
+/// One entry an agent offers: the name its message says (`$name`), one
+/// line about it, and the agent's own name to show when it gives one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCommandView {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub kind: AgentCommandKindView,
+}
+
+/// Where an entry comes from, in the order a picker lists them.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCommandKindView {
+    /// A skill of the folder the agent works in.
+    RepoSkill,
+    /// A skill of the person's own.
+    UserSkill,
+    /// A skill the agent ships with.
+    SystemSkill,
+    /// A skill an administrator installed.
+    AdminSkill,
+}
+
+/// The commands route's body: the folder the chat's agent works in, the
+/// person's home folder when absent — where an agent works until a folder
+/// is chosen.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscoverAgentCommandsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
 /// The models route's optional body. With `refresh`, the agent's list is
 /// rebuilt before it is answered: the session host re-probes the agent and
 /// lists it again, as it does after a CLI update. A request already
@@ -1037,6 +1094,7 @@ mod tests {
 
         let armed = SendTurnRequest {
             web_search: true,
+            skills: Vec::new(),
             ..decoded
         };
         assert_eq!(serde_json::to_value(armed).unwrap()["web_search"], true);

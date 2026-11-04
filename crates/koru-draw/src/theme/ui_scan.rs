@@ -42,6 +42,9 @@ const MIGRATED: &[&str] = &[
     // divider and *Hold to record*, the shared `Toggle` in a leaf; its
     // tokens are in `microphone/tokens.rs`.
     "crates/koru-ai-ui/src/microphone/elements.rs",
+    // The composer's `$` skill list (koru-ai D121): a name and its line a
+    // row; its tokens are in `skills/tokens.rs`.
+    "crates/koru-ai-ui/src/skills/elements.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");

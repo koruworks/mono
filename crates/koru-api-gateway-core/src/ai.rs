@@ -161,6 +161,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["provider"],
     },
     AiRoute {
+        operation_id: "ai_discover_agent_commands",
+        method: "POST",
+        path: "/v1/ai/providers/{provider}/commands",
+        scope: AiScope::Chat,
+        summary: "List what a local agent can be told to do by name in a folder",
+        returns: "The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder.",
+        handler: || post(discover_agent_commands),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::DiscoverAgentCommandsRequest>()
+        }),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::AgentCommandsResponse>()
+        }),
+        stream: false,
+        path_parameters: &["provider"],
+    },
+    AiRoute {
         operation_id: "ai_pull_ollama_model",
         method: "POST",
         path: "/v1/ai/providers/ollama/pulls",
@@ -875,6 +892,40 @@ async fn discover_agent_models(
         Err(response) => return response,
     };
     answer(call(move || client.discover_agent_models(context, provider, request)).await)
+}
+
+async fn discover_agent_commands(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(provider): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(provider) = AiProviderId::parse(provider) else {
+        return invalid_identity("provider");
+    };
+    let request = if body.iter().all(u8::is_ascii_whitespace) {
+        koru_ai_wire::DiscoverAgentCommandsRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(_) => {
+                return ai_failure(
+                    StatusCode::BAD_REQUEST,
+                    Failure {
+                        code: "invalid_request".into(),
+                        message: "The agent commands request body is invalid.".into(),
+                        retryable: false,
+                        details: Default::default(),
+                    },
+                );
+            }
+        }
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.discover_agent_commands(context, provider, request)).await)
 }
 
 /// The models route's optional body. An empty body asks for the list
@@ -1883,6 +1934,7 @@ fn status_for(failure: &Failure) -> StatusCode {
         | "ai_context_unavailable"
         | "ai_provider_management_unavailable"
         | "agent_models_listing"
+        | "agent_commands_busy"
         | "steer_failed" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }

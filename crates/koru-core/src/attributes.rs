@@ -111,6 +111,17 @@ pub const ROLE_SCHEDULE: &str = "koru.schedule";
 /// spell it the same.
 pub const ROLE_QUOTE: &str = "koru.quote";
 
+/// The role of a **skill chip in the AI chat's composer** (koru-ai D121): a
+/// skill of the chat's agent picked under `$`, held as its name — a
+/// [`Text`](crate::node::AttrValue::Text) record whose label is what the
+/// chip shows — and sent as `$name` (`koru_export_markdown::message_text`).
+///
+/// Like [`ROLE_QUOTE`] it lives only in the composer's private in-memory
+/// document, so nothing stores it; it is named here so the editor that draws
+/// the chip, the export that writes it and the chat that sends its name
+/// spell it the same.
+pub const ROLE_SKILL: &str = "koru.skill";
+
 /// The roles whose `"ref"` record means **a reference to a document**, and
 /// which are therefore read back as [`AttrValue::Document`] rather than as a
 /// bare [`AttrValue::Ref`] homed at one.

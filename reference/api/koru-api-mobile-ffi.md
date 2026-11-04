@@ -55,6 +55,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.update_ollama_settings` | `client.ai().update_ollama_settings` | PUT /v1/ai/providers/ollama | Phase 1 provider setup is desktop-only |
 | `ai.validate_provider` | `client.ai().validate_provider` | POST /v1/ai/providers/{provider}/validate | Phase 1 provider setup is desktop-only |
 | `ai.discover_agent_models` | `client.ai().discover_agent_models` | POST /v1/ai/providers/{provider}/models | Local agents run on the desktop that installed them |
+| `ai.discover_agent_commands` | `client.ai().discover_agent_commands` | POST /v1/ai/providers/{provider}/commands | Local agents run on the desktop that installed them |
 | `ai.pull_ollama_model` | `client.ai().pull_ollama_model` | POST /v1/ai/providers/ollama/pulls | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.cancel_ollama_pull` | `client.ai().cancel_ollama_pull` | POST /v1/ai/providers/ollama/pulls/cancel | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.create_chat` | `client.ai().create_chat` | POST /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |

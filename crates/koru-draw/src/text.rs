@@ -500,7 +500,8 @@ impl TextEngine {
             | PillKind::Run
             | PillKind::Schedule
             | PillKind::SchedulePaused
-            | PillKind::Quote => 0.0,
+            | PillKind::Quote
+            | PillKind::Skill => 0.0,
             PillKind::File | PillKind::Contact | PillKind::Date => theme::PILL_PAD_X,
         };
         // Document titles: peel a leading emoji into the icon slot (Explore/tabs
@@ -588,6 +589,9 @@ impl TextEngine {
             Some(self.icon_layout(crate::icons::PAUSE, icon_slot.max(1.0)))
         } else if kind == PillKind::Quote {
             Some(self.icon_layout(crate::icons::QUOTES, icon_slot.max(1.0)))
+        } else if kind == PillKind::Skill {
+            // A skill is something the agent knows how to do: the tool glyph.
+            Some(self.icon_layout(crate::icons::WRENCH, icon_slot.max(1.0)))
         } else {
             None
         };

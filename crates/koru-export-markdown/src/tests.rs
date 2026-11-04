@@ -447,6 +447,30 @@ fn quote_chips_are_blockquotes_before_their_comments_in_order() {
     assert_eq!(blockquote("a\n\nb\r\nc\n"), "> a\n>\n> b\n> c");
 }
 
+/// A skill chip (koru-ai D121) goes out as `$name`, exactly — a name with
+/// `_` or `:` is never escaped, whatever the chip shows.
+#[test]
+fn skill_chips_are_their_names_after_a_dollar() {
+    let (mut ws, root) = with_doc("");
+    let row = ws
+        .insert(Parent::Node(root), Node::paragraph("Use  now").unwrap())
+        .unwrap();
+    ws.insert_pill(
+        row,
+        4,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_SKILL,
+            AttrValue::Text("my_skill:review".to_owned()),
+            "Review",
+        ),
+    )
+    .unwrap();
+    let anchor = koru_core::ANCHOR.len_utf8();
+    let end = ws.read(row).unwrap().content.as_text().unwrap().len();
+    assert_eq!(end, "Use  now".len() + anchor);
+    assert_eq!(message_text(&ws, root).unwrap(), "Use $my_skill:review now");
+}
+
 /// Mixed right-to-left and left-to-right text is bytes to the exporter: a
 /// message in Arabic with a Latin word round-trips exactly.
 #[test]

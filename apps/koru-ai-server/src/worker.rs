@@ -486,6 +486,22 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentCommandsRequest,
+    ) -> ApiResult<koru_ai_wire::AgentCommandsResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::DiscoverAgentCommands {
+            context,
+            provider,
+            folder: request.folder,
+            reply,
+        })?;
+        receive_api(response)
+    }
+
     fn pull_ollama_model(
         &self,
         context: RequestContext,
@@ -1024,6 +1040,13 @@ enum WorkerCommand {
         refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
     },
+    /// What a local agent can be told to do by name in a folder (D121).
+    DiscoverAgentCommands {
+        context: RequestContext,
+        provider: AiProviderId,
+        folder: Option<String>,
+        reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
+    },
     PullOllamaModel {
         context: RequestContext,
         request: PullOllamaModelRequest,
@@ -1237,6 +1260,7 @@ impl WorkerCommand {
             Self::UpdateOllamaSettings { .. } => "update_ollama_settings",
             Self::ValidateProvider { .. } => "validate_provider",
             Self::DiscoverAgentModels { .. } => "discover_agent_models",
+            Self::DiscoverAgentCommands { .. } => "discover_agent_commands",
             Self::PullOllamaModel { .. } => "pull_ollama_model",
             Self::CancelOllamaPull { .. } => "cancel_ollama_pull",
             Self::CreateChat { .. } => "create_chat",
@@ -1662,6 +1686,12 @@ impl WorkerState {
                 refresh,
                 reply,
             } => self.discover_agent_models(context, provider, refresh, reply),
+            WorkerCommand::DiscoverAgentCommands {
+                context,
+                provider,
+                folder,
+                reply,
+            } => self.discover_agent_commands(context, provider, folder, reply),
             WorkerCommand::PullOllamaModel {
                 context,
                 request,
@@ -2083,6 +2113,38 @@ impl WorkerState {
             });
         if spawned.is_err() {
             tracing::warn!("could not start the agent model listing thread");
+        }
+    }
+
+    /// **An agent's skills for a folder** (koru-ai D121), for the
+    /// composer's `$`. The agent lists them from a process of its own, so
+    /// this runs on a thread of its own and answers through the held reply.
+    fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        folder: Option<String>,
+        reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
+    ) {
+        if let Err(error) = authorize(&context, AiScope::Chat) {
+            let _ = reply.send(Err(error));
+            return;
+        }
+        let Some(agents) = self.agents.clone() else {
+            let _ = reply.send(Err(failure(
+                "agent_service_unavailable",
+                "Local agents are not available in this AI service.",
+                false,
+            )));
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("koru-ai-agent-commands".into())
+            .spawn(move || {
+                let _ = reply.send(agents::agent_commands(&agents, provider, folder));
+            });
+        if spawned.is_err() {
+            tracing::warn!("could not start the agent command listing thread");
         }
     }
 
@@ -3210,6 +3272,18 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let attachments = self.attachments_for_send(&chat, &request.attachment_ids)?;
+        // Skills are a local agent's (koru-ai D121): one token each, none
+        // twice, a handful at most.
+        if !request.skills.is_empty()
+            && (!is_agent_provider(&chat.current_model.provider)
+                || !koru_session_protocol::valid_input_skills(&request.skills))
+        {
+            return Err(failure(
+                "invalid_request",
+                "Skills are named only to a local agent, each once.",
+                false,
+            ));
+        }
         let existing_messages = self
             .repository
             .messages(request.chat_id)
@@ -3356,6 +3430,9 @@ impl WorkerState {
                 agent_mode: chat.agent_mode.clone(),
                 agent_fast: chat.agent_fast,
                 agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
+                // The picked skills ride this message only (D121); a retry
+                // sends its `$name` text alone.
+                agent_skills: request.skills.clone(),
                 ..AiRequestOptions::default()
             },
         };

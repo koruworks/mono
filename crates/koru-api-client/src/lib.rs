@@ -720,6 +720,23 @@ impl AiClient<'_> {
         )
     }
 
+    /// **What a local agent can be told to do by name in `folder`** (koru-ai
+    /// D121) — Codex's skills, for the composer's `$`. `None` is the home
+    /// folder a chat's agent starts in.
+    pub fn discover_agent_commands(
+        &self,
+        provider: &AiProviderId,
+        folder: Option<&str>,
+    ) -> AiResult<koru_ai_wire::AgentCommandsResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/providers/{provider}/commands"),
+            Some(json_body(&koru_ai_wire::DiscoverAgentCommandsRequest {
+                folder: folder.map(str::to_owned),
+            })?),
+        )
+    }
+
     /// The agent's list rebuilt first — the manual refresh: the host
     /// re-probes the agent and lists it again before answering.
     pub fn refresh_agent_models(

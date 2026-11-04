@@ -379,6 +379,8 @@ pub enum Key {
     AiMicrophoneDefault,
     AiMicrophoneDefaultNamed,
     AiMicrophoneHoldToRecord,
+    // The agent's skills offered under `$` in the composer (koru-ai D121).
+    AiSkills,
     // Esc twice to stop a turn, and the empty chat's greetings.
     AiPressEscAgainToStop,
     AiGreeting01,
@@ -2865,7 +2867,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1999] = [
+    pub const ALL: [Key; 2000] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3133,6 +3135,7 @@ impl Key {
         Key::AiMicrophoneDefault,
         Key::AiMicrophoneDefaultNamed,
         Key::AiMicrophoneHoldToRecord,
+        Key::AiSkills,
         Key::AiPressEscAgainToStop,
         Key::AiGreeting01,
         Key::AiGreeting02,
@@ -7917,6 +7920,18 @@ pub const ROWS: &[Row] = &[
         ar: "اضغط مطولًا للتسجيل",
         zh_hans: "按住录音",
         ja: "押している間だけ録音",
+    },
+    // The list of the agent's skills that `$` opens in the composer: its name, for a screen reader.
+    Row {
+        key: Key::AiSkills,
+        en: "Skills",
+        es: "Habilidades",
+        pt_br: "Habilidades",
+        de: "Skills",
+        fr: "Compétences",
+        ar: "المهارات",
+        zh_hans: "技能",
+        ja: "スキル",
     },
     // Esc twice to stop a turn, and the empty chat's greetings.
     Row {

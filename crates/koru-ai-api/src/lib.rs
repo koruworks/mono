@@ -123,6 +123,14 @@ pub trait AiServerPort: Send + Sync {
         provider: koru_ai_core::AiProviderId,
         request: koru_ai_wire::DiscoverAgentModelsRequest,
     ) -> Result<koru_ai_wire::AgentModelsResponse>;
+    /// What a local agent can be told to do by name in a folder — Codex's
+    /// skills, for the composer's `$` (koru-ai D121).
+    fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: koru_ai_core::AiProviderId,
+        request: koru_ai_wire::DiscoverAgentCommandsRequest,
+    ) -> Result<koru_ai_wire::AgentCommandsResponse>;
     fn pull_ollama_model(
         &self,
         context: RequestContext,

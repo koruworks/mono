@@ -123,6 +123,7 @@ Generated from the route catalog. Do not edit.
 - PUT `/v1/ai/providers/ollama` — Update Ollama settings (Public)
 - POST `/v1/ai/providers/{provider}/validate` — Validate an AI provider and selected model (Public)
 - POST `/v1/ai/providers/{provider}/models` — List the models a local agent offers (Public)
+- POST `/v1/ai/providers/{provider}/commands` — List what a local agent can be told to do by name in a folder (Public)
 - POST `/v1/ai/providers/ollama/pulls` — Pull an Ollama model with bounded progress streaming (Public)
 - POST `/v1/ai/providers/ollama/pulls/cancel` — Cancel the active Ollama model pull (Public)
 - POST `/v1/ai/chats` — Create an AI chat (Public)

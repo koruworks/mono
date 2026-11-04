@@ -19,7 +19,8 @@
 //! - **Steer** sends an item into the running reply. An agent that takes
 //!   text mid-turn (`AgentProviderView::steers`: Codex, Claude) gets it
 //!   natively, through the attempt's steer endpoint; every other agent, and a
-//!   message carrying attachments or document chips, gets *stop, then send*:
+//!   message carrying attachments, document chips or skill chips (D121),
+//!   gets *stop, then send*:
 //!   the reply is cancelled and the item is sent first once the cancel lands.
 //!   That stop does not pause the queue — it was a steer, not a Stop.
 //!
@@ -63,7 +64,8 @@ pub(crate) struct Queued {
     /// What it says as it would be sent: chips in their `[[koru://doc/…]]`
     /// spelling, each quote a blockquote before the text under it.
     pub(crate) markdown: String,
-    /// It names a document by chip, which only a send can pin.
+    /// It names a document or a skill by chip: a document only a send can
+    /// pin, a skill only a turn of its own can carry (D121).
     pub(crate) documents: bool,
 }
 
@@ -267,7 +269,7 @@ impl ChatSurface {
             composer: self.composer.stash(),
             attachments,
             markdown: message.markdown.trim().to_owned(),
-            documents: !message.documents.is_empty(),
+            documents: !message.documents.is_empty() || !message.skills.is_empty(),
         };
         self.pill_strip.clear_tooltip();
         self.forget_input_walk();
@@ -404,7 +406,7 @@ impl ChatSurface {
             let message = self.composer.message();
             let displaced = Queued {
                 markdown: message.markdown.trim().to_owned(),
-                documents: !message.documents.is_empty(),
+                documents: !message.documents.is_empty() || !message.skills.is_empty(),
                 composer: self.composer.stash(),
                 attachments: self.strips.take(chat),
             };

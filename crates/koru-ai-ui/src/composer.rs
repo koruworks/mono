@@ -35,6 +35,15 @@
 //! (`koru_export_markdown::message_text`); a recalled or queued message
 //! brings its quotes back as chips.
 //!
+//! ## Skills
+//!
+//! A skill of the chat's agent picked under `$` (koru-ai D121, [`crate::skills`])
+//! is a **skill chip** where the `$` was typed — the editor's pill under
+//! [`koru_core::attributes::ROLE_SKILL`], holding the skill's name. At send
+//! it is `$name` in the text and its name in [`ComposedMessage::skills`]. A
+//! recalled message brings `$name` back as text, not as a chip: nothing
+//! stores which words were chips.
+//!
 //! ## Where it is drawn
 //!
 //! The editor believes it owns a viewport with its own margins; the chat gives
@@ -102,6 +111,57 @@ pub struct ComposedMessage {
     /// was chosen under. A heading chip names its whole document here: until
     /// UC15 a turn sends the whole document.
     pub documents: Vec<(koru_ai_core::DocumentId, String)>,
+    /// Every skill chip's name (koru-ai D121), in reading order, each once;
+    /// the text says `$name` where each is.
+    pub skills: Vec<String>,
+}
+
+/// **A `$` being typed** (koru-ai D121): where it is, and what follows it up
+/// to the caret — the query the skill list is filtered by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DollarToken {
+    pub(crate) row: NodeId,
+    /// The `$`'s byte offset in the row's text.
+    pub(crate) start: usize,
+    /// The caret's: where the token ends.
+    pub(crate) end: usize,
+    /// What follows the `$`.
+    pub(crate) query: String,
+}
+
+/// Whether `character` can be part of a skill's name typed after `$`.
+fn name_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '-' | '_' | ':' | '.')
+}
+
+/// **The `$` token that ends at `caret` in `text`**: a `$` at the start of
+/// the line or after a space, then name characters up to the caret. Its
+/// byte offset and what follows it; `None` when the caret is not in one —
+/// `a$b`, `$$`, or a price like `5$` is not a token.
+pub(crate) fn dollar_before(text: &str, caret: usize) -> Option<(usize, &str)> {
+    let head = text.get(..caret)?;
+    let start = head.rfind(|character: char| !name_char(character))?;
+    if !head[start..].starts_with('$') {
+        return None;
+    }
+    if head[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|before| !before.is_whitespace())
+    {
+        return None;
+    }
+    Some((start, &head[start + 1..]))
+}
+
+/// A skill chip's record: the skill's name, under the skill role, labelled
+/// with what the chip shows.
+fn skill_attr(name: &str, label: &str) -> Attr {
+    Attr::labelled(
+        koru_core::attributes::ROLE_SKILL,
+        AttrValue::Text(name.to_owned()),
+        label.to_owned(),
+    )
 }
 
 /// A message set aside by [`ChatComposer::stash`]: its private document and
@@ -169,6 +229,7 @@ impl ChatComposer {
     pub(crate) fn message(&self) -> ComposedMessage {
         let markdown = koru_export_markdown::message_text(&self.ws, self.root).unwrap_or_default();
         let mut documents: Vec<(koru_ai_core::DocumentId, String)> = Vec::new();
+        let mut skills: Vec<String> = Vec::new();
         for id in self
             .ws
             .children(Parent::Node(self.root))
@@ -192,12 +253,98 @@ impl ChatComposer {
                         documents.push((document, attr.label.clone().unwrap_or_default()));
                     }
                 }
+                if attr.role == koru_core::attributes::ROLE_SKILL
+                    && let AttrValue::Text(name) = &attr.value
+                    && !name.is_empty()
+                    && !skills.contains(name)
+                {
+                    skills.push(name.clone());
+                }
             }
         }
         ComposedMessage {
             markdown,
             documents,
+            skills,
         }
+    }
+
+    /// **The `$` the caret is in, if any** (koru-ai D121): not while a
+    /// dictation is provisional, and not across a selection.
+    pub(crate) fn dollar_token(&self) -> Option<DollarToken> {
+        if self.composing() {
+            return None;
+        }
+        let paragraph = self.editor.body.focused()?;
+        if !paragraph.selection.is_collapsed() {
+            return None;
+        }
+        let caret = paragraph.caret();
+        let (start, query) = dollar_before(&paragraph.text, caret)?;
+        Some(DollarToken {
+            row: paragraph.id,
+            start,
+            end: caret,
+            query: query.to_owned(),
+        })
+    }
+
+    /// **Put a picked skill where its `$` was typed** (koru-ai D121): the
+    /// `$` and what followed it become the skill's chip, labelled `label`,
+    /// with a space after it, and the caret after that. One undo step;
+    /// Backspace takes the chip back whole. `false` when the token is no
+    /// longer there.
+    pub(crate) fn insert_skill(&mut self, token: &DollarToken, name: &str, label: &str) -> bool {
+        let current = self
+            .ws
+            .read(token.row)
+            .ok()
+            .and_then(|node| node.content.as_text().map(str::to_owned));
+        if current
+            .as_deref()
+            .and_then(|text| dollar_before(text, token.end))
+            .is_none_or(|(start, _)| start != token.start)
+        {
+            return false;
+        }
+        self.ws.checkpoint();
+        self.ws.begin_group();
+        if self
+            .ws
+            .delete_text(token.row, token.start..token.end)
+            .is_err()
+            || self
+                .ws
+                .insert_pill(token.row, token.start, &skill_attr(name, label))
+                .is_err()
+        {
+            self.ws.checkpoint();
+            return false;
+        }
+        let mut caret = token.start + koru_core::ANCHOR.len_utf8();
+        let spaced = self
+            .ws
+            .read(token.row)
+            .ok()
+            .and_then(|node| {
+                node.content
+                    .as_text()
+                    .and_then(|text| text.get(caret..))
+                    .map(|rest| rest.starts_with(char::is_whitespace))
+            })
+            .unwrap_or(false);
+        if spaced || self.ws.insert_text(token.row, caret, " ").is_ok() {
+            caret += 1;
+        }
+        self.ws.checkpoint();
+        self.editor.view.active = true;
+        self.editor.body.rebuild(&self.ws);
+        self.editor.body.focus_on(token.row);
+        self.editor.place_caret(caret);
+        self.editor.view.desired_x = None;
+        self.editor.settle();
+        self.editor.scroll_to_caret();
+        true
     }
 
     /// The message's text as it would be sent now — chips in their

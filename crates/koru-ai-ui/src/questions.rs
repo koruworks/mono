@@ -617,6 +617,7 @@ impl ChatSurface {
                 invocation: tool,
                 answers,
             }),
+            skills: Vec::new(),
         };
         if !self.queue_command(Command::Send(request)) {
             self.answering = false;

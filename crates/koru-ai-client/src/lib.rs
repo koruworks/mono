@@ -83,6 +83,16 @@ impl Client {
             .discover_agent_models(context, provider, request)
     }
 
+    pub fn discover_agent_commands(
+        &self,
+        context: RequestContext,
+        provider: AiProviderId,
+        request: koru_ai_wire::DiscoverAgentCommandsRequest,
+    ) -> Result<koru_ai_wire::AgentCommandsResponse> {
+        self.server
+            .discover_agent_commands(context, provider, request)
+    }
+
     pub fn pull_ollama_model(
         &self,
         context: RequestContext,

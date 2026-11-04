@@ -91,6 +91,26 @@ pub fn info_for(ws: &WorkspaceDoc, attr: &Attr) -> PillInfo {
             entity: None,
         };
     }
+    // **A skill in the chat's composer** (koru-ai D121), keyed on its role:
+    // captioned by its label, the name the agent shows, else `$name`.
+    if attr.role == koru_core::attributes::ROLE_SKILL {
+        let name = match &attr.value {
+            AttrValue::Text(name) => name.as_str(),
+            _ => "",
+        };
+        return PillInfo {
+            kind: PillKind::Skill,
+            label: attr
+                .label
+                .clone()
+                .filter(|label| !label.is_empty())
+                .unwrap_or_else(|| format!("${name}")),
+            dangling: false,
+            trashed: false,
+            url: None,
+            entity: None,
+        };
+    }
     if attr.role == koru_core::attributes::ROLE_SCHEDULE {
         let schedule = match &attr.value {
             AttrValue::Text(schedule) => Some(schedule.as_str()),
@@ -335,6 +355,26 @@ mod tests {
         assert_eq!(info.kind, PillKind::Quote);
         assert_eq!(info.label, "\"g work, so \"workspaces\"\u{2026}\"");
         assert_eq!(quote_label("short"), "\"short\"");
+    }
+
+    /// A skill in the chat's composer (koru-ai D121) is its own kind,
+    /// captioned by the name its agent shows, else `$name` — never read as
+    /// a document's caption.
+    #[test]
+    fn a_skill_is_its_own_kind_captioned_by_its_name() {
+        let labelled = Attr::labelled(
+            koru_core::attributes::ROLE_SKILL,
+            AttrValue::Text("release-notes".into()),
+            "Release Notes".to_owned(),
+        );
+        let info = info_for(&ws(), &labelled);
+        assert_eq!(info.kind, PillKind::Skill);
+        assert_eq!(info.label, "Release Notes");
+        let bare = Attr::new(
+            koru_core::attributes::ROLE_SKILL,
+            AttrValue::Text("review-pr".into()),
+        );
+        assert_eq!(info_for(&ws(), &bare).label, "$review-pr");
     }
 
     /// The key is what `Paragraph::adopt` matches on and what a caption cache

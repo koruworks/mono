@@ -488,6 +488,12 @@ List the models a local agent offers
 
 Returns: The agent's models in its own ids, each with the agent's grouping; empty when it lists none. With the optional body `{ "refresh": true }` the list is rebuilt first.
 
+## POST `/v1/ai/providers/{provider}/commands`
+
+List what a local agent can be told to do by name in a folder
+
+Returns: The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder.
+
 ## POST `/v1/ai/providers/ollama/pulls`
 
 Pull an Ollama model with bounded progress streaming

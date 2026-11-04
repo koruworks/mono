@@ -242,6 +242,11 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
                         }
                         pieces.push(MessagePiece::Quote(passage.to_owned()));
                         quoted = true;
+                    } else if let Some(name) = skill_name(attr) {
+                        // A skill goes to its agent as `$name`, exactly —
+                        // never escaped, or the agent would not know it.
+                        line.push('$');
+                        line.push_str(name);
                     } else {
                         line.push_str(&serialize_pill(attr));
                     }
@@ -273,6 +278,17 @@ fn quoted_passage(attr: &Attr) -> Option<&str> {
     }
     match &attr.value {
         AttrValue::Text(passage) => Some(passage.as_str()),
+        _ => None,
+    }
+}
+
+/// The skill a skill chip names, when `attr` is one (koru-ai D121).
+fn skill_name(attr: &Attr) -> Option<&str> {
+    if attr.role != koru_core::attributes::ROLE_SKILL {
+        return None;
+    }
+    match &attr.value {
+        AttrValue::Text(name) if !name.is_empty() => Some(name.as_str()),
         _ => None,
     }
 }

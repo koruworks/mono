@@ -350,6 +350,81 @@
           }
         ]
       },
+      "AgentCommandKindView": {
+        "description": "Where an entry comes from, in the order a picker lists them.",
+        "oneOf": [
+          {
+            "description": "A skill of the folder the agent works in.",
+            "enum": [
+              "repo_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill of the person's own.",
+            "enum": [
+              "user_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill the agent ships with.",
+            "enum": [
+              "system_skill"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A skill an administrator installed.",
+            "enum": [
+              "admin_skill"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "AgentCommandView": {
+        "description": "One entry an agent offers: the name its message says (`$name`), one\nline about it, and the agent's own name to show when it gives one.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentCommandKindView"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AgentCommandsResponse": {
+        "description": "**What a local agent can be told to do by name** (koru-ai D121): Codex's\nskills for the chat's folder, in a picker's order — the folder's, the\nperson's, the agent's own, an administrator's, then by name — enabled\nones only, each name once. Empty for an agent with none: a client then\noffers nothing under `$`. Where each lives stays with the agent.",
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/AgentCommandView"
+            },
+            "type": "array"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AiProviderId"
+          }
+        },
+        "required": [
+          "provider",
+          "commands"
+        ],
+        "type": "object"
+      },
       "AgentModeView": {
         "description": "One approval mode an agent offers: its own id, and what it says of it.\nA client words the ids it knows and shows these for the rest.",
         "properties": {
@@ -4012,6 +4087,17 @@
           "high_accuracy"
         ],
         "type": "string"
+      },
+      "DiscoverAgentCommandsRequest": {
+        "additionalProperties": false,
+        "description": "The commands route's body: the folder the chat's agent works in, the\nperson's home folder when absent — where an agent works until a folder\nis chosen.",
+        "properties": {
+          "folder": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "DiscoverAgentModelsRequest": {
         "additionalProperties": false,
@@ -12273,6 +12359,13 @@
             "description": "When true, existing pinned documents are ignored and only the explicit\nrefs are used as context for this turn. Used by the contextual AI pane,\nwhere the current document should replace prior context.",
             "type": "boolean"
           },
+          "skills": {
+            "description": "**The skills the person picked** (koru-ai D121), by the name a\nlocal agent lists each under (`POST /v1/ai/providers/{provider}/\ncommands`), in the order they appear; `markdown` says `$name` where\neach was. The agent is told each by name beside the text; one it no\nlonger lists is left out, and the text goes as typed. Only an agent\nchat takes any. Not stored: the message keeps its `$name` text.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "surface": {
             "$ref": "#/components/schemas/AiSurface"
           },
@@ -20126,6 +20219,103 @@
           }
         ],
         "summary": "Read non-secret AI provider settings"
+      }
+    },
+    "/v1/ai/providers/{provider}/commands": {
+      "post": {
+        "description": "The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder.",
+        "operationId": "ai_discover_agent_commands",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAgentCommandsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCommandsResponse"
+                }
+              }
+            },
+            "description": "The agent's skills for the folder — Codex's `skills/list`, enabled ones only — in a picker's order, each a name, one line and the agent's display name; empty when it offers none. The body names the folder; absent, the home folder."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "List what a local agent can be told to do by name in a folder"
       }
     },
     "/v1/ai/providers/{provider}/models": {

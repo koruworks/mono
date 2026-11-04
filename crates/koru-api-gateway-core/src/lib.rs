@@ -345,6 +345,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Local agents run on the desktop that installed them",
     },
     MobileUnavailableOperation {
+        id: "ai.discover_agent_commands",
+        client: "client.ai().discover_agent_commands",
+        http: "POST /v1/ai/providers/{provider}/commands",
+        reason: "Local agents run on the desktop that installed them",
+    },
+    MobileUnavailableOperation {
         id: "ai.pull_ollama_model",
         client: "client.ai().pull_ollama_model",
         http: "POST /v1/ai/providers/ollama/pulls",
@@ -3378,6 +3384,52 @@ mod tests {
         }
         assert_eq!(answers[0].1, "agent_service_unavailable");
         assert_eq!(answers[1], answers[0], "a refresh reaches the same service");
+        for refused in &answers[2..] {
+            assert_eq!(
+                refused,
+                &(StatusCode::BAD_REQUEST, "invalid_request".to_owned())
+            );
+        }
+    }
+
+    /// **The commands route** (koru-ai D121): a chat's token reaches the AI
+    /// service with no body or a folder — which, with no session host here,
+    /// says local agents are not available — while a body that is not the
+    /// request is refused before it gets there.
+    #[tokio::test]
+    async fn the_agent_commands_route_takes_an_optional_folder() {
+        let (_root, state) = state_with_production_ai();
+        let (token, _) = state
+            .sessions
+            .mint("chat-client", &["ai.chat".into()], now_millis());
+        let mut answers = Vec::new();
+        for body in [
+            "",
+            r#"{"folder":"C:\\work"}"#,
+            r#"{"folder":7}"#,
+            r#"{"folder":"x","other":1}"#,
+        ] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/providers/agent-codex/commands")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .unwrap();
+            let failure: koru_ai_wire::Failure = serde_json::from_slice(&bytes).unwrap();
+            answers.push((status, failure.code));
+        }
+        assert_eq!(answers[0].1, "agent_service_unavailable");
+        assert_eq!(answers[1], answers[0], "a folder reaches the same service");
         for refused in &answers[2..] {
             assert_eq!(
                 refused,

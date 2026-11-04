@@ -392,6 +392,9 @@ pub fn open_for_pill(
         // A quote in the chat's composer is a passage held whole: nothing
         // about it is edited in place, and Backspace removes it.
         PillKind::Quote => Overlay::None,
+        // A skill chip is the agent's name for a skill: nothing to edit in
+        // place, and Backspace removes it whole (koru-ai D121).
+        PillKind::Skill => Overlay::None,
         // Fall back to today only if the pill somehow has no stored date.
         PillKind::Date => Overlay::Date(DatePicker::for_pill(
             trigger,
