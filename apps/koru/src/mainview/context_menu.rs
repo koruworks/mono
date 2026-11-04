@@ -1946,7 +1946,8 @@ pub fn export_items() -> Vec<MenuAction> {
 }
 
 /// *Welcome* is always offered, first: it selects the open Welcome tab or
-/// brings a closed one back.
+/// brings a closed one back. A new chat is started from the *Chats* flyout's
+/// *New*, not from a second top-level row of the same name.
 pub fn new_tab_items() -> Vec<MenuAction> {
     let mut items = vec![
         MenuAction::OpenWelcome,
@@ -1954,7 +1955,6 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::Canvases,
         MenuAction::NewShell,
         MenuAction::NewAgent,
-        MenuAction::NewAiChat,
         MenuAction::Delegate,
         MenuAction::Chats,
         MenuAction::Socials,

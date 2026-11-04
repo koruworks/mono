@@ -314,7 +314,6 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
             MenuAction::Canvases,
             MenuAction::NewShell,
             MenuAction::NewAgent,
-            MenuAction::NewAiChat,
             MenuAction::Delegate,
             MenuAction::Chats,
             MenuAction::Socials,

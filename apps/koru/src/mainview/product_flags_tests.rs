@@ -282,7 +282,7 @@ fn delegate_is_hidden_with_the_agent_views_while_ai_is_on() {
         let (mut v, _workspace) = on_document();
         assert!(v.open_new_tab_menu());
         let items = v.menu.as_ref().expect("the menu opened").items().to_vec();
-        assert!(items.contains(&MenuAction::NewAiChat), "chat stays");
+        assert!(items.contains(&MenuAction::Chats), "chat stays");
         assert!(!items.contains(&MenuAction::Delegate));
         v.menu = None;
 
