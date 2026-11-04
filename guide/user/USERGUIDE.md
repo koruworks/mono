@@ -2369,6 +2369,21 @@ changed until you pick something.
 new tab in the background (or reuses a tab already on that document, without
 switching to it). `Shift+click` opens it in a new window.
 
+**Links to Koru content open inside Koru.** A link to a Koru document or a
+Koru chat (`koru://chat/…`) is followed like a document pill: click opens it
+in this tab, `Ctrl+click` (⌘+click on a Mac) in a new tab in the background,
+and `Shift+click` opens a document in a new window (a chat opens in a tab in
+this window). A chat opens as a chat tab of the profile you are in; a chat
+that belongs to another profile opens in a window of that profile.
+
+**Alt+click a reference to choose where it opens** (Option+click on a Mac) —
+an `@` mention, a document pill or a Koru link. A small cross appears where you
+clicked: an arrow opens it in a new pane above, to the right, below or to the
+left of the current one, and the middle opens it in a new tab without
+splitting. Hovering an arrow shows where the new pane will go. With the
+keyboard, the arrow keys move and `Enter` opens; `Esc` or a click elsewhere
+closes it without opening anything.
+
 **Click a link pill to open it in your browser.** `Ctrl+click` opens the URL
 without leaving Koru. Hovering a link shows where it goes, with copy and edit
 buttons on the chip — copy puts the URL on the clipboard, edit reopens the
@@ -6026,6 +6041,8 @@ paragraph ready for typing. The title remains unchanged.
 | `Ctrl+click` a document pill | open in a background tab (reuse if already open) |
 | `Shift+click` a document pill | open in a new window |
 | right-click a document pill | Open / Open in new tab / Open in new window |
+| `Alt+click` a document pill, `@` mention or Koru link | choose where: a split up, right, down or left, or a new tab |
+| click a `koru://` link | follow it inside Koru, like a document pill |
 | click a link pill | open it in the browser |
 | `Ctrl+click` a link | open the URL without leaving Koru |
 | hover a link | URL chip with copy and edit |
@@ -6074,6 +6091,7 @@ paragraph ready for typing. The title remains unchanged.
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab |
 | `Shift+click` a document pill | open in a new window |
+| `Alt+click` a document pill, `@` mention or Koru link | choose where: a split up, right, down or left, or a new tab |
 | right-click a document pill | Open / Open in new tab / Open in new window |
 | `→` onto a document pill, then `Enter` | open it — `Ctrl+Enter` in a background tab, `Shift+Enter` in a new window |
 | drag a tab up / down | pop it out into its own window |
