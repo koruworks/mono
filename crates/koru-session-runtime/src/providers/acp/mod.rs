@@ -4,6 +4,7 @@ mod antigravity;
 mod claude;
 mod config;
 mod diagnostics;
+mod elicitation;
 mod events;
 mod grok;
 mod input;
@@ -77,6 +78,10 @@ pub struct AcpControl {
     /// The native ids of calls whose start is held back, oldest first.
     unstarted: Vec<String>,
     approvals: BTreeMap<ApprovalId, PendingApproval>,
+    /// Forms the agent asked (`elicitation/create`) and nobody has
+    /// answered: each one a question set (D108).
+    elicitations:
+        BTreeMap<koru_session_protocol::QuestionRequestId, elicitation::PendingElicitation>,
     events: VecDeque<AgentEvent>,
     diagnostics: ProviderDiagnostics,
     log: diagnostics::SessionLog,
@@ -160,6 +165,7 @@ impl AcpControl {
             tools: BTreeMap::new(),
             unstarted: Vec::new(),
             approvals: BTreeMap::new(),
+            elicitations: BTreeMap::new(),
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
             log: diagnostics::SessionLog::default(),
@@ -477,7 +483,9 @@ impl AcpControl {
     }
 
     fn push_event(&mut self, event: AgentEvent) -> Result<(), ProviderFailure> {
-        if self.events.len() + self.approvals.len() >= self.config.event_capacity {
+        if self.events.len() + self.approvals.len() + self.elicitations.len()
+            >= self.config.event_capacity
+        {
             return Err(failure(
                 ErrorCode::Backpressure,
                 ProviderStage::Read,
@@ -518,6 +526,7 @@ impl AcpControl {
         });
         self.log.cancel_requested(unrepresentable);
         self.expire_permissions(turn_id)?;
+        self.expire_elicitations(turn_id)?;
         let params = json!({"sessionId":self.native_session});
         self.transport()?
             .send(&json!({"jsonrpc":"2.0", "method":"session/cancel", "params":params}))
@@ -536,6 +545,7 @@ impl AcpControl {
         self.active = None;
         self.clear_tools();
         self.approvals.clear();
+        self.elicitations.clear();
         self.events.retain(|event| {
             !matches!(
                 event,
@@ -596,6 +606,15 @@ impl AcpControl {
             self.log.observe(&event, self.diagnostics);
             self.events.push_back(event);
         }
+        for (request_id, pending) in std::mem::take(&mut self.elicitations) {
+            let event = AgentEvent::QuestionsResolved {
+                turn_id: pending.turn_id,
+                request_id,
+                outcome: koru_session_protocol::QuestionsOutcome::Expired,
+            };
+            self.log.observe(&event, self.diagnostics);
+            self.events.push_back(event);
+        }
         self.unusable = Some(error);
     }
 
@@ -608,6 +627,7 @@ impl AcpControl {
             .cancelling
             .is_some_and(|value| value.unrepresentable);
         self.expire_permissions(turn_id)?;
+        self.expire_elicitations(turn_id)?;
         let event = if unrepresentable {
             failed_approval_event(turn_id)
         } else {
@@ -789,7 +809,7 @@ impl AcpControl {
             json!({
                 "protocolVersion":ACP_PROTOCOL_VERSION,
                 "clientInfo":{"name":"koru","version":env!("CARGO_PKG_VERSION")},
-                "clientCapabilities":{}
+                "clientCapabilities":client_capabilities(self.config.questions)
             }),
         )?;
         decode::<acp::InitializeResponse>(&initialized).map_err(|_| handshake_rejected())?;
@@ -1165,6 +1185,14 @@ impl AgentControl for AcpControl {
         })
     }
 
+    fn answer_questions(
+        &mut self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        self.answer_elicitation(request_id, answers)
+    }
+
     fn next_event(&mut self, timeout: Duration) -> Result<Option<AgentEvent>, ProviderFailure> {
         let deadline = Instant::now().checked_add(timeout);
         for _ in 0..self.config.event_capacity {
@@ -1305,6 +1333,17 @@ fn temp_owner(name: &str) -> Option<u32> {
     let (pid, sequence) = name.strip_prefix("koru-acp-")?.split_once('-')?;
     sequence.parse::<u64>().ok()?;
     pid.parse().ok()
+}
+
+/// **What Koru tells the agent it can do** at `initialize`: form
+/// elicitation — an agent's questions — only for a session whose creator
+/// draws them (D108). Nothing else is advertised.
+fn client_capabilities(questions: bool) -> Value {
+    if questions {
+        json!({"elicitation":{"form":{}}})
+    } else {
+        json!({})
+    }
 }
 
 fn failure(

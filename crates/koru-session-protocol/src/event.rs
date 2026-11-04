@@ -255,6 +255,32 @@ pub enum AgentEvent {
         turn_id: AgentTurnId,
         text: String,
     },
+    /// Protocol v21 (koru-ai D108). The agent stopped to ask the person —
+    /// Codex's `request_user_input`, Claude's `AskUserQuestion` — bounded by
+    /// [`crate::bound_questions`]. A set is answered once, through
+    /// `answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].
+    /// `blocking: false` is a set the agent does not wait on: its turn runs
+    /// on, and the set may be answered until the agent closes it. A new tag,
+    /// so the host sends it only to a v21 peer; a session created by an
+    /// older peer is never asked at all (the adapter declines for it).
+    QuestionsRequired {
+        turn_id: AgentTurnId,
+        request_id: crate::QuestionRequestId,
+        questions: Vec<crate::AgentQuestion>,
+        #[serde(default = "blocking_default")]
+        blocking: bool,
+    },
+    /// Protocol v21. How a set of questions ended: answered — a secret's
+    /// answer withheld — skipped, or expired with its turn.
+    QuestionsResolved {
+        turn_id: AgentTurnId,
+        request_id: crate::QuestionRequestId,
+        outcome: crate::QuestionsOutcome,
+    },
+}
+
+fn blocking_default() -> bool {
+    true
 }
 
 /// The most characters an agent's notice keeps; the rest is cut at a
@@ -284,6 +310,9 @@ impl AgentEvent {
         match self {
             Self::ModeChanged { .. } => crate::AGENT_MODES_PROTOCOL_VERSION,
             Self::Notice { .. } => crate::AGENT_NOTICES_PROTOCOL_VERSION,
+            Self::QuestionsRequired { .. } | Self::QuestionsResolved { .. } => {
+                crate::QUESTIONS_PROTOCOL_VERSION
+            }
             _ => 1,
         }
     }
@@ -327,6 +356,8 @@ impl std::fmt::Debug for AgentEvent {
             Self::ProviderState { .. } => ("ProviderState", None),
             Self::ModeChanged { turn_id, .. } => ("ModeChanged", Some(turn_id)),
             Self::Notice { turn_id, .. } => ("Notice", Some(turn_id)),
+            Self::QuestionsRequired { turn_id, .. } => ("QuestionsRequired", Some(turn_id)),
+            Self::QuestionsResolved { turn_id, .. } => ("QuestionsResolved", Some(turn_id)),
         };
         f.debug_struct(kind)
             .field("turn_id", &turn)

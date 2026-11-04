@@ -86,6 +86,11 @@ pub struct AcpConfig {
     /// Stdio MCP servers the session asks the agent to start (`session/new`
     /// `mcpServers`), beside any delegated endpoint.
     pub(super) mcp_servers: Vec<crate::providers::McpServerLaunch>,
+    /// The session's creator draws an agent's questions (protocol v21,
+    /// koru-ai D108): Koru advertises form elicitation at initialize, and
+    /// an `elicitation/create` becomes a question set. Off, nothing is
+    /// advertised and Claude is not offered its question tool.
+    pub(super) questions: bool,
     /// The bound on a frame read from the agent.
     pub(super) maximum_inbound_frame_bytes: usize,
     /// The bound on a frame written to it: a prompt carries its pictures.
@@ -134,6 +139,7 @@ impl AcpConfig {
             delegation: None,
             selection: None,
             mcp_servers: Vec::new(),
+            questions: false,
             maximum_inbound_frame_bytes: super::super::DEFAULT_PROVIDER_FRAME_BYTES,
             maximum_prompt_frame_bytes: super::super::DEFAULT_PROVIDER_PROMPT_FRAME_BYTES,
             maximum_input_bytes: 1024 * 1024,
@@ -159,6 +165,13 @@ impl AcpConfig {
     #[must_use]
     pub fn with_mcp_servers(mut self, servers: Vec<crate::providers::McpServerLaunch>) -> Self {
         self.mcp_servers = servers;
+        self
+    }
+
+    /// Whether the agent's questions reach the person (D108).
+    #[must_use]
+    pub fn with_questions(mut self, questions: bool) -> Self {
+        self.questions = questions;
         self
     }
 

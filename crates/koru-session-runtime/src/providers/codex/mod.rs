@@ -7,6 +7,7 @@ mod models;
 mod modes;
 mod normalize;
 mod probe;
+mod questions;
 
 pub use config::CodexConfig;
 pub use launch::{KORU_MCP_SERVER_NAME, mcp_server_overrides};
@@ -55,6 +56,8 @@ pub struct CodexControl {
     native_turns: BTreeMap<String, AgentTurnId>,
     tools: BTreeMap<(AgentTurnId, String), ToolCallId>,
     approvals: BTreeMap<ApprovalId, PendingApproval>,
+    /// Question sets Codex asked and nobody has answered (D108).
+    questions: BTreeMap<koru_session_protocol::QuestionRequestId, questions::PendingQuestions>,
     attachment_paths: BTreeMap<(AgentTurnId, String), AttachmentId>,
     events: VecDeque<AgentEvent>,
     diagnostics: ProviderDiagnostics,
@@ -143,6 +146,7 @@ impl CodexControl {
             native_turns: BTreeMap::new(),
             tools: BTreeMap::new(),
             approvals: BTreeMap::new(),
+            questions: BTreeMap::new(),
             attachment_paths: BTreeMap::new(),
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
@@ -753,6 +757,14 @@ impl AgentControl for CodexControl {
             })?;
         }
         Ok(())
+    }
+
+    fn answer_questions(
+        &mut self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        self.answer_pending_questions(request_id, answers)
     }
 
     fn next_event(&mut self, timeout: Duration) -> Result<Option<AgentEvent>, ProviderFailure> {

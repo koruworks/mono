@@ -1,0 +1,41 @@
+{
+  "id": 41,
+  "method": "item/tool/requestUserInput",
+  "params": {
+    "threadId": "fixture-thread",
+    "turnId": "native-tool-turn",
+    "itemId": "call_fixture_questions",
+    "isBlocking": true,
+    "autoResolutionMs": null,
+    "questions": [
+      {
+        "id": "framework",
+        "header": "Framework",
+        "question": "Which web framework should the service use?",
+        "options": [
+          { "label": "Axum (Recommended)", "description": "Tokio-native, and already a dependency." },
+          { "label": "Actix Web", "description": "Mature, with its own runtime." },
+          { "label": "Rocket", "description": "Batteries included." }
+        ],
+        "isOther": true,
+        "isSecret": false
+      },
+      {
+        "id": "port",
+        "header": "Port",
+        "question": "Which port should it listen on?",
+        "options": null,
+        "isOther": false,
+        "isSecret": false
+      },
+      {
+        "id": "token",
+        "header": "Token",
+        "question": "Paste the deploy token.",
+        "options": null,
+        "isOther": false,
+        "isSecret": true
+      }
+    ]
+  }
+}

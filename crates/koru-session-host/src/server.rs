@@ -154,6 +154,17 @@ impl ConnectionProtocol {
                 .capabilities
                 .supports(koru_session_protocol::capability::DYNAMIC_APPROVALS)
     }
+
+    /// **This peer draws an agent's questions** (protocol v21, koru-ai
+    /// D108): it negotiated the version and `managed-questions`. A managed
+    /// session it creates may ask; any other is told to decline.
+    fn questions(&self) -> bool {
+        self.version >= koru_session_protocol::QUESTIONS_PROTOCOL_VERSION
+            && self.managed_approval
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
+    }
 }
 
 struct AttachmentResourceLifecycle {
@@ -1048,6 +1059,24 @@ fn handle_request(
                 })
             }
         }
+        Request::AnswerQuestions {
+            session_id,
+            controller_lease,
+            idempotency_key,
+            request_id,
+            answers,
+        } => {
+            if !protocol.questions() {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else {
+                with_session(state, session_id, |session| {
+                    session
+                        .answer_questions(controller_lease, idempotency_key, request_id, answers)
+                        .map_err(failure)?;
+                    Ok(Response::Ok)
+                })
+            }
+        }
         Request::CancelTurn {
             session_id,
             controller_lease,
@@ -1825,6 +1854,10 @@ fn create_profile_session(
                     executable: executable.into_os_string(),
                     delegation: request.delegation.clone(),
                     selection: request.selection.clone(),
+                    // Only a peer that draws an agent's questions gets an
+                    // agent that asks them (koru-ai D108); every other
+                    // session's agent declines, as before v21.
+                    questions: protocol.questions(),
                     // A chat's agent gets Koru's own tools through the
                     // desktop bridge; a terminal's or a run's does not.
                     mcp_servers: match request.origin {
@@ -2335,7 +2368,8 @@ mod bridge_pages_tests {
 }
 
 /// **An older peer is never sent an agent event it cannot read** —
-/// `mode_changed` (protocol v19), `notice` (v20). It gets an empty message
+/// `mode_changed` (protocol v19), `notice` (v20), `questions_required` and
+/// `questions_resolved` (v21). It gets an empty message
 /// delta of the same turn in its place, which reads as nothing and keeps
 /// every sequence number where it was: a notice is dropped for it, never
 /// turned into reply text. Filtered here, like the approvals below, never
@@ -2345,7 +2379,9 @@ fn strip_newer_agent_events(frame: &mut FromHost, version: u32) {
         if event.minimum_protocol_version() > version {
             let turn_id = match event {
                 koru_session_protocol::AgentEvent::ModeChanged { turn_id, .. }
-                | koru_session_protocol::AgentEvent::Notice { turn_id, .. } => *turn_id,
+                | koru_session_protocol::AgentEvent::Notice { turn_id, .. }
+                | koru_session_protocol::AgentEvent::QuestionsRequired { turn_id, .. }
+                | koru_session_protocol::AgentEvent::QuestionsResolved { turn_id, .. } => *turn_id,
                 _ => return,
             };
             *event = koru_session_protocol::AgentEvent::MessageDelta {

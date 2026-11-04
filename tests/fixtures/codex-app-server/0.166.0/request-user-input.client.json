@@ -1,0 +1,10 @@
+{
+  "id": 41,
+  "result": {
+    "answers": {
+      "framework": { "answers": ["Axum (Recommended)"] },
+      "port": { "answers": ["8080"] },
+      "token": { "answers": ["sk-fixture-SECRET"] }
+    }
+  }
+}

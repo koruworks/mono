@@ -349,6 +349,17 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
     },
+    /// Protocol v21 (koru-ai D108): answer the set of questions an agent
+    /// asked, or skip it. `answers: None` skips the whole set; the agent is
+    /// told the person declined. Requires `managed-questions`.
+    AnswerQuestions {
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        idempotency_key: IdempotencyKey,
+        request_id: koru_session_protocol::QuestionRequestId,
+        #[serde(default)]
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    },
     /// Protocol v9 turn-specific managed cancellation. A delayed request can
     /// never cancel a later active turn.
     CancelTurn {

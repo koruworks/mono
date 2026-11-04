@@ -591,6 +591,9 @@ impl ManagedModel {
             // An agent's status line (koru-ai D69): the AI chat shows it, and
             // it is not part of the reply this transcript draws.
             AgentEvent::Notice { .. } => {}
+            // An agent's questions (koru-ai D108): the AI chat draws them; a
+            // terminal's session is not created to, and none arrive.
+            AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
             AgentEvent::MessageDelta { .. } => unreachable!("handled above"),
         }
     }

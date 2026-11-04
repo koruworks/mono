@@ -199,6 +199,39 @@ fn event_bytes(event: &AgentEvent) -> usize {
             AgentEvent::TurnFailed { error, .. } => error.message.len(),
             AgentEvent::ModeChanged { mode, .. } => mode.as_str().len(),
             AgentEvent::Notice { text, .. } => text.len(),
+            AgentEvent::QuestionsRequired { questions, .. } => {
+                questions.iter().fold(0usize, |bytes, question| {
+                    question.options.iter().fold(
+                        bytes
+                            .saturating_add(question.id.len())
+                            .saturating_add(question.header.len())
+                            .saturating_add(question.question.len()),
+                        |bytes, option| {
+                            bytes
+                                .saturating_add(option.label.len())
+                                .saturating_add(option.description.len())
+                        },
+                    )
+                })
+            }
+            AgentEvent::QuestionsResolved { outcome, .. } => match outcome {
+                koru_session_protocol::QuestionsOutcome::Answered { answers } => {
+                    answers.iter().fold(0usize, |bytes, answer| {
+                        bytes
+                            .saturating_add(answer.question_id.len())
+                            .saturating_add(match &answer.value {
+                                koru_session_protocol::QuestionAnswerValue::Option { label } => {
+                                    label.len()
+                                }
+                                koru_session_protocol::QuestionAnswerValue::Text { text } => {
+                                    text.len()
+                                }
+                                koru_session_protocol::QuestionAnswerValue::Withheld => 0,
+                            })
+                    })
+                }
+                _ => 0,
+            },
             AgentEvent::TurnStarted { .. }
             | AgentEvent::ToolCompleted { .. }
             | AgentEvent::ApprovalResolved { .. }

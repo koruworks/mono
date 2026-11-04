@@ -286,6 +286,7 @@ fn launch_secrets_are_bounded_and_never_printed() {
         delegation: Some(launch),
         selection: None,
         mcp_servers: Vec::new(),
+        questions: false,
     };
     let printed = format!("{request:?}");
     assert!(!printed.contains(SECRET), "{printed}");

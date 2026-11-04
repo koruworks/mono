@@ -30,3 +30,12 @@ words. Model and level names are replaced with `<label>`. `bypassPermissions`
 is listed because the wrapper was not running as root; `fast` is the select
 fallback (`on`/`off`) a client gets when it does not advertise boolean config
 options, as Koru does not.
+
+ask-user-question.elicitation.json is the `elicitation/create` request the
+wrapper sends for an `AskUserQuestion` call of two questions — one
+single-select, one multi-select — once the client advertised
+`clientCapabilities.elicitation.form` (koru-ai D108, 2026-11-03). It is
+written from the 0.76.0 source (`askUserQuestionsToCreateRequest` in
+`src/elicitation.ts`, at the `v0.76.0` tag), not observed from a model turn:
+no prompt was sent. The installed 0.76.0 bundles `@agentclientprotocol/sdk`
+1.4.0, whose `elicitation/create` method name and form schema it follows.

@@ -267,6 +267,7 @@ fn managed_harness(capabilities: CapabilitySet) -> ManagedHarness {
                 delegation: None,
                 selection: None,
                 mcp_servers: Vec::new(),
+                questions: false,
             },
             created_at_ms: 10,
             origin: Default::default(),

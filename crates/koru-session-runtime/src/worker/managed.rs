@@ -36,6 +36,11 @@ enum ManagedCommand {
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
         reply: SyncSender<Result<(), ProviderFailure>>,
     },
+    Questions {
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+        reply: SyncSender<Result<(), ProviderFailure>>,
+    },
 }
 
 struct HandleInner {
@@ -99,6 +104,20 @@ impl ManagedHandle {
             approval_id,
             decision,
             choice,
+            reply,
+        })?;
+        receive(response)
+    }
+
+    pub(super) fn answer_questions(
+        &self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ErrorCode> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.send(ManagedCommand::Questions {
+            request_id,
+            answers,
             reply,
         })?;
         receive(response)
@@ -220,6 +239,13 @@ fn handle_command(control: &mut dyn AgentControl, command: ManagedCommand) {
             reply,
         } => {
             let _ = reply.send(control.answer_approval(approval_id, decision, choice));
+        }
+        ManagedCommand::Questions {
+            request_id,
+            answers,
+            reply,
+        } => {
+            let _ = reply.send(control.answer_questions(request_id, answers));
         }
     }
 }

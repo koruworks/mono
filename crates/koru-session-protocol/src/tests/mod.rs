@@ -6,6 +6,7 @@ mod dependency;
 mod ids;
 mod negotiation;
 mod project;
+mod questions;
 mod render;
 mod schema;
 mod state;

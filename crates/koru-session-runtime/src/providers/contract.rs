@@ -110,6 +110,10 @@ pub struct ManagedProviderRequest {
     /// each into its own configuration form privately, as it does the
     /// delegated endpoint.
     pub mcp_servers: Vec<McpServerLaunch>,
+    /// The session's creator draws an agent's questions (protocol v21,
+    /// koru-ai D108). Off, the adapter declines an agent's question as it
+    /// always has, and offers it no way to ask.
+    pub questions: bool,
 }
 
 /// One stdio MCP server the agent starts as its own child: the program,
@@ -406,6 +410,24 @@ pub trait AgentControl: Send {
         decision: ApprovalDecision,
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
     ) -> Result<(), ProviderFailure>;
+
+    /// **Answer a set of questions the agent asked** (protocol v21, koru-ai
+    /// D108), or skip it with `None`. The answers are checked against the
+    /// set ([`koru_session_protocol::validate_answers`]); a set that is not
+    /// pending is `ApprovalStale`, like an approval. An adapter that never
+    /// asks has nothing pending.
+    fn answer_questions(
+        &mut self,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        let _ = (request_id, answers);
+        Err(ProviderFailure::new(
+            ErrorCode::ApprovalStale,
+            ProviderStage::Approval,
+            ProviderDiagnostic::InvalidState,
+        ))
+    }
 
     /// Returns normalized events only. Unknown provider events increment the
     /// diagnostic counter and are not surfaced as invented Koru semantics.

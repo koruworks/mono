@@ -139,6 +139,12 @@ uuid_id!(
     "approval-choice"
 );
 uuid_id!(
+    /// One set of questions an agent asked (protocol v21, koru-ai D108),
+    /// minted by the adapter; the agent's own request id never crosses.
+    QuestionRequestId,
+    "question-request"
+);
+uuid_id!(
     /// One provider-neutral managed tool call.
     ToolCallId,
     "tool-call"

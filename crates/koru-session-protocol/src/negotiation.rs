@@ -82,7 +82,17 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// turn at the session's old level: the v16 hazard again, so a client sends
 /// it only to a v20 host, and a chat against an older one keeps its level
 /// from its start.
-pub const MAX_PROTOCOL_VERSION: u32 = 20;
+///
+/// v21 adds an agent's **questions** (koru-ai D108): the
+/// `questions_required` and `questions_resolved` agent events and the
+/// `answer_questions` request, behind the `managed-questions` capability. A
+/// session asks only when the peer that created it negotiated both — the
+/// host tells the adapter at launch, and for any other session the adapter
+/// declines the agent's question as Koru always has (Codex is answered
+/// "unsupported", Claude is not offered its question tool). The events are
+/// new tags, so a host sends them only to a v21 peer and an older one gets
+/// an empty delta in their place, as with `notice`.
+pub const MAX_PROTOCOL_VERSION: u32 = 21;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
 /// failed call's message (`ToolCompleted.detail`), what the call was asked
@@ -103,6 +113,9 @@ pub const AGENT_NOTICES_PROTOCOL_VERSION: u32 = 20;
 /// The first version whose pending input may carry a turn's reasoning
 /// level. The same bump as the notice.
 pub const TURN_REASONING_PROTOCOL_VERSION: u32 = 20;
+/// The first version whose agent events may carry `questions_required` and
+/// `questions_resolved`, and that takes `answer_questions`.
+pub const QUESTIONS_PROTOCOL_VERSION: u32 = 21;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

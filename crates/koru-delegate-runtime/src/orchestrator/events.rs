@@ -453,6 +453,9 @@ impl Orchestrator {
             // An agent's status line (koru-ai D69): the chat shows it; a run
             // keeps its reply and its steps, and nothing else.
             AgentEvent::Notice { .. } => {}
+            // An agent's questions (koru-ai D108): a run's sessions are not
+            // created to draw them, so its agent declines and none arrive.
+            AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
         }
         Ok(HandleOutcome::Continue)
     }

@@ -42,6 +42,32 @@ fn dynamic_approvals_need_a_managed_protocol_and_negotiated_capability() {
     assert!(protocol(14, true, true).dynamic_approvals());
 }
 
+/// **Only a v21 peer that offered `managed-questions` gets an agent that
+/// asks** (koru-ai D108): every other peer's sessions decline as before,
+/// and its `answer_questions` is refused.
+#[test]
+fn questions_need_protocol_twenty_one_and_their_capability() {
+    let with_questions = |version: u32| {
+        let mut peer = protocol(version, true, false);
+        peer.capabilities = CapabilitySet::new(vec![
+            CapabilityName::from_str(capability::MANAGED_QUESTIONS).unwrap(),
+        ]);
+        peer
+    };
+    assert!(with_questions(21).questions());
+    assert!(!with_questions(20).questions(), "a v20 peer is never asked");
+    assert!(!protocol(21, true, true).questions(), "not offered");
+    let mut unmanaged = with_questions(21);
+    unmanaged.managed_approval = false;
+    assert!(!unmanaged.questions());
+    assert!(
+        crate::protocol_offer()
+            .capabilities
+            .supports(capability::MANAGED_QUESTIONS),
+        "the host offers it"
+    );
+}
+
 fn events() -> Vec<SequencedAgentEvent> {
     let turn_id = AgentTurnId::mint();
     let approval_id = ApprovalId::mint();
@@ -236,6 +262,55 @@ async fn an_older_reader_gets_an_empty_delta_for_a_notice() {
     )
     .await;
     assert_eq!(mode["event"]["kind"], "mode_changed");
+}
+
+/// **An agent's questions reach only a v21 reader** (koru-ai D108); a v20
+/// one gets an empty delta of the same turn and sequence for each, which
+/// reads as nothing — and a notice still reaches it.
+#[tokio::test]
+async fn an_older_reader_gets_an_empty_delta_for_questions() {
+    let turn_id = AgentTurnId::mint();
+    let request_id = koru_session_protocol::QuestionRequestId::mint();
+    let asked = || AgentEvent::QuestionsRequired {
+        turn_id,
+        request_id,
+        questions: vec![koru_session_protocol::AgentQuestion {
+            id: "q".into(),
+            header: String::new(),
+            question: "Which one?".into(),
+            options: Vec::new(),
+            allow_other: false,
+            secret: false,
+        }],
+        blocking: true,
+    };
+    let closed = || AgentEvent::QuestionsResolved {
+        turn_id,
+        request_id,
+        outcome: koru_session_protocol::QuestionsOutcome::Skipped,
+    };
+    let current = written_agent_event(asked(), 21).await;
+    assert_eq!(current["event"]["kind"], "questions_required");
+    assert_eq!(current["event"]["questions"][0]["question"], "Which one?");
+    assert_eq!(
+        written_agent_event(closed(), 21).await["event"]["kind"],
+        "questions_resolved"
+    );
+    for event in [asked(), closed()] {
+        let older = written_agent_event(event, 20).await;
+        assert_eq!(older["sequence"], 7);
+        assert_eq!(older["event"]["kind"], "message_delta");
+        assert_eq!(older["event"]["text"], "");
+    }
+    let notice = written_agent_event(
+        AgentEvent::Notice {
+            turn_id,
+            text: "Hook failed".into(),
+        },
+        20,
+    )
+    .await;
+    assert_eq!(notice["event"]["kind"], "notice");
 }
 
 /// **`mode_changed` reaches only a v19 reader** (koru-ai D7); an older one

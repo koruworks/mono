@@ -2772,3 +2772,6 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
         .collect();
     assert_eq!(efforts, [json!("low"), json!("xhigh"), json!("xhigh")]);
 }
+
+/// An agent's questions (koru-ai D108).
+mod questions;

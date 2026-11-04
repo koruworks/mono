@@ -255,7 +255,8 @@ impl ManagedProviderFactory for AcpFactory {
         )?
         .with_delegation(request.delegation)
         .with_selection(request.selection)
-        .with_mcp_servers(request.mcp_servers);
+        .with_mcp_servers(request.mcp_servers)
+        .with_questions(request.questions);
         let wake: Arc<dyn ProviderWake> = config.wake.clone();
         Ok(ManagedProvider {
             control: Box::new(AcpControl::new(config)),

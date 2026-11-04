@@ -793,6 +793,42 @@ impl SessionClient {
         })?)
     }
 
+    /// **Answer the questions an agent asked, or skip them** (`None`)
+    /// (protocol v21, koru-ai D108). Refused before it is sent to a host
+    /// that did not negotiate questions — which has none pending anyway.
+    pub fn answer_questions(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        idempotency_key: IdempotencyKey,
+        request_id: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ClientError> {
+        if !self.supports_questions() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        expect_ok(self.request(Request::AnswerQuestions {
+            session_id,
+            controller_lease,
+            idempotency_key,
+            request_id,
+            answers,
+        })?)
+    }
+
+    /// Whether the host asks this client an agent's questions and takes
+    /// their answers (protocol v21, `managed-questions`).
+    pub fn supports_questions(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::QUESTIONS_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::MANAGED_QUESTIONS)
+    }
+
     pub fn supports_dynamic_approvals(&self) -> bool {
         self.host.agreement.version >= 8
             && self

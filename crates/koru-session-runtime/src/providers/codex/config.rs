@@ -38,6 +38,10 @@ pub struct CodexConfig {
     /// Stdio MCP servers rendered as `mcp_servers.<name>` overrides, beside
     /// any delegated endpoint.
     pub(super) mcp_servers: Vec<crate::providers::McpServerLaunch>,
+    /// The session's creator draws an agent's questions (protocol v21,
+    /// koru-ai D108): `request_user_input` becomes a question set. Off, the
+    /// request is answered "unsupported" as it always was.
+    pub(super) questions: bool,
 }
 
 impl CodexConfig {
@@ -69,7 +73,15 @@ impl CodexConfig {
             delegation: None,
             selection: None,
             mcp_servers: Vec::new(),
+            questions: false,
         })
+    }
+
+    /// Whether the agent's questions reach the person (D108).
+    #[must_use]
+    pub fn with_questions(mut self, questions: bool) -> Self {
+        self.questions = questions;
+        self
     }
 
     /// Make this a delegated launch: the endpoint and allowlist are

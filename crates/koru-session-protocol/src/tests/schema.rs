@@ -75,6 +75,7 @@ fn every_public_model_declaration_is_registered() {
     declared.remove("IdParseError");
     declared.remove("TokenParseError");
     declared.remove("ApprovalChoiceError");
+    declared.remove("QuestionAnswerError");
     let registered: std::collections::BTreeSet<_> = schema::TYPE_NAMES
         .iter()
         .map(|name| (*name).to_owned())

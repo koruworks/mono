@@ -188,6 +188,12 @@ pub mod capability {
     /// folder. Gated because an older host would ignore the flag and start a
     /// fresh conversation under a button that said *Resume*.
     pub const LAUNCH_RESUME: &str = "launch-resume";
+    /// An agent's questions (protocol v21, koru-ai D108): the peer that
+    /// creates a managed session draws an agent's questions and answers
+    /// them. Offered only by a client that does — the chat's — so a run's
+    /// agent and a terminal tab's are never asked anything they cannot
+    /// answer, and decline as before.
+    pub const MANAGED_QUESTIONS: &str = "managed-questions";
 
     pub const ALL: &[&str] = &[
         CONTROLLER_LEASES,
@@ -221,5 +227,6 @@ pub mod capability {
         SESSION_ORIGIN,
         LAUNCH_SELECTION,
         LAUNCH_RESUME,
+        MANAGED_QUESTIONS,
     ];
 }

@@ -40,6 +40,9 @@ impl AcpControl {
                 if method == "session/request_permission" {
                     return self.permission(id.clone(), &frame["params"]);
                 }
+                if method == super::elicitation::CREATE && self.config.questions {
+                    return self.elicitation(id.clone(), &frame["params"]);
+                }
                 self.mark_unknown();
                 return self.transport()?.send(&json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32601,"message":"Method not found"}}));
@@ -50,6 +53,9 @@ impl AcpControl {
             }
             if method == "session/update" {
                 return self.update(&frame["params"]);
+            }
+            if method == super::elicitation::CANCEL_REQUEST {
+                return self.cancel_request(&frame["params"]);
             }
             self.mark_unknown();
             return Ok(());

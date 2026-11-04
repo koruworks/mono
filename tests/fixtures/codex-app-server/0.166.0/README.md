@@ -35,3 +35,15 @@ regenerating the schema from the installed 0.166.0: the same digest, and
 turn, approval, interruption or image turn has been recorded under 0.166.0.
 The unhandled server requests are still unhandled, and the many additive
 notifications are ignored without having been observed in a turn.
+
+**An agent's questions** (koru-ai D108, session protocol v21, 2026-11-03).
+`request-user-input.server.json` is an `item/tool/requestUserInput` server
+request and `request-user-input.client.json` the
+`ToolRequestUserInputResponse` the adapter answers it with, both in the shapes
+of the schema regenerated from the installed 0.166.0 into a scratch folder
+(`ToolRequestUserInputParams.json` and `ToolRequestUserInputResponse.json`,
+identical to the copies the session lead generated): three questions — one
+with options and *Other*, one with no options, one secret — and an answer
+each. They are written from the schema, not recorded from a turn: no model
+turn was started, and how a live Codex reads an *Other* answer or a skip
+(`{"answers": {}}`) is not established.

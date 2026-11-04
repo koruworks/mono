@@ -26,7 +26,7 @@ impl CodexControl {
         Ok(())
     }
 
-    fn mark_unknown(&mut self) {
+    pub(super) fn mark_unknown(&mut self) {
         self.diagnostics.unknown_events = self.diagnostics.unknown_events.saturating_add(1);
     }
 
@@ -55,6 +55,9 @@ impl CodexControl {
             ));
         };
         let params = frame.get("params").unwrap_or(&Value::Null);
+        if method == super::questions::METHOD {
+            return self.handle_questions(request_id, params);
+        }
         let kind = match method {
             "item/commandExecution/requestApproval" => ApprovalKind::Command,
             "item/fileChange/requestApproval" => ApprovalKind::FileChange,
@@ -96,7 +99,7 @@ impl CodexControl {
         })
     }
 
-    fn reply_error(
+    pub(super) fn reply_error(
         &mut self,
         request_id: RpcId,
         code: i32,
@@ -340,6 +343,9 @@ impl CodexControl {
         let Some(approval_id) = self.approvals.iter().find_map(|(approval_id, pending)| {
             (pending.request_id == request_id).then_some(*approval_id)
         }) else {
+            // A question set Codex took back itself — a set it did not
+            // wait on, closed when it moved on — expires.
+            self.expire_resolved_questions(&request_id)?;
             return Ok(());
         };
         let pending = self
@@ -386,6 +392,7 @@ impl CodexControl {
                 approval_id,
             })?;
         }
+        self.expire_turn_questions(turn_id)?;
         self.tools
             .retain(|(tool_turn_id, _), _| *tool_turn_id != turn_id);
         self.attachment_paths
@@ -426,7 +433,7 @@ impl CodexControl {
         })
     }
 
-    fn koru_turn(&self, native: Option<&Value>) -> Option<AgentTurnId> {
+    pub(super) fn koru_turn(&self, native: Option<&Value>) -> Option<AgentTurnId> {
         native
             .and_then(Value::as_str)
             .and_then(|value| self.native_turns.get(value))
