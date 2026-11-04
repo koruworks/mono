@@ -10,9 +10,8 @@
 //! `[[koru://doc/<id>]]` the conversation draws as a titled link
 //! ([`crate::doc_links`]).
 //!
-//! One module below both chat hosts — the embedded pane and tab in
-//! `apps/koru`, and the standalone `koru-ai-chat` window — so neither host
-//! repeats what `MainView` does for a document leaf: the private workspace,
+//! One module below the chat hosts — the embedded pane and tab in
+//! `apps/koru` — so no host repeats what `MainView` does for a document leaf: the private workspace,
 //! the [`Editor`], the entity search behind `@`, and the loop that drains the
 //! picker's requests and delivers its answers.
 //!
@@ -723,9 +722,9 @@ impl ChatComposer {
         }
         let scope = match self.current_workspace {
             Some(current) => Some((current, self.workspaces.clone())),
-            // No workspace on screen — the standalone window. Every live
-            // workspace in the catalog is the scope, the first one standing in
-            // for "current", which only seeds the picker's bootstrap.
+            // No workspace on screen. Every live workspace in the catalog is
+            // the scope, the first one standing in for "current", which only
+            // seeds the picker's bootstrap.
             None => self
                 .search
                 .as_mut()

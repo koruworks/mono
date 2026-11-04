@@ -605,7 +605,7 @@ impl ChatSurface {
         let request = koru_ai_wire::SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
-            surface: self.mode.wire(),
+            surface: crate::SURFACE,
             markdown: String::new(),
             explicit_refs: Vec::new(),
             reasoning_override: None,

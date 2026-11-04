@@ -10,13 +10,13 @@ use vello::kurbo::Affine;
 
 use super::*;
 use crate::reader::DestinationOption;
-use crate::{ChatSurface, SurfaceMode, TOOL_ACCESS_CHIP_MAX_W};
+use crate::{ChatSurface, TOOL_ACCESS_CHIP_MAX_W};
 use koru_ui::button::{ActionButton, ActionStyle};
 
 /// A surface on an OpenAI chat that may reach the second of `count`
-/// workspaces, the access panel open.
+/// workspaces, all in the window's profile, the access panel open.
 fn open_panel(count: usize) -> ChatSurface {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
     let mut transcript = crate::unmade_transcript(ModelSelection {
@@ -24,14 +24,16 @@ fn open_panel(count: usize) -> ChatSurface {
         requested_model: "gpt-test".into(),
         default_reasoning: ReasoningChoice::Default,
     });
+    let profile = ProfileId::new();
     surface.destinations = (0..count)
         .map(|index| DestinationOption {
-            profile_id: ProfileId::new(),
+            profile_id: profile,
             workspace_id: WorkspaceId::new(),
-            label: format!("Workspace {index}"),
+            label: format!("Profile / Workspace {index}"),
             name: format!("Workspace {index}"),
         })
         .collect();
+    surface.context_workspace = surface.destinations.first().map(|first| first.workspace_id);
     if let Some(second) = surface.destinations.get(1) {
         transcript.tool_policy.workspace_ids = vec![second.workspace_id];
     }
@@ -43,9 +45,8 @@ fn open_panel(count: usize) -> ChatSurface {
 
 /// A chat in two profiles' worth of workspaces — *Private*'s Travel and
 /// Home, *Work*'s Project, Plan and Ops — granted Travel and Project, the
-/// access panel open. In a window whose workspace is Travel unless
-/// `standalone`, the machine-wide window, which has none.
-fn two_profiles(standalone: bool) -> (ChatSurface, [WorkspaceId; 5]) {
+/// access panel open, in a window on Travel.
+fn two_profiles() -> (ChatSurface, [WorkspaceId; 5]) {
     let mut surface = open_panel(0);
     let private = ProfileId::new();
     let work = ProfileId::new();
@@ -74,9 +75,7 @@ fn two_profiles(standalone: bool) -> (ChatSurface, [WorkspaceId; 5]) {
         .unwrap()
         .tool_policy
         .workspace_ids = vec![ids[0], ids[1]];
-    if !standalone {
-        surface.context_workspace = Some(ids[0]);
-    }
+    surface.context_workspace = Some(ids[0]);
     (surface, ids)
 }
 
@@ -93,7 +92,7 @@ fn row_labels(surface: &ChatSurface) -> Vec<String> {
 /// the one of them granted: the grant to *Work*'s Project is not counted.
 #[test]
 fn the_panel_lists_and_counts_only_the_current_profiles_workspaces() {
-    let (mut surface, ids) = two_profiles(false);
+    let (mut surface, ids) = two_profiles();
     let private = surface.destinations[0].profile_id;
     assert_eq!(surface.current_profile(), Some(private));
     assert_eq!(row_labels(&surface), ["Travel", "Home"]);
@@ -122,7 +121,7 @@ fn the_panel_lists_and_counts_only_the_current_profiles_workspaces() {
 /// *Private* finds nothing, and a name from another profile is not offered.
 #[test]
 fn the_filter_matches_only_the_current_profiles_names() {
-    let (mut surface, _) = two_profiles(false);
+    let (mut surface, _) = two_profiles();
     surface
         .workspace_search
         .set_text(&mut surface.engine, "Private");
@@ -142,7 +141,7 @@ fn the_filter_matches_only_the_current_profiles_names() {
 /// Project, which the panel did not show.
 #[test]
 fn choosing_a_workspace_keeps_another_profiles_grant() {
-    let (mut surface, ids) = two_profiles(false);
+    let (mut surface, ids) = two_profiles();
     let (reader, commands, _updates) = crate::reader::Reader::test_pair();
     surface.reader = Some(reader);
     assert!(surface.toggle_tool_workspace(ids[2]));
@@ -159,27 +158,19 @@ fn choosing_a_workspace_keeps_another_profiles_grant() {
     }
 }
 
-/// **The standalone Koru AI window belongs to no profile** (it is
-/// machine-wide): its panel lists every profile's workspaces as *Profile /
-/// Workspace* and counts every grant, as before.
+/// **No profile known, no workspace offered.** Until the catalog has
+/// placed the window's workspace there is no current profile, and the panel
+/// lists none rather than every profile's.
 #[test]
-fn the_standalone_window_lists_every_profiles_workspaces() {
-    let (mut surface, _) = two_profiles(true);
+fn a_window_whose_profile_is_not_known_yet_offers_no_workspace() {
+    let (mut surface, _) = two_profiles();
+    surface.context_workspace = None;
     assert_eq!(surface.current_profile(), None);
-    assert_eq!(
-        row_labels(&surface),
-        [
-            "Private / Travel",
-            "Work / Project",
-            "Private / Home",
-            "Work / Plan",
-            "Work / Ops"
-        ]
-    );
+    assert!(row_labels(&surface).is_empty());
     let (_, spec, _) = surface.tool_access_frame().unwrap();
-    assert_eq!(spec.count, "2/5");
+    assert_eq!(spec.count, "0/0");
     surface.tool_access_open = false;
-    assert_eq!(surface.tool_access_label(), "2 spaces");
+    assert_eq!(surface.tool_access_label(), "0 spaces");
 }
 
 fn near(a: f32, b: f32, what: &str) {

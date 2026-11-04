@@ -11,7 +11,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::*;
 use crate::reader::Update;
-use crate::{ChatSurface, Focus, SurfaceMode};
+use crate::{ChatSurface, Focus};
 
 const COMMENTARY: &str = "I'll look at the file.";
 const ANSWER: &str = "Done: it works.";
@@ -164,7 +164,7 @@ fn layout_of(surface: &ChatSurface, id: MessageId) -> &crate::MessageLayout {
 
 #[test]
 fn a_finished_reply_folds_its_work_and_keeps_its_answer() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let (reply, _) = finished(&mut surface);
     rebuild(&mut surface);
 
@@ -192,7 +192,7 @@ fn a_finished_reply_folds_its_work_and_keeps_its_answer() {
 
 #[test]
 fn the_header_opens_the_commentary_and_the_steps_by_click_and_by_key() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let (reply, [first, _]) = finished(&mut surface);
     rebuild(&mut surface);
     let area = surface.conversation_rect();
@@ -236,7 +236,7 @@ fn the_header_opens_the_commentary_and_the_steps_by_click_and_by_key() {
 
 #[test]
 fn a_running_reply_shows_what_it_said_and_the_call_it_is_making() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let transcript = transcript();
     let chat = transcript.chat.id;
     surface.transcript = Some(transcript);
@@ -281,7 +281,7 @@ fn a_running_reply_shows_what_it_said_and_the_call_it_is_making() {
 /// the person opens shows its detail, live, and the rest stay shut.
 #[test]
 fn live_steps_stay_one_line_until_opened() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let transcript = transcript();
     let chat = transcript.chat.id;
     surface.transcript = Some(transcript);
@@ -411,7 +411,7 @@ fn stream_news(surface: &mut ChatSurface, side_failure: bool) -> MessageId {
 #[test]
 fn a_running_reply_with_its_calls_done_is_still_working_above_its_answer() {
     for side_failure in [false, true] {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let reply = stream_news(&mut surface, side_failure);
 
         assert_eq!(
@@ -439,7 +439,7 @@ fn a_running_reply_with_its_calls_done_is_still_working_above_its_answer() {
 
 #[test]
 fn a_pending_permission_request_is_never_folded() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let (reply, _) = finished(&mut surface);
     let transcript = surface.transcript.as_mut().unwrap();
     let chat = transcript.chat.id;
@@ -467,7 +467,7 @@ fn a_pending_permission_request_is_never_folded() {
 
 #[test]
 fn a_reply_without_tools_reads_as_before() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let mut transcript = transcript();
     let chat = transcript.chat.id;
     let reply = message(chat, ChatRole::Assistant, MessageState::Complete, ANSWER);
@@ -487,7 +487,7 @@ fn a_reply_without_tools_reads_as_before() {
 
 #[test]
 fn a_reply_from_before_offsets_folds_only_its_steps() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let mut transcript = transcript();
     let chat = transcript.chat.id;
     let markdown = format!("{COMMENTARY}{ANSWER}");
@@ -516,7 +516,7 @@ fn a_reply_from_before_offsets_folds_only_its_steps() {
 /// file cannot be read (as under test, where nothing is), not drawn at all.
 #[test]
 fn a_read_picture_is_drawn_in_its_opened_detail_and_a_missing_one_is_not() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let mut transcript = transcript();
     let folder = std::env::temp_dir().join("koru-d38");
     transcript.chat.agent_working_folder = Some(folder.to_string_lossy().into_owned());

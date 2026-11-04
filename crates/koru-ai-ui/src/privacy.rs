@@ -94,9 +94,8 @@ impl ChatSurface {
     }
 
     /// **The profile this chat is in**: the one that owns the window's
-    /// workspace. `None` in the standalone Koru AI window, which is
-    /// machine-wide and belongs to no profile, and while the workspace
-    /// catalog has not placed the window's workspace.
+    /// workspace. `None` while the workspace catalog has not placed the
+    /// window's workspace.
     pub(super) fn current_profile(&self) -> Option<ProfileId> {
         let workspace = self.context_workspace?;
         self.destinations
@@ -106,40 +105,28 @@ impl ChatSurface {
     }
 
     /// **The workspaces the access panel offers**, as indices into the
-    /// catalog: the current profile's only. Where there is no current
-    /// profile, every profile's.
+    /// catalog: the current profile's only — none until the catalog has
+    /// placed the window's workspace.
     ///
     /// A grant to another profile's workspace is left in the chat's policy —
     /// not shown, not counted, and kept, so it is there again in that
     /// profile. It is not withheld from the chat's tools: the service reads
     /// the stored policy and is not told which profile a window is in.
     pub(super) fn scoped_workspace_indices(&self) -> Vec<usize> {
-        let profile = self.current_profile();
+        let Some(profile) = self.current_profile() else {
+            return Vec::new();
+        };
         self.destinations
             .iter()
             .enumerate()
-            .filter(|(_, destination)| profile.is_none_or(|p| destination.profile_id == p))
+            .filter(|(_, destination)| destination.profile_id == profile)
             .map(|(index, _)| index)
             .collect()
     }
 
-    /// A workspace as its row names it: its own name in one profile's list,
-    /// *Profile / Workspace* where every profile's are listed together.
-    fn workspace_row_label(&self, destination: &DestinationOption, scoped: bool) -> String {
-        if scoped {
-            destination.name.clone()
-        } else {
-            destination.label.clone()
-        }
-    }
-
     /// How many of the chat's workspaces the panel and the chip count: the
-    /// granted ones among those the panel offers. Where there is no current
-    /// profile, every grant — as before profiles scoped the list.
+    /// granted ones among those the panel offers.
     pub(super) fn granted_workspace_count(&self, granted: &[WorkspaceId]) -> usize {
-        if self.current_profile().is_none() {
-            return granted.len();
-        }
         self.scoped_workspace_indices()
             .into_iter()
             .filter(|index| granted.contains(&self.destinations[*index].workspace_id))
@@ -169,7 +156,6 @@ impl ChatSurface {
         let lang = self.lang;
         let matching = self.matching_workspace_indices();
         let offered = self.scoped_workspace_indices().len();
-        let scoped = self.current_profile().is_some();
         let empty = matching.is_empty().then(|| {
             if offered == 0 {
                 self.workspace_catalog_error
@@ -192,7 +178,7 @@ impl ChatSurface {
                     let workspace = &self.destinations[*index];
                     elements::AccessRow {
                         key: elements::row_key(workspace.workspace_id),
-                        label: self.workspace_row_label(workspace, scoped),
+                        label: workspace.name.clone(),
                         chosen: policy.workspace_ids.contains(&workspace.workspace_id),
                     }
                 })
@@ -273,13 +259,12 @@ impl ChatSurface {
     /// their row shows.
     pub(super) fn matching_workspace_indices(&self) -> Vec<usize> {
         let query = self.workspace_search.raw_text().trim().to_lowercase();
-        let scoped = self.current_profile().is_some();
         self.scoped_workspace_indices()
             .into_iter()
             .filter(|index| {
                 query.is_empty()
-                    || self
-                        .workspace_row_label(&self.destinations[*index], scoped)
+                    || self.destinations[*index]
+                        .name
                         .to_lowercase()
                         .contains(&query)
             })

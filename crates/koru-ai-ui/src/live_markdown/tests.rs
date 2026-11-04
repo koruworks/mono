@@ -7,8 +7,8 @@ use koru_ai_core::{
 use koru_ai_wire::ChatTranscript;
 
 use super::*;
+use crate::ChatSurface;
 use crate::reader::Update;
-use crate::{ChatSurface, SurfaceMode};
 
 const HEADING: &str = "# Top US News";
 const FIRST: &str = "**1. Election eve** brings a *long* night of counting.";
@@ -55,7 +55,7 @@ fn transcript() -> ChatTranscript {
 
 /// A reply running in `surface`, its draft so far `draft`.
 fn streaming(draft: &str) -> (ChatSurface, MessageId) {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.transcript = Some(transcript());
     surface.pending_user = Some("Today's top US news?".into());
     let reply = MessageId::new();
@@ -196,7 +196,7 @@ fn the_finished_reply_draws_as_a_reply_that_never_streamed() {
     surface.apply_update(Update::Transcript(finished.clone()));
     rebuild(&mut surface);
 
-    let mut fresh = ChatSurface::new(SurfaceMode::Standalone);
+    let mut fresh = ChatSurface::new();
     fresh.transcript = Some(finished);
     rebuild(&mut fresh);
 

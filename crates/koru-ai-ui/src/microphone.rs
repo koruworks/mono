@@ -346,7 +346,6 @@ impl ChatSurface {
     }
 
     fn open_microphones(&mut self) -> bool {
-        self.history_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
         self.close_approval_modes();

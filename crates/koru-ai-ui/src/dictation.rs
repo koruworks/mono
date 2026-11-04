@@ -14,7 +14,7 @@
 //! composition over the composer's own document — `ChatComposer`'s
 //! `DictationTarget` — and the controller deciding what happens to it is
 //! `koru_dictation::Dictation`, owned by the host: the workspace shell for the
-//! pane and a chat tab, the standalone window for itself. The host routes the
+//! pane and a chat tab. The host routes the
 //! controller's four actions into the composer exactly as it did before there
 //! was a button, so the recognised words stream in at the caret, drawn dim and
 //! underlined while they are provisional and as ordinary text once the final
@@ -342,13 +342,6 @@ impl ChatSurface {
         self.composer_hit_rect
             .contains(x, y)
             .then_some(DictationPress::Stop)
-    }
-
-    /// **Say why a dictation did not start**, on the status line — for a host
-    /// with no other place to say it (the standalone window).
-    pub fn dictation_refused(&mut self, sentence: koru_i18n::Key) -> bool {
-        self.status = Some(koru_i18n::t(self.lang, sentence).into());
-        true
     }
 
     /// Where the microphone is, as of the last frame, while it shows.

@@ -10,8 +10,8 @@ use koru_ai_wire::ChatTranscript;
 use koru_draw::el::Name;
 
 use super::*;
+use crate::Update;
 use crate::reader::Reader;
-use crate::{SurfaceMode, Update};
 
 fn question(id: &str, options: &[&str]) -> AgentQuestion {
     AgentQuestion {
@@ -122,7 +122,7 @@ fn surface_with(
     std::sync::mpsc::Receiver<Command>,
     std::sync::mpsc::SyncSender<Update>,
 ) {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 900.0));
     let (reader, commands, updates) = Reader::test_pair();

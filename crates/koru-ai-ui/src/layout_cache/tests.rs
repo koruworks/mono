@@ -8,7 +8,7 @@ use parley::editing::{Cursor, Selection};
 use parley::layout::Affinity;
 
 use super::*;
-use crate::{ChatSurface, SurfaceMode};
+use crate::ChatSurface;
 
 const AP: &str = "https://ap.example/";
 const BBC: &str = "https://bbc.example/";
@@ -22,7 +22,7 @@ fn surface_with_reply() -> ChatSurface {
         "Sources: [AP]({AP}) · [Reuters](https://reuters.example/)\n\n{}\n\nSources: [BBC]({BBC})",
         "Election eve brings a long night of counting. ".repeat(12)
     );
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.transcript = Some(ChatTranscript {
         sources: vec![MessageSources {
             message_id: reply,

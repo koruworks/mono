@@ -740,7 +740,6 @@ impl crate::ChatSurface {
             .is_some_and(|chip| chip.contains(x, y))
         {
             let open = !self.approval_mode_open;
-            self.history_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
             if self.chat_model_open {

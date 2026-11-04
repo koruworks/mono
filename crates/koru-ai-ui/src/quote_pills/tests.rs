@@ -16,7 +16,7 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::reader::{Command, Reader};
-use crate::{ChatSurface, ResponsePosition, ResponseSelection, SurfaceMode};
+use crate::{ChatSurface, ResponsePosition, ResponseSelection};
 
 const REPLY: &str = "Koru keeps every workspace in one store, so workspaces stay together.";
 
@@ -61,7 +61,7 @@ fn transcript() -> ChatTranscript {
 
 /// A chat on screen with one finished reply, laid out, nothing selected.
 fn reply_surface() -> ChatSurface {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = koru_i18n::Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 700.0, 520.0));
     let mut transcript = transcript();

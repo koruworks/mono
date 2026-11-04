@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::{ChatSurface, SurfaceMode};
+use crate::ChatSurface;
 use koru_ai_core::{ChatId, ModelSelection, ReasoningLevel};
 use koru_ai_wire::{AgentModelView, AgentProviderView, ProviderSettingsResponse};
 
@@ -50,7 +50,7 @@ fn model(id: &str, group: &str, name: Option<&str>, description: Option<&str>) -
 /// A surface with Claude and OpenCode offered, both ready, and lists for
 /// both: Claude's flat, OpenCode's in two groups.
 fn surface() -> ChatSurface {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
     surface.settings = Some(settings(
         &[("agent-claude", "Claude"), ("agent-opencode", "OpenCode")],

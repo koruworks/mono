@@ -3,12 +3,11 @@
 //! AI chat hosted as a main-window tab.
 //!
 //! A thin wrapper around [`koru_ai_ui::ChatSurface`] so the container can treat
-//! it like any other [`TabView`] arm. The surface runs in
-//! [`SurfaceMode::ContextPane`] to avoid wire-protocol changes; it starts a
-//! fresh chat, attaches workspace context, and deliberately does not pre-attach
-//! the active document.
+//! it like any other [`TabView`] arm. It starts a fresh chat, attaches
+//! workspace context, and deliberately does not pre-attach the active
+//! document.
 
-use koru_ai_ui::{ChatId, ChatSurface, OpenAiCredentialRequest, SurfaceMode, WorkingFolderRequest};
+use koru_ai_ui::{ChatId, ChatSurface, OpenAiCredentialRequest, WorkingFolderRequest};
 use koru_core::schema::WorkspaceDoc;
 use koru_draw::geometry::Rect;
 use koru_store_core::DocumentId;
@@ -59,9 +58,6 @@ impl AiChatView {
         surface.offer_agent_settings(true);
         // A changed file's path shows the file in Explorer or Finder (D62).
         surface.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
-        // Koru opens documents as tabs: a stored reply is followed by
-        // *Open* (D78).
-        surface.offer_open_stored_documents(true);
         // The workspace shell dictates into a chat tab's composer: the
         // microphone shows wherever voice is available (D103).
         surface.offer_dictation(koru_dictation::available());
@@ -141,7 +137,6 @@ impl AiChatView {
 
     pub fn new() -> Self {
         let mut surface = Box::new(ChatSurface::new_at(
-            SurfaceMode::ContextPane,
             koru_workspace_host::cli::root_from_args(),
         ));
         surface.activate();
@@ -268,7 +263,6 @@ impl AiChatView {
     /// Open an existing chat in this tab instead of starting a fresh one.
     pub fn existing(id: ChatId) -> Self {
         let mut surface = Box::new(ChatSurface::new_at(
-            SurfaceMode::ContextPane,
             koru_workspace_host::cli::root_from_args(),
         ));
         surface.activate();
@@ -304,11 +298,6 @@ impl AiChatView {
     /// The chats this tab's surface last listed.
     pub fn listed_chats(&self) -> &[koru_chats_ui::Chat] {
         self.surface.listed_chats()
-    }
-
-    /// The *Chats* button in this tab was pressed: show the Chats view.
-    pub fn take_wants_chats_view(&mut self) -> bool {
-        self.surface.take_wants_chats_view()
     }
 
     pub fn set_context_document(&mut self, document: Option<(DocumentId, String)>) -> bool {

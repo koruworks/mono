@@ -125,7 +125,7 @@ use std::time::{Duration, Instant};
 use std::collections::{HashMap, HashSet};
 
 use koru_ai_provider::{CredentialStore, OsCredentialStore, SecretString};
-use koru_ai_ui::{ChatSurface, SurfaceMode};
+use koru_ai_ui::ChatSurface;
 use koru_app_shell::panel::Panel;
 use koru_app_shell::tabslide::TabSlides;
 use koru_app_shell::tabstrip::TabStrip;
@@ -1788,19 +1788,13 @@ impl MainView {
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
             ai_chat: {
-                let mut chat = ChatSurface::new_at(
-                    SurfaceMode::ContextPane,
-                    koru_workspace_host::cli::root_from_args(),
-                );
+                let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
                 // Koru has a Settings tab: the picker's + opens *Agent
                 // providers*.
                 chat.offer_agent_settings(true);
                 // A changed file's path shows the file in Explorer or Finder
                 // (D62).
                 chat.offer_reveal_paths(koru_workspace_host::reveal::is_supported());
-                // Koru opens documents as tabs: a stored reply is followed
-                // by *Open* (D78).
-                chat.offer_open_stored_documents(true);
                 // The workspace shell dictates into the pane's composer: the
                 // microphone shows wherever voice is available (D103).
                 chat.offer_dictation(koru_dictation::available());
@@ -5832,19 +5826,13 @@ impl MainView {
     /// chat tab — says when the chat list changed (a chat made, renamed,
     /// deleted, re-pointed, answered). Draining them is a flag each, so it
     /// happens whether or not the view is showing, and the view is asked to
-    /// refresh only when it is: **told, never polled**. The same pass hears a
-    /// *Chats* button pressed inside a chat, which in this window means *show
-    /// me the Chats view on this chat*.
+    /// refresh only when it is: **told, never polled**.
     fn maintain_chats(&mut self) -> bool {
         // Which chats work, wait or hold something unseen (D83), before the
         // Chats view is asked again below.
         let status_changed = self.maintain_chat_status();
         let step_changed = self.step_chats();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
-        let mut wants_view = self
-            .ai_chat
-            .take_wants_chats_view()
-            .then(|| self.ai_chat.current_chat_id());
         let mut relabeled = false;
         for (_, group) in self.panes.iter_groups_mut() {
             let mut group_relabeled = false;
@@ -5856,9 +5844,6 @@ impl MainView {
                 group_relabeled |= tab.refresh_ai_chat_face();
                 if let TabView::AiChat(view) = &mut tab.view {
                     list_changed |= view.take_chat_list_changed();
-                    if view.take_wants_chats_view() {
-                        wants_view = Some(view.chat_id());
-                    }
                 }
             }
             // Its own strip, whichever column it is in: the window-level
@@ -5869,9 +5854,6 @@ impl MainView {
             }
         }
         let mut changed = relabeled || status_changed || step_changed;
-        if let Some(chat) = wants_view {
-            changed |= self.show_chats_on(chat);
-        }
         if !self.explore.showing_chats() {
             return changed;
         }
@@ -5935,15 +5917,6 @@ impl MainView {
             step.from(&fallback, current)
         };
         target.is_some_and(|chat| self.open_ai_chat_tab_for(chat))
-    }
-
-    /// Show the Chats view, on `chat` when there is one — the *Chats* button
-    /// inside a chat, and `Ctrl+Shift+E` from an AI chat tab.
-    fn show_chats_on(&mut self, chat: Option<koru_ai_ui::ChatId>) -> bool {
-        match chat {
-            Some(chat) => self.reveal_in_column(layout::ColumnPlace::Chat(chat)),
-            None => self.show_navigator(crate::panes::explore::NavigatorMode::Chats),
-        }
     }
 
     /// Close every AI chat tab in this window seated on `chat`. Back to

@@ -118,6 +118,7 @@ pub(crate) fn format_usage_report(report: &UsageReport) -> String {
     }
     for group in &report.groups {
         let surface = match group.surface {
+            // Usage kept from the retired Koru AI window.
             AiSurface::Standalone => "standalone",
             AiSurface::ContextPane => "context pane",
         };
@@ -204,8 +205,8 @@ mod tests {
     };
     use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
+    use crate::ChatSurface;
     use crate::reader::{Command, Reader, Update};
-    use crate::{ChatSurface, SurfaceMode};
 
     fn usage(
         prompt_tokens: Option<u64>,
@@ -323,7 +324,7 @@ mod tests {
 
     #[test]
     fn pending_turn_pulses_until_first_delta_or_failure() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -351,7 +352,7 @@ mod tests {
         }));
         assert!(!surface.animating());
 
-        let mut failed = ChatSurface::new(SurfaceMode::Standalone);
+        let mut failed = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         failed.reader = Some(reader);
         failed.transcript = Some(transcript());
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn usage_event_labels_the_pending_response() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.lang = Lang::En;
         surface.transcript = Some(transcript());
         surface.pending_user = Some("Question".into());
@@ -392,7 +393,7 @@ mod tests {
 
     #[test]
     fn transcript_usage_labels_historical_messages_and_grows_geometry() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.lang = Lang::En;
         let mut transcript = transcript();
         let message_id = MessageId::new();

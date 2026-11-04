@@ -14,13 +14,12 @@ use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::*;
-use crate::SurfaceMode;
 use crate::dictation::DictationShown;
 
 /// A composer whose host dictates and offers the chooser, on a machine with
 /// a USB microphone (the system's default) and a headset with a long name.
 fn surface() -> ChatSurface {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
     surface.validated_ready = true;
@@ -128,7 +127,7 @@ fn the_chevron_shows_left_of_the_microphone_on_hover() {
     );
 
     // A host that keeps no choice: the microphone alone.
-    let mut bare = ChatSurface::new(SurfaceMode::Standalone);
+    let mut bare = ChatSurface::new();
     bare.offer_dictation(true);
     bare.composer_rect();
     assert!(bare.mic_button().is_some());

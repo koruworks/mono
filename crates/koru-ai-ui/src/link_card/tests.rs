@@ -15,7 +15,7 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
 use super::*;
-use crate::{ChatSurface, SurfaceMode};
+use crate::ChatSurface;
 
 const DOCUMENT: &str = "koru://doc/0b9c1f1e-6a0e-4b7a-9f53-2d8f0c6a7e11";
 
@@ -45,7 +45,7 @@ fn surface_with(markdown: &str) -> ChatSurface {
     let now = Timestamp::from_millis(1);
     let chat_id = ChatId::new();
     let reply = MessageId::new();
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = koru_i18n::Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 1000.0, 3000.0));
     surface.transcript = Some(ChatTranscript {

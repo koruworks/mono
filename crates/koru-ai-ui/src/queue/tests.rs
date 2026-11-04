@@ -13,8 +13,8 @@ use koru_ai_wire::{
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use super::*;
+use crate::attachments;
 use crate::reader::{Reader, Update};
-use crate::{SurfaceMode, attachments};
 
 /// A surface on a new agent chat, with the agents the settings list:
 /// `(id, steers)`.
@@ -22,7 +22,7 @@ fn agent_surface(
     provider: &str,
     agents: &[(&str, bool)],
 ) -> (ChatSurface, ChatTranscript, Receiver<Command>) {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let (reader, commands, _updates) = Reader::test_pair();
     surface.reader = Some(reader);
     let mut transcript = crate::unmade_transcript(ModelSelection {

@@ -50,7 +50,6 @@ pub(crate) enum Command {
     /// approved with an answer per question. A skip is `DenyTool`.
     AnswerQuestions(ToolInvocationId, Vec<koru_ai_core::AgentAnswer>),
     Usage(ChatId),
-    DeleteChat(ChatId),
     ClearHistory,
     ClearUsage(Option<ChatId>),
     Send(SendTurnRequest),
@@ -93,7 +92,6 @@ impl Command {
             Self::DecideTool(..) => "decide_tool",
             Self::AnswerQuestions(..) => "answer_questions",
             Self::Usage(_) => "usage",
-            Self::DeleteChat(_) => "delete_chat",
             Self::ClearHistory => "clear_history",
             Self::ClearUsage(_) => "clear_usage",
             Self::Send(_) => "send",
@@ -564,13 +562,6 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         .usage(Some(chat))
                         .map(|response| Update::Usage(response.report)),
                 );
-            }
-            Command::DeleteChat(chat) => {
-                let result = client.ai().delete_chat(chat).and_then(|_| {
-                    history_after_mutation(&client)
-                        .map(|(chats, transcript)| Update::HistoryChanged { chats, transcript })
-                });
-                send_result(&updates, result);
             }
             Command::ClearHistory => {
                 let result = client.ai().clear_history().and_then(|_| {
@@ -1200,7 +1191,7 @@ mod tests {
             Command::Send(koru_ai_wire::SendTurnRequest {
                 operation_id: uuid::Uuid::new_v4(),
                 chat_id,
-                surface: koru_ai_core::AiSurface::Standalone,
+                surface: koru_ai_core::AiSurface::ContextPane,
                 markdown: "hi".into(),
                 explicit_refs: Vec::new(),
                 web_search: false,

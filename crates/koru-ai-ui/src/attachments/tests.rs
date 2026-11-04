@@ -7,7 +7,7 @@ use koru_ai_wire::ChatTranscript;
 
 use super::*;
 use crate::reader::{Command, Reader, Update};
-use crate::{SurfaceMode, message_content_width, usage::message_content_height};
+use crate::{message_content_width, usage::message_content_height};
 
 fn agent_transcript(provider: &str) -> ChatTranscript {
     let chat_id = ChatId::new();
@@ -58,7 +58,7 @@ fn png(width: u32, height: u32) -> koru_clipboard::PngBitmap {
 }
 
 fn surface_with_agent_chat() -> (ChatSurface, ChatId, std::sync::mpsc::Receiver<Command>) {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     let (reader, commands, _updates) = Reader::test_pair();
     let transcript = agent_transcript("agent-claude");
     let chat = transcript.chat.id;
@@ -154,7 +154,7 @@ fn a_refusal_reads_in_the_persons_language() {
 
 #[test]
 fn a_paste_on_a_chat_that_is_not_an_agents_says_so_and_reads_nothing() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.transcript = Some(agent_transcript(AiProviderId::OPENAI));
     assert!(surface.begin_attachment_paste());
     assert_eq!(
@@ -361,7 +361,7 @@ fn a_send_the_queue_will_not_take_puts_the_message_back() {
 
 #[test]
 fn a_paste_with_the_picker_open_is_answered_at_once() {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.transcript = Some(agent_transcript(AiProviderId::OPENAI));
     surface.composer.arm_paste_attachment();
     surface.composer_key(

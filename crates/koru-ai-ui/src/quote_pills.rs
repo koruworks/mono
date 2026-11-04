@@ -424,10 +424,9 @@ impl ChatSurface {
     pub(crate) fn draw_add_pill(&mut self, canvas: &mut Scene, root: Affine) {
         self.add_pill.rect = None;
         // Under anything that floats over the transcript it is neither drawn
-        // nor pressed: the menu, the Chats pane, a picker, a confirmation.
+        // nor pressed: the menu, a picker, a confirmation.
         let covered = self.response_menu.is_some()
             || self.showing_setup()
-            || self.history_open
             || self.chat_model_open
             || self.tool_mode_open
             || self.approval_mode_open
@@ -638,12 +637,9 @@ impl ChatSurface {
 
     /// Open the shared popover menu only when the press lands in the selected
     /// response text. Hosts call this from their ordinary `View::context_menu`
-    /// path, so the standalone window and workspace pane behave alike.
+    /// path, so the context pane and a chat tab behave alike.
     pub fn context_menu(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
-        if let Some(handled) = self.chats_pane_context_menu(x, y) {
-            return handled;
-        }
         if !self.response_selection_contains(x, y) {
             self.response_menu_anchor = None;
             return self.response_menu.take().is_some();

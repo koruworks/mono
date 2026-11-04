@@ -5,13 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Reusable standalone and embedded Koru AI chat surface."
+description = "The Koru AI chat surface Koru embeds in its context pane and chat tabs."
 
 [features]
 default = []
-# **Never dial anything, never open a browser.** For a host's tests: the Chats
-# pane has a reader, the chip composer starts an entity search and hosts the
-# document editor, and no `cfg(test)` guard reaches a crate above them, so
+# **Never dial anything, never open a browser.** For a host's tests: the host's
+# Chats view has a reader, the chip composer starts an entity search and hosts
+# the document editor, and no `cfg(test)` guard reaches a crate above them, so
 # this turns theirs on too.
 no-client = [
     "koru-chats-ui/no-reader",
@@ -25,8 +25,8 @@ test-support = []
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }
 koru-ai-wire = { path = "../koru-ai-wire" }
-# The Chats surface, hosted here as the standalone window's floating pane
-# (AGENTUX I5). It names no host, so this is not a cycle.
+# The Chats list's vocabulary — a step through it (D87) — shared with the
+# host's Chats view (AGENTUX I5). It names no host, so this is not a cycle.
 koru-chats-ui = { path = "../koru-chats-ui" }
 koru-api-client = { path = "../koru-api-client" }
 koru-clipboard = { path = "../koru-clipboard" }
@@ -44,8 +44,7 @@ koru-window = { path = "../koru-window" }
 # **The chip composer** (AGENTUX I6, X1): the composer is a Koru document in a
 # private in-memory workspace, edited by the same editor as every page, so a
 # document can sit in the text as a chip. The accepted cost, stated in the
-# plan: this crate and `koru-ai-chat.exe` link the editor and the workspace
-# stack. The search behind `@` is the shared entity search; the message goes
+# plan: this crate links the editor and the workspace stack. The search behind `@` is the shared entity search; the message goes
 # out through the Markdown exporter so a chip has one spelling everywhere.
 koru-core = { path = "../koru-core" }
 koru-editor = { path = "../koru-editor" }

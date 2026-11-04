@@ -14,10 +14,9 @@ use vello::kurbo::Affine;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::*;
-use crate::SurfaceMode;
 
 fn surface() -> ChatSurface {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.validated_ready = true;
     surface.offer_dictation(true);
     surface.composer_rect();
@@ -47,7 +46,7 @@ fn node(surface: &ChatSurface, key: ElKey) -> Rect {
 /// press on it asks the host — once — with the keyboard in the composer.
 #[test]
 fn the_microphone_is_in_the_footer_just_before_send() {
-    let mut bare = ChatSurface::new(SurfaceMode::Standalone);
+    let mut bare = ChatSurface::new();
     bare.composer_rect();
     assert!(bare.mic_button().is_none(), "no microphone unless offered");
 

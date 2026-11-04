@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use crate::ChatSurface;
 use crate::reader::Reader;
-use crate::{ChatSurface, SurfaceMode};
 use koru_ai_core::{ChatId, InferenceAttemptId, ModelSelection, ReasoningChoice};
 use koru_i18n::Lang;
 use std::time::Duration;
@@ -44,7 +44,7 @@ fn claude_modes() -> ListedModes {
 /// A surface on a new Claude chat whose listing carries its modes, with a
 /// reader whose commands the test reads.
 fn surface() -> (ChatSurface, std::sync::mpsc::Receiver<Command>) {
-    let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    let mut surface = ChatSurface::new();
     surface.lang = Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
     let (reader, commands, _updates) = Reader::test_pair();

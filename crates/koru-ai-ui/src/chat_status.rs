@@ -87,14 +87,9 @@ impl ChatSurface {
         moved
     }
 
-    /// Count a send or a reply's end, and move the chat up this window's
-    /// own Chats pane at once (the standalone window's).
+    /// Count a send or a reply's end ([`take_activity`](Self::take_activity)).
     pub(crate) fn note_activity(&mut self) {
         self.activity = self.activity.wrapping_add(1);
-        if let Some(chat) = self.shown_chat_id() {
-            self.chats_pane
-                .touch(chat, koru_ai_core::Timestamp::now().millis());
-        }
     }
 
     /// **The newest message the person can see here that is done** — what

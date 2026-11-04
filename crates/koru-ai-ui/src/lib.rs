@@ -63,9 +63,8 @@ pub(crate) fn chat_line_height() -> f32 {
 mod agents;
 mod approval_modes;
 mod attachments;
-mod chat_history;
 mod chat_status;
-mod chats_pane;
+mod chats;
 mod composer;
 mod dictation;
 mod doc_links;
@@ -81,6 +80,7 @@ mod questions;
 mod queue;
 mod quote_pills;
 mod reader;
+mod restored_scroll;
 mod sources;
 mod tool_groups;
 mod tool_output;
@@ -103,7 +103,6 @@ use reader::{Command, DestinationOption, POLL_INTERVAL, Reader, SendError, Updat
 use usage::{format_usage_report, message_content_height, message_height, usage_line};
 
 const PAD: f32 = 14.0;
-const HEADER_H: f32 = 46.0;
 const FIELD_H: f32 = 36.0;
 const BUTTON_H: f32 = ActionButton::H;
 const CARD_GAP: f32 = 10.0;
@@ -195,21 +194,11 @@ const TOOL_ACCESS_VISIBLE_ROWS: usize = 6;
 /// The workspace-access chip at its widest; a longer label is elided.
 const TOOL_ACCESS_CHIP_MAX_W: f32 = 140.0;
 
-/// Where the shared surface is hosted. It is recorded on every attempt.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SurfaceMode {
-    Standalone,
-    ContextPane,
-}
-
-impl SurfaceMode {
-    const fn wire(self) -> AiSurface {
-        match self {
-            Self::Standalone => AiSurface::Standalone,
-            Self::ContextPane => AiSurface::ContextPane,
-        }
-    }
-}
+/// Where every attempt says it was made. The surface is hosted inside
+/// Koru — the context pane or a chat tab — so it is always the context
+/// pane on the wire. `AiSurface::Standalone` stays readable in stored
+/// attempts from the retired Koru AI window; nothing produces it any more.
+const SURFACE: AiSurface = AiSurface::ContextPane;
 
 /// A capability that must remain outside the public AI HTTP contract.
 ///
@@ -279,8 +268,6 @@ enum SetupProvider {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DestructiveAction {
-    /// One chat, or the pane's pick (the CTO's note: several at once).
-    DeleteChats(Vec<ChatId>),
     ClearHistory,
     ClearUsage,
 }
@@ -388,7 +375,6 @@ struct SentMessage {
 /// One AI conversation surface, usable as a window body or in Koru's context
 /// column. Constructing it in tests starts no service client.
 pub struct ChatSurface {
-    mode: SurfaceMode,
     viewport: Rect,
     engine: TextEngine,
     root: Option<PathBuf>,
@@ -396,26 +382,9 @@ pub struct ChatSurface {
     waiting: bool,
     settings: Option<ProviderSettingsResponse>,
     chats: Vec<Chat>,
-    /// **The Chats pane is open** — the standalone window's floating host of
-    /// [`koru_chats_ui::ChatsSurface`] (see [`chats_pane`]). Only ever true in
-    /// [`SurfaceMode::Standalone`]; the name is the old popover's, kept so
-    /// the many pickers that close it still read the same.
-    history_open: bool,
-    chats_pane: koru_chats_ui::ChatsSurface,
-    /// Whether the pane's reader has been started — on its first opening, so
-    /// a window whose list was never opened dials nothing for it.
-    chats_pane_started: bool,
-    /// A chat being renamed in the pane: the field over its row's title.
-    chats_rename: Option<chats_pane::ChatsRename>,
-    /// The pane's right-click menu over a row, and the chats it is about.
-    chats_menu: Option<chats_pane::ChatsMenu>,
     /// A chat was created, renamed, deleted, re-pointed or answered since the
     /// host last asked ([`ChatSurface::take_chat_list_changed`]).
     chat_list_changed: bool,
-    /// The same news, for this surface's own pane.
-    chat_list_changed_for_pane: bool,
-    /// The *Chats* button was pressed where the host has a navigator.
-    wants_chats_view: bool,
     transcript: Option<ChatTranscript>,
     usage_report: Option<UsageReport>,
     live_usage: Option<AiUsage>,
@@ -645,9 +614,6 @@ pub struct ChatSurface {
     pending_model_prefetch: Option<AiProviderId>,
     retry_link: Option<Rect>,
     ollama_search_link: Option<Rect>,
-    /// **The host opens documents as tabs** (D78): apps/koru says so; the
-    /// standalone chat window has no tabs and does not.
-    stored_documents_openable: bool,
     /// **A reply just stored as a document** (D78): the status line that
     /// says so, and the document. *Open* follows that line while it is the
     /// one shown.
@@ -743,9 +709,9 @@ pub struct ChatSurface {
     /// `Ctrl+Shift+↑`/`↓` asked for the chat above or below in the Chats
     /// list, where a host with a navigator answers it (D87).
     wants_chat_step: Option<koru_chats_ui::ChatStep>,
-    /// Back and forward over the chats read into this surface's place, and
-    /// the scroll owed to a chat coming back (D102, `chat_history`).
-    chat_history: chat_history::ChatHistory,
+    /// The scroll owed to a chat coming back, and the chat it belongs to
+    /// (D102, `restored_scroll`).
+    restored_scroll: Option<(ChatId, f32)>,
     /// A NEW divider above the first message the person has not seen, and
     /// the chat opened there (D84). Set by the host as the chat comes into
     /// view.
@@ -766,8 +732,7 @@ impl ChatSurface {
     }
 
     /// A document chip, or a document link in the conversation, was clicked.
-    /// The host opens the document: a tab in Koru, or through the Agent from
-    /// the standalone window.
+    /// The host opens the document as a tab.
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.composer
             .take_open_request()
@@ -787,7 +752,6 @@ impl ChatSurface {
         self.tool_access_open = false;
         self.tool_mode_open = false;
         self.approval_mode_open = false;
-        self.history_open = false;
         self.setup_open = true;
         self.focus = Focus::None;
     }
@@ -824,23 +788,16 @@ impl ChatSurface {
         true
     }
 
-    /// The host could not open a document this surface asked for. Said on the
-    /// status line, in the person's language.
-    pub fn open_document_failed(&mut self) -> bool {
-        self.status = Some(koru_i18n::t(self.lang, koru_i18n::Key::AiOpenDocumentFailed).into());
-        true
-    }
-
     /// Where the composer is drawn, in the surface's host coordinate space.
     pub fn dictation_anchor(&self) -> Rect {
         self.composer_text_rect()
     }
 
-    pub fn new(mode: SurfaceMode) -> Self {
-        Self::new_at(mode, None)
+    pub fn new() -> Self {
+        Self::new_at(None)
     }
 
-    pub fn new_at(mode: SurfaceMode, root: Option<PathBuf>) -> Self {
+    pub fn new_at(root: Option<PathBuf>) -> Self {
         let mut engine = TextEngine::new();
         let composer = ChatComposer::new(root.clone());
         let attachment_work = attachments::Work::new(root.clone());
@@ -853,7 +810,6 @@ impl ChatSurface {
         let system_prompt = TextArea::new(&mut engine, role::ui());
         let picker = model_picker::PickerState::new(&mut engine);
         Self {
-            mode,
             viewport: Rect::new(0.0, 0.0, 460.0, 680.0),
             engine,
             root,
@@ -861,14 +817,7 @@ impl ChatSurface {
             waiting: false,
             settings: None,
             chats: Vec::new(),
-            history_open: false,
-            chats_pane: koru_chats_ui::ChatsSurface::without_reader(),
-            chats_pane_started: false,
-            chats_rename: None,
-            chats_menu: None,
             chat_list_changed: false,
-            chat_list_changed_for_pane: false,
-            wants_chats_view: false,
             transcript: None,
             usage_report: None,
             live_usage: None,
@@ -899,7 +848,7 @@ impl ChatSurface {
             document_titles: HashMap::new(),
             titles_requested: HashSet::new(),
             open_document_request: None,
-            conversation_hit_rect: Rect::new(14.0, HEADER_H, 432.0, 500.0),
+            conversation_hit_rect: Rect::new(14.0, PAD, 432.0, 500.0),
             workspace_search,
             fresh_chat_wanted: false,
             unmade_chat: None,
@@ -994,7 +943,6 @@ impl ChatSurface {
             pending_model_prefetch: None,
             retry_link: None,
             ollama_search_link: None,
-            stored_documents_openable: false,
             stored_document: None,
             stored_open_link: None,
             staged_embedded_send: None,
@@ -1037,7 +985,7 @@ impl ChatSurface {
             activity: 0,
             activity_reported: 0,
             wants_chat_step: None,
-            chat_history: chat_history::ChatHistory::default(),
+            restored_scroll: None,
             new_divider: None,
             dictation: dictation::ComposerDictation::default(),
             lang: koru_i18n::Lang::for_system(
@@ -1081,9 +1029,6 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
-        if self.reader.is_some() && self.shown_chat_id() != Some(chat) {
-            self.leave_chat_in_place();
-        }
         self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
@@ -1332,15 +1277,6 @@ impl ChatSurface {
             .values()
             .any(|image| image.pending.is_some())
             .then(|| Instant::now() + Duration::from_millis(100));
-        let chats_pane = self.chats_pane_awaiting().then(|| {
-            Instant::now()
-                .checked_add(POLL_INTERVAL)
-                .unwrap_or_else(Instant::now)
-        });
-        // The pane's ring for the chat in this window, while it turns.
-        let chats_pane_ring = self
-            .chats_pane_turning()
-            .then(|| Instant::now() + koru_chats_ui::status::FRAME);
         // The stop hint goes away when its window closes.
         let stop_hint = self
             .stop_armed_at
@@ -1349,8 +1285,6 @@ impl ChatSurface {
             poll,
             highlight,
             image,
-            chats_pane,
-            chats_pane_ring,
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
             self.link_card.deadline(),
@@ -1377,7 +1311,6 @@ impl ChatSurface {
         // opportunity to publish and acknowledge the edit that preceded it.
         let mut changed = self.staged_embedded_send.is_some();
         changed |= self.drain_updates();
-        changed |= self.maintain_chats_pane();
         self.follow_agent_checks(_now);
         self.follow_agent_modes(_now);
         if self
@@ -1459,7 +1392,7 @@ impl ChatSurface {
         if let Some(cursor) = self.viewer_cursor() {
             return cursor;
         }
-        if self.confirm.is_some() || self.response_menu.is_some() || self.chats_menu.is_some() {
+        if self.confirm.is_some() || self.response_menu.is_some() {
             return CursorIcon::Default;
         }
         let p = self.pointer;
@@ -1571,9 +1504,6 @@ impl ChatSurface {
         if let Some(confirm) = &mut self.confirm {
             let outcome = confirm.key(key);
             return self.finish_confirmation(outcome);
-        }
-        if let Some(handled) = self.chats_pane_key(key, text, mods) {
-            return handled;
         }
         if let Some(handled) = self.quote_key(key, text, mods) {
             return handled;
@@ -1829,19 +1759,11 @@ impl ChatSurface {
         self.status.as_deref()
     }
 
-    /// **Say the host opens documents as tabs** (D78): then a reply stored
-    /// as a document is followed by *Open*. The standalone chat window has
-    /// no tabs and leaves it off.
-    pub fn offer_open_stored_documents(&mut self, offered: bool) {
-        self.stored_documents_openable = offered;
-    }
-
-    /// The document *Open* opens: the one just stored, while the footer
-    /// still says so and the host opens documents as tabs.
+    /// The document *Open* opens (D78): the one just stored, while the
+    /// footer still says so. The host opens it as a tab.
     fn stored_open_document(&self) -> Option<DocumentId> {
         let (line, document) = self.stored_document.as_ref()?;
-        (self.stored_documents_openable && self.footer_line() == Some(line.as_str()))
-            .then_some(*document)
+        (self.footer_line() == Some(line.as_str())).then_some(*document)
     }
 
     /// *Open*'s rectangle, while it shows.
@@ -2022,9 +1944,6 @@ impl ChatSurface {
             );
             return self.finish_confirmation(outcome);
         }
-        if let Some(handled) = self.chats_pane_mouse_down(x, y) {
-            return handled;
-        }
         if self.showing_setup() {
             return self.setup_mouse_down(x, y);
         }
@@ -2122,7 +2041,6 @@ impl ChatSurface {
             .privacy_button()
             .is_some_and(|button| button.contains(x, y))
         {
-            self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
@@ -2164,7 +2082,6 @@ impl ChatSurface {
             }
         }
         if self.tool_access_button().contains(x, y) {
-            self.history_open = false;
             self.chat_model_open = false;
             self.tool_mode_open = false;
             self.tool_workspace_offset = 0;
@@ -2182,7 +2099,6 @@ impl ChatSurface {
                 .folder_button()
                 .is_some_and(|button| button.contains(x, y))
         {
-            self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
@@ -2202,7 +2118,6 @@ impl ChatSurface {
             .tool_mode_button()
             .is_some_and(|button| button.contains(x, y))
         {
-            self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = !self.tool_mode_open;
@@ -2220,7 +2135,6 @@ impl ChatSurface {
             .is_some_and(|button| button.contains(x, y))
         {
             self.web_search_armed = !self.web_search_armed;
-            self.history_open = false;
             self.chat_model_open = false;
             self.tool_access_open = false;
             self.tool_mode_open = false;
@@ -2229,7 +2143,6 @@ impl ChatSurface {
         }
         if self.chat_model_button().contains(x, y) {
             if self.chat_model_open {
-                self.history_open = false;
                 self.tool_access_open = false;
                 self.tool_mode_open = false;
                 self.close_picker();
@@ -2249,21 +2162,6 @@ impl ChatSurface {
                 }
             }
             return true;
-        }
-        if self.hosts_header_buttons() && self.history_button().contains(x, y) {
-            self.chat_model_open = false;
-            self.tool_access_open = false;
-            self.tool_mode_open = false;
-            return self.press_chats_button();
-        }
-        // The header's *Settings* opened the provider setup here; it is
-        // dormant and the button is not drawn, so nothing is hit there.
-        if self.hosts_header_buttons() && self.new_chat_button().contains(x, y) {
-            self.chat_model_open = false;
-            self.tool_access_open = false;
-            self.tool_mode_open = false;
-            self.leave_chat_in_place();
-            return self.create_chat();
         }
         if self.tool_mode_open || self.tool_access_open {
             self.tool_mode_open = false;
@@ -2486,7 +2384,7 @@ impl ChatSurface {
     /// anything changed. The host calls this when a press lands outside the AI
     /// surface so an open popover does not keep floating over the document.
     pub fn dismiss_popovers(&mut self) -> bool {
-        let mut changed = self.close_chats_pane();
+        let mut changed = false;
         if self.chat_model_open {
             self.close_picker();
             changed = true;
@@ -2521,13 +2419,6 @@ impl ChatSurface {
         if let Some(changed) = self.viewer_mouse_move(x, y) {
             return changed;
         }
-        // Over the open Chats pane the pane is all there is: nothing under it
-        // hovers. While its row menu is up, the menu is all there is.
-        if self.history_open && (self.chats_menu.is_some() || self.chats_panel().contains(x, y)) {
-            self.pointer = (x, y);
-            return self.chats_pane_mouse_move(x, y);
-        }
-        let pane_left = self.chats_pane_mouse_move(x, y);
         let old = self.cursor_icon();
         let old_control_hover = self.control_hover_at(self.pointer.0, self.pointer.1);
         let old_pointer = self.pointer;
@@ -2625,7 +2516,6 @@ impl ChatSurface {
             || old_work_hover != self.work_hover
             || old_control_hover != self.control_hover_at(x, y)
             || search_tooltip_changed
-            || pane_left
             || old != self.cursor_icon()
     }
 
@@ -2772,9 +2662,6 @@ impl ChatSurface {
             MouseScrollDelta::LineDelta(_, y) => y * 38.0,
             MouseScrollDelta::PixelDelta(p) => p.y as f32,
         } * CONVERSATION_SCROLL_SPEED;
-        if let Some(changed) = self.chats_pane_scroll(dy) {
-            return changed;
-        }
         let max = (self.conversation_extent - self.conversation_rect().h).max(0.0);
         let next = (self.conversation_scroll - dy).clamp(0.0, max);
         let changed = (next - self.conversation_scroll).abs() > f32::EPSILON;
@@ -2982,16 +2869,6 @@ impl ChatSurface {
 
     fn open_confirmation(&mut self, action: DestructiveAction) {
         let (title, body, label) = match &action {
-            DestructiveAction::DeleteChats(chats) if chats.len() <= 1 => (
-                "Delete this chat?",
-                "Its messages and search results will be removed. Anonymous usage and feedback totals remain.",
-                "Delete chat",
-            ),
-            DestructiveAction::DeleteChats(_) => (
-                "Delete these chats?",
-                "Their messages and search results will be removed. Anonymous usage and feedback totals remain.",
-                "Delete chats",
-            ),
             DestructiveAction::ClearHistory => (
                 "Clear all chat history?",
                 "All AI conversations and search results will be removed. Anonymous usage and feedback totals remain.",
@@ -3023,14 +2900,6 @@ impl ChatSurface {
                     return true;
                 };
                 match action {
-                    // The pane stays open when it asked: the row leaves it
-                    // once the list is asked again, and a refusal is said on
-                    // the status line.
-                    DestructiveAction::DeleteChats(chats) => chats
-                        .into_iter()
-                        .map(|chat| self.send_command(Command::DeleteChat(chat)))
-                        .last()
-                        .unwrap_or_default(),
                     DestructiveAction::ClearHistory => {
                         self.setup_open = false;
                         self.send_command(Command::ClearHistory)
@@ -3051,7 +2920,6 @@ impl ChatSurface {
     fn apply_update(&mut self, update: Update) -> bool {
         if update.changes_chat_list() {
             self.chat_list_changed = true;
-            self.chat_list_changed_for_pane = true;
         }
         match update {
             Update::Boot {
@@ -3151,7 +3019,6 @@ impl ChatSurface {
                     self.select_context_workspace_if_needed();
                 }
                 self.usage_report = None;
-                self.history_open = false;
                 self.question_navigation = None;
                 self.question_navigation_anchor = None;
                 self.scroll_loaded_chat_to_bottom = false;
@@ -4208,7 +4075,6 @@ impl ChatSurface {
 
     /// Open the composer's model picker, as a press on its chip does.
     fn open_model_picker(&mut self) -> bool {
-        self.history_open = false;
         self.tool_access_open = false;
         self.tool_mode_open = false;
         self.approval_mode_open = false;
@@ -4500,7 +4366,7 @@ impl ChatSurface {
         let request = SendTurnRequest {
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
-            surface: self.mode.wire(),
+            surface: SURFACE,
             markdown,
             explicit_refs,
             web_search: self.web_search_armed,
@@ -4511,11 +4377,11 @@ impl ChatSurface {
                 .debug_prompt_enabled
                 .then(|| self.system_prompt.value())
                 .filter(|prompt| !prompt.trim().is_empty()),
-            replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
+            replace_pinned_documents: true,
             attachment_ids,
             answers: None,
         };
-        let sent = if self.mode == SurfaceMode::ContextPane && self.context_document.is_some() {
+        let sent = if self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
             self.durable_observations = 0;
             self.waiting = true;
@@ -4605,9 +4471,7 @@ impl ChatSurface {
             push(&mut documents, *document);
         }
         let asked = documents.len();
-        if self.mode == SurfaceMode::ContextPane
-            && let Some(transcript) = &self.transcript
-        {
+        if let Some(transcript) = &self.transcript {
             for message in transcript
                 .messages
                 .iter()
@@ -5060,16 +4924,10 @@ impl ChatSurface {
         )
     }
 
-    /// Where the conversation may start: below the standalone window's
-    /// header buttons, or a margin's worth below the top in a workspace,
-    /// where the surface has no header row of its own.
+    /// Where the conversation may start: a margin's worth below the top —
+    /// the surface has no header row of its own.
     fn chat_top(&self) -> f32 {
-        self.viewport.y
-            + if self.hosts_header_buttons() {
-                HEADER_H
-            } else {
-                PAD
-            }
+        self.viewport.y + PAD
     }
 
     /// **A chat with nothing in it yet** — no message, none on its way, no
@@ -5183,14 +5041,6 @@ impl ChatSurface {
         )
     }
 
-    /// Whether the header carries *Chats*, *New chat* and *Settings*: the
-    /// standalone window's does; in a workspace those doors are the rail's,
-    /// the Chats heading's and the rail's again (the CTO's note), and the
-    /// surface has no header row at all.
-    fn hosts_header_buttons(&self) -> bool {
-        self.mode == SurfaceMode::Standalone
-    }
-
     fn conversation_rect(&mut self) -> Rect {
         let composer = self.composer_rect();
         let content = self.content_rect();
@@ -5257,28 +5107,6 @@ impl ChatSurface {
         let w = (self.viewport.w - PAD * 2.0).max(1.0).min(CONTENT_MAX_W);
         let x = self.viewport.x + (self.viewport.w - w) * 0.5;
         Rect::new(x, self.viewport.y, w, self.viewport.h)
-    }
-
-    fn settings_button(&self) -> Rect {
-        Rect::new(
-            self.viewport.x + self.viewport.w - PAD - 76.0,
-            self.viewport.y + 7.0,
-            76.0,
-            BUTTON_H,
-        )
-    }
-
-    fn history_button(&self) -> Rect {
-        Rect::new(self.viewport.x + PAD, self.viewport.y + 7.0, 72.0, BUTTON_H)
-    }
-
-    fn new_chat_button(&self) -> Rect {
-        Rect::new(
-            self.settings_button().x - 92.0,
-            self.viewport.y + 7.0,
-            84.0,
-            BUTTON_H,
-        )
     }
 
     fn provider_cards(&self) -> [Rect; 4] {
@@ -6080,17 +5908,10 @@ impl ChatSurface {
                     return Some((14, index));
                 }
             }
-            let header = self.hosts_header_buttons();
-            // No *Settings* among them: it is not drawn while the setup is
-            // dormant. The send button keeps its identity, 4.
-            for (index, rect) in [
-                (0, self.history_button()),
-                (1, self.new_chat_button()),
-                (3, self.send_button()),
-            ] {
-                if (header || index == 3) && rect.contains(x, y) {
-                    return Some((5, index + 1));
-                }
+            // The send button keeps its identity, 4, from when the header's
+            // buttons were 1 to 3.
+            if self.send_button().contains(x, y) {
+                return Some((5, 4));
             }
             if self.destination_open.is_some()
                 && let Some(index) = self.destination_at(x, y)
@@ -6105,34 +5926,7 @@ impl ChatSurface {
         let p = theme::p();
         // **No title row.** A chat's name is its tab's in a workspace and
         // its row's in the Chats list; the surface itself starts with the
-        // conversation. The standalone window keeps its header buttons.
-        if self.hosts_header_buttons() {
-            let history = self.history_button();
-            draw_surface_button(
-                canvas,
-                root,
-                &mut self.engine,
-                history,
-                "Chats",
-                ButtonRole::Secondary,
-                history.contains(self.pointer.0, self.pointer.1),
-                self.history_open,
-            );
-            // *Settings* opened the provider setup, which is dormant, so
-            // it is not drawn ([`Self::open_setup`]); its place stays.
-            for (rect, label) in [(self.new_chat_button(), "New chat")] {
-                draw_surface_button(
-                    canvas,
-                    root,
-                    &mut self.engine,
-                    rect,
-                    label,
-                    ButtonRole::Secondary,
-                    rect.contains(self.pointer.0, self.pointer.1),
-                    false,
-                );
-            }
-        }
+        // conversation.
         self.draw_messages(canvas, root);
         // Over the transcript, under everything that floats over it.
         self.draw_add_pill(canvas, root);
@@ -6421,9 +6215,6 @@ impl ChatSurface {
             self.pointer,
             Instant::now(),
         );
-        if self.history_open {
-            self.draw_chats_pane(canvas, root);
-        }
         self.draw_model_picker(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
@@ -6941,10 +6732,7 @@ impl ChatSurface {
         }
         tracing::debug!(
             target: "koru_ai::ui",
-            surface = match self.mode {
-                SurfaceMode::Standalone => "standalone",
-                SurfaceMode::ContextPane => "context_pane",
-            },
+            surface = "context_pane",
             message_count = self.message_layouts.len(),
             block_count = self
                 .message_layouts
@@ -8447,11 +8235,11 @@ impl ChatSurface {
                     RetryTurnRequest {
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,
-                        surface: self.mode.wire(),
+                        surface: SURFACE,
                         explicit_refs,
                         web_search: self.web_search_armed,
                         reasoning_override: None,
-                        replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
+                        replace_pinned_documents: true,
                     },
                 ))
             }
@@ -9751,7 +9539,7 @@ mod tests {
 
     #[test]
     fn current_chat_id_follows_a_link_before_the_transcript_loads() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let id = ChatId::new();
         assert!(surface.current_chat_id().is_none());
         assert!(surface.open_link(id, None));
@@ -9760,14 +9548,14 @@ mod tests {
 
     #[test]
     fn drain_updates_is_a_no_op_without_a_reader() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         assert!(!surface.drain_updates());
         assert!(surface.listing_deadline().is_none());
     }
 
     #[test]
     fn recent_chats_takes_the_first_n_in_list_order() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let a = ChatId::new();
         let b = ChatId::new();
         let chat = |id, title: &str| Chat {
@@ -9785,15 +9573,14 @@ mod tests {
 
     #[test]
     fn test_surface_starts_no_reader_or_maintenance_clock() {
-        let surface = ChatSurface::new(SurfaceMode::Standalone);
+        let surface = ChatSurface::new();
         assert!(surface.reader.is_none());
         assert!(surface.maintenance_deadline().is_none());
     }
 
     #[test]
     fn dismiss_popovers_closes_every_transient_overlay() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
-        surface.history_open = true;
+        let mut surface = ChatSurface::new();
         surface.chat_model_open = true;
         surface.tool_access_open = true;
         surface.tool_mode_open = true;
@@ -9804,7 +9591,6 @@ mod tests {
         surface.confirm = Some(Confirm::new("", "", ""));
 
         assert!(surface.dismiss_popovers());
-        assert!(!surface.history_open);
         assert!(!surface.chat_model_open);
         assert!(!surface.tool_access_open);
         assert!(!surface.tool_mode_open);
@@ -9820,7 +9606,7 @@ mod tests {
 
     #[test]
     fn context_document_attaches_with_title_and_updates_title_without_dismissal() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let doc_id = DocumentId::new();
         assert!(surface.set_context_document(Some((doc_id, "Launch plan".into()))));
         assert_eq!(
@@ -9839,7 +9625,7 @@ mod tests {
 
     #[test]
     fn removing_context_document_dismisses_it_until_document_changes() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let doc_a = DocumentId::new();
         surface.set_context_document(Some((doc_a, "A".into())));
         surface.remove_context_document();
@@ -9859,7 +9645,7 @@ mod tests {
 
     #[test]
     fn a_tab_without_a_document_clears_the_pill_without_recording_a_dismissal() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let doc_a = DocumentId::new();
         surface.set_context_document(Some((doc_a, "A".into())));
 
@@ -9875,7 +9661,7 @@ mod tests {
 
     #[test]
     fn clearing_dismissal_re_attaches_the_current_document() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let doc_a = DocumentId::new();
         surface.set_context_document(Some((doc_a, "A".into())));
         surface.remove_context_document();
@@ -9887,34 +9673,8 @@ mod tests {
     }
 
     #[test]
-    fn send_composer_includes_context_document_reference() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
-        let (reader, commands, _updates) = Reader::test_pair();
-        let transcript = transcript();
-        surface.reader = Some(reader);
-        surface.transcript = Some(transcript.clone());
-        surface.composer.set_text("hello");
-
-        let doc_id = DocumentId::new();
-        surface.set_context_document(Some((doc_id, "Launch plan".into())));
-
-        assert!(surface.send_composer());
-        match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
-            Command::Send(request) => {
-                assert_eq!(
-                    request.explicit_refs,
-                    vec![ContextRef::Document {
-                        document_id: doc_id
-                    }]
-                );
-            }
-            _ => panic!("composer send must issue a turn"),
-        }
-    }
-
-    #[test]
     fn send_composer_omits_context_document_after_removal() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         surface.reader = Some(reader);
@@ -9934,7 +9694,7 @@ mod tests {
 
     #[test]
     fn context_pane_without_document_sends_immediately() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         surface.reader = Some(reader);
@@ -9954,7 +9714,7 @@ mod tests {
 
     #[test]
     fn context_pane_with_document_stages_until_durable() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         surface.reader = Some(reader);
@@ -9995,7 +9755,7 @@ mod tests {
     /// chat; a tab that asked for a new chat drops it there too.
     #[test]
     fn a_new_chat_tab_does_not_take_the_last_chat_from_the_boot() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
@@ -10035,7 +9795,7 @@ mod tests {
     /// is not saved over it again — and owes a new chat instead.
     #[test]
     fn a_tab_opened_on_a_deleted_chat_becomes_a_new_chat() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         let gone = ChatId::new();
         assert!(surface.open_link(gone, None));
@@ -10067,7 +9827,7 @@ mod tests {
     /// chat is dropped, and the chat this tab asked for is the one it shows.
     #[test]
     fn a_tab_asked_for_a_new_chat_does_not_take_the_services_current_one() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat(), "the intent is kept");
@@ -10144,10 +9904,10 @@ mod tests {
 
     /// **Nothing opens the provider setup**, for now: not the boot with no
     /// provider chosen, not a settings answer, not a new chat with nothing
-    /// to make it with, not the standalone header's old *Settings* place.
+    /// to make it with.
     #[test]
     fn no_door_opens_the_provider_setup() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
@@ -10166,14 +9926,6 @@ mod tests {
             failure: None,
         }));
         assert!(!surface.showing_setup(), "nor a provider that is down");
-        let header = surface.settings_button();
-        surface.mouse_down(header.x + header.w / 2.0, header.y + header.h / 2.0);
-        assert!(!surface.showing_setup(), "nor the header's old Settings");
-        assert_eq!(
-            surface.control_hover_at(header.x + header.w / 2.0, header.y + header.h / 2.0),
-            None,
-            "which is no longer a control"
-        );
     }
 
     /// **A new chat with no model ever chosen is the chat view**: the
@@ -10181,7 +9933,7 @@ mod tests {
     /// Enter opens the picker instead of sending, and the message waits.
     #[test]
     fn a_fresh_chat_with_no_model_waits_on_the_chip() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
@@ -10221,7 +9973,7 @@ mod tests {
     /// not. A chat that has begun on one leads the rail with it (S1).
     #[test]
     fn the_picker_of_a_chat_with_no_model_offers_only_the_agents() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         surface.settings = Some(unchosen_settings(&["agent-claude"]));
         surface
             .settings
@@ -10273,14 +10025,12 @@ mod tests {
 
     /// The surface of a chat not made yet, on Claude: a reader, settings with
     /// the agent ready, and the pick made in the composer.
-    fn unmade_claude_chat(
-        mode: SurfaceMode,
-    ) -> (
+    fn unmade_claude_chat() -> (
         ChatSurface,
         std::sync::mpsc::Receiver<Command>,
         std::sync::mpsc::SyncSender<Update>,
     ) {
-        let mut surface = ChatSurface::new(mode);
+        let mut surface = ChatSurface::new();
         let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.settings = Some(unchosen_settings(&["agent-claude"]));
@@ -10297,7 +10047,7 @@ mod tests {
     /// on it. Nothing reaches the Chats list until the first message.
     #[test]
     fn picking_an_agent_with_no_chat_waits_for_the_first_message() {
-        let (surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (surface, commands, _updates) = unmade_claude_chat();
         let claude = AiProviderId::parse("agent-claude").unwrap();
         let Command::SelectProvider(selected) =
             commands.recv_timeout(Duration::from_millis(50)).unwrap()
@@ -10327,7 +10077,7 @@ mod tests {
     /// brand through the one mapping the model picker draws with.
     #[test]
     fn a_chat_is_made_by_its_first_message_and_names_its_agent() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         assert!(!surface.current_chat_made(), "not sent, not made");
         assert_eq!(surface.current_chat_provider(), Some("agent-claude"));
         surface.composer.set_text("Plan the launch");
@@ -10356,7 +10106,7 @@ mod tests {
     /// message's card stays through the chat's arrival.
     #[test]
     fn the_first_message_makes_the_chat_and_is_sent_into_it() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         while commands.try_recv().is_ok() {}
         let stand_in = surface.transcript.clone().unwrap();
         surface.composer.set_text("Plan the launch");
@@ -10394,7 +10144,7 @@ mod tests {
     /// again.
     #[test]
     fn a_failed_create_gives_the_first_message_back() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         while commands.try_recv().is_ok() {}
         let chat = surface.transcript.as_ref().unwrap().chat.id;
         surface.composer.set_text("Plan the launch");
@@ -10432,7 +10182,7 @@ mod tests {
     /// message makes the chat, ahead of the message.
     #[test]
     fn a_new_chats_folder_is_kept_until_its_first_message() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         while commands.try_recv().is_ok() {}
         let chat = surface.transcript.as_ref().unwrap().chat.id;
         assert!(surface.shows_composer_footer(), "the folder can be chosen");
@@ -10461,7 +10211,7 @@ mod tests {
     /// it: deleting another chat does not swap in the service's current one.
     #[test]
     fn a_chat_not_made_yet_survives_a_history_change() {
-        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, _commands, _updates) = unmade_claude_chat();
         let chat = surface.transcript.as_ref().unwrap().chat.id;
         let other = transcript();
         surface.apply_update(Update::HistoryChanged {
@@ -10476,7 +10226,7 @@ mod tests {
     /// stored under its chat — and the paste is read once the chat exists.
     #[test]
     fn a_paste_into_a_chat_not_made_yet_makes_it_first() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         while commands.try_recv().is_ok() {}
         let chat = surface.transcript.as_ref().unwrap().chat.id;
         assert!(surface.begin_attachment_paste());
@@ -10497,7 +10247,7 @@ mod tests {
     /// fresh chat asked for two).
     #[test]
     fn a_remembered_provider_makes_one_chat_for_a_fresh_tab() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         assert!(surface.start_new_chat());
@@ -10537,7 +10287,7 @@ mod tests {
     /// too, the provider's one line above the composer.
     #[test]
     fn a_remembered_provider_that_is_down_says_so_on_the_chat_view() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let mut settings = unchosen_settings(&[]);
@@ -10564,7 +10314,7 @@ mod tests {
     /// way `@` puts one there; anything typed stays after it.
     #[test]
     fn attaching_a_document_puts_its_chip_in_the_composer() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let document = DocumentId::new();
         surface.composer.set_text("summarise");
         assert!(surface.attach_document(document, "Launch plan".into()));
@@ -10594,7 +10344,7 @@ mod tests {
             Some("quoted question?".into())
         );
 
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let mut chat = transcript();
@@ -10639,7 +10389,7 @@ mod tests {
     /// chat after the document's title, never its `koru://` link.
     #[test]
     fn a_document_chip_names_the_chat_by_its_title() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let mut chat = transcript();
@@ -10663,7 +10413,7 @@ mod tests {
     /// none yet.
     #[test]
     fn the_wheel_scrolls_a_long_picker_with_no_chat() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
         surface.settings = Some(unchosen_settings(&["agent-claude"]));
         let claude = AiProviderId::parse("agent-claude").unwrap();
@@ -10697,7 +10447,7 @@ mod tests {
 
     #[test]
     fn web_search_is_capability_gated_sticky_and_streams_visible_sources() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let mut chat = transcript();
@@ -10777,7 +10527,7 @@ mod tests {
     /// there (under test nothing is read, so it reads as not there).
     #[test]
     fn a_replys_file_picture_is_read_from_the_disk() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let url = if cfg!(windows) {
             "file:///D:/apple.jpeg"
@@ -10842,7 +10592,7 @@ mod tests {
     /// font changed, `invalidate` keeping `message_layouts`.
     #[test]
     fn invalidate_lays_every_finished_message_out_again() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let message_id = MessageId::new();
         transcript.messages.push(koru_ai_core::Message {
@@ -10886,7 +10636,7 @@ mod tests {
 
     #[test]
     fn a_stream_event_relays_out_only_the_pending_turn() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let message_id = MessageId::new();
         transcript.messages.push(koru_ai_core::Message {
@@ -10940,7 +10690,7 @@ mod tests {
 
     #[test]
     fn missing_authoritative_attempt_ends_recovery_with_retryable_status() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let attempt = InferenceAttemptId::new();
         surface.attempt = Some(attempt);
         surface.waiting = true;
@@ -10972,7 +10722,7 @@ mod tests {
 
     #[test]
     fn stale_recovery_failure_does_not_clear_a_newer_attempt() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let stale = InferenceAttemptId::new();
         let current = InferenceAttemptId::new();
         surface.attempt = Some(current);
@@ -10995,7 +10745,7 @@ mod tests {
     /// Stop.
     #[test]
     fn a_side_command_failing_mid_reply_keeps_stop() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let transcript = transcript();
@@ -11068,7 +10818,7 @@ mod tests {
 
     #[test]
     fn composer_grows_to_eight_lines_then_caps() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let base = surface.composer_rect().h;
         for _ in 0..12 {
             surface.composer.insert_break();
@@ -11090,7 +10840,7 @@ mod tests {
                     + 1.0
         );
         // Four lines are four lines: the composer grows until the eighth.
-        let mut short = ChatSurface::new(SurfaceMode::Standalone);
+        let mut short = ChatSurface::new();
         short.composer.set_text("1\n2\n3\n4");
         let four = short.composer_rect().h;
         assert!(four > base && four < grown);
@@ -11098,7 +10848,7 @@ mod tests {
 
     #[test]
     fn alt_arrows_visit_questions_then_return_to_the_composer() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.tool_policy.chat_id = transcript.chat.id;
         for (ordinal, role) in [
@@ -11147,7 +10897,7 @@ mod tests {
 
     #[test]
     fn loaded_chat_scrolls_to_its_end_once() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.tool_policy.chat_id = transcript.chat.id;
         for ordinal in 0..24 {
@@ -11192,7 +10942,7 @@ mod tests {
     /// composer with text Ctrl+End stays the editor's.
     #[test]
     fn jump_to_latest_shows_off_the_end_and_follows_the_reply() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.tool_policy.chat_id = transcript.chat.id;
         let message = |chat, ordinal: u32, markdown: String| koru_ai_core::Message {
@@ -11292,7 +11042,7 @@ mod tests {
 
     #[test]
     fn authoritative_recovery_preserves_same_chat_scroll_position() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.tool_policy.chat_id = transcript.chat.id;
         for ordinal in 0..24 {
@@ -11341,7 +11091,7 @@ mod tests {
 
     #[test]
     fn completed_short_answer_keeps_the_submitted_question_at_the_top() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.tool_policy.chat_id = transcript.chat.id;
         for ordinal in 0..10 {
@@ -11407,7 +11157,7 @@ mod tests {
 
     #[test]
     fn workspace_selection_replaces_the_complete_chat_grant_set() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         let chat = transcript.chat.id;
@@ -11428,7 +11178,7 @@ mod tests {
 
     #[test]
     fn embedded_context_workspace_is_first_and_initially_selected() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let current = WorkspaceId::new();
         let other = WorkspaceId::new();
@@ -11467,7 +11217,7 @@ mod tests {
 
     #[test]
     fn composer_footer_separates_workspace_approval_and_model_controls() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         transcript.chat.current_model.requested_model = "gpt-5.5".into();
         surface.transcript = Some(transcript);
@@ -11498,11 +11248,16 @@ mod tests {
 
     #[test]
     fn workspace_access_adds_search_only_for_large_lists_and_filters_rows() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.transcript = Some(transcript());
+        let profile = ProfileId::new();
         surface.destinations = (0..6)
-            .map(|index| destination(WorkspaceId::new(), &format!("Workspace {index}")))
+            .map(|index| DestinationOption {
+                profile_id: profile,
+                ..destination(WorkspaceId::new(), &format!("Workspace {index}"))
+            })
             .collect();
+        surface.context_workspace = Some(surface.destinations[0].workspace_id);
         surface.tool_access_open = true;
 
         assert!(surface.tool_access_search_rect().is_some());
@@ -11518,7 +11273,7 @@ mod tests {
 
     #[test]
     fn chat_model_picker_is_wide_and_scrollable() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         // A chat that has begun: an empty one offers only the agents.
         let mut begun = transcript();
         begun.messages.push(koru_ai_core::Message {
@@ -11549,7 +11304,7 @@ mod tests {
 
     #[test]
     fn composer_owns_its_disabled_send_action() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.transcript = Some(transcript());
         surface.validated_ready = true;
         let composer = surface.composer_rect();
@@ -11561,7 +11316,7 @@ mod tests {
 
     #[test]
     fn shift_enter_inserts_a_newline_in_the_composer() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.validated_ready = true;
         surface.composer.set_text("one");
 
@@ -11571,7 +11326,7 @@ mod tests {
 
     #[test]
     fn ctrl_j_inserts_a_newline_in_the_composer() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.validated_ready = true;
         surface.composer.set_text("one");
 
@@ -11620,7 +11375,7 @@ mod tests {
 
     #[test]
     fn picker_keys_come_before_send_and_the_chip_is_pinned_at_send() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -11654,7 +11409,7 @@ mod tests {
 
     #[test]
     fn several_chips_are_several_refs_and_never_more_than_the_worker_takes() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -11666,6 +11421,17 @@ mod tests {
             .map(|i| chip_into(&mut surface, &format!("Doc {i}")))
             .collect();
         assert!(surface.send_composer());
+        assert!(
+            surface
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("16")),
+            "the person is told which went: {:?}",
+            surface.status
+        );
+        // With a page open the send waits for the page to be saved.
+        surface.submit_embedded_when_durable(true);
+        assert!(surface.submit_embedded_when_durable(true));
         match commands.recv_timeout(Duration::from_millis(50)).unwrap() {
             Command::Send(request) => {
                 assert_eq!(request.explicit_refs.len(), koru_ai_wire::MAX_CONTEXT_REFS);
@@ -11680,19 +11446,11 @@ mod tests {
             }
             _ => panic!("a send"),
         }
-        assert!(
-            surface
-                .status
-                .as_deref()
-                .is_some_and(|status| status.contains("16")),
-            "the person is told which went: {:?}",
-            surface.status
-        );
     }
 
     #[test]
     fn in_the_pane_an_earlier_chip_stays_pinned() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let earlier = DocumentId::new();
@@ -11721,7 +11479,7 @@ mod tests {
     #[test]
     fn send_waits_for_a_provisional_dictation() {
         use koru_ui::DictationTarget;
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -11751,7 +11509,7 @@ mod tests {
 
     #[test]
     fn the_sent_message_reads_the_chip_as_a_titled_link() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -11779,7 +11537,7 @@ mod tests {
 
         // The durable card in another window, which never saw the chip: the
         // fallback word, then the title once the reader finds it.
-        let mut other = ChatSurface::new(SurfaceMode::Standalone);
+        let mut other = ChatSurface::new();
         let (reader, commands, _other_updates) = Reader::test_pair();
         other.reader = Some(reader);
         other.lang = koru_i18n::Lang::En;
@@ -11805,13 +11563,12 @@ mod tests {
         let _ = updates;
     }
 
-    /// **D78: *Stored “…” in Koru.* is followed by *Open*** where the host
-    /// opens documents as tabs; a press asks the host to open the new
-    /// document, as a document link does. The standalone window, with no
-    /// tabs, shows no link; nor does a later status line.
+    /// **D78: *Stored “…” in Koru.* is followed by *Open***; a press asks
+    /// the host to open the new document as a tab, as a document link does.
+    /// A later status line takes the link with it.
     #[test]
-    fn a_stored_reply_offers_open_where_the_host_has_tabs() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+    fn a_stored_reply_offers_open() {
+        let mut surface = ChatSurface::new();
         surface.lang = koru_i18n::Lang::En;
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
         surface.transcript = Some(transcript());
@@ -11830,13 +11587,6 @@ mod tests {
             surface.status.as_deref(),
             Some("Stored “Help me plan a trip to Portugal for 10 days” in Koru.")
         );
-        assert!(
-            surface.stored_open_rect().is_none(),
-            "the standalone window has no tabs: no Open"
-        );
-
-        surface.offer_open_stored_documents(true);
-        stored(&mut surface);
         let open = surface.stored_open_rect().expect("Open after the line");
         surface.pointer = (open.x + open.w * 0.5, open.y + open.h * 0.5);
         assert_eq!(surface.cursor_icon(), CursorIcon::Default, "the arrow");
@@ -11856,7 +11606,7 @@ mod tests {
 
     #[test]
     fn a_document_link_asks_the_host_to_open_it_and_a_web_link_does_not() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let document = DocumentId::new();
         assert!(surface.follow_link(&format!("koru://doc/{document}")));
         assert_eq!(
@@ -11872,7 +11622,7 @@ mod tests {
 
     #[test]
     fn plain_enter_still_sends_the_composer() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -11888,7 +11638,7 @@ mod tests {
 
     #[test]
     fn pending_mutation_opens_and_exposes_approve_through_the_shared_reader() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         let activity = ToolActivity {
@@ -11965,7 +11715,7 @@ mod tests {
 
     #[test]
     fn running_activity_keeps_a_previously_resolved_document_title() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let transcript = transcript();
         let mut activity = ToolActivity {
             id: ToolInvocationId::new(),
@@ -12021,7 +11771,7 @@ mod tests {
 
     #[test]
     fn tool_activity_is_positioned_inside_its_turn() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let user_id = MessageId::new();
         let assistant_id = MessageId::new();
@@ -12106,7 +11856,7 @@ mod tests {
 
     #[test]
     fn live_tool_activity_precedes_the_pending_response() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let assistant_id = MessageId::new();
         transcript.tool_activities.push(ToolActivity {
@@ -12152,7 +11902,7 @@ mod tests {
     /// it on its own, whatever was approved before it in the chat.
     #[test]
     fn a_waiting_tool_is_never_approved_on_its_own() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         let chat = transcript.chat.id;
@@ -12257,7 +12007,7 @@ mod tests {
 
     #[test]
     fn an_empty_agent_chat_offers_its_folder_and_the_host_answers_it() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -12339,7 +12089,7 @@ mod tests {
     /// no room.
     #[test]
     fn the_folder_sits_under_the_composer_left_aligned() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
         let mut transcript = transcript();
         transcript.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
@@ -12401,7 +12151,7 @@ mod tests {
 
     #[test]
     fn a_running_agent_check_is_followed_up_while_the_picker_shows_it() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.settings = Some(ProviderSettingsResponse {
@@ -12457,7 +12207,7 @@ mod tests {
     /// turns ready while the picker is open is asked again.
     #[test]
     fn agent_models_are_asked_for_ahead_of_the_picker_and_kept_meanwhile() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let claude = AiProviderId::parse("agent-claude").unwrap();
@@ -12551,7 +12301,7 @@ mod tests {
 
     #[test]
     fn koru_card_selects_without_creating_a_chat_and_save_selects_the_provider() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.lang = koru_i18n::Lang::En;
@@ -12642,7 +12392,7 @@ mod tests {
     /// reads *Default*; a chosen level is kept on the chat and named.
     #[test]
     fn an_agent_models_levels_show_and_the_chip_names_a_chosen_one() {
-        let (mut surface, commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, commands, _updates) = unmade_claude_chat();
         surface.lang = koru_i18n::Lang::En;
         claude_listing(&mut surface);
         let claude = AiProviderId::parse("agent-claude").unwrap();
@@ -12683,7 +12433,7 @@ mod tests {
     /// **D18: a new model keeps the chat's level when it offers it.**
     #[test]
     fn picking_another_model_keeps_a_level_it_offers() {
-        let (mut surface, _commands, _updates) = unmade_claude_chat(SurfaceMode::Standalone);
+        let (mut surface, _commands, _updates) = unmade_claude_chat();
         claude_listing(&mut surface);
         let claude = AiProviderId::parse("agent-claude").unwrap();
         surface.choose_agent_model(claude.clone(), "opus".into());
@@ -12718,7 +12468,7 @@ mod tests {
     /// says why instead.
     #[test]
     fn an_agent_chats_level_is_read_only_after_its_first_message() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -12773,7 +12523,7 @@ mod tests {
     /// start's: that is a model, and a live session keeps its model.
     #[test]
     fn a_begun_agent_chats_level_changes_from_its_next_message() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -12858,7 +12608,7 @@ mod tests {
     /// text; one that comes live is kept once.
     #[test]
     fn an_agent_notice_is_a_line_in_front_of_its_reply() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
         let mut chat = transcript();
         let message = |ordinal: u32, role: ChatRole, markdown: &str| koru_ai_core::Message {
@@ -12933,7 +12683,7 @@ mod tests {
     /// **D19: a refused level is said in the person's language.**
     #[test]
     fn a_refused_level_reads_in_the_persons_language() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.lang = koru_i18n::Lang::De;
         surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
             version: 1,
@@ -12956,7 +12706,7 @@ mod tests {
 
     #[test]
     fn the_chip_reads_the_effort_and_a_stop_sets_the_chats_default() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -13016,7 +12766,7 @@ mod tests {
 
     #[test]
     fn a_koru_chat_folds_its_thinking_toggle_into_the_chip() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -13068,7 +12818,7 @@ mod tests {
             },
             agents: Vec::new(),
         };
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.apply_settings_fields(&settings);
         surface.settings = Some(settings);
         surface.setup_provider = SetupProvider::Ollama;
@@ -13119,7 +12869,7 @@ mod tests {
             },
             agents: Vec::new(),
         };
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.apply_settings_fields(&settings);
         surface.settings = Some(settings);
         surface.setup_provider = SetupProvider::Ollama;
@@ -13144,7 +12894,7 @@ mod tests {
 
     #[test]
     fn ollama_pull_can_cancel_before_first_progress_and_retry_after_terminal() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface
@@ -13211,38 +12961,30 @@ mod tests {
         assert_eq!(&models[..3], ["gpt-5.6", "gpt-5.5", "gpt-4.1"]);
     }
 
-    /// **The title row is gone** in both hosts: nothing is drawn or hit at
-    /// the top of a workspace pane, whose conversation starts a margin below
-    /// the top, and the standalone window keeps only its header buttons.
+    /// **The title row is gone**: nothing is drawn or hit at the top of the
+    /// surface, whose conversation starts a margin below the top — and no
+    /// header buttons are there either.
     #[test]
     fn the_chat_title_is_neither_drawn_nor_hit() {
-        for mode in [SurfaceMode::ContextPane, SurfaceMode::Standalone] {
-            let mut surface = ChatSurface::new(mode);
-            let mut chat = transcript();
-            chat.messages.push(user_message(&chat, "hello"));
-            surface.transcript = Some(chat);
-            surface.validated_ready = true;
-            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
-            let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
-            // Where the title's words were: the middle of the top row.
-            let x = surface.viewport.x + surface.viewport.w * 0.5;
-            assert!(!surface.mouse_double_click(x, top), "{mode:?}");
-            assert_eq!(surface.control_hover_at(x, top), None, "{mode:?}");
-            assert_eq!(surface.focus, Focus::Composer, "{mode:?}");
+        let mut surface = ChatSurface::new();
+        let mut chat = transcript();
+        chat.messages.push(user_message(&chat, "hello"));
+        surface.transcript = Some(chat);
+        surface.validated_ready = true;
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
+        // Where the title's words were, and where the header's *Chats* was.
+        for x in [
+            surface.viewport.x + surface.viewport.w * 0.5,
+            surface.viewport.x + PAD + 4.0,
+        ] {
+            assert!(!surface.mouse_double_click(x, top));
+            assert_eq!(surface.control_hover_at(x, top), None);
+            assert_eq!(surface.focus, Focus::Composer);
         }
-        let mut pane = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut pane = ChatSurface::new();
         pane.transcript = Some(transcript());
         assert_eq!(pane.conversation_rect().y, pane.viewport.y + PAD);
-        let mut window = ChatSurface::new(SurfaceMode::Standalone);
-        window.transcript = Some(transcript());
-        window.validated_ready = true;
-        assert_eq!(window.conversation_rect().y, window.viewport.y + HEADER_H);
-        let history = window.history_button();
-        assert_eq!(
-            window.control_hover_at(history.x + 4.0, history.y + 4.0),
-            Some((5, 1)),
-            "the standalone header keeps Chats"
-        );
     }
 
     /// **The private mark is hidden for now** (the user, 2026-11-03:
@@ -13253,7 +12995,7 @@ mod tests {
     #[test]
     fn the_private_mark_is_hidden_and_a_private_chat_stays_private() {
         assert!(!koru_features::PRIVATE_CHAT_BUTTON_SHOWN);
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let mut transcript = transcript();
         transcript.chat.current_model.requested_model = "gpt-5.5".into();
@@ -13288,7 +13030,7 @@ mod tests {
 
     #[test]
     fn desktop_controls_keep_the_arrow_while_editable_text_uses_the_ibeam() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         surface.transcript = Some(transcript());
         surface.validated_ready = true;
 
@@ -13312,7 +13054,7 @@ mod tests {
 
     #[test]
     fn usage_command_is_local_and_does_not_create_a_turn() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         let transcript = transcript();
         let chat_id = transcript.chat.id;
@@ -13338,7 +13080,7 @@ mod tests {
 
     #[test]
     fn destructive_confirmation_defaults_to_cancel() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.open_confirmation(DestructiveAction::ClearHistory);
@@ -13404,7 +13146,7 @@ mod tests {
 
     #[test]
     fn the_composer_accepts_a_provisional_multiline_dictation() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         use koru_ui::DictationTarget;
         let composer = surface.dictation_composer();
         assert!(composer.begin_composition(()));
@@ -13423,7 +13165,7 @@ mod tests {
     /// the composer takes the press first.
     #[test]
     fn escape_twice_stops_the_turn_and_once_only_says_how() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.transcript = Some(transcript());
@@ -13484,7 +13226,7 @@ mod tests {
     /// message twice in a row is one step.
     #[test]
     fn up_and_down_walk_the_messages_asked_and_give_the_draft_back() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let mut chat = transcript();
@@ -13571,7 +13313,7 @@ mod tests {
 
     /// A surface on a chat that has been sent `asked`, in a narrow window.
     fn walked_chat(asked: &[&str]) -> (ChatSurface, std::sync::mpsc::Receiver<Command>) {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
         std::mem::forget(_updates);
         surface.reader = Some(reader);
@@ -13736,7 +13478,7 @@ mod tests {
     /// conversation reads it under, so sending it again carries the document.
     #[test]
     fn up_recalls_a_message_with_its_document_chips() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let known = DocumentId::new();
@@ -13769,7 +13511,7 @@ mod tests {
     /// chat picks again.
     #[test]
     fn an_empty_chat_greets_once_and_holds_the_line() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         surface.validated_ready = true;
         let line = surface.greeting().expect("a chat being made greets");
         for _ in 0..4 {
@@ -13796,7 +13538,7 @@ mod tests {
         assert!(surface.greeting().is_some());
         assert_eq!(surface.greeting.map(|(chat, _)| chat), Some(Some(other_id)));
 
-        let mut loading = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut loading = ChatSurface::new();
         loading.open_link(ChatId::new(), None);
         assert_eq!(
             loading.greeting(),
@@ -13812,51 +13554,49 @@ mod tests {
     /// the composer's padding, in both places.
     #[test]
     fn the_composer_starts_centred_and_moves_to_the_bottom() {
-        for mode in [SurfaceMode::ContextPane, SurfaceMode::Standalone] {
-            let mut surface = ChatSurface::new(mode);
-            surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
-            surface.transcript = Some(transcript());
-            surface.validated_ready = true;
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 700.0));
+        surface.transcript = Some(transcript());
+        surface.validated_ready = true;
 
-            let centred = surface.composer_rect();
-            let bottom = surface.viewport.h - PAD - centred.h;
-            let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
-            let middle = (centred.y - above + centred.y + centred.h) * 0.5;
-            assert!((middle - surface.viewport.h * 0.5).abs() < 1.0, "{mode:?}");
-            assert!(centred.y < bottom - 100.0, "{mode:?}");
-            for begun in [false, true] {
-                surface.pending_user = begun.then(|| "hello".to_owned());
-                let composer = surface.composer_rect();
-                let send = surface.send_button();
-                let toolbar = surface.composer_toolbar_rect();
-                let text = surface.composer_text_rect();
-                assert_eq!(text.y, composer.y);
-                assert_eq!(toolbar.x, composer.x + COMPOSER_PAD_X);
-                assert_eq!(send.x + send.w, composer.x + composer.w - COMPOSER_PAD_X);
-                assert_eq!(
-                    toolbar.y + toolbar.h,
-                    composer.y + composer.h - COMPOSER_PAD_BOTTOM
-                );
-                assert_eq!(
-                    send.y + send.h,
-                    composer.y + composer.h - COMPOSER_PAD_BOTTOM
-                );
-                assert!(text.y + text.h <= toolbar.y);
-                let conversation = surface.conversation_rect();
-                assert!(conversation.y + conversation.h < composer.y);
-            }
-            assert_eq!(surface.composer_rect().y, bottom, "{mode:?} at the bottom");
-
-            // Pressed where it is drawn: the text in the middle takes focus.
-            surface.pending_user = None;
-            let text = {
-                surface.composer_rect();
-                surface.composer_text_rect()
-            };
-            surface.focus = Focus::None;
-            assert!(surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5));
-            assert_eq!(surface.focus, Focus::Composer, "{mode:?}");
+        let centred = surface.composer_rect();
+        let bottom = surface.viewport.h - PAD - centred.h;
+        let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
+        let middle = (centred.y - above + centred.y + centred.h) * 0.5;
+        assert!((middle - surface.viewport.h * 0.5).abs() < 1.0);
+        assert!(centred.y < bottom - 100.0);
+        for begun in [false, true] {
+            surface.pending_user = begun.then(|| "hello".to_owned());
+            let composer = surface.composer_rect();
+            let send = surface.send_button();
+            let toolbar = surface.composer_toolbar_rect();
+            let text = surface.composer_text_rect();
+            assert_eq!(text.y, composer.y);
+            assert_eq!(toolbar.x, composer.x + COMPOSER_PAD_X);
+            assert_eq!(send.x + send.w, composer.x + composer.w - COMPOSER_PAD_X);
+            assert_eq!(
+                toolbar.y + toolbar.h,
+                composer.y + composer.h - COMPOSER_PAD_BOTTOM
+            );
+            assert_eq!(
+                send.y + send.h,
+                composer.y + composer.h - COMPOSER_PAD_BOTTOM
+            );
+            assert!(text.y + text.h <= toolbar.y);
+            let conversation = surface.conversation_rect();
+            assert!(conversation.y + conversation.h < composer.y);
         }
+        assert_eq!(surface.composer_rect().y, bottom, "at the bottom");
+
+        // Pressed where it is drawn: the text in the middle takes focus.
+        surface.pending_user = None;
+        let text = {
+            surface.composer_rect();
+            surface.composer_text_rect()
+        };
+        surface.focus = Focus::None;
+        assert!(surface.mouse_down(text.x + 40.0, text.y + text.h * 0.5));
+        assert_eq!(surface.focus, Focus::Composer);
     }
 
     /// **The composer is one component in the inspector**, its box, text,
@@ -13865,7 +13605,7 @@ mod tests {
     #[test]
     fn the_composer_is_one_component_with_its_parts_inside() {
         use koru_draw::inspect;
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
@@ -13932,7 +13672,7 @@ mod tests {
     /// times the host asks.
     #[test]
     fn a_chat_says_it_works_waits_and_finished_once() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         let transcript = transcript();
@@ -14008,7 +13748,7 @@ mod tests {
     /// still streaming is not it.
     #[test]
     fn the_newest_seen_message_skips_a_reply_still_running() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let message = |ordinal, state| koru_ai_core::Message {
             id: MessageId::new(),
@@ -14040,7 +13780,7 @@ mod tests {
     /// puts the divider away.
     #[test]
     fn an_unread_chat_opens_on_its_divider_above_the_first_unseen_message() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         for ordinal in 0..24 {
             transcript.messages.push(koru_ai_core::Message {
@@ -14109,7 +13849,7 @@ mod tests {
     /// A divider over the last message has nothing to go above.
     #[test]
     fn a_divider_after_the_newest_message_shows_nothing() {
-        let mut surface = ChatSurface::new(SurfaceMode::Standalone);
+        let mut surface = ChatSurface::new();
         let mut transcript = transcript();
         let only = user_message(&transcript, "Hello");
         transcript.messages.push(only.clone());
@@ -14122,10 +13862,9 @@ mod tests {
         assert!(surface.new_divider.as_ref().unwrap().top.is_none());
     }
 
-    /// **Ctrl+Shift+↑/↓ step through the Chats list** (D87): in a host with a
-    /// navigator the host is asked; with text in the composer the chord is
-    /// the editor's and nothing is asked; the standalone window reads the
-    /// next chat in place, in the list's order.
+    /// **Ctrl+Shift+↑/↓ step through the Chats list** (D87): the host, whose
+    /// list it is, is asked — the surface reads nothing in place; with text
+    /// in the composer the chord is the editor's and nothing is asked.
     #[test]
     fn ctrl_shift_arrows_step_through_the_chats_list_with_an_empty_composer() {
         let primary_shift = if cfg!(target_os = "macos") {
@@ -14136,7 +13875,7 @@ mod tests {
         let down = Key::Named(NamedKey::ArrowDown);
         let up = Key::Named(NamedKey::ArrowUp);
 
-        let mut pane = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut pane = ChatSurface::new();
         pane.transcript = Some(transcript());
         pane.validated_ready = true;
         pane.setup_open = false;
@@ -14149,33 +13888,18 @@ mod tests {
         pane.key(&up, None, primary_shift);
         assert_eq!(pane.take_wants_chat_step(), None, "the editor's chord");
 
-        let mut window = ChatSurface::new(SurfaceMode::Standalone);
+        let mut reading = ChatSurface::new();
         let (reader, commands, _updates) = Reader::test_pair();
-        window.reader = Some(reader);
-        window.validated_ready = true;
-        window.setup_open = false;
-        let shown = transcript();
-        let mut above = shown.chat.clone();
-        above.id = ChatId::new();
-        above.updated_at = koru_ai_core::Timestamp::from_millis(50);
-        let mut below = shown.chat.clone();
-        below.id = ChatId::new();
-        below.updated_at = koru_ai_core::Timestamp::from_millis(0);
-        let mut current = shown.chat.clone();
-        current.updated_at = koru_ai_core::Timestamp::from_millis(10);
-        window.chats = vec![below.clone(), current, above.clone()];
-        window.transcript = Some(shown);
-        assert!(window.key(&down, None, primary_shift));
-        assert!(matches!(
-            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::Read(chat) if chat == below.id
-        ));
-        assert!(window.key(&up, None, primary_shift));
-        assert!(matches!(
-            commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::Read(chat) if chat == above.id
-        ));
-        assert_eq!(window.take_wants_chat_step(), None, "read in place");
+        reading.reader = Some(reader);
+        reading.validated_ready = true;
+        reading.setup_open = false;
+        reading.transcript = Some(transcript());
+        assert!(reading.key(&up, None, primary_shift));
+        assert_eq!(
+            reading.take_wants_chat_step(),
+            Some(koru_chats_ui::ChatStep::Previous)
+        );
+        assert!(commands.try_recv().is_err(), "nothing read in place");
         assert_eq!(
             koru_keys::registry::get(koru_keys::ShortcutId::NextChat).layer,
             koru_keys::Layer::Chat
@@ -14186,7 +13910,7 @@ mod tests {
     /// view ticks once a second for its count, not at the status frame.
     #[test]
     fn reduced_motion_ticks_the_work_header_once_a_second() {
-        let mut surface = ChatSurface::new(SurfaceMode::ContextPane);
+        let mut surface = ChatSurface::new();
         assert!(surface.work_tick_deadline().is_none(), "no reply runs");
         surface.work_layouts.push(work_view::build(
             &mut surface.engine,
