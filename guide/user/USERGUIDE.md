@@ -3347,9 +3347,9 @@ Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
 **Fonts and density** are on the **Appearance** page: a density control
-(Compact / Normal) and four font dropdowns — the **app** font
-(tabs, sidebar, pills, panels), and three document roles, **body**,
-**headings** and **code**. Each dropdown lists every family set in that
+(Compact / Normal) and five font dropdowns — the **app** font
+(tabs, sidebar, pills, panels), the **chat** font, and three document roles,
+**body**, **headings** and **code**. Each dropdown lists every family set in that
 family's own face, so you see what you are choosing. While a font list is
 open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
@@ -3376,7 +3376,15 @@ theme keeps its own choice, so switching between light and dark shows the
 color you picked for each. The choice is saved with your other appearance
 settings and follows you to your other computers.
 
-**Any font installed on your computer** can be chosen for the app, body,
+**The chat font** is the row under the app font. It sets the face of the
+messages in a chat — yours, the agent's answers, its notes between tools, a
+reply as it streams — and of the box you type in; code inside a message keeps
+the code font, and the chat's headers, buttons and notices stay in the app
+font. Until you choose one it is **Follow app**: the chat uses whatever the
+app font is, and changes with it. Pick *Follow app* again to go back. It has
+no size of its own; the chat follows the app's text size.
+
+**Any font installed on your computer** can be chosen for the app, chat, body,
 headings or code: every font list ends with **More fonts…**, which opens a
 searchable list of your installed fonts, each name shown in its own face.
 Type to filter; the arrow keys preview the lit font across the app, and
@@ -3399,8 +3407,8 @@ follow. Larger still is what zoom is for. Koru opens at your size, fonts and
 theme from its first frame when its settings answer within moments of
 starting; if they are slower it opens with the defaults and settles.
 
-The four roles are separate on purpose. Setting the app font to a monospace
-makes every *pill* monospaced and leaves the sentence around it alone. All four
+The five roles are separate on purpose. Setting the app font to a monospace
+makes every *pill* monospaced and leaves the sentence around it alone. All five
 are remembered and come back when you reopen the app.
 
 **Zoom** (`Ctrl+=`, `Ctrl+-`, `Ctrl+0`, or `Ctrl` + scroll) scales the whole
