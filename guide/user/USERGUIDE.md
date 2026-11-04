@@ -2383,8 +2383,8 @@ left of the current one, and the middle opens it in a new tab without
 splitting. Hovering an arrow shows where the new pane will go. With the
 keyboard, the arrow keys move and `Enter` opens; `Esc` or a click elsewhere
 closes it without opening anything. The same cross appears when you Alt+click
-a document or chat in the Explore column; there an arrow splits the pane you
-are working in.
+a document or chat in the Explore column, a queue or list on the tasks rail,
+or a task on the Tasks tab; there an arrow splits the pane you are working in.
 
 **Click a link pill to open it in your browser.** `Ctrl+click` opens the URL
 without leaving Koru. Hovering a link shows where it goes, with copy and edit
@@ -2885,6 +2885,10 @@ Choosing a queue or a list opens **one Tasks tab** on it, and marks it in the
 column. Choosing another queue points that same tab at it rather than opening a
 second — the column has one selection, and two tabs would be two answers to the
 same question. The tab survives a restart, on the queue you left it on.
+**Alt+click a queue or list** to choose where instead: an arrow opens it in a
+second Tasks tab in a split beside the one you are in, the middle in a new tab,
+and your first Tasks tab stays where it was. **Alt+click a task row** to open
+the task's own page the same way, in a split or a new tab, scrolled to the task.
 
 The heading names the queue, with today's date beside it in **Today** and the
 number of open tasks after that.
@@ -6134,6 +6138,7 @@ restart.
 | `Ctrl+click` a sidebar row | toggle one document in the selection |
 | `Shift+click` a sidebar row | select the full range, including child rows |
 | `Alt+click` a document or chat row | choose where it opens: a split up, right, down or left, or a new tab |
+| `Alt+click` a tasks queue, list or task | the same: a split up, right, down or left, or a new tab |
 | row `…` / right-click | **Open in new tab**, **Open in new window**, **Export → Markdown** or **TextBundle**, or move the selection to Trash |
 | `↑` `↓` `←` `→` | walk the explore tree, once it has the keyboard |
 | `Enter` | open the row the keyboard is on |
