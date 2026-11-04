@@ -407,11 +407,11 @@ mod tests {
         assert_eq!(
             ALL.len(),
             if cfg!(windows) {
-                7
-            } else if cfg!(target_os = "linux") {
-                5
-            } else {
                 6
+            } else if cfg!(target_os = "linux") {
+                4
+            } else {
+                5
             }
         );
         assert_eq!(
