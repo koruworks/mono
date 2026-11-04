@@ -1354,6 +1354,14 @@ Branching snapshots the source chat's privacy setting. Message-block context
 uses the same rule, so a request cannot smuggle a block from another private
 chat into a provider prompt.
 
+A chat of a Profile removed from this computer is hidden from all three tools,
+and from every other surface, from the moment of removal: it is not listed or
+found, and `read_chat` answers `chat_not_found`, as for a missing chat. It
+stays on the device, untouched, and is back as soon as the Profile is
+restored; if the Profile is not restored within 30 days, the chat is deleted.
+If the AI service cannot ask the Store which Profiles are removed, the tools
+answer a retryable `ai_storage` error rather than show anything.
+
 `list_chats` is ordered by most recent update and accepts an optional decimal
 offset `cursor` plus `page_size` (default 50, maximum 200). It returns chat id,
 title, terminal-message count, timestamps, and `next_cursor`.

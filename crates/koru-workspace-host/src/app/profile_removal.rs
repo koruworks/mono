@@ -368,7 +368,7 @@ impl<H: Host> App<H> {
             }
             if hosted_source == Some(HostedProfileRemovalSource::Peer) {
                 let message = format!(
-                    "\u{201c}{removed_profile_name}\u{201d} was deleted from Koru\n\nAnother trusted device deleted this Profile. It no longer syncs. Workspaces on this device were moved to Trash and remain recoverable."
+                    "\u{201c}{removed_profile_name}\u{201d} was deleted from Koru\n\nAnother trusted device deleted this Profile. It no longer syncs. Its Workspaces on this device were moved to Trash and, with its AI chats, remain recoverable for 30 days."
                 );
                 for pane in self.panes.values_mut() {
                     let _ = if next.is_some() {

@@ -56,6 +56,9 @@ pub(super) struct ClosingChat {
 /// has not reported yet, how many could not be stopped, and the reply.
 pub(super) struct Clearing {
     snapshot: Vec<ChatId>,
+    /// The chats of removed profiles, which a clear leaves untouched: they
+    /// are in no list it was asked over, and come back with a restore.
+    kept: HashSet<ChatId>,
     pending: HashSet<ChatId>,
     failed: u32,
     reply: SyncSender<ApiResult<ClearHistoryResponse>>,
@@ -271,13 +274,16 @@ impl WorkerState {
             let _ = reply.send(Err(active_history_conflict()));
             return;
         }
-        let chats = match self.repository.chats() {
-            Ok(chats) => chats,
+        let (chats, hidden): (Vec<_>, Vec<_>) = match self.repository.chats() {
+            Ok(chats) => chats
+                .into_iter()
+                .partition(|chat| !self.is_hidden(chat.profile_id)),
             Err(error) => {
                 let _ = reply.send(Err(ai_failure(error)));
                 return;
             }
         };
+        let kept: HashSet<ChatId> = hidden.iter().map(|chat| chat.id).collect();
         let snapshot: Vec<ChatId> = chats.iter().map(|chat| chat.id).collect();
         let agent_chats: Vec<ChatId> = chats
             .iter()
@@ -308,6 +314,7 @@ impl WorkerState {
         }
         self.clearing = Some(Clearing {
             snapshot,
+            kept,
             pending,
             failed: 0,
             reply,
@@ -331,10 +338,15 @@ impl WorkerState {
             ))
         } else {
             // The gate admitted nothing since the snapshot, so the snapshot
-            // is the whole set; a chat outside it would be a broken gate,
-            // and the transaction is aborted rather than trusted.
+            // and the removed profiles' chats it kept are the whole set; a
+            // chat outside both would be a broken gate, and the
+            // transaction is aborted rather than trusted.
             match self.repository.chats() {
-                Ok(now) if now.iter().any(|chat| !clearing.snapshot.contains(&chat.id)) => {
+                Ok(now)
+                    if now.iter().any(|chat| {
+                        !clearing.snapshot.contains(&chat.id) && !clearing.kept.contains(&chat.id)
+                    }) =>
+                {
                     tracing::error!(
                         target: "koru_ai::agent",
                         "clear history found a chat outside its snapshot; aborting"

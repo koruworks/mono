@@ -564,7 +564,7 @@ fn sorted(mut ids: Vec<ChatId>) -> Vec<ChatId> {
 /// **Deleting a profile takes its chats with it** once the deletion is
 /// final — every row and the attachment folders — and another profile's
 /// chats are untouched. A profile removed only lately can still be
-/// restored, so its chats wait, and come back with it.
+/// restored, so its chats wait, hidden, and come back with it.
 #[test]
 fn a_deleted_profiles_chats_go_with_it_once_its_deletion_is_final() {
     let root = tempfile::tempdir().unwrap();
@@ -589,8 +589,12 @@ fn a_deleted_profiles_chats_go_with_it_once_its_deletion_is_final() {
     let client = worker.client();
     assert_eq!(
         listed(&client),
-        sorted(vec![lately_chat, work_chat]),
-        "the deleted profile's chats are gone; the others are all here"
+        vec![work_chat],
+        "the deleted profile's chats are gone, the lately removed one's hidden"
+    );
+    assert_eq!(
+        client.read_chat(context(), lately_chat).unwrap_err().code,
+        "not_found"
     );
     for chat in [gone_talked, gone_quiet] {
         assert_eq!(
@@ -618,6 +622,11 @@ fn a_deleted_profiles_chats_go_with_it_once_its_deletion_is_final() {
             .collect::<Vec<_>>(),
         vec![lately_chat],
         "a restored profile has its chats back"
+    );
+    assert_eq!(
+        client.read_chat(context(), lately_chat).unwrap().chat.id,
+        lately_chat,
+        "untouched while it was hidden"
     );
     profiles.finish(worker);
 }
@@ -692,4 +701,421 @@ fn a_chat_of_a_profile_the_store_does_not_know_is_kept() {
     );
     profiles.finish(worker);
     assert!(folder.exists());
+}
+
+// ----- a removed profile's chats are hidden ---------------------------------
+
+fn searched(client: &AiWorkerClient, profile: Option<ProfileId>) -> Vec<ChatId> {
+    let mut ids: Vec<ChatId> = client
+        .search(
+            context(),
+            AiSearchRequest {
+                text: "deterministic".into(),
+                limit: 50,
+                cursor: None,
+                request_seq: 0,
+                profile,
+            },
+        )
+        .unwrap()
+        .page
+        .hits
+        .into_iter()
+        .map(|hit| hit.chat_id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// What an outside MCP client lists, and what it finds.
+fn tool_listed(client: &AiWorkerClient) -> Vec<ChatId> {
+    let mut ids: Vec<ChatId> = client
+        .tool_list_chats(context(), ListChatsToolRequest::default())
+        .unwrap()
+        .chats
+        .into_iter()
+        .map(|chat| chat.chat_id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+fn tool_searched(client: &AiWorkerClient) -> Vec<ChatId> {
+    let mut ids: Vec<ChatId> = client
+        .tool_search_chats(
+            context(),
+            SearchChatsToolRequest {
+                query: "deterministic".into(),
+                cursor: None,
+                page_size: None,
+            },
+        )
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|hit| hit.chat_id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn tool_read(client: &AiWorkerClient, chat_id: ChatId) -> Result<u32, Failure> {
+    client
+        .tool_read_chat(
+            context(),
+            ReadChatToolRequest {
+                chat_id,
+                cursor: None,
+                page_size: None,
+            },
+        )
+        .map(|read| read.total_messages)
+}
+
+/// **A removed profile's chats are hidden everywhere from the moment it is
+/// removed** (the user's call, 2026-11-04: "yes, hide") — the unscoped
+/// list the recents come from, a search across profiles, an outside MCP
+/// client's list, search and read — and one opened by its id, or by its
+/// reply's, is not found, as a deleted chat is. Another profile's chats are
+/// untouched, Clear history leaves the hidden ones alone, and a restore
+/// brings them all back at once, in the same worker, with no restart.
+#[test]
+fn a_removed_profiles_chats_are_hidden_everywhere_until_it_is_restored() {
+    let root = tempfile::tempdir().unwrap();
+    let profiles = Profiles::new(root.path());
+    let gone = profiles.add_profile("Gone");
+    let worker = profiles.ai_worker(root.path());
+    let client = worker.client();
+    let gone_chat = chat_in(&client, gone, "Gone");
+    let gone_reply = send(&client, gone_chat, Uuid::new_v4());
+    assert_eq!(
+        wait_for_terminal(&client, gone_reply.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let gone_quiet = chat_in(&client, gone, "Quiet");
+    let work_chat = chat_with_reply(&client, profiles.work);
+    let everything = sorted(vec![gone_chat, gone_quiet, work_chat]);
+    assert_eq!(listed(&client), everything);
+    assert_eq!(searched(&client, None), sorted(vec![gone_chat, work_chat]));
+    assert_eq!(tool_listed(&client), everything);
+
+    profiles.remove(gone, Timestamp::now());
+
+    // Every list and search, unscoped or for the profile itself.
+    assert_eq!(listed(&client), vec![work_chat]);
+    assert!(
+        client
+            .list_chats(context(), Some(gone))
+            .unwrap()
+            .chats
+            .is_empty()
+    );
+    assert_eq!(searched(&client, None), vec![work_chat]);
+    assert!(searched(&client, Some(gone)).is_empty());
+    assert_eq!(tool_listed(&client), vec![work_chat]);
+    assert_eq!(tool_searched(&client), vec![work_chat]);
+
+    // By id, the answer a chat that never was gets.
+    let missing = client.read_chat(context(), ChatId::new()).unwrap_err();
+    for chat in [gone_chat, gone_quiet] {
+        let refused = client.read_chat(context(), chat).unwrap_err();
+        assert_eq!(
+            (refused.code.as_str(), refused.retryable),
+            (missing.code.as_str(), missing.retryable)
+        );
+    }
+    let tool_missing = tool_read(&client, ChatId::new()).unwrap_err();
+    assert_eq!(tool_missing.code, "chat_not_found");
+    assert_eq!(
+        tool_read(&client, gone_chat).unwrap_err().code,
+        tool_missing.code
+    );
+    for code in [
+        client
+            .read_attempt(context(), gone_reply.accepted.attempt_id)
+            .unwrap_err()
+            .code,
+        client
+            .rename_chat(
+                context(),
+                gone_chat,
+                RenameChatRequest {
+                    title: "Renamed".into(),
+                },
+            )
+            .unwrap_err()
+            .code,
+        client
+            .pin_chat(
+                context(),
+                gone_chat,
+                koru_ai_wire::PinChatRequest { pinned: true },
+            )
+            .unwrap_err()
+            .code,
+        client
+            .feedback(
+                context(),
+                gone_reply.accepted.assistant_message_id,
+                FeedbackRequest {
+                    event_id: koru_ai_core::FeedbackEventId::new(),
+                    value: koru_ai_core::FeedbackValue::Good,
+                    surface: AiSurface::Standalone,
+                },
+            )
+            .unwrap_err()
+            .code,
+        client
+            .send_turn(
+                context(),
+                SendTurnRequest {
+                    operation_id: Uuid::new_v4(),
+                    chat_id: gone_chat,
+                    surface: AiSurface::Standalone,
+                    markdown: "Still here?".into(),
+                    explicit_refs: Vec::new(),
+                    web_search: false,
+                    reasoning_override: None,
+                    system_prompt_override: None,
+                    replace_pinned_documents: false,
+                    attachment_ids: Vec::new(),
+                    answers: None,
+                    skills: Vec::new(),
+                },
+            )
+            .err()
+            .expect("a removed profile's chat sends nothing")
+            .code,
+        client.delete_chat(context(), gone_quiet).unwrap_err().code,
+        client
+            .create_chat(
+                context(),
+                CreateChatRequest {
+                    chat_id: ChatId::new(),
+                    title: "New".into(),
+                    profile_id: Some(gone),
+                    model: model(),
+                },
+            )
+            .unwrap_err()
+            .code,
+    ] {
+        assert_eq!(code, "not_found");
+    }
+
+    // Another profile's chat is whole, and a clear takes only what shows.
+    let work = client.read_chat(context(), work_chat).unwrap();
+    assert_eq!(work.chat.profile_id, Some(profiles.work));
+    assert_eq!(work.messages.len(), 2);
+    assert_eq!(client.clear_history(context()).unwrap().chats_deleted, 1);
+    assert!(listed(&client).is_empty());
+
+    // Restored, in the same worker: everything of it is back as it was.
+    profiles.restore(gone);
+    assert_eq!(listed(&client), sorted(vec![gone_chat, gone_quiet]));
+    assert_eq!(searched(&client, None), vec![gone_chat]);
+    assert_eq!(tool_listed(&client), sorted(vec![gone_chat, gone_quiet]));
+    assert_eq!(tool_read(&client, gone_chat).unwrap(), 2);
+    let back = client.read_chat(context(), gone_chat).unwrap();
+    assert_eq!(back.chat.title, "Gone", "never renamed");
+    assert_eq!(back.chat.pinned_at, None, "never pinned");
+    assert_eq!(back.messages.len(), 2, "never sent to");
+    assert!(back.feedback.is_empty(), "never rated");
+    assert_eq!(
+        client
+            .read_attempt(context(), gone_reply.accepted.attempt_id)
+            .unwrap()
+            .attempt
+            .status,
+        AttemptStatus::Complete
+    );
+    profiles.finish(worker);
+}
+
+/// **A reply running in a chat when its profile is removed is stopped** at
+/// the worker's next command, as the person's Stop would: nothing goes on
+/// in a chat nobody can see. What it wrote is kept, and is back with the
+/// chat on a restore.
+#[test]
+fn a_reply_running_when_its_profile_is_removed_is_stopped_and_kept() {
+    let root = tempfile::tempdir().unwrap();
+    let profiles = Profiles::new(root.path());
+    let gone = profiles.add_profile("Gone");
+    let (captured, requests) = sync_channel(8);
+    let (release, released) = sync_channel(8);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(HeldProvider {
+            requests: captured,
+            release: Arc::new(std::sync::Mutex::new(released)),
+        }),
+    );
+    let worker = AiWorker::new(
+        WorkerConfig::new(root.path().join("ai"), "internal-debug", providers).with_store_context(
+            Arc::new(crate::StoreContextAdapter::new(profiles.store.client())),
+        ),
+    )
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = chat_in(&client, gone, "Running");
+    let stream = send(&client, chat, Uuid::new_v4());
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    profiles.remove(gone, Timestamp::now());
+    assert!(listed(&client).is_empty());
+    assert_eq!(
+        client
+            .cancel_attempt(context(), stream.accepted.attempt_id)
+            .unwrap_err()
+            .code,
+        "not_found",
+        "its Stop is a missing chat's too"
+    );
+    release.send(()).unwrap();
+
+    profiles.restore(gone);
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Cancelled,
+        "stopped, not completed after the removal"
+    );
+    let back = client.read_chat(context(), chat).unwrap();
+    assert_eq!(back.messages.len(), 2, "the question and the stopped reply");
+    profiles.finish(worker);
+}
+
+/// A Store that can be told to stop answering which profiles are removed,
+/// and answers everything else as the real one does.
+struct Unanswering {
+    store: crate::StoreContextAdapter,
+    silent: Arc<AtomicBool>,
+}
+
+impl StoreContextPort for Unanswering {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        reader: Option<ProfileId>,
+    ) -> Result<DocumentContext, AiError> {
+        self.store.resolve_document(document, reader)
+    }
+    fn create_document(
+        &self,
+        idempotency_key: Uuid,
+        destination: &DocumentDestination,
+        markdown: &str,
+    ) -> Result<DocumentId, AiError> {
+        self.store
+            .create_document(idempotency_key, destination, markdown)
+    }
+    fn profile_catalog(&self) -> Result<koru_ai_core::ProfileCatalog, AiError> {
+        self.store.profile_catalog()
+    }
+    fn document_workspace(&self, document: DocumentId) -> Result<Option<WorkspaceId>, AiError> {
+        self.store.document_workspace(document)
+    }
+    fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        self.store.retired_profiles()
+    }
+    fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        if self.silent.load(Ordering::Acquire) {
+            return Err(AiError::new(
+                AiErrorClass::Storage,
+                "Koru's profiles are temporarily unavailable.",
+                true,
+            ));
+        }
+        self.store.removed_profiles()
+    }
+}
+
+/// **A Store that does not say which profiles are removed shows nothing it
+/// could be hiding**: every list, search and read is refused as retryable
+/// — not served from an older answer a removal may have outdated — and
+/// Stop still works. Once it answers again, the removed profile's chats are
+/// hidden and the rest served as before.
+#[test]
+fn a_store_that_does_not_answer_refuses_rather_than_shows_a_removed_profiles_chats() {
+    let root = tempfile::tempdir().unwrap();
+    let profiles = Profiles::new(root.path());
+    let gone = profiles.add_profile("Gone");
+    let silent = Arc::new(AtomicBool::new(false));
+    let worker = AiWorker::new(
+        WorkerConfig::deterministic_mock(root.path().join("ai"), "internal-debug")
+            .with_store_context(Arc::new(Unanswering {
+                store: crate::StoreContextAdapter::new(profiles.store.client()),
+                silent: Arc::clone(&silent),
+            })),
+    )
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let gone_chat = chat_with_reply(&client, gone);
+    let work_chat = chat_in(&client, profiles.work, "Work");
+    let work_reply = send(&client, work_chat, Uuid::new_v4()).accepted.attempt_id;
+    assert_eq!(
+        wait_for_terminal(&client, work_reply),
+        AttemptStatus::Complete
+    );
+    assert_eq!(listed(&client), sorted(vec![gone_chat, work_chat]));
+
+    profiles.remove(gone, Timestamp::now());
+    silent.store(true, Ordering::Release);
+    let refusals = [
+        client.list_chats(context(), None).unwrap_err(),
+        client
+            .list_chats(context(), Some(profiles.work))
+            .unwrap_err(),
+        client
+            .search(
+                context(),
+                AiSearchRequest {
+                    text: "deterministic".into(),
+                    limit: 50,
+                    cursor: None,
+                    request_seq: 0,
+                    profile: None,
+                },
+            )
+            .unwrap_err(),
+        client
+            .tool_list_chats(context(), ListChatsToolRequest::default())
+            .unwrap_err(),
+        client.read_chat(context(), gone_chat).unwrap_err(),
+        client.read_chat(context(), work_chat).unwrap_err(),
+        tool_read(&client, gone_chat).unwrap_err(),
+    ];
+    for refused in refusals {
+        assert_eq!(refused.code, "ai_storage");
+        assert!(refused.retryable, "try again");
+        assert_eq!(
+            refused.message,
+            "Koru's profiles are temporarily unavailable."
+        );
+    }
+    assert_eq!(
+        client.cancel_attempt(context(), work_reply).unwrap().status,
+        AttemptStatus::Complete,
+        "Stop is answered on the last answer: it shows nothing"
+    );
+
+    silent.store(false, Ordering::Release);
+    assert_eq!(listed(&client), vec![work_chat]);
+    assert_eq!(
+        client.read_chat(context(), gone_chat).unwrap_err().code,
+        "not_found"
+    );
+    assert_eq!(
+        client
+            .read_chat(context(), work_chat)
+            .unwrap()
+            .messages
+            .len(),
+        2
+    );
+    profiles.finish(worker);
 }

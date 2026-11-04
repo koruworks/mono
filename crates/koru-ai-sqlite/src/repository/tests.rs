@@ -1359,6 +1359,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
             profile: None,
+            removed_profiles: Vec::new(),
         })
         .unwrap();
     assert_eq!(page.hits.len(), 1);
@@ -1379,6 +1380,7 @@ fn search_returns_one_highlighted_best_block_per_finalized_response() {
             cursor: None,
             visibility: ChatAccessLens::UserSurface,
             profile: None,
+            removed_profiles: Vec::new(),
         })
         .unwrap();
     assert!(empty.hits.is_empty());
@@ -1406,7 +1408,7 @@ fn chat_tools_apply_one_privacy_lens_to_list_search_and_read() {
     let lens = ChatAccessLens::ToolSurface {
         calling_chat: Some(calling_id),
     };
-    let listed = list_chats(&repository, lens, ListChatsToolRequest::default()).unwrap();
+    let listed = list_chats(&repository, lens, ListChatsToolRequest::default(), &[]).unwrap();
     let listed_ids = listed
         .chats
         .iter()
@@ -1424,6 +1426,7 @@ fn chat_tools_apply_one_privacy_lens_to_list_search_and_read() {
             cursor: None,
             page_size: None,
         },
+        &[],
     )
     .unwrap();
     let searched_ids = searched
@@ -1743,6 +1746,7 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
                 cursor: None,
                 visibility: ChatAccessLens::UserSurface,
                 profile: None,
+                removed_profiles: Vec::new(),
             })
             .unwrap()
             .hits
@@ -2146,6 +2150,7 @@ fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
                 cursor: None,
                 visibility: ChatAccessLens::UserSurface,
                 profile,
+                removed_profiles: Vec::new(),
             })
             .unwrap()
             .hits
@@ -2162,7 +2167,7 @@ fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
     let lens = ChatAccessLens::ToolSurface {
         calling_chat: Some(calling),
     };
-    let listed = list_chats(&repository, lens, ListChatsToolRequest::default())
+    let listed = list_chats(&repository, lens, ListChatsToolRequest::default(), &[])
         .unwrap()
         .chats
         .into_iter()
@@ -2178,6 +2183,7 @@ fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
             cursor: None,
             page_size: None,
         },
+        &[],
     )
     .unwrap();
     assert_eq!(searched.hits.len(), 2);
@@ -2205,7 +2211,101 @@ fn a_profile_holds_search_and_a_chats_tools_to_its_chats() {
         &repository,
         ChatAccessLens::ToolSurface { calling_chat: None },
         ListChatsToolRequest::default(),
+        &[],
     )
     .unwrap();
     assert_eq!(outside.chats.len(), 3);
+}
+
+/// **A removed profile's chats are left out of every search and tool
+/// listing** before the page is cut, while another profile's and a chat
+/// with no profile yet are found as before.
+#[test]
+fn a_removed_profiles_chats_are_left_out_of_search_and_tool_listings() {
+    let mut repository = Repository::in_memory().unwrap();
+    let (removed, kept) = (ProfileId::new(), ProfileId::new());
+    let (gone, stays, unplaced) = (ChatId::new(), ChatId::new(), ChatId::new());
+    for (id, profile, offset) in [
+        (gone, Some(removed), 0),
+        (stays, Some(kept), 10),
+        (unplaced, None, 20),
+    ] {
+        let mut value = chat(id, offset);
+        value.profile_id = profile;
+        repository.create_chat(&value).unwrap();
+        complete_turn(&mut repository, id, 0, "hiddenneedle answer", offset + 1);
+    }
+
+    let search = |removed_profiles: Vec<ProfileId>, profile| {
+        let mut ids: Vec<ChatId> = repository
+            .search(&AiSearchQuery {
+                text: "hiddenneedle".into(),
+                limit: 50,
+                cursor: None,
+                visibility: ChatAccessLens::UserSurface,
+                profile,
+                removed_profiles,
+            })
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|hit| hit.chat_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let sorted = |mut ids: Vec<ChatId>| {
+        ids.sort();
+        ids
+    };
+    assert_eq!(
+        search(Vec::new(), None),
+        sorted(vec![gone, stays, unplaced])
+    );
+    assert_eq!(search(vec![removed], None), sorted(vec![stays, unplaced]));
+    assert!(search(vec![removed], Some(removed)).is_empty());
+    assert_eq!(
+        search(vec![removed, ProfileId::new()], Some(kept)),
+        vec![stays]
+    );
+
+    let outside = ChatAccessLens::ToolSurface { calling_chat: None };
+    let first = list_chats(
+        &repository,
+        outside,
+        ListChatsToolRequest {
+            cursor: None,
+            page_size: Some(1),
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(first.chats.len(), 1);
+    let rest = list_chats(
+        &repository,
+        outside,
+        ListChatsToolRequest {
+            cursor: first.next_cursor,
+            page_size: Some(1),
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(rest.next_cursor, None, "two chats are left, in two pages");
+    let mut listed = vec![first.chats[0].chat_id, rest.chats[0].chat_id];
+    listed.sort();
+    assert_eq!(listed, sorted(vec![stays, unplaced]));
+    let searched = search_chats(
+        &repository,
+        outside,
+        SearchChatsToolRequest {
+            query: "hiddenneedle".into(),
+            cursor: None,
+            page_size: None,
+        },
+        &[removed],
+    )
+    .unwrap();
+    assert_eq!(searched.hits.len(), 2);
+    assert!(searched.hits.iter().all(|hit| hit.chat_id != gone));
 }

@@ -574,6 +574,8 @@ impl AiPersistence for Repository {
                        AND message.state = 'complete'
                        AND (?4 = 0 OR chat.private = 0 OR chat.id = ?5)
                        AND (?6 IS NULL OR chat.profile_id = ?6)
+                       AND (?7 IS NULL OR chat.profile_id IS NULL
+                            OR chat.profile_id NOT IN (SELECT value FROM json_each(?7)))
                        AND (?4 = 0 OR ?5 IS NULL OR chat.profile_id IS (
                            SELECT calling.profile_id FROM chats AS calling
                             WHERE calling.id = ?5
@@ -600,6 +602,16 @@ impl AiPersistence for Repository {
             ChatAccessLens::UserSurface => None,
         };
         let tool_surface = matches!(query.visibility, ChatAccessLens::ToolSurface { .. });
+        // The removed profiles as one JSON array of their ids, which
+        // `json_each` reads back; ids are UUIDs, so nothing needs escaping.
+        let removed = (!query.removed_profiles.is_empty()).then(|| {
+            let ids: Vec<String> = query
+                .removed_profiles
+                .iter()
+                .map(|profile| format!("\"{}\"", profile.to_storage()))
+                .collect();
+            format!("[{}]", ids.join(","))
+        });
         let rows = statement
             .query_map(
                 params![
@@ -609,6 +621,7 @@ impl AiPersistence for Repository {
                     tool_surface,
                     calling_chat,
                     query.profile.map(|profile| profile.to_storage()),
+                    removed,
                 ],
                 |row| {
                     let rank: f64 = row.get(5)?;

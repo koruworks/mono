@@ -60,16 +60,21 @@ impl ChatToolAdapter {
         let lens = ChatAccessLens::ToolSurface {
             calling_chat: Some(context.chat_id),
         };
+        // A calling chat sees only its own profile's chats, and a chat of a
+        // removed profile sends no turn, so there is no removed profile to
+        // leave out here; the worker hides them from every other surface.
         match call.name.as_str() {
             "list_chats" => encode(list_chats(
                 repository,
                 lens,
                 decode::<ListChatsToolRequest>(call.arguments.clone())?,
+                &[],
             )?),
             "search_chats" => encode(search_chats(
                 repository,
                 lens,
                 decode::<SearchChatsToolRequest>(call.arguments.clone())?,
+                &[],
             )?),
             "read_chat" => encode(read_chat(
                 repository,

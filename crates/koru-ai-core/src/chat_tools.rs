@@ -105,10 +105,15 @@ pub struct ChatToolMessage {
     pub created_at: Timestamp,
 }
 
+/// The chats a tool may list. **A chat of a profile in `removed`** — one
+/// removed from this computer ([`crate::StoreContextPort::removed_profiles`])
+/// — is left out before the page is cut, so a page is never short of what
+/// its cursor promises.
 pub fn list_chats(
     persistence: &dyn AiPersistence,
     lens: ChatAccessLens,
     request: ListChatsToolRequest,
+    removed: &[ProfileId],
 ) -> Result<ListChatsToolResponse, AiError> {
     let offset = offset_cursor(request.cursor.as_deref())?;
     let page_size = usize::from(
@@ -123,6 +128,10 @@ pub fn list_chats(
         .into_iter()
         .filter(|chat| lens_allows(lens, chat.chat_id, chat.private))
         .filter(|chat| scope.is_none_or(|profile| chat.profile_id == profile))
+        .filter(|chat| {
+            chat.profile_id
+                .is_none_or(|profile| !removed.contains(&profile))
+        })
         .collect::<Vec<_>>();
     let chats = visible
         .iter()
@@ -143,10 +152,13 @@ pub fn list_chats(
     })
 }
 
+/// The responses a tool may find, leaving out **a chat of a profile in
+/// `removed`** in the search itself, as [`list_chats`] does.
 pub fn search_chats(
     persistence: &dyn AiPersistence,
     lens: ChatAccessLens,
     request: SearchChatsToolRequest,
+    removed: &[ProfileId],
 ) -> Result<SearchChatsToolResponse, AiError> {
     let page = persistence.search(&AiSearchQuery {
         text: request.query,
@@ -158,6 +170,7 @@ pub fn search_chats(
         visibility: lens,
         // A calling chat's own profile is applied by the search itself.
         profile: None,
+        removed_profiles: removed.to_vec(),
     })?;
     Ok(SearchChatsToolResponse {
         hits: page

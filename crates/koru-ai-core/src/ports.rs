@@ -239,4 +239,15 @@ pub trait StoreContextPort: Send + Sync {
     fn retired_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
         Ok(Vec::new())
     }
+    /// Every profile removed from this computer, **whether or not it can
+    /// still be restored**: a chat of one of these is hidden everywhere —
+    /// listed, searched and opened by nobody — until its profile is
+    /// restored or its removal is final ([`Self::retired_profiles`]).
+    ///
+    /// The same rule as [`Self::retired_profiles`]: only a profile the Store
+    /// holds and records as removed is ever named, never an absent one. A
+    /// port with no Store has none to give, and hides nothing.
+    fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        Ok(Vec::new())
+    }
 }

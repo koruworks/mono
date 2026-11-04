@@ -700,6 +700,12 @@ pub struct AiSearchQuery {
     /// whatever this says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileId>,
+    /// **Never these profiles' chats**: the profiles removed from this
+    /// computer ([`crate::StoreContextPort::removed_profiles`]), whose
+    /// chats are hidden from every search until a restore. Empty hides
+    /// nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_profiles: Vec<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

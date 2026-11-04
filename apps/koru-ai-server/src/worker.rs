@@ -61,6 +61,7 @@ pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
+mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
 use agents::{AttemptWork, Clearing, ClosingChat, agent_validation};
@@ -1381,6 +1382,11 @@ struct WorkerState {
     /// be retired: until the Store has answered once in this process
     /// ([`WorkerState::retire_removed_profiles`]).
     retiring: bool,
+    /// The profiles removed from this computer, restorable or not, as the
+    /// Store last answered: their chats are hidden everywhere. Asked again
+    /// before every command that lists, searches or names a chat
+    /// ([`WorkerState::hide_removed_profiles`]); never kept anywhere else.
+    removed: HashSet<koru_ai_core::ProfileId>,
     /// Steers handed to a running turn and not answered yet, by operation.
     steering: HashSet<Uuid>,
 }
@@ -1572,6 +1578,7 @@ fn run_worker(
         store: placement_store,
         unplaced: true,
         retiring: true,
+        removed: HashSet::new(),
     };
     // **A deleted profile's chats go with it**, once its deletion is final,
     // before any command is served; a Store that does not answer leaves
@@ -1677,6 +1684,11 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        // **A removed profile's chats are hidden**: a command that names
+        // one is answered here as a missing chat is, before it is served.
+        let Some(command) = self.hide_removed_profiles(command) else {
+            return;
+        };
         match command {
             WorkerCommand::Ping(reply) => {
                 let _ = reply.send(());
@@ -2836,6 +2848,7 @@ impl WorkerState {
             &self.repository,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
+            &self.removed_profiles(),
         )
         .map_err(ai_failure)
     }
@@ -2850,6 +2863,7 @@ impl WorkerState {
             &self.repository,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
+            &self.removed_profiles(),
         )
         .map_err(ai_failure)
     }
@@ -2992,6 +3006,7 @@ impl WorkerState {
                 cursor: request.cursor,
                 visibility: ChatAccessLens::UserSurface,
                 profile: request.profile,
+                removed_profiles: self.removed_profiles(),
             })
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
@@ -3346,7 +3361,8 @@ impl WorkerState {
 
     /// **One profile's chats** (AI schema 13), or every profile's for a
     /// client that names none. A chat not yet placed is in no profile's
-    /// list, so a list for a profile first tries to place it.
+    /// list, so a list for a profile first tries to place it. A removed
+    /// profile's chats are in neither.
     fn list_chats(
         &mut self,
         context: RequestContext,
@@ -3361,6 +3377,7 @@ impl WorkerState {
         if let Some(profile) = profile {
             chats.retain(|chat| chat.profile_id == Some(profile));
         }
+        chats.retain(|chat| !self.is_hidden(chat.profile_id));
         Ok(ListChatsResponse { chats })
     }
 
@@ -4058,16 +4075,22 @@ impl WorkerState {
         attempt_id: InferenceAttemptId,
     ) -> ApiResult<CancelAttemptResponse> {
         authorize(&context, AiScope::Chat)?;
+        Ok(CancelAttemptResponse {
+            attempt_id,
+            status: self.stop_attempt(attempt_id)?,
+        })
+    }
+
+    /// Stop an attempt as the person's Stop does: what it wrote is kept and
+    /// it ends cancelled. A finished attempt is left as it ended.
+    fn stop_attempt(&mut self, attempt_id: InferenceAttemptId) -> ApiResult<AttemptStatus> {
         let attempt = self
             .repository
             .attempt(attempt_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         if attempt.status.is_terminal() {
-            return Ok(CancelAttemptResponse {
-                attempt_id,
-                status: attempt.status,
-            });
+            return Ok(attempt.status);
         }
         if let Some(cancellation) = self.cancellations.get(&attempt_id) {
             cancellation.cancel();
@@ -4089,10 +4112,7 @@ impl WorkerState {
         self.work_terminal(attempt_id);
         log_terminal_attempt(&updated);
         tracing::info!(attempt = %attempt_id, status = "cancelled", "AI attempt finished");
-        Ok(CancelAttemptResponse {
-            attempt_id,
-            status: updated.status,
-        })
+        Ok(updated.status)
     }
 
     fn handle_provider_event(&mut self, mut event: AiEvent) {

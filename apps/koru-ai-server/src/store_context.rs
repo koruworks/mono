@@ -210,6 +210,16 @@ impl StoreContextPort for StoreContextAdapter {
             .map_err(|_| profiles_unavailable())?
             .map_err(|_| profiles_unavailable())
     }
+
+    /// The same query with no window: every row marked removed, however
+    /// lately — and however the clock has moved since.
+    fn removed_profiles(&self) -> Result<Vec<ProfileId>, AiError> {
+        let always = koru_store_core::Timestamp::from_millis(i64::MAX);
+        self.client
+            .with_store(move |store| store.profiles_removed_before(always))
+            .map_err(|_| profiles_unavailable())?
+            .map_err(|_| profiles_unavailable())
+    }
 }
 
 fn profiles_unavailable() -> AiError {
@@ -320,6 +330,43 @@ mod tests {
         assert!(adapter.document_workspace(document).unwrap().is_some());
 
         drop(adapter);
+        assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
+    }
+
+    /// **A profile removed a moment ago is removed, not yet retired**; a
+    /// restored one is neither, and a live one never was.
+    #[test]
+    fn removed_profiles_name_every_removal_and_retired_only_final_ones() {
+        let root = tempfile::tempdir().unwrap();
+        let worker = koru_store_server::StoreWorker::new(
+            koru_store_server::WorkerConfig::embedded(root.path().to_owned(), "internal-debug"),
+        )
+        .spawn()
+        .unwrap();
+        let client = worker.client();
+        let (kept, removed) = client
+            .with_store(|store| {
+                let locale = || Locale::parse("en").unwrap();
+                let kept = store.create_profile("Kept", None, None, locale(), Timestamp::now())?;
+                let removed =
+                    store.create_profile("Removed", None, None, locale(), Timestamp::now())?;
+                store.remove_profile_local(removed.id, Timestamp::now())?;
+                Ok::<_, koru_store_core::Error>((kept.id, removed.id))
+            })
+            .unwrap()
+            .unwrap();
+        let adapter = StoreContextAdapter::new(client.clone());
+        assert_eq!(adapter.removed_profiles().unwrap(), vec![removed]);
+        assert!(!adapter.removed_profiles().unwrap().contains(&kept));
+        assert!(adapter.retired_profiles().unwrap().is_empty());
+
+        client
+            .with_store(move |store| store.restore_profile_local(removed))
+            .unwrap()
+            .unwrap();
+        assert!(adapter.removed_profiles().unwrap().is_empty());
+        drop(adapter);
+        drop(client);
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
     }
 
