@@ -1103,9 +1103,8 @@ impl ExploreView {
         self.chats.refresh();
     }
 
-    /// The Chats view as it stands. Test-only, for the artifacts column's
-    /// reason.
-    #[cfg(test)]
+    /// The Chats view as it stands — read by a Koru chat link to tell whether
+    /// the chat it names is this window's.
     pub fn chats(&self) -> &koru_chats_ui::ChatsSurface {
         &self.chats
     }
