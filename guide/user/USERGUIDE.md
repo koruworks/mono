@@ -2389,9 +2389,9 @@ are working in.
 **Click a link pill to open it in your browser.** `Ctrl+click` opens the URL
 without leaving Koru. Hovering a link shows where it goes, with copy and edit
 buttons on the chip — copy puts the URL on the clipboard, edit reopens the
-picker that made it. The pointer turns into a hand over the pill; over the
-lines themselves it is an I-beam, so what you are about to click is never a
-guess.
+picker that made it. The pill itself shows it can be pressed — it lights
+up under the pointer — while over the lines themselves the pointer is an
+I-beam, so what you are about to click is never a guess.
 
 **Click a date pill to change it** — the only way one is made now, since
 `/date` is gone.
@@ -2477,8 +2477,8 @@ appears on a block that has none set.
 
 **A chip is the control for its attribute.** Click one and the picker for that
 attribute opens, over that block — the same panel the command below opens,
-already showing what the block carries. The pointer tells you: over a chip it
-becomes a hand. Clicking a chip does not move your caret or start a selection
+already showing what the block carries. The chip lights up under the pointer
+to tell you. Clicking a chip does not move your caret or start a selection
 in the line underneath, so you can change a due date without losing your place.
 Chips on a document's **name** are clickable in exactly the same way.
 
