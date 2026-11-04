@@ -436,6 +436,10 @@ pub struct ChatSurface {
     ended_attempt: Option<InferenceAttemptId>,
     pending_assistant_message_id: Option<MessageId>,
     pending_user: Option<String>,
+    /// The running reply carries an agent's answers sent as the next
+    /// message (koru-ai D108): it follows with no card of the person's —
+    /// the answers are read on the set's card.
+    answering: bool,
     pulse: Option<PulsingDots>,
     draft: String,
     status: Option<String>,
@@ -879,6 +883,7 @@ impl ChatSurface {
             ended_attempt: None,
             pending_assistant_message_id: None,
             pending_user: None,
+            answering: false,
             pulse: None,
             draft: String::new(),
             status: None,
@@ -3130,6 +3135,7 @@ impl ChatSurface {
                     self.attempt = None;
                     self.pending_assistant_message_id = None;
                     self.pending_user = None;
+                    self.answering = false;
                     self.pulse = None;
                     self.live_usage = None;
                     self.live_sources.clear();
@@ -3175,6 +3181,7 @@ impl ChatSurface {
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
+                self.answering = false;
                 self.pulse = None;
                 self.live_usage = None;
                 self.live_sources.clear();
@@ -3329,6 +3336,7 @@ impl ChatSurface {
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
+                self.answering = false;
                 self.pulse = None;
                 self.live_usage = None;
                 self.live_sources.clear();
@@ -3414,6 +3422,10 @@ impl ChatSurface {
                         self.status = Some(
                             if error.public_message == koru_ai_core::AGENT_REASONING_REJECTED {
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiAgentReasoningRejected)
+                                    .to_owned()
+                            } else if error.public_message == koru_ai_core::AGENT_QUESTIONS_CLOSED {
+                                // Questions whose agent's session ended (D108).
+                                koru_i18n::t(self.lang, koru_i18n::Key::AiQuestionsPassedOver)
                                     .to_owned()
                             } else {
                                 error.public_message.clone()
@@ -3510,6 +3522,7 @@ impl ChatSurface {
                 self.attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
+                self.answering = false;
                 self.pulse = None;
                 self.live_usage = None;
                 self.live_sources.clear();
@@ -3897,6 +3910,12 @@ impl ChatSurface {
     /// not yet sent its terminal event.
     fn reply_streaming(&self) -> bool {
         self.attempt.is_some() && self.attempt != self.ended_attempt
+    }
+
+    /// A reply sent from here is on its way or running: the person's
+    /// message, or an agent's answers sent as one (D108).
+    fn reply_pending(&self) -> bool {
+        self.pending_user.is_some() || self.answering
     }
 
     fn update_tool_policy(&mut self, mode: ToolMode, workspace_ids: Vec<WorkspaceId>) -> bool {
@@ -4494,6 +4513,7 @@ impl ChatSurface {
                 .filter(|prompt| !prompt.trim().is_empty()),
             replace_pinned_documents: self.mode == SurfaceMode::ContextPane,
             attachment_ids,
+            answers: None,
         };
         let sent = if self.mode == SurfaceMode::ContextPane && self.context_document.is_some() {
             self.staged_embedded_send = Some(request);
@@ -4527,6 +4547,7 @@ impl ChatSurface {
         self.attempt = None;
         self.pending_assistant_message_id = None;
         self.pending_user = None;
+        self.answering = false;
         self.pending_user_tiles.clear();
         self.pulse = None;
         self.messages_dirty = true;
@@ -6644,7 +6665,7 @@ impl ChatSurface {
             }
             // The running reply: its draft is cut the same way, at the
             // offsets its rows carry or the surface noted as they came.
-            if self.pending_user.is_some()
+            if (self.pending_user.is_some() || self.answering)
                 && let Some(message) = running
                 && !worked.contains(&message)
             {
@@ -6804,10 +6825,14 @@ impl ChatSurface {
                 attachments: Vec::new(),
             });
         }
-        if let Some(markdown) = self.pending_user.clone() {
-            let tiles = self.pending_user_tiles.clone();
-            let card = self.user_card(&markdown, tiles, width);
-            messages.push(card);
+        if self.reply_pending() {
+            // Answers sent as the next message have no card of the
+            // person's: they are read on the set's card (D108).
+            if let Some(markdown) = self.pending_user.clone() {
+                let tiles = self.pending_user_tiles.clone();
+                let card = self.user_card(&markdown, tiles, width);
+                messages.push(card);
+            }
             // Messages the running reply took read under the question,
             // in the order sent, and the reply follows them — as the
             // transcript reads once it is read back (D99).

@@ -305,6 +305,11 @@ pub enum AgentActivityEvent {
         invocation: ToolInvocationId,
         questions: Vec<crate::AgentQuestion>,
         blocking: bool,
+        /// A set the agent asked in its reply and moved on from: it stays
+        /// answerable after the reply ends, its answers go as the person's
+        /// next message, and another message passes it over.
+        #[serde(default)]
+        next_message: bool,
     },
     /// The set was answered — a secret's answer withheld — or, with
     /// `None`, skipped.

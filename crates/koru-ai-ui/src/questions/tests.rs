@@ -444,3 +444,105 @@ fn a_refused_answer_can_be_sent_again() {
     surface.apply_update(Update::Failure("Not now.".into()));
     assert!(!surface.question_cards[&activity.id].sent);
 }
+
+/// A set answered by the next message (D108): its row runs, and its record
+/// says so.
+fn next_message_row(chat: ChatId) -> ToolActivity {
+    let mut questions = vec![question(
+        "[\"request_user_input_async\",\"call\",0]",
+        &["SQLite", "Redis"],
+    )];
+    questions[0].allow_other = true;
+    questions[0].header = String::new();
+    let mut activity = row(chat, questions.clone(), false);
+    activity.agent_input = QuestionsRecord::of(&questions)
+        .answered_by_next_message(true)
+        .encode();
+    activity
+}
+
+/// **A set answered by the next message is answered by a message of its
+/// own once its reply ended** (D108): *Submit* sends the answers as the
+/// next message — no text, no card of the person's — and while the reply
+/// that asked still runs, they go into it as any set's do.
+#[test]
+fn a_next_message_set_is_answered_by_a_message_of_its_own_after_its_reply() {
+    let transcript = transcript();
+    let chat = transcript.chat.id;
+    let activity = next_message_row(chat);
+    assert!(is_next_message(&activity));
+    let (mut surface, commands, _) = surface_with(&activity, transcript.clone());
+    assert!(!surface.needs_you(), "it does not stop anything");
+    let (_, frame, _) = card_frame(&mut surface);
+    let (x, y) = centre(
+        frame
+            .node(control_key(activity.id, Control::Option(0, 0)))
+            .unwrap()
+            .rect,
+    );
+    surface.question_mouse_down(x, y);
+    surface.press_question_control(&activity, Control::Submit);
+    let Command::Send(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap() else {
+        panic!("sent as a message");
+    };
+    assert_eq!(request.chat_id, chat);
+    assert!(request.markdown.is_empty() && request.attachment_ids.is_empty());
+    let next = request.answers.expect("the answers");
+    assert_eq!(next.invocation, activity.id);
+    assert_eq!(
+        next.answers[0].value,
+        AgentAnswerValue::Option {
+            label: "SQLite".into()
+        }
+    );
+    assert!(
+        surface.answering && surface.pending_user.is_none(),
+        "no card of the person's"
+    );
+
+    // While the reply that asked runs, the answers go into it.
+    let (mut surface, commands, _) = surface_with(&activity, transcript);
+    surface.attempt = Some(activity.attempt_id);
+    let (_, frame, _) = card_frame(&mut surface);
+    let (x, y) = centre(
+        frame
+            .node(control_key(activity.id, Control::Option(0, 1)))
+            .unwrap()
+            .rect,
+    );
+    surface.question_mouse_down(x, y);
+    surface.press_question_control(&activity, Control::Submit);
+    assert!(matches!(
+        commands.recv_timeout(Duration::from_millis(50)).unwrap(),
+        Command::AnswerQuestions(tool, _) if tool == activity.id
+    ));
+}
+
+/// **A set answered by the next message that closed unanswered was passed
+/// over**, and says so; its answers refused, the card can be answered again
+/// once nothing is on its way.
+#[test]
+fn a_passed_over_set_says_so_and_refused_answers_can_be_sent_again() {
+    let transcript = transcript();
+    let activity = next_message_row(transcript.chat.id);
+    let mut passed = activity.clone();
+    passed.live = None;
+    passed.status = ToolActivityStatus::Cancelled;
+    passed.approval = ToolApproval::Denied;
+    assert_eq!(
+        summary(&passed, Lang::En).heading,
+        "Passed over — these questions can no longer be answered"
+    );
+
+    let (mut surface, _, _) = surface_with(&activity, transcript);
+    surface.question_cards.get_mut(&activity.id).unwrap().sent = true;
+    surface.answering = true;
+    surface.settle_question_cards(false);
+    assert!(
+        surface.question_cards[&activity.id].sent,
+        "still on its way"
+    );
+    surface.answering = false;
+    surface.settle_question_cards(false);
+    assert!(!surface.question_cards[&activity.id].sent);
+}

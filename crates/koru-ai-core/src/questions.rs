@@ -19,6 +19,17 @@
 //! [`AGENT_CONTENT_CHARS`](crate::AGENT_CONTENT_CHARS), and a plain line of
 //! them in `agent_summary`, which is what an older build shows. A secret's
 //! answer is never kept: the host has already withheld it.
+//!
+//! **A set answered by the next message.** Some agents ask in their reply
+//! and move on — Codex's `request_user_input_async` — and take the answers
+//! as the person's next message. Such a set's row says so in its record
+//! (`next_message`), runs rather than waits, and outlives its reply: it is
+//! answered by sending [`NextMessageAnswers`] as a message of its own, which
+//! starts the agent's next reply and shows no message of the person's — the
+//! answers are read on the card. Skipping it sends the agent nothing.
+//! Another message passes it over, and so does the end of the agent's
+//! session: the row is cancelled, and the card says it can no longer be
+//! answered.
 
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +90,18 @@ pub struct AgentAnswer {
     pub value: AgentAnswerValue,
 }
 
+/// **A set's answers sent as the person's next message**: the set's row
+/// and an answer per question. It is a message of its own — it starts the
+/// agent's next reply — and the person's words are read on the set's card,
+/// never as a message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct NextMessageAnswers {
+    /// The set's row.
+    pub invocation: crate::ToolInvocationId,
+    pub answers: Vec<AgentAnswer>,
+}
+
 /// The marker a question row's `agent_input` starts its record with.
 const QUESTIONS_MARK: &str = "koru_questions";
 /// The marker of the answers' record in `agent_output`.
@@ -89,6 +112,11 @@ const ANSWERS_MARK: &str = "koru_answers";
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionsRecord {
     pub questions: Vec<RecordedQuestion>,
+    /// A set answered by the next message: once it is cancelled, it was
+    /// passed over — by another message, or the end of the agent's session.
+    /// An older build reads the record without it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub next_message: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,7 +179,14 @@ impl QuestionsRecord {
                     secret: question.secret,
                 })
                 .collect(),
+            next_message: false,
         }
+    }
+
+    /// The record of a set answered by the next message, or not.
+    pub fn answered_by_next_message(mut self, next_message: bool) -> Self {
+        self.next_message = next_message;
+        self
     }
 
     /// The record as the row's `agent_input`, fitted to the column.
@@ -167,6 +202,7 @@ impl QuestionsRecord {
                     secret: question.secret,
                 })
                 .collect(),
+            next_message: self.next_message,
         })
     }
 
@@ -273,6 +309,12 @@ mod tests {
         let back = QuestionsRecord::decode(&encoded).unwrap();
         assert_eq!(back.questions.len(), 16);
         assert!(back.questions[0].question.ends_with('…'));
+
+        // A set answered by the next message says so, and only it.
+        assert!(!encoded.contains("next_message"));
+        let next = QuestionsRecord::of(&set).answered_by_next_message(true);
+        let encoded = next.encode().unwrap();
+        assert!(QuestionsRecord::decode(&encoded).unwrap().next_message);
 
         let answers = AnswersRecord {
             answers: vec![

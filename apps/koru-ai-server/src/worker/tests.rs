@@ -98,6 +98,7 @@ fn send(client: &AiWorkerClient, chat_id: ChatId, operation_id: Uuid) -> AiRespo
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap()
@@ -650,6 +651,7 @@ fn armed_web_search_is_audited_and_citations_reach_transcript_and_usage() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -728,6 +730,7 @@ fn unsupported_web_search_is_rejected_before_an_attempt_or_provider_call() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         },
     ) {
         Ok(_) => panic!("unsupported web search unexpectedly started"),
@@ -802,6 +805,7 @@ fn document_and_message_block_context_reach_provider_with_durable_provenance() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -896,6 +900,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -922,6 +927,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
                 system_prompt_override: None,
                 replace_pinned_documents: true,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -982,6 +988,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -1013,6 +1020,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -1037,6 +1045,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -1084,6 +1093,7 @@ fn context_failure_is_durable_and_never_calls_the_provider() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -2172,6 +2182,7 @@ fn debug_lifecycle_logs_exclude_chat_content_titles_and_paths() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -2255,6 +2266,7 @@ fn payload_debug_logs_one_marked_request_and_terminal_response() {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             },
         )
         .unwrap();
@@ -3114,6 +3126,7 @@ impl AiProvider for QuestionsProvider {
                     invocation: answered,
                     questions: Self::set("a"),
                     blocking: true,
+                    next_message: false,
                 }),
                 activity(AgentActivityEvent::QuestionsAnswered {
                     invocation: answered,
@@ -3134,6 +3147,7 @@ impl AiProvider for QuestionsProvider {
                     invocation: skipped,
                     questions: Self::set("b"),
                     blocking: false,
+                    next_message: false,
                 }),
                 activity(AgentActivityEvent::QuestionsAnswered {
                     invocation: skipped,
@@ -3143,6 +3157,7 @@ impl AiProvider for QuestionsProvider {
                     invocation: open,
                     questions: Self::set("c"),
                     blocking: true,
+                    next_message: false,
                 }),
                 AiEvent::TextDelta {
                     attempt_id,
@@ -3244,6 +3259,242 @@ fn an_agents_questions_are_a_permission_rows_and_read_back_the_same() {
     assert_eq!(set("Header b").approval, ToolApproval::Denied);
     assert_eq!(set("Header c").status, ToolActivityStatus::Cancelled);
     assert!(set("Header c").agent_output.is_none());
+
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// An agent that asks, in each reply, one set answered by the next message
+/// and moves on (koru-ai D108): Codex's `request_user_input_async`.
+struct NextMessageQuestionsProvider;
+
+impl AiProvider for NextMessageQuestionsProvider {
+    fn start(
+        &self,
+        request: AiRequest,
+        _cancellation: Cancellation,
+    ) -> Result<ProviderStream, AiError> {
+        use koru_ai_core::AgentActivityEvent;
+        let attempt_id = request.attempt_id;
+        Ok(Box::new(
+            vec![
+                AiEvent::Started {
+                    attempt_id,
+                    provider_response_id: None,
+                    request_payload_bytes: None,
+                    resolved_model: None,
+                    effective_reasoning: None,
+                    at: Timestamp::now(),
+                },
+                AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::QuestionsAsked {
+                        invocation: ToolInvocationId::new(),
+                        questions: vec![koru_ai_core::AgentQuestion {
+                            id: "[\"request_user_input_async\",\"call\",0]".into(),
+                            header: String::new(),
+                            question: "Which database?".into(),
+                            options: vec![koru_ai_core::AgentQuestionOption {
+                                label: "SQLite".into(),
+                                description: String::new(),
+                            }],
+                            allow_other: true,
+                            secret: false,
+                        }],
+                        blocking: false,
+                        next_message: true,
+                    },
+                    at: Timestamp::now(),
+                },
+                AiEvent::Completed {
+                    attempt_id,
+                    stop_reason: Some("stop".into()),
+                    at: Timestamp::now(),
+                },
+            ]
+            .into_iter(),
+        ))
+    }
+}
+
+/// The set a reply asked, read back from the stream: its row's id.
+fn asked_set(stream: &AiResponseStream) -> ToolInvocationId {
+    let mut asked = None;
+    loop {
+        let public = stream.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        match public.event {
+            PublicAiEvent::ToolActivity { activity, .. }
+                if activity
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| !live.questions.is_empty()) =>
+            {
+                asked = Some(activity.id);
+            }
+            event if event.is_terminal() => break,
+            _ => {}
+        }
+    }
+    asked.expect("a set was asked")
+}
+
+/// **A set answered by the next message outlives its reply** (koru-ai
+/// D108): it stays open and live — its questions on the transcript — after
+/// the reply that asked ends, says so in its record, and is answered by a
+/// message of its own, never by approving the row once its reply ended.
+/// Another message passes it over (cancelled, on that message's reply), and
+/// a skip closes it with nothing sent.
+#[test]
+fn a_set_answered_by_the_next_message_outlives_its_reply_until_passed_over() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(NextMessageQuestionsProvider),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = agent_chat(&client, "agent-codex");
+    let first = asked_set(&send(&client, chat, Uuid::new_v4()));
+
+    let row = |id: ToolInvocationId| {
+        client
+            .read_chat(context(), chat)
+            .unwrap()
+            .tool_activities
+            .into_iter()
+            .find(|row| row.id == id)
+            .unwrap()
+    };
+    let open = row(first);
+    assert_eq!(open.status, ToolActivityStatus::Running);
+    assert_eq!(open.approval, ToolApproval::Pending);
+    assert_eq!(
+        open.live.as_ref().unwrap().questions[0].options[0].label,
+        "SQLite",
+        "still answerable after its reply"
+    );
+    let record =
+        koru_ai_core::QuestionsRecord::decode(open.agent_input.as_deref().unwrap()).unwrap();
+    assert!(record.next_message);
+    let refused = client
+        .approve_tool_call(
+            context(),
+            first,
+            koru_ai_wire::ToolDecisionRequest {
+                choice: None,
+                answers: Some(vec![koru_ai_core::AgentAnswer {
+                    question_id: "[\"request_user_input_async\",\"call\",0]".into(),
+                    value: koru_ai_core::AgentAnswerValue::Option {
+                        label: "SQLite".into(),
+                    },
+                }]),
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, "answer_as_message");
+
+    // Another message passes it over, on that message's own reply.
+    let next = send(&client, chat, Uuid::new_v4());
+    let mut passed = None;
+    let mut second = None;
+    loop {
+        let public = next.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        match public.event {
+            PublicAiEvent::ToolActivity { activity, .. } if activity.id == first => {
+                passed = Some(activity.status);
+            }
+            PublicAiEvent::ToolActivity { activity, .. } if activity.live.is_some() => {
+                second = Some(activity.id);
+            }
+            event if event.is_terminal() => break,
+            _ => {}
+        }
+    }
+    assert_eq!(passed, Some(ToolActivityStatus::Cancelled));
+    let closed = row(first);
+    assert_eq!(closed.status, ToolActivityStatus::Cancelled);
+    assert!(closed.live.is_none());
+
+    // The second reply's set is skipped: denied, and no reply runs for it.
+    let second = second.expect("the second reply asked again");
+    let skipped = client.deny_tool_call(context(), second, None).unwrap();
+    assert_eq!(skipped.activity.status, ToolActivityStatus::Denied);
+    assert_eq!(skipped.activity.approval, ToolApproval::Denied);
+    assert!(row(second).live.is_none());
+    let replies = client
+        .read_chat(context(), chat)
+        .unwrap()
+        .messages
+        .iter()
+        .filter(|message| message.role == ChatRole::Assistant)
+        .count();
+    assert_eq!(replies, 2, "a skip starts no reply");
+
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// **Answers go only to a set answered by the next message**, on their own:
+/// with words of their own, or for a set that is not one, they are refused
+/// and no reply starts.
+#[test]
+fn answers_as_a_message_are_refused_for_anything_but_an_open_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(NextMessageQuestionsProvider),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = agent_chat(&client, "agent-codex");
+    let set = asked_set(&send(&client, chat, Uuid::new_v4()));
+    let answers = |invocation: ToolInvocationId, markdown: &str| SendTurnRequest {
+        operation_id: Uuid::new_v4(),
+        chat_id: chat,
+        surface: AiSurface::Standalone,
+        markdown: markdown.into(),
+        explicit_refs: Vec::new(),
+        web_search: false,
+        reasoning_override: None,
+        system_prompt_override: None,
+        replace_pinned_documents: false,
+        attachment_ids: Vec::new(),
+        answers: Some(koru_ai_core::NextMessageAnswers {
+            invocation,
+            answers: vec![koru_ai_core::AgentAnswer {
+                question_id: "[\"request_user_input_async\",\"call\",0]".into(),
+                value: koru_ai_core::AgentAnswerValue::Option {
+                    label: "SQLite".into(),
+                },
+            }],
+        }),
+    };
+    let worded = client
+        .send_turn(context(), answers(set, "and words"))
+        .err()
+        .unwrap();
+    assert_eq!(worded.code, "invalid_request");
+    let stranger = client
+        .send_turn(context(), answers(ToolInvocationId::new(), ""))
+        .err()
+        .unwrap();
+    assert_eq!(stranger.code, "not_found");
+    let messages = client.read_chat(context(), chat).unwrap().messages;
+    assert_eq!(messages.len(), 2, "nothing was written");
 
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);

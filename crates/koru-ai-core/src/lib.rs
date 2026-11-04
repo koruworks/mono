@@ -43,7 +43,7 @@ pub use ports::{
 pub use provider::*;
 pub use questions::{
     AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,
-    QuestionsRecord,
+    NextMessageAnswers, QuestionsRecord,
 };
 pub use reading_order::{read_through, reading_order};
 

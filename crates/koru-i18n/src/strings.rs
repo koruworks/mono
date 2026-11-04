@@ -246,6 +246,7 @@ pub enum Key {
     AiQuestionsClosed,
     AiQuestionsWithheld,
     AiQuestionsUnanswered,
+    AiQuestionsPassedOver,
     AiAgentOutcomeDone,
     AiAgentOutcomeFailed,
     AiAgentOutcomeAllowed,
@@ -2864,7 +2865,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1998] = [
+    pub const ALL: [Key; 1999] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3006,6 +3007,7 @@ impl Key {
         Key::AiQuestionsClosed,
         Key::AiQuestionsWithheld,
         Key::AiQuestionsUnanswered,
+        Key::AiQuestionsPassedOver,
         Key::AiAgentOutcomeDone,
         Key::AiAgentOutcomeFailed,
         Key::AiAgentOutcomeAllowed,
@@ -6458,6 +6460,19 @@ pub const ROWS: &[Row] = &[
         ar: "(بلا إجابة)",
         zh_hans: "（未回答）",
         ja: "（未回答）",
+    },
+    // A set the agent asked in its reply, answered by the next message
+    // (D108), that another message or the end of the agent's session closed.
+    Row {
+        key: Key::AiQuestionsPassedOver,
+        en: "Passed over — these questions can no longer be answered",
+        es: "Omitidas: ya no se pueden responder estas preguntas",
+        pt_br: "Deixadas de lado — estas perguntas não podem mais ser respondidas",
+        de: "Übergangen – diese Fragen können nicht mehr beantwortet werden",
+        fr: "Laissées de côté — ces questions ne peuvent plus recevoir de réponse",
+        ar: "تم تجاوزها — لم يعد من الممكن الإجابة عن هذه الأسئلة",
+        zh_hans: "已略过——这些问题已无法再回答",
+        ja: "見送られました — これらの質問にはもう回答できません",
     },
     Row {
         key: Key::AiAgentOutcomeDone,

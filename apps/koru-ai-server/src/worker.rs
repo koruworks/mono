@@ -1314,6 +1314,12 @@ struct WorkerState {
     /// An agent's live wording per open row, for the length of its turn.
     agent_live: HashMap<ToolInvocationId, koru_ai_core::AgentActivityLive>,
     agent_rows: HashMap<InferenceAttemptId, Vec<ToolInvocationId>>,
+    /// Sets answered by the next message still open, by row, with their
+    /// chat (koru-ai D108): they outlive their reply, and another message
+    /// in the chat passes them over.
+    next_message_rows: HashMap<ToolInvocationId, ChatId>,
+    /// Replies that carry a set's answers, with the set's row.
+    answer_attempts: HashMap<InferenceAttemptId, ToolInvocationId>,
     /// The dispatcher's own inbox, for reports that arrive from other threads.
     output: SyncSender<Envelope>,
     /// The agents this worker offers, as the settings view lists them.
@@ -1508,6 +1514,8 @@ fn run_worker(
         clearing: None,
         agent_live: HashMap::new(),
         agent_rows: HashMap::new(),
+        next_message_rows: HashMap::new(),
+        answer_attempts: HashMap::new(),
         output: provider_output.clone(),
         agent_views,
         ollama_controls: HashMap::new(),
@@ -3151,6 +3159,11 @@ impl WorkerState {
         {
             return replay_stream(&self.repository, existing);
         }
+        // A set's answers sent as the next message (D108): a reply of its
+        // own with no message of the person's.
+        if let Some(next) = request.answers.clone() {
+            return self.send_answers_turn(request, next);
+        }
         // A message may be attachments only (chat-attachments D3).
         if request.markdown.trim().is_empty() && request.attachment_ids.is_empty() {
             return Err(failure("invalid_request", "A message is required.", false));
@@ -3323,6 +3336,8 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
+        // Another message passes over the chat's open sets (D108).
+        self.pass_over_questions(chat.id, attempt_id);
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -3822,6 +3837,7 @@ impl WorkerState {
             .map_err(ai_failure)?;
         self.cancel_pending_tools(attempt_id);
         self.finish_agent_rows(attempt_id);
+        self.finish_answer_attempt(attempt_id);
         self.publish(event);
         self.cancellations.remove(&attempt_id);
         self.tool_loops.remove(&attempt_id);
@@ -3926,6 +3942,7 @@ impl WorkerState {
                 if updated.status.is_terminal() {
                     self.cancel_pending_tools(attempt_id);
                     self.finish_agent_rows(attempt_id);
+                    self.finish_answer_attempt(attempt_id);
                 }
                 self.publish(event);
                 if updated.status.is_terminal() {
@@ -4406,6 +4423,7 @@ impl WorkerState {
         }
         self.streams.remove(&attempt_id);
         self.finish_agent_rows(attempt_id);
+        self.finish_answer_attempt(attempt_id);
         self.work_terminal(attempt_id);
     }
 

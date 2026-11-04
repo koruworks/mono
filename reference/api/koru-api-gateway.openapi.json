@@ -7598,6 +7598,30 @@
         ],
         "type": "object"
       },
+      "NextMessageAnswers": {
+        "description": "**A set's answers sent as the person's next message**: the set's row\nand an answer per question. It is a message of its own — it starts the\nagent's next reply — and the person's words are read on the set's card,\nnever as a message.",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAnswer"
+            },
+            "type": "array"
+          },
+          "invocation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              }
+            ],
+            "description": "The set's row."
+          }
+        },
+        "required": [
+          "invocation",
+          "answers"
+        ],
+        "type": "object"
+      },
       "Nullable_AiProvider": {
         "anyOf": [
           {
@@ -12195,6 +12219,20 @@
       "SendTurnRequest": {
         "additionalProperties": false,
         "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextMessageAnswers"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**A local agent's questions answered by this message** (koru-ai\nD108): a set the agent asked in its reply and moved on from, whose\nanswers go to it as the person's next message. The message is the\nanswers alone — `markdown`, `explicit_refs` and `attachment_ids`\nempty — and is recorded as no message of the person's: the answers\nare read on the set's card, and the agent's reply follows the one\nthat asked. `user_message_id` in the answer is the message the\nasking reply answered. A set that can no longer be answered is\nrefused (`questions_closed`)."
+          },
           "attachment_ids": {
             "description": "Attachments already stored for this chat and not yet sent, in the\norder they go with the message. Only an agent chat takes any.",
             "items": {

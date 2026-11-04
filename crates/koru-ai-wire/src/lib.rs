@@ -389,6 +389,17 @@ pub struct SendTurnRequest {
     /// order they go with the message. Only an agent chat takes any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachment_ids: Vec<ChatAttachmentId>,
+    /// **A local agent's questions answered by this message** (koru-ai
+    /// D108): a set the agent asked in its reply and moved on from, whose
+    /// answers go to it as the person's next message. The message is the
+    /// answers alone — `markdown`, `explicit_refs` and `attachment_ids`
+    /// empty — and is recorded as no message of the person's: the answers
+    /// are read on the set's card, and the agent's reply follows the one
+    /// that asked. `user_message_id` in the answer is the message the
+    /// asking reply answered. A set that can no longer be answered is
+    /// refused (`questions_closed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<koru_ai_core::NextMessageAnswers>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

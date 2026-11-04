@@ -163,6 +163,19 @@ pub(crate) struct PendingApproval {
     pub(crate) choices: Vec<(ApprovalChoiceId, ApprovalDecision)>,
 }
 
+/// **A set answered by the person's next message** (koru-ai D108): one the
+/// agent asked in its reply and moved on from. It outlives the turn that
+/// asked, so it is kept apart from the live turns, with the session that
+/// asked it — a set is answerable only in that session — until it is
+/// answered, skipped, passed over or its session ends.
+#[derive(Clone)]
+pub(crate) struct NextMessageSet {
+    pub(crate) chat: ChatId,
+    pub(crate) session: koru_session_protocol::SessionId,
+    pub(crate) request: koru_session_protocol::QuestionRequestId,
+    pub(crate) questions: Vec<koru_session_protocol::AgentQuestion>,
+}
+
 /// One running agent turn, as the dispatcher sees it: which chat, and the
 /// permission requests still waiting for an answer.
 pub(crate) struct LiveTurn {
@@ -262,6 +275,8 @@ pub enum AnswerError {
 #[derive(Default)]
 pub struct LiveTurns {
     turns: Mutex<HashMap<InferenceAttemptId, LiveTurn>>,
+    /// Sets answered by the next message, by their row (D108).
+    next_message: Mutex<HashMap<ToolInvocationId, NextMessageSet>>,
 }
 
 impl LiveTurns {
@@ -394,6 +409,76 @@ impl LiveTurns {
         }
     }
 
+    /// Keep a set answered by the next message, past its turn (D108).
+    pub(crate) fn keep_next_message(&self, invocation: ToolInvocationId, set: NextMessageSet) {
+        self.sets().insert(invocation, set);
+    }
+
+    /// The set answered by the next message that `invocation` is, if it is
+    /// still answerable.
+    pub(crate) fn next_message_set(&self, invocation: ToolInvocationId) -> Option<NextMessageSet> {
+        self.sets().get(&invocation).cloned()
+    }
+
+    /// **Check a set's answers before they are sent as the next message**
+    /// (D108): the row is a set of `chat`'s still answerable, and the
+    /// answers fit it — at least one, each an option it offers or words.
+    /// `NotLive` when the set is no longer answerable: answered, passed
+    /// over, or its session gone.
+    pub fn check_next_message_answers(
+        &self,
+        chat: ChatId,
+        invocation: ToolInvocationId,
+        answers: &[koru_ai_core::AgentAnswer],
+    ) -> Result<(), AnswerError> {
+        let set = self
+            .next_message_set(invocation)
+            .filter(|set| set.chat == chat)
+            .ok_or(AnswerError::NotLive)?;
+        let valid = koru_session_protocol::validate_answers(
+            &set.questions,
+            answers.iter().cloned().map(protocol_answer).collect(),
+        )
+        .map_err(|_| AnswerError::UnknownChoice)?;
+        if valid.is_empty() {
+            return Err(AnswerError::ChoiceRequired);
+        }
+        Ok(())
+    }
+
+    /// Whether a set answered by the next message is still answerable.
+    pub fn next_message_answerable(&self, invocation: ToolInvocationId) -> bool {
+        self.sets().contains_key(&invocation)
+    }
+
+    /// Forget a set answered by the next message: it was answered, skipped
+    /// or closed.
+    pub fn forget_next_message(&self, invocation: ToolInvocationId) {
+        self.sets().remove(&invocation);
+    }
+
+    /// **Pass over a chat's sets answered by the next message**: the person
+    /// sent another message, or the chat's sessions ended. The rows they
+    /// were, for the caller to close.
+    pub fn pass_over_next_message(&self, chat: ChatId) -> Vec<ToolInvocationId> {
+        let mut sets = self.sets();
+        let passed: Vec<ToolInvocationId> = sets
+            .iter()
+            .filter(|(_, set)| set.chat == chat)
+            .map(|(invocation, _)| *invocation)
+            .collect();
+        for invocation in &passed {
+            sets.remove(invocation);
+        }
+        passed
+    }
+
+    fn sets(&self) -> std::sync::MutexGuard<'_, HashMap<ToolInvocationId, NextMessageSet>> {
+        self.next_message
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+    }
+
     pub(crate) fn settle(&self, attempt: InferenceAttemptId, approval: ApprovalId) {
         if let Some(turn) = self.lock().get_mut(&attempt) {
             turn.pending
@@ -468,7 +553,9 @@ impl LiveTurns {
 }
 
 /// A chat's answer in the session protocol's terms.
-fn protocol_answer(answer: koru_ai_core::AgentAnswer) -> koru_session_protocol::QuestionAnswer {
+pub(crate) fn protocol_answer(
+    answer: koru_ai_core::AgentAnswer,
+) -> koru_session_protocol::QuestionAnswer {
     use koru_ai_core::AgentAnswerValue;
     use koru_session_protocol::QuestionAnswerValue;
     koru_session_protocol::QuestionAnswer {
@@ -621,6 +708,89 @@ mod tests {
         assert_eq!(
             live.answer_questions(attempt, invocation, None),
             Err(AnswerError::NoSuchApproval)
+        );
+    }
+
+    /// **A set answered by the next message outlives its turn** (koru-ai
+    /// D108): kept apart from the live turns, its answers are checked
+    /// against it — at least one, each fitting — only for its own chat; a
+    /// new message in that chat passes it over, and then it is closed.
+    #[test]
+    fn a_set_answered_by_the_next_message_outlives_its_turn_until_passed_over() {
+        use koru_ai_core::{AgentAnswer, AgentAnswerValue};
+        use koru_session_protocol::{AgentQuestion, QuestionOption, QuestionRequestId, SessionId};
+        let live = LiveTurns::default();
+        let chat = ChatId::new();
+        let invocation = ToolInvocationId::new();
+        live.keep_next_message(
+            invocation,
+            NextMessageSet {
+                chat,
+                session: SessionId::mint(),
+                request: QuestionRequestId::mint(),
+                questions: vec![AgentQuestion {
+                    id: "[\"request_user_input_async\",\"call\",0]".into(),
+                    header: String::new(),
+                    question: "Which?".into(),
+                    options: vec![QuestionOption {
+                        label: "First".into(),
+                        description: String::new(),
+                    }],
+                    allow_other: true,
+                    secret: false,
+                }],
+            },
+        );
+        let answer = |value: AgentAnswerValue| {
+            vec![AgentAnswer {
+                question_id: "[\"request_user_input_async\",\"call\",0]".into(),
+                value,
+            }]
+        };
+        let first = answer(AgentAnswerValue::Option {
+            label: "First".into(),
+        });
+        assert!(live.next_message_answerable(invocation));
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &first),
+            Ok(())
+        );
+        assert_eq!(
+            live.check_next_message_answers(
+                chat,
+                invocation,
+                &answer(AgentAnswerValue::Text {
+                    text: "my own words".into()
+                })
+            ),
+            Ok(()),
+            "the person's words are always taken"
+        );
+        assert_eq!(
+            live.check_next_message_answers(
+                chat,
+                invocation,
+                &answer(AgentAnswerValue::Option {
+                    label: "Second".into()
+                })
+            ),
+            Err(AnswerError::UnknownChoice)
+        );
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &[]),
+            Err(AnswerError::ChoiceRequired)
+        );
+        assert_eq!(
+            live.check_next_message_answers(ChatId::new(), invocation, &first),
+            Err(AnswerError::NotLive),
+            "another chat's set"
+        );
+        assert!(live.pass_over_next_message(ChatId::new()).is_empty());
+        assert_eq!(live.pass_over_next_message(chat), vec![invocation]);
+        assert!(!live.next_message_answerable(invocation));
+        assert_eq!(
+            live.check_next_message_answers(chat, invocation, &first),
+            Err(AnswerError::NotLive)
         );
     }
 

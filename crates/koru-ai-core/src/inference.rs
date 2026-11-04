@@ -321,6 +321,12 @@ pub struct AiRequestOptions {
     /// applies from its next message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_turn_reasoning: Option<ReasoningChoice>,
+    /// This message is a local agent's question set answered (koru-ai
+    /// D108): a set the agent asked in its reply and moved on from, whose
+    /// answers go to it as the person's next message. The agent's provider
+    /// sends them in place of the message; the API providers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_answers: Option<crate::NextMessageAnswers>,
 }
 
 impl Default for AiRequestOptions {
@@ -335,6 +341,7 @@ impl Default for AiRequestOptions {
             agent_mode: None,
             agent_fast: None,
             agent_turn_reasoning: None,
+            agent_answers: None,
         }
     }
 }

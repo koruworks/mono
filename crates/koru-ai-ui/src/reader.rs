@@ -1208,6 +1208,7 @@ mod tests {
                 system_prompt_override: None,
                 replace_pinned_documents: false,
                 attachment_ids: Vec::new(),
+                answers: None,
             })
         };
         assert!(matches!(

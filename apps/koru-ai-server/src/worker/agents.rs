@@ -206,6 +206,12 @@ impl WorkerState {
     /// The host reported on one chat's sessions: finish its delete, or count
     /// it for the clear that owns it.
     pub(super) fn on_chat_sessions_ended(&mut self, chat: ChatId, outcome: EndOutcome) {
+        // Its agent is gone: a set it asked to be answered by the next
+        // message has nobody to take the answers (D108). The rows go with
+        // the chat; only the live state is left to forget.
+        if matches!(outcome, EndOutcome::Ended) {
+            self.forget_next_message_sets(chat);
+        }
         if let Some(closing) = self.closing.remove(&chat) {
             let answer = match outcome {
                 EndOutcome::Ended => self.delete_chat_now(chat),
@@ -487,6 +493,7 @@ impl WorkerState {
                 invocation,
                 questions,
                 blocking,
+                next_message,
             } => {
                 // A permission request's row (D108): it reads as one in
                 // every build. The set's words are kept on it — a plain
@@ -501,7 +508,8 @@ impl WorkerState {
                     ToolApproval::Pending,
                     at,
                 );
-                let record = koru_ai_core::QuestionsRecord::of(&questions);
+                let record = koru_ai_core::QuestionsRecord::of(&questions)
+                    .answered_by_next_message(next_message);
                 let summary = koru_ai_core::bound_live_text(record.summary().trim());
                 row.agent_summary = (!summary.is_empty()).then_some(summary);
                 row.agent_input = record.encode();
@@ -517,6 +525,11 @@ impl WorkerState {
                     }
                     self.repository.advance_agent_activity(&row).map(|()| {
                         self.remember_agent_row(attempt.id, invocation);
+                        // A set answered by the next message outlives its
+                        // reply, with its questions live (D108).
+                        if next_message {
+                            self.next_message_rows.insert(invocation, chat_id);
+                        }
                         self.agent_live.insert(
                             invocation,
                             AgentActivityLive {
@@ -532,6 +545,7 @@ impl WorkerState {
                 invocation,
                 answers,
             } => {
+                self.next_message_rows.remove(&invocation);
                 if let Some(live) = self.agent_live.get_mut(&invocation) {
                     live.questions.clear();
                 }
@@ -557,6 +571,15 @@ impl WorkerState {
                 })
             }
             AgentActivityEvent::ApprovalExpired { invocation } => {
+                // A set passed over here first has nothing left to expire.
+                if self.next_message_rows.remove(&invocation).is_none()
+                    && matches!(
+                        self.repository.tool_activity(invocation),
+                        Ok(Some(row)) if row.status.is_terminal()
+                    )
+                {
+                    return;
+                }
                 if let Some(live) = self.agent_live.get_mut(&invocation) {
                     live.choices.clear();
                     live.questions.clear();
@@ -574,7 +597,12 @@ impl WorkerState {
         match result {
             Ok(mut row) => {
                 row.live = self.agent_live.get(&row.id).cloned();
-                self.publish_tool_activity(row);
+                // On the reply the fact came with: a set answered by the
+                // next message closes in a reply after the one that asked.
+                self.publish(AiEvent::ToolActivity {
+                    attempt_id: attempt.id,
+                    activity: row,
+                });
             }
             Err(error) => {
                 tracing::warn!(
@@ -695,6 +723,11 @@ impl WorkerState {
         let at = Timestamp::now();
         for invocation in invocations {
             self.tool_attempts.remove(&invocation);
+            // A set answered by the next message stays open past its reply
+            // (D108): it closes when it is answered, skipped or passed over.
+            if self.next_message_rows.contains_key(&invocation) {
+                continue;
+            }
             self.agent_live.remove(&invocation);
             let result = self.agent_row_mut(invocation, |row| {
                 row.status = ToolActivityStatus::Cancelled;
@@ -802,6 +835,28 @@ impl WorkerState {
                 false,
             ));
         }
+        let live_attempt = self
+            .tool_attempts
+            .get(&activity.id)
+            .copied()
+            .filter(|attempt| {
+                self.agents
+                    .as_ref()
+                    .is_some_and(|agents| agents.live().is_live(*attempt))
+            });
+        // A set answered by the next message whose reply ended (D108): its
+        // answers are a message of their own, and a skip is the chat's
+        // alone — the agent hears nothing.
+        if self.next_message_rows.contains_key(&activity.id) && live_attempt.is_none() {
+            if approve {
+                return Err(failure(
+                    "answer_as_message",
+                    "These questions are answered by your next message; send the answers as one.",
+                    false,
+                ));
+            }
+            return self.skip_next_message(activity);
+        }
         let Some(agents) = &self.agents else {
             return Err(tool_not_resumable());
         };
@@ -825,6 +880,349 @@ impl WorkerState {
         let mut activity = activity.clone();
         activity.live = self.agent_live.get(&activity.id).cloned();
         Ok(ToolDecisionResponse { activity })
+    }
+
+    // ----- questions answered by the next message (D108) --------------
+
+    /// **Skip a set answered by the next message** after its reply ended:
+    /// the row is denied as any skipped set is, and nothing reaches the
+    /// agent — a skip costs nothing.
+    fn skip_next_message(&mut self, activity: &ToolActivity) -> ApiResult<ToolDecisionResponse> {
+        self.next_message_rows.remove(&activity.id);
+        self.agent_live.remove(&activity.id);
+        if let Some(agents) = &self.agents {
+            agents.live().forget_next_message(activity.id);
+        }
+        let at = Timestamp::now();
+        let row = self
+            .agent_row_mut(activity.id, |row| {
+                row.status = ToolActivityStatus::Denied;
+                row.approval = ToolApproval::Denied;
+                row.started_at = None;
+                row.error_code = Some(ToolErrorCode::PermissionDenied);
+                row.completed_at = Some(at);
+            })
+            .map_err(ai_failure)?;
+        tracing::info!(target: "koru_ai::agent", "agent questions skipped after their reply");
+        Ok(ToolDecisionResponse { activity: row })
+    }
+
+    /// **Close a set answered by the next message unanswered**: the person
+    /// sent another message, or its agent's session is gone. The row is
+    /// cancelled — the card says it can no longer be answered — and shown on
+    /// `publish_on`'s reply when one is running.
+    fn close_next_message_row(
+        &mut self,
+        invocation: ToolInvocationId,
+        publish_on: Option<InferenceAttemptId>,
+    ) {
+        self.next_message_rows.remove(&invocation);
+        self.agent_live.remove(&invocation);
+        let at = Timestamp::now();
+        let closed = self.agent_row_mut(invocation, |row| {
+            row.status = ToolActivityStatus::Cancelled;
+            if row.approval == ToolApproval::Pending {
+                row.approval = ToolApproval::Denied;
+            }
+            row.completed_at = Some(at);
+            row.error_code = Some(ToolErrorCode::Cancelled);
+        });
+        match (closed, publish_on) {
+            (Ok(row), Some(attempt_id)) => self.publish(AiEvent::ToolActivity {
+                attempt_id,
+                activity: row,
+            }),
+            (Ok(_), None) => {}
+            (Err(error), _) => tracing::warn!(
+                target: "koru_ai::agent",
+                class = ?error.class,
+                "a passed-over question set could not be closed"
+            ),
+        }
+    }
+
+    /// **Another message passes over the chat's open sets** (D108): they
+    /// can no longer be answered, here and in the agent's adapter, which
+    /// expires its own when the message reaches it.
+    pub(super) fn pass_over_questions(&mut self, chat: ChatId, attempt: InferenceAttemptId) {
+        let passed: Vec<ToolInvocationId> = self
+            .next_message_rows
+            .iter()
+            .filter(|(_, owner)| **owner == chat)
+            .map(|(invocation, _)| *invocation)
+            .collect();
+        if passed.is_empty() {
+            return;
+        }
+        if let Some(agents) = &self.agents {
+            agents.live().pass_over_next_message(chat);
+        }
+        for invocation in passed {
+            self.close_next_message_row(invocation, Some(attempt));
+        }
+        tracing::info!(target: "koru_ai::agent", "agent questions passed over by a message");
+    }
+
+    /// The chat's agent is gone: its sets answered by the next message are
+    /// forgotten with it.
+    fn forget_next_message_sets(&mut self, chat: ChatId) {
+        let gone: Vec<ToolInvocationId> = self
+            .next_message_rows
+            .iter()
+            .filter(|(_, owner)| **owner == chat)
+            .map(|(invocation, _)| *invocation)
+            .collect();
+        for invocation in gone {
+            self.next_message_rows.remove(&invocation);
+            self.agent_live.remove(&invocation);
+        }
+        if let Some(agents) = &self.agents {
+            agents.live().pass_over_next_message(chat);
+        }
+    }
+
+    /// **A reply that carried a set's answers ended** (D108). Answered, the
+    /// set closed in it; still open and no longer answerable — its agent's
+    /// session ended under it — the set is closed now, on this reply,
+    /// before the reply's own end is published. Still answerable — the
+    /// reply failed on the way — it waits to be answered again.
+    pub(super) fn finish_answer_attempt(&mut self, attempt: InferenceAttemptId) {
+        let Some(invocation) = self.answer_attempts.remove(&attempt) else {
+            return;
+        };
+        let answerable = self
+            .agents
+            .as_ref()
+            .is_some_and(|agents| agents.live().next_message_answerable(invocation));
+        if self.next_message_rows.contains_key(&invocation) && !answerable {
+            self.close_next_message_row(invocation, Some(attempt));
+        }
+    }
+
+    /// **Send a set's answers as the person's next message** (koru-ai
+    /// D108): a set the agent asked in its reply and moved on from. The
+    /// answers are a message of their own — a new reply, which costs what
+    /// any message costs — and show as the set's card, never as a message
+    /// of the person's: the reply follows the asking one, and the agent
+    /// writes the message in its own form. The set closes in the reply when
+    /// the agent takes the answers.
+    pub(super) fn send_answers_turn(
+        &mut self,
+        request: SendTurnRequest,
+        next: koru_ai_core::NextMessageAnswers,
+    ) -> ApiResult<AiResponseStream> {
+        if !request.markdown.trim().is_empty()
+            || !request.attachment_ids.is_empty()
+            || !request.explicit_refs.is_empty()
+        {
+            return Err(failure(
+                "invalid_request",
+                "Answers to an agent's questions are sent on their own.",
+                false,
+            ));
+        }
+        let chat = self
+            .repository
+            .chat(request.chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        let activity = self
+            .repository
+            .tool_activity(next.invocation)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if activity.chat_id != chat.id
+            || !is_agent_provider(&chat.current_model.provider)
+            || !self.next_message_rows.contains_key(&activity.id)
+        {
+            return Err(failure(
+                "invalid_request",
+                "These are not questions answered by a message.",
+                false,
+            ));
+        }
+        if activity.approval != ToolApproval::Pending || activity.status.is_terminal() {
+            return Err(tool_decision_conflict());
+        }
+        let messages = self.repository.messages(chat.id).map_err(ai_failure)?;
+        if messages.iter().any(|message| {
+            message.role == ChatRole::Assistant && message.state == MessageState::Pending
+        }) {
+            return Err(failure(
+                "chat_busy",
+                "This chat already has a response in progress.",
+                true,
+            ));
+        }
+        let user = messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ChatRole::User)
+            .ok_or_else(|| failure("invalid_request", "The chat has no message.", false))?
+            .id;
+        let Some(agents) = self.agents.clone() else {
+            return Err(tool_not_resumable());
+        };
+        match agents
+            .live()
+            .check_next_message_answers(chat.id, activity.id, &next.answers)
+        {
+            Ok(()) => {}
+            Err(AnswerError::NotLive) => {
+                self.close_next_message_row(activity.id, None);
+                return Err(failure(
+                    "questions_closed",
+                    koru_ai_core::AGENT_QUESTIONS_CLOSED,
+                    false,
+                ));
+            }
+            Err(AnswerError::ChoiceRequired) => {
+                return Err(failure(
+                    "answers_required",
+                    "These questions take answers; send one for each.",
+                    false,
+                ));
+            }
+            Err(_) => {
+                return Err(failure(
+                    "invalid_request",
+                    "Those answers do not fit the questions.",
+                    false,
+                ));
+            }
+        }
+        let ordinal = messages.last().map_or(Ok(0), |message| {
+            message.ordinal.checked_add(1).ok_or_else(invariant_failure)
+        })?;
+        let now = Timestamp::now();
+        let assistant_id = MessageId::new();
+        let attempt_id = InferenceAttemptId::new();
+        let reasoning = chat.current_model.default_reasoning;
+        let assistant_message = Message {
+            id: assistant_id,
+            chat_id: chat.id,
+            ordinal,
+            role: ChatRole::Assistant,
+            state: MessageState::Pending,
+            markdown: String::new(),
+            origin_message_id: None,
+            provider: Some(chat.current_model.provider.clone()),
+            requested_model: Some(chat.current_model.requested_model.clone()),
+            resolved_model: None,
+            error_class: None,
+            created_at: now,
+            completed_at: None,
+        };
+        let provider_messages: Vec<AiRequestMessage> = messages
+            .iter()
+            .filter(|message| message.state == MessageState::Complete)
+            .map(|message| AiRequestMessage {
+                role: message.role,
+                markdown: message.markdown.clone(),
+                attachments: Vec::new(),
+            })
+            .collect();
+        let attempt = InferenceAttempt {
+            id: attempt_id,
+            operation_id: request.operation_id,
+            chat_id: Some(chat.id),
+            assistant_message_id: Some(assistant_id),
+            surface: request.surface,
+            intent: AiIntent::Chat,
+            provider: chat.current_model.provider.clone(),
+            requested_model: chat.current_model.requested_model.clone(),
+            resolved_model: None,
+            requested_reasoning: reasoning,
+            effective_reasoning: None,
+            prompt_template_version: PROMPT_TEMPLATE_VERSION.into(),
+            status: AttemptStatus::Pending,
+            queued_at: now,
+            context_started_at: None,
+            context_completed_at: None,
+            provider_started_at: None,
+            first_token_at: None,
+            completed_at: None,
+            request_payload_bytes: None,
+            web_search_requested: false,
+            web_search_calls: 0,
+            context_payload_bytes: 0,
+            message_count: provider_messages.len().try_into().unwrap_or(u32::MAX),
+            context_document_count: 0,
+            context_message_block_count: 0,
+            usage: Default::default(),
+            stop_reason: None,
+            error_class: None,
+            provider_response_id: None,
+        };
+        // A reply of its own, after the one that asked; no message of the
+        // person's is written — the answers are read on the set's card.
+        self.repository
+            .begin_retry(&PendingRetry {
+                assistant_message,
+                attempt: attempt.clone(),
+            })
+            .map_err(ai_failure)?;
+        let (stream_sender, events) = sync_channel(STREAM_CAPACITY);
+        self.streams.insert(
+            attempt_id,
+            StreamState {
+                sender: stream_sender,
+                next_sequence: 1,
+            },
+        );
+        let cancellation = Cancellation::default();
+        self.cancellations.insert(attempt_id, cancellation.clone());
+        self.answer_attempts.insert(attempt_id, activity.id);
+        let base_request = AiRequest {
+            attempt_id,
+            provider: attempt.provider.clone(),
+            model: attempt.requested_model.clone(),
+            reasoning,
+            prompt_template_version: PROMPT_TEMPLATE_VERSION.into(),
+            system: CHAT_PROMPT.into(),
+            messages: provider_messages,
+            context: Vec::new(),
+            tools: self.tool_definitions.clone(),
+            tool_history: Vec::new(),
+            options: AiRequestOptions {
+                chat_id: Some(chat.id),
+                working_folder: chat.agent_working_folder.clone(),
+                agent_mode: chat.agent_mode.clone(),
+                agent_fast: chat.agent_fast,
+                agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
+                agent_answers: Some(next),
+                ..AiRequestOptions::default()
+            },
+        };
+        self.work_started(attempt_id);
+        let started_at = Timestamp::now();
+        // No context goes with answers: the chat's pinned documents are not
+        // read again, and nothing is recorded against the asking message.
+        let job = ContextJob {
+            attempt_id,
+            user_message_id: user,
+            chat_id: chat.id,
+            request: base_request,
+            refs: Vec::new(),
+            known_documents: HashMap::new(),
+            replace_pinned_documents: false,
+            started_at,
+            cancellation,
+        };
+        match self.context_pool.try_submit(job) {
+            Ok(()) => self.work_admitted(attempt_id),
+            Err(error) => self.fail_context(attempt_id, started_at, error),
+        }
+        tracing::info!(attempt = %attempt_id, "AI attempt queued with an agent's answers");
+        Ok(AiResponseStream {
+            accepted: SendTurnAccepted {
+                attempt_id,
+                user_message_id: user,
+                assistant_message_id: assistant_id,
+                replayed: false,
+            },
+            events,
+        })
     }
 
     // ----- steering ---------------------------------------------------
@@ -946,6 +1344,8 @@ impl WorkerState {
         self.steering.remove(&delivery.operation);
         let answer = match delivery.outcome {
             Ok(()) => {
+                // Another message: the chat's open sets are passed over.
+                self.pass_over_questions(delivery.chat, delivery.attempt);
                 let now = Timestamp::now();
                 let message = Message {
                     id: MessageId::from_uuid(delivery.operation),

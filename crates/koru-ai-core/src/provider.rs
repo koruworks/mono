@@ -207,6 +207,12 @@ pub enum ReasoningControl {
 /// the same in the person's language.
 pub const AGENT_REASONING_REJECTED: &str = "The agent did not accept that reasoning level.";
 
+/// What an agent chat's answers say when their questions can no longer be
+/// answered (koru-ai D108): a set answered by the next message that was
+/// passed over, or whose agent session ended. A surface that knows it says
+/// the same in the person's language.
+pub const AGENT_QUESTIONS_CLOSED: &str = "These questions can no longer be answered.";
+
 /// Resolves a requested reasoning choice against a model's declared control.
 pub fn validate_reasoning(
     control: &ReasoningControl,

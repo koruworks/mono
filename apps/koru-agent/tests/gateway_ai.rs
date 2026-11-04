@@ -139,6 +139,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         })
         .unwrap();
     let accepted = stream.accepted.clone();
@@ -184,6 +185,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         })
         .unwrap();
     assert!(replay.accepted.replayed);
@@ -202,6 +204,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         })
         .unwrap();
     let dropped_attempt = dropped.accepted.attempt_id;
@@ -259,6 +262,7 @@ fn public_stream_disconnect_then_cancel_is_durable_and_not_duplicated() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         })
         .unwrap();
     let accepted = stream.accepted.clone();
@@ -314,6 +318,7 @@ fn an_existing_client_recovers_interrupted_history_after_gateway_restart() {
             system_prompt_override: None,
             replace_pinned_documents: false,
             attachment_ids: Vec::new(),
+            answers: None,
         })
         .unwrap();
     let accepted = stream.accepted.clone();
@@ -414,6 +419,7 @@ fn every_in_flight_stream_reaches_one_terminal_outcome_when_the_host_dies() {
                     system_prompt_override: None,
                     replace_pinned_documents: false,
                     attachment_ids: Vec::new(),
+                    answers: None,
                 })
                 .unwrap()
         })

@@ -87,6 +87,34 @@ pub(crate) fn start(
         }),
         (selection, _) => selection,
     };
+    // A set's answers sent as the next message (D108): the set must still be
+    // answerable, and the answers fit it, before a session is touched.
+    let answering = match &request.options.agent_answers {
+        Some(next) => {
+            let set = provider
+                .live
+                .next_message_set(next.invocation)
+                .filter(|set| set.chat == chat)
+                .ok_or_else(questions_closed)?;
+            let answers = koru_session_protocol::validate_answers(
+                &set.questions,
+                next.answers
+                    .iter()
+                    .cloned()
+                    .map(crate::protocol_answer)
+                    .collect(),
+            )
+            .map_err(|_| {
+                AiError::new(
+                    AiErrorClass::Configuration,
+                    "Those answers do not fit the questions.",
+                    false,
+                )
+            })?;
+            Some((next.invocation, set, answers))
+        }
+        None => None,
+    };
     let ensured = provider.sessions.ensure(
         origin,
         &provider.kind,
@@ -112,6 +140,16 @@ pub(crate) fn start(
     drop(render);
     let lease = lease.token;
 
+    // Only the session that asked can take the answers: a chat whose agent
+    // started again has nobody waiting for them (D108).
+    if let Some((invocation, set, _)) = &answering
+        && set.session != ensured.session
+    {
+        provider.live.forget_next_message(*invocation);
+        let _ = client.detach(ensured.session, lease);
+        return Err(questions_closed());
+    }
+
     let observation = client
         .observe_agent_events(ensured.session)
         .map_err(|error| session_error("observe", error))?;
@@ -126,13 +164,22 @@ pub(crate) fn start(
         reconcile(&client, ensured.session, lease, stale, &events)?;
     }
 
-    let had_history = request.messages.len() > 1;
-    let text = compose_prompt(&request, ensured.fresh);
-    let pictures = request
-        .messages
-        .last()
-        .map(|message| message.attachments.as_slice())
-        .unwrap_or_default();
+    let had_history = request.messages.len() > 1 && answering.is_none();
+    // Answers are the whole message: the adapter writes them in the agent's
+    // own form, and nothing of the chat's goes with them.
+    let text = if answering.is_some() {
+        String::new()
+    } else {
+        compose_prompt(&request, ensured.fresh)
+    };
+    let pictures = match answering {
+        Some(_) => &[][..],
+        None => request
+            .messages
+            .last()
+            .map(|message| message.attachments.as_slice())
+            .unwrap_or_default(),
+    };
     let mut delivered = deliver_pictures(
         pictures,
         |native| {
@@ -157,19 +204,27 @@ pub(crate) fn start(
         .agent_turn_reasoning
         .and_then(launch_reasoning)
         .filter(|_| client.supports_turn_reasoning());
+    let reply = answering
+        .as_ref()
+        .map(|(_, set, answers)| koru_session_protocol::QuestionsReply {
+            request_id: set.request,
+            answers: answers.clone(),
+        });
     let send = |attachment_ids: Vec<AttachmentId>| {
-        client.send_pending_input(
-            ensured.session,
-            lease,
-            PendingInput {
-                idempotency_key: IdempotencyKey::mint(),
-                text: text.clone(),
-                attachment_ids,
-                mode: mode.clone(),
-                fast,
-                reasoning: turn_reasoning,
-            },
-        )
+        let input = PendingInput {
+            idempotency_key: IdempotencyKey::mint(),
+            text: text.clone(),
+            attachment_ids,
+            mode: mode.clone(),
+            fast,
+            reasoning: turn_reasoning,
+        };
+        match &reply {
+            Some(reply) => {
+                client.send_pending_answers(ensured.session, lease, input, reply.clone())
+            }
+            None => client.send_pending_input(ensured.session, lease, input),
+        }
     };
     let sent = match send(delivered.native.clone()) {
         Ok(sent) => sent,
@@ -245,8 +300,15 @@ pub(crate) fn start(
         effective_reasoning: reasoning.and_then(applied_choice),
         at: Timestamp::now(),
     });
+    // The answers' set closes in this reply: its resolution is followed here
+    // though another turn asked it.
+    let question_rows = answering
+        .map(|(invocation, set, _)| (set.request, invocation))
+        .into_iter()
+        .collect();
     Ok(Box::new(TurnStream {
         attempt,
+        chat,
         session: ensured.session,
         lease,
         turn: sent.turn_id,
@@ -260,12 +322,22 @@ pub(crate) fn start(
         queued,
         tools: HashMap::new(),
         approvals: HashMap::new(),
-        question_rows: HashMap::new(),
+        question_rows,
         usage: None,
         ingested: delivered.native,
         started_in: request.options.agent_mode.clone(),
         done: false,
     }))
+}
+
+/// A set answered by the next message that can no longer be answered: it
+/// was answered or passed over, or the agent's session that asked it ended.
+fn questions_closed() -> AiError {
+    AiError::new(
+        AiErrorClass::Configuration,
+        koru_ai_core::AGENT_QUESTIONS_CLOSED,
+        false,
+    )
 }
 
 /// The chat's mode as the session protocol spells it. A token that is not a
@@ -574,6 +646,7 @@ fn human_size(bytes: u64) -> String {
 
 struct TurnStream {
     attempt: InferenceAttemptId,
+    chat: koru_ai_core::ChatId,
     session: SessionId,
     lease: ControllerLeaseToken,
     turn: AgentTurnId,
@@ -991,8 +1064,11 @@ impl TurnStream {
                 request_id,
                 questions,
                 blocking,
+                delivery,
             } if turn_id == self.turn => {
                 let invocation = ToolInvocationId::new();
+                let next_message =
+                    delivery == koru_session_protocol::QuestionsDelivery::NextMessage;
                 self.question_rows.insert(request_id, invocation);
                 self.live.offer_questions(
                     attempt_id,
@@ -1002,23 +1078,38 @@ impl TurnStream {
                         questions: questions.clone(),
                     },
                 );
+                // A set answered by the next message outlives this turn.
+                if next_message {
+                    self.live.keep_next_message(
+                        invocation,
+                        crate::NextMessageSet {
+                            chat: self.chat,
+                            session: self.session,
+                            request: request_id,
+                            questions: questions.clone(),
+                        },
+                    );
+                }
                 self.queued.push_back(AiEvent::AgentActivity {
                     attempt_id,
                     activity: AgentActivityEvent::QuestionsAsked {
                         invocation,
                         questions: questions.into_iter().map(chat_question).collect(),
                         blocking,
+                        next_message,
                     },
                     at,
                 });
             }
+            // A set this turn asked, or one whose answers this turn carries.
             AgentEvent::QuestionsResolved {
                 turn_id,
                 request_id,
                 outcome,
-            } if turn_id == self.turn => {
+            } if turn_id == self.turn || self.question_rows.contains_key(&request_id) => {
                 self.live.settle_questions(attempt_id, request_id);
                 if let Some(invocation) = self.question_rows.remove(&request_id) {
+                    self.live.forget_next_message(invocation);
                     use koru_session_protocol::QuestionsOutcome;
                     let activity = match outcome {
                         QuestionsOutcome::Answered { answers } => {

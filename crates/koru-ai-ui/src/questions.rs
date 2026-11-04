@@ -32,6 +32,16 @@
 //! questions and the answers (`agent_input`, `agent_output`), so the summary
 //! reads the same after a reload; a skipped set, or one its turn closed,
 //! says so in one line.
+//!
+//! **A set answered by the next message** — one the agent asked in its reply
+//! and moved on from, Codex's `request_user_input_async` — is the same card,
+//! and stays answerable after its reply ends. *Submit* then sends the
+//! answers as the person's next message: a reply of its own, which follows
+//! with no card of the person's — the answers are read here, as *You
+//! answered*. While its reply still runs, *Submit* answers into it as any
+//! set does. *Skip* sends the agent nothing. Another message passes it
+//! over, and so does the end of the agent's session: it then reads *Passed
+//! over*, and can no longer be answered.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -222,6 +232,16 @@ pub(crate) fn is_question_row(activity: &ToolActivity) -> bool {
                 .is_some())
 }
 
+/// **Whether a row is a set answered by the next message** (D108), as its
+/// record says.
+pub(crate) fn is_next_message(activity: &ToolActivity) -> bool {
+    activity
+        .agent_input
+        .as_deref()
+        .and_then(QuestionsRecord::decode)
+        .is_some_and(|record| record.next_message)
+}
+
 /// The questions of a set still waiting for the person; `None` once it was
 /// answered, skipped or closed, and on every other row.
 pub(crate) fn waiting(activity: &ToolActivity) -> Option<&[AgentQuestion]> {
@@ -275,6 +295,12 @@ pub(crate) fn summary(activity: &ToolActivity, lang: Lang) -> elements::SummaryS
         },
         (ToolActivityStatus::Denied, _) => elements::SummarySpec {
             heading: t(lang, Key::AiQuestionsSkipped).to_owned(),
+            lines: Vec::new(),
+        },
+        // A set answered by the next message that closed unanswered was
+        // passed over: another message, or its agent's session ended.
+        _ if questions.next_message => elements::SummarySpec {
+            heading: t(lang, Key::AiQuestionsPassedOver).to_owned(),
             lines: Vec::new(),
         },
         _ => elements::SummarySpec {
@@ -540,9 +566,66 @@ impl ChatSurface {
                 card.sent = true;
                 tracing::info!(target: "koru_ai::ui", count = answers.len(), "agent questions answered");
                 self.give_keyboard_back();
+                // A set answered by the next message whose reply ended:
+                // the answers are a message of their own (D108).
+                if is_next_message(activity) && !self.asking_reply_running(activity) {
+                    return self.send_answers(tool, answers);
+                }
                 self.send_command(Command::AnswerQuestions(tool, answers))
             }
         }
+    }
+
+    /// Whether the reply that asked `activity`'s set is the one running.
+    fn asking_reply_running(&self, activity: &ToolActivity) -> bool {
+        self.reply_streaming() && self.attempt == Some(activity.attempt_id)
+    }
+
+    /// **Send a set's answers as the next message** (D108): a reply of its
+    /// own, followed as a sent message's is, with no card of the person's —
+    /// the set's card turns to *You answered* when the agent takes them.
+    /// Refused, the card can be answered again.
+    pub(crate) fn send_answers(
+        &mut self,
+        tool: ToolInvocationId,
+        answers: Vec<AgentAnswer>,
+    ) -> bool {
+        let Some(chat_id) = self.shown_chat_id() else {
+            return false;
+        };
+        self.answering = true;
+        self.pulse = Some(koru_ui::PulsingDots::new(std::time::Instant::now()));
+        self.live_usage = None;
+        self.live_sources.clear();
+        self.open_searches.clear();
+        self.live_reasoning.clear();
+        self.pending_assistant_message_id = None;
+        self.draft.clear();
+        self.messages_dirty = true;
+        let request = koru_ai_wire::SendTurnRequest {
+            operation_id: uuid::Uuid::new_v4(),
+            chat_id,
+            surface: self.mode.wire(),
+            markdown: String::new(),
+            explicit_refs: Vec::new(),
+            reasoning_override: None,
+            web_search: false,
+            system_prompt_override: None,
+            replace_pinned_documents: false,
+            attachment_ids: Vec::new(),
+            answers: Some(koru_ai_core::NextMessageAnswers {
+                invocation: tool,
+                answers,
+            }),
+        };
+        if !self.queue_command(Command::Send(request)) {
+            self.answering = false;
+            self.pulse = None;
+            if let Some(card) = self.question_cards.get_mut(&tool) {
+                card.sent = false;
+            }
+        }
+        true
     }
 
     fn give_keyboard_back(&mut self) {
@@ -693,6 +776,28 @@ impl ChatSurface {
         if refused {
             for card in self.question_cards.values_mut() {
                 card.sent = false;
+            }
+        }
+        // A set answered by the next message still waiting once nothing is
+        // on its way — its answers were refused, or their reply ended
+        // without the agent taking them — can be answered again (D108).
+        if !self.reply_streaming() && !self.message_on_its_way() && !self.answering {
+            let next_message: Vec<ToolInvocationId> = self
+                .transcript
+                .as_ref()
+                .map(|transcript| {
+                    transcript
+                        .tool_activities
+                        .iter()
+                        .filter(|activity| waiting(activity).is_some() && is_next_message(activity))
+                        .map(|activity| activity.id)
+                        .collect()
+                })
+                .unwrap_or_default();
+            for id in next_message {
+                if let Some(card) = self.question_cards.get_mut(&id) {
+                    card.sent = false;
+                }
             }
         }
         if let Focus::Questions(tool) = self.focus
