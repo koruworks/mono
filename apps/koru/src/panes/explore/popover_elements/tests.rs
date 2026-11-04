@@ -880,7 +880,10 @@ fn a_profile_rows_record_names_its_tokens() {
         value(row, "pad_x"),
         "alias::ROW_PLATE_INSET = Space::S1 -> 4"
     );
-    assert_eq!(value(find("Profile name"), "text mode"), "single line, elided");
+    assert_eq!(
+        value(find("Profile name"), "text mode"),
+        "single line, elided"
+    );
     assert_eq!(value(find("Profile name"), "h"), "Space::S4 -> 16");
     assert_eq!(
         value(find("Profile detail"), "text mode"),
@@ -889,6 +892,9 @@ fn a_profile_rows_record_names_its_tokens() {
     assert_eq!(value(find("Manage gear"), "name"), "Key::ManageProfile");
     assert_eq!(
         value(find("Sync status words"), "ink"),
-        format!("Ink::Accent -> {}", inspect::color(Ink::Accent.of(dtheme::p())))
+        format!(
+            "Ink::Accent -> {}",
+            inspect::color(Ink::Accent.of(dtheme::p()))
+        )
     );
 }
