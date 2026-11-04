@@ -237,6 +237,7 @@ fn answers_as_the_next_message_need_managed_questions() {
         SessionId::mint(),
         ControllerLeaseToken::mint(),
         PendingInput {
+            model: None,
             idempotency_key: IdempotencyKey::mint(),
             text: String::new(),
             attachment_ids: Vec::new(),
@@ -272,6 +273,7 @@ fn skills_need_agent_commands() {
         SessionId::mint(),
         ControllerLeaseToken::mint(),
         PendingInput {
+            model: None,
             idempotency_key: IdempotencyKey::mint(),
             text: "Use $review".into(),
             attachment_ids: Vec::new(),
@@ -306,6 +308,7 @@ fn skills_need_agent_commands() {
 #[test]
 fn a_turns_level_is_sent_only_to_a_v20_host() {
     let input = || PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         text: "go on".into(),
         attachment_ids: Vec::new(),
@@ -332,4 +335,46 @@ fn a_turns_level_is_sent_only_to_a_v20_host() {
     let bytes = bytes.lock().unwrap();
     let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
     assert!(body.contains("\"reasoning\":\"high\""), "{body}");
+}
+
+/// **A turn's model never reaches a v21 host**: it would read past it and
+/// run the turn on the session's old model, so the input — and a set's
+/// answers sent as the next message — is refused before any wire traffic.
+/// A v22 host takes it.
+#[test]
+fn a_turns_model_is_sent_only_to_a_v22_host() {
+    let input = || PendingInput {
+        model: Some("sonnet".parse().unwrap()),
+        idempotency_key: IdempotencyKey::mint(),
+        text: "go on".into(),
+        attachment_ids: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    let refused = |result: Result<SendPendingInputResult, ClientError>| {
+        matches!(
+            result,
+            Err(ClientError::Session(SessionFailure {
+                code: ErrorCode::CapabilityNotNegotiated,
+                ..
+            }))
+        )
+    };
+    let (older, bytes) = approval_client(21, true, true);
+    assert!(older.supports_turn_reasoning());
+    assert!(!older.supports_turn_model());
+    assert!(refused(older.send_pending_input(
+        SessionId::mint(),
+        ControllerLeaseToken::mint(),
+        input()
+    )));
+    assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
+    let (current, bytes) = approval_client(22, true, true);
+    assert!(current.supports_turn_model());
+    let _ = current.send_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), input());
+    let bytes = bytes.lock().unwrap();
+    let body = std::str::from_utf8(&bytes[koru_ipc::frame::HEADER_LEN..]).unwrap();
+    assert!(body.contains("\"model\":\"sonnet\""), "{body}");
 }

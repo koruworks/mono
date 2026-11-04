@@ -437,6 +437,7 @@ fn pending_input_uses_the_host_rooted_path_once() {
         .unwrap();
     assert_eq!(attachment.delivery_mode, DeliveryMode::QuotedPath);
     let input = PendingInput {
+        model: None,
         idempotency_key: IdempotencyKey::mint(),
         #[cfg(windows)]
         text: "echo".into(),
@@ -634,6 +635,7 @@ fn managed_codex_crosses_real_ipc_for_image_events_approval_cancel_and_reattach(
             session.id,
             lease.token,
             PendingInput {
+                model: None,
                 idempotency_key: IdempotencyKey::mint(),
                 text: "inspect the fixture image".into(),
                 attachment_ids: vec![attachment_id],
@@ -840,6 +842,7 @@ fn attachment_commands_require_protocol_four_and_the_negotiated_capability() {
             session.id,
             lease.token,
             PendingInput {
+                model: None,
                 idempotency_key: IdempotencyKey::mint(),
                 text: "echo legacy".into(),
                 attachment_ids: Vec::new(),

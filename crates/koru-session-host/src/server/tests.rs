@@ -90,6 +90,22 @@ fn agent_commands_need_protocol_twenty_one_and_their_capability() {
     );
 }
 
+/// **Only a v22 peer names a turn's model with its input**: the version
+/// alone, no capability; an older peer's input with one is refused.
+#[test]
+fn a_turns_model_needs_protocol_twenty_two() {
+    assert!(protocol(22, true, false).turn_model());
+    assert!(
+        !protocol(21, true, true).turn_model(),
+        "a v21 peer has none"
+    );
+    assert_eq!(
+        crate::protocol_offer().versions.max,
+        koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION,
+        "the host offers it"
+    );
+}
+
 fn events() -> Vec<SequencedAgentEvent> {
     let turn_id = AgentTurnId::mint();
     let approval_id = ApprovalId::mint();

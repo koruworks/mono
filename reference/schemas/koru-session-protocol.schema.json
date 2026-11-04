@@ -5595,6 +5595,10 @@
             "type": "string"
           }
         ]
+      },
+      "ModelName": {
+        "description": "A provider's model name, as the provider spells it.\n\nBounded and printable, and otherwise opaque: Koru compares it, stores it\nbeside a run's economics and prices it at display, but never interprets\nit. It is not an event attribute — `AttrValue` has no free string, and\nthe bus carries an `Id` reference to retained metadata instead (§17.3).",
+        "type": "string"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5626,6 +5630,17 @@
           }
         ],
         "description": "v19 (koru-ai D7): the approval mode this turn runs in. The adapter\nmoves the session to it before the prompt when it is elsewhere, and\nrefuses the turn visibly when it cannot. `None` leaves the mode as\nit is. Sent only to a v19 host."
+      },
+      "model": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ModelName"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "v22: the model this turn runs on, another of the session's agent's\nmodels chosen after the start. The adapter moves the session to it\nbefore the prompt when it is on another, and refuses the turn\nvisibly when the agent cannot take it; the level and Fast mode the\ninput carries are then the new model's. `None` leaves the model as\nit is. Sent only to a v22 host: an older one would read past it and\nrun the turn on the session's old model."
       },
       "reasoning": {
         "anyOf": [

@@ -115,6 +115,7 @@ fn names_are_one_token_and_text_is_one_line() {
 #[test]
 fn an_inputs_skills_are_absent_when_none_and_bounded_when_named() {
     let mut input = PendingInput {
+        model: None,
         idempotency_key: super::idempotency_key(),
         text: "Use $review-pr".into(),
         attachment_ids: Vec::new(),
@@ -141,5 +142,5 @@ fn an_inputs_skills_are_absent_when_none_and_bounded_when_named() {
         .collect();
     assert!(!valid_input_skills(&too_many));
     assert!(capability::ALL.contains(&capability::AGENT_COMMANDS));
-    assert_eq!(AGENT_COMMANDS_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION);
+    assert_eq!(AGENT_COMMANDS_PROTOCOL_VERSION, 21);
 }

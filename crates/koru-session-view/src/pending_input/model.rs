@@ -266,6 +266,7 @@ impl PendingInputModel {
             return None;
         }
         let input = PendingInput {
+            model: None,
             idempotency_key: IdempotencyKey::mint(),
             text: self.draft.clone(),
             attachment_ids: self

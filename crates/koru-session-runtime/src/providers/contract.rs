@@ -299,11 +299,8 @@ pub struct AgentInput {
     /// moves the session to it before the prompt when it is on another, and
     /// a turn the agent cannot take it for is refused, never run on a model
     /// nobody chose. `None` leaves the model as it is. The level and Fast
-    /// mode the turn carries are then the new model's.
-    ///
-    /// The session protocol carries no model with a message yet, so the
-    /// host passes `None` until it does: the adapters take it, nothing
-    /// sends it.
+    /// mode the turn carries are then the new model's. It is the pending
+    /// input's `model` (protocol v22); a steer never carries one.
     pub model: Option<koru_session_protocol::ModelName>,
     /// The skills the person picked, by name (koru-ai D121); the text says
     /// `$name` where each was. An adapter names each to its agent beside

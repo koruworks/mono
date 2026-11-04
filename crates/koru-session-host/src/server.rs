@@ -175,6 +175,12 @@ impl ConnectionProtocol {
                 .capabilities
                 .supports(koru_session_protocol::capability::AGENT_COMMANDS)
     }
+
+    /// **This peer may name a turn's model with its input** (protocol v22):
+    /// the number alone, as a turn's level is v20's.
+    fn turn_model(&self) -> bool {
+        self.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
+    }
 }
 
 struct AttachmentResourceLifecycle {
@@ -957,6 +963,9 @@ fn handle_request(
             } else if input.needs_agent_commands() && !protocol.agent_commands() {
                 // Skills named with the input are v21 and `agent-commands`
                 // (koru-ai D121).
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else if input.needs_turn_model() && !protocol.turn_model() {
+                // A turn's model is v22.
                 Err(failure(ErrorCode::CapabilityNotNegotiated))
             } else {
                 with_session(state, session_id, |session| {

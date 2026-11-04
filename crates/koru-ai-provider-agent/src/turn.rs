@@ -35,8 +35,8 @@ use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
     AgentEvent, AgentModeId, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
     Attachment, AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode,
-    ErrorCode, IdempotencyKey, LaunchReasoning, LaunchSelection, ModelName, PendingInput,
-    SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
+    ErrorCode, IdempotencyKey, LaunchReasoning, LaunchSelection, ModelIdentity, ModelName,
+    PendingInput, SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
 };
 use koru_session_wire::SubscriptionUpdate;
 
@@ -87,6 +87,11 @@ pub(crate) fn start(
         }),
         (selection, _) => selection,
     };
+    // The chat's model, as the session would be started on it: kept for a
+    // session that is already live on another (below).
+    let chat_model = selection
+        .as_ref()
+        .and_then(|selection| selection.model.clone());
     // A set's answers sent as the next message (D108): the set must still be
     // answerable, and the answers fit it, before a session is touched.
     let answering = match &request.options.agent_answers {
@@ -204,6 +209,18 @@ pub(crate) fn start(
         .agent_turn_reasoning
         .and_then(launch_reasoning)
         .filter(|_| client.supports_turn_reasoning());
+    // **A model chosen after the chat began**: the session is live on
+    // another, so the message moves it there, to a host that takes a model
+    // per message (protocol v22). A session started for this message is on
+    // it already. An older host would run the message on the session's
+    // model, so it is never sent one; the picker offers the switch only
+    // where the listing says the host takes it.
+    let turn_model = turn_model(
+        chat_model,
+        ensured.fresh,
+        ensured.model.as_ref(),
+        client.supports_turn_model(),
+    );
     let reply = answering
         .as_ref()
         .map(|(_, set, answers)| koru_session_protocol::QuestionsReply {
@@ -227,6 +244,7 @@ pub(crate) fn start(
     };
     let send = |attachment_ids: Vec<AttachmentId>| {
         let input = PendingInput {
+            model: turn_model.clone(),
             idempotency_key: IdempotencyKey::mint(),
             text: text.clone(),
             attachment_ids,
@@ -260,9 +278,12 @@ pub(crate) fn start(
             for id in &delivered.native {
                 remove_session_copy(&client, ensured.session, lease, *id);
             }
-            // The model does not change between messages: an agent refusing
-            // one is refusing the message's level (D70), said as D19 says it.
+            // A message that keeps the session's model and is refused one is
+            // refused its level (D70), said as D19 says it. One that moves
+            // the session to another model is refused that model — the
+            // adapters set the model before the level — and says so.
             if turn_reasoning.is_some()
+                && turn_model.is_none()
                 && matches!(&error, ClientError::Session(failure)
                     if failure.code == ErrorCode::ProviderModelUnavailable)
             {
@@ -306,10 +327,15 @@ pub(crate) fn start(
         attempt_id: attempt,
         provider_response_id: Some(sent.turn_id.to_string()),
         request_payload_bytes: None,
-        resolved_model: ensured
-            .model
+        // The model the message moved the session to, else the session's.
+        resolved_model: turn_model
             .as_ref()
-            .and_then(|model| model.reported.as_ref().or(model.requested.as_ref()))
+            .or_else(|| {
+                ensured
+                    .model
+                    .as_ref()
+                    .and_then(|model| model.reported.as_ref().or(model.requested.as_ref()))
+            })
             .map(|model| model.as_str().to_owned()),
         // The level the session started at: the host refuses a start whose
         // level the agent did not report applied, so the chat's is the one.
@@ -474,6 +500,30 @@ fn applied_choice(level: LaunchReasoning) -> Option<ReasoningChoice> {
         LaunchReasoning::XHigh => ReasoningChoice::Level(ReasoningLevel::XHigh),
         LaunchReasoning::Max => ReasoningChoice::Level(ReasoningLevel::Max),
     })
+}
+
+/// **The model a message moves its session to**: the chat's, when the
+/// session was live before the message and asks for another — `None` when
+/// the chat is on its agent's *Default*, which names no model, or the
+/// session was started for this message on the chat's model. Only to a host
+/// that takes a model per message (protocol v22): an older one runs the
+/// message on the session's model, as before.
+fn turn_model(
+    chat: Option<ModelName>,
+    fresh: bool,
+    session: Option<&ModelIdentity>,
+    host_takes_one: bool,
+) -> Option<ModelName> {
+    let moved =
+        chat.filter(|model| !fresh && session.and_then(|s| s.requested.as_ref()) != Some(model))?;
+    if !host_takes_one {
+        tracing::info!(
+            target: "koru_ai::agent",
+            "the session host takes no model per message; the message runs on the session's"
+        );
+        return None;
+    }
+    Some(moved)
 }
 
 fn selection_for(
@@ -820,6 +870,7 @@ impl TurnStream {
                 self.session,
                 self.lease,
                 PendingInput {
+                    model: None,
                     idempotency_key: steer.key,
                     text: steer.text,
                     attachment_ids: Vec::new(),
@@ -1278,6 +1329,46 @@ mod tests {
             tool_history: Vec::new(),
             options: AiRequestOptions::default(),
         }
+    }
+
+    /// **A message carries the chat's model only where the session is live
+    /// on another** and its host takes one: never for a session started for
+    /// it, a chat on *Default*, or the model the session already asks for.
+    #[test]
+    fn a_message_moves_a_live_session_only_to_another_model() {
+        let name = |model: &str| ModelName::from_str(model).unwrap();
+        let on = |model: Option<&str>| ModelIdentity {
+            requested: model.map(name),
+            reported: None,
+        };
+        let opus = on(Some("opus"));
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&opus), true),
+            Some(name("sonnet"))
+        );
+        // A session that started on the agent's default asks for none.
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&on(None)), true),
+            Some(name("sonnet"))
+        );
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, None, true),
+            Some(name("sonnet"))
+        );
+        assert_eq!(
+            turn_model(Some(name("opus")), false, Some(&opus), true),
+            None
+        );
+        assert_eq!(
+            turn_model(Some(name("sonnet")), true, Some(&opus), true),
+            None
+        );
+        assert_eq!(turn_model(None, false, Some(&opus), true), None);
+        assert_eq!(
+            turn_model(Some(name("sonnet")), false, Some(&opus), false),
+            None,
+            "an older host is never sent one"
+        );
     }
 
     #[test]

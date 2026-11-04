@@ -664,6 +664,13 @@ impl SessionClient {
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        // A turn's model is v22: an older host would read past it and run
+        // the turn on the session's old model.
+        if input.needs_turn_model() && !self.supports_turn_model() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
         // Skills named with the input are `agent-commands`: an older host
         // would read past them and send `$name` as words alone (koru-ai
         // D121).
@@ -725,6 +732,7 @@ impl SessionClient {
     ) -> Result<SendPendingInputResult, ClientError> {
         if !self.supports_questions()
             || (input.needs_turn_reasoning() && !self.supports_turn_reasoning())
+            || (input.needs_turn_model() && !self.supports_turn_model())
         {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,
@@ -756,6 +764,14 @@ impl SessionClient {
     /// the one its session started at.
     pub fn supports_turn_reasoning(&self) -> bool {
         self.host.agreement.version >= koru_session_protocol::TURN_REASONING_PROTOCOL_VERSION
+    }
+
+    /// Whether the host takes a turn's model with its input (protocol v22):
+    /// a begun agent chat may then move to another of its agent's models
+    /// from its next message. Against an older host a chat's model is the
+    /// one its session started on.
+    pub fn supports_turn_model(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
 
     pub fn supports_provider_models(&self) -> bool {

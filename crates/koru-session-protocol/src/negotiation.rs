@@ -104,7 +104,14 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// picked, by name. An older host would read past the field and send
 /// `$name` as words alone, so a client sends it only to a host that
 /// negotiated the capability, and the host refuses it from any other peer.
-pub const MAX_PROTOCOL_VERSION: u32 = 21;
+///
+/// v22 adds a turn's model: the defaulted `model` on a turn's pending
+/// input, another of the session's agent's models chosen after the start,
+/// which the adapter moves the session to before the prompt. An older host
+/// would read past it and run the turn on the session's old model, so a
+/// client sends it only to a v22 host, and the host refuses it from an
+/// older peer.
+pub const MAX_PROTOCOL_VERSION: u32 = 22;
 pub const PROVIDER_MODELS_PROTOCOL_VERSION: u32 = 15;
 /// The first version whose tool events may carry the tool's own words: a
 /// failed call's message (`ToolCompleted.detail`), what the call was asked
@@ -131,6 +138,8 @@ pub const QUESTIONS_PROTOCOL_VERSION: u32 = 21;
 /// The first version that takes `discover_provider_commands` and whose
 /// pending input may name skills. The same version as the questions.
 pub const AGENT_COMMANDS_PROTOCOL_VERSION: u32 = 21;
+/// The first version whose pending input may carry a turn's model.
+pub const TURN_MODEL_PROTOCOL_VERSION: u32 = 22;
 /// The first version that can carry the session-origin family's tags.
 pub const SESSION_ORIGIN_PROTOCOL_VERSION: u32 = 16;
 /// The first version that can carry the delegation family's tags.

@@ -368,6 +368,7 @@ impl Sessions for HostSessions {
                 session,
                 controller.lease,
                 PendingInput {
+                    model: None,
                     idempotency_key: IdempotencyKey::mint(),
                     text,
                     attachment_ids: Vec::new(),

@@ -1804,7 +1804,8 @@ impl Shared {
             }
             AgentEvent::Usage { usage, .. } => {
                 // The last model the provider named is the session's
-                // reported model; the requested one never moves.
+                // reported model; the requested one moves only with a turn
+                // that chose another (protocol v22).
                 if let Some(model) = &usage.model {
                     state
                         .summary

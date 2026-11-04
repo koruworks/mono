@@ -231,12 +231,14 @@ impl SessionHandle {
             let running = matches!(state.summary.mode, SessionMode::Managed { .. })
                 && state.summary.process == koru_session_protocol::ProcessState::Running;
             // A steer carries text: an input that names a skill (koru-ai
-            // D121) waits for a turn of its own, as one with attachments does.
+            // D121) or a model (v22) waits for a turn of its own, as one
+            // with attachments does.
             match state.summary.active_turn_id {
                 Some(active)
                     if running
                         && input.attachment_ids.is_empty()
                         && input.skills.is_empty()
+                        && input.model.is_none()
                         && !state.pending_inputs.contains_key(&input.idempotency_key) =>
                 {
                     active
@@ -536,7 +538,7 @@ impl SessionHandle {
         let answered = answers.is_some();
         let response = managed.submit(
             AgentInput {
-                model: None,
+                model: input.model.clone(),
                 turn_id,
                 text: input.text.clone(),
                 attachments: candidates.clone(),
@@ -553,6 +555,16 @@ impl SessionHandle {
         match response {
             Ok(()) => {
                 submission_mut(&mut state, input.idempotency_key)?.command_sent = true;
+                // The adapter moved the session to the turn's model: it is
+                // the one the session asks for now, and the one last
+                // reported was the old model's until the agent names one.
+                if let Some(model) = &input.model {
+                    let identity = state.summary.model.get_or_insert_with(Default::default);
+                    if identity.requested.as_ref() != Some(model) {
+                        identity.requested = Some(model.clone());
+                        identity.reported = None;
+                    }
+                }
                 Ok(())
             }
             Err(code) => {
@@ -735,6 +747,13 @@ fn input_fingerprint(input: &PendingInput, answers: Option<&QuestionsReply>) -> 
         hasher.update(b"skill\0");
         hasher.update(&(skill.len() as u64).to_le_bytes());
         hasher.update(skill.as_bytes());
+    }
+    // So is a model it moves the session to (v22); one with none hashes as
+    // it always has.
+    if let Some(model) = &input.model {
+        hasher.update(b"model\0");
+        hasher.update(&(model.as_str().len() as u64).to_le_bytes());
+        hasher.update(model.as_str().as_bytes());
     }
     // A set's answers are the input's content: the same key with other
     // answers is a conflict, never a replay (D108).

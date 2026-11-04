@@ -487,7 +487,9 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // answer request behind `managed-questions`, which this backend does
     // not offer — a terminal tab's agent is not asked, and declines as
     // before; the events read as more events.
-    assert_eq!(offer.versions.max, 21);
+    // **v22 is a turn's model**: an input may carry one. A terminal view
+    // sends none.
+    assert_eq!(offer.versions.max, 22);
     assert!(
         !offer
             .capabilities

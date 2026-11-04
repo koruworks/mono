@@ -491,6 +491,7 @@ async fn send_pending(
                 id,
                 request.controller_lease,
                 PendingInput {
+                    model: None,
                     idempotency_key: request.idempotency_key,
                     text: request.text,
                     attachment_ids: request.attachment_ids,
