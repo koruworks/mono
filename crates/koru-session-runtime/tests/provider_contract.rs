@@ -564,6 +564,7 @@ fn contract_covers_idempotency_cancellation_races_approval_children_and_exit() {
 
     let turn_id = AgentTurnId::mint();
     let input = AgentInput {
+        model: None,
         turn_id,
         text: "review".into(),
         attachments: Vec::new(),
@@ -720,6 +721,7 @@ fn discovery_runs_off_caller_and_only_a_matching_handshake_enables_managed_mode(
 #[test]
 fn sensitive_inputs_and_probe_material_are_redacted_from_debug() {
     let input = AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: SECRET.into(),
         attachments: vec![AgentAttachment {

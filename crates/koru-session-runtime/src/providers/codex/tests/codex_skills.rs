@@ -105,6 +105,7 @@ fn started(frames: Vec<Value>) -> (CodexControl, Arc<Mutex<ReplayState>>) {
 
 fn input(text: &str, skills: &[&str]) -> AgentInput {
     AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: text.into(),
         attachments: Vec::new(),

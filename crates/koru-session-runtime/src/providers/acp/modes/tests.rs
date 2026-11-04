@@ -173,7 +173,9 @@ impl JsonRpcTransport for ModePeer {
                 return Ok(());
             }
             "session/set_config_option"
-                if params["configId"] == "fast" || params["configId"] == "effort" =>
+                if params["configId"] == "fast"
+                    || params["configId"] == "effort"
+                    || params["configId"] == "model" =>
             {
                 let mut options = self.new_session["configOptions"].clone();
                 for option in options.as_array_mut().unwrap() {
@@ -284,6 +286,7 @@ fn started(new_session: Value) -> super::super::AcpControl {
 
 fn turn(mode: Option<&str>) -> AgentInput {
     AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
@@ -538,6 +541,7 @@ fn a_turns_level_is_set_through_the_thought_level_option() {
     let (mut claude, script) = control(result(CLAUDE), None);
     start(&mut claude).unwrap();
     let leveled = |level: LaunchReasoning| AgentInput {
+        model: None,
         reasoning: Some(level),
         skills: Vec::new(),
         ..turn(None)
@@ -587,4 +591,85 @@ fn a_turns_level_is_set_through_the_thought_level_option() {
     let refused = plain.submit(leveled(LaunchReasoning::High)).unwrap_err();
     assert_eq!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
     assert_eq!(prompts(&script), 0);
+}
+
+fn model_sets(script: &Arc<Mutex<Script>>) -> Vec<Value> {
+    script
+        .lock()
+        .unwrap()
+        .sent
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session/set_config_option" && frame["params"]["configId"] == "model"
+        })
+        .map(|frame| frame["params"]["value"].clone())
+        .collect()
+}
+
+/// **A model chosen after the start reaches the agent before the next
+/// prompt**: set through the session's `model` option and verified, only
+/// when the session is on another, and before the turn's level, which is
+/// then set as the new model offers it. A model the session did not
+/// advertise refuses the turn as a refused model — not a refused level —
+/// before any prompt.
+#[test]
+fn a_turns_model_is_set_through_the_model_option() {
+    use koru_session_protocol::{LaunchReasoning, ModelName, ProviderDiagnostic};
+    let (mut claude, script) = control(result(CLAUDE), None);
+    start(&mut claude).unwrap();
+    let on = |model: &str, reasoning: Option<LaunchReasoning>| AgentInput {
+        model: Some(model.parse::<ModelName>().unwrap()),
+        reasoning,
+        skills: Vec::new(),
+        ..turn(None)
+    };
+    claude.submit(on("sonnet", None)).unwrap();
+    events(&mut claude);
+    assert_eq!(model_sets(&script), [json!("sonnet")]);
+    // Already on it: no call.
+    claude.submit(on("sonnet", None)).unwrap();
+    events(&mut claude);
+    claude.submit(turn(None)).unwrap();
+    events(&mut claude);
+    assert_eq!(model_sets(&script), [json!("sonnet")]);
+
+    // Another model and a level: the model first, then the level, then the
+    // prompt.
+    let from = script.lock().unwrap().sent.len();
+    claude
+        .submit(on("haiku", Some(LaunchReasoning::High)))
+        .unwrap();
+    events(&mut claude);
+    assert_eq!(model_sets(&script), [json!("sonnet"), json!("haiku")]);
+    let sent: Vec<Value> = script.lock().unwrap().sent[from..].to_vec();
+    let position = |config: &str| {
+        sent.iter()
+            .position(|frame| {
+                frame["method"] == "session/set_config_option"
+                    && frame["params"]["configId"] == config
+            })
+            .unwrap()
+    };
+    let prompt = sent
+        .iter()
+        .position(|frame| frame["method"] == "session/prompt")
+        .unwrap();
+    assert!(position("model") < position("effort"));
+    assert!(position("effort") < prompt);
+
+    let prompts = |script: &Arc<Mutex<Script>>| {
+        methods(script)
+            .iter()
+            .filter(|method| *method == "session/prompt")
+            .count()
+    };
+    let before = prompts(&script);
+    let refused = claude.submit(on("fixture-gone", None)).unwrap_err();
+    assert_eq!(
+        refused.code,
+        koru_session_protocol::ErrorCode::ProviderModelUnavailable
+    );
+    assert_ne!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+    assert_eq!(prompts(&script), before);
+    assert_eq!(model_sets(&script).len(), 2, "never asked for");
 }

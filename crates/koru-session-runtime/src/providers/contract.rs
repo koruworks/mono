@@ -295,6 +295,16 @@ pub struct AgentInput {
     /// cannot take it for is refused, never run at another level. `None`
     /// leaves the level as it is.
     pub reasoning: Option<koru_session_protocol::LaunchReasoning>,
+    /// The model this turn runs on, chosen after the start: an adapter
+    /// moves the session to it before the prompt when it is on another, and
+    /// a turn the agent cannot take it for is refused, never run on a model
+    /// nobody chose. `None` leaves the model as it is. The level and Fast
+    /// mode the turn carries are then the new model's.
+    ///
+    /// The session protocol carries no model with a message yet, so the
+    /// host passes `None` until it does: the adapters take it, nothing
+    /// sends it.
+    pub model: Option<koru_session_protocol::ModelName>,
     /// The skills the person picked, by name (koru-ai D121); the text says
     /// `$name` where each was. An adapter names each to its agent beside
     /// the text, resolving where it lives from the agent's own listing; one
@@ -336,6 +346,7 @@ impl fmt::Debug for AgentInput {
             .field("mode", &self.mode)
             .field("fast", &self.fast)
             .field("reasoning", &self.reasoning)
+            .field("model", &self.model)
             .field("skill_count", &self.skills.len())
             .finish()
     }

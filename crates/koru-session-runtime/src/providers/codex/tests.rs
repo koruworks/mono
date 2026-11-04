@@ -361,6 +361,7 @@ fn text_only_default_does_not_advertise_or_accept_images() {
     );
     let failure = control
         .submit(AgentInput {
+            model: None,
             turn_id: AgentTurnId::mint(),
             text: "inspect".into(),
             attachments: vec![AgentAttachment {
@@ -402,6 +403,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
         })
         .unwrap();
     let input = AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: "one logical turn".into(),
         attachments: vec![AgentAttachment {
@@ -434,6 +436,7 @@ fn an_unknown_turn_start_outcome_is_never_resent_and_kind_is_idempotent_data() {
     );
 
     let changed_kind = AgentInput {
+        model: None,
         attachments: vec![AgentAttachment {
             id: attachment_id,
             kind: AttachmentKind::File,
@@ -767,6 +770,7 @@ fn offline_replay(
 
     let turn_id = AgentTurnId::mint();
     let input = AgentInput {
+        model: None,
         turn_id,
         text: SECRET.to_owned(),
         attachments: vec![AgentAttachment {
@@ -782,6 +786,7 @@ fn offline_replay(
     control.submit(input.clone()).unwrap();
     control.submit(input.clone()).unwrap();
     let conflicting = AgentInput {
+        model: None,
         text: "different".into(),
         mode: None,
         fast: None,
@@ -998,6 +1003,7 @@ fn offline_replay(
     let cancelled = AgentTurnId::mint();
     control
         .submit(AgentInput {
+            model: None,
             turn_id: cancelled,
             text: "cancel fixture".into(),
             attachments: Vec::new(),
@@ -1294,6 +1300,7 @@ fn live_codex_text_and_image_smoke_is_opt_in() {
     let turn_id = AgentTurnId::mint();
     control
         .submit(AgentInput {
+            model: None,
             turn_id,
             text: "Reply with the single word OK after inspecting this one-pixel image.".into(),
             attachments: vec![AgentAttachment {
@@ -1479,6 +1486,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
     let first = AgentTurnId::mint();
     control
         .submit(AgentInput {
+            model: None,
             turn_id: first,
             text: "first".into(),
             attachments: Vec::new(),
@@ -1533,6 +1541,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
     }));
     control
         .submit(AgentInput {
+            model: None,
             turn_id: second,
             text: "second".into(),
             attachments: Vec::new(),
@@ -1572,6 +1581,7 @@ fn codex_usage_is_normalized_to_one_replacing_total_per_turn() {
     let attempt = AgentTurnId::mint();
     fresh
         .submit(AgentInput {
+            model: None,
             turn_id: attempt,
             text: "again".into(),
             attachments: Vec::new(),
@@ -1669,6 +1679,7 @@ fn live_codex_reaches_a_stub_mcp_endpoint_when_opted_in() {
     let turn_id = AgentTurnId::mint();
     control
         .submit(AgentInput {
+            model: None,
             turn_id,
             text: "Reply with the single word OK.".into(),
             attachments: Vec::new(),
@@ -2413,6 +2424,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
     let turn_id = AgentTurnId::mint();
     control
         .submit(AgentInput {
+            model: None,
             turn_id,
             text: "start".into(),
             attachments: Vec::new(),
@@ -2425,6 +2437,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
 
     control
         .steer(AgentInput {
+            model: None,
             turn_id,
             text: "also this".into(),
             attachments: Vec::new(),
@@ -2447,6 +2460,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
     // A turn this adapter never started, or one that finished, is not steered.
     let stranger = control
         .steer(AgentInput {
+            model: None,
             turn_id: AgentTurnId::mint(),
             text: "x".into(),
             attachments: Vec::new(),
@@ -2460,6 +2474,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
     control.turns.get_mut(&turn_id).unwrap().terminal = true;
     let finished = control
         .steer(AgentInput {
+            model: None,
             turn_id,
             text: "late".into(),
             attachments: Vec::new(),
@@ -2513,6 +2528,7 @@ fn the_chats_mode_starts_the_thread_and_every_turn_carries_its_own() {
         })
         .unwrap();
     let turn = |mode: Option<&str>| AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
@@ -2640,6 +2656,7 @@ fn fast_mode_is_the_models_fast_tier_on_the_thread_and_each_turn() {
         for fast in turns {
             control
                 .submit(AgentInput {
+                    model: None,
                     turn_id: AgentTurnId::mint(),
                     text: "<prompt>".into(),
                     attachments: Vec::new(),
@@ -2724,6 +2741,7 @@ fn a_chosen_effort_rides_every_turn_and_an_unlisted_one_is_refused() {
         for _ in 0..2 {
             control
                 .submit(AgentInput {
+                    model: None,
                     turn_id: AgentTurnId::mint(),
                     text: "<prompt>".into(),
                     attachments: Vec::new(),
@@ -2802,6 +2820,7 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
         })
         .unwrap();
     let input = |reasoning: Option<LaunchReasoning>| AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
@@ -2827,6 +2846,101 @@ fn a_level_chosen_after_the_start_rides_the_next_turn() {
         .map(|message| message["params"]["effort"].clone())
         .collect();
     assert_eq!(efforts, [json!("low"), json!("xhigh"), json!("xhigh")]);
+}
+
+/// **A model chosen after the start rides the next `turn/start`** as its
+/// `model`, which holds for that turn and the ones after it; a turn already
+/// on it sends none. The level is then checked against the new model: one
+/// kept from before that it does not list is not sent on. A model the
+/// app-server no longer lists refuses the turn before anything is sent.
+#[test]
+fn a_model_chosen_after_the_start_rides_the_next_turn() {
+    use koru_session_protocol::{LaunchReasoning, ProviderDiagnostic};
+    let list = |id: u64| {
+        json!({
+            "id": id,
+            "result": {
+                "data": [
+                    { "isDefault": true, "model": "fixture-levels", "inputModalities": ["text"],
+                      "supportedReasoningEfforts": [{"reasoningEffort": "low"},
+                                                    {"reasoningEffort": "xhigh"}] },
+                    { "isDefault": false, "model": "fixture-other", "inputModalities": ["text"],
+                      "supportedReasoningEfforts": [{"reasoningEffort": "high"}] }
+                ],
+                "nextCursor": null
+            }
+        })
+    };
+    let turn = |id: u64| json!({ "id": id, "result": { "turn": { "id": format!("turn-{id}") } } });
+    let mut frames = initialize_frames(false);
+    frames[1] = list(2);
+    frames.extend([turn(4), list(5), turn(6), turn(7), list(8)]);
+    let state = Arc::new(Mutex::new(ReplayState::default()));
+    let transport = ReplayTransport {
+        inbound: frames.into_iter().collect(),
+        state: Arc::clone(&state),
+    };
+    let selection = koru_session_protocol::LaunchSelection {
+        reasoning: Some(LaunchReasoning::Low),
+        ..Default::default()
+    };
+    let mut control = CodexControl::with_transport(
+        config(Arc::new(NoopAttachmentPathResolver)).with_selection(Some(selection)),
+        Some(Box::new(transport)),
+    );
+    control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap();
+    let input = |reasoning: Option<LaunchReasoning>, model: Option<&str>| AgentInput {
+        turn_id: AgentTurnId::mint(),
+        text: "<prompt>".into(),
+        attachments: Vec::new(),
+        mode: None,
+        fast: None,
+        reasoning,
+        model: model.map(|model| ModelName::from_str(model).unwrap()),
+        skills: Vec::new(),
+    };
+    control.submit(input(None, None)).unwrap();
+    control.submit(input(None, Some("fixture-other"))).unwrap();
+    control
+        .submit(input(Some(LaunchReasoning::High), Some("fixture-other")))
+        .unwrap();
+    let refused = control
+        .submit(input(None, Some("fixture-gone")))
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::ProviderModelUnavailable);
+    assert_ne!(refused.diagnostic, ProviderDiagnostic::ReasoningRejected);
+    let sent = state.lock().unwrap().sent.clone();
+    let turns: Vec<_> = sent
+        .iter()
+        .filter(|message| message["method"] == "turn/start")
+        .map(|message| {
+            (
+                message["params"]["model"].clone(),
+                message["params"]["effort"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        turns,
+        [
+            (Value::Null, json!("low")),
+            (json!("fixture-other"), Value::Null),
+            (Value::Null, json!("high")),
+        ]
+    );
+    assert_eq!(
+        sent.iter()
+            .filter(|message| message["method"] == "model/list")
+            .count(),
+        3,
+        "the start's, the switch's and the refused one's"
+    );
 }
 
 /// Codex's skills under `$` (koru-ai D121).

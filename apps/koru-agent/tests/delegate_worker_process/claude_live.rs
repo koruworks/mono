@@ -100,6 +100,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
         .expect("pinned authenticated wrapper starts");
     let turn = AgentTurnId::mint();
     control.0.submit(AgentInput {
+        model: None,
         turn_id:turn,
         text:"Call the koru_run MCP create tool exactly once with path fixture.txt, title Wrapper qualification, and mime text/plain. The fixture file is already staged. Use no other tools, no shell, no child agents. Then finish.".into(),
         attachments:Vec::new(),
@@ -156,6 +157,7 @@ fn live_claude_wrapper_registers_through_koru_endpoint_and_cancels_when_opted_in
     control
         .0
         .submit(AgentInput {
+            model: None,
             turn_id: cancel,
             text: "Produce a long numbered explanation of arithmetic without using any tools."
                 .into(),

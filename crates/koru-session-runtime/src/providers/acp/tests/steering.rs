@@ -20,6 +20,7 @@ fn steering(outcome: &'static str) -> Harness {
 
 fn steer_input(turn_id: AgentTurnId, text: &str) -> AgentInput {
     AgentInput {
+        model: None,
         text: text.into(),
         skills: Vec::new(),
         ..input(turn_id)

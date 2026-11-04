@@ -309,6 +309,7 @@ fn async_item() -> Value {
 
 fn text_input(text: &str) -> AgentInput {
     AgentInput {
+        model: None,
         turn_id: AgentTurnId::mint(),
         text: text.into(),
         attachments: Vec::new(),

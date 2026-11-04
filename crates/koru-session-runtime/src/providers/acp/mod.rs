@@ -68,6 +68,10 @@ pub struct AcpControl {
     /// chosen after the start can be set (koru-ai D70); `None` for a model
     /// without one.
     thought_level: Option<models::ThoughtLevel>,
+    /// The model the session's turns run on, as its `model` option last
+    /// said: the start's, then the last one a turn moved it to. `None`
+    /// where the session advertised no such option.
+    turn_model: Option<koru_session_protocol::ModelName>,
     /// Notices the agent said while no turn ran, said with the next turn
     /// (koru-ai D69; `Notice` belongs to a turn).
     unsaid_notices: Vec<String>,
@@ -158,6 +162,7 @@ impl AcpControl {
             unreported_mode: None,
             fast: None,
             thought_level: None,
+            turn_model: None,
             unsaid_notices: Vec::new(),
             next_request_id: 1,
             turns: BTreeMap::new(),
@@ -743,6 +748,59 @@ impl AcpControl {
         Ok(())
     }
 
+    /// **Move the session to the turn's model**, between turns: through the
+    /// same `model` config option the start sets, verified from the answer
+    /// the same way, and only when the session is on another. A model the
+    /// session did not advertise, or a set it refuses or does not apply,
+    /// refuses the turn — never runs it on a model nobody chose. The answer
+    /// carries the new model's level option and Fast mode, and the mode the
+    /// agent may have moved the session to (said with the turn), as at the
+    /// start.
+    fn apply_turn_model(
+        &mut self,
+        native_session: &str,
+        model: &koru_session_protocol::ModelName,
+    ) -> Result<(), ProviderFailure> {
+        if self.turn_model.as_ref() == Some(model) {
+            return Ok(());
+        }
+        let rejected = || {
+            tracing::warn!(target: "koru::acp", event = "acp.model.rejected", stage = "submit");
+            failure(
+                ErrorCode::ProviderModelUnavailable,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidInput,
+            )
+        };
+        // A model's longer window is advertised under the model it folds
+        // into (koru-ai D10).
+        let advertised = self.model_options.iter().any(|option| {
+            &option.id == model
+                || option
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| &context.id == model)
+        });
+        if !advertised {
+            return Err(rejected());
+        }
+        let applied = self
+            .call(
+                "session/set_config_option",
+                json!({"sessionId":native_session, "configId":"model", "value":model.as_str()}),
+            )
+            .map_err(|_| rejected())?;
+        models::validate_applied(&applied, model).map_err(|_| rejected())?;
+        if let Some(moved) = self.follow_mode(modes::current(&applied)) {
+            self.unreported_mode = Some(moved);
+        }
+        self.fast = models::fast_option(&applied);
+        self.thought_level = models::thought_level(&applied);
+        self.turn_model = Some(model.clone());
+        tracing::info!(target: "koru::acp", event = "acp.model.selected", stage = "submit");
+        Ok(())
+    }
+
     /// **Each model's levels, read by walking the models once** (D16): the
     /// discovery session's own model is set to each listed one in turn, and
     /// the `thought_level` option its answer carries is that model's. No
@@ -941,8 +999,10 @@ impl AcpControl {
             self.fast = models::fast_option(&selected);
             latest = Some(selected);
         }
-        // The session's level option, as the model now in it has it (D70).
+        // The session's level option, as the model now in it has it (D70),
+        // and the model itself, for one chosen after the start.
         self.thought_level = models::thought_level(latest.as_ref().unwrap_or(&session));
+        self.turn_model = models::current_model(latest.as_ref().unwrap_or(&session));
         if let Some(level) = self.config.requested_reasoning() {
             let options = latest.as_ref().unwrap_or(&session);
             self.apply_reasoning(&native_session, options, level, start.session_id)?;
@@ -1062,6 +1122,11 @@ impl AgentControl for AcpControl {
             ));
         }
         let prompt = self.prompt(&input)?;
+        // A model chosen after the start goes first: the mode, Fast and the
+        // level below are then set as the new model offers them.
+        if let (Some(model), Some(native_session)) = (&input.model, self.native_session.clone()) {
+            self.apply_turn_model(&native_session, model)?;
+        }
         // The turn's mode is set before its prompt, between turns (D7).
         if let (Some(mode), Some(native_session)) = (&input.mode, self.native_session.clone()) {
             self.apply_mode(&native_session, mode, ProviderStage::Submit)?;

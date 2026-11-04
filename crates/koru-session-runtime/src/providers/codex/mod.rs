@@ -87,6 +87,9 @@ pub struct CodexControl {
     /// The levels the thread's model lists, for a level chosen after the
     /// start (koru-ai D70).
     model_reasoning: Option<koru_session_protocol::ModelReasoning>,
+    /// The model the thread's turns run on, as Koru chose it from the
+    /// catalog: the start's, then the last one a turn moved it to.
+    turn_model: Option<String>,
     /// The session's skills by name, with the path Codex reads each from
     /// (koru-ai D121): read at the first turn that names one, and again
     /// after `skills/changed`. `None` until then.
@@ -168,6 +171,7 @@ impl CodexControl {
             fast_tier: None,
             effort: None,
             model_reasoning: None,
+            turn_model: None,
             skills: None,
             shut_down: false,
         }
@@ -319,16 +323,10 @@ impl CodexControl {
         }
     }
 
-    /// **Fast mode as Codex takes it** (koru-ai D11): the model's *Fast*
-    /// service tier when on, `default` — standard speed — when off, and
-    /// nothing at all when the chat said nothing or the model has no Fast
-    /// tier, so the thread keeps what it has.
+    /// Fast mode for the thread's model ([`service_tier`]): nothing when the
+    /// chat said nothing, so the thread keeps what it has.
     fn service_tier(&self, fast: Option<bool>) -> Option<Value> {
-        let tier = self.fast_tier.as_ref()?;
-        Some(match fast? {
-            true => json!(tier),
-            false => json!("default"),
-        })
+        service_tier(self.fast_tier.as_deref(), fast)
     }
 
     fn notify(&mut self, method: &str, params: Value) -> Result<(), ProviderFailure> {
@@ -359,6 +357,26 @@ impl CodexControl {
         // Resolved before anything of the turn is recorded: a listing read
         // now is a request of its own (koru-ai D121).
         let skill_items = self.skill_items(&input.skills);
+        // A model chosen after the start is this turn's and the ones after
+        // it, as `turn/start`'s `model` is: one the app-server still lists,
+        // or the turn is refused before anything is sent. The level and the
+        // Fast tier below are then the new model's.
+        let switch = match input.model.as_ref() {
+            Some(model) if self.turn_model.as_deref() != Some(model.as_str()) => {
+                Some(self.select_model(Some(model)).map_err(|error| {
+                    if error.code != ErrorCode::ProviderModelUnavailable {
+                        return error;
+                    }
+                    tracing::warn!(target: "koru::codex", event = "codex.model.rejected");
+                    failure(
+                        ErrorCode::ProviderModelUnavailable,
+                        ProviderStage::Submit,
+                        ProviderDiagnostic::InvalidInput,
+                    )
+                })?)
+            }
+            _ => None,
+        };
         let capabilities = self.capabilities.as_ref().ok_or_else(|| {
             failure(
                 ErrorCode::ProviderFailed,
@@ -376,11 +394,19 @@ impl CodexControl {
                 ProviderDiagnostic::InvalidInput,
             )
         })?;
+        let (reasoning, fast_tier) = match &switch {
+            Some(model) => (
+                model.reasoning.as_ref(),
+                model.fast.as_ref().map(|tier| tier.id.as_str()),
+            ),
+            None => (self.model_reasoning.as_ref(), self.fast_tier.as_deref()),
+        };
         // A level chosen after the start (koru-ai D70) is this turn's and
         // the ones after it, as `turn/start`'s `effort` is: one the model
-        // lists, or the turn is refused before anything is sent.
+        // lists, or the turn is refused before anything is sent. A turn with
+        // none keeps the last, unless it moved to a model that lacks it.
         let effort = match input.reasoning {
-            Some(level) => Some(effort(self.model_reasoning.as_ref(), level).ok_or_else(|| {
+            Some(level) => Some(effort(reasoning, level).ok_or_else(|| {
                 tracing::warn!(target: "koru::codex", event = "codex.reasoning.rejected", level = level.as_str());
                 failure(
                     ErrorCode::ProviderModelUnavailable,
@@ -388,8 +414,10 @@ impl CodexControl {
                     ProviderDiagnostic::ReasoningRejected,
                 )
             })?),
+            None if switch.is_some() => self.effort.filter(|word| lists_effort(reasoning, word)),
             None => self.effort,
         };
+        let tier = service_tier(fast_tier, input.fast);
         let session_id = self.session_id.expect("started adapter has a session id");
         let mut provider_input = Vec::new();
         let mut resolved_attachments = Vec::new();
@@ -480,7 +508,10 @@ impl CodexControl {
             "sandboxPolicy": policy.sandbox_policy(),
             "approvalsReviewer": policy.reviewer,
         });
-        if let Some(tier) = self.service_tier(input.fast) {
+        if let Some(model) = &switch {
+            params["model"] = json!(model.model);
+        }
+        if let Some(tier) = tier {
             params["serviceTier"] = tier;
         }
         if let Some(effort) = effort {
@@ -488,6 +519,12 @@ impl CodexControl {
         }
         let response = self.call("turn/start", params, ProviderStage::Submit)?;
         self.effort = effort;
+        if let Some(model) = switch {
+            tracing::info!(target: "koru::codex", event = "codex.model.selected", stage = "submit");
+            self.fast_tier = model.fast.as_ref().map(|tier| tier.id.clone());
+            self.model_reasoning = model.reasoning;
+            self.turn_model = Some(model.model);
+        }
         let native_id = response
             .pointer("/turn/id")
             .and_then(Value::as_str)
@@ -682,6 +719,7 @@ impl AgentControl for CodexControl {
         };
         self.session_id = Some(start.session_id);
         self.thread_id = Some(thread_id);
+        self.turn_model = Some(model.model.clone());
         self.capabilities = Some(capabilities.clone());
         self.queue(AgentEvent::ProviderState {
             provider: provider_kind(),
@@ -934,6 +972,12 @@ fn input_fingerprint(input: &AgentInput) -> blake3::Hash {
         hasher.update(&(skill.len() as u64).to_le_bytes());
         hasher.update(skill.as_bytes());
     }
+    // So is a model chosen after the start.
+    if let Some(model) = &input.model {
+        hasher.update(b"model\0");
+        hasher.update(&(model.as_str().len() as u64).to_le_bytes());
+        hasher.update(model.as_str().as_bytes());
+    }
     hasher.finalize()
 }
 
@@ -975,6 +1019,26 @@ fn effort(
         LaunchReasoning::On => None,
         level => reasoning.levels.contains(&level).then(|| level.as_str()),
     }
+}
+
+/// Whether a model's levels hold `word`, an effort in Codex's word: a
+/// level kept from the last turn is sent on to a new model only if so.
+fn lists_effort(reasoning: Option<&koru_session_protocol::ModelReasoning>, word: &str) -> bool {
+    reasoning.is_some_and(|reasoning| {
+        (word == "none" && reasoning.off)
+            || reasoning.levels.iter().any(|level| level.as_str() == word)
+    })
+}
+
+/// **Fast mode as Codex takes it** (koru-ai D11), for a model whose *Fast*
+/// service tier is `tier`: the tier when on, `default` — standard speed —
+/// when off, and nothing when the chat said nothing or the model has none.
+fn service_tier(tier: Option<&str>, fast: Option<bool>) -> Option<Value> {
+    let tier = tier?;
+    Some(match fast? {
+        true => json!(tier),
+        false => json!("default"),
+    })
 }
 
 pub(super) fn failure(

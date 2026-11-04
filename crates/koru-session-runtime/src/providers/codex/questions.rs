@@ -388,6 +388,7 @@ impl CodexControl {
                         ));
                     }
                     self.steer_turn(AgentInput {
+                        model: None,
                         turn_id: pending.turn_id,
                         text: reply_text(&pending.questions, answers),
                         attachments: Vec::new(),

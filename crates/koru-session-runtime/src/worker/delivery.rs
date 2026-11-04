@@ -249,6 +249,7 @@ impl SessionHandle {
         };
         managed.steer(
             AgentInput {
+                model: None,
                 turn_id: active,
                 text: input.text.clone(),
                 attachments: Vec::new(),
@@ -535,6 +536,7 @@ impl SessionHandle {
         let answered = answers.is_some();
         let response = managed.submit(
             AgentInput {
+                model: None,
                 turn_id,
                 text: input.text.clone(),
                 attachments: candidates.clone(),

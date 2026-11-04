@@ -549,6 +549,15 @@ pub(super) fn validate_selection(
     }
 }
 
+/// The model an answer's `model` option says the session is on; `None`
+/// where it carries no such option, or names nothing Koru can hold.
+pub(super) fn current_model(response: &Value) -> Option<ModelName> {
+    option(response).ok()?["currentValue"]
+        .as_str()?
+        .parse()
+        .ok()
+}
+
 pub(super) fn validate_applied(
     response: &Value,
     selected: &ModelName,

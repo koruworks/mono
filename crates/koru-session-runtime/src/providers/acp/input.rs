@@ -111,5 +111,11 @@ pub(super) fn fingerprint(input: &AgentInput) -> blake3::Hash {
         hash.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hash.update(attachment.media_type.as_bytes());
     }
+    // A model chosen after the start is part of what the turn asks.
+    if let Some(model) = &input.model {
+        hash.update(b"model\0");
+        hash.update(&(model.as_str().len() as u64).to_le_bytes());
+        hash.update(model.as_str().as_bytes());
+    }
     hash.finalize()
 }

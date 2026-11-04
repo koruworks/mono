@@ -107,6 +107,7 @@ fn start(control: &mut AcpControl) -> AgentCapabilities {
 }
 fn input(turn_id: AgentTurnId) -> AgentInput {
     AgentInput {
+        model: None,
         turn_id,
         text: "<prompt>".into(),
         attachments: Vec::new(),
