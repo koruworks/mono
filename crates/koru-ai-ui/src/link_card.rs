@@ -9,9 +9,8 @@
 //! where the document has its pencil the chat has **open**, which does what
 //! clicking the link does ([`LinkCardAction::Open`]).
 //!
-//! The card reads `[Title](url)`, or the address alone when the link's
-//! text *is* its address. **Copy** copies the address, as the document's
-//! does. The card goes when the pointer leaves both the link and the card,
+//! The card reads the link's address — never the markdown that wrote it —
+//! as the document's does. **Copy** copies the address. The card goes when the pointer leaves both the link and the card,
 //! on Escape or any other key, and on a scroll.
 
 use std::time::{Duration, Instant};
@@ -32,8 +31,6 @@ use vello::kurbo::Affine;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ConversationLink {
     pub url: String,
-    /// What the link reads as on screen.
-    pub title: String,
     /// The line box of the link the pointer is on, which the card hangs
     /// from.
     pub anchor: Rect,
@@ -69,19 +66,7 @@ impl ConversationLink {
             .unwrap_or(Rect::new(pointer.0, pointer.1, 1.0, 1.0));
         Self {
             url: hit.url.to_owned(),
-            title: hit.title.to_owned(),
             anchor,
-        }
-    }
-
-    /// What the card says: `[Title](url)`, or the address alone when the
-    /// link's text is its address.
-    pub fn label(&self) -> String {
-        let title = self.title.trim();
-        if title.is_empty() || title == self.url {
-            self.url.clone()
-        } else {
-            format!("[{title}]({})", self.url)
         }
     }
 }
@@ -233,7 +218,7 @@ impl LinkCard {
         let Some(hovered) = &mut self.hovered else {
             return;
         };
-        let label = link_card_label(engine, &hovered.link.label(), bounds.w);
+        let label = link_card_label(engine, &hovered.link.url, bounds.w);
         let card = match hovered.drawn {
             Some(card) => LinkCardGeom::in_rect(card.rect),
             None => link_card_geom(label.width(), label.height(), hovered.link.anchor, bounds),

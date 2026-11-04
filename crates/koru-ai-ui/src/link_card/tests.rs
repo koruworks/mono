@@ -229,14 +229,15 @@ fn a_press_let_go_over_another_link_opens_nothing() {
 }
 
 /// **A reply's link shows the document's card** (D95), under the link,
-/// with copy and *open* — no pencil, a reply cannot be edited. Open does
-/// what the click does; copy copies the address.
+/// with copy and *open* — no pencil, a reply cannot be edited. The card
+/// says the address, not `[Walkthrough](…)`. Open does what the click does;
+/// copy copies the address.
 #[test]
 fn a_reply_link_shows_the_card_with_copy_and_open() {
     let mut surface = surface_with(&every_kind_of_link());
     let point = point_on(&surface, "https://youtu.test/1");
     let link = surface.conversation_link_at(point.0, point.1).unwrap();
-    assert_eq!(link.label(), "[Walkthrough](https://youtu.test/1)");
+    assert_eq!(link.url, "https://youtu.test/1");
     let card = show_card(&mut surface, point);
     assert!(
         card.y >= link.anchor.y + link.anchor.h - 4.0 - 0.01,
@@ -276,7 +277,7 @@ fn a_bare_address_card_says_only_the_address() {
     let surface = surface_with(&every_kind_of_link());
     let (x, y) = point_on(&surface, "https://k.test/bare");
     let link = surface.conversation_link_at(x, y).unwrap();
-    assert_eq!(link.label(), "https://k.test/bare");
+    assert_eq!(link.url, "https://k.test/bare");
 }
 
 /// The card goes when the pointer leaves the link, on Escape (which it
@@ -300,16 +301,4 @@ fn leaving_escape_and_a_scroll_let_the_card_go() {
     show_card(&mut surface, point);
     surface.scroll_by(MouseScrollDelta::LineDelta(0.0, -1.0));
     assert!(surface.link_card_buttons().is_empty());
-}
-
-#[test]
-fn the_label_is_markdown_unless_the_title_is_the_address() {
-    let link = |title: &str| ConversationLink {
-        url: "https://koru.test/a".into(),
-        title: title.into(),
-        anchor: Rect::new(0.0, 0.0, 1.0, 1.0),
-    };
-    assert_eq!(link("Koru").label(), "[Koru](https://koru.test/a)");
-    assert_eq!(link("https://koru.test/a").label(), "https://koru.test/a");
-    assert_eq!(link("  ").label(), "https://koru.test/a");
 }
