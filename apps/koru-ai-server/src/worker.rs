@@ -2525,8 +2525,21 @@ impl WorkerState {
     ) -> ApiResult<UpdateChatModelResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
+        // A local agent's running reply took its model and level when it was
+        // sent, so a chat that keeps its agent may change either while it
+        // runs, from its next message (koru-ai D70). Anything else waits.
         if self.chat_has_active_attempt(chat_id)? {
-            return Err(active_history_conflict());
+            let keeps_agent = self
+                .repository
+                .chat(chat_id)
+                .map_err(ai_failure)?
+                .is_some_and(|chat| {
+                    is_agent_provider(&chat.current_model.provider)
+                        && chat.current_model.provider == request.model.provider
+                });
+            if !keeps_agent {
+                return Err(active_history_conflict());
+            }
         }
         let mut model = request.model;
         model.requested_model = model.requested_model.trim().to_owned();

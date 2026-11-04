@@ -2814,6 +2814,126 @@ impl AiProvider for ModeMovingProvider {
     }
 }
 
+/// An agent whose reply runs until the test lets it end.
+struct HeldProvider {
+    requests: std::sync::mpsc::SyncSender<AiRequest>,
+    release: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl AiProvider for HeldProvider {
+    fn start(
+        &self,
+        request: AiRequest,
+        _cancellation: Cancellation,
+    ) -> Result<ProviderStream, AiError> {
+        let attempt_id = request.attempt_id;
+        self.requests.send(request).unwrap();
+        let release = Arc::clone(&self.release);
+        let mut step = 0;
+        Ok(Box::new(std::iter::from_fn(move || {
+            step += 1;
+            match step {
+                1 => Some(AiEvent::Started {
+                    attempt_id,
+                    provider_response_id: None,
+                    request_payload_bytes: None,
+                    resolved_model: None,
+                    effective_reasoning: None,
+                    at: Timestamp::now(),
+                }),
+                2 => {
+                    let _ = release
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10));
+                    Some(AiEvent::Completed {
+                        attempt_id,
+                        stop_reason: Some("stop".into()),
+                        at: Timestamp::now(),
+                    })
+                }
+                _ => None,
+            }
+        })))
+    }
+}
+
+/// **A begun agent chat's model and level change while a reply runs**,
+/// from its next message (koru-ai D70): the running reply took its own
+/// when it was sent. A change of provider still waits for the reply.
+#[test]
+fn an_agent_chats_model_changes_while_a_reply_runs_from_its_next_message() {
+    let directory = tempfile::tempdir().unwrap();
+    let (captured, requests) = sync_channel(8);
+    let (release, released) = sync_channel(8);
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("mock").unwrap(),
+        Arc::new(DeterministicMockProvider::new("Answer.")),
+    );
+    providers.insert(
+        AiProviderId::parse("agent-claude").unwrap(),
+        Arc::new(HeldProvider {
+            requests: captured,
+            release: Arc::new(std::sync::Mutex::new(released)),
+        }),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let agent = agent_chat(&client, "agent-claude");
+    let model = |provider: &str, requested: &str| UpdateChatModelRequest {
+        model: koru_ai_core::ModelSelection {
+            provider: AiProviderId::parse(provider).unwrap(),
+            requested_model: requested.into(),
+            default_reasoning: ReasoningChoice::Level(koru_ai_core::ReasoningLevel::High),
+        },
+    };
+
+    let stream = send(&client, agent, Uuid::new_v4());
+    let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(first.model, koru_ai_core::AGENT_DEFAULT_MODEL);
+    let moved = client
+        .update_chat_model(context(), agent, model("agent-claude", "sonnet"))
+        .unwrap();
+    assert_eq!(moved.chat.current_model.requested_model, "sonnet");
+    let refused = client
+        .update_chat_model(context(), agent, model("mock", "mock-model"))
+        .unwrap_err();
+    assert_eq!(refused.code, "ai_attempt_active");
+    release.send(()).unwrap();
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+
+    let stream = send(&client, agent, Uuid::new_v4());
+    let next = requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(next.model, "sonnet");
+    assert_eq!(
+        next.reasoning,
+        ReasoningChoice::Level(koru_ai_core::ReasoningLevel::High)
+    );
+    release.send(()).unwrap();
+    wait_for_terminal(&client, stream.accepted.attempt_id);
+    let messages = client.read_chat(context(), agent).unwrap().messages;
+    let models: Vec<_> = messages
+        .iter()
+        .filter(|message| message.role == ChatRole::Assistant)
+        .map(|message| message.requested_model.as_deref())
+        .collect();
+    assert_eq!(
+        models,
+        [Some(koru_ai_core::AGENT_DEFAULT_MODEL), Some("sonnet")],
+        "each reply keeps the model it ran on"
+    );
+}
+
 fn agent_chat(client: &AiWorkerClient, provider: &str) -> ChatId {
     let chat = ChatId::new();
     client
