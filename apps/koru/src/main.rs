@@ -335,6 +335,10 @@ impl Host for Manager {
         self.agent.open_external_url(&url)
     }
 
+    fn open_chat_elsewhere(&self, chat: String, block: Option<String>, profile: String) {
+        self.agent.open_chat_elsewhere(chat, block, profile);
+    }
+
     fn take_agent_asks(&self) -> Vec<koru_workspace_host::AgentAsk> {
         self.agent
             .drain()

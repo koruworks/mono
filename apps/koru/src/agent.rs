@@ -1334,6 +1334,21 @@ impl AgentLink {
         Ok(())
     }
 
+    /// **A chat of another profile, for a window of that profile** (AI
+    /// schema 13): this window would not show it. The Agent opens it in the
+    /// profile's most recent window, or opens one; the profile goes with it
+    /// so the Agent never routes it back here.
+    pub fn open_chat_elsewhere(&self, chat: String, block: Option<String>, profile: String) {
+        if !koru_features::ai() {
+            return;
+        }
+        self.request(Request::OpenChatLink {
+            chat,
+            block,
+            profile: Some(profile),
+        });
+    }
+
     /// Pass this window's foreground grant on to the agent, so its overlay can
     /// take focus on a *Search* click. The grant came from the short-lived
     /// taskbar process; the agent owns the overlay, so the overlay — not Koru —
@@ -2903,6 +2918,8 @@ fn request_for_external_url(raw: &str) -> Result<Request, String> {
         Ok(koru_link::KoruLink::Chat { chat, block }) => Ok(Request::OpenChatLink {
             chat: chat.to_string(),
             block: block.map(|block| block.to_string()),
+            // A link names no profile: the Agent asks the chat's.
+            profile: None,
         }),
         Ok(koru_link::KoruLink::Node(_)) => {
             Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkMissingDocument).into())

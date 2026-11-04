@@ -28,7 +28,11 @@ const CLIENT_SCOPES: &[&str] = &[
 ];
 
 pub(crate) enum Command {
-    Boot(Option<ChatId>),
+    /// The settings, the window's profile's chats and the chat asked for
+    /// (AI schema 13: the list is one profile's).
+    Boot(Option<ChatId>, Option<ProfileId>),
+    /// One profile's chats again: the window changed profile.
+    ListChats(Option<ProfileId>),
     Create(CreateChatRequest),
     Read(ChatId),
     Rename(ChatId, RenameChatRequest),
@@ -54,7 +58,8 @@ pub(crate) enum Command {
     /// card are left as they were, for the maintainers to keep or retire.
     #[allow(dead_code)]
     Usage(ChatId),
-    ClearHistory,
+    /// Clear the history, and list the window's profile's chats after.
+    ClearHistory(Option<ProfileId>),
     ClearUsage(Option<ChatId>),
     Send(SendTurnRequest),
     Cancel(InferenceAttemptId),
@@ -84,7 +89,8 @@ pub(crate) enum Command {
 impl Command {
     fn name(&self) -> &'static str {
         match self {
-            Self::Boot(_) => "boot",
+            Self::Boot(..) => "boot",
+            Self::ListChats(_) => "list_chats",
             Self::Create(_) => "create",
             Self::Read(_) => "read",
             Self::Rename(_, _) => "rename",
@@ -99,7 +105,7 @@ impl Command {
             Self::DecideTool(..) => "decide_tool",
             Self::AnswerQuestions(..) => "answer_questions",
             Self::Usage(_) => "usage",
-            Self::ClearHistory => "clear_history",
+            Self::ClearHistory(_) => "clear_history",
             Self::ClearUsage(_) => "clear_usage",
             Self::Send(_) => "send",
             Self::Cancel(_) => "cancel",
@@ -147,6 +153,8 @@ pub(crate) enum Update {
         destination_error: Option<String>,
     },
     Created(ChatTranscript),
+    /// The window's profile's chats, listed again.
+    Listed(Vec<koru_ai_core::Chat>),
     Transcript(ChatTranscript),
     Renamed(koru_ai_core::Chat),
     /// A chat pinned or unpinned, in place like a rename.
@@ -221,6 +229,7 @@ impl Update {
             | Self::Pinned(_)
             | Self::ModelUpdated(..)
             | Self::PrivacyUpdated(_)
+            | Self::Listed(_)
             | Self::HistoryChanged { .. } => true,
             Self::Event(event) => event.event.is_terminal(),
             _ => false,
@@ -367,10 +376,10 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
         };
 
         match command {
-            Command::Boot(requested_chat) => {
+            Command::Boot(requested_chat, profile) => {
                 let result = (|| {
                     let settings = client.ai().provider_settings()?;
-                    let chats = client.ai().list_chats(None)?.chats;
+                    let chats = client.ai().list_chats(profile)?.chats;
                     // **A chat asked for by name that the service no longer
                     // holds** — deleted since a tab was saved over it
                     // (ADR-483-chattabrestore) — boots without it. Failing
@@ -578,9 +587,18 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         .map(|response| Update::Usage(response.report)),
                 );
             }
-            Command::ClearHistory => {
+            Command::ListChats(profile) => {
+                send_result(
+                    &updates,
+                    client
+                        .ai()
+                        .list_chats(profile)
+                        .map(|response| Update::Listed(response.chats)),
+                );
+            }
+            Command::ClearHistory(profile) => {
                 let result = client.ai().clear_history().and_then(|_| {
-                    history_after_mutation(&client)
+                    history_after_mutation(&client, profile)
                         .map(|(chats, transcript)| Update::HistoryChanged { chats, transcript })
                 });
                 send_result(&updates, result);
@@ -993,8 +1011,9 @@ fn authoritatively_missing(failure: &koru_ai_wire::Failure) -> bool {
 
 fn history_after_mutation(
     client: &koru_api_client::Client,
+    profile: Option<ProfileId>,
 ) -> Result<(Vec<koru_ai_core::Chat>, Option<ChatTranscript>), koru_ai_wire::Failure> {
-    let chats = client.ai().list_chats(None)?.chats;
+    let chats = client.ai().list_chats(profile)?.chats;
     let transcript = chats
         .first()
         .map(|chat| client.ai().read_chat(chat.id))
@@ -1270,7 +1289,7 @@ mod tests {
         ));
         assert!(refused_answer(Some(&refused), &send(koru_ai_core::ChatId::new())).is_none());
         assert!(refused_answer(None, &send(chat)).is_none());
-        assert!(refused_answer(Some(&refused), &Command::ClearHistory).is_none());
+        assert!(refused_answer(Some(&refused), &Command::ClearHistory(None)).is_none());
     }
     use koru_ai_wire::Failure;
 

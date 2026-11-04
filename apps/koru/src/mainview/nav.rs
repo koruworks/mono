@@ -314,6 +314,12 @@ impl MainView {
         }
         // **A chat stop is answered here too** (D102): no document, no row.
         if let Some(chat) = spot.chat {
+            // **Only this profile's chats** (AI schema 13): a stop made
+            // before the window switched profile names a chat of another,
+            // which never opens here — Back and Forward step over it.
+            if spot.profile.is_some() && spot.profile != self.current_profile_id() {
+                return false;
+            }
             self.restoring = true;
             let opened = self.restore_chat_spot(chat, spot.tab, spot.scroll);
             self.restoring = false;

@@ -204,3 +204,29 @@ fn a_chat_link_opens_its_chat_as_a_tab_and_finds_it_again() {
         Some("not-a-block")
     ));
 }
+
+/// **A chat of another profile is never stepped back into** (AI schema 13):
+/// a stop made before the window switched profile names a chat of the old
+/// one, which does not open here — Back steps over it to the page before.
+#[test]
+fn back_steps_over_a_chat_of_the_profile_the_window_left() {
+    let (mut v, mut w) = container();
+    let workspace = w.ws.id().expect("workspace id");
+    let first = a_document(&mut w.ws, "Brief");
+    let linked = a_document(&mut w.ws, "Linked from a reply");
+    v.open_node(&w.ws, first);
+    let chat = ChatId::new();
+    assert!(v.open_ai_chat_tab_for(chat));
+    assert!(v.open_node(&w.ws, linked));
+
+    View::set_pane_context(
+        &mut v,
+        Vec::new(),
+        koru_core::ProfileId::new(),
+        Vec::new(),
+        Some(workspace),
+    );
+    assert!(v.navigate_history(&w.ws, -1));
+    assert_ne!(chat_in_front(&v), Some(chat), "not the old profile's chat");
+    assert_eq!(v.document_root(), Some(first), "the page before it");
+}

@@ -582,6 +582,7 @@ fn quiescing_rejects_new_process_launches() {
         Request::OpenChatLink {
             chat: "00000000-0000-4000-8000-000000000001".into(),
             block: None,
+            profile: None,
         },
         Request::OpenWorkspace {
             profile: None,
@@ -617,6 +618,7 @@ fn post_update_restart_gate_rejects_child_launch_requests() {
         Request::OpenChatLink {
             chat: "00000000-0000-4000-8000-000000000001".into(),
             block: None,
+            profile: None,
         },
         Request::OpenWorkspace {
             profile: None,
@@ -2124,6 +2126,7 @@ fn a_chat_link_opens_as_a_tab_in_the_most_recent_workspace_window() {
         Request::OpenChatLink {
             chat: chat.into(),
             block: Some(block.into()),
+            profile: None,
         },
         Duration::ZERO,
     );
@@ -2162,6 +2165,7 @@ fn an_overlay_chat_hit_opens_as_a_tab() {
         chat,
         message: koru_ai_core::MessageId::new(),
         block,
+        profile: None,
         disposition: koru_search_ui::Disposition::CurrentWindow,
     });
     assert_eq!(
@@ -3323,6 +3327,7 @@ fn a_build_that_hides_koru_ai_opens_no_chat() {
             Request::OpenChatLink {
                 chat: "00000000-0000-4000-8000-000000000001".into(),
                 block: None,
+                profile: None,
             },
             Duration::ZERO,
         );

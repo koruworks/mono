@@ -139,6 +139,8 @@ impl AiChatView {
         let mut surface = Box::new(ChatSurface::new_at(
             koru_workspace_host::cli::root_from_args(),
         ));
+        // Before the first listing: it is already the window's profile's.
+        surface.set_profile(window_profile());
         surface.activate();
         surface.start_new_chat();
         Self::over(surface)
@@ -272,9 +274,23 @@ impl AiChatView {
         let mut surface = Box::new(ChatSurface::new_at(
             koru_workspace_host::cli::root_from_args(),
         ));
+        surface.set_profile(window_profile());
         surface.activate();
         surface.open_link(id, block);
         Self::over(surface)
+    }
+
+    /// **The window's profile** (AI schema 13): the chats this tab lists, the
+    /// profile a chat it starts is made in, and the only profile whose chat
+    /// it shows.
+    pub fn set_profile(&mut self, profile: Option<koru_ai_ui::ProfileId>) -> bool {
+        self.surface.set_profile(profile)
+    }
+
+    /// A chat of another profile this tab was asked to show, taken once:
+    /// the window hands it to the Agent for a window of that profile.
+    pub fn take_wants_open_elsewhere(&mut self) -> Option<koru_ai_ui::ChatElsewhere> {
+        self.surface.take_wants_open_elsewhere()
     }
 
     /// Whether this tab's chat surface changed the chat list since the last
@@ -372,6 +388,25 @@ impl AiChatView {
 }
 
 /// **The agents turned off on this machine, for chat tabs opened later.**
+/// **The profile this process's windows are in** (AI schema 13), for chat
+/// tabs made later — the arrangement [`HIDDEN_AGENTS`] has. One per process,
+/// because a Koru process holds one profile: a switch moves every window of
+/// it, and the window pushes the new one to every surface it holds.
+static WINDOW_PROFILE: std::sync::Mutex<Option<koru_ai_ui::ProfileId>> =
+    std::sync::Mutex::new(None);
+
+pub(crate) fn set_window_profile(profile: Option<koru_ai_ui::ProfileId>) {
+    *WINDOW_PROFILE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = profile;
+}
+
+fn window_profile() -> Option<koru_ai_ui::ProfileId> {
+    *WINDOW_PROFILE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 /// The window pushes the list to every surface it holds when it changes;
 /// a tab made afterwards takes it from here. One list per process, because
 /// the setting is one per machine.

@@ -93,10 +93,13 @@ impl ChatSurface {
             }
     }
 
-    /// **The profile this chat is in**: the one that owns the window's
-    /// workspace. `None` while the workspace catalog has not placed the
-    /// window's workspace.
+    /// **The profile this chat is in**: the window's, as its host says
+    /// ([`ChatSurface::set_profile`]), else the one that owns the window's
+    /// workspace. `None` while neither is known.
     pub(super) fn current_profile(&self) -> Option<ProfileId> {
+        if let Some(profile) = self.profile {
+            return Some(profile);
+        }
         let workspace = self.context_workspace?;
         self.destinations
             .iter()
@@ -109,9 +112,10 @@ impl ChatSurface {
     /// placed the window's workspace.
     ///
     /// A grant to another profile's workspace is left in the chat's policy —
-    /// not shown, not counted, and kept, so it is there again in that
-    /// profile. It is not withheld from the chat's tools: the service reads
-    /// the stored policy and is not told which profile a window is in.
+    /// not shown, not counted, and kept, so choosing a workspace here sends
+    /// it back unchanged. The service never reads it either: a chat reads
+    /// only its own profile's workspaces, by the profile it is stored with
+    /// (AI schema 13).
     pub(super) fn scoped_workspace_indices(&self) -> Vec<usize> {
         let Some(profile) = self.current_profile() else {
             return Vec::new();

@@ -5832,6 +5832,7 @@ impl MainView {
         // Chats view is asked again below.
         let status_changed = self.maintain_chat_status();
         let step_changed = self.step_chats();
+        let elsewhere = self.open_chats_elsewhere();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
         let mut relabeled = false;
         for (_, group) in self.panes.iter_groups_mut() {
@@ -5853,7 +5854,7 @@ impl MainView {
                 relabeled = true;
             }
         }
-        let mut changed = relabeled || status_changed || step_changed;
+        let mut changed = relabeled || status_changed || step_changed || elsewhere;
         if !self.explore.showing_chats() {
             return changed;
         }
@@ -5878,6 +5879,75 @@ impl MainView {
             chat_status::forget(chat);
         }
         changed
+    }
+
+    /// **The window's profile reaches every chat surface it holds** (AI
+    /// schema 13, koru-ai D120): the side pane, each chat tab, the Chats
+    /// view, and — through [`crate::ai_chat_view::set_window_profile`] — a
+    /// chat tab made later. Each lists that profile's chats alone, makes a
+    /// new chat in it, and shows no chat of another; switching profile
+    /// switches every list at once.
+    fn adopt_chat_profile(&mut self, profile: ProfileId) {
+        let profile = Some(koru_ai_ui::ProfileId::from_uuid(profile.as_uuid()));
+        crate::ai_chat_view::set_window_profile(profile);
+        self.ai_chat.set_profile(profile);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view {
+                    view.set_profile(profile);
+                }
+            }
+        }
+        self.explore.chats_mut().set_profile(profile);
+    }
+
+    /// **A chat of another profile opens in a window of that profile** (AI
+    /// schema 13): a link in a reply, a hit, or a tab saved before chats had
+    /// a profile asked a surface here to show one, and it would not. The
+    /// tab that was opened only for it closes, and the Agent is asked to
+    /// open it in the most recent window of its profile — or a new one.
+    fn open_chats_elsewhere(&mut self) -> bool {
+        let mut asked = Vec::new();
+        if let Some(chat) = self.ai_chat.take_wants_open_elsewhere() {
+            asked.push(chat);
+        }
+        let mut emptied = Vec::new();
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view
+                    && let Some(chat) = view.take_wants_open_elsewhere()
+                {
+                    asked.push(chat);
+                    if view.chat_id().is_none() {
+                        emptied.push(tab.id);
+                    }
+                }
+            }
+        }
+        if asked.is_empty() {
+            return false;
+        }
+        // In the group in front, where the open was asked; a tab elsewhere
+        // stays, a new chat.
+        let doomed: Vec<usize> = (0..self.tabs().len())
+            .rev()
+            .filter(|&i| {
+                self.tabs()
+                    .get(i)
+                    .is_some_and(|tab| emptied.contains(&tab.id))
+            })
+            .collect();
+        for i in doomed {
+            self.close(i);
+        }
+        for chat in asked {
+            self.ask_pane(PaneRequest::OpenChatElsewhere {
+                chat: chat.chat.to_string(),
+                block: chat.block.map(|block| block.to_string()),
+                profile: chat.profile.to_storage(),
+            });
+        }
+        true
     }
 
     /// **`Ctrl+Shift+↑`/`↓` in a chat** (koru-ai D87): the chat above or
@@ -12652,6 +12722,7 @@ impl View for MainView {
                 self.reminder_creation.reset_profile();
             }
             self.pane_context = Some(next);
+            self.adopt_chat_profile(current_profile);
             self.reminder_preferences
                 .select_profile(koru_store_core::ids::ProfileId::from_uuid(
                     current_profile.as_uuid(),

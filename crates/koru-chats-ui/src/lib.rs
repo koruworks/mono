@@ -87,6 +87,9 @@ pub use draw::MODE_ICON;
 /// Re-exported so a host names the id a row carries without a
 /// `koru-ai-core` dependency of its own.
 pub use koru_ai_core::ChatId;
+/// Re-exported so a host names whose chats these are
+/// ([`ChatsSurface::set_profile`]) without a `koru-ai-core` dependency.
+pub use koru_ai_core::ProfileId;
 pub use rows::{Notice, Row, RowButton, RowParts};
 pub use seen::{SeenBook, SeenMark};
 pub use status::ChatStatus;
@@ -256,6 +259,10 @@ pub struct ChatsSurface {
     /// the host's field: no card, tint or ring, no title, no status mark, no
     /// pin and no ⋯ — one box, the field's.
     pub(crate) renaming: Option<ChatId>,
+    /// **The profile whose chats these are** (AI schema 13), as the host
+    /// says: the window's. Every listing asks for this profile's alone, and
+    /// a listing that names another is never shown.
+    pub(crate) profile: Option<ProfileId>,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -318,6 +325,7 @@ impl ChatsSurface {
             wants_pin: None,
             wants_menu: None,
             renaming: None,
+            profile: None,
             reader_link: None,
             seq: 0,
         }
@@ -441,10 +449,41 @@ impl ChatsSurface {
     /// Ask again. **The host calls this when the surface is shown and when a
     /// chat surface says a chat was created, renamed or deleted** — never on
     /// a timer. Harmless without a reader.
+    /// **Whose chats this is** (AI schema 13, koru-ai D120): the window's
+    /// profile. Switching it empties the list at once — no chat of the old
+    /// profile stays on screen, picked, hovered or asked about — and lists
+    /// again; the same profile again changes nothing.
+    pub fn set_profile(&mut self, profile: Option<ProfileId>) -> bool {
+        if self.profile == profile {
+            return false;
+        }
+        self.profile = profile;
+        self.chats.clear();
+        self.selection.clear();
+        self.anchor = None;
+        self.hover = None;
+        self.hover_button = None;
+        self.pending_reveal = None;
+        self.wants_open = None;
+        self.wants_delete.clear();
+        self.wants_pin = None;
+        self.wants_menu = None;
+        self.renaming = None;
+        self.scroll = 0.0;
+        self.load = Load::Cold;
+        self.refresh();
+        true
+    }
+
+    /// The profile whose chats this is, as the host last said.
+    pub fn profile(&self) -> Option<ProfileId> {
+        self.profile
+    }
+
     pub fn refresh(&mut self) {
         self.seq = self.seq.wrapping_add(1);
         if let Some(reader) = &self.reader_link
-            && reader.list(self.seq)
+            && reader.list(self.seq, self.profile)
         {
             self.in_flight = true;
             // A refresh over a list that is already showing does not blank
@@ -487,8 +526,15 @@ impl ChatsSurface {
     /// Accept a listing — the reader's seam, and the one every test drives.
     pub fn take_listing(&mut self, result: Result<Listing, Failure>) {
         match result {
-            Ok(listing) => {
+            Ok(mut listing) => {
                 self.agents = listing.agents;
+                // The service lists one profile's; a chat of another never
+                // shows here, whoever listed it.
+                if let Some(profile) = self.profile {
+                    listing
+                        .chats
+                        .retain(|chat| chat.profile_id.is_none_or(|theirs| theirs == profile));
+                }
                 self.replace_chats(listing.chats);
                 self.load = Load::Ready;
                 // A delete whose chat the service no longer lists is done,

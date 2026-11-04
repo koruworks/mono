@@ -320,6 +320,7 @@ pub fn open_link(paths: &Paths, link: koru_link::KoruLink) -> Result<bool, Strin
         koru_link::KoruLink::Chat { chat, block } => Request::OpenChatLink {
             chat: chat.to_string(),
             block: block.map(|block| block.to_string()),
+            profile: None,
         },
         // A bare node names no document, so there is nothing the catalog could
         // place. Refused here rather than sent for the agent to refuse.

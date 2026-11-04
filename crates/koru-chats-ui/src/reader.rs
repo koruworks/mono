@@ -15,7 +15,7 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use koru_ai_core::ChatId;
+use koru_ai_core::{ChatId, ProfileId};
 use koru_ai_wire::Failure;
 
 use crate::Listing;
@@ -33,14 +33,14 @@ pub(crate) enum Answer {
 }
 
 pub(crate) struct Reader {
-    lists: Sender<u64>,
+    lists: Sender<(u64, Option<ProfileId>)>,
     deletes: Sender<ChatId>,
     answers: Receiver<Answer>,
 }
 
 impl Reader {
     pub(crate) fn start(root: Option<std::path::PathBuf>) -> std::io::Result<Self> {
-        let (lists, list_rx) = mpsc::channel::<u64>();
+        let (lists, list_rx) = mpsc::channel::<(u64, Option<ProfileId>)>();
         let (deletes, delete_rx) = mpsc::channel::<ChatId>();
         let (answer_tx, answers) = mpsc::channel::<Answer>();
         let delete_tx = answer_tx.clone();
@@ -53,9 +53,9 @@ impl Reader {
         std::thread::Builder::new()
             .name("koru-chats-read".into())
             .spawn(move || {
-                while let Ok(seq) = list_rx.recv() {
-                    let seq = list_rx.try_iter().last().unwrap_or(seq);
-                    let result = list(&gateway);
+                while let Ok(ask) = list_rx.recv() {
+                    let (seq, profile) = list_rx.try_iter().last().unwrap_or(ask);
+                    let result = list(&gateway, profile);
                     if answer_tx.send(Answer::Listed { seq, result }).is_err() {
                         break;
                     }
@@ -84,8 +84,8 @@ impl Reader {
         })
     }
 
-    pub(crate) fn list(&self, seq: u64) -> bool {
-        self.lists.send(seq).is_ok()
+    pub(crate) fn list(&self, seq: u64, profile: Option<ProfileId>) -> bool {
+        self.lists.send((seq, profile)).is_ok()
     }
 
     pub(crate) fn delete(&self, chat: ChatId) -> bool {
@@ -102,8 +102,12 @@ impl Reader {
 /// The names may fail on their own: without them an agent chat says *Local
 /// agent* rather than its name, which is a better answer than an empty list
 /// because one request did not land.
-fn list(gateway: &Gateway) -> Result<Listing, Failure> {
-    let chats = gateway.call(|client| client.ai().list_chats(None))?.chats;
+/// One profile's chats (AI schema 13), or every profile's for a host that
+/// names none.
+fn list(gateway: &Gateway, profile: Option<ProfileId>) -> Result<Listing, Failure> {
+    let chats = gateway
+        .call(|client| client.ai().list_chats(profile))?
+        .chats;
     let agents = gateway
         .call(|client| client.ai().provider_settings())
         .map(|settings| settings.agents)

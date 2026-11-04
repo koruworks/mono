@@ -437,6 +437,7 @@ fn every_message_round_trips() {
         Request::OpenChatLink {
             chat: "00000000-0000-4000-8000-000000000001".into(),
             block: None,
+            profile: None,
         },
     ] {
         let framed = FromShell::Request { id: 7, body };

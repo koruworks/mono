@@ -122,6 +122,10 @@ pub enum Target {
         chat: ChatId,
         message: MessageId,
         block: MessageBlockId,
+        /// The profile the chat belongs to (AI schema 13), so a host that
+        /// searched every profile opens it in that profile's window. `None`
+        /// from an older service, or for a chat it has not placed yet.
+        profile: Option<ProfileId>,
         disposition: Disposition,
     },
 }
@@ -319,7 +323,7 @@ pub struct SearchSurface {
     page: SearchPage,
     next_cursor: Option<String>,
     include_ai: bool,
-    ai_targets: HashMap<String, (ChatId, MessageId, MessageBlockId)>,
+    ai_targets: HashMap<String, (ChatId, MessageId, MessageBlockId, Option<ProfileId>)>,
     list: SelectableList,
     viewport: (f32, f32),
     engine: TextEngine,
@@ -2173,6 +2177,7 @@ impl SearchSurface {
             append: false,
             include_ai: self.include_ai,
             cursor: None,
+            profile: self.selected_profile,
         });
     }
 
@@ -2447,7 +2452,7 @@ impl SearchSurface {
                                 let display = ai_display_hit(&hit);
                                 targets.insert(
                                     hit_key(&display),
-                                    (hit.chat_id, hit.message_id, hit.block_id),
+                                    (hit.chat_id, hit.message_id, hit.block_id, hit.profile_id),
                                 );
                                 converted.push(display);
                             }
@@ -2582,6 +2587,7 @@ impl SearchSurface {
             append: true,
             include_ai: self.include_ai,
             cursor: Some(cursor),
+            profile: self.selected_profile,
         });
     }
 
@@ -2765,6 +2771,7 @@ impl SearchSurface {
             append: false,
             include_ai: self.include_ai,
             cursor: None,
+            profile: self.selected_profile,
         });
     }
 
@@ -3033,11 +3040,12 @@ impl SearchSurface {
         let Some(hit) = self.page.hits.get(self.list.selected) else {
             return;
         };
-        if let Some(&(chat, message, block)) = self.ai_targets.get(&hit_key(hit)) {
+        if let Some(&(chat, message, block, profile)) = self.ai_targets.get(&hit_key(hit)) {
             self.target = Some(Target::Chat {
                 chat,
                 message,
                 block,
+                profile,
                 disposition,
             });
             return;
@@ -7795,6 +7803,7 @@ mod tests {
                 chat,
                 message,
                 block,
+                profile: None,
                 disposition: Disposition::CurrentWindow,
             })
         );

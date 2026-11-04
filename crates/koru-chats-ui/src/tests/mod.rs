@@ -19,6 +19,7 @@ mod freshness;
 mod keys;
 mod locales;
 mod order;
+mod profiles;
 mod rows;
 mod status;
 

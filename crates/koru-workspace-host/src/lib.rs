@@ -2261,6 +2261,16 @@ pub enum PaneRequest {
         chat: String,
         block: Option<String>,
     },
+    /// **Open a chat of another profile in a window of that profile** (AI
+    /// schema 13): a surface here was asked to show it and would not. The
+    /// shell hands it to the Agent ([`Host::open_chat_elsewhere`]), which
+    /// picks the profile's most recent window or opens one. Strings, as on
+    /// [`Self::OpenChatLink`].
+    OpenChatElsewhere {
+        chat: String,
+        block: Option<String>,
+        profile: String,
+    },
     /// Navigate to stable content. Every document target is resolved through
     /// Store here; views never decide which profile/workspace currently owns it.
     ///
@@ -2693,6 +2703,7 @@ impl PaneRequest {
             Self::OpenHelp => "request.open_help",
             Self::OpenSupport => "request.open_support",
             Self::OpenChatLink { .. } => "request.open_chat_link",
+            Self::OpenChatElsewhere { .. } => "request.open_chat_elsewhere",
             Self::Navigate { .. } => "request.navigate",
             Self::ActivateDocument { .. } => "request.activate_document",
             Self::OpenBackground { .. } => "request.open_background",
@@ -3293,6 +3304,11 @@ pub trait Host {
     fn open_external_url(&self, _url: String) -> Result<(), String> {
         Ok(())
     }
+
+    /// Hand a chat of another profile to the Agent, which opens it in a
+    /// window of `profile` ([`PaneRequest::OpenChatElsewhere`]). Ids as the
+    /// wire spells them. A host with no Agent opens nothing.
+    fn open_chat_elsewhere(&self, _chat: String, _block: Option<String>, _profile: String) {}
 
     fn take_unpinned_documents(&self) -> Vec<koru_core::DocumentId> {
         Vec::new()

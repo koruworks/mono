@@ -4258,7 +4258,7 @@ impl Agent {
             // **A chat opens as a tab in a Koru window.** Answered at once:
             // the window it lands in is chosen, and launched if need be, by
             // `show_workspace_chat`, as the tray's Agents rows are.
-            Request::OpenChatLink { chat, block } => {
+            Request::OpenChatLink { chat, block, .. } => {
                 let parsed = uuid::Uuid::parse_str(&chat)
                     .ok()
                     .zip(block.as_deref().map(uuid::Uuid::parse_str).transpose().ok());

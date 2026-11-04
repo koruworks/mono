@@ -703,6 +703,7 @@ fn launchservices_links_use_the_existing_agent_routes() {
         Ok(Request::OpenChatLink {
             chat,
             block: None,
+            profile: None,
         }) if chat == D
     ));
     assert!(matches!(
@@ -710,6 +711,7 @@ fn launchservices_links_use_the_existing_agent_routes() {
         Ok(Request::OpenChatLink {
             chat,
             block: Some(block),
+            profile: None,
         }) if chat == D && block == B
     ));
 }

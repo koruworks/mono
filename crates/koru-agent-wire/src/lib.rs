@@ -496,9 +496,18 @@ pub enum Request {
     /// outside Koru. The Agent answers `Ok` and routes it to a Koru window as
     /// [`Push::OpenChat`]. Chat and block identities remain strings on this
     /// process boundary so the Agent does not link AI models.
+    ///
+    /// **The chat's profile, when the sender knows it** (AI schema 13): a
+    /// window that would not show another profile's chat says whose it is,
+    /// and the Agent opens it in a window of that profile — never back in
+    /// the window that sent it. A link from outside names none, and the
+    /// Agent asks the AI service. Optional both ways, so a 45 peer reads it
+    /// and a 45 sender is read: an older Agent opens the chat as it did.
     OpenChatLink {
         chat: String,
         block: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
     },
     /// The person answered the update banner. See [`UpdateChoice`].
     ///

@@ -8699,6 +8699,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::OpenChatLink { chat, block } => {
                 self.open_chat(&chat, block.as_deref());
             }
+            PaneRequest::OpenChatElsewhere {
+                chat,
+                block,
+                profile,
+            } => self.host.open_chat_elsewhere(chat, block, profile),
             PaneRequest::Navigate {
                 target,
                 match_text,

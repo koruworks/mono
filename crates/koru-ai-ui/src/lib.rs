@@ -19,6 +19,7 @@ use koru_ai_core::{
     ToolActivityStatus, ToolInvocationId, ToolMode, UsageReport, WebSearchPhase, WorkspaceId,
 };
 
+pub use chats::ChatElsewhere;
 /// Re-exported so a host can name the id [`ChatSurface::open_link`] and
 /// [`ChatSurface::recent_chats`] carry without taking a `koru-ai-core`
 /// dependency of its own.
@@ -29,6 +30,9 @@ pub use koru_ai_core::MessageBlockId;
 /// Re-exported so a host can hold the message a person last saw without a
 /// `koru-ai-core` dependency of its own (D83).
 pub use koru_ai_core::MessageId;
+/// Re-exported so a host names its window's profile
+/// ([`ChatSurface::set_profile`]) without a `koru-ai-core` dependency.
+pub use koru_ai_core::ProfileId;
 use koru_ai_wire::{
     BranchChatRequest, ChatTranscript, CreateChatRequest, ExportChatRequest, ModelPullEvent,
     ProviderSettingsResponse, ProviderValidationResponse, ProviderValidationStatus, PublicAiEvent,
@@ -638,6 +642,14 @@ pub struct ChatSurface {
     selected_destination: usize,
     destination_open: Option<MessageId>,
     pending_link_chat: Option<ChatId>,
+    /// **The profile this surface's window is in** (AI schema 13), as its
+    /// host says: the chats it lists, the profile a new chat is made in,
+    /// and the only profile whose chat it shows. `None` until the host says.
+    profile: Option<ProfileId>,
+    /// A chat this surface was asked to show that belongs to another
+    /// profile, with the block it was to open at: not shown here, for the
+    /// host to open in a window of that profile.
+    wants_open_elsewhere: Option<ChatElsewhere>,
     highlight: Option<(MessageBlockId, Instant)>,
     confirm: Option<Confirm>,
     destructive_action: Option<DestructiveAction>,
@@ -966,6 +978,8 @@ impl ChatSurface {
             selected_destination: 0,
             destination_open: None,
             pending_link_chat: None,
+            profile: None,
+            wants_open_elsewhere: None,
             highlight: None,
             confirm: None,
             destructive_action: None,
@@ -1019,7 +1033,9 @@ impl ChatSurface {
         }
         self.reader = Reader::start(self.root.clone());
         if let Some(reader) = &self.reader {
-            self.waiting = reader.send(Command::Boot(self.pending_link_chat)).is_ok();
+            self.waiting = reader
+                .send(Command::Boot(self.pending_link_chat, self.profile))
+                .is_ok();
             true
         } else {
             self.status = Some("Koru AI service is not connected.".into());
@@ -2956,7 +2972,7 @@ impl ChatSurface {
                 match action {
                     DestructiveAction::ClearHistory => {
                         self.setup_open = false;
-                        self.send_command(Command::ClearHistory)
+                        self.send_command(Command::ClearHistory(self.profile))
                     }
                     DestructiveAction::ClearUsage => {
                         let chat = self
@@ -3001,6 +3017,16 @@ impl ChatSurface {
                 } else {
                     transcript
                 };
+                // **Another profile's chat is not shown here** (AI schema
+                // 13): the host opens it in a window of its own profile, and
+                // this tab becomes a new chat.
+                let transcript = match transcript {
+                    Some(transcript) if self.belongs_elsewhere(&transcript.chat) => {
+                        self.refuse_chat_elsewhere(&transcript.chat);
+                        None
+                    }
+                    transcript => transcript,
+                };
                 self.waiting = false;
                 self.apply_settings_fields(&settings);
                 self.setup_provider = selected_setup_provider(&settings);
@@ -3015,6 +3041,7 @@ impl ChatSurface {
                 let selected = settings.selected_provider.clone();
                 self.settings = Some(settings);
                 self.chats = chats;
+                self.keep_profile_chats();
                 self.destinations = destinations;
                 self.prioritize_context_workspace();
                 self.workspace_catalog_error = destination_error;
@@ -3096,6 +3123,14 @@ impl ChatSurface {
                 }
                 self.waiting = false;
                 self.status = Some(failure_text(&failure, self.lang));
+            }
+            Update::Listed(chats) => {
+                self.chats = chats;
+                self.keep_profile_chats();
+            }
+            Update::Transcript(transcript) if self.belongs_elsewhere(&transcript.chat) => {
+                self.waiting = false;
+                self.refuse_chat_elsewhere(&transcript.chat);
             }
             Update::Transcript(transcript) => {
                 self.waiting = false;
@@ -4061,7 +4096,7 @@ impl ChatSurface {
         if !self.queue_command(Command::Create(CreateChatRequest {
             chat_id: chat,
             title: stand_in.chat.title.clone(),
-            profile_id: None,
+            profile_id: self.profile,
             model: stand_in.chat.current_model.clone(),
         })) {
             self.unmade_chat = Some(chat);
@@ -13232,7 +13267,7 @@ mod tests {
         assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
         assert!(matches!(
             commands.recv_timeout(Duration::from_millis(50)).unwrap(),
-            Command::ClearHistory
+            Command::ClearHistory(None)
         ));
     }
 

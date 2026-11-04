@@ -56,6 +56,7 @@ fn an_ai_result_opens_the_exact_chat_block_as_a_tab() {
             chat,
             message,
             block,
+            profile: None,
             disposition: Disposition::CurrentWindow,
         }),
         Some(PaneRequest::OpenChatLink {
