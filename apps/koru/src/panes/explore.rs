@@ -6740,7 +6740,7 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            pane_fill(),
             &scene::rect(area.x, area.y, area.w, area.h),
         );
         // Hairline down the inside edge, separating the column from the view
@@ -6900,7 +6900,7 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            pane_fill(),
             &scene::rect(r.band.x, r.band.y, (r.band.w - 1.0).max(0.0), r.band.h),
         );
         scene::fill(
@@ -7878,6 +7878,13 @@ impl ExploreView {
             );
         }
     }
+}
+
+/// The pane's own fill, the colour of its card. One answer, because the
+/// window reads it too: the document's top-left corner, where it meets the
+/// pane, is masked in it (`MainView::draw_cards`).
+pub(crate) fn pane_fill() -> peniko::Color {
+    theme::p().status_bg
 }
 
 /// The trailing lane of a popover row: the tick, the gear, a caret.

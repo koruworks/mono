@@ -820,7 +820,8 @@ impl MainView {
     /// and the right-most card's right pair (the CTO's artboard and his
     /// notes). Drawn after every column and the header, which laid the
     /// straight hairlines: each corner masks the square outside its arc in
-    /// the ground's colour and strokes the arc in the hairline's.
+    /// the colour of what lies outside it — the ground, or the pane beside
+    /// the document's top-left — and strokes the arc in the hairline's.
     ///
     /// **Drawn edges**, not settled ones: the pane slides, and the
     /// document's left corner rides its edge the way the caption does. The
@@ -916,21 +917,23 @@ impl MainView {
         }
         let bottom = foot.y + 1.0;
         if let Some(x) = left {
-            draw_card_corner(scene, root, x, top, r, (false, false), p);
+            draw_card_corner(scene, root, x, top, r, (false, false), None, p);
             if foot.h > 0.0 {
-                draw_card_corner(scene, root, x, bottom, r, (false, true), p);
+                draw_card_corner(scene, root, x, bottom, r, (false, true), None, p);
             }
         }
         // The document's top-left where it meets the pane; with the pane
-        // gone that corner is the lane's, drawn above.
+        // gone that corner is the lane's, drawn above. The pane, not the
+        // ground, is what lies outside this one (see `draw_card_corner`).
         let cap = self.drawn_caption();
         if pane.is_some() && cap.x > 0.0 {
-            draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), p);
+            let beside = Some(crate::panes::explore::pane_fill());
+            draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), beside, p);
         }
         if edge.w > 0.0 {
-            draw_card_corner(scene, root, edge.x + 1.0, top, r, (true, false), p);
+            draw_card_corner(scene, root, edge.x + 1.0, top, r, (true, false), None, p);
             if foot.h > 0.0 {
-                draw_card_corner(scene, root, edge.x + 1.0, bottom, r, (true, true), p);
+                draw_card_corner(scene, root, edge.x + 1.0, bottom, r, (true, true), None, p);
             }
         }
     }
@@ -1599,6 +1602,17 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
 /// stroked one pixel wide along the hairline's centre, so it meets the
 /// straight runs where they leave the square. The ground is the palette's
 /// `ground` and the border the hairline's.
+///
+/// `beside` is the fill of the card the corner sits against, for a corner
+/// that is not on the ground: the document's top-left, where it meets the
+/// pane. Outside that arc is the pane, so the square is masked in the
+/// pane's fill, and the hairline along the corner's straight edge — the
+/// header's, which is the pane's top border as well as the document's —
+/// runs on across it. Masked in the ground like an outer corner, it cut a
+/// notch of the header's colour into the pane's top-right corner, open on
+/// the pane's side with nothing bordering it, and broke the header's
+/// hairline over it (the user's screenshot, 2026-11-03).
+#[allow(clippy::too_many_arguments)]
 fn draw_card_corner(
     scene: &mut Scene,
     root: Affine,
@@ -1606,13 +1620,22 @@ fn draw_card_corner(
     y: f32,
     r: f32,
     (right, bottom): (bool, bool),
+    beside: Option<Color>,
     p: &theme::Palette,
 ) {
     use vello::kurbo::{BezPath, Point};
-    let (ground, border) = (theme::base_fill(), p.panel_border);
+    let (outside, border) = (beside.unwrap_or_else(theme::base_fill), p.panel_border);
     if r <= 1.0 {
         return;
     }
+    // The straight edge's hairline across the square, for a corner beside a
+    // card: one pixel on the square's outer row.
+    let run = scene::rect(
+        if right { x - r } else { x },
+        if bottom { y - 1.0 } else { y },
+        r,
+        1.0,
+    );
     // One part per corner in the inspector — the mask and the arc together,
     // named for the corner they are (the CTO's note, E75) — rather than two
     // anonymous fills at the window's level.
@@ -1637,6 +1660,15 @@ fn draw_card_corner(
                 "draw_card_corner",
             );
             rec.property("radius", r, "theme::PAGE_RADIUS");
+            rec.property(
+                "outside",
+                if beside.is_some() {
+                    "the pane"
+                } else {
+                    "the ground"
+                },
+                "draw_card_corner",
+            );
         },
     );
     // Quarter-circle as one cubic, the usual constant.
@@ -1652,7 +1684,10 @@ fn draw_card_corner(
     mask.line_to(pt(r, 0.0));
     mask.curve_to(pt(r - K * r, 0.0), pt(0.0, r - K * r), pt(0.0, r));
     mask.close_path();
-    scene::fill(scene, root, ground, &mask);
+    scene::fill(scene, root, outside, &mask);
+    if beside.is_some() {
+        scene::fill(scene, root, border, &run);
+    }
     // The border's centre runs half a pixel inside the outer edge.
     let rr = r - 0.5;
     let mut arc = BezPath::new();

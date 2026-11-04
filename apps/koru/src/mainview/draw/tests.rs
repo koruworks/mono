@@ -228,3 +228,89 @@ fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
         band.y0 + crate::panes::sidebar::apps_rail::PAD_TOP as f64
     );
 }
+
+/// **No notch between the pane and the document** (2026-11-03, the user's
+/// screenshot). The document's top-left corner, where it meets the pane,
+/// was masked in the ground like an outer corner: a wedge of the header's
+/// colour opened into the pane's top-right, with no border on the pane's
+/// side and the header's hairline broken over it. Outside that arc is the
+/// pane, so the mask is the pane's fill and the hairline runs on across the
+/// corner; the outer corners still mask in the ground.
+#[test]
+fn the_document_corner_beside_the_pane_is_masked_in_the_pane_and_keeps_the_hairline() {
+    let (mut view, workspace) = crate::mainview::harness::on_document();
+    view.viewport = (1200.0, 700.0);
+    view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
+    view.sidebar
+        .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
+    view.relayout();
+    let root = Affine::IDENTITY;
+    let frame = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 1200.0, 700.0));
+    view.draw_frame(
+        &mut Scene::new(),
+        &workspace,
+        &ImageCache::new(),
+        root,
+        false,
+        (-1.0, -1.0),
+    );
+    let records = frame.finish().records;
+    let colour = |i: usize| {
+        records[i]
+            .properties
+            .iter()
+            .find(|p| p.name == "color")
+            .map(|p| p.value.clone())
+            .expect("a fill records its colour")
+    };
+    let fills_of = |corner: usize| {
+        records
+            .iter()
+            .enumerate()
+            .filter(move |(_, r)| r.name == "fill" && r.parent == Some(corner))
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>()
+    };
+    let corner_at = |x: f32| {
+        records
+            .iter()
+            .position(|r| r.name == "CardCorner" && r.rect().x0 == x as f64)
+            .unwrap_or_else(|| panic!("a card corner at x = {x}"))
+    };
+    let sb = view.sidebar_rect();
+    let top = view.content().y - 1.0;
+    let r = theme::PAGE_RADIUS;
+    let pane_fill = inspect::color(crate::panes::explore::pane_fill());
+    let ground = inspect::color(theme::base_fill());
+    assert_ne!(
+        pane_fill, ground,
+        "the notch only shows when the two differ"
+    );
+
+    // The document's top-left, on the pane's inside hairline.
+    let inner = corner_at(sb.x + sb.w - 1.0);
+    assert_eq!(records[inner].rect().y0, top as f64);
+    let fills = fills_of(inner);
+    assert_eq!(
+        colour(fills[0]),
+        pane_fill,
+        "masked in the pane, not the ground"
+    );
+    let run = fills
+        .iter()
+        .copied()
+        .find(|&i| records[i].rect() == scene::rect(sb.x + sb.w - 1.0, top, r, 1.0))
+        .expect("the header's hairline runs across the corner");
+    assert_eq!(colour(run), inspect::color(theme::p().panel_border));
+
+    // The pane's own top-left is an outer corner: still the ground, and no
+    // hairline drawn across it.
+    let outer = corner_at(MainView::pane_of(sb).x - 1.0);
+    let fills = fills_of(outer);
+    assert_eq!(colour(fills[0]), ground);
+    assert_eq!(
+        fills.len(),
+        1,
+        "only the mask is a fill; the arc is a stroke"
+    );
+}
