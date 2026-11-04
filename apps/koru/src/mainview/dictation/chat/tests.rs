@@ -259,3 +259,62 @@ fn a_documents_dictation_is_not_a_recording() {
     assert!(v.listening.is_some(), "the chip");
     assert!(!View::dictation_cancel_hit(&v, 10.0, 10.0));
 }
+
+/// **The pane's microphone chooser is the Settings page's**: the chevron
+/// beside the microphone opens the panel, which asks the shell for the
+/// device list on its worker thread (`AskVoiceDevices`) — never here — and
+/// a device chosen in it is the *Voice → Microphone* preference.
+#[test]
+fn the_panes_microphone_chooser_keeps_the_voice_preference() {
+    let (mut v, mut w) = on_document();
+    assert!(v.toggle_ai());
+    v.ai_chat.offer_dictation(true);
+    v.ai_chat.offer_microphone_choice(true);
+    frame(&mut v, &w);
+    let (x, y) = centre(v.ai_chat.microphone_for_host_test().unwrap());
+    v.ai_chat.mouse_move(x, y);
+    let chevron = v
+        .ai_chat
+        .microphone_chooser_for_host_test()
+        .expect("the chevron shows on the microphone");
+    let (x, y) = centre(chevron);
+    v.ai_chat.mouse_move(x, y);
+    v.pane_requests.clear();
+    assert!(View::mouse_down(&mut v, &mut w.ws, x, y, false));
+    View::mouse_up(&mut v, &mut w.ws);
+    assert!(v.ai_chat.microphone_panel_open());
+    assert!(
+        v.pane_requests
+            .iter()
+            .any(|request| matches!(request, koru_workspace_host::PaneRequest::AskVoiceDevices)),
+        "the list is the shell's to read"
+    );
+
+    // The device the worker listed, chosen by the keyboard.
+    let before = koru_workspace_host::voice_prefs::input();
+    koru_workspace_host::voice_devices::set(vec![
+        koru_workspace_host::voice_prefs::InputDevice::new("Test Microphone", true),
+    ]);
+    // What the shell does when the worker's answer lands.
+    v.push_chat_microphones();
+    // *Default* is checked; Down reaches the device, Enter chooses it.
+    for key in [
+        winit::keyboard::NamedKey::ArrowDown,
+        winit::keyboard::NamedKey::Enter,
+    ] {
+        View::key(
+            &mut v,
+            &mut w.ws,
+            &winit::keyboard::Key::Named(key),
+            None,
+            winit::keyboard::ModifiersState::empty(),
+        );
+    }
+    let chosen = koru_workspace_host::voice_prefs::input();
+    koru_workspace_host::voice_prefs::set_input(before);
+    assert_eq!(
+        chosen,
+        koru_workspace_host::voice_prefs::InputChoice::named("Test Microphone")
+    );
+    assert!(!v.ai_chat.microphone_panel_open(), "a choice closes it");
+}

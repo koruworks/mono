@@ -26,10 +26,15 @@
 
 use std::time::Instant;
 
-use koru_ai_ui::{ChatSurface, DictationPress, DictationShown};
+use koru_ai_ui::{
+    ChatSurface, DictationPress, DictationShown, MicrophoneAsk, MicrophoneDevice, Microphones,
+};
 use koru_dictation::{DictationAction, Stage, State, Status};
 use koru_ui::dictation::ComposeInto;
+use koru_workspace_host::PaneRequest;
 use koru_workspace_host::routing::{EditableTarget, FieldId};
+use koru_workspace_host::voice_devices;
+use koru_workspace_host::voice_prefs::{self, InputChoice};
 
 use crate::mainview::MainView;
 use crate::mainview::tab::TabView;
@@ -52,6 +57,21 @@ pub(crate) fn shown(status: Status) -> DictationShown {
         level: status.level.step(),
         listening: status.stage == Stage::Live && status.worker == State::Listening,
         finishing: status.stage == Stage::Finalising || status.worker == State::Finalising,
+    }
+}
+
+/// **What a chat's microphone panel shows**: the Settings page's list and
+/// value — the devices the voice worker last listed
+/// (`voice_devices::known`), the *Microphone* preference, and the gesture,
+/// *Hold to record* being push-to-talk.
+pub(crate) fn microphones() -> Microphones {
+    Microphones {
+        devices: voice_devices::known()
+            .into_iter()
+            .map(|device| MicrophoneDevice::new(device.name, device.default))
+            .collect(),
+        chosen: voice_prefs::input().name().map(str::to_owned),
+        hold: !voice_prefs::toggle(),
     }
 }
 
@@ -167,6 +187,65 @@ impl MainView {
                     .dictation_press_at(lx, ly)
             }
         }
+    }
+
+    /// **Hand every chat in this window what its microphone panel shows**:
+    /// the pane's surface and each chat tab's. Answers whether any open panel
+    /// changed.
+    pub(crate) fn push_chat_microphones(&mut self) -> bool {
+        let microphones = microphones();
+        let mut changed = self.ai_chat.set_microphones(microphones.clone());
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::AiChat(view) = &mut tab.view {
+                    changed |= view
+                        .dictation_surface_mut()
+                        .set_microphones(microphones.clone());
+                }
+            }
+        }
+        changed
+    }
+
+    /// **Do what a chat's microphone panel asked** — the pane's or the
+    /// active chat tab's. Called on the press or key that asked, inside the
+    /// shell's input guard, so a choice is saved by the stroke that made it,
+    /// as a choice on the Settings page is.
+    ///
+    /// The list is asked for the way the Settings page asks: on the shell's
+    /// worker thread, never here. A choice and *Hold to record* are the
+    /// person's *Voice* preferences (`voice_prefs`), so the Settings tabs'
+    /// mirrors follow them and the next dictation records from the device.
+    pub(crate) fn serve_chat_microphones(&mut self) -> bool {
+        let mut asks = self.ai_chat.take_microphone_asks();
+        if let TabView::AiChat(view) = self.tabs_mut().active_view() {
+            asks.extend(view.dictation_surface_mut().take_microphone_asks());
+        }
+        if asks.is_empty() {
+            return false;
+        }
+        let mut moved = false;
+        for ask in asks {
+            match ask {
+                MicrophoneAsk::List => {
+                    self.ask_pane(PaneRequest::AskVoiceDevices);
+                }
+                MicrophoneAsk::Choose(name) => {
+                    voice_prefs::set_input(
+                        name.map_or(InputChoice::SystemDefault, InputChoice::named),
+                    );
+                    moved = true;
+                }
+                MicrophoneAsk::Hold(hold) => {
+                    voice_prefs::set_toggle(!hold);
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            self.push_voice_preferences();
+        }
+        self.push_chat_microphones() | moved
     }
 
     /// **A chat's microphone was pressed**: the pane's, which also takes the

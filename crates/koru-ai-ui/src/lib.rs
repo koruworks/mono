@@ -73,6 +73,7 @@ mod effort;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
+mod microphone;
 mod model_picker;
 mod new_divider;
 mod privacy;
@@ -91,6 +92,7 @@ pub use approval_modes::NewChatPermission;
 pub use attachments::ViewerLift;
 pub use composer::{ChatComposer, ComposedMessage};
 pub use dictation::{DictationPress, DictationShown};
+pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
@@ -1550,6 +1552,11 @@ impl ChatSurface {
         if let Some(handled) = self.dictation_key(key) {
             return handled;
         }
+        // The open microphone panel takes Up, Down, Enter and Escape, as
+        // the approval-mode list does (D103).
+        if let Some(handled) = self.microphone_key(key, mods) {
+            return handled;
+        }
         // A link's card (D95) goes on any key; Escape is spent on it.
         let card_up = self.link_card.visible(Instant::now());
         self.link_card.hide();
@@ -2027,6 +2034,11 @@ impl ChatSurface {
         if let Some(handled) = self.strip_mouse_down(x, y) {
             return handled;
         }
+        // The chevron beside the microphone and its panel (D103): a press
+        // anywhere else shuts the panel and goes on.
+        if let Some(handled) = self.microphone_mouse_down(x, y) {
+            return handled;
+        }
         // The microphone, or a press on a composer that is recording (D103).
         if let Some(handled) = self.dictation_mouse_down(x, y) {
             return handled;
@@ -2486,6 +2498,7 @@ impl ChatSurface {
             self.model_options_open = false;
             changed = true;
         }
+        changed |= self.close_microphones();
         if self.destination_open.take().is_some() {
             changed = true;
         }
@@ -5583,8 +5596,13 @@ impl ChatSurface {
     /// button.
     fn composer_toolbar_rect(&self) -> Rect {
         let composer = self.composer_hit_rect;
-        // Left of the microphone where there is one (D103), else of send.
-        let send = self.mic_button().unwrap_or_else(|| self.send_button());
+        // Left of the microphone's chevron where the host offers a choice of
+        // microphone (D103) — its slot is kept whether or not it shows —
+        // else of the microphone, else of send.
+        let send = self
+            .mic_chooser_slot()
+            .or_else(|| self.mic_button())
+            .unwrap_or_else(|| self.send_button());
         let x = composer.x + COMPOSER_PAD_X;
         Rect::new(
             x,
@@ -6013,6 +6031,15 @@ impl ChatSurface {
             if let Some(part) = self.approval_mode_hover_at(x, y) {
                 return Some(part);
             }
+            if let Some(part) = self.microphone_hover_at(x, y) {
+                return Some(part);
+            }
+            if self
+                .mic_chooser_button()
+                .is_some_and(|chevron| chevron.contains(x, y))
+            {
+                return Some((5, 14));
+            }
             if self.tool_mode_open {
                 if let Some(modes) = self.tool_mode_buttons() {
                     for (index, rect) in modes.into_iter().enumerate() {
@@ -6380,6 +6407,7 @@ impl ChatSurface {
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
+        self.draw_microphone_panel(canvas, root);
         self.web_search_tooltip.draw(
             canvas,
             root,

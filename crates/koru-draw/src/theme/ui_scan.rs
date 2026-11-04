@@ -38,6 +38,10 @@ const MIGRATED: &[&str] = &[
     // actions are the shared `TextInput` and `ActionButton` in leaves; its
     // tokens are in `questions/tokens.rs`.
     "crates/koru-ai-ui/src/questions/elements.rs",
+    // The composer's microphone panel (koru-ai D103): its devices, a
+    // divider and *Hold to record*, the shared `Toggle` in a leaf; its
+    // tokens are in `microphone/tokens.rs`.
+    "crates/koru-ai-ui/src/microphone/elements.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");

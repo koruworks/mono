@@ -65,6 +65,9 @@ impl AiChatView {
         // The workspace shell dictates into a chat tab's composer: the
         // microphone shows wherever voice is available (D103).
         surface.offer_dictation(koru_dictation::available());
+        // And it keeps the Voice preferences: the chevron beside the
+        // microphone chooses which one, as Settings does.
+        surface.offer_microphone_choice(koru_dictation::available());
         Self {
             surface,
             face: ChatFace::default(),

@@ -1804,6 +1804,9 @@ impl MainView {
                 // The workspace shell dictates into the pane's composer: the
                 // microphone shows wherever voice is available (D103).
                 chat.offer_dictation(koru_dictation::available());
+                // And it keeps the Voice preferences: the chevron beside
+                // the microphone chooses which one, as Settings does.
+                chat.offer_microphone_choice(koru_dictation::available());
                 chat
             },
             ai_focused: false,
@@ -9790,7 +9793,8 @@ impl MainView {
         if ai_hit {
             self.ai_focused = true;
             let changed = self.ai_chat.mouse_down(x, y);
-            return self.save_pending_ai_credential() || changed;
+            let microphones = self.serve_chat_microphones();
+            return self.save_pending_ai_credential() || changed || microphones;
         }
         let hit = self.hit_at(x, y);
         inputdebug::write(format_args!(
@@ -9912,8 +9916,10 @@ impl MainView {
         self.drain_welcome();
         self.drain_home();
         self.drain_settings_requests();
+        // A chat tab's microphone panel (D103), inside the input guard.
+        let microphones = self.serve_chat_microphones();
         self.drain_feedback();
-        handled || opened || toasted || asked || binned || entity_changed
+        handled || opened || toasted || asked || binned || entity_changed || microphones
     }
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
         // A chat's lifted picture viewer takes the release of its own press.
@@ -10265,7 +10271,9 @@ impl View for MainView {
     /// A model was installed or deleted, so every Settings tab in this window
     /// takes another reading of the cache.
     fn voice_models_changed(&mut self) -> bool {
-        let mut changed = false;
+        // The devices the worker listed moved too: a chat's open
+        // microphone panel shows them (D103).
+        let mut changed = self.push_chat_microphones();
         for tab in self.tabs_mut().iter_mut() {
             if let TabView::Welcome(w) = &mut tab.view {
                 changed |= w.voice_models_changed();
@@ -14663,7 +14671,8 @@ impl MainView {
         if self.ai_visible() && self.ai_focused {
             inputdebug::write(format_args!("[Koru][input] view key claimed=ai"));
             let changed = self.ai_chat.key(key, text, mods);
-            return self.save_pending_ai_credential() || changed;
+            let microphones = self.serve_chat_microphones();
+            return self.save_pending_ai_credential() || changed || microphones;
         }
         // **Escape on a draft is "nothing happened".** Nothing was ever
         // written, so closing the tab is the whole of it — the trip Back
@@ -14729,8 +14738,9 @@ impl MainView {
             self.drain_welcome();
             self.drain_home();
             self.drain_settings_requests();
+            let microphones = self.serve_chat_microphones();
             self.drain_feedback();
-            return handled || entity_changed;
+            return handled || entity_changed || microphones;
         }
         handled
     }

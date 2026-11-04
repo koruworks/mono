@@ -149,6 +149,7 @@ pub(crate) const TIMER: &str = "Dictation timer";
 const TIP_MIC: u64 = 1;
 const TIP_CANCEL: u64 = 2;
 const TIP_STOP: u64 = 3;
+const TIP_CHOOSE: u64 = 4;
 
 /// **The composer's voice input**: whether the host offers it, whether the
 /// microphone was pressed, and the recording while one is shown.
@@ -162,6 +163,16 @@ pub(crate) struct ComposerDictation {
     wants: bool,
     live: Option<Recording>,
     tooltip: Tooltip,
+    /// The chevron's panel: which microphone, and *Hold to record*
+    /// ([`crate::microphone`]).
+    pub(crate) microphone: crate::microphone::Panel,
+}
+
+impl ComposerDictation {
+    /// Let the tooltip over the microphone or the chevron go.
+    pub(crate) fn tooltip_clear(&mut self) {
+        self.tooltip.clear();
+    }
 }
 
 /// One recording, from the host's first `Some` to its `None`.
@@ -309,6 +320,8 @@ impl ChatSurface {
                 self.dictation.live = Some(Recording::new(shown, now));
                 self.dictation.wants = false;
                 self.dictation.tooltip.clear();
+                // The footer is the recording row now: no chevron, no panel.
+                self.close_microphones();
                 true
             }
         }
@@ -342,6 +355,12 @@ impl ChatSurface {
     #[doc(hidden)]
     pub fn microphone_for_host_test(&self) -> Option<Rect> {
         self.mic_button().filter(|_| self.dictation.live.is_none())
+    }
+
+    /// Where the chevron beside the microphone is, while it shows.
+    #[doc(hidden)]
+    pub fn microphone_chooser_for_host_test(&self) -> Option<Rect> {
+        self.mic_chooser_button()
     }
 
     /// Where ✕ and ■ are, as of the last frame, while the composer records.
@@ -468,6 +487,7 @@ impl ChatSurface {
                 disabled: false,
             })
             .draw(canvas, root, &mut self.engine);
+        self.draw_mic_chooser(canvas, root);
     }
 
     /// The tooltip over the microphone, ✕ or ■.
@@ -544,6 +564,11 @@ impl ChatSurface {
                 anchor,
                 koru_i18n::t(lang, koru_i18n::Key::AiDictationCancel),
             ),
+            TIP_CHOOSE => TooltipContent::new(
+                key,
+                anchor,
+                koru_i18n::t(lang, koru_i18n::Key::AiMicrophoneChoose),
+            ),
             _ => TooltipContent::new(
                 key,
                 anchor,
@@ -555,12 +580,20 @@ impl ChatSurface {
             )),
         });
         let tooltip = self.dictation.tooltip.set_hover(tip, now);
-        tooltip || before.map(|(key, _)| key) != after.map(|(key, _)| key)
+        // The chevron shows and goes with the pointer (`mic_chooser_button`).
+        let chevron = self
+            .mic_chooser_zone()
+            .is_some_and(|zone| zone.contains(old.0, old.1) != zone.contains(x, y));
+        tooltip || chevron || before.map(|(key, _)| key) != after.map(|(key, _)| key)
     }
 
     /// The microphone, ✕ or ■ under `(x, y)`, as a tooltip key and anchor.
     fn dictation_target_at(&self, x: f32, y: f32) -> Option<(u64, Rect)> {
         if self.dictation.live.is_none() {
+            // The chevron says nothing while its panel is open.
+            if let Some(chevron) = self.mic_chooser_slot().filter(|slot| slot.contains(x, y)) {
+                return (!self.microphone_panel_open()).then_some((TIP_CHOOSE, chevron));
+            }
             return self
                 .mic_button()
                 .filter(|mic| mic.contains(x, y))

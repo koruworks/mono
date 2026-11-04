@@ -373,6 +373,11 @@ pub enum Key {
     AiDictate,
     AiDictationCancel,
     AiDictationStop,
+    // The composer's microphone chooser (koru-ai D103).
+    AiMicrophoneChoose,
+    AiMicrophoneDefault,
+    AiMicrophoneDefaultNamed,
+    AiMicrophoneHoldToRecord,
     // Esc twice to stop a turn, and the empty chat's greetings.
     AiPressEscAgainToStop,
     AiGreeting01,
@@ -2859,7 +2864,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1994] = [
+    pub const ALL: [Key; 1998] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3122,6 +3127,10 @@ impl Key {
         Key::AiDictate,
         Key::AiDictationCancel,
         Key::AiDictationStop,
+        Key::AiMicrophoneChoose,
+        Key::AiMicrophoneDefault,
+        Key::AiMicrophoneDefaultNamed,
+        Key::AiMicrophoneHoldToRecord,
         Key::AiPressEscAgainToStop,
         Key::AiGreeting01,
         Key::AiGreeting02,
@@ -7845,6 +7854,54 @@ pub const ROWS: &[Row] = &[
         ar: "إيقاف الإملاء",
         zh_hans: "停止听写",
         ja: "音声入力を停止",
+    },
+    // The microphone chooser: the chevron beside the microphone, and the panel it opens.
+    Row {
+        key: Key::AiMicrophoneChoose,
+        en: "Choose microphone",
+        es: "Elegir micrófono",
+        pt_br: "Escolher microfone",
+        de: "Mikrofon wählen",
+        fr: "Choisir le micro",
+        ar: "اختيار الميكروفون",
+        zh_hans: "选择麦克风",
+        ja: "マイクを選択",
+    },
+    // The microphone chooser: the system's own microphone, when its name is not known.
+    Row {
+        key: Key::AiMicrophoneDefault,
+        en: "Default",
+        es: "Predeterminado",
+        pt_br: "Padrão",
+        de: "Standard",
+        fr: "Par défaut",
+        ar: "الافتراضي",
+        zh_hans: "默认",
+        ja: "既定",
+    },
+    // The microphone chooser: the system's own microphone, and what it is called now.
+    Row {
+        key: Key::AiMicrophoneDefaultNamed,
+        en: "Default – {}",
+        es: "Predeterminado – {}",
+        pt_br: "Padrão – {}",
+        de: "Standard – {}",
+        fr: "Par défaut – {}",
+        ar: "الافتراضي – {}",
+        zh_hans: "默认 – {}",
+        ja: "既定 – {}",
+    },
+    // The microphone chooser: the switch: on is push-to-talk, off is press to start and stop.
+    Row {
+        key: Key::AiMicrophoneHoldToRecord,
+        en: "Hold to record",
+        es: "Mantener para grabar",
+        pt_br: "Segurar para gravar",
+        de: "Zum Aufnehmen halten",
+        fr: "Maintenir pour enregistrer",
+        ar: "اضغط مطولًا للتسجيل",
+        zh_hans: "按住录音",
+        ja: "押している間だけ録音",
     },
     // Esc twice to stop a turn, and the empty chat's greetings.
     Row {
