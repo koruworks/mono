@@ -10,7 +10,9 @@
 //! the middle opens it in a new tab here, with no split. The same for every
 //! reference the editor reads — an `@` document pill, an older document pill,
 //! a `koru://` document link, a `koru://chat/…` link
-//! ([`koru_editor::Reference`]).
+//! ([`koru_editor::Reference`]) — and for a document, canvas or chat row
+//! Alt+clicked in Explore (`Outcome::ChoosePlace`), which takes the same
+//! five outcomes for that row.
 //!
 //! **The cross is KoruUI's** ([`koru_ui::place_chooser`]): its layout,
 //! hit-testing, hover, keys, drawing and the shape a screen reader hears.
@@ -78,7 +80,8 @@ pub(crate) fn split_dir(side: SplitSide) -> SplitDir {
 pub(crate) struct PlaceAsk {
     /// What was Alt+clicked.
     pub reference: Reference,
-    /// The pane a split divides: the one the click was in.
+    /// The pane a split divides: the one the click was in, or for an
+    /// Explore row — Explore has no pane of its own — the focused one.
     pub pane: PanePath,
     /// The cross itself.
     pub chooser: PlaceChooser,

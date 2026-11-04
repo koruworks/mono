@@ -7705,7 +7705,9 @@ impl MainView {
             // open by the shell. It only looks like a file row because the
             // glyph that offered it sits on one.
             Outcome::OpenNote(id) => self.open_from_explore(ws, id),
-            Outcome::OpenNodeInBackgroundTab(id) => self.open_in_background_from_explore(ws, id),
+            // Alt+click on a document or chat row: the place chooser at the
+            // press, answered through the same door a document's is.
+            Outcome::ChoosePlace { reference, at } => self.open_place_chooser(reference, at),
             // The Agents navigator: focus the tab already on this session,
             // else open one bound to it (never a launch).
             //

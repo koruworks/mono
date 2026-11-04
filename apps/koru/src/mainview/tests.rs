@@ -12,7 +12,7 @@
 //! `Session::open` reaches a directory, and only `App::new` calls it.
 use super::*;
 use crate::mainview::harness::*;
-use crate::mainview::panes::TEAR_OFF_PX;
+use crate::mainview::panes::{PaneNode, PanePath, SplitAxis, TEAR_OFF_PX};
 use koru_core::node::Node;
 use koru_core::schema::Parent;
 use koru_editor::Editing;
@@ -3406,16 +3406,56 @@ fn sidebar_with_a_document() -> (MainView, Workspace, Rect, koru_core::NodeId) {
     (v, workspace, row, doc)
 }
 
-/// **Alt+click opens the row in a background tab** (the CTO's note): a new
-/// tab appears beside the active one on the document, and the active tab
-/// stays what it was. A double-click opens nothing beyond the first click.
-#[test]
-fn an_alt_click_opens_the_row_in_a_background_tab() {
-    let (mut v, mut workspace, row, doc) = sidebar_with_a_document();
+/// Brief open from a click on its row, then a second document, "Other", in
+/// the tree: the view, its workspace, Brief, Other and where Other's row
+/// is pressed.
+fn sidebar_with_brief_open_and_other() -> (MainView, Workspace, NodeId, NodeId, (f32, f32)) {
+    let (mut v, mut workspace, row, brief) = sidebar_with_a_document();
     let (x, y) = (row.x + row.w * 0.4, row.centre().1);
     v.mouse_down(&mut workspace.ws, x, y, false);
     v.mouse_up(&mut workspace.ws);
-    assert_eq!(v.document_root(), Some(doc), "a click opens it");
+    assert_eq!(v.document_root(), Some(brief), "a click opens it");
+    let other = a_document(&mut workspace.ws, "Other");
+    v.adopt(&workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    let (_, r) = v
+        .explore
+        .row_rects(v.explore_area())
+        .into_iter()
+        .find(|(i, _)| v.explore.row_node(*i) == Some(other))
+        .expect("Other has a row");
+    (v, workspace, brief, other, (r.x + r.w * 0.4, r.centre().1))
+}
+
+/// An Alt press and release on a row, the way the shell delivers it.
+fn alt_press(v: &mut MainView, ws: &mut WorkspaceDoc, (x, y): (f32, f32)) {
+    v.set_mods(winit::keyboard::ModifiersState::ALT);
+    v.mouse_down(ws, x, y, false);
+    v.mouse_up(ws);
+    v.set_mods(winit::keyboard::ModifiersState::empty());
+}
+
+/// The window's split, as the axis and the focused pane's side of it —
+/// `None` while it is one pane.
+fn split_shape(v: &MainView) -> Option<(SplitAxis, Vec<u8>)> {
+    match v.panes.root() {
+        PaneNode::Split { axis, .. } => Some((*axis, v.panes.focused_path().as_bytes().to_vec())),
+        PaneNode::Group(_) => None,
+    }
+}
+
+/// **Alt+click on a row asks where it opens** — the place chooser a
+/// reference in a document shows, at the press (ADR-58; it was a background
+/// tab, E49). Nothing opens and nothing moves until a place is chosen, and
+/// the chooser is the window's blocker. A double-click on a row opens
+/// nothing beyond the first click.
+#[test]
+fn an_alt_click_on_a_row_opens_the_place_chooser_at_the_press() {
+    let (mut v, mut workspace, row, brief) = sidebar_with_a_document();
+    let (x, y) = (row.x + row.w * 0.4, row.centre().1);
+    v.mouse_down(&mut workspace.ws, x, y, false);
+    v.mouse_up(&mut workspace.ws);
+    assert_eq!(v.document_root(), Some(brief), "a click opens it");
     let tabs = v.tabs().len();
     // Consumed, so the press does not fall through — but nothing opens.
     v.mouse_double_click(&workspace.ws, x, y);
@@ -3430,28 +3470,86 @@ fn an_alt_click_opens_the_row_in_a_background_tab() {
         .into_iter()
         .find(|(i, _)| v.explore.row_node(*i) == Some(other))
         .expect("Other has a row");
-    v.set_mods(winit::keyboard::ModifiersState::ALT);
-    v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
-    v.mouse_up(&mut workspace.ws);
-    v.set_mods(winit::keyboard::ModifiersState::empty());
-    assert_eq!(v.tabs().len(), tabs + 1, "a tab appeared");
+    let at = (r.x + r.w * 0.4, r.centre().1);
+    alt_press(&mut v, &mut workspace.ws, at);
+
+    let ask = v.place_chooser.as_ref().expect("the chooser is up");
+    assert_eq!(ask.reference, koru_editor::Reference::Node(other));
+    assert_eq!(ask.chooser.at(), at, "at the press");
+    assert_eq!(&ask.pane, v.panes.focused_path(), "over the focused pane");
     assert_eq!(
-        v.document_root(),
-        Some(doc),
-        "the active tab is still Brief"
+        ask.chooser.highlight(),
+        koru_ui::place_chooser::Place::Middle
     );
+    assert_eq!(
+        v.blockers(),
+        koru_workspace_host::routing::Blockers::Modal(
+            koru_workspace_host::routing::ModalKind::PlaceChooser
+        )
+    );
+    assert_eq!(v.tabs().len(), tabs, "nothing opens until it is chosen");
+    assert_eq!(v.document_root(), Some(brief));
+    assert!(split_shape(&v).is_none());
+}
+
+/// **An arm splits, from a row as from a reference**: choosing one opens
+/// the row's document in a new pane on that side of the focused one, which
+/// takes the focus, and the pane it was asked from keeps showing Brief.
+#[test]
+fn choosing_an_arm_for_a_row_opens_it_in_a_split_on_that_side() {
+    use koru_ui::place_chooser::Place;
+    for (place, axis, side) in [
+        (Place::Up, SplitAxis::Horizontal, 0u8),
+        (Place::Right, SplitAxis::Vertical, 1),
+        (Place::Down, SplitAxis::Horizontal, 1),
+        (Place::Left, SplitAxis::Vertical, 0),
+    ] {
+        let (mut v, mut workspace, brief, other, at) = sidebar_with_brief_open_and_other();
+        alt_press(&mut v, &mut workspace.ws, at);
+
+        assert!(v.choose_place(&workspace.ws, place), "{place:?}");
+
+        assert!(v.place_chooser.is_none(), "{place:?}: the chooser closed");
+        assert_eq!(split_shape(&v), Some((axis, vec![side])), "{place:?}");
+        assert_eq!(v.document_root(), Some(other), "{place:?}: Other in front");
+        let beside = PanePath::root().child(1 - side as usize);
+        assert_eq!(
+            v.panes
+                .group(&beside)
+                .and_then(|group| group.active_tab().view.root()),
+            Some(brief),
+            "{place:?}: Brief stays in the pane it was asked from"
+        );
+    }
+}
+
+/// **The middle is a new tab, and no split** — from a row as from a
+/// reference: Other in front in a tab of its own, Brief's tab still there.
+/// Pressed with the pointer here, the whole way through the window.
+#[test]
+fn choosing_the_middle_for_a_row_opens_it_in_a_new_tab() {
+    let (mut v, mut workspace, brief, other, at) = sidebar_with_brief_open_and_other();
+    let tabs = v.tabs().len();
+    alt_press(&mut v, &mut workspace.ws, at);
+    let viewport = v.viewport;
+    let (mx, my) = v
+        .place_chooser
+        .as_ref()
+        .expect("the chooser is up")
+        .chooser
+        .cell_rect(viewport, koru_ui::place_chooser::Place::Middle)
+        .centre();
+
+    assert!(v.mouse_down(&mut workspace.ws, mx, my, false));
+
+    assert!(v.place_chooser.is_none(), "the chooser closed");
+    assert!(split_shape(&v).is_none(), "no split");
+    assert_eq!(v.tabs().len(), tabs + 1, "a new tab");
+    assert_eq!(v.document_root(), Some(other), "Other in front");
     assert!(
-        labels(&v).contains(&"Other".to_string()),
-        "the new tab is Other's: {:?}",
-        labels(&v)
+        v.tabs().iter().any(|tab| tab.view.root() == Some(brief)),
+        "Brief's tab is still there"
     );
-    // Again: the tab already there is reused, not doubled.
-    v.set_mods(winit::keyboard::ModifiersState::ALT);
-    v.mouse_down(&mut workspace.ws, r.x + r.w * 0.4, r.centre().1, false);
-    v.mouse_up(&mut workspace.ws);
-    v.set_mods(winit::keyboard::ModifiersState::empty());
-    assert_eq!(v.tabs().len(), tabs + 1, "no second tab on Other");
-    assert_eq!(v.document_root(), Some(doc));
 }
 
 /// Press a row, arm the drag inside the column, and carry it out.

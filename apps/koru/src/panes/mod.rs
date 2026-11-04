@@ -88,12 +88,15 @@ pub enum Outcome {
     /// the note's, not the row's. The same reasoning that keeps
     /// [`Outcome::DownloadFile`] distinct.
     OpenNote(NodeId),
-    /// Alt+click on a document or canvas row (the CTO's note): open it in a
-    /// new tab **beside** the active one, without activating it — the way a
-    /// browser's middle-click does. A double-click opened a tab of its own
-    /// for a day and felt wrong: the first click had already opened the
-    /// document, so the second looked like nothing or like a duplicate.
-    OpenNodeInBackgroundTab(NodeId),
+    /// Alt+click on a document, canvas or chat row: ask where it opens, with
+    /// the place chooser at `at` (window coordinates) — the one a reference
+    /// in a document shows, with the same five outcomes (ADR-58). Until
+    /// 2026-11-04 this was a background tab (E49); the user's decision made
+    /// Explore follow the document rule.
+    ChoosePlace {
+        reference: koru_editor::Reference,
+        at: (f32, f32),
+    },
     /// A document dragged to a new place in the explore tree. `nodes` is the
     /// carried set in document order (one entry for a plain drag); `target`
     /// is the row it was dropped on and `zone` says where relative to it.

@@ -75,6 +75,26 @@ impl ChatsSurface {
         true
     }
 
+    /// The chat a press here would choose — a chat row, off its own pin and
+    /// ⋯ — without choosing it: nothing is picked and nothing opens. What a
+    /// host asks before giving a modified press a meaning of its own (the
+    /// navigator's Alt+click, which asks where the chat opens).
+    pub fn chat_pressed_at(
+        &mut self,
+        area: Rect,
+        top: f32,
+        x: f32,
+        y: f32,
+    ) -> Option<crate::ChatId> {
+        let (row @ Row::Chat(index), rect) = self.row_at(area, top, x, y)? else {
+            return None;
+        };
+        if self.button_at(row, rect, x, y).is_some() {
+            return None;
+        }
+        self.chats.get(index).map(|chat| chat.id)
+    }
+
     /// A right-click. Names the chats the host's menu is about: the pick,
     /// when the chat under the pointer is in it, else that chat alone, which
     /// becomes the pick. The keyboard lands on the chat under the pointer.

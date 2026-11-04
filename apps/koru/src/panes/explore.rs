@@ -78,8 +78,17 @@ pub struct PressMods {
     pub ctrl: bool,
     /// Extends the selection from its anchor.
     pub shift: bool,
-    /// A document or canvas row: a background tab (the CTO's note).
+    /// Alone, on a document, canvas or chat row: ask where it opens — the
+    /// place chooser a reference in a document shows (ADR-58).
     pub alt: bool,
+}
+
+impl PressMods {
+    /// Alt with nothing else: the place chooser's press. Alt with Ctrl or
+    /// Shift is that key's press, as in a document.
+    fn asks_where(self) -> bool {
+        self.alt && !self.ctrl && !self.shift
+    }
 }
 
 /// What a plain click on a row does when it turns out not to be a drag.
@@ -4766,9 +4775,9 @@ impl ExploreView {
     /// Pointer press with the complete selection modifiers supplied by the
     /// container. Shift arrives through `View::set_mods`, while Ctrl is part of
     /// the shell's established pointer vocabulary.
-    /// …and with every key the press reads, Alt among them: on a document
-    /// or canvas row it means *open it in a background tab* (the CTO's note)
-    /// rather than select or open here.
+    /// …and with every key the press reads, Alt among them: alone, on a
+    /// document, canvas or chat row it means *ask where it opens* — the
+    /// place chooser, at the press — rather than select or open here.
     pub fn mouse_down_with(
         &mut self,
         area: Rect,
@@ -4777,7 +4786,7 @@ impl ExploreView {
         y: f32,
         mods: PressMods,
     ) -> Outcome {
-        let PressMods { ctrl, shift, alt } = mods;
+        let PressMods { ctrl, shift, .. } = mods;
         // The popover first: it floats *over* the pane, so a row underneath it
         // would otherwise answer for a press meant for a menu item — the same
         // ordering a tab's close box needs against the tab it sits in.
@@ -4881,6 +4890,20 @@ impl ExploreView {
         // reports what it cannot do itself.
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
+            // Alt alone on a chat asks where it opens, as it does on a
+            // document row — off the row's pin and ⋯, which keep their own
+            // meaning. Nothing is picked: the chooser is the answer.
+            if mods.asks_where()
+                && let Some(chat) = self.chats.chat_pressed_at(area, top, x, y)
+            {
+                return Outcome::ChoosePlace {
+                    reference: koru_editor::Reference::Chat(koru_editor::ChatTarget {
+                        chat: chat.as_uuid(),
+                        block: None,
+                    }),
+                    at: (x, y),
+                };
+            }
             self.chats.mouse_down_with(area, top, x, y, ctrl, shift);
             return self.chats_outcome();
         }
@@ -5071,11 +5094,16 @@ impl ExploreView {
             self.selection_anchor = None;
             return self.agents_row_pressed(row.node);
         }
-        // Alt+click on a page or a canvas: a new tab beside the active one,
-        // not activated (the CTO's note). Answered on the press, before any
-        // drag is seeded, so the release has nothing to open.
-        if alt && matches!(row.kind, Kind::Document | Kind::Canvas) {
-            return Outcome::OpenNodeInBackgroundTab(row.node);
+        // Alt+click on a page or a canvas asks where it opens: the place
+        // chooser at the press, the one a reference in a document shows
+        // (ADR-58; until 2026-11-04 a background tab, E49). Answered on the
+        // press, before any drag is seeded, so the release has nothing to
+        // open.
+        if mods.asks_where() && matches!(row.kind, Kind::Document | Kind::Canvas) {
+            return Outcome::ChoosePlace {
+                reference: koru_editor::Reference::Node(row.node),
+                at: (x, y),
+            };
         }
         // Manifest rows may be dragged. Seed a **latent** drag — it stays a
         // click until the pointer crosses `DRAG_ARM_PX`. Documents activate on

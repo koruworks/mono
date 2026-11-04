@@ -154,6 +154,38 @@ fn the_pin_pins_and_more_asks_for_the_menu_and_neither_opens() {
     assert_eq!(surface.take_wants_open(), None);
 }
 
+/// **What a press would choose, asked without choosing it** — the host's
+/// question before a modified press (the navigator's Alt+click): the chat
+/// under a row's title, nothing on its pin or ⋯, and nothing off a row; and
+/// asking picks nothing and opens nothing.
+#[test]
+fn chat_pressed_at_names_the_row_off_its_buttons_and_changes_nothing() {
+    let mut surface = three();
+    let (row, rect) = first_row(&mut surface);
+    let chat = surface.chats()[0].id;
+    let (x, y) = (rect.x + 20.0, rect.y + rect.h * 0.5);
+    surface.mouse_move(tall(), TOP, x, y);
+    assert_eq!(surface.chat_pressed_at(tall(), TOP, x, y), Some(chat));
+
+    let parts = surface.row_parts(row, rect);
+    for button in [parts.pin, parts.more] {
+        let (bx, by) = (button.x + button.w * 0.5, button.y + button.h * 0.5);
+        assert_eq!(
+            surface.chat_pressed_at(tall(), TOP, bx, by),
+            None,
+            "a row's button keeps its own meaning"
+        );
+    }
+    let last = surface.rows(tall(), TOP).last().copied().unwrap().1;
+    assert_eq!(
+        surface.chat_pressed_at(tall(), TOP, x, last.y + last.h + 40.0),
+        None,
+        "off the rows"
+    );
+    assert!(surface.selected().is_empty(), "nothing picked");
+    assert_eq!(surface.take_wants_open(), None, "nothing opened");
+}
+
 /// **A row being renamed stands aside for the field** (D89, the user's
 /// screenshot): no card, tint or ring behind the field, no status mark, no
 /// pin and no ⋯ to draw or press — and the field's text starts where the

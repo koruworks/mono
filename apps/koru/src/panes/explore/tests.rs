@@ -390,34 +390,89 @@ fn double_clicking_an_image_row_requests_rename() {
     );
 }
 
-/// **Alt+click on a document row asks for a background tab** (the CTO's
-/// note), on the press and without seeding a drag, so the release opens
-/// nothing. A double-click asks for nothing beyond the first click.
+/// **Alt+click on a document or canvas row asks where it opens** — the
+/// place chooser a reference in a document shows, at the press (ADR-58;
+/// it was a background tab, E49) — on the press and without seeding a
+/// drag, so the release opens nothing. A double-click asks for nothing
+/// beyond the first click.
 #[test]
-fn alt_clicking_a_document_row_asks_for_a_background_tab() {
+fn alt_clicking_a_document_row_asks_where_it_opens() {
+    for kind in [Kind::Document, Kind::Canvas] {
+        let mut v = with_rows(1);
+        v.rows[0].kind = kind;
+        let node = v.rows[0].node;
+        let (_, r) = v.row_rects(area()).into_iter().next().unwrap();
+        let (x, y) = (on_label(r), r.centre().1);
+        assert_eq!(
+            v.mouse_down_with(
+                area(),
+                VIEW,
+                x,
+                y,
+                PressMods {
+                    alt: true,
+                    ..PressMods::default()
+                }
+            ),
+            Outcome::ChoosePlace {
+                reference: koru_editor::Reference::Node(node),
+                at: (x, y),
+            },
+            "{kind:?}"
+        );
+        assert!(
+            v.drag.is_none(),
+            "{kind:?}: no latent drag: the release opens nothing"
+        );
+        assert!(v.selection.is_empty(), "{kind:?}: and nothing is selected");
+        assert_eq!(v.mouse_double_click(area(), VIEW, x, y), Outcome::Consumed);
+    }
+}
+
+/// **Only Alt alone asks** — Alt with Ctrl or Shift is that key's press, as
+/// in a document: Ctrl+Alt toggles the row in the selection the way Ctrl
+/// does. And a row that cannot open in a tab keeps its plain press: an
+/// image opens in its document as a click does.
+#[test]
+fn alt_with_another_key_or_on_an_image_is_not_the_place_chooser() {
     let mut v = with_rows(1);
     let node = v.rows[0].node;
     let (_, r) = v.row_rects(area()).into_iter().next().unwrap();
+    let (x, y) = (on_label(r), r.centre().1);
     assert_eq!(
         v.mouse_down_with(
             area(),
             VIEW,
-            on_label(r),
-            r.centre().1,
+            x,
+            y,
+            PressMods {
+                ctrl: true,
+                alt: true,
+                ..PressMods::default()
+            }
+        ),
+        Outcome::Consumed,
+        "Ctrl's press"
+    );
+    assert_eq!(v.mouse_up(), Outcome::Consumed, "Ctrl opens nothing");
+    assert!(v.selection.contains(&node), "Ctrl's toggle");
+
+    let mut v = with_rows(1);
+    v.rows[0].kind = Kind::Image;
+    let image = v.rows[0].node;
+    assert_eq!(
+        v.mouse_down_with(
+            area(),
+            VIEW,
+            x,
+            y,
             PressMods {
                 alt: true,
                 ..PressMods::default()
             }
         ),
-        Outcome::OpenNodeInBackgroundTab(node)
-    );
-    assert!(
-        v.drag.is_none(),
-        "no latent drag: the release opens nothing"
-    );
-    assert_eq!(
-        v.mouse_double_click(area(), VIEW, on_label(r), r.centre().1),
-        Outcome::Consumed
+        Outcome::OpenNode(image),
+        "an image's plain press"
     );
 }
 
@@ -6578,6 +6633,50 @@ fn a_press_in_the_chats_view_is_reported_as_what_it_asks_for() {
             chats: vec![newer, older],
             at: (a.x + 60.0, oldest.y + 6.0)
         }
+    );
+}
+
+/// **Alt+click on a chat asks where it opens**, as it does on a document
+/// row: the place chooser for that chat, at the press, with nothing picked
+/// and nothing opened. Ctrl+Alt is Ctrl's press — it picks, and opens
+/// nothing.
+#[test]
+fn alt_clicking_a_chat_row_asks_where_it_opens() {
+    let mut view = showing_chats(vec![a_chat(1, "Older", 1_000), a_chat(2, "Newer", 2_000)]);
+    let a = area();
+    let top = view.rows_top(a);
+    let (_, newest) = view
+        .chats_mut()
+        .layout(a, top)
+        .into_iter()
+        .find(|(row, _)| *row == koru_chats_ui::Row::Chat(0))
+        .unwrap();
+    let (x, y) = (a.x + 60.0, newest.y + 6.0);
+    let alt = PressMods {
+        alt: true,
+        ..PressMods::default()
+    };
+    assert_eq!(
+        view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
+        Outcome::ChoosePlace {
+            reference: koru_editor::Reference::Chat(koru_editor::ChatTarget {
+                chat: uuid::Uuid::from_u128(2),
+                block: None,
+            }),
+            at: (x, y),
+        }
+    );
+    assert!(view.chats().selected().is_empty(), "nothing picked");
+    assert_eq!(view.chats_mut().take_wants_open(), None, "nothing opened");
+
+    assert_eq!(
+        view.mouse_down_with(a, (1200.0, 800.0), x, y, PressMods { ctrl: true, ..alt }),
+        Outcome::Consumed,
+        "Ctrl's press"
+    );
+    assert_eq!(
+        view.chats().selected(),
+        vec![koru_chats_ui::ChatId::from_uuid(uuid::Uuid::from_u128(2))]
     );
 }
 
