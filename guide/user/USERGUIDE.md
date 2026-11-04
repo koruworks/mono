@@ -1534,7 +1534,9 @@ you to set up voice input and download the model.
 To change the microphone, rest the pointer on the microphone button and click
 the small arrow that appears beside it. Pick a device from the list —
 **Default** follows your system's choice — or turn **Hold to record** on or
-off. These are the same settings as in Settings → Voice. If the microphone
+off. The bar at the top of the list moves with what the microphone hears, so
+you can check you picked the right one; the microphone is only open while the
+list is. These are the same settings as in Settings → Voice. If the microphone
 you chose is unplugged, Koru uses the default until it is back.
 
 The **1 space** chip under the message box shows how many of this
@@ -1552,7 +1554,13 @@ Press **Submit** once every question has an answer, or **Skip** to tell the
 agent you'd rather not say. Tab moves through the card and Enter chooses. A
 message you send meanwhile waits in the queue until the reply ends.
 Afterwards the card shows what you answered (secrets as *(hidden)*), and it
-still does when you reopen the chat. `Enter` sends
+still does when you reopen the chat.
+
+Codex sometimes asks and finishes its reply straight away. Its card stays open
+after the reply ends: when you press **Submit**, your answers go to Codex as
+your next message and it carries on in a new reply (which counts like any
+message you send). **Skip** sends nothing. If you type a different message
+instead, the card reads *Passed over* and can no longer be answered. `Enter` sends
 and `Ctrl+Shift+Enter` (or `Cmd+Shift+Enter` on macOS) inserts a newline. It
 grows to eight lines and then scrolls inside itself, independently of the
 conversation. Embedded questions include the active document by stable
@@ -3617,6 +3625,9 @@ unchanged; for Kimi, *Manage documents over MCP* on the Welcome page shows the
 command to add by hand.
 
 ### Handing a piece of work over
+
+*Delegating is switched off in this build for now; it returns with the Agents
+views. Runs you have already delegated still show as described below.*
 
 Delegating is asking an agent to go and do something while you get on with
 something else. There are five ways to start one, and all five open the same
