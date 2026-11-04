@@ -452,8 +452,13 @@ impl WorkerState {
                         self.remember_agent_row(attempt.id, invocation);
                         // Only the choices are live: a person answers them
                         // once, and nothing reopens them.
-                        self.agent_live
-                            .insert(invocation, AgentActivityLive { choices });
+                        self.agent_live.insert(
+                            invocation,
+                            AgentActivityLive {
+                                choices,
+                                questions: Vec::new(),
+                            },
+                        );
                         row
                     })
                 })
@@ -478,9 +483,83 @@ impl WorkerState {
                     row.completed_at = Some(at);
                 })
             }
+            AgentActivityEvent::QuestionsAsked {
+                invocation,
+                questions,
+                blocking,
+            } => {
+                // A permission request's row (D108): it reads as one in
+                // every build. The set's words are kept on it — a plain
+                // line, and the questions as a record — so it reads the
+                // same after a reload; the options are live only.
+                let mut row = agent_row(
+                    invocation,
+                    attempt.id,
+                    chat_id,
+                    assistant_message_id,
+                    AgentToolKind::Approval,
+                    ToolApproval::Pending,
+                    at,
+                );
+                let record = koru_ai_core::QuestionsRecord::of(&questions);
+                let summary = koru_ai_core::bound_live_text(record.summary().trim());
+                row.agent_summary = (!summary.is_empty()).then_some(summary);
+                row.agent_input = record.encode();
+                self.repository.create_tool_activity(&row).and_then(|()| {
+                    row.text_offset = self.recorded_text_offset(invocation)?;
+                    // A set the agent waits on is the person's to answer —
+                    // the chat needs them; one it does not wait on runs.
+                    if blocking {
+                        row.status = ToolActivityStatus::ApprovalRequired;
+                    } else {
+                        row.status = ToolActivityStatus::Running;
+                        row.started_at = Some(at);
+                    }
+                    self.repository.advance_agent_activity(&row).map(|()| {
+                        self.remember_agent_row(attempt.id, invocation);
+                        self.agent_live.insert(
+                            invocation,
+                            AgentActivityLive {
+                                choices: Vec::new(),
+                                questions,
+                            },
+                        );
+                        row
+                    })
+                })
+            }
+            AgentActivityEvent::QuestionsAnswered {
+                invocation,
+                answers,
+            } => {
+                if let Some(live) = self.agent_live.get_mut(&invocation) {
+                    live.questions.clear();
+                }
+                self.agent_row_mut(invocation, |row| {
+                    match answers {
+                        // Answered: allowed, with what was said — a
+                        // secret's arrives withheld and is kept so.
+                        Some(answers) => {
+                            row.status = ToolActivityStatus::Complete;
+                            row.approval = ToolApproval::Approved;
+                            row.started_at.get_or_insert(at);
+                            row.agent_output = koru_ai_core::AnswersRecord { answers }.encode();
+                        }
+                        // Skipped: denied, as a refused request is.
+                        None => {
+                            row.status = ToolActivityStatus::Denied;
+                            row.approval = ToolApproval::Denied;
+                            row.started_at = None;
+                            row.error_code = Some(ToolErrorCode::PermissionDenied);
+                        }
+                    }
+                    row.completed_at = Some(at);
+                })
+            }
             AgentActivityEvent::ApprovalExpired { invocation } => {
                 if let Some(live) = self.agent_live.get_mut(&invocation) {
                     live.choices.clear();
+                    live.questions.clear();
                 }
                 self.agent_row_mut(invocation, |row| {
                     row.status = ToolActivityStatus::Cancelled;
@@ -672,6 +751,76 @@ impl WorkerState {
                 AnswerError::UnknownChoice => {
                     failure("invalid_request", "That choice was not offered.", false)
                 }
+            })?;
+        let mut activity = activity.clone();
+        activity.live = self.agent_live.get(&activity.id).cloned();
+        Ok(ToolDecisionResponse { activity })
+    }
+
+    /// Whether a row is a set of an agent's questions (D108): it has them
+    /// live, or keeps their record.
+    pub(super) fn is_question_row(&self, activity: &ToolActivity) -> bool {
+        self.agent_live
+            .get(&activity.id)
+            .is_some_and(|live| !live.questions.is_empty())
+            || activity
+                .agent_input
+                .as_deref()
+                .and_then(koru_ai_core::QuestionsRecord::decode)
+                .is_some()
+    }
+
+    /// **Answer a local agent's questions, or skip them** (`None`, D108).
+    /// Like an approval, the answer is dropped into the turn's channel and
+    /// the row moves only when the agent's own resolution arrives. A set
+    /// the agent does not wait on is answerable while its row runs.
+    pub(super) fn answer_agent_questions(
+        &mut self,
+        activity: &ToolActivity,
+        answers: Option<Vec<koru_ai_core::AgentAnswer>>,
+        approve: bool,
+    ) -> ApiResult<ToolDecisionResponse> {
+        if activity.approval != ToolApproval::Pending
+            || !matches!(
+                activity.status,
+                ToolActivityStatus::ApprovalRequired | ToolActivityStatus::Running
+            )
+        {
+            return Err(tool_decision_conflict());
+        }
+        if !self.is_question_row(activity) {
+            return Err(failure(
+                "invalid_request",
+                "This request asks no questions.",
+                false,
+            ));
+        }
+        if approve && answers.is_none() {
+            return Err(failure(
+                "answers_required",
+                "These questions take answers; send one for each.",
+                false,
+            ));
+        }
+        let Some(agents) = &self.agents else {
+            return Err(tool_not_resumable());
+        };
+        let attempt = self
+            .tool_attempts
+            .get(&activity.id)
+            .copied()
+            .ok_or_else(tool_not_resumable)?;
+        agents
+            .live()
+            .answer_questions(attempt, activity.id, answers)
+            .map_err(|error| match error {
+                AnswerError::NotLive | AnswerError::Closed => tool_not_resumable(),
+                AnswerError::NoSuchApproval => tool_decision_conflict(),
+                AnswerError::ChoiceRequired | AnswerError::UnknownChoice => failure(
+                    "invalid_request",
+                    "Those answers do not fit the questions.",
+                    false,
+                ),
             })?;
         let mut activity = activity.clone();
         activity.live = self.agent_live.get(&activity.id).cloned();

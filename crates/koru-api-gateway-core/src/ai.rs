@@ -1441,37 +1441,42 @@ async fn approve_tool_call(
     let Some(tool) = ToolInvocationId::parse(&tool) else {
         return invalid_identity("tool");
     };
-    let choice = match tool_decision_choice(&body) {
-        Ok(choice) => choice,
+    let decision = match tool_decision(&body) {
+        Ok(decision) => decision,
         Err(response) => return response,
     };
     let (client, context) = match admitted(&state, principal, AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
-    answer(call(move || client.approve_tool_call(context, tool, choice)).await)
+    answer(call(move || client.approve_tool_call(context, tool, decision)).await)
+}
+
+/// The optional decision body's choice: absent for a workspace tool, the
+/// chosen option for a local agent's permission request.
+fn tool_decision_choice(body: &[u8]) -> Result<Option<String>, Response> {
+    tool_decision(body).map(|request| request.choice)
 }
 
 /// The optional decision body: absent for a workspace tool, the chosen
-/// option for a local agent's permission request. An empty body is no
-/// choice, so the clients that predate the body keep working unchanged.
-fn tool_decision_choice(body: &[u8]) -> Result<Option<String>, Response> {
+/// option for a local agent's permission request, the answers to an
+/// agent's questions (koru-ai D108). An empty body is no choice, so the
+/// clients that predate the body keep working unchanged.
+fn tool_decision(body: &[u8]) -> Result<ToolDecisionRequest, Response> {
     if body.iter().all(u8::is_ascii_whitespace) {
-        return Ok(None);
+        return Ok(ToolDecisionRequest::default());
     }
-    serde_json::from_slice::<ToolDecisionRequest>(body)
-        .map(|request| request.choice)
-        .map_err(|_| {
-            ai_failure(
-                StatusCode::BAD_REQUEST,
-                Failure {
-                    code: "invalid_request".into(),
-                    message: "The tool decision body is invalid.".into(),
-                    retryable: false,
-                    details: Default::default(),
-                },
-            )
-        })
+    serde_json::from_slice::<ToolDecisionRequest>(body).map_err(|_| {
+        ai_failure(
+            StatusCode::BAD_REQUEST,
+            Failure {
+                code: "invalid_request".into(),
+                message: "The tool decision body is invalid.".into(),
+                retryable: false,
+                details: Default::default(),
+            },
+        )
+    })
 }
 
 async fn deny_tool_call(

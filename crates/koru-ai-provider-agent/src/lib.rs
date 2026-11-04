@@ -140,6 +140,24 @@ pub(crate) struct ApprovalAnswer {
     pub(crate) choice: Option<ApprovalChoiceId>,
 }
 
+/// What the person said to a waiting row: a permission's answer, or an
+/// agent's questions answered (`Some`) or skipped (`None`, koru-ai D108).
+#[derive(Clone, Debug)]
+pub(crate) enum TurnAnswer {
+    Approval(ApprovalAnswer),
+    Questions {
+        request: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    },
+}
+
+/// A question set waiting for the person: the host's id for it and the
+/// questions, which an answer is checked against before it is sent.
+pub(crate) struct PendingQuestions {
+    pub(crate) request: koru_session_protocol::QuestionRequestId,
+    pub(crate) questions: Vec<koru_session_protocol::AgentQuestion>,
+}
+
 pub(crate) struct PendingApproval {
     pub(crate) approval: ApprovalId,
     pub(crate) choices: Vec<(ApprovalChoiceId, ApprovalDecision)>,
@@ -149,9 +167,10 @@ pub(crate) struct PendingApproval {
 /// permission requests still waiting for an answer.
 pub(crate) struct LiveTurn {
     pub(crate) chat: ChatId,
-    answers: SyncSender<ApprovalAnswer>,
+    answers: SyncSender<TurnAnswer>,
     steers: SyncSender<SteerInput>,
     pub(crate) pending: HashMap<ToolInvocationId, PendingApproval>,
+    pub(crate) questions: HashMap<ToolInvocationId, PendingQuestions>,
 }
 
 /// **Text the person sends into the running turn** (a steer), dropped into
@@ -250,7 +269,7 @@ impl LiveTurns {
         &self,
         attempt: InferenceAttemptId,
         chat: ChatId,
-        answers: SyncSender<ApprovalAnswer>,
+        answers: SyncSender<TurnAnswer>,
         steers: SyncSender<SteerInput>,
     ) {
         self.lock().insert(
@@ -260,6 +279,7 @@ impl LiveTurns {
                 answers,
                 steers,
                 pending: HashMap::new(),
+                questions: HashMap::new(),
             },
         );
     }
@@ -311,6 +331,66 @@ impl LiveTurns {
     ) {
         if let Some(turn) = self.lock().get_mut(&attempt) {
             turn.pending.insert(invocation, pending);
+        }
+    }
+
+    pub(crate) fn offer_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        invocation: ToolInvocationId,
+        pending: PendingQuestions,
+    ) {
+        if let Some(turn) = self.lock().get_mut(&attempt) {
+            turn.questions.insert(invocation, pending);
+        }
+    }
+
+    pub(crate) fn settle_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        request: koru_session_protocol::QuestionRequestId,
+    ) {
+        if let Some(turn) = self.lock().get_mut(&attempt) {
+            turn.questions
+                .retain(|_, pending| pending.request != request);
+        }
+    }
+
+    /// **Answer an agent's questions, or skip them** (`None`, koru-ai
+    /// D108). The answers are checked against the set here, so a bad one is
+    /// refused at once; the turn's thread sends the rest. The row stays
+    /// waiting until the agent's own resolution moves it.
+    pub fn answer_questions(
+        &self,
+        attempt: InferenceAttemptId,
+        invocation: ToolInvocationId,
+        answers: Option<Vec<koru_ai_core::AgentAnswer>>,
+    ) -> Result<(), AnswerError> {
+        let mut turns = self.lock();
+        let turn = turns.get_mut(&attempt).ok_or(AnswerError::NotLive)?;
+        let pending = turn
+            .questions
+            .get(&invocation)
+            .ok_or(AnswerError::NoSuchApproval)?;
+        let answers = match answers {
+            Some(answers) => Some(
+                koru_session_protocol::validate_answers(
+                    &pending.questions,
+                    answers.into_iter().map(protocol_answer).collect(),
+                )
+                .map_err(|_| AnswerError::UnknownChoice)?,
+            ),
+            None => None,
+        };
+        let answer = TurnAnswer::Questions {
+            request: pending.request,
+            answers,
+        };
+        match turn.answers.try_send(answer) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                Err(AnswerError::Closed)
+            }
         }
     }
 
@@ -369,11 +449,11 @@ impl LiveTurns {
             }
             (decision, Some(id))
         };
-        let answer = ApprovalAnswer {
+        let answer = TurnAnswer::Approval(ApprovalAnswer {
             approval: pending.approval,
             decision,
             choice: chosen,
-        };
+        });
         match turn.answers.try_send(answer) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
@@ -384,6 +464,20 @@ impl LiveTurns {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<InferenceAttemptId, LiveTurn>> {
         self.turns.lock().unwrap_or_else(|held| held.into_inner())
+    }
+}
+
+/// A chat's answer in the session protocol's terms.
+fn protocol_answer(answer: koru_ai_core::AgentAnswer) -> koru_session_protocol::QuestionAnswer {
+    use koru_ai_core::AgentAnswerValue;
+    use koru_session_protocol::QuestionAnswerValue;
+    koru_session_protocol::QuestionAnswer {
+        question_id: answer.question_id,
+        value: match answer.value {
+            AgentAnswerValue::Option { label } => QuestionAnswerValue::Option { label },
+            AgentAnswerValue::Text { text } => QuestionAnswerValue::Text { text },
+            AgentAnswerValue::Withheld => QuestionAnswerValue::Withheld,
+        },
     }
 }
 
@@ -444,9 +538,90 @@ mod tests {
             capability::PROVIDER_MODELS,
             capability::SESSION_ORIGIN,
             capability::LAUNCH_SELECTION,
+            capability::MANAGED_QUESTIONS,
         ] {
             assert!(offer.capabilities.supports(name), "{name} is not offered");
         }
+    }
+
+    /// **An agent's questions are answered through the live turn** (koru-ai
+    /// D108): answers that fit the set go into the turn's channel in the
+    /// session protocol's terms, a skip goes as `None`, and an answer that
+    /// does not fit is refused at once; a settled set takes no answer.
+    #[test]
+    fn question_answers_fit_their_set_or_are_refused() {
+        use koru_ai_core::{AgentAnswer, AgentAnswerValue};
+        use koru_session_protocol::{
+            AgentQuestion, QuestionAnswerValue, QuestionOption, QuestionRequestId,
+        };
+        let live = LiveTurns::default();
+        let attempt = InferenceAttemptId::new();
+        let invocation = ToolInvocationId::new();
+        let (answers, received) = std::sync::mpsc::sync_channel(4);
+        let (steers, _steered) = std::sync::mpsc::sync_channel(4);
+        live.register(attempt, ChatId::new(), answers, steers);
+        assert_eq!(
+            live.answer_questions(attempt, invocation, None),
+            Err(AnswerError::NoSuchApproval)
+        );
+        let request = QuestionRequestId::mint();
+        live.offer_questions(
+            attempt,
+            invocation,
+            PendingQuestions {
+                request,
+                questions: vec![AgentQuestion {
+                    id: "pick".into(),
+                    header: String::new(),
+                    question: "Which?".into(),
+                    options: vec![QuestionOption {
+                        label: "First".into(),
+                        description: String::new(),
+                    }],
+                    allow_other: false,
+                    secret: false,
+                }],
+            },
+        );
+        let answer = |label: &str| {
+            Some(vec![AgentAnswer {
+                question_id: "pick".into(),
+                value: AgentAnswerValue::Option {
+                    label: label.into(),
+                },
+            }])
+        };
+        assert_eq!(
+            live.answer_questions(attempt, invocation, answer("Second")),
+            Err(AnswerError::UnknownChoice)
+        );
+        assert!(received.try_recv().is_err(), "nothing sent");
+        live.answer_questions(attempt, invocation, answer("First"))
+            .unwrap();
+        let TurnAnswer::Questions {
+            request: sent,
+            answers: Some(sent_answers),
+        } = received.try_recv().unwrap()
+        else {
+            panic!("answers");
+        };
+        assert_eq!(sent, request);
+        assert_eq!(
+            sent_answers[0].value,
+            QuestionAnswerValue::Option {
+                label: "First".into()
+            }
+        );
+        live.answer_questions(attempt, invocation, None).unwrap();
+        assert!(matches!(
+            received.try_recv().unwrap(),
+            TurnAnswer::Questions { answers: None, .. }
+        ));
+        live.settle_questions(attempt, request);
+        assert_eq!(
+            live.answer_questions(attempt, invocation, None),
+            Err(AnswerError::NoSuchApproval)
+        );
     }
 
     use super::*;
@@ -543,7 +718,9 @@ mod tests {
         );
         live.answer(attempt, invocation, Some(&allow_twice.to_string()), true)
             .unwrap();
-        let sent = received.try_recv().unwrap();
+        let TurnAnswer::Approval(sent) = received.try_recv().unwrap() else {
+            panic!("an approval");
+        };
         assert_eq!(sent.approval, approval);
         assert_eq!(sent.decision, ApprovalDecision::Approve);
         assert_eq!(sent.choice, Some(allow_twice));
@@ -574,7 +751,9 @@ mod tests {
             },
         );
         live.answer(attempt, invocation, None, false).unwrap();
-        let sent = received.try_recv().unwrap();
+        let TurnAnswer::Approval(sent) = received.try_recv().unwrap() else {
+            panic!("an approval");
+        };
         assert_eq!(sent.decision, ApprovalDecision::Reject);
         assert_eq!(sent.choice, None);
     }

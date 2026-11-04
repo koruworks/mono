@@ -232,11 +232,19 @@ pub struct ChatToolPolicyResponse {
 /// choices for a permission request; the chosen one's id comes back here.
 /// A workspace tool offers none and takes no body. An agent's row with no
 /// choice is refused, so two same-intent choices can never collapse.
+///
+/// **An agent's questions are answered by approving their row with
+/// `answers`** (koru-ai D108), one per question by its id: an offered
+/// option by label, or the person's own words where the question takes
+/// them. Denying the row skips the set. A question row approved without
+/// answers is refused.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolDecisionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Vec<koru_ai_core::AgentAnswer>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

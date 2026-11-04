@@ -16,6 +16,7 @@ pub mod inference;
 pub mod model;
 pub mod ports;
 pub mod provider;
+pub mod questions;
 pub mod reading_order;
 
 pub use agent::*;
@@ -40,6 +41,10 @@ pub use ports::{
     AiPersistence, AiProvider, AiToolExecutionContext, AiToolExecutor, StoreContextPort,
 };
 pub use provider::*;
+pub use questions::{
+    AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,
+    QuestionsRecord,
+};
 pub use reading_order::{read_through, reading_order};
 
 pub use koru_store_core::ids::{DocumentId, ProfileId, WorkspaceId};

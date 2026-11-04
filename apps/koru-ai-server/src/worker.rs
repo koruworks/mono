@@ -845,13 +845,13 @@ impl AiServerPort for AiWorkerClient {
         &self,
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ApproveToolCall {
             context,
             tool,
-            choice,
+            decision,
             reply,
         })?;
         receive_api(response)
@@ -1168,7 +1168,7 @@ enum WorkerCommand {
     ApproveToolCall {
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     DenyToolCall {
@@ -1834,10 +1834,10 @@ impl WorkerState {
             WorkerCommand::ApproveToolCall {
                 context,
                 tool,
-                choice,
+                decision,
                 reply,
             } => {
-                let _ = reply.send(self.approve_tool_call(context, tool, choice));
+                let _ = reply.send(self.approve_tool_call(context, tool, decision));
             }
             WorkerCommand::DenyToolCall {
                 context,
@@ -4219,7 +4219,7 @@ impl WorkerState {
         &mut self,
         context: RequestContext,
         invocation_id: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(None)?;
@@ -4228,7 +4228,12 @@ impl WorkerState {
             .tool_activity(invocation_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let koru_ai_wire::ToolDecisionRequest { choice, answers } = decision;
         if AgentToolKind::is_agent_token(&activity.tool_name) {
+            // An agent's questions are answered, never approved bare (D108).
+            if self.is_question_row(&activity) || answers.is_some() {
+                return self.answer_agent_questions(&activity, answers, true);
+            }
             if activity.status != ToolActivityStatus::ApprovalRequired
                 || activity.approval != ToolApproval::Pending
             {
@@ -4323,6 +4328,10 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         if AgentToolKind::is_agent_token(&activity.tool_name) {
+            // Denying an agent's questions skips them (D108).
+            if self.is_question_row(&activity) {
+                return self.answer_agent_questions(&activity, None, false);
+            }
             if activity.status != ToolActivityStatus::ApprovalRequired
                 || activity.approval != ToolApproval::Pending
             {

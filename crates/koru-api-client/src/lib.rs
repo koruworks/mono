@@ -1073,6 +1073,24 @@ impl AiClient<'_> {
         )
     }
 
+    /// **Answer a local agent's questions** (koru-ai D108): their row is
+    /// approved with an answer per question. A skip is
+    /// [`Self::deny_tool_call`] with no choice.
+    pub fn answer_tool_questions(
+        &self,
+        tool: ToolInvocationId,
+        answers: Vec<koru_ai_core::AgentAnswer>,
+    ) -> AiResult<ToolDecisionResponse> {
+        self.json(
+            reqwest::Method::POST,
+            format!("/v1/ai/tool-calls/{tool}/approve"),
+            Some(json_body(&koru_ai_wire::ToolDecisionRequest {
+                choice: None,
+                answers: Some(answers),
+            })?),
+        )
+    }
+
     pub fn deny_tool_call(
         &self,
         tool: ToolInvocationId,
@@ -1380,6 +1398,7 @@ fn tool_decision_body(choice: Option<String>) -> AiResult<Option<Bytes>> {
         .map(|choice| {
             json_body(&koru_ai_wire::ToolDecisionRequest {
                 choice: Some(choice),
+                answers: None,
             })
         })
         .transpose()

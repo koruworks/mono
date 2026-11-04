@@ -48,7 +48,9 @@ pub(crate) fn is_card(activity: &ToolActivity) -> bool {
 /// step — a pending permission request, or plumbing such as a lookup of
 /// which tools exist.
 pub(crate) fn step_kind(activity: &ToolActivity) -> Option<StepKind> {
-    if is_card(activity) {
+    // An agent's questions are a card of their own, waiting or closed
+    // (koru-ai D108), never a step.
+    if is_card(activity) || crate::questions::is_question_row(activity) {
         return None;
     }
     if !is_agent_row(activity) {

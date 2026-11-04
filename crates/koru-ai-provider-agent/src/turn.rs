@@ -42,8 +42,8 @@ use koru_session_wire::SubscriptionUpdate;
 
 use crate::control::{offer, session_error};
 use crate::{
-    AGENT_DEFAULT_MODEL, AgentProvider, ApprovalAnswer, CANCEL_DEADLINE, COLUMNS, LiveTurns,
-    PREFIX_BYTES, PRODUCT, PendingApproval, READ_INTERVAL, SteerError, SteerInput, chat_origin,
+    AGENT_DEFAULT_MODEL, AgentProvider, CANCEL_DEADLINE, COLUMNS, LiveTurns, PREFIX_BYTES, PRODUCT,
+    PendingApproval, READ_INTERVAL, SteerError, SteerInput, chat_origin,
 };
 
 /// How long the turn waits for a turn it found already running to end
@@ -260,6 +260,7 @@ pub(crate) fn start(
         queued,
         tools: HashMap::new(),
         approvals: HashMap::new(),
+        question_rows: HashMap::new(),
         usage: None,
         ingested: delivered.native,
         started_in: request.options.agent_mode.clone(),
@@ -578,7 +579,7 @@ struct TurnStream {
     turn: AgentTurnId,
     client: Arc<SessionClient>,
     events: Subscription,
-    answers: Receiver<ApprovalAnswer>,
+    answers: Receiver<crate::TurnAnswer>,
     /// Text the person sends into this turn (a steer), sent on its lease.
     steers: Receiver<SteerInput>,
     live: Arc<LiveTurns>,
@@ -587,6 +588,8 @@ struct TurnStream {
     queued: VecDeque<AiEvent>,
     tools: HashMap<ToolCallId, ToolInvocationId>,
     approvals: HashMap<ApprovalId, ToolInvocationId>,
+    /// Each question set this turn asked, by the row it is (D108).
+    question_rows: HashMap<koru_session_protocol::QuestionRequestId, ToolInvocationId>,
     usage: Option<AiUsage>,
     /// The session's copies of this turn's pictures, removed when it ends.
     ingested: Vec<AttachmentId>,
@@ -682,15 +685,30 @@ impl Iterator for TurnStream {
 impl TurnStream {
     fn drain_answers(&mut self) {
         while let Ok(answer) = self.answers.try_recv() {
-            if let Err(error) = self.client.answer_approval(
-                self.session,
-                self.lease,
-                IdempotencyKey::mint(),
-                answer.approval,
-                answer.decision,
-                answer.choice,
-            ) {
-                tracing::debug!(target: "koru_ai::agent", error = %error, "agent approval answer failed");
+            match answer {
+                crate::TurnAnswer::Approval(answer) => {
+                    if let Err(error) = self.client.answer_approval(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        answer.approval,
+                        answer.decision,
+                        answer.choice,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "agent approval answer failed");
+                    }
+                }
+                crate::TurnAnswer::Questions { request, answers } => {
+                    if let Err(error) = self.client.answer_questions(
+                        self.session,
+                        self.lease,
+                        IdempotencyKey::mint(),
+                        request,
+                        answers,
+                    ) {
+                        tracing::debug!(target: "koru_ai::agent", error = %error, "agent questions answer failed");
+                    }
+                }
             }
         }
     }
@@ -966,6 +984,64 @@ impl TurnStream {
                     at,
                 });
             }
+            // The agent stopped to ask (D108): a row of its own, filed as a
+            // permission request, whose questions are live until answered.
+            AgentEvent::QuestionsRequired {
+                turn_id,
+                request_id,
+                questions,
+                blocking,
+            } if turn_id == self.turn => {
+                let invocation = ToolInvocationId::new();
+                self.question_rows.insert(request_id, invocation);
+                self.live.offer_questions(
+                    attempt_id,
+                    invocation,
+                    crate::PendingQuestions {
+                        request: request_id,
+                        questions: questions.clone(),
+                    },
+                );
+                self.queued.push_back(AiEvent::AgentActivity {
+                    attempt_id,
+                    activity: AgentActivityEvent::QuestionsAsked {
+                        invocation,
+                        questions: questions.into_iter().map(chat_question).collect(),
+                        blocking,
+                    },
+                    at,
+                });
+            }
+            AgentEvent::QuestionsResolved {
+                turn_id,
+                request_id,
+                outcome,
+            } if turn_id == self.turn => {
+                self.live.settle_questions(attempt_id, request_id);
+                if let Some(invocation) = self.question_rows.remove(&request_id) {
+                    use koru_session_protocol::QuestionsOutcome;
+                    let activity = match outcome {
+                        QuestionsOutcome::Answered { answers } => {
+                            AgentActivityEvent::QuestionsAnswered {
+                                invocation,
+                                answers: Some(answers.into_iter().map(chat_answer).collect()),
+                            }
+                        }
+                        QuestionsOutcome::Skipped => AgentActivityEvent::QuestionsAnswered {
+                            invocation,
+                            answers: None,
+                        },
+                        QuestionsOutcome::Expired => {
+                            AgentActivityEvent::ApprovalExpired { invocation }
+                        }
+                    };
+                    self.queued.push_back(AiEvent::AgentActivity {
+                        attempt_id,
+                        activity,
+                        at,
+                    });
+                }
+            }
             // Another turn's events, provider state, attachments, children:
             // counted, never surfaced.
             _ => {}
@@ -992,6 +1068,40 @@ impl TurnStream {
 impl Drop for TurnStream {
     fn drop(&mut self) {
         self.finish();
+    }
+}
+
+/// A question as the chat keeps it: the agent's words, its options in its
+/// order (D108).
+fn chat_question(question: koru_session_protocol::AgentQuestion) -> koru_ai_core::AgentQuestion {
+    koru_ai_core::AgentQuestion {
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        options: question
+            .options
+            .into_iter()
+            .map(|option| koru_ai_core::AgentQuestionOption {
+                label: option.label,
+                description: option.description,
+            })
+            .collect(),
+        allow_other: question.allow_other,
+        secret: question.secret,
+    }
+}
+
+/// An answer as the chat keeps it; a secret's arrives withheld.
+fn chat_answer(answer: koru_session_protocol::QuestionAnswer) -> koru_ai_core::AgentAnswer {
+    use koru_ai_core::AgentAnswerValue;
+    use koru_session_protocol::QuestionAnswerValue;
+    koru_ai_core::AgentAnswer {
+        question_id: answer.question_id,
+        value: match answer.value {
+            QuestionAnswerValue::Option { label } => AgentAnswerValue::Option { label },
+            QuestionAnswerValue::Text { text } => AgentAnswerValue::Text { text },
+            QuestionAnswerValue::Withheld => AgentAnswerValue::Withheld,
+        },
     }
 }
 

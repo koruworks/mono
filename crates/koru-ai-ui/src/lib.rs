@@ -76,6 +76,7 @@ mod live_markdown;
 mod model_picker;
 mod new_divider;
 mod privacy;
+mod questions;
 mod queue;
 mod quote_pills;
 mod reader;
@@ -245,6 +246,9 @@ enum Focus {
     Composer,
     /// A reply's *Worked for …* header: Enter or Space opens it.
     Work(MessageId),
+    /// An agent's waiting questions (koru-ai D108): the card's own cursor
+    /// says which option, box or action.
+    Questions(ToolInvocationId),
     WorkspaceSearch,
     OpenAiKey,
     OpenAiModel,
@@ -481,6 +485,9 @@ pub struct ChatSurface {
     pointer: (f32, f32),
     message_layouts: Vec<MessageLayout>,
     tool_activity_layouts: Vec<ToolActivityLayout>,
+    /// Each waiting question set's card (koru-ai D108): what is chosen and
+    /// typed, by the row's id, while the set waits.
+    question_cards: HashMap<ToolInvocationId, questions::Card>,
     /// Each reply's work view, in the order the replies happened.
     work_layouts: Vec<work_view::WorkLayout>,
     /// A local agent's notices, each a grey line in front of its reply
@@ -900,6 +907,7 @@ impl ChatSurface {
             pointer: (0.0, 0.0),
             message_layouts: Vec::new(),
             tool_activity_layouts: Vec::new(),
+            question_cards: HashMap::new(),
             work_layouts: Vec::new(),
             notice_layouts: Vec::new(),
             opened_work: HashSet::new(),
@@ -1642,6 +1650,11 @@ impl ChatSurface {
         {
             return handled;
         }
+        if let Focus::Questions(tool) = self.focus
+            && let Some(handled) = self.questions_key(tool, key, text, mods)
+        {
+            return handled;
+        }
         // **A modifier pressed on its own is not typing** (D90's Ctrl+L
         // bug): the shell hands this surface the Ctrl of `Ctrl+L` as a key
         // of its own, and taking it as the keyboard arriving in the composer
@@ -2268,6 +2281,9 @@ impl ChatSurface {
                 self.composer.set_focused(false);
             }
             return self.toggle_work(hit);
+        }
+        if let Some(handled) = self.question_mouse_down(x, y) {
+            return handled;
         }
         if let Some((tool, part)) = self.tool_activity_at(x, y) {
             // A permission card is always open: only its choices act.
@@ -3741,6 +3757,7 @@ impl ChatSurface {
             // has said why.
             Update::Failure(_) if self.chat_unmade() => {}
             Update::Failure(message) => {
+                self.settle_question_cards(true);
                 tracing::warn!(
                     target: "koru_ai::ui",
                     "AI UI received a client failure"
@@ -3814,13 +3831,13 @@ impl ChatSurface {
         if transcript.chat.id != activity.chat_id {
             return;
         }
+        let arrived_new = !transcript
+            .tool_activities
+            .iter()
+            .any(|existing| existing.id == activity.id);
         let (reply, unplaced) = (
             activity.assistant_message_id,
-            activity.text_offset.is_none()
-                && !transcript
-                    .tool_activities
-                    .iter()
-                    .any(|existing| existing.id == activity.id),
+            activity.text_offset.is_none() && arrived_new,
         );
         if let Some(existing) = transcript
             .tool_activities
@@ -3844,6 +3861,21 @@ impl ChatSurface {
                 activity_id,
                 u32::try_from(self.draft.len()).unwrap_or(u32::MAX),
             );
+        }
+        // A set of questions that just arrived may take the keyboard (D108).
+        let arrived = arrived_new
+            .then(|| {
+                self.transcript.as_ref().and_then(|transcript| {
+                    transcript
+                        .tool_activities
+                        .iter()
+                        .find(|activity| activity.id == activity_id)
+                        .cloned()
+                })
+            })
+            .flatten();
+        if let Some(activity) = arrived {
+            self.offer_question_keyboard(&activity);
         }
         self.messages_dirty = true;
     }
@@ -6394,6 +6426,7 @@ impl ChatSurface {
 
     fn rebuild_messages(&mut self, width: f32) {
         let started = Instant::now();
+        self.settle_question_cards(false);
         self.tool_activity_layouts.clear();
         self.work_layouts.clear();
         self.notice_layouts.clear();
@@ -6652,12 +6685,29 @@ impl ChatSurface {
                 }
             }
             // A pending permission request is a card of its own, open, in
-            // front of its reply.
-            for activity in transcript
-                .tool_activities
-                .iter()
-                .filter(|activity| tool_groups::is_card(activity))
-            {
+            // front of its reply; so is an agent's set of questions (D108),
+            // waiting or closed.
+            for activity in transcript.tool_activities.iter().filter(|activity| {
+                tool_groups::is_card(activity) || questions::is_question_row(activity)
+            }) {
+                if questions::is_question_row(activity) {
+                    let expanded_height = questions::card_height(
+                        &mut self.engine,
+                        &mut self.question_cards,
+                        lang,
+                        activity,
+                        width,
+                    );
+                    self.tool_activity_layouts.push(ToolActivityLayout {
+                        activity: activity.clone(),
+                        before_message: Some(activity.assistant_message_id),
+                        top: 0.0,
+                        title: self.engine.simple_layout("", role::row()),
+                        detail: self.engine.simple_layout("", role::meta()),
+                        expanded_height,
+                    });
+                    continue;
+                }
                 let title = if is_agent_row(activity) {
                     agent_row_title(activity, self.lang)
                 } else {
@@ -7353,6 +7403,24 @@ impl ChatSurface {
                 area.w,
                 tool.expanded_height,
             );
+            if row.y + row.h >= area.y
+                && row.y <= area.y + area.h
+                && questions::is_question_row(&tool.activity)
+            {
+                let focused = self.question_focus(tool.activity.id);
+                questions::draw_card(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    &self.question_cards,
+                    self.lang,
+                    self.pointer,
+                    focused,
+                    row,
+                    &tool.activity,
+                );
+                continue;
+            }
             if row.y + row.h >= area.y && row.y <= area.y + area.h {
                 scene::fill(
                     canvas,
@@ -7632,6 +7700,11 @@ impl ChatSurface {
             );
             if !row.contains(x, y) {
                 continue;
+            }
+            // A question card answers its own presses (D108); a closed
+            // set's summary has nothing to press.
+            if questions::is_question_row(&tool.activity) {
+                return Some((tool.activity.id, 0));
             }
             if is_agent_row(&tool.activity) {
                 if let Some(part) = agents::agent_choice_at(row, &tool.activity, x, y) {

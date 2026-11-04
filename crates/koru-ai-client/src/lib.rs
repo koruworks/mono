@@ -286,9 +286,9 @@ impl Client {
         &self,
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> Result<ToolDecisionResponse> {
-        self.server.approve_tool_call(context, tool, choice)
+        self.server.approve_tool_call(context, tool, decision)
     }
 
     pub fn deny_tool_call(

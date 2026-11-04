@@ -265,9 +265,90 @@
               "$ref": "#/components/schemas/OfferedChoice"
             },
             "type": "array"
+          },
+          "questions": {
+            "description": "The questions a waiting question set asks (koru-ai D108), in the\nagent's order with each one's options in its order; empty once\nanswered, skipped or expired, and on every other row.",
+            "items": {
+              "$ref": "#/components/schemas/AgentQuestion"
+            },
+            "type": "array"
           }
         },
         "type": "object"
+      },
+      "AgentAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/AgentAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "AgentAnswerValue": {
+        "description": "What one question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "option"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given; it is not repeated.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "withheld"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "AgentModeView": {
         "description": "One approval mode an agent offers: its own id, and what it says of it.\nA client words the ids it knows and shows these for the rest.",
@@ -498,6 +579,55 @@
         },
         "required": [
           "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "AgentQuestion": {
+        "description": "One question an agent asked. `id` is the agent's own key for it.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/components/schemas/AgentQuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
+      },
+      "AgentQuestionOption": {
+        "description": "One option a question offers: its label, sent back when chosen, and the\nline under it.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
           "label"
         ],
         "type": "object"
@@ -15324,8 +15454,15 @@
       },
       "ToolDecisionRequest": {
         "additionalProperties": false,
-        "description": "The optional body of an approve or deny. A local agent offers its own\nchoices for a permission request; the chosen one's id comes back here.\nA workspace tool offers none and takes no body. An agent's row with no\nchoice is refused, so two same-intent choices can never collapse.",
+        "description": "The optional body of an approve or deny. A local agent offers its own\nchoices for a permission request; the chosen one's id comes back here.\nA workspace tool offers none and takes no body. An agent's row with no\nchoice is refused, so two same-intent choices can never collapse.\n\n**An agent's questions are answered by approving their row with\n`answers`** (koru-ai D108), one per question by its id: an offered\noption by label, or the person's own words where the question takes\nthem. Denying the row skips the set. A question row approved without\nanswers is refused.",
         "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAnswer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "choice": {
             "nullable": true,
             "type": "string"

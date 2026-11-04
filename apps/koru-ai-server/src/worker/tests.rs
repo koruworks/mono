@@ -1306,12 +1306,12 @@ fn manual_mode_pauses_mutation_until_idempotent_approval() {
     );
 
     let approved = client
-        .approve_tool_call(context(), invocation, None)
+        .approve_tool_call(context(), invocation, Default::default())
         .unwrap();
     assert_eq!(approved.activity.approval, ToolApproval::Approved);
     assert_eq!(
         client
-            .approve_tool_call(context(), invocation, None)
+            .approve_tool_call(context(), invocation, Default::default())
             .unwrap()
             .activity
             .approval,
@@ -3049,4 +3049,202 @@ fn an_export_carries_a_steer_under_its_question() {
     .map(|text| through_next.find(text).unwrap())
     .collect();
     assert!(order.is_sorted(), "{through_next}");
+}
+
+/// An agent that asks three sets of questions in one reply (koru-ai D108):
+/// the first answered — a secret among the answers, withheld — the second
+/// skipped, the third left open when the reply ends.
+struct QuestionsProvider;
+
+impl QuestionsProvider {
+    fn set(id: &str) -> Vec<koru_ai_core::AgentQuestion> {
+        vec![
+            koru_ai_core::AgentQuestion {
+                id: format!("{id}-pick"),
+                header: format!("Header {id}"),
+                question: "Which one?".into(),
+                options: vec![koru_ai_core::AgentQuestionOption {
+                    label: "Recommended".into(),
+                    description: "The agent's first".into(),
+                }],
+                allow_other: true,
+                secret: false,
+            },
+            koru_ai_core::AgentQuestion {
+                id: format!("{id}-token"),
+                header: String::new(),
+                question: "The token?".into(),
+                options: Vec::new(),
+                allow_other: false,
+                secret: true,
+            },
+        ]
+    }
+}
+
+impl AiProvider for QuestionsProvider {
+    fn start(
+        &self,
+        request: AiRequest,
+        _cancellation: Cancellation,
+    ) -> Result<ProviderStream, AiError> {
+        use koru_ai_core::{AgentActivityEvent, AgentAnswer, AgentAnswerValue};
+        let attempt_id = request.attempt_id;
+        let activity = |activity: AgentActivityEvent| AiEvent::AgentActivity {
+            attempt_id,
+            activity,
+            at: Timestamp::now(),
+        };
+        let [answered, skipped, open] = [
+            ToolInvocationId::new(),
+            ToolInvocationId::new(),
+            ToolInvocationId::new(),
+        ];
+        Ok(Box::new(
+            vec![
+                AiEvent::Started {
+                    attempt_id,
+                    provider_response_id: None,
+                    request_payload_bytes: None,
+                    resolved_model: None,
+                    effective_reasoning: None,
+                    at: Timestamp::now(),
+                },
+                activity(AgentActivityEvent::QuestionsAsked {
+                    invocation: answered,
+                    questions: Self::set("a"),
+                    blocking: true,
+                }),
+                activity(AgentActivityEvent::QuestionsAnswered {
+                    invocation: answered,
+                    answers: Some(vec![
+                        AgentAnswer {
+                            question_id: "a-pick".into(),
+                            value: AgentAnswerValue::Option {
+                                label: "Recommended".into(),
+                            },
+                        },
+                        AgentAnswer {
+                            question_id: "a-token".into(),
+                            value: AgentAnswerValue::Withheld,
+                        },
+                    ]),
+                }),
+                activity(AgentActivityEvent::QuestionsAsked {
+                    invocation: skipped,
+                    questions: Self::set("b"),
+                    blocking: false,
+                }),
+                activity(AgentActivityEvent::QuestionsAnswered {
+                    invocation: skipped,
+                    answers: None,
+                }),
+                activity(AgentActivityEvent::QuestionsAsked {
+                    invocation: open,
+                    questions: Self::set("c"),
+                    blocking: true,
+                }),
+                AiEvent::TextDelta {
+                    attempt_id,
+                    text: "Thanks.".into(),
+                    at: Timestamp::now(),
+                },
+                AiEvent::Completed {
+                    attempt_id,
+                    stop_reason: Some("stop".into()),
+                    at: Timestamp::now(),
+                },
+            ]
+            .into_iter(),
+        ))
+    }
+}
+
+/// **An agent's questions are a permission request's row** (koru-ai D108):
+/// a set the agent waits on asks for the person, live with its questions,
+/// one it does not wait on runs; answered it is allowed with what was said
+/// — a secret withheld — skipped it is denied, and one its reply left open
+/// is cancelled. The questions and the answers stay on the row, so the set
+/// reads the same reopened, and an older build reads a permission request.
+#[test]
+fn an_agents_questions_are_a_permission_rows_and_read_back_the_same() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut providers = ProviderRegistry::default();
+    providers.insert(
+        AiProviderId::parse("agent-codex").unwrap(),
+        Arc::new(QuestionsProvider),
+    );
+    let worker = AiWorker::new(WorkerConfig::new(
+        directory.path().to_owned(),
+        "internal-debug",
+        providers,
+    ))
+    .spawn()
+    .unwrap();
+    let client = worker.client();
+    let chat = agent_chat(&client, "agent-codex");
+    let stream = send(&client, chat, Uuid::new_v4());
+    let mut asked = Vec::new();
+    loop {
+        let public = stream.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        match public.event {
+            PublicAiEvent::ToolActivity { activity, .. }
+                if activity
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| !live.questions.is_empty()) =>
+            {
+                asked.push((activity.status, activity.live.unwrap().questions));
+            }
+            event if event.is_terminal() => break,
+            _ => {}
+        }
+    }
+    assert_eq!(asked.len(), 3);
+    assert_eq!(asked[0].0, ToolActivityStatus::ApprovalRequired);
+    assert_eq!(asked[1].0, ToolActivityStatus::Running, "not waited on");
+    assert_eq!(asked[0].1[0].options[0].label, "Recommended");
+
+    let transcript = client.read_chat(context(), chat).unwrap();
+    let rows = &transcript.tool_activities;
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|row| row.tool_name == "agent.approval"));
+    assert!(
+        rows.iter().all(|row| row.live.is_none()),
+        "nothing live after"
+    );
+    // The rows share a timestamp; each set is found by its own header.
+    let set = |header: &str| {
+        rows.iter()
+            .find(|row| {
+                row.agent_summary
+                    .as_deref()
+                    .is_some_and(|summary| summary.starts_with(header))
+            })
+            .unwrap()
+    };
+    let answered = set("Header a");
+    assert_eq!(answered.status, ToolActivityStatus::Complete);
+    assert_eq!(answered.approval, ToolApproval::Approved);
+    assert_eq!(
+        answered.agent_summary.as_deref(),
+        Some("Header a · The token?")
+    );
+    let questions =
+        koru_ai_core::QuestionsRecord::decode(answered.agent_input.as_deref().unwrap()).unwrap();
+    assert_eq!(questions.questions[0].question, "Which one?");
+    assert!(questions.questions[1].secret);
+    let answers =
+        koru_ai_core::AnswersRecord::decode(answered.agent_output.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        answers.answers[1].value,
+        koru_ai_core::AgentAnswerValue::Withheld
+    );
+    assert_eq!(set("Header b").status, ToolActivityStatus::Denied);
+    assert_eq!(set("Header b").approval, ToolApproval::Denied);
+    assert_eq!(set("Header c").status, ToolActivityStatus::Cancelled);
+    assert!(set("Header c").agent_output.is_none());
+
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
 }

@@ -34,6 +34,10 @@ const MIGRATED: &[&str] = &[
     // The composer's workspace-access panel (koru-ai D106): its filter field
     // is the picker's `SearchLeaf`; its tokens are in `privacy/tokens.rs`.
     "crates/koru-ai-ui/src/privacy/elements.rs",
+    // An agent's questions in the chat (koru-ai D108): its answer box and
+    // actions are the shared `TextInput` and `ActionButton` in leaves; its
+    // tokens are in `questions/tokens.rs`.
+    "crates/koru-ai-ui/src/questions/elements.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");

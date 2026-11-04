@@ -323,6 +323,9 @@ pub(crate) fn offer() -> ProtocolOffer {
         capability::PROJECTS,
         capability::SESSION_ORIGIN,
         capability::LAUNCH_SELECTION,
+        // The chat draws an agent's questions and answers them (koru-ai
+        // D108): its sessions' agents may ask.
+        capability::MANAGED_QUESTIONS,
         // A turn is `SendPendingInput`, which the host answers only to a peer
         // that negotiated attachments (protocol v4); the first live turn
         // failed for its absence here.

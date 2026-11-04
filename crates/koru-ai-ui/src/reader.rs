@@ -46,6 +46,9 @@ pub(crate) enum Command {
     /// Answer a local agent's permission request with one of the choices it
     /// offered: approve or reject as the choice means.
     DecideTool(ToolInvocationId, String, bool),
+    /// Answer a local agent's questions (koru-ai D108): their row is
+    /// approved with an answer per question. A skip is `DenyTool`.
+    AnswerQuestions(ToolInvocationId, Vec<koru_ai_core::AgentAnswer>),
     Usage(ChatId),
     DeleteChat(ChatId),
     ClearHistory,
@@ -88,6 +91,7 @@ impl Command {
             Self::ApproveTool(_) => "approve_tool",
             Self::DenyTool(_) => "deny_tool",
             Self::DecideTool(..) => "decide_tool",
+            Self::AnswerQuestions(..) => "answer_questions",
             Self::Usage(_) => "usage",
             Self::DeleteChat(_) => "delete_chat",
             Self::ClearHistory => "clear_history",
@@ -511,6 +515,17 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             }
             Command::DenyTool(tool) => {
                 let update = match client.ai().deny_tool_call(tool, None) {
+                    Ok(response) => {
+                        Update::ToolActivity(decorate_tool_activity(&client, response.activity))
+                    }
+                    Err(error) => Update::Failure(error.message),
+                };
+                if updates.send(update).is_err() {
+                    return;
+                }
+            }
+            Command::AnswerQuestions(tool, answers) => {
+                let update = match client.ai().answer_tool_questions(tool, answers) {
                     Ok(response) => {
                         Update::ToolActivity(decorate_tool_activity(&client, response.activity))
                     }

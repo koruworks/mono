@@ -240,11 +240,14 @@ pub trait AiServerPort: Send + Sync {
         attempt: InferenceAttemptId,
         request: koru_ai_wire::SteerAttemptRequest,
     ) -> Result<koru_ai_wire::SteerAttemptResponse>;
+    /// Approve a pending call: a workspace tool's, a local agent's
+    /// permission request by its offered choice, or an agent's questions
+    /// with their answers (koru-ai D108).
     fn approve_tool_call(
         &self,
         context: RequestContext,
         tool: ToolInvocationId,
-        choice: Option<String>,
+        decision: koru_ai_wire::ToolDecisionRequest,
     ) -> Result<ToolDecisionResponse>;
     fn deny_tool_call(
         &self,

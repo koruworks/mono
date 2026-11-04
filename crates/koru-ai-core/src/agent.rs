@@ -194,6 +194,11 @@ pub struct AgentActivityLive {
     /// (schema 8); only the choices, which a person answers once, are live.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<OfferedChoice>,
+    /// The questions a waiting question set asks (koru-ai D108), in the
+    /// agent's order with each one's options in its order; empty once
+    /// answered, skipped or expired, and on every other row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<crate::AgentQuestion>,
 }
 
 /// The longest label or summary that crosses to the surface. Anything
@@ -290,6 +295,22 @@ pub enum AgentActivityEvent {
     /// (koru-ai D69): kept with the reply, shown beside it.
     Notice {
         text: String,
+    },
+    /// The agent stopped to ask the person (koru-ai D108): a row of its
+    /// own, filed as a permission request. `blocking: false` is a set the
+    /// agent does not wait on — its reply runs on, and the row waits
+    /// without stopping it. Closed by [`Self::QuestionsAnswered`], or by
+    /// [`Self::ApprovalExpired`] when the turn ends first.
+    QuestionsAsked {
+        invocation: ToolInvocationId,
+        questions: Vec<crate::AgentQuestion>,
+        blocking: bool,
+    },
+    /// The set was answered — a secret's answer withheld — or, with
+    /// `None`, skipped.
+    QuestionsAnswered {
+        invocation: ToolInvocationId,
+        answers: Option<Vec<crate::AgentAnswer>>,
     },
 }
 
