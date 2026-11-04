@@ -566,9 +566,11 @@ pub struct Agent {
     /// ask is addressed to is the one the launch below is producing.
     pending_workspace_session: Option<Option<koru_session_protocol::SessionId>>,
     /// A chat to open as a tab — a `koru://chat/…` link or an overlay hit —
-    /// asked for while no Workspace window was connected. Spent by the next
-    /// Workspace `Hello`, as [`Self::pending_workspace_session`] is.
-    pending_workspace_chat: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
+    /// asked for while no Workspace window of its profile was connected.
+    /// Spent by the next Workspace `Hello` of that profile (of any profile
+    /// when the chat's is not known), as [`Self::pending_workspace_session`]
+    /// is by the next of any.
+    pending_workspace_chat: Option<PendingChat>,
     /// The last session-host catalog the agents-menu watcher read — what the
     /// tray's Agents submenu is projected from. Stored whole so the wake path
     /// only reads; every IPC read happened on the watcher's thread.
@@ -4258,14 +4260,21 @@ impl Agent {
             // **A chat opens as a tab in a Koru window.** Answered at once:
             // the window it lands in is chosen, and launched if need be, by
             // `show_workspace_chat`, as the tray's Agents rows are.
-            Request::OpenChatLink { chat, block, .. } => {
+            Request::OpenChatLink {
+                chat,
+                block,
+                profile,
+            } => {
                 let parsed = uuid::Uuid::parse_str(&chat)
                     .ok()
                     .zip(block.as_deref().map(uuid::Uuid::parse_str).transpose().ok());
+                // A profile that is not an id is no profile: the chat's own
+                // is asked for instead.
+                let profile = profile.as_deref().and_then(ProfileId::parse);
                 match parsed {
                     Some((chat, block)) => {
                         self.reply(connection, id, Response::Ok);
-                        self.show_workspace_chat(chat, block);
+                        self.show_workspace_chat(chat, block, profile);
                     }
                     None => self.reply(
                         connection,
@@ -5592,17 +5601,23 @@ impl Agent {
         }
     }
 
-    /// **Open a chat as a tab in a Koru window** — a `koru://chat/…` link
-    /// from outside Koru, or a chat hit in the overlay — scrolled to `block`
-    /// when there is one.
+    /// **Open a chat as a tab in a Koru window of its profile** — a
+    /// `koru://chat/…` link from outside Koru, a chat hit in the overlay, or
+    /// a chat a window of another profile would not show — scrolled to
+    /// `block` when there is one.
     ///
-    /// **Which window is one decision, in [`Self::chat_window`]**: the most
-    /// recently active Workspace window today. Chats are about to belong to a
-    /// profile; when they do, that function is what learns to pick the
-    /// chat's profile's window, and nothing else here changes. With no
-    /// Workspace connected the ask is latched and a window is launched, the
-    /// way the tray's Agents rows do it; the next `Hello` spends it.
-    fn show_workspace_chat(&mut self, chat: uuid::Uuid, block: Option<uuid::Uuid>) {
+    /// **A chat belongs to a profile** (AI schema 13, koru-ai D120), and a
+    /// window shows only its own profile's. When the asker knows the
+    /// chat's profile it says so; when it does not (a link from outside),
+    /// the AI service is asked off this thread
+    /// ([`crate::service::place_chat`]) and the answer comes back as
+    /// [`AgentEvent::ChatPlaced`]. Then [`Self::route_workspace_chat`].
+    fn show_workspace_chat(
+        &mut self,
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+        profile: Option<ProfileId>,
+    ) {
         // The in-document link and the overlay's chat hits are both absent in
         // a build that hides Koru AI; this is the same answer at the door
         // (koru-features).
@@ -5613,7 +5628,34 @@ impl Agent {
             self.show_restart_gate_warning();
             return;
         }
-        match self.chat_window() {
+        if profile.is_none()
+            && let Some(waker) = self.event_waker.clone()
+        {
+            self.routing_log
+                .event(format_args!("chat decision ask_profile"));
+            crate::service::place_chat(self.paths.clone(), waker, chat, block);
+            return;
+        }
+        self.route_workspace_chat(chat, block, profile);
+    }
+
+    /// **The chat goes to a window of its profile** ([`Self::chat_window`]),
+    /// or — with none of that profile connected — the ask is latched and a
+    /// window of the profile is launched, the way the Agent opens a profile;
+    /// that profile's next `Hello` spends it. A chat whose profile is not
+    /// known (the service could not say) goes to the most recent window, as
+    /// before profiles, and a window of another profile hands it back with
+    /// its profile named.
+    fn route_workspace_chat(
+        &mut self,
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+        profile: Option<ProfileId>,
+    ) {
+        if !koru_features::ai() {
+            return;
+        }
+        match self.chat_window(profile) {
             Some((connection, pid)) => {
                 let foreground = pid.map(foreground);
                 let foreground = foreground
@@ -5629,9 +5671,20 @@ impl Agent {
                 self.push(connection, open_chat(chat, block));
             }
             None => {
-                self.routing_log.event(format_args!("chat decision launch"));
-                self.pending_workspace_chat = Some((chat, block));
-                match spawn_shell_bare(self.paths.explicit_root()) {
+                self.routing_log.event(format_args!(
+                    "chat decision launch profile={}",
+                    profile.map_or_else(|| "unknown".into(), |profile| profile.to_storage())
+                ));
+                self.pending_workspace_chat = Some(PendingChat {
+                    chat,
+                    block,
+                    profile,
+                });
+                let launched = match profile {
+                    Some(profile) => spawn_profile_shell(profile, self.paths.explicit_root()),
+                    None => spawn_shell_bare(self.paths.explicit_root()),
+                };
+                match launched {
                     Ok(pid) => {
                         koru_ipc::ipc_debug!("chat: opened a Workspace window (pid {pid})");
                     }
@@ -5644,22 +5697,32 @@ impl Agent {
         }
     }
 
-    /// **The Workspace window a chat opens in**: the most recently active one,
-    /// as for the tray's Agents rows. The seam for profile-owned chats — the
-    /// chat's profile's window, once a chat has one — is here and only here.
-    fn chat_window(&self) -> Option<(ConnectionId, Option<u32>)> {
-        self.registry
-            .most_recent()
-            .map(|shell| (shell.connection, shell.pid))
+    /// **The Workspace window a chat opens in**: the most recently active
+    /// window of the chat's profile (AI schema 13), and none when that
+    /// profile has no window open — never a window of another profile,
+    /// which would not show it. A chat whose profile is not known goes to
+    /// the most recently active window of any, as for the tray's Agents rows.
+    fn chat_window(&self, profile: Option<ProfileId>) -> Option<(ConnectionId, Option<u32>)> {
+        match profile {
+            Some(profile) => self.registry.route_profile(profile),
+            None => self.registry.most_recent(),
+        }
+        .map(|shell| (shell.connection, shell.pid))
     }
 
-    /// Hand a latched chat to the window that just arrived. Taken, not read,
-    /// so it reaches exactly one window.
+    /// Hand a latched chat to the window that just arrived, if it is of the
+    /// chat's profile. Taken, not read, so it reaches exactly one window; a
+    /// window of another profile leaves it for the one being launched.
     fn push_workspace_chat_to(&mut self, connection: ConnectionId) {
-        let Some((chat, block)) = self.pending_workspace_chat.take() else {
+        let Some(pending) = self.pending_workspace_chat else {
             return;
         };
-        self.push(connection, open_chat(chat, block));
+        let arrived = self.registry.shell(connection).map(|shell| shell.profile);
+        if pending.profile.is_some() && arrived != pending.profile {
+            return;
+        }
+        self.pending_workspace_chat = None;
+        self.push(connection, open_chat(pending.chat, pending.block));
     }
 
     /// A result the person chose in the overlay.
@@ -5679,8 +5742,13 @@ impl Agent {
                 node,
                 ..
             } => (*profile, *workspace, *document, node.is_some()),
-            koru_search_ui::Target::Chat { chat, block, .. } => {
-                self.show_workspace_chat(chat.as_uuid(), Some(block.as_uuid()));
+            koru_search_ui::Target::Chat {
+                chat,
+                block,
+                profile,
+                ..
+            } => {
+                self.show_workspace_chat(chat.as_uuid(), Some(block.as_uuid()), *profile);
                 return;
             }
         };
@@ -6127,6 +6195,16 @@ fn replay_reopen(
     }
 
     running.store(false, Ordering::Release);
+}
+
+/// A chat waiting for a Workspace window of its profile to arrive.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingChat {
+    pub(crate) chat: uuid::Uuid,
+    pub(crate) block: Option<uuid::Uuid>,
+    /// The chat's profile; `None` when it could not be learned, and then
+    /// any window takes it.
+    pub(crate) profile: Option<ProfileId>,
 }
 
 /// The push that opens `chat` as a tab, its ids in their wire spelling.
@@ -7558,7 +7636,15 @@ impl WindowApp for Agent {
                 false
             }
             AgentEvent::ChatLink { chat, block } => {
-                self.show_workspace_chat(chat, block);
+                self.show_workspace_chat(chat, block, None);
+                false
+            }
+            AgentEvent::ChatPlaced {
+                chat,
+                block,
+                profile,
+            } => {
+                self.route_workspace_chat(chat, block, profile);
                 false
             }
             AgentEvent::Tray(ask @ (TrayAsk::RegisterUrlScheme | TrayAsk::UnregisterUrlScheme)) => {

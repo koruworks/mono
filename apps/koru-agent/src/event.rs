@@ -336,6 +336,13 @@ pub enum AgentEvent {
         chat: uuid::Uuid,
         block: Option<uuid::Uuid>,
     },
+    /// The AI service said which profile a chat belongs to (AI schema 13),
+    /// or could not (`None`): open it in a window of that profile.
+    ChatPlaced {
+        chat: uuid::Uuid,
+        block: Option<uuid::Uuid>,
+        profile: Option<koru_store_core::ids::ProfileId>,
+    },
     /// The agents-menu watcher read a fresh session-host catalog. The loop
     /// only stores it; the tray re-projects on the wake that delivered it.
     /// Boxed for the reason [`AgentEvent::LinkResolved`] is: every other event
@@ -504,6 +511,7 @@ impl AgentEvent {
             Self::AgentQuitDecided { .. } => "AgentQuitDecided",
             Self::LinkResolved { .. } => "LinkResolved",
             Self::ChatLink { .. } => "ChatLink",
+            Self::ChatPlaced { .. } => "ChatPlaced",
             Self::AgentsCatalog { .. } => "AgentsCatalog",
         }
     }

@@ -2185,7 +2185,11 @@ fn an_overlay_chat_hit_opens_as_a_tab() {
 fn a_latched_chat_is_spent_by_the_next_workspace_hello() {
     let mut agent = agent();
     let chat = uuid::Uuid::new_v4();
-    agent.pending_workspace_chat = Some((chat, None));
+    agent.pending_workspace_chat = Some(crate::app::PendingChat {
+        chat,
+        block: None,
+        profile: None,
+    });
 
     let workspace = ConnectionId(68);
     let (connection, queue) = Connection::for_test(workspace);
@@ -2210,6 +2214,140 @@ fn a_latched_chat_is_spent_by_the_next_workspace_hello() {
         later_queue.try_recv().is_err(),
         "the latch is spent by the first Hello, not re-read"
     );
+}
+
+/// A Workspace window of `profile`, introduced as a window says Hello.
+fn profile_hello(
+    agent: &mut Agent,
+    connection: ConnectionId,
+    profile: ProfileId,
+) -> std::sync::mpsc::Receiver<FromAgent> {
+    let (conn, queue) = Connection::for_test(connection);
+    agent.connections.push(conn);
+    agent.said(
+        connection,
+        1,
+        Request::Hello {
+            profile: profile.to_storage(),
+            workspace: WorkspaceId::new().to_storage(),
+            profile_name: "Profile".into(),
+            workspace_name: "Notes".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        },
+        Duration::ZERO,
+    );
+    let _ = drained(&queue);
+    queue
+}
+
+/// **A chat opens in a window of its own profile** (AI schema 13), not the
+/// most recent window when that is another profile's: a chat a window of
+/// Private would not show is named with its profile, and the Work window
+/// opens it — though Private's was used last.
+#[test]
+fn a_chat_named_with_its_profile_opens_in_that_profiles_window() {
+    let mut agent = agent();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let at_work = profile_hello(&mut agent, ConnectionId(80), work);
+    let at_home = profile_hello(&mut agent, ConnectionId(81), private);
+    agent.said(ConnectionId(81), 2, Request::Active, Duration::ZERO);
+    let _ = drained(&at_home);
+
+    let chat = "00000000-0000-4000-8000-000000000001";
+    agent.said(
+        ConnectionId(81),
+        3,
+        Request::OpenChatLink {
+            chat: chat.into(),
+            block: None,
+            profile: Some(work.to_storage()),
+        },
+        Duration::ZERO,
+    );
+    assert_eq!(
+        drained(&at_home),
+        vec![FromAgent::Response {
+            id: 3,
+            body: Response::Ok,
+        }],
+        "the asking window is answered, and not handed it back"
+    );
+    assert_eq!(
+        drained(&at_work),
+        vec![FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.into(),
+                block: None,
+            },
+        }]
+    );
+
+    // An overlay hit names its chat's profile too.
+    let hit = koru_ai_core::ChatId::new();
+    let block = koru_ai_core::MessageBlockId::new();
+    agent.open_target(koru_search_ui::Target::Chat {
+        chat: hit,
+        message: koru_ai_core::MessageId::new(),
+        block,
+        profile: Some(work),
+        disposition: koru_search_ui::Disposition::CurrentWindow,
+    });
+    assert_eq!(
+        drained(&at_work),
+        vec![FromAgent::Push {
+            body: Push::OpenChat {
+                chat: hit.as_uuid().to_string(),
+                block: Some(block.as_uuid().to_string()),
+            },
+        }]
+    );
+    assert!(drained(&at_home).is_empty());
+}
+
+/// **A chat of a profile with no window open waits for that profile's**
+/// (AI schema 13): it is latched for that profile, a window of another
+/// profile arriving does not take it, and the profile's window does.
+#[test]
+fn a_chat_waits_for_a_window_of_its_own_profile() {
+    let mut agent = agent();
+    let (private, work) = (ProfileId::new(), ProfileId::new());
+    let chat = uuid::Uuid::new_v4();
+    agent.pending_workspace_chat = Some(crate::app::PendingChat {
+        chat,
+        block: None,
+        profile: Some(work),
+    });
+
+    let at_home = profile_hello(&mut agent, ConnectionId(82), private);
+    assert!(drained(&at_home).is_empty(), "not another profile's window");
+    assert!(agent.pending_workspace_chat.is_some());
+
+    let (conn, at_work) = Connection::for_test(ConnectionId(83));
+    agent.connections.push(conn);
+    agent.said(
+        ConnectionId(83),
+        1,
+        Request::Hello {
+            profile: work.to_storage(),
+            workspace: WorkspaceId::new().to_storage(),
+            profile_name: "Work".into(),
+            workspace_name: "Office".into(),
+            pinned: Vec::new(),
+            reopen_claim: None,
+        },
+        Duration::ZERO,
+    );
+    assert!(
+        drained(&at_work).contains(&FromAgent::Push {
+            body: Push::OpenChat {
+                chat: chat.to_string(),
+                block: None,
+            },
+        }),
+        "the profile's own window takes it"
+    );
+    assert!(agent.pending_workspace_chat.is_none());
 }
 
 /// **The guard that keeps this file off a real store.** Opening the overlay
