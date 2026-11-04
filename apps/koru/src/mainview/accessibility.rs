@@ -74,6 +74,7 @@ mod commands;
 pub(crate) mod document;
 mod menus;
 pub(crate) mod persistence;
+mod place_chooser;
 pub(crate) mod reminders;
 mod viewer;
 
@@ -464,6 +465,16 @@ impl MainView {
                 }
             }
         }
+        // The place chooser: a new opening, or its highlight moving, is news.
+        match self.place_chooser.as_ref() {
+            Some(chooser) => {
+                rev.u64(chooser.instance);
+                rev.u64(chooser.place_instance(chooser.highlight));
+            }
+            None => {
+                rev.byte(0);
+            }
+        }
         // The Tasks page, when it is the tab in front of the person. It is part
         // of the chrome's fingerprint rather than the body's because it is
         // re-sent whole with the chrome: a row ticked on it has to make the
@@ -502,6 +513,9 @@ impl MainView {
             return true;
         }
         if menus::action(self, target, action) {
+            return true;
+        }
+        if place_chooser::action(self, ws, target, action) {
             return true;
         }
         if persistence::action(self, target, action) {

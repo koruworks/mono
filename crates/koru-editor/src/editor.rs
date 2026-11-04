@@ -7930,15 +7930,58 @@ pub trait Editing {
             self.view_mut().wants_run_open = Some((run, where_));
             return true;
         }
+        match self.pill_reference(ws, row, attr) {
+            Some(reference) => {
+                self.ask_open(reference, where_);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The document a pill references, as a [`Reference`] — `None` for a
+    /// pill that is not a document reference, and for a run or schedule
+    /// pill, which open their own views rather than a page and so have no
+    /// "where" to choose.
+    fn pill_reference(
+        &self,
+        ws: &WorkspaceDoc,
+        row: usize,
+        attr: AttrId,
+    ) -> Option<crate::view_state::Reference> {
+        if self.schedule_behind(ws, row, attr).is_some() || self.run_behind(ws, row, attr).is_some()
+        {
+            return None;
+        }
         if let Some(target) = self.entity_document_behind(ws, row, attr) {
-            self.view_mut().wants_entity_open = Some((target, where_));
-            return true;
+            return Some(crate::view_state::Reference::Document(target));
         }
-        if let Some(target) = self.document_behind(ws, row, attr) {
-            self.view_mut().wants_open = Some((target, where_));
-            return true;
+        self.document_behind(ws, row, attr)
+            .map(crate::view_state::Reference::Node)
+    }
+
+    /// **Ask the container to open `reference` at `where_`** — the one place
+    /// each kind of reference becomes its request, for a click, an Enter, and
+    /// the place chooser's answer alike.
+    fn ask_open(&mut self, reference: crate::view_state::Reference, where_: OpenWhere) {
+        use crate::view_state::Reference;
+        let view = self.view_mut();
+        match reference {
+            Reference::Node(node) => view.wants_open = Some((node, where_)),
+            Reference::Document(target) => view.wants_entity_open = Some((target, where_)),
+            Reference::Chat(chat) => view.wants_chat_open = Some((chat, where_)),
         }
-        false
+    }
+
+    /// The chat a `koru://chat/…` link asked to open, if any. Taken by the
+    /// container, which owns the chat tabs.
+    fn take_wants_chat_open(&mut self) -> Option<(crate::view_state::ChatTarget, OpenWhere)> {
+        self.view_mut().wants_chat_open.take()
+    }
+
+    /// The reference an Alt+click asked the place chooser about, if any.
+    fn take_wants_place_chooser(&mut self) -> Option<crate::view_state::Reference> {
+        self.view_mut().wants_place_chooser.take()
     }
 
     /// The delegated run a pill points at, when the pill is a run pill.
@@ -8510,19 +8553,50 @@ pub trait Editing {
             }
         }
 
+        // **One click rule for every reference** — an `@` pill, an older
+        // document pill, a `koru://` link: a click follows it here, Ctrl a
+        // background tab, Shift a new window, and Alt alone asks where with
+        // the place chooser. Alt with anything else held means nothing of its
+        // own and falls to the ladder below it.
+        let choose = !ctrl && self.view().mods == ModifiersState::ALT;
+        let where_ = if ctrl {
+            OpenWhere::BackgroundTab
+        } else if self.view().mods.shift_key() {
+            OpenWhere::NewWindow
+        } else {
+            OpenWhere::SameTab
+        };
         if let Some((i, attr)) = self.document_pill_at(ws, cx, y) {
-            let where_ = if ctrl {
-                OpenWhere::BackgroundTab
-            } else if self.view().mods.shift_key() {
-                OpenWhere::NewWindow
-            } else {
-                OpenWhere::SameTab
-            };
+            if choose && let Some(reference) = self.pill_reference(ws, i, attr) {
+                self.view_mut().wants_place_chooser = Some(reference);
+                koru_ui::keys::debug::write(format_args!(
+                    "[Koru][input] editor press hit=document-pill place-chooser"
+                ));
+                return true;
+            }
             let followed = self.follow_document_pill(ws, i, attr, where_);
             koru_ui::keys::debug::write(format_args!(
                 "[Koru][input] editor press hit=document-pill followed={followed} where={where_:?}"
             ));
             return followed;
+        }
+        // **A `koru://` link is a reference, not a web address.** It opens in
+        // this window, by the rule above, and never reaches the OS handler for
+        // the scheme — which this build's `browser` refuses anyway, so the
+        // press used to do nothing at all.
+        if let Some(reference) = self
+            .link_at(cx, y)
+            .and_then(crate::view_state::Reference::of_link)
+        {
+            if choose {
+                self.view_mut().wants_place_chooser = Some(reference);
+            } else {
+                self.ask_open(reference, where_);
+            }
+            koru_ui::keys::debug::write(format_args!(
+                "[Koru][input] editor press hit=koru-link choose={choose} where={where_:?}"
+            ));
+            return true;
         }
         if let Some(url) = self.link_at(cx, y).map(str::to_owned) {
             let opened = if ctrl {
@@ -14852,6 +14926,10 @@ mod tests {
     }
 
     fn editor_over_link() -> (WorkspaceDoc, Editor, AttrId) {
+        editor_over_url("https://example.com")
+    }
+
+    fn editor_over_url(url: &str) -> (WorkspaceDoc, Editor, AttrId) {
         use koru_core::node::{Attr, AttrValue, Node};
 
         crate::browser::clear_last_launch();
@@ -14863,11 +14941,7 @@ mod tests {
             .insert_pill(
                 row,
                 4,
-                &Attr::labelled(
-                    "link",
-                    AttrValue::Url("https://example.com".into()),
-                    "Example",
-                ),
+                &Attr::labelled("link", AttrValue::Url(url.into()), "Example"),
             )
             .unwrap();
         ws.enable_undo();
@@ -14902,6 +14976,212 @@ mod tests {
             Some(("https://example.com".into(), false))
         );
         assert!(e.view.wants_stay_focused);
+    }
+
+    /// Click, Ctrl+click and Shift+click as the click rule names them —
+    /// `(view modifiers, the primary flag the host passes, destination)`.
+    fn click_rule() -> [(ModifiersState, bool, OpenWhere); 3] {
+        [
+            (ModifiersState::empty(), false, OpenWhere::SameTab),
+            (koru_keys::PRIMARY, true, OpenWhere::BackgroundTab),
+            (ModifiersState::SHIFT, false, OpenWhere::NewWindow),
+        ]
+    }
+
+    /// **A `koru://chat/…` link opens in Koru**, by the same rule a document
+    /// pill follows, and never reaches the OS handler for the scheme — which
+    /// refused it, so the press did nothing at all.
+    #[test]
+    fn a_koru_chat_link_opens_in_koru_by_the_click_rule() {
+        let chat = uuid::Uuid::new_v4();
+        let block = uuid::Uuid::new_v4();
+        let url = koru_link::chat_link(chat, Some(block));
+        for (mods, primary, want) in click_rule() {
+            let (mut ws, mut e, attr) = editor_over_url(&url);
+            e.view.mods = mods;
+            let (x, y) = pill_centre(&e, 0, attr);
+
+            assert!(e.mouse_down(&mut ws, x, y, primary), "{mods:?}");
+            assert_eq!(
+                e.view.wants_chat_open,
+                Some((
+                    crate::view_state::ChatTarget {
+                        chat,
+                        block: Some(block)
+                    },
+                    want
+                )),
+                "{mods:?}"
+            );
+            assert_eq!(crate::browser::last_launch(), None, "{mods:?}");
+            assert!(!e.view.wants_stay_focused, "{mods:?}");
+        }
+    }
+
+    /// A `koru://doc/…` link written as a URL is the same reference an `@`
+    /// pill is, block included, and opens the same way.
+    #[test]
+    fn a_koru_document_link_opens_as_a_document_reference() {
+        let document = uuid::Uuid::new_v4();
+        let node = uuid::Uuid::new_v4();
+        let url = koru_link::document_link(document, Some(node));
+        for (mods, primary, want) in click_rule() {
+            let (mut ws, mut e, attr) = editor_over_url(&url);
+            e.view.mods = mods;
+            let (x, y) = pill_centre(&e, 0, attr);
+
+            assert!(e.mouse_down(&mut ws, x, y, primary), "{mods:?}");
+            assert_eq!(
+                e.view.wants_entity_open,
+                Some((
+                    crate::trigger::DocumentTarget {
+                        document: koru_core::DocumentId::from_uuid(document),
+                        node: Some(NodeId::from_uuid(node)),
+                    },
+                    want
+                )),
+                "{mods:?}"
+            );
+            assert_eq!(crate::browser::last_launch(), None, "{mods:?}");
+        }
+    }
+
+    /// Alt alone asks where: the reference goes to the container's place
+    /// chooser and nothing opens yet — for a chat link, a document link and a
+    /// document pill alike.
+    #[test]
+    fn alt_clicking_any_reference_asks_for_the_place_chooser() {
+        use crate::view_state::{ChatTarget, Reference};
+
+        let chat = uuid::Uuid::new_v4();
+        let document = uuid::Uuid::new_v4();
+        for (url, want) in [
+            (
+                koru_link::chat_link(chat, None),
+                Reference::Chat(ChatTarget { chat, block: None }),
+            ),
+            (
+                koru_link::document_link(document, None),
+                Reference::Document(crate::trigger::DocumentTarget {
+                    document: koru_core::DocumentId::from_uuid(document),
+                    node: None,
+                }),
+            ),
+        ] {
+            let (mut ws, mut e, attr) = editor_over_url(&url);
+            e.view.mods = ModifiersState::ALT;
+            let (x, y) = pill_centre(&e, 0, attr);
+
+            assert!(e.mouse_down(&mut ws, x, y, false), "{url}");
+            assert_eq!(e.view.wants_place_chooser, Some(want), "{url}");
+            assert_eq!(e.view.wants_chat_open, None, "{url}");
+            assert_eq!(e.view.wants_entity_open, None, "{url}");
+            assert_eq!(crate::browser::last_launch(), None, "{url}");
+        }
+
+        let (mut ws, mut e, attr, target) = editor_over_pill();
+        e.view.mods = ModifiersState::ALT;
+        let (x, y) = pill_centre(&e, 0, attr);
+        assert!(e.mouse_down(&mut ws, x, y, false));
+        assert_eq!(e.view.wants_place_chooser, Some(Reference::Node(target)));
+        assert_eq!(
+            e.view.wants_open, None,
+            "nothing opens until a place is chosen"
+        );
+        assert!(selected(&e).is_empty());
+    }
+
+    /// **Only Alt alone is the chooser.** Alt with Shift or the primary
+    /// modifier has no meaning of its own and falls to the rule beneath it.
+    #[test]
+    fn alt_with_another_modifier_is_not_the_place_chooser() {
+        for (mods, primary, want) in [
+            (
+                ModifiersState::ALT | ModifiersState::SHIFT,
+                false,
+                OpenWhere::NewWindow,
+            ),
+            (
+                ModifiersState::ALT | koru_keys::PRIMARY,
+                true,
+                OpenWhere::BackgroundTab,
+            ),
+        ] {
+            let (mut ws, mut e, attr, target) = editor_over_pill();
+            e.view.mods = mods;
+            let (x, y) = pill_centre(&e, 0, attr);
+
+            assert!(e.mouse_down(&mut ws, x, y, primary), "{mods:?}");
+            assert_eq!(e.view.wants_place_chooser, None, "{mods:?}");
+            assert_eq!(e.view.wants_open, Some((target, want)), "{mods:?}");
+        }
+    }
+
+    /// A web link is still the browser's, whatever Alt says.
+    #[test]
+    fn alt_clicking_a_web_link_still_opens_the_browser() {
+        let (mut ws, mut e, attr) = editor_over_link();
+        e.view.mods = ModifiersState::ALT;
+        let (x, y) = pill_centre(&e, 0, attr);
+
+        assert!(e.mouse_down(&mut ws, x, y, false));
+        assert_eq!(e.view.wants_place_chooser, None);
+        assert_eq!(
+            crate::browser::last_launch(),
+            Some(("https://example.com".into(), true))
+        );
+    }
+
+    /// The chooser's answer comes back through the same door a click uses:
+    /// each kind of reference becomes its own request, at the place chosen.
+    #[test]
+    fn asking_to_open_a_reference_names_the_place_chosen() {
+        use crate::view_state::{ChatTarget, Reference, SplitSide};
+
+        let (_, mut e, _, target) = editor_over_pill();
+        let chat = ChatTarget {
+            chat: uuid::Uuid::new_v4(),
+            block: None,
+        };
+        let document = crate::trigger::DocumentTarget {
+            document: koru_core::DocumentId::new(),
+            node: None,
+        };
+        e.ask_open(Reference::Node(target), OpenWhere::Split(SplitSide::Left));
+        e.ask_open(Reference::Document(document), OpenWhere::NewTab);
+        e.ask_open(Reference::Chat(chat), OpenWhere::Split(SplitSide::Down));
+
+        assert_eq!(
+            e.view.wants_open,
+            Some((target, OpenWhere::Split(SplitSide::Left)))
+        );
+        assert_eq!(
+            e.view.wants_entity_open,
+            Some((document, OpenWhere::NewTab))
+        );
+        assert_eq!(
+            e.take_wants_chat_open(),
+            Some((chat, OpenWhere::Split(SplitSide::Down)))
+        );
+        assert_eq!(e.take_wants_chat_open(), None, "taken once");
+    }
+
+    #[test]
+    fn only_a_koru_link_this_build_reads_is_a_reference() {
+        use crate::view_state::Reference;
+
+        assert_eq!(Reference::of_link("https://example.com"), None);
+        assert_eq!(Reference::of_link("koru://doc/not-a-uuid"), None);
+        assert_eq!(
+            Reference::of_link(&format!("koru://chat/{}/history", uuid::Uuid::new_v4())),
+            None,
+            "an unknown form is refused, never guessed"
+        );
+        let node = uuid::Uuid::new_v4();
+        assert_eq!(
+            Reference::of_link(&koru_link::node_link(node)),
+            Some(Reference::Node(NodeId::from_uuid(node)))
+        );
     }
 
     #[test]

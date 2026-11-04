@@ -2856,13 +2856,22 @@ pub enum Key {
     AiToolWorkspaceFilter,
     AiToolWorkspacesNone,
     AiToolWorkspacesNoMatch,
+    /// The place chooser Alt+click on a reference in a document opens: its name.
+    PlaceChooser,
+    /// Its four edges: a new pane on that side of the current one.
+    PlaceSplitUp,
+    PlaceSplitRight,
+    PlaceSplitDown,
+    PlaceSplitLeft,
+    /// Its middle: a new tab in the current pane, no split.
+    PlaceNewTab,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1995] = [
+    pub const ALL: [Key; 2001] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4858,6 +4867,12 @@ impl Key {
         Key::AiToolWorkspaceFilter,
         Key::AiToolWorkspacesNone,
         Key::AiToolWorkspacesNoMatch,
+        Key::PlaceChooser,
+        Key::PlaceSplitUp,
+        Key::PlaceSplitRight,
+        Key::PlaceSplitDown,
+        Key::PlaceSplitLeft,
+        Key::PlaceNewTab,
     ];
 }
 
@@ -15643,5 +15658,72 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
         ar: "لا توجد مساحات عمل مطابقة.",
         zh_hans: "没有匹配的工作区。",
         ja: "一致するワークスペースはありません。",
+    },
+    // The place chooser (Alt+click on a reference in a document).
+    Row {
+        key: Key::PlaceChooser,
+        en: "Where to open",
+        es: "Dónde abrir",
+        pt_br: "Onde abrir",
+        de: "Wo öffnen",
+        fr: "Où ouvrir",
+        ar: "مكان الفتح",
+        zh_hans: "打开位置",
+        ja: "開く場所",
+    },
+    Row {
+        key: Key::PlaceSplitUp,
+        en: "Split up",
+        es: "Dividir hacia arriba",
+        pt_br: "Dividir para cima",
+        de: "Nach oben teilen",
+        fr: "Diviser vers le haut",
+        ar: "تقسيم للأعلى",
+        zh_hans: "向上拆分",
+        ja: "上に分割",
+    },
+    Row {
+        key: Key::PlaceSplitRight,
+        en: "Split right",
+        es: "Dividir a la derecha",
+        pt_br: "Dividir à direita",
+        de: "Nach rechts teilen",
+        fr: "Diviser à droite",
+        ar: "تقسيم لليمين",
+        zh_hans: "向右拆分",
+        ja: "右に分割",
+    },
+    Row {
+        key: Key::PlaceSplitDown,
+        en: "Split down",
+        es: "Dividir hacia abajo",
+        pt_br: "Dividir para baixo",
+        de: "Nach unten teilen",
+        fr: "Diviser vers le bas",
+        ar: "تقسيم للأسفل",
+        zh_hans: "向下拆分",
+        ja: "下に分割",
+    },
+    Row {
+        key: Key::PlaceSplitLeft,
+        en: "Split left",
+        es: "Dividir a la izquierda",
+        pt_br: "Dividir à esquerda",
+        de: "Nach links teilen",
+        fr: "Diviser à gauche",
+        ar: "تقسيم لليسار",
+        zh_hans: "向左拆分",
+        ja: "左に分割",
+    },
+    Row {
+        key: Key::PlaceNewTab,
+        en: "New tab",
+        es: "Nueva pestaña",
+        pt_br: "Nova aba",
+        de: "Neuer Tab",
+        fr: "Nouvel onglet",
+        ar: "علامة تبويب جديدة",
+        zh_hans: "新建标签页",
+        ja: "新しいタブ",
     },
 ];

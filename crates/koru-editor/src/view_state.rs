@@ -172,6 +172,64 @@ pub enum OpenWhere {
     BackgroundTab,
     /// A new window — Shift+Enter, and Shift+click on a document pill.
     NewWindow,
+    /// A new pane split off the current one on `side`, showing the reference —
+    /// one of the four edges of the chooser Alt+click on a reference opens.
+    /// The chooser's middle is [`NewTab`](Self::NewTab).
+    Split(SplitSide),
+}
+
+/// Which edge of the current pane a [`OpenWhere::Split`] puts the new pane on.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SplitSide {
+    Up,
+    Right,
+    Down,
+    Left,
+}
+
+/// **What a reference in a document names**, once the editor has read it.
+///
+/// One vocabulary for every reference a click can follow — an `@` document
+/// pill, an older pill that names a node, and a `koru://` link written as a
+/// URL — so the click rule ([`OpenWhere`]) is one rule, and the container
+/// answers it in one place whichever kind it was.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Reference {
+    /// A node, the way a pill written before Store-per-document named its
+    /// target ([`ViewState::wants_open`]).
+    Node(NodeId),
+    /// A document, and optionally one block in it: an `@` pill, or a
+    /// `koru://doc/…` link ([`ViewState::wants_entity_open`]).
+    Document(crate::trigger::DocumentTarget),
+    /// A Koru AI chat, and optionally one message block in it — a
+    /// `koru://chat/…` link ([`ViewState::wants_chat_open`]).
+    Chat(ChatTarget),
+}
+
+/// A chat a link names. Uuids rather than the AI crate's ids: this layer
+/// never links the AI domain, and the container converts at its edge.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ChatTarget {
+    pub chat: uuid::Uuid,
+    pub block: Option<uuid::Uuid>,
+}
+
+impl Reference {
+    /// The reference a `koru://` URL names, or `None` for any other URL — an
+    /// `https:` link is still the browser's — and for a `koru://` form this
+    /// build cannot read, which is refused rather than guessed at.
+    pub fn of_link(url: &str) -> Option<Self> {
+        Some(match koru_link::parse(url).ok()? {
+            koru_link::KoruLink::Document { document, node } => {
+                Self::Document(crate::trigger::DocumentTarget {
+                    document: koru_core::DocumentId::from_uuid(document),
+                    node: node.map(NodeId::from_uuid),
+                })
+            }
+            koru_link::KoruLink::Chat { chat, block } => Self::Chat(ChatTarget { chat, block }),
+            koru_link::KoruLink::Node(node) => Self::Node(NodeId::from_uuid(node)),
+        })
+    }
 }
 
 /// The clickable URL hover chip: destination plus copy and edit.
@@ -775,6 +833,15 @@ pub struct ViewState {
     pub wants_open: Option<(NodeId, OpenWhere)>,
     /// A store-backed document reference, including its workspace route.
     pub wants_entity_open: Option<(crate::trigger::DocumentTarget, OpenWhere)>,
+    /// A Koru AI chat a `koru://chat/…` link in the document asked to open,
+    /// and where. A chat opens inside this window, never through the OS's
+    /// handler for the scheme.
+    pub wants_chat_open: Option<(ChatTarget, OpenWhere)>,
+    /// A reference somebody **Alt+clicked**: the container asks where to open
+    /// it with the place chooser at the pointer, then opens it there. Only
+    /// the reference travels — the chooser is the window's, which is the one
+    /// thing that knows the panes and is not clipped by this view's edges.
+    pub wants_place_chooser: Option<Reference>,
     /// A **delegated run** somebody clicked the pill of, by its Run document
     /// (delegation roadmap D8). Its own field rather than
     /// [`wants_entity_open`](Self::wants_entity_open), because a run opens the
@@ -1154,6 +1221,8 @@ impl Default for ViewState {
             wants_sharing_toggle: false,
             wants_open: None,
             wants_entity_open: None,
+            wants_chat_open: None,
+            wants_place_chooser: None,
             wants_run_open: None,
             wants_run_menu: None,
             wants_schedule_open: None,

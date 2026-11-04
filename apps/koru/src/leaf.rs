@@ -595,6 +595,16 @@ impl Leaf {
         Editing::take_wants_entity_open(self)
     }
 
+    /// The chat a `koru://chat/…` link in the document asked to open.
+    pub fn take_wants_chat_open(&mut self) -> Option<(koru_editor::ChatTarget, OpenWhere)> {
+        Editing::take_wants_chat_open(self)
+    }
+
+    /// The reference an Alt+click asked the place chooser about.
+    pub fn take_wants_place_chooser(&mut self) -> Option<koru_editor::Reference> {
+        Editing::take_wants_place_chooser(self)
+    }
+
     /// The delegated run a click or an Enter on a run pill asked to open.
     pub fn take_wants_run_open(&mut self) -> Option<(koru_core::DocumentId, OpenWhere)> {
         Editing::take_wants_run_open(self)

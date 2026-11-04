@@ -5995,6 +5995,7 @@ dependencies = [
  "koru-features",
  "koru-i18n",
  "koru-keys",
+ "koru-link",
  "koru-markdown",
  "koru-time-zone",
  "koru-ui",

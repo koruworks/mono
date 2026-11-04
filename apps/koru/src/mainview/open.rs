@@ -8,9 +8,11 @@
 
 use koru_core::schema::WorkspaceDoc;
 use koru_core::{Kind, NodeId};
-use koru_editor::{Editing, OpenWhere};
+use koru_editor::trigger::DocumentTarget;
+use koru_editor::{ChatTarget, Editing, OpenWhere, Reference, SplitSide};
 
 use super::MainView;
+use super::place_chooser::split_dir;
 use super::tab::{Tab, TabView};
 use super::tab_rules::KoruTabs;
 
@@ -392,6 +394,17 @@ impl MainView {
                     match_text,
                 );
             }
+            // The place chooser's arm, for a document the Store had to open:
+            // the gesture recorded the place it left, so this records none.
+            Some(OpenWhere::Split(side)) => {
+                return self.split_document_tab(
+                    ws,
+                    root,
+                    reveal.or_else(|| match_text.map(|_| root)),
+                    match_text,
+                    side,
+                );
+            }
             Some(OpenWhere::BackgroundTab)
             | Some(OpenWhere::Reuse)
             | Some(OpenWhere::NewWindow)
@@ -613,13 +626,390 @@ impl MainView {
             self.tabs().active_tab().is_reusable(),
             self.tabs().active_tab().is_pinned(),
         ));
+        self.open_node_where(ws, node, where_)
+    }
+
+    /// **Open a reference where the person asked** — the one door a click, an
+    /// Enter and the place chooser all go through, whichever kind of
+    /// reference it is: an older pill's node, a document (an `@` pill or a
+    /// `koru://doc/…` link), or a chat (`koru://chat/…`).
+    pub(crate) fn open_reference(
+        &mut self,
+        ws: &WorkspaceDoc,
+        reference: Reference,
+        where_: OpenWhere,
+    ) -> bool {
+        match reference {
+            Reference::Node(node) => self.open_node_where(ws, node, where_),
+            Reference::Document(target) => self.open_document_target(target, where_),
+            Reference::Chat(chat) => self.open_chat_where(chat, where_),
+        }
+    }
+
+    fn open_node_where(&mut self, ws: &WorkspaceDoc, node: NodeId, where_: OpenWhere) -> bool {
         match where_ {
             OpenWhere::Reuse => self.open_node(ws, node),
             OpenWhere::SameTab => self.honor_same_tab(ws, node),
-            OpenWhere::NewTab => self.open_node_in_new_tab(ws, node),
+            // A node this window does not hold names a document by its stable
+            // id (a pill written before Store-per-document): the Store opens
+            // it, and the landing makes the tab.
+            OpenWhere::NewTab => {
+                self.open_node_in_new_tab(ws, node)
+                    || self.navigate_store_document(node, OpenWhere::NewTab)
+            }
             OpenWhere::BackgroundTab => self.open_node_in_background_tab(ws, node),
             OpenWhere::NewWindow => self.open_node_in_new_window(ws, node),
+            OpenWhere::Split(side) => self.open_node_in_split(ws, node, side),
         }
+    }
+
+    /// Open `node` in a new pane split off the focused one on `side` — an arm
+    /// of the place chooser. The document stays where it was; the new pane
+    /// takes the focus.
+    pub(super) fn open_node_in_split(
+        &mut self,
+        ws: &WorkspaceDoc,
+        node: NodeId,
+        side: SplitSide,
+    ) -> bool {
+        let Some((root, reveal)) = Self::resolve_target(ws, node) else {
+            // Not a node this window holds: a document named by its stable
+            // id. The Store opens it, and its landing splits.
+            let Some(document) = self.entries.as_ref().and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|e| e.id.as_uuid() == node.as_uuid())
+                    .map(|e| e.id)
+            }) else {
+                return false;
+            };
+            return self.open_document_target(
+                DocumentTarget {
+                    document,
+                    node: None,
+                },
+                OpenWhere::Split(side),
+            );
+        };
+        if self.canvas_hidden(self.active_document) {
+            return false;
+        }
+        self.record_jump();
+        self.split_document_tab(ws, root, reveal, None, side)
+    }
+
+    /// A new document tab on `root`, in a new pane split off the focused one.
+    /// Never moves a tab that exists: the pane the reference was followed
+    /// from keeps showing what it showed.
+    fn split_document_tab(
+        &mut self,
+        ws: &WorkspaceDoc,
+        root: NodeId,
+        reveal: Option<NodeId>,
+        match_text: Option<&str>,
+        side: SplitSide,
+    ) -> bool {
+        let name = koru_workspace::name_of(ws, root);
+        let active = self.active_document;
+        let view = self.document_view(ws, root, active);
+        let home = self.current_workspace();
+        self.split_with(Tab::document_at(view, &name, active, home), side);
+        if let Some(target) = reveal {
+            match match_text {
+                Some(text) => {
+                    self.tabs_mut()
+                        .active_view()
+                        .reveal_search_match(target, text);
+                }
+                None => {
+                    self.tabs_mut().active_view().reveal(target);
+                }
+            }
+        }
+        true
+    }
+
+    /// Put `tab` in a new pane on `side` of the focused one — the mechanism
+    /// *Open in chat* splits with, on any side — and focus it.
+    pub(super) fn split_with(&mut self, tab: Tab, side: SplitSide) {
+        let beside = self.panes.focused_path().clone();
+        self.panes.split(&beside, split_dir(side), tab);
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.slides_mut().clear();
+        self.ensure_tab_visible(self.tabs().active());
+    }
+
+    /// **A document the Store routes — an `@` pill or a `koru://doc/…` link —
+    /// opened where the person asked.** The arrival is announced by the
+    /// shell, so a disposition that needs a tab waits in `pending_lands`,
+    /// paired with its document, for [`land_on`](Self::land_on).
+    pub(super) fn open_document_target(
+        &mut self,
+        target: DocumentTarget,
+        where_: OpenWhere,
+    ) -> bool {
+        let match_text = target.node.map(|_| String::new());
+        tracing::info!(
+            target: "koru::document_link",
+            document = %target.document.to_storage(),
+            node = ?target.node.map(|node| node.to_storage()),
+            disposition = ?where_,
+            route = "store-document-location",
+            "document link opened"
+        );
+        let navigate = |disposition| koru_workspace_host::PaneRequest::Navigate {
+            target: koru_workspace_host::NavigationTarget::Document {
+                document: target.document,
+                node: target.node,
+            },
+            match_text: match_text.clone(),
+            disposition,
+        };
+        match where_ {
+            OpenWhere::BackgroundTab => {
+                if let Some(i) = self.tabs().showing_document(target.document).or_else(|| {
+                    self.tabs()
+                        .showing(koru_core::NodeId::from_uuid(target.document.as_uuid()))
+                }) {
+                    koru_ui::keys::debug::write(format_args!(
+                        "[Koru][input] view entity background-tab already-showing i={i}"
+                    ));
+                    self.ensure_tab_visible(i);
+                } else {
+                    koru_ui::keys::debug::write(format_args!(
+                        "[Koru][input] view entity background-tab open-background"
+                    ));
+                    self.ask_pane(koru_workspace_host::PaneRequest::OpenBackground {
+                        document: target.document,
+                        node: target.node,
+                    });
+                }
+            }
+            OpenWhere::NewWindow => {
+                self.ask_pane(navigate(
+                    koru_workspace_host::SearchTargetDisposition::NewWindow,
+                ));
+            }
+            OpenWhere::SameTab | OpenWhere::NewTab => {
+                let land =
+                    if where_ == OpenWhere::SameTab && !self.tabs().active_tab().is_reusable() {
+                        if self.focus_showing_document(target.document) {
+                            koru_ui::keys::debug::write(format_args!(
+                                "[Koru][input] view entity same-tab already-showing"
+                            ));
+                            None
+                        } else {
+                            koru_ui::keys::debug::write(format_args!(
+                                "[Koru][input] view entity same-tab pin-redirect=NewTab"
+                            ));
+                            Some(OpenWhere::NewTab)
+                        }
+                    } else {
+                        Some(where_)
+                    };
+                if let Some(land) = land {
+                    self.pending_lands.push_back((target.document, land));
+                    self.ask_pane(navigate(
+                        koru_workspace_host::SearchTargetDisposition::CurrentWindow,
+                    ));
+                }
+            }
+            // **Pinned to this window**: the pane the split divides is this
+            // window's, and an ordinary landing would be offered first to a
+            // window already holding the document (Q44).
+            OpenWhere::Split(side) => {
+                self.record_jump();
+                self.pending_lands
+                    .push_back((target.document, OpenWhere::Split(side)));
+                self.ask_pane(navigate(
+                    koru_workspace_host::SearchTargetDisposition::SourceWindow,
+                ));
+            }
+            OpenWhere::Reuse => {
+                self.record_jump();
+                self.ask_pane(navigate(
+                    koru_workspace_host::SearchTargetDisposition::CurrentWindow,
+                ));
+            }
+        }
+        true
+    }
+
+    /// Drain a `koru://chat/…` link the active document's click asked to open.
+    pub(super) fn drain_wants_chat_open(&mut self) -> bool {
+        let asked = match self.active_view() {
+            TabView::Leaf(leaf) => leaf.take_wants_chat_open(),
+            _ => None,
+        };
+        match asked {
+            Some((chat, where_)) => self.open_chat_where(chat, where_),
+            None => false,
+        }
+    }
+
+    /// **A Koru chat a link names, opened inside this window** — as a chat
+    /// tab of this window's profile, by the click rule a document follows.
+    ///
+    /// A chat of another profile is not shown here (AI schema 13): the chat
+    /// view finds that out when it reads the chat, and hands it to a window
+    /// of its profile through the route every chat surface uses
+    /// (`open_chats_elsewhere`). Which is why only a chat this window is
+    /// known to list ever *replaces* a tab — the tab handed back is closed,
+    /// and it must not be the page the person was reading.
+    pub(crate) fn open_chat_where(&mut self, target: ChatTarget, where_: OpenWhere) -> bool {
+        if !koru_features::ai() {
+            return false;
+        }
+        let id = koru_ai_ui::ChatId::from_uuid(target.chat);
+        let block = target.block.map(koru_ai_ui::MessageBlockId::from_uuid);
+        tracing::info!(
+            target: "koru::chat_link",
+            chat = %target.chat,
+            disposition = ?where_,
+            "chat link opened"
+        );
+        match where_ {
+            OpenWhere::SameTab => self.open_chat_here(id, block),
+            OpenWhere::BackgroundTab => self.open_chat_in_background(id, block),
+            OpenWhere::Split(side) => self.open_chat_in_split(id, block, side),
+            // A chat has no window of its own to open in — a chat tab cannot
+            // be popped out — so Shift+click opens it here, in front, the way
+            // a new tab does.
+            OpenWhere::Reuse | OpenWhere::NewTab | OpenWhere::NewWindow => {
+                self.open_ai_chat_tab_at(id, block)
+            }
+        }
+    }
+
+    /// The pane and index of a tab already showing `chat`, anywhere in the
+    /// window.
+    fn chat_tab_showing(
+        &self,
+        chat: koru_ai_ui::ChatId,
+    ) -> Option<(super::panes::PanePath, usize)> {
+        self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .tabs()
+                .iter()
+                .position(
+                    |tab| matches!(&tab.view, TabView::AiChat(view) if view.chat_id() == Some(chat)),
+                )
+                .map(|index| (path, index))
+        })
+    }
+
+    /// Whether this window already lists `chat` as one of its profile's — the
+    /// Chats view's list or the Koru AI column's. Unknown is not "another
+    /// profile's"; it is "not safe to replace a page with".
+    fn chat_is_listed_here(&self, chat: koru_ai_ui::ChatId) -> bool {
+        self.explore.chats().chats().iter().any(|c| c.id == chat)
+            || self
+                .ai_chat
+                .recent_chats(usize::MAX)
+                .iter()
+                .any(|(listed, _)| *listed == chat)
+    }
+
+    /// Click: the chat **in this tab**, replacing the page the link was on —
+    /// when the tab may be replaced and the chat is known to be this
+    /// profile's. Otherwise the open-or-focus every chat link has had: a tab
+    /// already on the chat is preferred, else a new one in front.
+    fn open_chat_here(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> bool {
+        let replaceable = self.chat_tab_showing(id).is_none()
+            && self.tabs().active_tab().is_reusable()
+            && matches!(self.tabs().active_tab().view, TabView::Leaf(_))
+            && self.chat_is_listed_here(id);
+        if !replaceable {
+            return self.open_ai_chat_tab_at(id, block);
+        }
+        self.record_jump();
+        let left = self.tabs().active_tab().document;
+        let mut tab = Tab::ai_chat_existing_at(id, block);
+        let active = self.tabs_mut().active_mut();
+        // The same tab, so Back returns to the page in it.
+        tab.id = active.id;
+        *active = tab;
+        // A tab is what keeps a document open; this one no longer does.
+        if let Some(document) = left
+            && !self
+                .panes
+                .iter_groups()
+                .any(|(_, group)| group.iter_tabs().any(|t| t.document == Some(document)))
+        {
+            self.ask_pane(koru_workspace_host::PaneRequest::CloseDocument(document));
+        }
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
+        self.explore_stale = true;
+        true
+    }
+
+    /// Ctrl+click: a chat tab beside this one, not made active. A tab already
+    /// on the chat is kept rather than doubled, and is not switched to.
+    fn open_chat_in_background(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> bool {
+        if let Some((path, index)) = self.chat_tab_showing(id) {
+            if &path == self.panes.focused_path() {
+                self.ensure_tab_visible(index);
+            }
+            return true;
+        }
+        let i = self
+            .tabs_mut()
+            .insert_inactive(Tab::ai_chat_existing_at(id, block));
+        self.mark_tab_widths_stale();
+        self.ensure_tab_visible(i);
+        true
+    }
+
+    /// A chooser arm: the chat in a new pane on `side` of this one. A tab
+    /// already on the chat **moves** there rather than being doubled — one
+    /// chat, one view of it.
+    fn open_chat_in_split(
+        &mut self,
+        id: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+        side: SplitSide,
+    ) -> bool {
+        self.record_jump();
+        let existing = self.chat_tab_showing(id).and_then(|(path, index)| {
+            let tab_id = self.panes.group(&path)?.tabs().get(index)?.id;
+            self.take_tab_from_group(&path, tab_id)
+        });
+        let Some(tab) = existing else {
+            self.split_with(Tab::ai_chat_existing_at(id, block), side);
+            return true;
+        };
+        let moved = tab.id;
+        self.split_with(tab, side);
+        if block.is_some()
+            && let TabView::AiChat(view) = &mut self.tabs_mut().active_mut().view
+        {
+            view.open_link(id, block);
+        }
+        // The pane it left may be empty now; collapsing it can renumber the
+        // panes, so the moved tab is found again by its id.
+        self.settle_pane_drop(None);
+        let found = self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .iter_tabs()
+                .position(|t| t.id == moved)
+                .map(|index| (path, index))
+        });
+        if let Some((path, index)) = found {
+            self.panes.set_focus(path);
+            let _ = self.select(index);
+        }
+        true
     }
 
     /// Focus a tab already showing `document` when SameTab must not replace.

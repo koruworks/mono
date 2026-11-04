@@ -91,6 +91,7 @@ mod new_document;
 mod new_list;
 mod open;
 pub mod panes;
+mod place_chooser;
 mod profile_probe;
 mod recording;
 mod reminder_creation;
@@ -776,6 +777,9 @@ pub struct MainView {
     /// Modal **over the switcher popover, not instead of it** — a menu opened
     /// from a workspace row leaves the row it names on screen underneath.
     menu: Option<ContextMenu>,
+    /// The place chooser an Alt+click on a reference opened, while it stands
+    /// (`place_chooser`). Modal the way the menu is, and never up beside it.
+    place_chooser: Option<place_chooser::PlaceChooser>,
     /// The modal opened by the taskbar's “New document” action. It is kept at
     /// container level so completing it can create a document and open its tab
     /// in one workspace edit.
@@ -1848,6 +1852,7 @@ impl MainView {
             pointer_in_content: false,
             hover: None,
             menu: None,
+            place_chooser: None,
             new_document: None,
             new_workspace_owner: None,
             snapshot_prompt: None,
@@ -9622,6 +9627,12 @@ impl MainView {
             let out = self.press(Hit::Window(CaptionAction::WindowMenu), x, y, ctrl);
             return self.apply(ws, out);
         }
+        // The place chooser is modal the way a menu is: a press on a target
+        // opens the reference there, a press anywhere else closes it, and
+        // neither reaches what is underneath.
+        if let Some(handled) = self.place_chooser_mouse_down(ws, x, y) {
+            return handled;
+        }
         // An open context menu is modal: the press either chooses an item or
         // dismisses it, and is consumed either way — it must not also hit
         // whatever happens to sit under the menu.
@@ -9947,11 +9958,15 @@ impl MainView {
         if handled && page_icon_commit && !self.tabs().active_tab().view.is_setting_page_icon() {
             self.explore_stale = true;
         }
-        // Document-pill clicks set `wants_open` / `wants_entity_open` here.
+        // Document-pill clicks set `wants_open` / `wants_entity_open` here; a
+        // `koru://chat/…` link sets `wants_chat_open`, and an Alt+click on any
+        // reference asks for the place chooser.
         let opened = self.drain_wants_open(ws);
         if opened {
             inputdebug::write(format_args!("[Koru][input] view press drained=wants-open"));
         }
+        let opened = self.drain_wants_chat_open() | opened;
+        let opened = self.drain_place_chooser() | opened;
         let toasted = self.drain_editor_toast();
         let entity_changed = self.sync_entity_picker();
         let asked = self.drain_manage_profiles_request();
@@ -10490,6 +10505,11 @@ impl View for MainView {
             return fab.context_menu();
         }
         self.pointer = (x, y);
+        // A right press dismisses the place chooser the way any press outside
+        // it does, and goes no further: a menu must not open beside it.
+        if self.dismiss_place_chooser() {
+            return true;
+        }
         if self.error.is_some()
             || self.import_dialog.is_some()
             || self.confirm.is_some()
@@ -11233,6 +11253,9 @@ impl View for MainView {
         }
         if let Some(m) = &self.workspace_icon {
             return m.cursor();
+        }
+        if let Some(icon) = self.place_chooser_cursor() {
+            return icon;
         }
         if let Some(menu) = &self.menu {
             let i = menu.item_at(self.viewport, self.pointer.0, self.pointer.1);
@@ -14531,6 +14554,9 @@ impl MainView {
             // arrows, Enter) and lets nothing else through — a chord must not,
             // say, close a tab under a menu that is itself about to dismiss.
             Blockers::Modal(ModalKind::ContextMenu) => return self.menu_key(key),
+            // The place chooser, on the menu's terms: its arrows, Enter and
+            // Escape, and nothing else gets past it.
+            Blockers::Modal(ModalKind::PlaceChooser) => return self.place_chooser_key(ws, key),
             Blockers::Modal(ModalKind::ReminderOverlay) => {
                 let bell = self.reminder_bell_rect();
                 let (handled, intent) =
@@ -14800,6 +14826,7 @@ impl MainView {
             // Drained here rather than by the shell: `take_wants_open` has no
             // document, and this is the nearest point that does.
             self.drain_wants_open(ws);
+            self.drain_wants_chat_open();
             self.drain_manage_profiles_request();
             self.drain_trash_all(ws);
             self.drain_welcome();
@@ -15930,88 +15957,7 @@ impl MainView {
         }
         let opened = open.is_some();
         if let Some((target, where_)) = open {
-            let match_text = target.node.map(|_| String::new());
-            tracing::info!(
-                target: "koru::document_link",
-                document = %target.document.to_storage(),
-                node = ?target.node.map(|node| node.to_storage()),
-                disposition = ?where_,
-                route = "store-document-location",
-                "document link opened"
-            );
-            match where_ {
-                OpenWhere::BackgroundTab => {
-                    if let Some(i) = self.tabs().showing_document(target.document).or_else(|| {
-                        self.tabs()
-                            .showing(koru_core::NodeId::from_uuid(target.document.as_uuid()))
-                    }) {
-                        inputdebug::write(format_args!(
-                            "[Koru][input] view entity background-tab already-showing i={i}"
-                        ));
-                        self.ensure_tab_visible(i);
-                    } else {
-                        inputdebug::write(format_args!(
-                            "[Koru][input] view entity background-tab open-background"
-                        ));
-                        self.ask_pane(koru_workspace_host::PaneRequest::OpenBackground {
-                            document: target.document,
-                            node: target.node,
-                        });
-                    }
-                }
-                OpenWhere::NewWindow => {
-                    self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
-                        target: koru_workspace_host::NavigationTarget::Document {
-                            document: target.document,
-                            node: target.node,
-                        },
-                        match_text,
-                        disposition: koru_workspace_host::SearchTargetDisposition::NewWindow,
-                    });
-                }
-                OpenWhere::SameTab | OpenWhere::NewTab => {
-                    let land = if where_ == OpenWhere::SameTab
-                        && !self.tabs().active_tab().is_reusable()
-                    {
-                        if self.focus_showing_document(target.document) {
-                            inputdebug::write(format_args!(
-                                "[Koru][input] view entity same-tab already-showing"
-                            ));
-                            None
-                        } else {
-                            inputdebug::write(format_args!(
-                                "[Koru][input] view entity same-tab pin-redirect=NewTab"
-                            ));
-                            Some(OpenWhere::NewTab)
-                        }
-                    } else {
-                        Some(where_)
-                    };
-                    if let Some(land) = land {
-                        self.pending_lands.push_back((target.document, land));
-                        self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
-                            target: koru_workspace_host::NavigationTarget::Document {
-                                document: target.document,
-                                node: target.node,
-                            },
-                            match_text,
-                            disposition:
-                                koru_workspace_host::SearchTargetDisposition::CurrentWindow,
-                        });
-                    }
-                }
-                OpenWhere::Reuse => {
-                    self.record_jump();
-                    self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
-                        target: koru_workspace_host::NavigationTarget::Document {
-                            document: target.document,
-                            node: target.node,
-                        },
-                        match_text,
-                        disposition: koru_workspace_host::SearchTargetDisposition::CurrentWindow,
-                    });
-                }
-            }
+            self.open_document_target(target, where_);
         }
         // A move picker with nothing typed lists this window's recents, not
         // the search service's idea of them — the service only remembers
@@ -16639,6 +16585,11 @@ impl MainView {
             {
                 return true;
             }
+        }
+        // The place chooser tracks its own hover while it stands, the way the
+        // menu below does; nothing under it is hovered.
+        if let Some(changed) = self.place_chooser_mouse_move(x, y) {
+            return changed;
         }
         // **Innermost flyout first.** Nested overlaps the submenu, the submenu
         // overlaps the parent; asking the parent first would track a row under

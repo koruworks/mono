@@ -65,6 +65,12 @@ impl MainView {
         if let Some(node) = self.menu_semantics(cx) {
             return node;
         }
+        // The place chooser is a menu of five, projected in full like one.
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::PlaceChooser)
+            && let Some(node) = self.place_chooser_semantics(cx)
+        {
+            return node;
+        }
         // The font picker is projected in full: a search field, the families
         // on screen and the toggle, not a hollow dialog.
         if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
@@ -123,6 +129,11 @@ impl MainView {
                 Some(index) => cx.instance(MENU, menu.row_instance(index), ITEM),
                 None => cx.instance(MENU, menu.instance, parts::ROOT),
             };
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::PlaceChooser)
+            && let Some(occurrence) = self.place_chooser_focus(cx)
+        {
+            return occurrence;
         }
         if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
             && let Some(occurrence) = self.font_picker_focus(cx)
@@ -322,6 +333,7 @@ fn modal_keyword(kind: koru_workspace_host::routing::ModalKind) -> &'static str 
         K::ReminderManagement => "reminder-management",
         K::Recording => "recording",
         K::ContextMenu => "menu",
+        K::PlaceChooser => "place-chooser",
         K::MediaViewer => "media-viewer",
     }
 }
@@ -351,6 +363,9 @@ fn prompt_keyword(kind: koru_workspace_host::routing::PromptKind) -> &'static st
 pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
     if let Some(id) = instance_of(target, MENU) {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
+    }
+    if super::place_chooser::is_target(view, target) {
+        return true;
     }
     // The reminder popover's own controls, when it is what is standing. A menu
     // and the bell's overlay both sit above it in the table, so asking the

@@ -75,8 +75,8 @@ pub use objective::row_words;
 pub use paragraph::{Paragraph, TaskRow};
 pub use policy::Policy;
 pub use view_state::{
-    DelegateRequest, DragRow, Embedded, Hover, OpenWhere, PasteBatch, PasteReplacement,
-    SaveDiagramAs, SearchHighlight, ViewState,
+    ChatTarget, DelegateRequest, DragRow, Embedded, Hover, OpenWhere, PasteBatch, PasteReplacement,
+    Reference, SaveDiagramAs, SearchHighlight, SplitSide, ViewState,
 };
 pub mod emoji;
 
