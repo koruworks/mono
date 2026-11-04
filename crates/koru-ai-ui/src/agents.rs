@@ -966,8 +966,11 @@ impl crate::ChatSurface {
             .transcript
             .as_ref()
             .is_some_and(|transcript| !chat_is_empty(Some(transcript)));
+        // *Default* names no model a live session could be moved to: the
+        // agent decides it when a session starts.
         if begun
             && (self.model_locked()
+                || requested_model == koru_ai_core::AGENT_DEFAULT_MODEL
                 || self.transcript.as_ref().is_some_and(|transcript| {
                     let current = &transcript.chat.current_model;
                     current.provider != agent || current.requested_model == requested_model

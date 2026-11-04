@@ -568,10 +568,8 @@ pub struct ChatSurface {
     levels_per_turn: HashSet<AiProviderId>,
     /// The agents whose model a begun chat can change to another of the
     /// same agent's, applied from the next message, as `levels_per_turn`
-    /// is for the level. Empty for now: no session host takes a model with
-    /// a message yet, and no listing says so — the session protocol and the
-    /// agent listing gain that word first. Every agent chat keeps the
-    /// model it started on until then.
+    /// is for the level: their listing said so — the session host is v22.
+    /// Every other agent chat keeps the model it started on.
     models_per_turn: HashSet<AiProviderId>,
     /// The coding agents turned off on this machine, by agent key
     /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
@@ -3212,7 +3210,7 @@ impl ChatSurface {
                 }
                 self.settle_after_choice();
                 self.status =
-                    Some("This chat will use the selected model on its next turn.".into());
+                    Some(koru_i18n::t(self.lang, koru_i18n::Key::AiModelNextTurn).to_owned());
                 self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
@@ -3540,6 +3538,12 @@ impl ChatSurface {
                     self.levels_per_turn.insert(response.provider.clone());
                 } else {
                     self.levels_per_turn.remove(&response.provider);
+                }
+                // And its model, to another of the agent's (protocol v22).
+                if response.models_per_turn {
+                    self.models_per_turn.insert(response.provider.clone());
+                } else {
+                    self.models_per_turn.remove(&response.provider);
                 }
                 self.agent_models.insert(
                     response.provider,
@@ -12515,6 +12519,7 @@ mod tests {
             modes: Vec::new(),
             default_mode: None,
             levels_per_turn: false,
+            models_per_turn: false,
             models: listed.clone(),
         }));
         surface.prefetch_agent_models();
@@ -12623,6 +12628,7 @@ mod tests {
             modes: Vec::new(),
             default_mode: None,
             levels_per_turn: false,
+            models_per_turn: false,
             models: vec![
                 model(
                     "opus",
@@ -12775,7 +12781,8 @@ mod tests {
     /// **D70: where the agent's host takes a level per message, a begun
     /// chat's level changes from its next message**, as Fast does; while a
     /// reply runs the strip says so. The *1M context* pill stays the
-    /// start's: that is a model, and a live session keeps its model.
+    /// start's against a v21 host: that is a model, and such a host keeps a
+    /// live session's model. A v22 host's listing unlocks it.
     #[test]
     fn a_begun_agent_chats_level_changes_from_its_next_message() {
         let mut surface = ChatSurface::new();
@@ -12813,6 +12820,7 @@ mod tests {
             modes: Vec::new(),
             default_mode: None,
             levels_per_turn: true,
+            models_per_turn: false,
             models: surface
                 .listed_agent_models(&AiProviderId::parse("agent-claude").unwrap())
                 .to_vec(),
@@ -12820,6 +12828,16 @@ mod tests {
         surface.apply_update(Update::AgentModels(listing.clone()));
         assert!(!surface.effort_locked());
         assert!(surface.model_locked(), "the model stays the start's");
+        // A v22 host takes a model per message too: the model unlocks.
+        let mut v22 = listing.clone();
+        v22.models_per_turn = true;
+        surface.apply_update(Update::AgentModels(v22));
+        assert!(!surface.model_locked());
+        surface.apply_update(Update::AgentModels(listing.clone()));
+        assert!(
+            surface.model_locked(),
+            "a v21 host's listing locks it again"
+        );
 
         surface.composer_rect();
         assert!(surface.open_model_picker());

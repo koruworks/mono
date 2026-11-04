@@ -608,6 +608,7 @@ fn the_chip_comes_when_the_modes_come_after_the_models() {
                 modes,
                 default_mode: Some("default".into()),
                 levels_per_turn: false,
+                models_per_turn: false,
             },
         ));
     };
@@ -652,6 +653,7 @@ fn an_agent_with_no_modes_is_not_asked_forever() {
                 modes: Vec::new(),
                 default_mode: None,
                 levels_per_turn: false,
+                models_per_turn: false,
             },
         ));
     }

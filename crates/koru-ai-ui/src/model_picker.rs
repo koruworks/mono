@@ -1179,6 +1179,9 @@ impl crate::ChatSurface {
                 Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
                 // A search's row can be chosen as on its own entry's list.
                 Row::Found(entry, found) => self.entry_choosable(entry) && found.choosable(),
+                // A begun agent chat moves only to a model its agent names:
+                // *Default* is the agent's own choice when a session starts.
+                Row::Default if self.agent_chat_begun() => false,
                 _ => entry_choosable && row.choosable(),
             })
             .collect()

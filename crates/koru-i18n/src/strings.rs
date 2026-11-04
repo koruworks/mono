@@ -322,6 +322,7 @@ pub enum Key {
     AiModelContextPill,
     AiModelContextLockedAfterStart,
     AiModelSwitchedTo,
+    AiModelNextTurn,
     AiAgentModeAskFirst,
     AiAgentModeAskFirstHelp,
     AiAgentModeAcceptEdits,
@@ -2861,7 +2862,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1994] = [
+    pub const ALL: [Key; 1995] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3077,6 +3078,7 @@ impl Key {
         Key::AiModelContextPill,
         Key::AiModelContextLockedAfterStart,
         Key::AiModelSwitchedTo,
+        Key::AiModelNextTurn,
         Key::AiAgentModeAskFirst,
         Key::AiAgentModeAskFirstHelp,
         Key::AiAgentModeAcceptEdits,
@@ -7310,6 +7312,18 @@ pub const ROWS: &[Row] = &[
         ar: "تم التبديل إلى {}",
         zh_hans: "已切换到 {}",
         ja: "{} に切り替えました",
+    },
+    // The status line after a chat's model or level changed: the chat's next message uses it.
+    Row {
+        key: Key::AiModelNextTurn,
+        en: "This chat will use the selected model on its next turn.",
+        es: "Este chat usará el modelo seleccionado en su próximo turno.",
+        pt_br: "Este chat usará o modelo selecionado no próximo turno.",
+        de: "Dieser Chat verwendet das ausgewählte Modell ab dem nächsten Zug.",
+        fr: "Cette discussion utilisera le modèle sélectionné au prochain tour.",
+        ar: "ستستخدم هذه المحادثة النموذج المحدد في دورها التالي.",
+        zh_hans: "此对话将在下一轮使用所选模型。",
+        ja: "このチャットは次のターンから選択したモデルを使用します。",
     },
     // Claude Code's `default` mode, in the approval-mode picker (koru-ai D7).
     Row {

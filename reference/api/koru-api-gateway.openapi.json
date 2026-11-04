@@ -568,6 +568,10 @@
             },
             "type": "array"
           },
+          "models_per_turn": {
+            "description": "A begun chat's model can move to another of the agent's models,\napplied from its next message: the agent's session host takes a\nmodel with each message (session protocol v22). `false` — the model\nstays the one the chat started on — against an older host, and from\nan older service.",
+            "type": "boolean"
+          },
           "modes": {
             "description": "The agent's approval modes (koru-ai D7), in its order, with its own\nids. Empty when it offers none: a client then shows no mode control.",
             "items": {

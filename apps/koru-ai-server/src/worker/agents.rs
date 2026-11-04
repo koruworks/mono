@@ -1655,6 +1655,7 @@ pub(super) fn agent_models(
         modes,
         default_mode,
         levels_per_turn: catalog.levels_per_turn,
+        models_per_turn: catalog.models_per_turn,
         models: catalog
             .models
             .models()

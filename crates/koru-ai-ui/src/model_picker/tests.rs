@@ -904,11 +904,15 @@ fn a_begun_agent_chat_moves_between_its_own_agents_models_where_its_host_takes_o
         surface.picker_rail(),
         [RailEntry::Agent(agent("agent-claude"))]
     );
+    // Its *Default* names no model to move to: the agent picks it when a
+    // session starts.
     let rows = surface.picker_rows();
     let choosable = surface.picker_choosable(&rows);
     for (row, can) in rows.iter().zip(&choosable) {
-        assert_eq!(*can, matches!(row, Row::Default | Row::Model(_)), "{row:?}");
+        assert_eq!(*can, matches!(row, Row::Model(_)), "{row:?}");
     }
+    surface.choose_agent_model(agent("agent-claude"), AGENT_DEFAULT_MODEL.into());
+    assert!(updates(&commands).is_empty());
     assert!(surface.choose_picker_row(sonnet));
     assert!(surface.chat_model_open, "chosen, still open (D66)");
     let sent = updates(&commands);
@@ -1667,6 +1671,7 @@ fn codex_is_offered_with_its_models_levels_and_modes() {
             modes: vec![mode("ask"), mode("auto-review"), mode("full-access")],
             default_mode: Some("ask".into()),
             levels_per_turn: false,
+            models_per_turn: false,
         },
     ));
     open(&mut surface);

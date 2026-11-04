@@ -108,6 +108,10 @@ pub struct AgentCatalog {
     /// a begun chat's level can change from its next message (koru-ai
     /// D70). `false` against an older host.
     pub levels_per_turn: bool,
+    /// The session host takes a model with each message (protocol v22), so
+    /// a begun chat can move to another of its agent's models from its
+    /// next message. `false` against an older host.
+    pub models_per_turn: bool,
 }
 
 /// Where a chat's agent works until a folder is chosen (I8): the person's
@@ -148,9 +152,11 @@ impl AgentSessions {
     ) -> Result<AgentCatalog, ErrorCode> {
         let started = Instant::now();
         let mut levels_per_turn = false;
+        let mut models_per_turn = false;
         let listed = SessionClient::connect(&self.endpoint, "koru-ai-agent-models", offer())
             .and_then(|client| {
                 levels_per_turn = client.supports_turn_reasoning();
+                models_per_turn = client.supports_turn_model();
                 if refresh {
                     client.refresh_provider(kind.kind.clone())?;
                     tracing::info!(
@@ -193,6 +199,7 @@ impl AgentSessions {
             models,
             modes,
             levels_per_turn,
+            models_per_turn,
         })
     }
 

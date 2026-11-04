@@ -737,6 +737,13 @@ pub struct AgentModelsResponse {
     /// against an older host, and from an older service.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub levels_per_turn: bool,
+    /// A begun chat's model can move to another of the agent's models,
+    /// applied from its next message: the agent's session host takes a
+    /// model with each message (session protocol v22). `false` — the model
+    /// stays the one the chat started on — against an older host, and from
+    /// an older service.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub models_per_turn: bool,
 }
 
 /// One approval mode an agent offers: its own id, and what it says of it.
