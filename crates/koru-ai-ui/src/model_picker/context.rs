@@ -13,8 +13,10 @@
 //! the model's own id, on the window's. Nothing here knows how an agent
 //! spells either.
 //!
-//! Like the level, the window is chosen before an agent chat's first
-//! message: the agent starts with it, so afterwards the pill only shows it.
+//! The window is a model, so it changes when the model may
+//! (`ChatSurface::model_locked`): before an agent chat's first message, and
+//! after it only where the agent's host takes a model with each message.
+//! Elsewhere the agent started with it, and the pill only shows it.
 
 use koru_ai_core::AiProviderId;
 use koru_i18n::{Key, Lang, fill, number, t};
@@ -80,7 +82,8 @@ impl crate::ChatSurface {
     }
 
     /// Choose the window: the longer one when `long`, else the model's own.
-    /// Read only once the chat has begun: a live session keeps its model.
+    /// Read only once the chat has begun on a host that keeps a live
+    /// session's model.
     pub(crate) fn choose_context(&mut self, long: bool) -> bool {
         let Some(choice) = self.picker_context() else {
             return false;

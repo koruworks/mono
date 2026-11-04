@@ -952,18 +952,31 @@ impl crate::ChatSurface {
     /// is made with. Only offered on a chat with no message yet, and only
     /// for an agent that is ready. The chat keeps its level when the new
     /// model offers it, and is back on *Default* otherwise (D18).
+    ///
+    /// **A begun chat keeps its agent**: another of that agent's models
+    /// only, from its next message, and only where its host takes one
+    /// ([`Self::model_locked`]). While a reply runs, a note over the picker
+    /// says the model is the next message's; the reply keeps its own.
     pub(crate) fn choose_agent_model(
         &mut self,
         agent: AiProviderId,
         requested_model: String,
     ) -> bool {
-        if self
+        let begun = self
             .transcript
             .as_ref()
-            .is_some_and(|transcript| !chat_is_empty(Some(transcript)))
+            .is_some_and(|transcript| !chat_is_empty(Some(transcript)));
+        if begun
+            && (self.model_locked()
+                || self.transcript.as_ref().is_some_and(|transcript| {
+                    let current = &transcript.chat.current_model;
+                    current.provider != agent || current.requested_model == requested_model
+                }))
         {
             return true;
         }
+        let name = (begun && self.attempt.is_some())
+            .then(|| self.agent_model_name(&agent, &requested_model));
         let mut model = koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,
@@ -978,7 +991,11 @@ impl crate::ChatSurface {
         {
             model.default_reasoning = current;
         }
-        self.start_chat_on(model)
+        let chosen = self.start_chat_on(model);
+        if chosen && let Some(name) = name {
+            self.announce_model_next_message(&name);
+        }
+        chosen
     }
 
     /// Answer an agent's permission request by the choice clicked.

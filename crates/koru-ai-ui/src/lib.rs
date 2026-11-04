@@ -566,6 +566,13 @@ pub struct ChatSurface {
     /// next message (koru-ai D70): their listing said so — the session
     /// host is v20. Every other agent chat keeps its level from its start.
     levels_per_turn: HashSet<AiProviderId>,
+    /// The agents whose model a begun chat can change to another of the
+    /// same agent's, applied from the next message, as `levels_per_turn`
+    /// is for the level. Empty for now: no session host takes a model with
+    /// a message yet, and no listing says so — the session protocol and the
+    /// agent listing gain that word first. Every agent chat keeps the
+    /// model it started on until then.
+    models_per_turn: HashSet<AiProviderId>,
     /// The coding agents turned off on this machine, by agent key
     /// (`claude`, `codex`, …), as the host's *Agent providers* setting holds
     /// them. Hidden from every choice; a chat already on one keeps it.
@@ -938,6 +945,7 @@ impl ChatSurface {
             agent_modes: HashMap::new(),
             modes_asked: HashMap::new(),
             levels_per_turn: HashSet::new(),
+            models_per_turn: HashSet::new(),
             hidden_agents: std::collections::HashSet::new(),
             agent_defaults: agents::AgentDefaults::default(),
             agent_order: Vec::new(),
@@ -4185,9 +4193,10 @@ impl ChatSurface {
     /// **Start this surface's chat on `model`**, picked in the composer: a
     /// chat with no message yet takes it, and a surface with no chat yet
     /// shows a new one on it, made only when its first message is sent
-    /// ([`Self::begin_unmade_chat`]). The pick is remembered as what new
-    /// chats start on — the choice the setup used to save — so the next chat
-    /// opens on it.
+    /// ([`Self::begin_unmade_chat`]). A begun agent chat takes another of
+    /// its own agent's models, from its next message, where its host takes
+    /// one. The pick is remembered as what new chats start on — the choice
+    /// the setup used to save — so the next chat opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
         self.web_search_armed = false;
         let sent = match &self.transcript {
@@ -4202,8 +4211,22 @@ impl ChatSurface {
                     },
                 ))
             }
-            // A chat that has begun keeps its provider; only its models are
-            // offered.
+            // A chat that has begun keeps its provider: another model of
+            // its agent, from its next message, where the agent's host
+            // takes one ([`Self::model_locked`]); nothing else.
+            Some(transcript)
+                if transcript.chat.current_model.provider == model.provider
+                    && agents::is_agent_provider(&model.provider)
+                    && !self.model_locked() =>
+            {
+                let chat = transcript.chat.id;
+                self.send_command(Command::UpdateModel(
+                    chat,
+                    UpdateChatModelRequest {
+                        model: model.clone(),
+                    },
+                ))
+            }
             Some(_) => return true,
             None => {
                 self.begin_unmade_chat(model.clone());
@@ -5615,14 +5638,29 @@ impl ChatSurface {
         effort::resolve(control, transcript.chat.current_model.default_reasoning)
     }
 
-    /// **An agent chat's model is chosen before its first message**: the
-    /// agent starts on it, and a live session is not moved to another, so
-    /// afterwards the picker's *1M context* pill only shows it.
-    fn model_locked(&self) -> bool {
+    /// Whether the chat is an agent chat that has begun: from its first
+    /// message it keeps its agent (AGENTUX D1-2).
+    fn agent_chat_begun(&self) -> bool {
         self.transcript.as_ref().is_some_and(|transcript| {
             agents::is_agent_provider(&transcript.chat.current_model.provider)
                 && !transcript.messages.is_empty()
         })
+    }
+
+    /// **A begun agent chat keeps its agent; its model may move to another
+    /// of that agent's, from its next message**, as its level does — where
+    /// its agent's listing says the session host takes a model with each
+    /// message ([`Self::models_per_turn`]). Everywhere else the model is the
+    /// one the chat started on: the agent started on it and a live session
+    /// is not moved, so the picker's other rows and its *1M context* pill
+    /// only show it. A chat with no message yet chooses freely.
+    fn model_locked(&self) -> bool {
+        self.agent_chat_begun()
+            && self.transcript.as_ref().is_some_and(|transcript| {
+                !self
+                    .models_per_turn
+                    .contains(&transcript.chat.current_model.provider)
+            })
     }
 
     /// **A begun agent chat's level changes from its next message**
@@ -5632,7 +5670,7 @@ impl ChatSurface {
     /// picker's effort strip only shows it: a level such a host would
     /// ignore is never sent.
     fn effort_locked(&self) -> bool {
-        self.model_locked()
+        self.agent_chat_begun()
             && self.transcript.as_ref().is_some_and(|transcript| {
                 !self
                     .levels_per_turn
@@ -6360,12 +6398,51 @@ impl ChatSurface {
         scene::draw_layout(canvas, root, &layout, area.x, y, Some(theme::p().text));
     }
 
+    /// **Where an agent chat moved to another of its agent's models**: the
+    /// first reply on each model after another, with the words its note in
+    /// front of it reads — *Switched to Sonnet 4.6*. Read from the model
+    /// each reply recorded when it was sent, so it needs nothing kept beside
+    /// the messages; a reply that recorded none is passed over. Empty for
+    /// every other chat.
+    fn model_switches(&self) -> Vec<(MessageId, String)> {
+        let Some(transcript) = &self.transcript else {
+            return Vec::new();
+        };
+        let agent = &transcript.chat.current_model.provider;
+        if !agents::is_agent_provider(agent) {
+            return Vec::new();
+        }
+        let mut last: Option<&str> = None;
+        let mut switches = Vec::new();
+        for message in koru_ai_core::reading_order(&transcript.messages) {
+            if message.role != ChatRole::Assistant || message.provider.as_ref() != Some(agent) {
+                continue;
+            }
+            let Some(model) = message.requested_model.as_deref() else {
+                continue;
+            };
+            if last.is_some_and(|last| last != model) {
+                let name = self.agent_model_name(agent, model);
+                switches.push((
+                    message.id,
+                    koru_i18n::fill(
+                        koru_i18n::t(self.lang, koru_i18n::Key::AiModelSwitchedTo),
+                        &[&name],
+                    ),
+                ));
+            }
+            last = Some(model);
+        }
+        switches
+    }
+
     fn rebuild_messages(&mut self, width: f32) {
         let started = Instant::now();
         self.settle_question_cards(false);
         self.tool_activity_layouts.clear();
         self.work_layouts.clear();
         self.notice_layouts.clear();
+        let switches = self.model_switches();
         self.request_document_titles();
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let lang = self.lang;
@@ -6440,6 +6517,17 @@ impl ChatSurface {
                 .iter()
                 .map(|entry| (entry.message_id, &entry.usage))
                 .collect::<HashMap<_, _>>();
+            // Where an agent chat moved to another of its agent's models, a
+            // grey line in front of the first reply on it, as a notice's.
+            for (message, text) in switches {
+                self.notice_layouts.push(NoticeLayout {
+                    message,
+                    top: 0.0,
+                    layout: self
+                        .engine
+                        .simple_layout_wrapped(&text, role::meta(), work_width),
+                });
+            }
             // An agent's notices (D69): one grey line each, 12 px, wrapped
             // to the column, in front of the reply they came with.
             for notice in &transcript.notices {
@@ -12845,6 +12933,78 @@ mod tests {
         assert_eq!(tops.len(), 2);
         assert!(tops[0] < tops[1], "in the order they came");
         assert!(tops[1] < top_of(&surface, reply.id));
+    }
+
+    /// **Where an agent chat moved to another of its agent's models, a grey
+    /// line says so in front of the first reply on it**, read from the model
+    /// each reply recorded: none in front of the first reply, none where
+    /// the model stayed, and one each time it moved.
+    #[test]
+    fn a_model_switch_is_a_line_in_front_of_the_first_reply_on_it() {
+        let mut surface = ChatSurface::new();
+        surface.lang = koru_i18n::Lang::En;
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        claude_listing(&mut surface);
+        let claude = AiProviderId::parse("agent-claude").unwrap();
+        let mut chat = transcript();
+        chat.chat.current_model = ModelSelection {
+            provider: claude.clone(),
+            requested_model: "sonnet".into(),
+            default_reasoning: ReasoningChoice::Default,
+        };
+        let chat_id = chat.chat.id;
+        let message = |ordinal: u32, model: Option<&str>| koru_ai_core::Message {
+            id: MessageId::new(),
+            chat_id,
+            ordinal,
+            role: if model.is_some() {
+                ChatRole::Assistant
+            } else {
+                ChatRole::User
+            },
+            state: MessageState::Complete,
+            markdown: "words".into(),
+            origin_message_id: None,
+            provider: model.map(|_| claude.clone()),
+            requested_model: model.map(Into::into),
+            resolved_model: None,
+            error_class: None,
+            created_at: koru_ai_core::Timestamp::from_millis(1),
+            completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+        };
+        chat.messages = vec![
+            message(0, None),
+            message(1, Some("opus")),
+            message(2, None),
+            message(3, Some("opus")),
+            message(4, None),
+            message(5, Some("sonnet")),
+        ];
+        let moved = chat.messages[5].id;
+        surface.transcript = Some(chat);
+        assert_eq!(
+            surface.model_switches(),
+            [(moved, "Switched to Sonnet".to_owned())],
+            "the listing names none: its id formatted"
+        );
+        surface.rebuild_messages(600.0);
+        assert_eq!(surface.notice_layouts.len(), 1);
+        let line = surface.notice_layouts[0].top;
+        let top_of = |id: MessageId| {
+            surface
+                .message_layouts
+                .iter()
+                .find(|layout| layout.id == Some(id))
+                .unwrap()
+                .top
+        };
+        let asked = surface.transcript.as_ref().unwrap().messages[4].id;
+        assert!(top_of(asked) < line && line < top_of(moved));
+
+        // Not an agent chat: no line, whatever the replies recorded.
+        let transcript = surface.transcript.as_mut().unwrap();
+        transcript.chat.current_model.provider = AiProviderId::parse(AiProviderId::OPENAI).unwrap();
+        assert!(surface.model_switches().is_empty());
     }
 
     /// **D19: a refused level is said in the person's language.**

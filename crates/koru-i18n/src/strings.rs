@@ -321,6 +321,7 @@ pub enum Key {
     AiModelContextThousands,
     AiModelContextPill,
     AiModelContextLockedAfterStart,
+    AiModelSwitchedTo,
     AiAgentModeAskFirst,
     AiAgentModeAskFirstHelp,
     AiAgentModeAcceptEdits,
@@ -2860,7 +2861,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 1993] = [
+    pub const ALL: [Key; 1994] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3075,6 +3076,7 @@ impl Key {
         Key::AiModelContextThousands,
         Key::AiModelContextPill,
         Key::AiModelContextLockedAfterStart,
+        Key::AiModelSwitchedTo,
         Key::AiAgentModeAskFirst,
         Key::AiAgentModeAskFirstHelp,
         Key::AiAgentModeAcceptEdits,
@@ -7295,6 +7297,19 @@ pub const ROWS: &[Row] = &[
         ar: "بدأ الوكيل بهذا السياق؛ يمكن تغييره في محادثة جديدة",
         zh_hans: "代理已按此上下文启动；可在新对话中更改",
         ja: "エージェントはこのコンテキストで開始しました。新しいチャットで変更できます",
+    },
+    // A grey line in an agent chat's transcript, in front of the first reply on another
+    // of the agent's models: {} is the model's name, e.g. "Sonnet 4.6".
+    Row {
+        key: Key::AiModelSwitchedTo,
+        en: "Switched to {}",
+        es: "Cambiado a {}",
+        pt_br: "Alterado para {}",
+        de: "Gewechselt zu {}",
+        fr: "Passé à {}",
+        ar: "تم التبديل إلى {}",
+        zh_hans: "已切换到 {}",
+        ja: "{} に切り替えました",
     },
     // Claude Code's `default` mode, in the approval-mode picker (koru-ai D7).
     Row {

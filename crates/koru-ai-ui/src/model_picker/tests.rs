@@ -851,6 +851,90 @@ fn a_search_in_a_begun_chat_looks_only_at_its_own_agent() {
     assert_eq!(model.requested_model, "sonnet");
 }
 
+/// **A begun agent chat moves between its own agent's models, from its
+/// next message, where the agent's host takes a model with each one**: the
+/// rail stays hidden and every other agent stays out of reach, the agent's
+/// own rows are choosable, and a choice is the chat's model update — the
+/// level kept where the new model offers it (D18). While a reply runs, a
+/// note says the model is the next message's. Where the host takes no
+/// model, the rows only show the one the chat started on.
+#[test]
+fn a_begun_agent_chat_moves_between_its_own_agents_models_where_its_host_takes_one() {
+    use crate::reader::Command;
+    let mut surface = surface();
+    surface.lang = Lang::En;
+    let (reader, commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "opus",
+        ReasoningChoice::Default,
+    );
+    begin(&mut surface);
+    let updates = |commands: &std::sync::mpsc::Receiver<Command>| -> Vec<ModelSelection> {
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::UpdateModel(_, request) => Some(request.model),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // A host that takes no model per message: shown, not chosen.
+    assert!(surface.model_locked());
+    open(&mut surface);
+    let rows = surface.picker_rows();
+    assert!(surface.picker_choosable(&rows).iter().all(|can| !can));
+    let sonnet = rows
+        .iter()
+        .position(|row| *row == Row::Model("sonnet".into()))
+        .unwrap();
+    surface.choose_picker_row(sonnet);
+    assert!(updates(&commands).is_empty());
+    surface.close_picker();
+
+    // One that does: the agent's own rows are choosable, the rail still
+    // hidden.
+    surface.models_per_turn.insert(agent("agent-claude"));
+    assert!(!surface.model_locked());
+    open(&mut surface);
+    assert!(surface.picker_rail_hidden());
+    assert_eq!(
+        surface.picker_rail(),
+        [RailEntry::Agent(agent("agent-claude"))]
+    );
+    let rows = surface.picker_rows();
+    let choosable = surface.picker_choosable(&rows);
+    for (row, can) in rows.iter().zip(&choosable) {
+        assert_eq!(*can, matches!(row, Row::Default | Row::Model(_)), "{row:?}");
+    }
+    assert!(surface.choose_picker_row(sonnet));
+    assert!(surface.chat_model_open, "chosen, still open (D66)");
+    let sent = updates(&commands);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].provider, agent("agent-claude"), "the same agent");
+    assert_eq!(sent[0].requested_model, "sonnet");
+    assert!(
+        surface.copy_feedback.label().is_none(),
+        "no reply runs: no note"
+    );
+
+    // Another agent's model is refused: the chat keeps its agent.
+    surface.choose_agent_model(agent("agent-opencode"), "deepseek/v4-pro".into());
+    assert!(updates(&commands).is_empty());
+    // The model it is on already: nothing to send.
+    surface.choose_agent_model(agent("agent-claude"), "opus".into());
+    assert!(updates(&commands).is_empty());
+
+    // While a reply runs: the choice is the next message's, and says so.
+    surface.attempt = Some(koru_ai_core::InferenceAttemptId::new());
+    surface.choose_agent_model(agent("agent-claude"), "sonnet".into());
+    assert_eq!(updates(&commands).len(), 1);
+    let note = surface.copy_feedback.label().unwrap_or_default().to_owned();
+    assert_eq!(note, "Sonnet 4.6 · applies to your next message");
+}
+
 /// **The rail shows until the chat begins, and then it is gone** (the
 /// user: *once the chat is running, hide the model rail since we don't
 /// support switching models*). A new chat has every agent, *Favorites* and

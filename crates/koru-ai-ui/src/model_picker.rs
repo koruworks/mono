@@ -32,7 +32,10 @@
 //! models*): from its first message a chat keeps its provider, so the
 //! picker shows that provider's list alone — no rail, no *Favorites*, no
 //! **+** — and a search looks only there
-//! (`ChatSurface::picker_rail_hidden`).
+//! (`ChatSurface::picker_rail_hidden`). In an agent chat those rows are
+//! choosable, from the next message, only where the agent's session host
+//! takes a model with each message (`ChatSurface::model_locked`); elsewhere
+//! they only show the model the chat started on.
 //!
 //! **The chrome is an element tree** (D64, [`elements`]): the rail and the
 //! content column, the search row, the list and the rows under it are
@@ -734,8 +737,8 @@ impl crate::ChatSurface {
     /// switching models*). From its first message a chat belongs to its
     /// provider (AGENTUX D1-2) — the same test by which
     /// [`Self::choose_agent_model`] refuses another agent and
-    /// [`Self::entry_choosable`] dims every agent's rows — so the rail
-    /// would offer only what cannot be chosen. The picker then shows the
+    /// [`Self::entry_choosable`] dims every other agent's rows — so the
+    /// rail would offer only what cannot be chosen. The picker then shows the
     /// chat's own provider's list with no rail, *Favorites* or **+**, and
     /// its search looks only there. A new chat with no message, or no chat
     /// yet, keeps the rail.
@@ -809,19 +812,44 @@ impl crate::ChatSurface {
     }
 
     /// Whether a row of `entry` can be chosen now: an agent while the chat
-    /// has no message and the agent is ready; the chat's own built-in
-    /// provider's models always, as today. *Favorites* answers row by row,
-    /// by each favorite's agent.
+    /// has no message and the agent is ready — and in a begun chat its own
+    /// agent, where that agent's host takes a model per message
+    /// ([`Self::model_locked`]); the chat's own built-in provider's models
+    /// always, as today. *Favorites* answers row by row, by each favorite's
+    /// agent.
     fn entry_choosable(&self, entry: &RailEntry) -> bool {
         match entry {
             RailEntry::Favorites | RailEntry::Provider(_) => true,
             RailEntry::Agent(agent) => {
                 self.agent_status.get(agent).copied() == Some(AgentStatus::Ready)
-                    && self
-                        .transcript
-                        .as_ref()
-                        .is_none_or(|transcript| transcript.messages.is_empty())
+                    && self.transcript.as_ref().is_none_or(|transcript| {
+                        transcript.messages.is_empty()
+                            || (&transcript.chat.current_model.provider == agent
+                                && !self.model_locked())
+                    })
             }
+        }
+    }
+
+    /// An agent's model as its row reads it — its *Default*, its name, or
+    /// its id formatted — with the longer window named when the id is that
+    /// window's (koru-ai D10): what a note about the model says.
+    pub(crate) fn agent_model_name(&self, agent: &AiProviderId, id: &str) -> String {
+        let models = self.listed_agent_models(agent);
+        if id == AGENT_DEFAULT_MODEL {
+            return default_model_label(models, self.lang);
+        }
+        match find_listed(models, id) {
+            Some((listed, true)) => match &listed.context {
+                Some(window) => format!(
+                    "{} · {}",
+                    model_label(listed),
+                    context::pill_label(self.lang, window.tokens)
+                ),
+                None => model_label(listed),
+            },
+            Some((listed, false)) => model_label(listed),
+            None => fallback_label(id, ""),
         }
     }
 
@@ -1144,7 +1172,7 @@ impl crate::ChatSurface {
         rows.iter()
             .map(|row| match row {
                 // Showing the older models chooses nothing: it works in a
-                // begun chat too, whose models are only shown.
+                // begun chat too, even where its models are only shown.
                 Row::LegacyToggle => true,
                 Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
                 // A search's row can be chosen as on its own entry's list.
@@ -1609,6 +1637,21 @@ impl crate::ChatSurface {
             t(self.lang, Key::AiAgentModeNextMessage),
             &[t(self.lang, effort::word_key(level))],
         );
+        self.show_next_message_note(anchor, label);
+    }
+
+    /// **The note over the picker when a model is chosen during a reply**:
+    /// the model, named as its row reads, applies to the next message, in
+    /// the words the level's note uses.
+    pub(crate) fn announce_model_next_message(&mut self, name: &str) {
+        let anchor = self
+            .picker_geometry()
+            .map_or_else(|| self.chat_model_button(), |geometry| geometry.list);
+        let label = koru_i18n::fill(t(self.lang, Key::AiAgentModeNextMessage), &[name]);
+        self.show_next_message_note(anchor, label);
+    }
+
+    fn show_next_message_note(&mut self, anchor: Rect, label: String) {
         self.copy_feedback.show_transient(
             TooltipContent::new(LEVEL_NOTE_KEY, anchor, label),
             std::time::Instant::now(),
