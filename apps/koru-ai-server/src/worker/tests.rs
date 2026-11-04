@@ -302,7 +302,11 @@ impl AiToolExecutor for MutationToolExecutor {
 }
 
 impl StoreContextPort for FixedStoreContext {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError> {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        _reader: Option<koru_ai_core::ProfileId>,
+    ) -> Result<DocumentContext, AiError> {
         if self.failure || document != self.document {
             return Err(AiError::new(
                 AiErrorClass::Storage,
@@ -333,7 +337,11 @@ struct MultiStoreContext {
 }
 
 impl StoreContextPort for MultiStoreContext {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError> {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        _reader: Option<koru_ai_core::ProfileId>,
+    ) -> Result<DocumentContext, AiError> {
         let (_, title, markdown) = self
             .documents
             .iter()
@@ -1978,9 +1986,15 @@ fn chat_listing_is_scoped_and_returns_durable_rows() {
     .unwrap();
     let client = worker.client();
     let chat = create_chat(&client);
-    assert_eq!(client.list_chats(context()).unwrap().chats[0].id, chat);
     assert_eq!(
-        client.list_chats(provider_context()).unwrap_err().code,
+        client.list_chats(context(), None).unwrap().chats[0].id,
+        chat
+    );
+    assert_eq!(
+        client
+            .list_chats(provider_context(), None)
+            .unwrap_err()
+            .code,
         "forbidden"
     );
     worker.shutdown();
@@ -2100,7 +2114,7 @@ fn usage_is_separately_scoped_and_history_deletion_anonymizes_before_clear() {
     assert_eq!(before.groups[0].totals.good_feedback, 1);
 
     assert!(client.delete_chat(context(), chat).unwrap().deleted);
-    assert!(client.list_chats(context()).unwrap().chats.is_empty());
+    assert!(client.list_chats(context(), None).unwrap().chats.is_empty());
     let retained = client.usage(usage_context(), None).unwrap().report;
     assert_eq!(retained.groups.len(), 1);
     assert_eq!(retained.groups[0].totals.good_feedback, 1);
@@ -2946,7 +2960,7 @@ fn a_chat_is_pinned_and_unpinned_in_place() {
         .unwrap()
         .chat;
     assert_eq!(again.pinned_at, Some(at), "the first pin time is kept");
-    let listed = client.list_chats(context()).unwrap().chats;
+    let listed = client.list_chats(context(), None).unwrap().chats;
     assert_eq!(listed[0].pinned_at, Some(at));
     let unpinned = client
         .pin_chat(context(), chat, PinChatRequest { pinned: false })

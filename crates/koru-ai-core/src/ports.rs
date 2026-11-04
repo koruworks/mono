@@ -187,12 +187,26 @@ pub struct AiToolExecutionContext {
     pub chat_id: ChatId,
     pub attempt_id: InferenceAttemptId,
     pub invocation_id: ToolInvocationId,
+    /// The chat's grants. **Only those in [`Self::profile_id`]'s profile
+    /// are ever read** (AI schema 13): an executor that reaches a workspace
+    /// drops the rest before it reaches any, and they are not counted.
     pub workspace_ids: Vec<WorkspaceId>,
+    /// The calling chat's profile, from the stored chat — never from a
+    /// request. `None` (a chat not yet placed) reaches no workspace.
+    pub profile_id: Option<ProfileId>,
 }
 
 /// Narrow Store authority used for exact context and retry-safe export.
 pub trait StoreContextPort: Send + Sync {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError>;
+    /// The document as context for a chat of `reader`'s profile. **A
+    /// document in a workspace of another profile is not available**, the
+    /// same answer as a missing one, and neither is any document for a
+    /// chat with no profile (AI schema 13).
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        reader: Option<ProfileId>,
+    ) -> Result<DocumentContext, AiError>;
     fn create_document(
         &self,
         idempotency_key: Uuid,

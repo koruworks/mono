@@ -1756,6 +1756,7 @@ async fn federated_search(
     let ai_principal = principal.clone();
     let ai_text = request.query.text.clone();
     let ai_cursor = cursor.ai_cursor.clone();
+    let ai_profile = request.profile;
     let include_ai = request.include_ai;
     let request_seq = request.query.request_seq;
     let ai_future = async move {
@@ -1772,6 +1773,7 @@ async fn federated_search(
                     limit: u16::try_from(page_size).expect("Store page limit fits u16"),
                     cursor: ai_cursor,
                     request_seq,
+                    profile: ai_profile,
                 },
             ),
         )

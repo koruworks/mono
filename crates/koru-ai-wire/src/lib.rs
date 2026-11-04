@@ -351,6 +351,10 @@ pub struct AiSearchRequest {
     pub cursor: Option<String>,
     #[serde(default)]
     pub request_seq: u64,
+    /// Only this profile's chats (AI schema 13). Absent searches every
+    /// profile's; each hit names its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

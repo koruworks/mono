@@ -4,7 +4,7 @@
 
 use koru_ai_core::{
     AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, ProfileCatalog,
-    StoreContextPort, StoreRevision, WorkspaceId,
+    ProfileId, StoreContextPort, StoreRevision, WorkspaceId,
 };
 use koru_core::WorkspaceDoc;
 use koru_export::NoBlobs;
@@ -30,7 +30,13 @@ struct StoredDocument {
 }
 
 impl StoreContextPort for StoreContextAdapter {
-    fn resolve_document(&self, document: DocumentId) -> Result<DocumentContext, AiError> {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        reader: Option<ProfileId>,
+    ) -> Result<DocumentContext, AiError> {
+        // A chat not yet placed reads nothing (AI schema 13).
+        let reader = reader.ok_or_else(document_unavailable)?;
         let stored = self
             .client
             .with_store(move |store| {
@@ -38,6 +44,16 @@ impl StoreContextPort for StoreContextAdapter {
                     .locate(document)
                     .map_err(|_| context_unavailable())?
                     .ok_or_else(document_unavailable)?;
+                // **Only the reader's profile's documents**: another
+                // profile's is the same answer as a missing one.
+                if store
+                    .workspace(workspace)
+                    .map_err(|_| context_unavailable())?
+                    .owner
+                    != reader
+                {
+                    return Err(document_unavailable());
+                }
                 let entry = store
                     .documents(workspace)
                     .map_err(|_| context_unavailable())?
@@ -231,11 +247,18 @@ mod tests {
         .spawn()
         .unwrap();
         let client = worker.client();
-        let document = client
+        let (profile, other, document) = client
             .with_store(|store| {
                 let at = Timestamp::from_millis(1);
                 let profile =
                     store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
+                let other = store.create_profile(
+                    "Other",
+                    None,
+                    None,
+                    Locale::parse("en").unwrap(),
+                    Timestamp::from_millis(2),
+                )?;
                 let workspace = store.create_workspace(profile.id, "Workspace", at)?;
                 let (document, _) =
                     store.create_document(workspace.id, "Roadmap", "page", None, None, at)?;
@@ -254,17 +277,34 @@ mod tests {
                     UpdateOrigin::Store,
                 )?;
                 store.flush(workspace.id, document, at)?;
-                Ok::<_, koru_store_core::Error>(document)
+                Ok::<_, koru_store_core::Error>((profile.id, other.id, document))
             })
             .unwrap()
             .unwrap();
 
         let adapter = StoreContextAdapter::new(client);
-        let resolved = adapter.resolve_document(document).unwrap();
+        let resolved = adapter.resolve_document(document, Some(profile)).unwrap();
         assert_eq!(resolved.document_id, document);
         assert_eq!(resolved.display_title, "Roadmap");
         assert_eq!(resolved.markdown, "# Roadmap\n\nShip context\n");
         assert!(!resolved.source_revision.0.is_empty());
+
+        // **Another profile's chat reads nothing of it** (AI schema 13), and
+        // a chat not yet placed reads nothing at all: both are the answer a
+        // missing document gets.
+        let missing = adapter
+            .resolve_document(DocumentId::new(), Some(profile))
+            .unwrap_err();
+        for reader in [Some(other), None] {
+            let refused = adapter.resolve_document(document, reader).unwrap_err();
+            assert_eq!(refused.public_message, missing.public_message);
+            assert_eq!(refused.class, missing.class);
+        }
+        let catalog = adapter.profile_catalog().unwrap();
+        assert_eq!(catalog.profiles.len(), 2);
+        assert_eq!(catalog.first(), Some(profile), "the older one first");
+        assert_eq!(catalog.workspace_owners.len(), 1);
+        assert!(adapter.document_workspace(document).unwrap().is_some());
 
         drop(adapter);
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);

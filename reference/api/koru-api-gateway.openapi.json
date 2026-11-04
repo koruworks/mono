@@ -849,6 +849,20 @@
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The profile the hit's chat belongs to (AI schema 13), so a surface\nthat lists every profile's hits opens one in its own profile's\nwindow. `None` from an older server, or for a chat not yet placed."
+          },
           "score": {
             "format": "float",
             "type": "number"
@@ -905,6 +919,20 @@
             "maximum": 65535,
             "minimum": 0,
             "type": "integer"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Only this profile's chats (AI schema 13). Absent searches every\nprofile's; each hit names its own."
           },
           "request_seq": {
             "default": 0,
@@ -2849,6 +2877,20 @@
             "default": false,
             "type": "boolean"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**The profile the chat belongs to** (AI schema 13, koru-ai D120): the\nprofile of the window it was started in, its source's for a branch.\nIts list, its search hits and the workspaces it may read are that\nprofile's. `None` only for a chat written before schema 13 that the\nservice has not yet placed (it places each one as soon as the Store\nanswers: [`crate::place_chat`]), and on an older server's answer."
+          },
           "title": {
             "type": "string"
           },
@@ -3545,6 +3587,20 @@
           },
           "model": {
             "$ref": "#/components/schemas/ModelSelection"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**The profile the chat belongs to** (AI schema 13): the profile of\nthe window it is started in. An older client sends none, and the\nservice places the chat as it places one written before profiles —\nwith nothing read yet, in the first profile."
           },
           "title": {
             "type": "string"
@@ -5217,6 +5273,20 @@
             "format": "uint",
             "minimum": 0,
             "type": "integer"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**Only this profile's chats** among the AI results (AI schema 13):\na window searches its own profile's. Absent searches every\nprofile's, each hit naming its own. The Store results are scoped by\n`workspaces`, as before."
           },
           "recent_queries": {
             "default": null,
@@ -17377,8 +17447,20 @@
         "summary": "Clear all AI chat history"
       },
       "get": {
-        "description": "Durable chats ordered by most recent activity.",
+        "description": "Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's.",
         "operationId": "ai_list_chats",
+        "parameters": [
+          {
+            "description": "Only this profile's chats (AI schema 13). Absent lists every profile's.",
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17388,7 +17470,7 @@
                 }
               }
             },
-            "description": "Durable chats ordered by most recent activity."
+            "description": "Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's."
           },
           "400": {
             "content": {

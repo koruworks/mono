@@ -536,9 +536,17 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
-    fn list_chats(&self, context: RequestContext) -> ApiResult<ListChatsResponse> {
+    fn list_chats(
+        &self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> ApiResult<ListChatsResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::ListChats { context, reply })?;
+        self.send(WorkerCommand::ListChats {
+            context,
+            profile,
+            reply,
+        })?;
         receive_api(response)
     }
 
@@ -1063,6 +1071,7 @@ enum WorkerCommand {
     },
     ListChats {
         context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
         reply: SyncSender<ApiResult<ListChatsResponse>>,
     },
     ReadChat {
@@ -1724,8 +1733,12 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.create_chat(context, request));
             }
-            WorkerCommand::ListChats { context, reply } => {
-                let _ = reply.send(self.list_chats(context));
+            WorkerCommand::ListChats {
+                context,
+                profile,
+                reply,
+            } => {
+                let _ = reply.send(self.list_chats(context, profile));
             }
             WorkerCommand::ReadChat {
                 context,
@@ -2915,11 +2928,14 @@ impl WorkerState {
     }
 
     fn search(
-        &self,
+        &mut self,
         context: RequestContext,
         request: AiSearchRequest,
     ) -> ApiResult<AiSearchResponse> {
         authorize(&context, AiScope::Chat)?;
+        if request.profile.is_some() {
+            self.place_unplaced_chats();
+        }
         if request.text.len() > 4_096 || request.text.chars().any(char::is_control) {
             return Err(failure(
                 "invalid_request",
@@ -2952,7 +2968,7 @@ impl WorkerState {
                 limit: request.limit,
                 cursor: request.cursor,
                 visibility: ChatAccessLens::UserSurface,
-                profile: None,
+                profile: request.profile,
             })
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
@@ -3182,6 +3198,18 @@ impl WorkerState {
             .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        // A reply is kept as a document in its chat's own profile, as it
+        // reads only there (AI schema 13).
+        if chat
+            .profile_id
+            .is_some_and(|profile| profile != request.destination.profile_id)
+        {
+            return Err(failure(
+                "forbidden",
+                "A chat's reply is kept only in its own profile.",
+                false,
+            ));
+        }
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
         let through = messages
             .iter()
@@ -3293,11 +3321,23 @@ impl WorkerState {
         }
     }
 
-    fn list_chats(&self, context: RequestContext) -> ApiResult<ListChatsResponse> {
+    /// **One profile's chats** (AI schema 13), or every profile's for a
+    /// client that names none. A chat not yet placed is in no profile's
+    /// list, so a list for a profile first tries to place it.
+    fn list_chats(
+        &mut self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> ApiResult<ListChatsResponse> {
         authorize(&context, AiScope::Chat)?;
-        Ok(ListChatsResponse {
-            chats: self.repository.chats().map_err(ai_failure)?,
-        })
+        if profile.is_some() {
+            self.place_unplaced_chats();
+        }
+        let mut chats = self.repository.chats().map_err(ai_failure)?;
+        if let Some(profile) = profile {
+            chats.retain(|chat| chat.profile_id == Some(profile));
+        }
+        Ok(ListChatsResponse { chats })
     }
 
     fn send_turn(
@@ -3771,6 +3811,14 @@ impl WorkerState {
         started_at: Timestamp,
         cancellation: Cancellation,
     ) -> Result<ContextJob, AiError> {
+        // **What the chat may read is its stored profile's** (AI schema
+        // 13): pinned and `@` documents are resolved for it, and a block
+        // linked from another chat is context only from the same profile.
+        let profile = self
+            .repository
+            .chat(chat_id)?
+            .map(|chat| chat.profile_id)
+            .unwrap_or_default();
         let pinned = if replace_pinned_documents {
             Vec::new()
         } else {
@@ -3819,7 +3867,9 @@ impl WorkerState {
                                     false,
                                 )
                             })?;
-                        if block.chat_private && block.chat_id != chat_id {
+                        if block.chat_id != chat_id
+                            && (block.chat_private || block.chat_profile != profile)
+                        {
                             return Err(AiError::new(
                                 AiErrorClass::Storage,
                                 "The selected AI message block is not available.",
@@ -3842,6 +3892,7 @@ impl WorkerState {
             attempt_id,
             user_message_id,
             chat_id,
+            profile,
             request,
             refs,
             known_documents,
@@ -4191,6 +4242,12 @@ impl WorkerState {
             .repository
             .chat_tool_policy(chat_id)?
             .ok_or_else(tool_loop_missing)?;
+        // The stored chat's profile, never a request's (AI schema 13).
+        let profile_id = self
+            .repository
+            .chat(chat_id)?
+            .ok_or_else(tool_loop_missing)?
+            .profile_id;
         let cancellation = self
             .cancellations
             .get(&attempt_id)
@@ -4270,6 +4327,7 @@ impl WorkerState {
                     attempt_id,
                     invocation_id,
                     workspace_ids: policy.workspace_ids.clone(),
+                    profile_id,
                 },
                 call: call.clone(),
                 cancellation: cancellation.clone(),
@@ -4483,6 +4541,12 @@ impl WorkerState {
                     .map_err(ai_failure)?
                     .ok_or_else(tool_not_resumable)?
                     .workspace_ids,
+                profile_id: self
+                    .repository
+                    .chat(activity.chat_id)
+                    .map_err(ai_failure)?
+                    .ok_or_else(tool_not_resumable)?
+                    .profile_id,
             },
             call: call.clone(),
             cancellation,
@@ -5142,6 +5206,8 @@ struct ContextJob {
     attempt_id: InferenceAttemptId,
     user_message_id: MessageId,
     chat_id: ChatId,
+    /// The chat's stored profile: whose documents it may read.
+    profile: Option<koru_ai_core::ProfileId>,
     request: AiRequest,
     refs: Vec<PreparedContextRef>,
     known_documents: HashMap<koru_ai_core::DocumentId, PinnedDocument>,
@@ -5362,7 +5428,7 @@ fn resolve_context_job(
                 PreparedContextRef::Document(document_id) => {
                     let document = store
                         .ok_or_else(context_port_unavailable)?
-                        .resolve_document(document_id)?;
+                        .resolve_document(document_id, job.profile)?;
                     add_context_bytes(&mut payload_bytes, document.markdown.len())?;
                     let now = Timestamp::now();
                     let first_used_at = job

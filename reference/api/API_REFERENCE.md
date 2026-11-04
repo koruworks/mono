@@ -516,7 +516,7 @@ Returns: The durable chat created with the client-minted identity.
 
 List AI chats
 
-Returns: Durable chats ordered by most recent activity.
+Returns: Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's.
 
 ## GET `/v1/ai/chats/{chat}`
 

@@ -183,12 +183,26 @@ impl WorkerState {
             .iter()
             .any(|record| record.attachment.origin.is_some())
         {
-            let granted = self
+            // Granted, and in the chat's own profile (AI schema 13): a grant
+            // to another profile's workspace is kept and never read. A Store
+            // that cannot say who owns it is a refusal, not a guess.
+            let owners = self
+                .store
+                .as_ref()
+                .and_then(|store| store.profile_catalog().ok());
+            let granted: Vec<_> = self
                 .repository
                 .chat_tool_policy(chat.id)
                 .map_err(ai_failure)?
                 .map(|policy| policy.workspace_ids)
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|workspace| {
+                    chat.profile_id.is_some()
+                        && owners.as_ref().and_then(|owners| owners.owner(*workspace))
+                            == chat.profile_id
+                })
+                .collect();
             if let Some(revoked) = records.iter().find(|record| {
                 record
                     .attachment

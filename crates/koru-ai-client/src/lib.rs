@@ -113,8 +113,12 @@ impl Client {
         self.server.create_chat(context, request)
     }
 
-    pub fn list_chats(&self, context: RequestContext) -> Result<koru_ai_wire::ListChatsResponse> {
-        self.server.list_chats(context)
+    pub fn list_chats(
+        &self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> Result<koru_ai_wire::ListChatsResponse> {
+        self.server.list_chats(context, profile)
     }
 
     pub fn read_chat(&self, context: RequestContext, chat: ChatId) -> Result<ChatTranscript> {

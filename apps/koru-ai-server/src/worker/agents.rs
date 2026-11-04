@@ -1202,6 +1202,7 @@ impl WorkerState {
             attempt_id,
             user_message_id: user,
             chat_id: chat.id,
+            profile: chat.profile_id,
             request: base_request,
             refs: Vec::new(),
             known_documents: HashMap::new(),

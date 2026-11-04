@@ -103,7 +103,7 @@ impl Reader {
 /// agent* rather than its name, which is a better answer than an empty list
 /// because one request did not land.
 fn list(gateway: &Gateway) -> Result<Listing, Failure> {
-    let chats = gateway.call(|client| client.ai().list_chats())?.chats;
+    let chats = gateway.call(|client| client.ai().list_chats(None))?.chats;
     let agents = gateway
         .call(|client| client.ai().provider_settings())
         .map(|settings| settings.agents)

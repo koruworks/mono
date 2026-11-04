@@ -142,7 +142,12 @@ pub trait AiServerPort: Send + Sync {
         context: RequestContext,
         request: CreateChatRequest,
     ) -> Result<CreateChatResponse>;
-    fn list_chats(&self, context: RequestContext) -> Result<koru_ai_wire::ListChatsResponse>;
+    /// One profile's chats (AI schema 13); `None` is every profile's.
+    fn list_chats(
+        &self,
+        context: RequestContext,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> Result<koru_ai_wire::ListChatsResponse>;
     fn read_chat(&self, context: RequestContext, chat: ChatId) -> Result<ChatTranscript>;
     fn rename_chat(
         &self,

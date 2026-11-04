@@ -222,7 +222,7 @@ pub const ROUTES: &[AiRoute] = &[
         path: "/v1/ai/chats",
         scope: AiScope::Chat,
         summary: "List AI chats",
-        returns: "Durable chats ordered by most recent activity.",
+        returns: "Durable chats ordered by most recent activity: one profile's, given `profile`, else every profile's.",
         handler: || get(list_chats),
         request: AiBody::None,
         response: AiBody::Json(|generator| generator.subschema_for::<ListChatsResponse>()),
@@ -736,6 +736,13 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                 json!({"name": parameter, "in": "path", "required": true, "schema": schema})
             })
             .collect();
+        if route.operation_id == "ai_list_chats" {
+            parameters.push(json!({
+                "name": "profile", "in": "query", "required": false,
+                "description": "Only this profile's chats (AI schema 13). Absent lists every profile's.",
+                "schema": {"type": "string", "format": "uuid"}
+            }));
+        }
         if route.operation_id == "ai_put_attachment" {
             parameters.push(json!({
                 "name": "name", "in": "query", "required": true,
@@ -993,15 +1000,31 @@ async fn create_chat(
     answer(call(move || client.create_chat(context, request)).await)
 }
 
+/// The query of a listing: the profile whose chats it is (AI schema 13).
+#[derive(serde::Deserialize)]
+struct ListChatsQuery {
+    #[serde(default)]
+    profile: Option<String>,
+}
+
 async fn list_chats(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,
+    query: Result<Query<ListChatsQuery>, QueryRejection>,
 ) -> Response {
+    let profile = match query.map(|Query(query)| query.profile) {
+        Ok(None) => None,
+        Ok(Some(profile)) => match koru_ai_core::ProfileId::parse(&profile) {
+            Some(profile) => Some(profile),
+            None => return invalid_identity("profile"),
+        },
+        Err(_) => return invalid_identity("profile"),
+    };
     let (client, context) = match admitted(&state, principal, AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
-    answer(call(move || client.list_chats(context)).await)
+    answer(call(move || client.list_chats(context, profile)).await)
 }
 
 async fn read_chat(

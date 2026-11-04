@@ -189,6 +189,7 @@ impl SearchReader {
                                 recent_queries: (!append).then_some(8),
                                 include_ai,
                                 cursor,
+                                profile: None,
                             };
                             SearchReadResult::FederatedPage {
                                 append,

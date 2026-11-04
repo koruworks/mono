@@ -161,7 +161,24 @@ fn a_schema_12_stores_chats_go_to_the_profile_of_what_they_last_read() {
         "no evidence"
     );
     assert_eq!(profile_of(&client, d), Some(profiles.work), "a grant");
-    assert_eq!(client.list_chats(context()).unwrap().chats.len(), 4);
+    assert_eq!(client.list_chats(context(), None).unwrap().chats.len(), 4);
+    let listed = |profile| {
+        let mut ids: Vec<ChatId> = client
+            .list_chats(context(), Some(profile))
+            .unwrap()
+            .chats
+            .into_iter()
+            .map(|chat| chat.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let sorted = |mut ids: Vec<ChatId>| {
+        ids.sort();
+        ids
+    };
+    assert_eq!(listed(profiles.work), sorted(vec![a, d]));
+    assert_eq!(listed(profiles.private), sorted(vec![b, c]));
     assert_eq!(
         client
             .read_chat_tool_policy(context(), b)
@@ -226,5 +243,213 @@ fn a_new_chat_takes_its_windows_profile_and_a_branch_its_sources() {
         .unwrap()
         .transcript;
     assert_eq!(branch.chat.profile_id, Some(profiles.work));
+    profiles.finish(worker);
+}
+
+fn send_with(
+    client: &AiWorkerClient,
+    chat_id: ChatId,
+    explicit_refs: Vec<ContextRef>,
+) -> AiResponseStream {
+    client
+        .send_turn(
+            context(),
+            SendTurnRequest {
+                operation_id: Uuid::new_v4(),
+                chat_id,
+                surface: AiSurface::Standalone,
+                markdown: "Use this".into(),
+                explicit_refs,
+                web_search: false,
+                reasoning_override: None,
+                system_prompt_override: None,
+                replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
+                answers: None,
+                skills: Vec::new(),
+            },
+        )
+        .unwrap()
+}
+
+/// **A chat reads only its own profile** (AI schema 13), enforced here
+/// from the stored chat, whatever the window: a document of another
+/// profile's workspace is refused as a missing one is, and so is a block
+/// linked from another profile's chat; the list and the search are one
+/// profile's.
+#[test]
+fn a_chat_reads_and_lists_only_its_own_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let profiles = Profiles::new(root.path());
+    let worker = profiles.ai_worker(root.path());
+    let client = worker.client();
+    let create = |profile| {
+        let chat_id = ChatId::new();
+        client
+            .create_chat(
+                context(),
+                CreateChatRequest {
+                    chat_id,
+                    title: "Profiled".into(),
+                    profile_id: Some(profile),
+                    model: model(),
+                },
+            )
+            .unwrap();
+        chat_id
+    };
+    let at_work = create(profiles.work);
+    let at_home = create(profiles.private);
+    let also_at_work = create(profiles.work);
+
+    // Private's letter, from a chat at Work.
+    let refused = send_with(
+        &client,
+        at_work,
+        vec![ContextRef::Document {
+            document_id: profiles.letter,
+        }],
+    );
+    assert_eq!(
+        wait_for_terminal(&client, refused.accepted.attempt_id),
+        AttemptStatus::Failed
+    );
+    let missing = send_with(
+        &client,
+        also_at_work,
+        vec![ContextRef::Document {
+            document_id: DocumentId::new(),
+        }],
+    );
+    assert_eq!(
+        wait_for_terminal(&client, missing.accepted.attempt_id),
+        AttemptStatus::Failed
+    );
+    let failure = |stream: &AiResponseStream| {
+        client
+            .read_attempt(context(), stream.accepted.attempt_id)
+            .unwrap()
+            .attempt
+            .error_class
+    };
+    assert_eq!(
+        failure(&refused),
+        failure(&missing),
+        "the same as no document"
+    );
+
+    // A block of a chat at Work: context for another chat at Work, not for
+    // one in Private.
+    let first = send(&client, at_work, Uuid::new_v4());
+    assert_eq!(
+        wait_for_terminal(&client, first.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let block = client.read_chat(context(), at_work).unwrap().blocks[0].id;
+    let same = send_with(
+        &client,
+        also_at_work,
+        vec![ContextRef::MessageBlock { block_id: block }],
+    );
+    assert_eq!(
+        wait_for_terminal(&client, same.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let other = send_with(
+        &client,
+        at_home,
+        vec![ContextRef::MessageBlock { block_id: block }],
+    );
+    assert_eq!(
+        wait_for_terminal(&client, other.accepted.attempt_id),
+        AttemptStatus::Failed
+    );
+
+    let home_reply = send(&client, at_home, Uuid::new_v4());
+    assert_eq!(
+        wait_for_terminal(&client, home_reply.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let listed = client
+        .list_chats(context(), Some(profiles.private))
+        .unwrap()
+        .chats;
+    assert_eq!(
+        listed.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        vec![at_home]
+    );
+    let search = |profile| {
+        client
+            .search(
+                context(),
+                AiSearchRequest {
+                    text: "deterministic".into(),
+                    limit: 50,
+                    cursor: None,
+                    request_seq: 0,
+                    profile,
+                },
+            )
+            .unwrap()
+            .page
+            .hits
+    };
+    let everywhere = search(None);
+    assert!(everywhere.iter().any(|hit| hit.chat_id == at_home));
+    let at_work_hits = search(Some(profiles.work));
+    assert!(!at_work_hits.is_empty());
+    assert!(
+        at_work_hits
+            .iter()
+            .all(|hit| hit.profile_id == Some(profiles.work))
+    );
+    profiles.finish(worker);
+}
+
+/// **A reply is kept as a document only in its chat's profile** (AI
+/// schema 13): an export to another profile's workspace is refused before
+/// anything is written.
+#[test]
+fn a_chats_reply_is_kept_only_in_its_own_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let profiles = Profiles::new(root.path());
+    let worker = profiles.ai_worker(root.path());
+    let client = worker.client();
+    let chat_id = ChatId::new();
+    client
+        .create_chat(
+            context(),
+            CreateChatRequest {
+                chat_id,
+                title: "Profiled".into(),
+                profile_id: Some(profiles.work),
+                model: model(),
+            },
+        )
+        .unwrap();
+    let stream = send(&client, chat_id, Uuid::new_v4());
+    assert_eq!(
+        wait_for_terminal(&client, stream.accepted.attempt_id),
+        AttemptStatus::Complete
+    );
+    let refused = client
+        .export_chat(
+            context(),
+            chat_id,
+            koru_ai_wire::ExportChatRequest {
+                export_id: koru_ai_core::DocumentExportId::new(),
+                idempotency_key: Uuid::new_v4(),
+                through_message_id: stream.accepted.assistant_message_id,
+                destination: DocumentDestination {
+                    profile_id: profiles.private,
+                    workspace_id: profiles.home,
+                    parent_document_id: None,
+                    index: None,
+                    title: "Kept".into(),
+                },
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, "forbidden");
     profiles.finish(worker);
 }

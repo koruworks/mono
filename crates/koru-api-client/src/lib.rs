@@ -797,8 +797,18 @@ impl AiClient<'_> {
         )
     }
 
-    pub fn list_chats(&self) -> AiResult<koru_ai_wire::ListChatsResponse> {
-        self.json(reqwest::Method::GET, "/v1/ai/chats".into(), None)
+    /// **One profile's chats** (AI schema 13): what a window of that
+    /// profile lists. `None` is every profile's, for a surface that belongs
+    /// to none.
+    pub fn list_chats(
+        &self,
+        profile: Option<koru_ai_core::ProfileId>,
+    ) -> AiResult<koru_ai_wire::ListChatsResponse> {
+        let path = match profile {
+            Some(profile) => format!("/v1/ai/chats?profile={}", profile.to_storage()),
+            None => "/v1/ai/chats".into(),
+        };
+        self.json(reqwest::Method::GET, path, None)
     }
 
     pub fn read_chat(&self, chat: ChatId) -> AiResult<ChatTranscript> {

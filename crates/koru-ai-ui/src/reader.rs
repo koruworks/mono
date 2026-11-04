@@ -370,7 +370,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             Command::Boot(requested_chat) => {
                 let result = (|| {
                     let settings = client.ai().provider_settings()?;
-                    let chats = client.ai().list_chats()?.chats;
+                    let chats = client.ai().list_chats(None)?.chats;
                     // **A chat asked for by name that the service no longer
                     // holds** — deleted since a tab was saved over it
                     // (ADR-483-chattabrestore) — boots without it. Failing
@@ -994,7 +994,7 @@ fn authoritatively_missing(failure: &koru_ai_wire::Failure) -> bool {
 fn history_after_mutation(
     client: &koru_api_client::Client,
 ) -> Result<(Vec<koru_ai_core::Chat>, Option<ChatTranscript>), koru_ai_wire::Failure> {
-    let chats = client.ai().list_chats()?.chats;
+    let chats = client.ai().list_chats(None)?.chats;
     let transcript = chats
         .first()
         .map(|chat| client.ai().read_chat(chat.id))
