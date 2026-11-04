@@ -1299,6 +1299,7 @@ impl ChatSurface {
             self.web_search_tooltip.maintenance_deadline(),
             self.picker_tooltip.maintenance_deadline(),
             self.queue_tooltip.maintenance_deadline(),
+            self.skill_tooltip().maintenance_deadline(),
             self.pill_strip.maintenance_deadline(),
             self.composer.maintenance_deadline(),
             self.dictation_deadline(),
@@ -1347,6 +1348,7 @@ impl ChatSurface {
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
         changed |= self.queue_tooltip.maintain(_now);
+        changed |= self.maintain_skill_tooltip(_now);
         // The `@` picker's search answers, delivered on this tick.
         self.composer
             .set_context(self.context_workspace, self.context_document.clone());
@@ -1391,6 +1393,7 @@ impl ChatSurface {
             || self.web_search_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
             || self.queue_tooltip.animating(Instant::now())
+            || self.skill_tooltip().animating(Instant::now())
             || self.pill_strip.animating(Instant::now())
             || self.dictation_animating(Instant::now())
             || self.pulse.as_ref().is_some_and(PulsingDots::animating)
@@ -1497,6 +1500,12 @@ impl ChatSurface {
     }
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        // Any key lets a `$` row's description go at once (D121).
+        let tooltip_gone = self.skill_tooltip_clear();
+        self.route_key(key, text, mods) || tooltip_gone
+    }
+
+    fn route_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         // The viewer is modal: every key is its own while it is up.
         if let Some(handled) = self.viewer_key(key, text, mods) {
             return handled;
@@ -2466,7 +2475,8 @@ impl ChatSurface {
                     )
                 }),
             Instant::now(),
-        ) | self.dictation_hover(old_pointer, x, y);
+        ) | self.dictation_hover(old_pointer, x, y)
+            | self.skill_tooltip_hover(x, y);
         if let Some(changed) = self.response_menu_mouse_move(x, y, old) {
             return changed;
         }

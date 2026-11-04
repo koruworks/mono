@@ -381,6 +381,151 @@ fn a_press_on_a_row_picks_it() {
     assert!(!surface.skill_list_open());
 }
 
+/// A description far too long for a row's one line.
+const LONG: &str = "Review the open pull request against the repository's \
+    contribution rules, then write up every finding with the file and line \
+    it is about, and what to change before it can land.";
+
+/// The list with a long description first, a short one second, none third.
+fn described() -> Vec<AgentCommandView> {
+    vec![
+        skill("review-pr", None, LONG, AgentCommandKindView::RepoSkill),
+        skill(
+            "imagegen",
+            Some("Image Gen"),
+            "Generate an image",
+            AgentCommandKindView::SystemSkill,
+        ),
+        skill("bare", None, "", AgentCommandKindView::UserSkill),
+    ]
+}
+
+/// The middle of the `index`th row shown.
+fn row_point(surface: &ChatSurface, index: usize) -> (f32, f32) {
+    let panel = surface.skill_panel().unwrap();
+    let inset = elements::PANEL_INSET.token.px(Profile::Desktop);
+    (
+        panel.x + panel.w * 0.5,
+        panel.y + inset + elements::ROW_HEIGHT.value * (index as f32 + 0.5),
+    )
+}
+
+/// Past the hover delay and the fade in, as the window's clock would step it.
+fn settle(surface: &mut ChatSurface) -> Instant {
+    let motion = koru_draw::theme::motion::tooltip();
+    let later =
+        Instant::now() + motion.hover_delay + motion.enter_duration + Duration::from_millis(10);
+    surface.maintain_skill_tooltip(later);
+    surface.maintain_skill_tooltip(later);
+    later
+}
+
+/// **A long description, after the app's hover delay, in full beside the
+/// list** (the user: *on long hover, show the full description as
+/// tooltip*): the shared tooltip, wrapped, standing clear of the list
+/// rather than over the rows. Nothing before the delay.
+#[test]
+fn a_rested_pointer_shows_an_elided_description_whole_beside_the_list() {
+    let (mut surface, _commands) = surface();
+    type_text(&mut surface, "Use $");
+    answer(&mut surface, described());
+    let panel = surface.skill_panel().unwrap();
+    let (x, y) = row_point(&surface, 0);
+
+    let tip = surface.skill_tooltip_at(x, y).expect("elided: a tooltip");
+    assert_eq!(tip.label, LONG, "the whole description");
+    assert!(tip.wrap, "wrapped, not elided again");
+    assert_eq!(tip.placement, koru_ui::tooltip::Placement::Beside);
+    assert_eq!((tip.anchor.x, tip.anchor.w), (panel.x, panel.w));
+
+    let before = Instant::now();
+    surface.mouse_move(x, y);
+    let delay = koru_draw::theme::motion::tooltip().hover_delay;
+    let due = surface
+        .skill_tooltip()
+        .maintenance_deadline()
+        .expect("waiting");
+    assert!(due >= before + delay, "the app's hover delay, not sooner");
+    assert_eq!(surface.skill_tooltip().visibility(before), 0.0);
+
+    let later = settle(&mut surface);
+    assert_eq!(surface.skill_tooltip().visibility(later), 1.0);
+    let tooltip = surface.skill_tooltip().clone();
+    let drawn = tooltip
+        .draw(
+            &mut Scene::new(),
+            Affine::IDENTITY,
+            &mut surface.engine,
+            surface.viewport,
+            later,
+        )
+        .expect("drawn");
+    assert!(
+        drawn.x >= panel.x + panel.w || drawn.x + drawn.w <= panel.x,
+        "beside the list, never over it: {drawn:?} by {panel:?}"
+    );
+    assert!(drawn.w <= koru_ui::tooltip::MAX_W + 0.5);
+    assert!(drawn.h > 26.0, "wrapped onto more than one line");
+}
+
+/// **Only a description the row cut short**: one that fits its line, and a
+/// row with none, raise nothing.
+#[test]
+fn a_description_that_fits_raises_nothing() {
+    let (mut surface, _commands) = surface();
+    type_text(&mut surface, "Use $");
+    answer(&mut surface, described());
+    let (x, y) = row_point(&surface, 1);
+    assert!(surface.skill_tooltip_at(x, y).is_none(), "fits its line");
+    surface.mouse_move(x, y);
+    assert!(!surface.skill_tooltip().is_present());
+    let (x, y) = row_point(&surface, 2);
+    assert!(surface.skill_tooltip_at(x, y).is_none(), "no description");
+}
+
+/// **It goes when the pointer leaves the row, a key is pressed, the list
+/// scrolls or closes** — and the keyboard's row never raises one.
+#[test]
+fn leaving_a_key_a_scroll_or_closing_takes_the_description_away() {
+    let (mut surface, _commands) = surface();
+    type_text(&mut surface, "Use $");
+    answer(&mut surface, described());
+    let (x, y) = row_point(&surface, 0);
+
+    // Leaving the row: off to the short row, then off the list.
+    surface.mouse_move(x, y);
+    settle(&mut surface);
+    let (short_x, short_y) = row_point(&surface, 1);
+    surface.mouse_move(short_x, short_y);
+    let gone = Instant::now() + Duration::from_millis(500);
+    surface.maintain_skill_tooltip(gone);
+    assert!(!surface.skill_tooltip().is_present(), "left the row");
+
+    // A key: at once; and the keyboard moving does not raise another.
+    surface.mouse_move(x, y);
+    settle(&mut surface);
+    assert!(surface.skill_tooltip().is_present());
+    assert!(press(&mut surface, NamedKey::ArrowDown));
+    assert!(!surface.skill_tooltip().is_present(), "a key");
+    assert!(press(&mut surface, NamedKey::ArrowUp));
+    assert!(!surface.skill_tooltip().is_present(), "the keyboard's row");
+
+    // The wheel over the list.
+    surface.mouse_move(x + 1.0, y);
+    settle(&mut surface);
+    assert!(surface.skill_tooltip().is_present());
+    assert!(surface.skill_scroll(x, y, MouseScrollDelta::LineDelta(0.0, -1.0)));
+    assert!(!surface.skill_tooltip().is_present(), "a scroll");
+
+    // The list closing, by a press outside it.
+    surface.mouse_move(x, y);
+    settle(&mut surface);
+    assert!(surface.skill_tooltip().is_present());
+    assert_eq!(surface.skill_mouse_down(1.0, 1.0), None);
+    assert!(!surface.skill_list_open());
+    assert!(!surface.skill_tooltip().is_present(), "the list closed");
+}
+
 /// **A queued message with a skill chip rides a send, never a steer** —
 /// the running turn takes text alone.
 #[test]

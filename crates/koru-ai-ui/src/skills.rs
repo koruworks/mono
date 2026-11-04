@@ -41,7 +41,8 @@ use koru_ai_wire::AgentCommandView;
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
 use koru_draw::scene;
-use koru_draw::theme::Profile;
+use koru_draw::theme::{Profile, roles};
+use koru_ui::tooltip::{Tooltip, TooltipContent};
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::event::MouseScrollDelta;
@@ -91,6 +92,9 @@ pub(crate) struct SkillList {
     focus: usize,
     /// The first match shown.
     offset: usize,
+    /// A row's whole description, while the pointer rests on a row that
+    /// elides it ([`ChatSurface::skill_tooltip_at`]).
+    tooltip: Tooltip,
 }
 
 /// **The matches for `query`, in the order the list shows them**: indexes
@@ -168,6 +172,7 @@ impl ChatSurface {
 
     /// Shut the list; a later key opens it again where it applies.
     pub(crate) fn close_skill_list(&mut self) -> bool {
+        self.skills.tooltip.clear();
         self.skills.open.take().is_some()
     }
 
@@ -240,6 +245,7 @@ impl ChatSurface {
             self.skills.following = None;
             self.skills.dismissed = false;
             self.skills.open = None;
+            self.skills.tooltip.clear();
             return was.is_some();
         };
         let at = (token.row, token.start);
@@ -252,11 +258,13 @@ impl ChatSurface {
         }
         if self.skills.dismissed {
             self.skills.open = None;
+            self.skills.tooltip.clear();
             return was.is_some();
         }
         let count = matches(self.listed_skills(), &token.query).len();
         if count == 0 {
             self.skills.open = None;
+            self.skills.tooltip.clear();
             return was.is_some();
         }
         if was.as_ref().is_some_and(|was| was.query != token.query) {
@@ -430,6 +438,8 @@ impl ChatSurface {
         if !self.skill_panel().is_some_and(|panel| panel.contains(x, y)) {
             return false;
         }
+        // The rows move under the pointer: what it rested on is gone.
+        self.skills.tooltip.clear();
         let count = self.skill_rows().len();
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, lines) => lines,
@@ -451,6 +461,65 @@ impl ChatSurface {
         self.skill_row_at(x, y).map(|index| (20, index))
     }
 
+    /// **A row's whole description, for the pointer at `x`, `y`**: the
+    /// shared tooltip, wrapped, beside the list — its anchor is the row's
+    /// height across the whole panel, so it stands clear of every row.
+    /// `None` off the rows, and on a row whose description fits its line:
+    /// a tooltip repeating what the row already shows says nothing. Only
+    /// the pointer raises it; the keyboard's row never does.
+    pub(crate) fn skill_tooltip_at(&mut self, x: f32, y: f32) -> Option<TooltipContent> {
+        let (panel, specs, frame) = self.skill_frame()?;
+        let key = frame.hit_at(x, y)?;
+        let spec = specs.iter().find(|spec| spec.key == key)?;
+        if spec.line.is_empty() {
+            return None;
+        }
+        let row = frame.node(key)?.rect;
+        let line = frame
+            .named(elements::SKILL_LINE)
+            .map(|node| node.rect)
+            .find(|line| row.contains(line.x + line.w * 0.5, line.y + line.h * 0.5))?;
+        // Measured as the row lays it out: the line's role, at its width.
+        let full = self
+            .engine
+            .simple_layout(&spec.line, roles::META.style())
+            .width();
+        if full <= line.w {
+            return None;
+        }
+        Some(
+            TooltipContent::new(
+                crate::model_picker::stable_id(&spec.title) as u64,
+                Rect::new(panel.x, row.y, panel.w, row.h),
+                spec.line.clone(),
+            )
+            .wrapped()
+            .beside(),
+        )
+    }
+
+    /// **The pointer moved**: the tooltip follows the row under it, after
+    /// the app's hover delay. Answers whether what is drawn changed.
+    pub(crate) fn skill_tooltip_hover(&mut self, x: f32, y: f32) -> bool {
+        let tip = self.skill_tooltip_at(x, y);
+        self.skills.tooltip.set_hover(tip, Instant::now())
+    }
+
+    /// **A key went down**: the description goes at once, whichever key.
+    pub(crate) fn skill_tooltip_clear(&mut self) -> bool {
+        self.skills.tooltip.clear()
+    }
+
+    /// The description's tooltip clock, for the surface's own.
+    pub(crate) fn skill_tooltip(&self) -> &Tooltip {
+        &self.skills.tooltip
+    }
+
+    /// Step the description's tooltip: its wait, its fades.
+    pub(crate) fn maintain_skill_tooltip(&mut self, now: Instant) -> bool {
+        self.skills.tooltip.maintain(now)
+    }
+
     /// **The open list**: its element tree ([`elements`]) laid out with the
     /// pointer and the keyboard on it and painted while the panel's
     /// `FloatingPanel` record is open, so every row nests under the panel in
@@ -469,7 +538,7 @@ impl ChatSurface {
                 ..Interaction::default()
             }),
         );
-        let _panel = scene::floating_panel_scope(
+        let record = scene::floating_panel_scope(
             canvas,
             root,
             panel.x,
@@ -479,5 +548,14 @@ impl ChatSurface {
             &scene::Panel::popover(PANEL_RADIUS),
         );
         frame.paint(&tree, canvas, root, &mut self.engine);
+        drop(record);
+        // Over the list and beside it, never inside its record.
+        self.skills.tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            Instant::now(),
+        );
     }
 }
