@@ -397,6 +397,17 @@ pub fn run(request_path: &Path, wait_pid: u32) -> Result<Outcome, String> {
         Ok(prepared) => prepared,
         Err(error) => {
             log.line(&format!("update preparation failed: {error}"));
+            // **Recorded, as a failed installation is.** Without it the
+            // restarted build found the same verified package, offered it
+            // again, and the next Restart and install failed the same way —
+            // the banner came back on every start (2026-11-05). The record
+            // holds this build back from automatic offers; Check for updates
+            // still retries it.
+            record_failure(
+                &paths,
+                request.target_build,
+                &format!("update preparation failed: {error}"),
+            );
             let _ = remove_managed_dir(&request.install_dir, &staging, ".update");
             let _ = remove_managed_dir(&request.install_dir, &backup, ".previous");
             let _ = fs::remove_file(&journal);
@@ -3178,6 +3189,13 @@ mod macos {
         })();
         if let Err(error) = prepared {
             log.line(&format!("update preparation failed: {error}"));
+            // Recorded, as the Windows transaction does: otherwise the
+            // restarted build offers the same package again, in a loop.
+            record_failure(
+                &paths,
+                request.target_build,
+                &format!("update preparation failed: {error}"),
+            );
             let _ = remove_managed_dir(&container, &staging, ".update");
             let _ = remove_managed_dir(&container, &backup, ".previous");
             let _ = fs::remove_file(&journal);
