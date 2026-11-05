@@ -20,8 +20,6 @@
 //! page (`settled_panel`) and a closing popover answers nothing (`live`);
 //! paint follows the panel as it slides and fades, exactly as before.
 
-use std::cell::RefCell;
-
 use koru_core::WorkspaceId;
 use koru_draw::el::{
     self, Action, Align, El, ElState, Frame, FrameCx, Interaction, Key, Leaf, Look, Role,
@@ -48,18 +46,9 @@ pub(crate) struct PageLayout {
     cache: TextCache,
 }
 
-thread_local! {
-    /// The engine input layouts shape with. Paint is handed the window's;
-    /// a press, a key and the accessibility tree arrive without one. One per
-    /// UI thread, made on first use, so a second window or a reopened pane
-    /// does not pay for a font context again.
-    static INPUT_ENGINE: RefCell<Option<TextEngine>> = const { RefCell::new(None) };
-}
-
-/// `f` with the thread's input-layout engine.
-fn with_input_engine<R>(f: impl FnOnce(&mut TextEngine) -> R) -> R {
-    INPUT_ENGINE.with_borrow_mut(|engine| f(engine.get_or_insert_with(TextEngine::new)))
-}
+/// The engine input layouts shape with: paint is handed the window's, and a
+/// press, a key and the accessibility tree arrive without one.
+use crate::input_engine::with as with_input_engine;
 
 /// The popover's object, as its accessibility identities name it.
 pub(crate) const SURFACE: &str = "explore-popover";

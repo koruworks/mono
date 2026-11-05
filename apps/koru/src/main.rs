@@ -35,6 +35,7 @@ mod console;
 mod diff;
 mod feedback;
 mod format;
+mod input_engine;
 mod leaf;
 pub(crate) mod mainview;
 mod manage;

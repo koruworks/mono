@@ -282,6 +282,25 @@ impl TasksView {
     fn paint_lines(&mut self, scene: &mut Scene, root: Affine, caret_on: bool) {
         let t = self.table();
         let bands = self.bands();
+        // **The list, as the inspector's column of rows.** Its rows are the
+        // table's bands — the capture row, the rules and the task rows, each
+        // a `Task row` element tree (`row.rs`) — so the list is recorded as
+        // the container it is, over the band area it scrolls in.
+        let _list = koru_draw::inspect::scope(
+            super::row::LIST,
+            "container",
+            root,
+            scene::rect(
+                0.0,
+                self.header_h,
+                self.viewport.0,
+                (self.viewport.1 - self.header_h).max(0.0),
+            ),
+            |record| {
+                record.property("implementation", "koru_ui::table::Table", "row geometry");
+                record.property("rows", self.lines.len(), "the page's lines");
+            },
+        );
         for i in t.visible(&bands) {
             let Some(line) = self.lines.get(i).cloned() else {
                 continue;
@@ -372,9 +391,10 @@ impl TasksView {
         // **What the row says is decided here; how it is drawn is `row`'s.**
         // The chips are `row_chips`, one list asserted in the suite, so a
         // chip cannot be drawn that the view does not admit to; where they
-        // are is `row_chip_rects`, the rectangles a press is resolved against.
+        // are is the row's layout, which `row_chip_rects` reads back for the
+        // press to be resolved against.
         let chips = self.row_chips(row);
-        let chip_rects = self.row_chip_rects(r, idx);
+        let chip_widths = self.row_chip_ws.get(idx).cloned().unwrap_or_default();
         let context = self.context_of(row);
         let face = super::row::RowFace {
             completed: row.completed,
@@ -384,7 +404,7 @@ impl TasksView {
             title: &row.title,
             context: &context,
             chips: &chips,
-            chip_rects: &chip_rects,
+            chip_widths: &chip_widths,
             state,
             dots: on_row.then(|| self.hover == Some(Hit::Dots(idx))),
         };

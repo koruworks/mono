@@ -2691,8 +2691,8 @@ fn a_store_document_tab_offers_rename_and_move_to_trash() {
     right_click_tab(&mut v, &mut workspace.ws, 0);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::tab_items(false, false, false, false),
-        "Welcome does not show document-only actions"
+        context_menu::tab_items(false, true, false, false),
+        "Welcome does not show document-only actions (it may be pinned, like every tab)"
     );
 }
 

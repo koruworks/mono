@@ -129,6 +129,123 @@ fn row_geometry_hits_back() {
     }
 }
 
+/// **The row's spacing steps are the page's numbers.** The header and the
+/// capture row still read `PAD`, `CONTROL_GAP`, `CHIP_GAP` and `LANE_W`; the
+/// element row names the same lengths as steps so the inspector shows a token,
+/// and this is what keeps the two from drifting apart.
+#[test]
+fn the_rows_steps_are_the_pages_numbers() {
+    use super::row::{CHIP_GAP_STEP, CONTROL_GAP_STEP, LANE_STEP, PAD_STEP, TAG_GAP};
+    use super::view::{CHIP_GAP, CONTROL_GAP, LANE_W, PAD};
+    let px = |space: koru_draw::theme::Space| space.px(koru_draw::theme::Profile::Desktop);
+    assert_eq!(px(PAD_STEP), PAD);
+    assert_eq!(px(CONTROL_GAP_STEP), CONTROL_GAP);
+    assert_eq!(px(CHIP_GAP_STEP), CHIP_GAP);
+    assert_eq!(px(LANE_STEP), LANE_W);
+    assert_eq!(px(TAG_GAP), koru_draw::chip::CHIP_GAP);
+}
+
+/// **The element row lands where the arithmetic it replaced did**, to the
+/// pixel: the control at the page margin, the text a control and a gap in,
+/// the `…` lane at the far margin, and the chips laid in from the right with
+/// the chip gap between them and the lane gap either side.
+#[test]
+fn the_element_row_reproduces_the_rows_geometry() {
+    use super::view::{CHIP_GAP, CONTROL_GAP, CONTROL_W, DOTS_W, LANE_W, PAD};
+    let r = Rect::new(0.0, 100.0, 900.0, super::row::row_h());
+    let parts = super::row::parts(r);
+    let control = Rect::new(
+        r.x + PAD,
+        r.y + (r.h - CONTROL_W) * 0.5,
+        CONTROL_W,
+        CONTROL_W,
+    );
+    let dots = Rect::new(
+        r.x + r.w - PAD - LANE_W + (LANE_W - DOTS_W) * 0.5,
+        r.y + (r.h - DOTS_W) * 0.5,
+        DOTS_W,
+        DOTS_W,
+    );
+    let text_x = control.x + CONTROL_W + CONTROL_GAP;
+    assert_eq!(parts.control, control);
+    assert_eq!(parts.dots, dots);
+    assert_eq!(
+        parts.text,
+        Rect::new(text_x, r.y, dots.x - CHIP_GAP - text_x, r.h)
+    );
+    let side = koru_draw::theme::CHECKBOX_SIZE;
+    assert_eq!(parts.checkbox.w, side, "the document's box, not the target");
+    assert_eq!(
+        parts.checkbox.centre(),
+        parts.control.centre(),
+        "centred in the target"
+    );
+
+    let widths = [40.0, 56.0];
+    let chips = super::row::chip_rects(r, &widths);
+    let gap = koru_draw::chip::CHIP_GAP;
+    let h = koru_draw::chip::CHIP_H;
+    let first_x = dots.x - CHIP_GAP - (widths[0] + gap + widths[1]);
+    let y = r.y + (r.h - h) * 0.5;
+    assert_eq!(
+        chips,
+        [
+            Rect::new(first_x, y, widths[0], h),
+            Rect::new(first_x + widths[0] + gap, y, widths[1], h),
+        ]
+    );
+}
+
+/// **What the inspector shows for a row**: the column of rows' one row, and
+/// in it the control, the icon, the title, the tags and the menu — named, in
+/// that order, with nothing the frame's own validation objects to.
+#[test]
+fn a_task_row_is_an_element_tree_the_frame_accepts() {
+    use super::row::{
+        CONTENT, CONTROL, ICON, LABEL, MENU, ROW, RowFace, TAG, TAGS, TITLE, layout, tree,
+    };
+    use super::view::RowChip;
+    use koru_ui::table::{Metrics, RowState, Table};
+    let r = Rect::new(0.0, 0.0, 900.0, super::row::row_h());
+    let chip = |kind, label: &str| RowChip {
+        kind,
+        label: label.to_owned(),
+        accent: None,
+        list: None,
+    };
+    let chips = [
+        chip(koru_draw::chip::ChipKind::Tag, "Bike Project"),
+        chip(koru_draw::chip::ChipKind::Due, "Aug 29"),
+    ];
+    let face = RowFace {
+        completed: false,
+        residue: false,
+        glyph: Some(koru_draw::icons::DOCUMENT),
+        emoji: None,
+        title: "Order the groupset before the sale ends",
+        context: "Bike Project",
+        chips: &chips,
+        chip_widths: &[80.0, 48.0],
+        state: RowState::Hovered,
+        dots: Some(false),
+    };
+    let tree = tree(&face, Table::new(r, Metrics::manager(), 0.0));
+    let frame = crate::input_engine::with(|engine| layout(&tree, engine, r));
+    assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+    let names: Vec<&str> = frame.nodes.iter().map(|node| node.name).collect();
+    assert_eq!(
+        names,
+        [
+            ROW, CONTROL, CONTENT, LABEL, ICON, TITLE, TAGS, TAG, TAG, MENU
+        ]
+    );
+    assert_eq!(
+        frame.rect_of(ROW).map(|row| row.w),
+        Some(r.w),
+        "the row is the page's full width"
+    );
+}
+
 /// The capture row is the list's own first row, not a button beside it.
 #[test]
 fn the_capture_row_is_the_top_row_of_the_list() {
