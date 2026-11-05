@@ -1,0 +1,127 @@
+title = "A new Koru window, and chats that live in tabs"
+
+summary = [
+  "Koru's window is rebuilt around a rail of apps down the left edge, with search, help and your profile always in reach, and a lighter look with white panes and grey selection.",
+  "Chats now open as tabs and come back after a restart, and the separate Koru AI window is gone.",
+  "In a chat you can steer a reply while it runs, answer an agent's questions, paste pictures and files, dictate, and switch models mid-conversation.",
+]
+
+body = """
+## The window
+
+**A rail of apps.** Documents, Files, Tasks and Chats sit down the left
+edge of the window, with Settings, Help and your profile at its foot.
+Drag them into any order you like; Alt+1 to Alt+8 open them by position,
+so moving Chats to the top makes it Alt+1.
+
+**One place for where you are.** The chip at the foot of the sidebar shows
+your workspace and opens a page for switching workspaces; your profile
+square opens your profiles. Ctrl+Alt+W lands the keyboard on the workspace
+you are in.
+
+**Help from the ?.** What's new, the full changelog, Send feedback, Report
+a problem and Star us on GitHub are in one popover.
+
+**Search that can create.** Search opens as a command bar near the top of
+the window. Above the results it offers to make what you typed into a new
+task or a new document.
+
+**A lighter look.** The window's frame is lighter, the sidebar and
+documents are white panes with rounded corners, and the row, tab or app
+you are on is marked with a soft grey instead of an outlined box.
+Secondary text is darker, so it reads more clearly at small sizes. The
+sidebar folds away and back as one motion, and F6 now reaches the rail
+and the sidebar's controls.
+
+## Chats
+
+**Chats live in tabs.** Every chat opens as a tab in Koru's window, and
+chat tabs come back after a restart. The separate Koru AI window is
+retired, and this update removes it.
+
+**A Chats list that keeps you posted.** Each chat shows whether it is
+working, needs you, or has something you have not seen, and an unread
+chat opens at its first new message under NEW. Pin chats to keep them at
+the top; the rest are ordered by latest activity. Rename a chat from its
+row, and use Ctrl+Shift+Up and Ctrl+Shift+Down to move to the chat above
+or below. Each profile sees only its own chats.
+
+**A new model picker.** The local agents sit on a rail beside their
+models, search covers every agent, and a star marks your favorites
+(Ctrl+D). The effort level and Fast mode are in the picker's footer, older
+models expand in place, and a chat that has begun can switch to another
+of its agent's models or change its level from the next message.
+
+**Approval modes.** A chip beside the model shows the mode your next
+message runs in. Click it for every mode the agent offers, each with a
+line on what it does, or press Shift+Tab to step through them.
+
+**Steer a running reply.** Messages you send while a reply is running wait
+in a queue, and Steer sends one into the running reply.
+
+**Readable work.** While an agent works, its steps fold into one live line
+and then into "Worked for 1m 34s" above the answer. Open it to see edits
+as diffs, commands with their output, files as numbered text and search
+results as rows. A diff's path opens the file.
+
+**Questions you can answer.** When an agent asks you questions, they show
+as a card in the reply, and your next message answers them.
+
+**Pictures, files and your voice.** Paste a picture into an agent chat,
+or files copied in Explorer or Finder: PDFs, Office documents, video, text
+and source code. Click a picture to see it full window. On Windows and Mac,
+the composer has a microphone for dictating a message, and you can choose
+which microphone it uses. Dictation is not available on Linux yet.
+
+**Links and quotes.** Every link in a reply can be clicked and shows a
+link card. Select part of a reply and choose Add to chat, or press Ctrl+L,
+to quote it in your next message. A round arrow, or Ctrl+End, jumps to the
+newest message. Back and Forward, including the mouse's thumb buttons,
+return to chat tabs.
+
+**Agents.** Devin can now answer in a chat, and Codex is back in the agent
+picker. Typing $ in a Codex chat lists its skills, and /usage goes to the
+agent, which answers it in its own words.
+
+**Fixes.** A long-running agent no longer shows "Connection interrupted"
+while it thinks. New chat always starts a new chat, and a chat nobody has
+written in no longer sits in the list.
+
+## Agent providers
+
+Settings → Coding → Agent providers lists the coding agents Koru knows and
+whether each one is ready. Turn agents on or off, drag them into the order
+you want, and choose the agent and the permission a new chat starts with.
+
+## Documents
+
+**Links open inside Koru.** A link to a Koru chat or document opens in
+Koru. Alt+click on a link, a sidebar row or a task asks where to open it.
+
+**Restarts keep your place.** With two columns open, a restart brings back
+the document in the column that did not have focus, too. Opening a
+document from Files or Tasks no longer switches the sidebar to Documents.
+Settings and other page tabs can move between tab groups.
+
+## Settings
+
+**Fonts and text size.** Pick any font installed on your computer for the
+app, document text, headings or code, and a separate one for chats. Set
+how large document text is, from 14 to 22 px.
+
+**Icon styles.** Choose Tabler (the default), Phosphor, Lucide or Remix
+icons. Hovering a style previews it.
+
+**Base color.** Choose a base color for the window's frame, saved
+separately for the light and dark themes.
+
+## Koru MCP
+
+Agents connected to Koru read much less to get started. Tools are grouped
+into toolsets that a bridge can be started with (--toolsets docs,tasks),
+tool descriptions are shorter, the documentation is served in sections,
+and Koru assigns new block ids itself. An agent on the tasks toolset can
+complete, reopen and re-date tasks. On the Welcome page, Copy on Manage
+documents over MCP asks which agent you use and copies that agent's own
+command for adding Koru.
+"""
