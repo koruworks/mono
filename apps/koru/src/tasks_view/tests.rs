@@ -1161,11 +1161,11 @@ fn the_chips_row_hits_back() {
     // same inset from its label to the left border as from the caret to the
     // right one — the shared arithmetic, asserted where the chips are drawn.
     for (chip, r) in view.chips_for_test().iter().zip(&rects) {
-        assert_eq!(r.h, koru_ui::filter_chip::height());
-        if let Some(mark) = koru_ui::filter_chip::mark_rect(*r, chip.mark()) {
+        assert_eq!(r.h, koru_ui::label_chip::Size::Regular.height());
+        if let Some(mark) = chip.chip().trail_rect(*r) {
             assert_eq!(
                 (r.x + r.w) - (mark.x + mark.w),
-                koru_ui::filter_chip::PAD_X,
+                koru_ui::label_chip::REGULAR_PAD_X,
                 "the mark keeps the label's own inset"
             );
         }
@@ -1400,13 +1400,14 @@ fn the_lifecycle_chip_is_offered_where_it_bites() {
 fn an_active_chip_inverts_the_existing_tokens() {
     // One snapshot, because the theme is a process global other suites flip.
     let p = koru_draw::theme::p();
+    use koru_ui::label_chip::Tone;
     assert_eq!(
-        koru_ui::filter_chip::tokens(false, &p),
+        Tone::Neutral.colors(&p),
         (p.chip_bg, p.text_dim),
         "off is the chip family's own neutral pair"
     );
     assert_eq!(
-        koru_ui::filter_chip::tokens(true, &p),
+        Tone::Inverted.colors(&p),
         (p.bubble_bg, p.bubble_fg),
         "on is the one inverted surface, dark in both themes"
     );

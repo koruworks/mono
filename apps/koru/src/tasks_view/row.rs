@@ -450,15 +450,12 @@ impl Leaf for TagLeaf {
         _state: ElState,
     ) {
         if let Some(label) = &self.label {
-            paint_chip(
+            koru_ui::LabelChip::attribute(self.kind, label, self.accent.as_deref()).draw(
                 scene,
                 root,
                 engine,
-                self.kind,
-                label,
-                self.accent.as_deref(),
-                at.x,
-                at.y,
+                at,
+                koru_ui::label_chip::State::default(),
             );
         }
     }
@@ -497,21 +494,4 @@ pub(super) fn warm() -> vello::peniko::Color {
     theme::accent_tone(WARM)
         .map(|tone| tone.ink)
         .unwrap_or(theme::p().text)
-}
-
-/// One attribute chip, from the engine's chip cache.
-pub(super) fn paint_chip(
-    scene: &mut Scene,
-    root: Affine,
-    engine: &TextEngine,
-    kind: chip::ChipKind,
-    label: &str,
-    accent: Option<&str>,
-    x: f32,
-    y: f32,
-) {
-    let Some(visual) = engine.attr_chips.get(kind, label, accent, None) else {
-        return;
-    };
-    chip::draw(scene, root, visual, accent, x, y, false);
 }

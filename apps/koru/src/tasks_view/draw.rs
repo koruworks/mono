@@ -7,21 +7,13 @@
 //! [`TasksView::parts`] in `view.rs`, so a control and its hit test cannot
 //! drift.
 //!
-//! **The chips are the editor's chips.** `koru_draw::chip` is the one recipe —
-//! the lozenge, its height, its padding, its accent tones — and this surface
-//! measures and paints through it rather than inventing a second family. The
-//! remove lane every kind reserves is reserved here too, and the `×` is never
-//! inked: a chip on this list is a reading of the row, and the control that
-//! changes it is the row's menu.
-//!
-//! **The filter chips under the heading are a different thing wearing the same
-//! clothes**, and the difference is exactly the one above: a row's chip is a
-//! *reading*, and one of these is a *control*. So they take the family's
-//! tokens, its lozenge and its trailing-lane arithmetic — and they do ink the
-//! mark in that lane, because pressing a filter chip is how it comes off. They
-//! are drawn from [`chip_tokens`] rather than through
-//! [`koru_draw::chip::draw`] for one reason: a chip that is *on* inverts, and
-//! the ink of an attribute chip is baked into its cached label at measure time.
+//! **Every chip is the one chip component**, `koru_ui::label_chip`
+//! (KoruLabelChip) — the row's attribute chips, the filter chips under the
+//! heading and the *Updating…* status alike. A row's chip is a **reading**:
+//! compact, and with no remove lane, because the control that changes it is
+//! the row's menu. A filter chip is a **control**: regular, inverted while
+//! its dimension is set, and wearing the caret or the `×` that pressing it
+//! answers to.
 
 use koru_draw::geometry::Rect;
 use koru_draw::{scene, theme};
@@ -33,7 +25,7 @@ use super::pickers::Picker;
 use super::query::TaskEntry;
 use super::row::DOT;
 use super::states;
-use super::view::{CONTROL_W, FILTER_PAD_X, Hit, Line, PAD, TasksView};
+use super::view::{CONTROL_W, Hit, Line, PAD, TasksView};
 
 /// The page heading. **Medium, not semibold** — the size already says it is the
 /// title, and weight on top of that is a second answer to a question the type
@@ -184,7 +176,8 @@ impl TasksView {
 
     /// The **Updating…** chip.
     ///
-    /// `chip_bg` and `text_dim`, at the branch pill's size and in its register:
+    /// The one chip component, regular and neutral with the status dot —
+    /// `chip_bg` and `text_dim`, at the filter chips' size and in their register:
     /// this is *ambient*, not an alarm. The store has answered — these are the
     /// rows — and it is saying that one of the workspaces behind them may not
     /// have finished indexing. So there is **no spinner and no veil**: the list
@@ -195,10 +188,11 @@ impl TasksView {
         if !self.panel.updating() {
             return;
         }
-        let p = theme::p();
-        let label = self.engine.simple_layout(UPDATING, theme::role::hint());
-        let h = self.chip_h();
-        let w = label.width() + DOT_D + DOT_GAP + FILTER_PAD_X * 2.0;
+        use koru_ui::label_chip::{Lead, Size};
+        let chip = koru_ui::LabelChip::new(UPDATING)
+            .size(Size::Regular)
+            .lead(Lead::Dot);
+        let (w, h) = (chip.width(&mut self.engine), chip.height());
         // Left of the `…`, on the heading's own line.
         let r = Rect::new(
             self.header_dots().x - FRESHNESS_GAP - w,
@@ -206,29 +200,12 @@ impl TasksView {
             w,
             h,
         );
-        scene::fill(
+        chip.draw(
             scene,
             root,
-            p.chip_bg,
-            &scene::rrect(r.x, r.y, r.w, r.h, r.h * 0.5),
-        );
-        let cy = r.y + r.h * 0.5;
-        scene::fill(
-            scene,
-            root,
-            p.text_dim,
-            &Circle::new(
-                ((r.x + FILTER_PAD_X + DOT_D * 0.5) as f64, cy as f64),
-                (DOT_D * 0.5) as f64,
-            ),
-        );
-        scene::draw_layout_first_line(
-            scene,
-            root,
-            &label,
-            r.x + FILTER_PAD_X + DOT_D + DOT_GAP,
-            scene::centre_y_in(&label, r),
-            Some(p.text_dim),
+            &mut self.engine,
+            r,
+            koru_ui::label_chip::State::default(),
         );
     }
 
@@ -259,22 +236,22 @@ impl TasksView {
     /// what the offline chip and the selection bubble already use. No new
     /// `Palette` field, and no new accent token — a filter that is on is not a
     /// colour, it is the same chip with its ink and its ground exchanged.
-    /// The filter row. **Every chip is `koru_ui::filter_chip`** — the pill,
+    /// The filter row. **Every chip is `koru_ui::label_chip`** — the pill,
     /// the label, the caret or the `\u{00d7}`, and the air around all three
     /// — so what the page owns is which chips there are and what they say.
     fn paint_chips(&mut self, scene: &mut Scene, root: Affine) {
         let chips = self.chips();
         let rects = self.chip_rects();
         for (i, (chip, r)) in chips.iter().zip(rects).enumerate() {
-            koru_ui::filter_chip::draw(
+            chip.chip().draw(
                 scene,
                 root,
                 &mut self.engine,
                 r,
-                &chip.label,
-                chip.mark(),
-                chip.active,
-                self.hover == Some(Hit::Chip(i)),
+                koru_ui::label_chip::State {
+                    hovered: self.hover == Some(Hit::Chip(i)),
+                    reveal: false,
+                },
             );
         }
     }

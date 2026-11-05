@@ -63,9 +63,9 @@ const MORE: f32 = 28.0;
 const MORE_INSET: f32 = 10.0;
 /// Between the heading line, the notice, each list and the links.
 const LINE_GAP: f32 = 10.0;
-/// A tag's padding and height.
-const TAG_PAD: f32 = 6.0;
-const TAG_H: f32 = 18.0;
+/// Between two tags. A tag itself is the one chip component
+/// (`koru_ui::label_chip`), compact and neutral — the same chip a document's
+/// attribute and a task row wear.
 const TAG_GAP: f32 = 6.0;
 /// Between the two links on their line.
 const LINK_GAP: f32 = 18.0;
@@ -687,12 +687,10 @@ impl ManageView {
         let mut right = trailing.x - 10.0;
         let mut tags = Vec::new();
         for name in tag_names.into_iter().rev() {
-            let w = self.engine.simple_layout(name, theme::role::hint()).width() + TAG_PAD * 2.0;
+            let chip = koru_ui::LabelChip::new(name);
+            let (w, h) = (chip.width(&mut self.engine), chip.height());
             right -= w;
-            tags.push((
-                Rect::new(right, rect.y + (ROW_H - TAG_H) * 0.5, w, TAG_H),
-                name,
-            ));
+            tags.push((Rect::new(right, rect.y + (ROW_H - h) * 0.5, w, h), name));
             right -= TAG_GAP;
         }
         tags.reverse();
@@ -1037,25 +1035,12 @@ impl ManageView {
                 scene::rect(rect.x, rect.y, rect.w, rect.h),
                 |rec| rec.property("tag", *name, "the row's state"),
             );
-            scene::fill(
-                canvas,
-                root,
-                p.chip_bg,
-                &scene::rrect(rect.x, rect.y, rect.w, rect.h, rect.h * 0.5),
-            );
-            let style = theme::role::hint();
-            let text = self.engine.simple_layout(name, style);
-            let (w, h) = (text.width(), scene::first_line_height(&text));
-            koru_ui::text_paragraph::draw_line(
+            koru_ui::LabelChip::new(name).draw(
                 canvas,
                 root,
                 &mut self.engine,
-                name,
-                rect.x + (rect.w - w) * 0.5,
-                rect.y + (rect.h - h) * 0.5,
-                style,
-                "theme::role::hint() — a tag",
-                p.text_dim,
+                *rect,
+                koru_ui::label_chip::State::default(),
             );
         }
         for trailing in [

@@ -6,8 +6,10 @@
 //! A chip is not a pill. A pill is *content*: anchored to a character, part of
 //! the text, selectable and replaceable. A chip is *presentation of node
 //! state*: it trails the text, is never in the layout, and disappears the
-//! moment the attribute is cleared. What this module holds is the drawable —
-//! the cached label layout, the recipe, the metrics. Deciding *which* chips a
+//! moment the attribute is cleared. What this module holds is the shaping —
+//! the cached label layout, the metrics and the tones. **Painting one is
+//! `koru_ui::label_chip`'s** (KoruLabelChip), the one chip component every
+//! surface draws through; it reads this cache. Deciding *which* chips a
 //! node earns means reading the document, which is `koru-editor`'s
 //! (`chips.rs` there), the same split `pill.rs` documents.
 //!
@@ -20,10 +22,7 @@ use std::collections::HashMap;
 
 use parley::Layout;
 use peniko::Color;
-use vello::Scene;
-use vello::kurbo::{Affine, Circle};
 
-use crate::scene::{draw_layout, fill, rrect};
 use crate::theme::{self, Brush};
 
 /// Which recipe a chip draws with.
@@ -59,45 +58,13 @@ pub const SWATCH_D: f32 = 10.0;
 /// hover cannot move a chip, a leading glyph is a property of the *value* and
 /// two chips that differ in it are two different drawables anyway.
 pub const CHIP_ICON_GAP: f32 = 4.0;
-/// The lane **every** chip reserves after its label (or, for a swatch, after
-/// its dot) for the remove `×`.
+/// The lane a **removable** chip reserves after its label (or, for a swatch,
+/// after its dot) for the remove `×` — `koru_ui::label_chip::Trail::Remove`.
 ///
 /// Reserved whether or not the glyph is inked, so a hover cannot make a row's
-/// chips shuffle sideways. Wide enough that the whole lane is a comfortable
+/// chips shuffle sideways. A chip that cannot be removed reserves none. Wide enough that the whole lane is a comfortable
 /// target at the chip's 17px height.
 pub const CHIP_CLOSE_W: f32 = 15.0;
-/// The `×` itself, drawn as two strokes inside [`CHIP_CLOSE_W`].
-const CLOSE_ARM: f32 = 3.0;
-const CLOSE_STROKE: f32 = 1.3;
-
-/// How much wider than its label a chip of this kind is.
-///
-/// The one place the answer lives: `measure_attr_chip` sizes the *label*, and
-/// this is what a placed chip adds on top — so the lozenge that is filled, the
-/// rect that is hit-tested and the advance to the next chip are one number.
-///
-/// **Every kind reserves the remove lane** (amended [ADR-188], 2026-08-27).
-/// It was the tag chip's alone while the other three were cleared only through
-/// their picker's Clear row; a chip is the control for its attribute, and the
-/// control that takes it off belongs on it.
-///
-/// [ADR-188]: ../../../docs/decisions/ADR-201-225.md#adr-211-chipclick--an-attribute-chip-is-the-control-for-its-attribute-and-a-tag-comes-off-at-the-chip
-pub fn extra_w(kind: ChipKind) -> f32 {
-    match kind {
-        ChipKind::Tag | ChipKind::Swatch | ChipKind::Due | ChipKind::Priority => CHIP_CLOSE_W,
-    }
-}
-
-/// The remove lane inside a placed chip — `Some` wherever [`extra_w`] gave
-/// one, which is every kind.
-///
-/// Kept as an `Option` rather than a bare `Rect` on purpose: it is the one
-/// place a kind could stop offering removal, and a caller that already asks
-/// `is_some` would go on being right.
-pub fn close_rect(kind: ChipKind, chip: crate::geometry::Rect) -> Option<crate::geometry::Rect> {
-    let w = extra_w(kind);
-    (w > 0.0).then(|| crate::geometry::Rect::new(chip.x + chip.w - w, chip.y, w, chip.h))
-}
 
 /// Everything needed to paint one chip, shaped once and retained.
 pub struct ChipVisual {
@@ -170,130 +137,6 @@ pub fn chip_colors(accent: Option<&str>) -> (Color, Color) {
     }
 }
 
-/// Paint a measured chip at its top-left corner.
-///
-/// `close` inks the remove `×` in the lane [`extra_w`] reserved — on every
-/// kind, the swatch included. The lane is there whichever way this is passed —
-/// only the glyph comes and goes — so a caller that passes `false` draws the
-/// same shape at the same width.
-pub fn draw(
-    scene: &mut Scene,
-    root: Affine,
-    visual: &ChipVisual,
-    accent: Option<&str>,
-    x: f32,
-    y: f32,
-    close: bool,
-) {
-    let width = visual.width + extra_w(visual.kind);
-    match visual.kind {
-        // Three labelled lozenges, one recipe. Due and Priority pass
-        // `accent: None` from the seam above, so `chip_colors` answers the
-        // neutral pair for them by construction.
-        ChipKind::Tag | ChipKind::Due | ChipKind::Priority => {
-            let (fill_color, ink) = chip_colors(accent);
-            fill(
-                scene,
-                root,
-                fill_color,
-                &rrect(x, y, width, CHIP_H, CHIP_H * 0.5),
-            );
-            if close {
-                draw_close(scene, root, ink, x + width, y);
-            }
-            // The leading glyph, then the label past it. The glyph takes the
-            // chip's own `ink` rather than a colour of its own: a tag-toned
-            // chip draws its icon in that tone and a neutral one draws
-            // `text_dim`, which is the standing rule that no menu or chip
-            // glyph earns a `Palette` field.
-            let mut text_x = x + CHIP_PAD_X;
-            if let Some(lead) = &visual.lead {
-                draw_layout(
-                    scene,
-                    root,
-                    lead,
-                    text_x,
-                    y + (CHIP_H - lead.height()) * 0.5,
-                    Some(ink),
-                );
-                text_x += lead.width() + CHIP_ICON_GAP;
-            }
-            if let Some(label) = &visual.label {
-                draw_layout(
-                    scene,
-                    root,
-                    label,
-                    text_x,
-                    y + (CHIP_H - label.height()) * 0.5,
-                    // The ink was baked into the layout at measure time; None
-                    // keeps it.
-                    None,
-                );
-                // **Struck across the label's own advance, not the lozenge.**
-                // A line through the whole chip would cross the glyph and the
-                // remove lane, which are controls rather than the thing that
-                // is done. Its own thin stroke in the label's ink, centred on
-                // the line box the way a text decoration is.
-                if visual.struck {
-                    let mid = y + CHIP_H * 0.5;
-                    crate::scene::stroke(
-                        scene,
-                        root,
-                        ink,
-                        1.0,
-                        &vello::kurbo::Line::new(
-                            (text_x as f64, mid as f64),
-                            ((text_x + label.width()) as f64, mid as f64),
-                        ),
-                    );
-                }
-            }
-        }
-        ChipKind::Swatch => {
-            let dot = accent
-                .and_then(theme::accent_tone)
-                .map(|tone| tone.swatch)
-                .unwrap_or(theme::p().text_dim);
-            let r = SWATCH_D * 0.5;
-            fill(
-                scene,
-                root,
-                dot,
-                &Circle::new(((x + r) as f64, (y + CHIP_H * 0.5) as f64), r as f64),
-            );
-            // **To the right of the dot**, in the lane [`extra_w`] reserved —
-            // the same place, measured the same way, as the `×` on the three
-            // labelled lozenges. The swatch has no fill behind it to carry a
-            // tone's ink, so the glyph takes the neutral dim text colour
-            // rather than the hue: an `×` in the swatch's own saturated colour
-            // reads as part of the dot rather than as a control on it.
-            if close {
-                draw_close(scene, root, theme::p().text_dim, x + width, y);
-            }
-        }
-    }
-}
-
-/// The remove `×`, drawn as two strokes centred in the [`CHIP_CLOSE_W`] lane
-/// that ends at `right`. One body, so the swatch's glyph and the lozenge's are
-/// the same mark in the same place inside their chip.
-fn draw_close(scene: &mut Scene, root: Affine, ink: Color, right: f32, y: f32) {
-    let cx = right - CHIP_CLOSE_W * 0.5 - 1.0;
-    let cy = y + CHIP_H * 0.5;
-    for (dx, dy) in [(CLOSE_ARM, CLOSE_ARM), (CLOSE_ARM, -CLOSE_ARM)] {
-        crate::scene::stroke(
-            scene,
-            root,
-            ink,
-            CLOSE_STROKE as f64,
-            &vello::kurbo::Line::new(
-                ((cx - dx) as f64, (cy - dy) as f64),
-                ((cx + dx) as f64, (cy + dy) as f64),
-            ),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,24 +199,6 @@ mod tests {
         // this reads the cached entry back rather than shaping a second one.
         let done = e.measure_attr_chip(ChipKind::Due, "Wed", None, lead, true);
         assert!((open - done).abs() < f32::EPSILON, "{open} vs {done}");
-    }
-
-    /// The remove lane is the trailing edge and knows nothing about a lead:
-    /// it is `extra_w`, added past the measured width by both the geometry and
-    /// the paint, so a glyph at the other end cannot move it.
-    #[test]
-    fn the_remove_lane_is_the_same_rectangle_with_or_without_a_lead() {
-        let r = crate::geometry::Rect::new(10.0, 20.0, 80.0, CHIP_H);
-        assert_eq!(
-            close_rect(ChipKind::Due, r),
-            close_rect(ChipKind::Tag, r),
-            "one lane, one place, whatever the chip carries"
-        );
-        let lane = close_rect(ChipKind::Due, r).expect("every kind reserves one");
-        assert!(
-            (lane.x + lane.w - (r.x + r.w)).abs() < f32::EPSILON,
-            "it ends where the chip ends"
-        );
     }
 
     /// **The swatch takes neither.** It has no label to strike and no text
