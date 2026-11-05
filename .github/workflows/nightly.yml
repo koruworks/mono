@@ -168,8 +168,16 @@ jobs:
   build-ios:
     name: build-ios
     needs: plan
+    # The same grant as the other platforms', though the iOS job itself only
+    # reads: GitHub checks every job of a called workflow against its
+    # caller's permissions, skipped ones too, and release-build.yml's linux,
+    # macos and android jobs ask for id-token and attestations. With
+    # `contents: read` alone the whole nightly failed to start
+    # (startup_failure, run 41998200915).
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/release-build.yml
     secrets: inherit
     with:
