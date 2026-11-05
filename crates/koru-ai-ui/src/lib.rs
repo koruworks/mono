@@ -458,7 +458,7 @@ pub struct ChatSurface {
     /// it (D106).
     workspace_search: model_picker::SharedInput,
     /// Asked for a fresh chat before the service answered the boot (a new
-    /// tab, the CTO's note): the boot's snapshot carries the service's
+    /// tab, the review's note): the boot's snapshot carries the service's
     /// current chat, and a tab that wanted a new one must not take it.
     /// Cleared when the chat it asked for arrives.
     fresh_chat_wanted: bool,
@@ -3287,7 +3287,7 @@ impl ChatSurface {
             }
             Update::HistoryChanged { chats, transcript } => {
                 // A tab that asked for a new chat does not take the
-                // service's current one (the CTO's note): the snapshot's
+                // service's current one (the review's note): the snapshot's
                 // chat is dropped and a chat is created below.
                 let transcript = if self.chat_unmade() {
                     // A new chat not made yet stays on screen: deleting or
@@ -4431,7 +4431,7 @@ impl ChatSurface {
             }
         }
         // A chat still called *New chat* takes its name from this, its
-        // first message (the CTO's note): the way ChatGPT names a chat,
+        // first message (the review's note): the way ChatGPT names a chat,
         // without a model call — the first line, cut at a word. A document
         // chip is read as its title, as the sent card shows it, never as its
         // `koru://` link.
@@ -8809,7 +8809,7 @@ impl ChatSurface {
             );
             // Under the cards, and under the *Local agents* list when that is
             // what is open: the list grows with the agents installed, and the
-            // line was drawn across its fourth row (the CTO's note).
+            // line was drawn across its fourth row (the review's note).
             scene::draw_layout(
                 canvas,
                 root,
@@ -9575,7 +9575,7 @@ fn selected_setup_provider(settings: &ProviderSettingsResponse) -> SetupProvider
     }
 }
 
-/// A chat's name from its first message (the CTO's note): the first line
+/// A chat's name from its first message (the review's note): the first line
 /// that says something, its Markdown marks stripped, cut at a word before
 /// `AUTO_TITLE_CHARS` with an ellipsis. `None` when nothing is left.
 fn title_from_message(markdown: &str) -> Option<String> {
@@ -10008,7 +10008,7 @@ mod tests {
         assert!(!surface.current_chat_made());
     }
 
-    /// **A tab opened for a new chat gets one** (the CTO's note): the boot
+    /// **A tab opened for a new chat gets one** (the review's note): the boot
     /// answers with the service's current chat, and before that answer there
     /// is no provider to create under. The intent is kept, the snapshot's
     /// chat is dropped, and the chat this tab asked for is the one it shows.
@@ -10510,7 +10510,7 @@ mod tests {
         assert!(message.markdown.ends_with("summarise"), "{message:?}");
     }
 
-    /// **A chat's first message names it** (the CTO's note), the way ChatGPT
+    /// **A chat's first message names it** (the review's note), the way ChatGPT
     /// names a chat: the first line, cut at a word, Markdown marks stripped.
     /// A chat already named keeps its name.
     #[test]

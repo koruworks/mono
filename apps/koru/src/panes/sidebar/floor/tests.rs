@@ -23,7 +23,7 @@ fn the_floor_sits_at_the_foot_and_its_parts_nest_in_order() {
     assert!(r.chevron.x + r.chevron.w <= r.chip.x + r.chip.w);
     assert_eq!(r.avatar.w, AVATAR);
     // The `…` sits right of the chip, a square the chip's height, inside
-    // the band's pad (the CTO's artboard).
+    // the band's pad (the review's artboard).
     assert_eq!(r.dots.w, DOTS);
     assert_eq!(r.dots.h, CHIP_H);
     assert_eq!(r.dots.y, r.chip.y, "level with the chip");

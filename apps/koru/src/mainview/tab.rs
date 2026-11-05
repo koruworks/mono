@@ -1378,7 +1378,7 @@ impl Tab {
     }
 
     /// The Sync settings tab: its name as the title and nothing under it yet
-    /// (the CTO's artboard; QUESTIONS.md E31). A singleton, like Settings.
+    /// (the review's artboard; QUESTIONS.md E31). A singleton, like Settings.
     pub fn sync_settings() -> Option<Self> {
         let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::SyncSettingsTab);
         Self::private_page(PrivatePage::SyncSettings, title, &[])

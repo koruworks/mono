@@ -380,7 +380,7 @@ impl ManageView {
         self.paint_nav_caption(canvas, root, laid.computer_caption, THIS_COMPUTER);
         let devices = self.linked_count().to_string();
         let cloud = self.cloud_word();
-        // A computer and a cloud left of the labels (the CTO's note).
+        // A computer and a cloud left of the labels (the review's note).
         let mut cloud_item = NavItem::new(CLOUD).with_glyph(koru_draw::icons::CLOUD);
         if let Some((word, on)) = cloud {
             cloud_item = cloud_item.with_trailing(word);

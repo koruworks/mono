@@ -716,7 +716,7 @@ fn a_screen_reader_hears_the_devices_the_relay_and_the_back_row() {
             .is_some_and(|label| label.starts_with("phone, Linked (offline)"))
     );
     // The direct device's Unlink… is its child; the transitive one has none.
-    // The button reads *Unlink…* alone (the CTO's note); its spoken name
+    // The button reads *Unlink…* alone (the review's note); its spoken name
     // still says which device.
     assert_eq!(devices.children[0].children.len(), 1);
     assert_eq!(

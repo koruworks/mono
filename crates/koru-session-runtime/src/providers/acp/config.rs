@@ -35,7 +35,7 @@ impl AcpRoute {
     /// Whether `version` may start under this route: one of the listed
     /// versions, or — for a named CLI whose version is a number rather than
     /// a digest — any release **at or above the qualified pin**, the first
-    /// listed (the CTO's note, 2026-10-26: the installed CLIs had moved past
+    /// listed (the review's note, 2026-10-26: the installed CLIs had moved past
     /// the pins and every agent read *Needs a supported version*). A pin
     /// stays the floor: a release older than what was qualified is refused,
     /// and a route built by hand with its own list admits only that list.

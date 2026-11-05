@@ -1009,7 +1009,7 @@ pub struct Settings {
     pub pinned: bool,
 
     // ------------------------------------------------------------- container
-    /// The explore column. **Open by default** (the CTO's note): a new
+    /// The explore column. **Open by default** (the review's note): a new
     /// window after Welcome starts with the rail and the pane showing, since
     /// they are the way around. A file that never said otherwise opens too.
     pub sidebar_open: bool,

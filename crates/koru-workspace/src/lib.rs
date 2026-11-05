@@ -603,7 +603,7 @@ impl Workspace {
     }
 
     /// Create a document as the **last child** of `parent` and return its id
-    /// — a row's `+` in the sidebar (the CTO's note). Placed by the store
+    /// — a row's `+` in the sidebar (the review's note). Placed by the store
     /// under that parent, and shown there at once by the provisional entry,
     /// so the row does not appear at the root and then hop.
     pub fn create_document_in(

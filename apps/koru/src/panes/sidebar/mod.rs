@@ -2,7 +2,7 @@
 
 //! The sidebar's composition: lane across the top, then the rail beside the
 //! nav and its floor (`docs/features/workspace-foundation/TECHNICAL.final.md`
-//! §5, §6; the rail is the CTO's artboard 11, QUESTIONS.md E32).
+//! §5, §6; the rail is the review's artboard 11, QUESTIONS.md E32).
 //!
 //! The explore view still owns the column — its rows, its popover, its
 //! accessibility tree — and reads these modules for the bands it composes

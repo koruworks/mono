@@ -1271,7 +1271,7 @@ fn a_leading_title_emoji_becomes_the_tab_icon() {
     assert_eq!(tab.label, "Craft.do Pricing");
 }
 
-/// **A row's `+` makes a document inside the row** (the CTO's note): the
+/// **A row's `+` makes a document inside the row** (the review's note): the
 /// same name prompt, and the shell is asked to place the document as the
 /// row's last child, the row unfolded so it shows where it lands.
 #[test]
@@ -4178,7 +4178,7 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
 /// Socials each own everything below the heading in their mode, and the
 /// floor asked after them was unreachable there: the chip worked on Files
-/// and did nothing on Home (the CTO's second note). Every app the build
+/// and did nothing on Home (the review's second note). Every app the build
 /// shows gets the chip pressed, and the popover's `?` opens the help
 /// popover beside the page, which stays.
 #[test]
@@ -6176,7 +6176,7 @@ fn ctrl_alt_w_leaves_the_switcher_open() {
     assert!(!v.explore.popover_open());
 }
 
-/// **The chord lands the keyboard on the workspace you are in** (the CTO's
+/// **The chord lands the keyboard on the workspace you are in** (the review's
 /// note): ↵ straight away is a no-op switch, and ↑↓ walk from there, rather
 /// than from the top of a list that may have the current one below the
 /// fold.
@@ -6222,7 +6222,7 @@ fn ctrl_alt_w_puts_the_keyboard_on_the_current_workspace() {
 }
 
 /// **A right-click on a workspace row opens its menu over the page** (the
-/// CTO's note): the same menu a Manage row's `•••` opens, at the pointer,
+/// review's note): the same menu a Manage row's `•••` opens, at the pointer,
 /// with the row lit as its subject and the page still under it. A verb that
 /// changes the list in place leaves the page up; one that leaves the list
 /// shuts it. A right-click anywhere else on the page is swallowed.
@@ -6291,7 +6291,7 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.explore.popover_open(), "and the page stays");
 }
 
-/// **The rail's Settings tooltip carries its chord** (the CTO's note), the
+/// **The rail's Settings tooltip carries its chord** (the review's note), the
 /// way the lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
 fn the_rails_settings_tooltip_carries_its_chord() {
@@ -6316,7 +6316,7 @@ fn the_rails_settings_tooltip_carries_its_chord() {
     assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
 }
 
-/// **The profile tile and the chip's tile share a baseline** (the CTO's
+/// **The profile tile and the chip's tile share a baseline** (the review's
 /// note): the same size, their centres level, side by side at the foot.
 #[test]
 fn the_profile_tile_sits_level_with_the_chips_tile() {
@@ -6334,7 +6334,7 @@ fn the_profile_tile_sits_level_with_the_chips_tile() {
     );
 }
 
-/// **The lane has no `+`** (the CTO's note, E44): search and the toggle
+/// **The lane has no `+`** (the review's note, E44): search and the toggle
 /// only, and the keyboard's lane walk has no New stop.
 #[test]
 fn the_lane_has_no_plus() {
@@ -6345,7 +6345,7 @@ fn the_lane_has_no_plus() {
     assert!(lane.search.w > 0.0 && lane.toggle.w > 0.0);
 }
 
-/// **Rename… from a right-click shows its field** (the CTO's issue: nothing
+/// **Rename… from a right-click shows its field** (the review's issue: nothing
 /// appeared). The field is drawn over the row of whichever list shows the
 /// workspace: the page's row when the page lists it — so the page stays up
 /// for it — and the Manage tab's row otherwise, the tab opened on the
@@ -6385,7 +6385,7 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
 }
 
 /// **A right-click on the floor chip opens the open workspace's menu** (the
-/// CTO's note): the chip is the workspace's tile, so it gets the menu its
+/// review's note): the chip is the workspace's tile, so it gets the menu its
 /// row gets, at the pointer.
 #[test]
 fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
@@ -6409,7 +6409,7 @@ fn a_right_click_on_the_floor_chip_opens_the_open_workspaces_menu() {
     assert!(!v.explore.popover_open(), "the chip's page was not opened");
 }
 
-/// **The floor's `…` opens the workspace's menu** (the CTO's artboard, E60):
+/// **The floor's `…` opens the workspace's menu** (the review's artboard, E60):
 /// New workspace, Import… with the formats behind it, Invite people (dimmed
 /// until there is a flow), Trash. It hangs from the button's top-right
 /// corner and lifts itself to stay on screen at the window's foot; a chosen
@@ -6431,7 +6431,7 @@ fn the_floor_dots_open_the_workspace_menu() {
     assert!(m.y < dots.y, "lifted above the button: {m:?} vs {dots:?}");
     assert!(
         m.x >= dots.x + dots.w - 0.5,
-        "beside the button, to its right (the CTO's note): {m:?} vs {dots:?}"
+        "beside the button, to its right (the review's note): {m:?} vs {dots:?}"
     );
     let enabled = v.enabled_items(menu);
     let dimmed: Vec<_> = menu
@@ -13674,7 +13674,7 @@ fn press_help(
 }
 
 /// The rail's `?` opens the help popover beside the rail, its foot level with
-/// the `?`, as the CTO's artboard draws it (QUESTIONS.md E33): *WHAT'S NEW*
+/// the `?`, as the review's artboard draws it (QUESTIONS.md E33): *WHAT'S NEW*
 /// over the release card, *Full changelog*, *Send feedback* and *Star us on
 /// GitHub*, and the strip of the website and the socials at the foot. With
 /// nothing on offer the card is this build: the shipped notes' first section
@@ -13802,7 +13802,7 @@ fn the_help_popover_is_the_artboards_rows_beside_the_rail() {
     assert!(panel.y >= 0.0);
     assert!(panel.w >= koru_ui::menu::CARD_MIN_W);
     // Every row can be chosen; the Keyboard shortcuts row is gone until its
-    // page exists (the CTO's note).
+    // page exists (the review's note).
     let enabled = v.enabled_items(menu);
     let at = |a: MenuAction| items.iter().position(|i| *i == a).unwrap();
     for row in [
@@ -13879,7 +13879,7 @@ fn the_help_rows_open_their_destinations() {
         View::take_pane_request(&mut v).is_none(),
         "one row, one request"
     );
-    // Feedback: the one feedback row (the CTO's note).
+    // Feedback: the one feedback row (the review's note).
     assert!(v.run_menu_action_for_test(MenuSubject::Help, MenuAction::HelpSendFeedback));
     assert!(
         matches!(v.tabs().active_tab().view, TabView::Feedback(_)),
@@ -13940,7 +13940,7 @@ fn the_cards_download_sends_the_first_consent_when_a_build_is_offered() {
 }
 
 /// A press on the rail is a press outside the who/where popover, so it shuts
-/// — and the press still does what it does (the CTO's note: the Profiles
+/// — and the press still does what it does (the review's note: the Profiles
 /// list stayed up beside the help popover the `?` opened). The profile
 /// square is the list's own door and toggles it instead.
 #[test]

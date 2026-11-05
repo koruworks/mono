@@ -298,7 +298,7 @@ fn narrow_heading_publishes_only_controls_with_pointer_geometry() {
     let (view, _) = pane(&["Brief"]);
     // The modes left the heading band for the apps row and Search left it
     // for the lane, so at every width the column can take the band is the
-    // app's name and the `…`, each with its room (the CTO's note: the band
+    // app's name and the `…`, each with its room (the review's note: the band
     // names the app).
     for width in [256., 300., 400.] {
         let mut context = cx(Lang::En);

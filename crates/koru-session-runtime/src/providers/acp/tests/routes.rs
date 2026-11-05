@@ -77,7 +77,7 @@ fn version_carriers_accept_pinned_output_and_refuse_adornments() {
     );
 }
 
-/// **A release at or above the qualified pin is admitted** (the CTO's note,
+/// **A release at or above the qualified pin is admitted** (the review's note,
 /// 2026-10-26): the installed CLIs had moved past the pins. The pin stays
 /// the floor, an adorned print is still refused, and Antigravity — known by
 /// its digest, not a number — admits nothing it was not pinned to.

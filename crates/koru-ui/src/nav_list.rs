@@ -39,7 +39,7 @@ pub enum NavLeading<'a> {
     /// drawn muted, because the row is an action rather than a place.
     Add,
     /// An icon glyph in the tile's slot — a computer, a cloud — for a row
-    /// that is a place but has no tile of its own (the CTO's note).
+    /// that is a place but has no tile of its own (the review's note).
     Glyph(char),
 }
 
@@ -111,7 +111,7 @@ impl NavList {
     /// The rule down the row's left edge, and the label's distance from it.
     const RULE_W: f32 = 2.0;
     /// Air between the rule and the focus ring, so the two do not touch
-    /// (the CTO's note).
+    /// (the review's note).
     const RULE_GAP: f32 = 4.0;
     const LABEL_X: f32 = 12.0;
     /// The trailing marks' distance from the row's right end, and the focus

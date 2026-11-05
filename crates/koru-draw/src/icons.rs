@@ -309,7 +309,7 @@ pub const CIRCLE_NOTCH: char = '\u{EB44}';
 pub const LIST_CHECKS: char = '\u{EADC}';
 /// Comments and threads — `ph-chat-circle`
 pub const CHAT_CIRCLE: char = '\u{E168}';
-/// The Chats view — `ph-chats-circle`: two bubbles, the CTO's pick for the
+/// The Chats view — `ph-chats-circle`: two bubbles, the review's pick for the
 /// rail's square, the chat tab and the menu rows that lead there.
 pub const CHATS_CIRCLE: char = '\u{E17E}';
 /// Compose — `ph-note-pencil`: the Chats heading's *New chat* button.
@@ -321,9 +321,9 @@ pub const DEVICES: char = '\u{EBA4}';
 /// This computer — `ph-desktop`: the Manage nav's *Linked devices* row.
 pub const DESKTOP: char = '\u{E560}';
 /// The Documents view — `ph-files`: two sheets, the one ChatGPT's library
-/// wears (the CTO's note).
+/// wears (the review's note).
 pub const FILES: char = '\u{E710}';
-/// The Tasks view — `ph-check-square-offset` (the CTO's pick).
+/// The Tasks view — `ph-check-square-offset` (the review's pick).
 pub const CHECK_SQUARE_OFFSET: char = '\u{E188}';
 /// Send feedback — `ph-user-sound`. A person with sound waves; the same
 /// glyph the overflow menu and the Feedback tab share.
@@ -511,10 +511,10 @@ pub const CLOUD: char = '\u{E1AA}';
 pub const CLOUD_SLASH: char = '\u{E1B6}';
 /// Two arrows chasing each other round a circle — `ph-arrows-clockwise`,
 /// U+E094 in the same stylesheet. The who/where popover's sync icon, worn in
-/// five states by colour and a dot (the CTO's artboard).
+/// five states by colour and a dot (the review's artboard).
 pub const ARROWS_CLOCKWISE: char = '\u{E094}';
 
-// The help popover (workspace foundation, the CTO's artboard): its rows'
+// The help popover (workspace foundation, the review's artboard): its rows'
 // glyphs and the social strip at its foot. `ph-x-logo`, `ph-reddit-logo`,
 // `ph-instagram-logo`, `ph-tiktok-logo`, `ph-youtube-logo`,
 // `ph-keyboard`. The changelog's `↗` is [`POP_OUT`] and the card's Download

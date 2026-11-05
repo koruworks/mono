@@ -13,7 +13,7 @@ fn chats_are_listed_newest_first_whatever_order_they_arrive_in() {
 }
 
 /// Every chat is a row and nothing heads them: *New chat* is the heading's
-/// button now (the CTO's note).
+/// button now (the review's note).
 #[test]
 fn every_chat_is_a_row_and_nothing_heads_them() {
     let mut surface = three();
@@ -127,7 +127,7 @@ fn the_band_is_the_cull_and_the_hit_test() {
     assert_eq!(hit.map(|(row, _)| row), Some(row));
 }
 
-/// **A row is the library's row** (the CTO's note): one line at
+/// **A row is the library's row** (the review's note): one line at
 /// `NAV_ROW_H`, the title at the pad with no lane reserved, and only a
 /// private chat's title sits one icon slot in, behind its mark.
 #[test]
@@ -160,7 +160,7 @@ fn a_row_is_one_line_at_the_pad_and_a_private_one_wears_its_mark() {
     }
 }
 
-/// **The pick is the library's** (the CTO's note): a plain press picks one
+/// **The pick is the library's** (the review's note): a plain press picks one
 /// and opens it, Ctrl toggles, Shift extends from the anchor, and a
 /// right-click on a picked row names the whole pick in list order.
 #[test]

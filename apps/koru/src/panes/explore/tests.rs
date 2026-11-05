@@ -177,7 +177,7 @@ fn a_list_that_fits_does_not_scroll() {
     assert!(v.scrollbar_geom(area()).is_none());
 }
 
-/// **The heading band names the app** (the CTO's note): the mode's label
+/// **The heading band names the app** (the review's note): the mode's label
 /// sits at the band's left pad and stops short of the `…`, in every mode,
 /// and it is gone with the band in a collapsed column.
 #[test]
@@ -212,7 +212,7 @@ fn the_heading_band_names_the_app() {
     assert_eq!(v.heading_title_rect(shut).w, 0.0, "no band, no title");
 }
 
-/// **The actions menu is a menu's width, under its `…`** (the CTO's note):
+/// **The actions menu is a menu's width, under its `…`** (the review's note):
 /// its right edge is the button's, and it does not grow with the pane.
 #[test]
 fn the_actions_menu_hangs_under_its_button_at_a_menus_width() {
@@ -226,7 +226,7 @@ fn the_actions_menu_hangs_under_its_button_at_a_menus_width() {
     assert!(panel.w < a.w - theme::NAV_PAD * 2.0, "not the pane's width");
     assert_eq!(
         panel.x, button.x,
-        "its left edge at the button's: it opens to the right (the CTO's note)"
+        "its left edge at the button's: it opens to the right (the review's note)"
     );
     assert!(panel.y >= button.y + button.h, "under it");
 }
@@ -890,7 +890,7 @@ fn nothing_in_the_floor_is_hit_in_a_collapsed_column() {
     assert!(v.row_rects(shut).is_empty());
 }
 
-/// **The heading's title starts where the rows' glyphs start** (the CTO's
+/// **The heading's title starts where the rows' glyphs start** (the review's
 /// note, E76), in the library and in Home's nav alike. Measured off the
 /// inspector's records rather than the constants, so the glyph's centring
 /// in its slot is in the sum.
@@ -1081,7 +1081,7 @@ fn syncing(profile: &ProfileSummary) -> koru_agent_wire::AccountState {
 }
 
 /// The sync icon's five states, from the Agent's account state for the open
-/// Profile (the CTO's artboard).
+/// Profile (the review's artboard).
 #[test]
 fn the_sync_status_reads_the_account_state() {
     use koru_agent_wire::{AccountStage, AccountState, CloudConnectionStage};
@@ -1124,7 +1124,7 @@ fn the_sync_status_reads_the_account_state() {
 }
 
 /// **Everything a popover page draws nests under its `FloatingPanel`** in
-/// the inspector (the CTO's note, E73): the rows' text and fills were
+/// the inspector (the review's note, E73): the rows' text and fills were
 /// lying beside the panel's record, as if they were the pane's own.
 #[test]
 fn the_popovers_primitives_nest_under_the_floating_panel() {
@@ -1186,7 +1186,7 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let (cx, cy) = chip.centre();
     assert_eq!(v.mouse_down(a, VIEW, cx, cy, false), Outcome::Consumed);
     // The chip's page: the heading and the workspaces, nothing else (the
-    // CTO's artboard 11 and the notes after it).
+    // review's artboard 11 and the notes after it).
     assert_eq!(
         v.popover.as_ref().map(|p| p.kind),
         Some(PopoverKind::Summary)
@@ -1260,7 +1260,7 @@ fn both_pages_anchor_above_the_floor_chip() {
     assert!(panel.y + panel.h <= chip.y, "sits above the chip");
     assert!(panel.y >= 0.0);
     // The Profiles page, and the square's page, hang beside the rail with
-    // their foot level with the profile square's (the CTO's artboard 11).
+    // their foot level with the profile square's (the review's artboard 11).
     let rail = v.rail_of(a);
     let square = v.apps_rail_rects(rail).profile;
     for open in [
@@ -1398,7 +1398,7 @@ fn profile_and_workspace_rows_share_the_same_padding_lanes() {
     assert_eq!(koru_ui::profile_picker::ROW_H, theme::ROW_H);
 }
 
-/// **The gear is a control** (the CTO's artboard): a press on a workspace
+/// **The gear is a control** (the review's artboard): a press on a workspace
 /// row's trailing lane opens the Manage tab on it rather than switching, and
 /// the page shuts behind it. A Profile row's gear does the same for the
 /// Profile.
@@ -1579,7 +1579,7 @@ fn every_known_profile_gets_a_row() {
 
 /// **The other half of the bug**, and the one a weaker test would have got
 /// wrong: every row used to resolve to `self.profile.id`. Choosing a Profile
-/// switches to **that** Profile (the CTO's artboard) and slides back to the
+/// switches to **that** Profile (the review's artboard) and slides back to the
 /// main page, with the popover still open; choosing the one you are in only
 /// slides back.
 #[test]
@@ -1688,9 +1688,9 @@ fn the_arrows_walk_the_profiles_and_the_foot() {
     assert!(v.popover_open(), "and the list stays up");
 }
 
-/// **The foot's three buttons** (the CTO's artboard): the sync state's
+/// **The foot's three buttons** (the review's artboard): the sync state's
 /// words lead to Settings — or, with no cloud set up, to the subscription
-/// (the CTO's note: the option re-enabled); the devices open the Manage tab
+/// (the review's note: the option re-enabled); the devices open the Manage tab
 /// on *Linked devices*; the `+` creates.
 #[test]
 fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
@@ -1724,7 +1724,7 @@ fn the_foot_offers_the_cloud_the_devices_and_a_new_profile() {
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
         Outcome::ManageDevices,
-        "the devices open Manage on Linked devices (the CTO's note)"
+        "the devices open Manage on Linked devices (the review's note)"
     );
 }
 
@@ -1861,7 +1861,7 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     );
 }
 
-/// The WORKSPACES heading carries no buttons now (the CTO's artboard, E60):
+/// The WORKSPACES heading carries no buttons now (the review's artboard, E60):
 /// a press on its words does nothing and keeps the page, and so does Enter
 /// on it. New workspace and Import… are the floor's `…` menu's.
 #[test]
@@ -2000,7 +2000,7 @@ fn choosing_a_workspace_reports_it_and_closes_the_popover() {
     assert!(!v.popover_open(), "and it shut behind itself");
 }
 
-/// The Profiles title's `+` is *New profile* (the CTO's note): it reports
+/// The Profiles title's `+` is *New profile* (the review's note): it reports
 /// itself and shuts the page, since the creator is the end of it.
 #[test]
 fn the_titles_plus_reports_new_profile() {
@@ -3506,7 +3506,7 @@ fn a_footer_row_shares_the_library_rows_icon_lane() {
 
 /// The caret lane is paid for only where a caret can appear in it: a
 /// Documents row keeps a file row's padding — its chevron takes the icon's
-/// slot on hover (the CTO's note) — a Files row never draws one, and an
+/// slot on hover (the review's note) — a Files row never draws one, and an
 /// Agents row reserves a lane only while it has children of its own.
 #[test]
 fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
@@ -3558,7 +3558,7 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     );
 }
 
-/// **The profile square's tile is the floor chip's tile's size** (the CTO's
+/// **The profile square's tile is the floor chip's tile's size** (the review's
 /// note): the two sit beside each other and read as one kind of thing.
 #[test]
 fn the_profile_tile_is_the_chips_tile_size() {
@@ -3568,7 +3568,7 @@ fn the_profile_tile_is_the_chips_tile_size() {
     );
 }
 
-/// **A Documents parent's chevron is its icon's slot** (the CTO's note,
+/// **A Documents parent's chevron is its icon's slot** (the review's note,
 /// Notion's shape): a press there folds the row without opening it, and
 /// the `+` beside the `…` asks for a document inside the row. A Files row
 /// has no `+`.
@@ -3937,7 +3937,7 @@ fn navigator_modes_project_pages_and_files_from_one_manifest_cache() {
 /// **The apps are squares down the rail**, whatever the pane's width: each
 /// inside the rail, each hit-testing to its own mode, nothing under the
 /// last (the *Manage apps* `+` is out, E68), and the heading's `…`
-/// untouched by any of them (the CTO's artboard 11).
+/// untouched by any of them (the review's artboard 11).
 #[test]
 fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
     let view = ExploreView::new();
@@ -6621,7 +6621,7 @@ fn the_rail_keeps_its_squares_at_every_pane_width() {
         }
         seen = Some(squares);
         // The square's centre is the floor chip's tile's: half the floor
-        // band above the foot (the CTO's note on the two tiles' baseline).
+        // band above the foot (the review's note on the two tiles' baseline).
         assert_eq!(
             r.profile.y + r.profile.h * 0.5,
             rail.y + rail.h - crate::panes::sidebar::floor::H * 0.5
@@ -6667,7 +6667,7 @@ fn a_press_in_the_chats_view_is_reported_as_what_it_asks_for() {
         view.mouse_down(a, (1200.0, 800.0), a.x + 60.0, newest.y + 6.0, false),
         Outcome::OpenAiChat(newer)
     );
-    // *New chat* is the heading's button now (the CTO's note), where the
+    // *New chat* is the heading's button now (the review's note), where the
     // library's `…` sits.
     let button = view.actions_button(a);
     assert!(button.w > 0.0, "the Chats heading has its button");
@@ -6684,7 +6684,7 @@ fn a_press_in_the_chats_view_is_reported_as_what_it_asks_for() {
         }
     );
     // Shift+click extends the pick; the menu on a picked row is about the
-    // pick, in list order (the CTO's note).
+    // pick, in list order (the review's note).
     view.mouse_down_with(
         a,
         (1200.0, 800.0),
@@ -6812,7 +6812,7 @@ fn reveal_chat_shows_the_view_with_the_chat_focused() {
 
 /// The accessibility projection: a list named *Chats* with one row per chat
 /// named by title, who answered and time, with a Delete button under it —
-/// and *New chat* as the heading's button beside the list (the CTO's note).
+/// and *New chat* as the heading's button beside the list (the review's note).
 #[test]
 fn the_chats_view_publishes_a_row_per_chat_with_open_and_delete() {
     let view = showing_chats(vec![a_chat(1, "Release notes", 1_000)]);

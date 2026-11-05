@@ -174,7 +174,7 @@ fn every_line_fits_its_row_in_every_language_at_a_narrow_width() {
             TOP,
         );
         // Two titles and the note under the refused one: the second line
-        // left the row (the CTO's note).
+        // left the row (the review's note).
         assert!(surface.work().layouts >= 3, "{}", lang.tag());
         for (row, rect) in surface.rows(narrow, TOP) {
             let parts = surface.row_parts(row, rect);

@@ -166,7 +166,7 @@ fn profiled_window_title(subject: &str, profile: Option<&str>, slot: &str) -> St
 }
 
 /// A workspace window's title: the workspace's name, then the active tab's
-/// (the CTO's note — a second window is told apart by what it is showing,
+/// (the review's note — a second window is told apart by what it is showing,
 /// not by the app's name twice). A tab called the same as the workspace is
 /// not repeated; a named development replica stays visible as the last
 /// component, as in [`profiled_window_title`].
@@ -18819,7 +18819,7 @@ mod tests {
         assert_eq!(REVEAL_BUDGET, Duration::from_millis(400));
     }
 
-    /// **A window is titled by its workspace and its tab** (the CTO's note):
+    /// **A window is titled by its workspace and its tab** (the review's note):
     /// two windows on two workspaces read apart in Alt+Tab. A tab named as
     /// the workspace is not said twice; a replica's slot stays last.
     #[test]

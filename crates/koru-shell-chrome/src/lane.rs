@@ -117,7 +117,7 @@ pub fn solve(lane: Rect, leading: Leading) -> LaneRects {
     let s = square(lane);
     // **The mark sits over the rail.** In the lane its slot is the rail's
     // width, so the mark is centred on the column of app squares under it
-    // (the CTO's note on artboard 11); in the caption's chain, which has no
+    // (the review's note on artboard 11); in the caption's chain, which has no
     // rail under it, the slot stays one square (`caption::leading_chain`).
     let lead_w = match leading.mark {
         Mark::Mark => theme::RAIL_W.max(s),

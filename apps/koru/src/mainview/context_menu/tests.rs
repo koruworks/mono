@@ -334,7 +334,7 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
         Some(koru_draw::icons::HOUSE)
     );
     assert_eq!(MenuAction::NewAiChat.label(), "New");
-    // Two bubbles, the CTO's pick for everything that leads to a chat.
+    // Two bubbles, the review's pick for everything that leads to a chat.
     assert_eq!(
         MenuAction::NewAiChat.icon(),
         Some(koru_draw::icons::CHATS_CIRCLE)

@@ -184,7 +184,7 @@ pub struct Listing {
 /// Where the keyboard is. An id rather than a row index, so a refresh that
 /// reorders the list does not move the keyboard to another chat. One
 /// variant since *New chat* left the list for the heading's button (the
-/// CTO's note); kept as an enum so a host's match reads the same.
+/// review's note); kept as an enum so a host's match reads the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Focus {
     Chat(ChatId),
@@ -229,7 +229,7 @@ pub struct ChatsSurface {
     /// The chats a delete was asked for — one, or the selection.
     pub(crate) wants_delete: Vec<ChatId>,
     /// **The picked chats**, the library's multi-selection one column over
-    /// (the CTO's note): a plain press picks one, Ctrl toggles, Shift
+    /// (the review's note): a plain press picks one, Ctrl toggles, Shift
     /// extends from the anchor, and a right-click on a picked row raises
     /// the menu about all of them. Kept as ids; read in list order.
     pub(crate) selection: Vec<ChatId>,

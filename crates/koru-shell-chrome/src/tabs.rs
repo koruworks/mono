@@ -46,7 +46,7 @@ pub struct Tab<'a> {
     /// group's gap, folded into the last pin's width so [`layout`] stays pure
     /// arithmetic. The chip stops short of it; the slot (and the hit) keep it.
     /// Drawn as chip, it made the last pin six pixels wider than its
-    /// neighbours and its icon sit left of centre (the CTO's note).
+    /// neighbours and its icon sit left of centre (the review's note).
     pub gap_after: f32,
     /// A chat's status (koru-ai D83): a turning ring **in place of** the
     /// icon while it works, a dot on the icon's corner when it needs the
@@ -65,7 +65,7 @@ impl Tab<'_> {
 /// Where a tab's icon slot starts: at the label's padding for a titled tab,
 /// centred in the pill for an icon-only pin — there is no label and no close
 /// box to leave room for, so left-aligning it read as space kept for a hidden
-/// `×` (the CTO's note).
+/// `×` (the review's note).
 pub fn icon_slot_x(pill: Rect, icon_only: bool) -> f32 {
     if icon_only {
         pill.x + ((pill.w - crate::PAGE_ICON_SLOT) * 0.5).max(0.0)

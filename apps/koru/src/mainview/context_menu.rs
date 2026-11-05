@@ -257,7 +257,7 @@ pub enum MenuAction {
     /// The label comes from the format's descriptor — the registry decides
     /// what can be imported, this menu only displays it.
     ImportFormat(&'static str),
-    /// The floor menu's rows (the CTO's artboard, E60): a workspace's own
+    /// The floor menu's rows (the review's artboard, E60): a workspace's own
     /// verbs, where the popover's WORKSPACES heading used to carry a `+`
     /// and an import button.
     NewWorkspace,
@@ -611,7 +611,7 @@ pub enum MenuAction {
     /// The *WHAT'S NEW* heading over the release card. It wears a dot while
     /// a build is on offer.
     HelpWhatsNewHeading,
-    /// The release card (the CTO's artboard): the build on offer when the
+    /// The release card (the review's artboard): the build on offer when the
     /// Agent has one, else the build that is running — badge, date, title,
     /// a line under it, and the Download button at its foot, which is
     /// [`HelpDownload`](Self::HelpDownload). Chosen as a whole (its `›`), it
@@ -622,7 +622,7 @@ pub enum MenuAction {
     HelpDownload,
     /// The releases page on koru.do, in the browser.
     HelpFullChangelog,
-    /// The Feedback tab. **The only feedback row** (the CTO's note): *Report
+    /// The Feedback tab. **The only feedback row** (the review's note): *Report
     /// a problem* was a second door to the same tab and went.
     HelpSendFeedback,
     /// Koru's repository on GitHub, in the browser, to star it.
@@ -883,7 +883,7 @@ pub fn set_trash_count(count: usize) {
     TRASH_COUNT.with(|cell| *cell.borrow_mut() = count);
 }
 
-/// The floor's `…` menu (the CTO's artboard, E60).
+/// The floor's `…` menu (the review's artboard, E60).
 pub fn floor_items() -> Vec<MenuAction> {
     vec![
         MenuAction::NewWorkspace,
@@ -1142,7 +1142,7 @@ impl MenuAction {
                     return Cow::Borrowed(koru_i18n::t(lang, koru_i18n::Key::ChatsDelete));
                 }
                 // The row says how many, the way *Delete run* does (the
-                // CTO's note: delete several chats as several documents).
+                // review's note: delete several chats as several documents).
                 return Cow::Owned(koru_i18n::fill(
                     koru_i18n::t(lang, koru_i18n::Key::ChatsDeleteMany),
                     &[&koru_i18n::number::decimal(lang, count as u64)],
@@ -1416,7 +1416,7 @@ impl MenuAction {
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
             // Not a chord: the count of what is in the Trash, at the row's
-            // end where a chord would sit (the CTO's artboard).
+            // end where a chord would sit (the review's artboard).
             MenuAction::OpenTrash => {
                 let count = TRASH_COUNT.with(|cell| *cell.borrow());
                 (count > 0).then(|| koru_i18n::number::decimal(crate::format::lang(), count as u64))
@@ -2515,11 +2515,11 @@ fn help_card() -> HelpCard {
     HELP_CARD.with(|c| c.borrow().clone())
 }
 
-/// The help popover's rows (the CTO's artboard, QUESTIONS.md E33): *WHAT'S
+/// The help popover's rows (the review's artboard, QUESTIONS.md E33): *WHAT'S
 /// NEW* over the release card, then *Full changelog*, then *Send feedback*
 /// and *Star us on GitHub*, and the strip of the website and the socials at
 /// the foot. Support is not a row: it stays reachable through the Agent's own
-/// asks, and the CTO hid it here.
+/// asks, and the review hid it here.
 pub fn help_items(card: HelpCard) -> Vec<MenuAction> {
     HELP_CARD.with(|c| *c.borrow_mut() = card);
     vec![

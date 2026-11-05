@@ -10,7 +10,7 @@
 //!   keyboard's row is one of them; the menu key (or `Shift+F10`) opens the
 //!   row's menu, the one a right-click and its ⋯ open (D91);
 //! - a plain press picks one chat and opens it, Ctrl toggles a chat in the
-//!   pick, Shift extends it from the anchor (the library's rules, the CTO's
+//!   pick, Shift extends it from the anchor (the library's rules, the review's
 //!   note);
 //! - a row chosen by the pointer and one chosen by the keyboard mean the same
 //!   thing, because both reach [`activate`](ChatsSurface::activate).

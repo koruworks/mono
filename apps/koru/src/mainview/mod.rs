@@ -3056,7 +3056,7 @@ impl MainView {
         }
     }
 
-    /// A sidebar row's `+` (the CTO's note): the document's name, then the
+    /// A sidebar row's `+` (the review's note): the document's name, then the
     /// shell makes it as the row's last child and opens it.
     fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
         self.menu = None;
@@ -5090,7 +5090,7 @@ impl MainView {
     /// live while it waits for the first consent — else the build that is
     /// running: channel and version, the day it was released, the shipped
     /// notes' first sections for a title and a line, and Download drawn dim
-    /// since there is nothing to fetch (the CTO's artboard). A build without
+    /// since there is nothing to fetch (the review's artboard). A build without
     /// notes says so in the card rather than inventing a headline.
     fn help_card(&self) -> context_menu::HelpCard {
         use koru_agent_wire::UpdateStage;
@@ -6015,7 +6015,7 @@ impl MainView {
     /// the Chats view sends the delete on *yes*, through `settle_confirm`,
     /// which is what makes the dialog the one door. The title is the chat's
     /// own: shown, never logged.
-    /// Ask before deleting one chat or the pick (the CTO's note): one is
+    /// Ask before deleting one chat or the pick (the review's note): one is
     /// named, several are counted, and a yes deletes each.
     fn ask_delete_chats(&mut self, chats: Vec<koru_ai_ui::ChatId>) -> bool {
         let Some(&first) = chats.first() else {
@@ -7464,11 +7464,11 @@ impl MainView {
 
     /// The who/where popover's heading import button: the formats, hanging
     /// off the panel's right edge level with the button, with the page
-    /// still under it (the CTO's notes, QUESTIONS.md E29 and E37). A chosen
+    /// still under it (the review's notes, QUESTIONS.md E29 and E37). A chosen
     /// format shuts the page, since it is the end of the interaction.
-    /// The floor's `…` (the CTO's artboard, E60): New workspace, Import…
+    /// The floor's `…` (the review's artboard, E60): New workspace, Import…
     /// with its formats as a flyout, Invite people, and Trash with its
-    /// count. Beside the button to its right (the CTO's note), level with
+    /// count. Beside the button to its right (the review's note), level with
     /// its top; the menu lifts itself to stay on screen at the window's
     /// foot.
     fn open_floor_menu(&mut self, at: (f32, f32)) -> bool {
@@ -7517,7 +7517,7 @@ impl MainView {
     }
 
     /// The Sync settings tab: a singleton page that, for now, says only its
-    /// name (the CTO's artboard; what it holds is QUESTIONS.md E31). Nothing
+    /// name (the review's artboard; what it holds is QUESTIONS.md E31). Nothing
     /// opens it since the popover's toolbar went (E32); it waits for the
     /// Sync settings design to say where its door is.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -7782,7 +7782,7 @@ impl MainView {
             // directory nor a `Window`. So each is recorded and drained.
             Outcome::SwitchWorkspace(id) => self.switch_workspace_here(id),
             // The popover stays open on its main page, and lists the new
-            // Profile's workspaces once the switch has happened (the CTO's
+            // Profile's workspaces once the switch has happened (the review's
             // artboard). The window lands on the workspace that Profile
             // last had open — each Profile keeps its own window settings.
             Outcome::SwitchProfile(id) => self.ask_pane(PaneRequest::SwitchProfile(id)),
@@ -9885,7 +9885,7 @@ impl MainView {
         if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
             // The rail: an app, Settings, Help or the profile square. A press
             // on it is a press outside the popover, so the popover shuts
-            // first (the CTO's note: the Profiles list stayed up beside the
+            // first (the review's note: the Profiles list stayed up beside the
             // help popover the `?` opened) — unless the press is the square,
             // the popover's own door, which toggles it.
             let square = self.explore.apps_rail_rects(self.rail_area()).profile;
@@ -10581,7 +10581,7 @@ impl View for MainView {
         if self.popover_hit(x, y) {
             self.refresh_explore(ws, true);
             // A workspace row's menu — the same one its Manage row's `•••`
-            // opens — at the pointer, over the page (the CTO's note). Any
+            // opens — at the pointer, over the page (the review's note). Any
             // other press on the switcher is swallowed rather than falling
             // through to the view underneath.
             let area = self.explore_popover_area();
@@ -16233,7 +16233,7 @@ impl MainView {
         koru_shell_chrome::lane::Leading {
             mark: koru_shell_chrome::lane::Mark::Mark,
             search: true,
-            // No New in the lane (the CTO's note, E44): the tab strip's `+`
+            // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.
             new: false,
             folded: !self.sidebar.is_open(),
@@ -16900,7 +16900,7 @@ impl MainView {
                     koru_i18n::t(lang, koru_i18n::Key::TerminalSwitchWorkspace),
                 ))
             } else if on(rail.settings) {
-                // The chord rides the tooltip (the CTO's note), the way the
+                // The chord rides the tooltip (the review's note), the way the
                 // lane's controls carry theirs; the Settings page's own
                 // search box no longer prints it.
                 Some(

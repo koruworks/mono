@@ -804,7 +804,7 @@ fn the_edge_lane_comes_off_the_right() {
     assert_eq!(r.context.y + r.context.h, r.foot.y);
 }
 
-/// **A shut pane leaves a lane on the left too** (the CTO's note, E71): the
+/// **A shut pane leaves a lane on the left too** (the review's note, E71): the
 /// content card then has the same air off the window on both sides, and
 /// the same corners. With the pane open its card is the window's left and
 /// the left lane is zero-width — the content still begins at the pane.

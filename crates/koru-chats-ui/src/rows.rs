@@ -17,7 +17,7 @@ use koru_draw::theme;
 use crate::{ChatsSurface, Focus, Load};
 
 /// A chat row: its title on one line, the library row's height, so the list
-/// reads at the Documents list's pitch (the CTO's note). Who answered and
+/// reads at the Documents list's pitch (the review's note). Who answered and
 /// when left the row; the accessible name still says it.
 pub(crate) const CHAT_H: f32 = theme::NAV_ROW_H;
 /// A sentence under a row — *Deleting…*, or why a delete was refused.
@@ -26,7 +26,7 @@ const NOTE_H: f32 = 17.0;
 const NOTICE_GAP: f32 = 4.0;
 /// A private chat's mark, left of its title in the slot a page icon takes —
 /// only on a private row, so every other title starts at the pad, as a
-/// Documents label starts after its icon (the CTO's note).
+/// Documents label starts after its icon (the review's note).
 const LEAD_W: f32 = koru_shell_chrome::PAGE_ICON_SLOT;
 const LEAD_GAP: f32 = 4.0;
 /// The status mark's slot at a row's end (D83), an icon's width.

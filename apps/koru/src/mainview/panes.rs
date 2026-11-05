@@ -284,7 +284,7 @@ impl TabGroup {
         };
         // The pin group's gap rides in the last pin's width (`ensure_widths`);
         // the chip stops short of it so the pin is its neighbours' size and
-        // its icon sits centred (the CTO's note).
+        // its icon sits centred (the review's note).
         let gap_after = if pin_count > 0 && i + 1 == pin_count {
             theme::TAB_PIN_GAP
         } else {

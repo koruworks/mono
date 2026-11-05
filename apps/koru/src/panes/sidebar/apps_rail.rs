@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The rail: the apps down the sidebar's left edge, under the lane, and at
-//! its foot Help, Settings and the profile square (the CTO's artboard 11,
+//! its foot Help, Settings and the profile square (the review's artboard 11,
 //! QUESTIONS.md E32). Settings sits on the profile square: both are about
 //! the person, Help is about Koru.
 //!
@@ -34,14 +34,14 @@ pub const GAP: f32 = 4.0;
 pub const PAD_TOP: f32 = 10.0;
 /// Under the profile square: what centres the square — and so the Profile's
 /// tile in it — on the floor chip's tile beside it, so the two tiles share
-/// a baseline (the CTO's note). The chip's tile is centred in the floor's
+/// a baseline (the review's note). The chip's tile is centred in the floor's
 /// band; the square sits that band's half-height above the foot.
 const PAD_BOTTOM: f32 = (super::floor::H - SQUARE) * 0.5;
 /// The glyph inside a square.
 pub const GLYPH: f32 = 18.0;
 /// The profile's tile inside its square: **the floor chip's workspace tile's
 /// size**, so the two tiles beside each other read as one kind of thing (the
-/// CTO's note).
+/// review's note).
 pub const PROFILE_TILE: f32 = super::floor::AVATAR;
 
 /// Every rect in the rail. Zero-width in a collapsed column, the idiom the
@@ -52,7 +52,7 @@ pub struct Rects {
     /// One square per app the build shows, in the person's order
     /// (`rail_order::RailOrder::visible`).
     /// Nothing under the last: the *Manage apps* `+` is out until the
-    /// manager lands (the CTO's note, E68).
+    /// manager lands (the review's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,
     pub settings: Rect,
     pub help: Rect,

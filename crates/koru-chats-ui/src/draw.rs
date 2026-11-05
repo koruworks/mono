@@ -28,7 +28,7 @@ use crate::{ChatsSurface, Deleting};
 /// The icon the navigator's mode row draws for this view. The same mark the
 /// `+` menu's *Chats* row and an AI chat tab wear, so the three places a
 /// chat is reached from agree about what one looks like — two bubbles (the
-/// CTO's pick: `chats-circle`).
+/// review's pick: `chats-circle`).
 pub const MODE_ICON: char = icons::CHATS_CIRCLE;
 
 impl ChatsSurface {
@@ -167,7 +167,7 @@ impl ChatsSurface {
                     p.text_dim
                 };
                 // The private mark left of the title, in a page icon's slot
-                // (the CTO's note). Who answered and when is the accessible
+                // (the review's note). Who answered and when is the accessible
                 // name's, not the row's.
                 if private && parts.lead.w > 0.0 {
                     draw_icon(scene, root, engine, icons::DETECTIVE, parts.lead, ink);

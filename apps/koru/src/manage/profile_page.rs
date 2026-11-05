@@ -130,7 +130,7 @@ pub(crate) enum Control {
     OlderHistory,
     // ---- the New profile page (`new_profile`) ----
     /// The page's X: put the form away and land on the first Profile (the
-    /// CTO's note).
+    /// review's note).
     CloseCreation,
     // ---- the Koru Cloud page (`cloud`) ----
     /// *Accounts…*: the account switcher.

@@ -1313,7 +1313,7 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
 }
 
 /// **The window keeps a lane at its right edge and along its foot** (the
-/// CTO's artboard and his note), **and at its left while the pane is shut**
+/// review's artboard and note), **and at its left while the pane is shut**
 /// (his note, E71): the content stops `EDGE_LANE_W` short of the window on
 /// every side it reaches, the caption does not, and the context column,
 /// when open, ends where the lanes begin. Open the pane and the left lane

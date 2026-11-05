@@ -141,7 +141,7 @@ pub enum Outcome {
     /// *Pin*/*Unpin*, *Delete chat*.
     AiChatMenu {
         /// The picked chats, in list order — one, or a multi-selection (the
-        /// CTO's note: delete several as several documents).
+        /// review's note: delete several as several documents).
         chats: Vec<koru_chats_ui::ChatId>,
         at: (f32, f32),
     },
@@ -207,7 +207,7 @@ pub enum Outcome {
     /// A double-clicked file whose bytes are already here: open it through the
     /// operating system's associated application.
     OpenFile(NodeId),
-    /// A right-click on a workspace row of the who/where popover (the CTO's
+    /// A right-click on a workspace row of the who/where popover (the review's
     /// note): the container opens the workspace menu — the one a Manage
     /// row's `•••` opens — at the pointer, with the page still under it.
     ///
@@ -217,7 +217,7 @@ pub enum Outcome {
         workspace: WorkspaceId,
         at: (f32, f32),
     },
-    /// A Documents row's `+` (the CTO's note, Notion's *Add a page inside*):
+    /// A Documents row's `+` (the review's note, Notion's *Add a page inside*):
     /// the container asks for a name and has the shell make a document as
     /// this row's last child.
     NewChildDocument(NodeId),
@@ -314,13 +314,13 @@ pub enum Outcome {
     ManageWorkspace(WorkspaceId),
     /// The gear on a Profile row: the Manage tab on that Profile's page.
     ManageProfile(ProfileId),
-    /// The Profiles page's devices button (the CTO's note): the Manage tab
+    /// The Profiles page's devices button (the review's note): the Manage tab
     /// on *Linked devices*.
     ManageDevices,
     /// The who/where popover's heading import button: the container hangs
-    /// the import formats beside the page, which stays (the CTO's note:
+    /// the import formats beside the page, which stays (the review's note:
     /// the heading's ⋯ became a `+` and an import button).
-    /// The floor's `…` was pressed (the CTO's artboard): the workspace's
+    /// The floor's `…` was pressed (the review's artboard): the workspace's
     /// menu — New workspace, Import…, Invite people, Trash — hung from the
     /// button's top-right corner, which `at` names.
     FloorMenu {

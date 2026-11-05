@@ -50,7 +50,7 @@ pub struct Regions {
     /// The lane at the window's **left** edge, `edge`'s mirror, carved by
     /// [`with_ground`] only while the explore column is shut: the content is
     /// then the window's left-most card and keeps the same air off the
-    /// window as off the right (the CTO's note, E71). With the column open
+    /// window as off the right (the review's note, E71). With the column open
     /// its card is the window's left and this is zero-width.
     ///
     /// [`with_ground`]: Self::with_ground

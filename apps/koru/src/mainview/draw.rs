@@ -412,7 +412,7 @@ impl MainView {
             // The rail and the pane, cut from the drawn column the way the
             // settled one is (`layout::pane_of`, `rail_of`). In the
             // inspector the rail is the pane's sibling, not its child (the
-            // CTO's note, E75): `KoruRail` is recorded first, on its own,
+            // review's note, E75): `KoruRail` is recorded first, on its own,
             // and the *Explore sidebar* record is the pane's.
             let pane = Self::pane_of(sb);
             let rail = Self::rail_of(sb);
@@ -526,7 +526,7 @@ impl MainView {
         // **After every column**, because it paints over their edges: the
         // ground's lanes, the cards' outer borders and their rounded corners.
         // Before it, the sidebar's own fill and the lane's were painting the
-        // pane's corner back square (the CTO's note).
+        // pane's corner back square (the review's note).
         self.draw_cards(scene, root);
         // **After both columns**, and deliberately not from inside the pane's
         // own `draw`: a popover hangs over the active view, so where it lands in
@@ -797,7 +797,7 @@ impl MainView {
         // drawn right edge, so the logo and the tabs slide along with the pane
         // instead of jumping when it lands.
         let cap = self.drawn_caption();
-        // **The rail's colour** (the CTO's artboard): the header, the rail
+        // **The rail's colour** (the review's artboard): the header, the rail
         // and the edge lane are the window's ground, one tint; the explore
         // pane and the document are cards on it.
         scene::fill(
@@ -820,7 +820,7 @@ impl MainView {
     /// side lanes and every card's along the foot, then a rounded corner at
     /// each outer corner — the explore pane's left pair, or the document's
     /// with the pane shut; the document's top-left where it meets the pane;
-    /// and the right-most card's right pair (the CTO's artboard and his
+    /// and the right-most card's right pair (the review's artboard and
     /// notes). Drawn after every column and the header, which laid the
     /// straight hairlines: each corner masks the square outside its arc in
     /// the colour of what lies outside it — the ground, or the pane beside
@@ -893,7 +893,7 @@ impl MainView {
                 &scene::rect(edge.x, edge.y, 1.0, edge.h),
             );
             // The caption's hairline runs to the window's edge; over the
-            // lane it is a stray (the CTO's note), so the ground covers it.
+            // lane it is a stray (the review's note), so the ground covers it.
             scene::fill(
                 scene,
                 root,
@@ -1054,7 +1054,7 @@ impl MainView {
         );
         let p = theme::p();
         // The lane is the header's: the rail's colour, like the caption
-        // beside it (the CTO's artboard). Its hairline is the explore
+        // beside it (the review's artboard). Its hairline is the explore
         // card's top border, so it runs from the rail's edge, not over the
         // rail — the rail and the header are one ground. The mark's slot
         // no longer needs a fill or a hairline of its own (E37): the ground
@@ -1525,7 +1525,7 @@ impl MainView {
 /// A band of the ground that keeps two things apart — the lanes at the
 /// window's edges and foot — filled in `colour` and recorded as a **Gap**
 /// part, so the space between two components is a thing the inspector
-/// names rather than an anonymous fill (the CTO's note, E75). `separates`
+/// names rather than an anonymous fill (the review's note, E75). `separates`
 /// says what is on either side; `role` which gap it is.
 fn draw_gap(
     scene: &mut Scene,
@@ -1640,7 +1640,7 @@ fn draw_card_corner(
         1.0,
     );
     // One part per corner in the inspector — the mask and the arc together,
-    // named for the corner they are (the CTO's note, E75) — rather than two
+    // named for the corner they are (the review's note, E75) — rather than two
     // anonymous fills at the window's level.
     let _corner = koru_draw::inspect::scope(
         "CardCorner",

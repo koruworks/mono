@@ -407,7 +407,7 @@ impl ExploreView {
     fn heading_semantics(&self, cx: &Context) -> Vec<SemanticNode> {
         let mut out = Vec::new();
         // The band's title says which app the rows below belong to, as the
-        // drawn heading does (the CTO's note).
+        // drawn heading does (the review's note).
         let title = self.heading_title_rect(cx.area);
         if title.w > 0.0 {
             out.push(
@@ -418,7 +418,7 @@ impl ExploreView {
         }
         let actions = self.actions_button(cx.area);
         if actions.w > 0.0 {
-            // The Chats heading's button is *New chat* (the CTO's note).
+            // The Chats heading's button is *New chat* (the review's note).
             let label = if self.mode == NavigatorMode::Chats {
                 Key::ChatsNew
             } else {
@@ -637,7 +637,7 @@ impl ExploreView {
                 .with_label(format!("{workspace}, {person}"))
                 .with_bounds(r.chip)
                 .with_action(Action::Click),
-            // The `…` beside it: the workspace's menu (the CTO's artboard).
+            // The `…` beside it: the workspace's menu (the review's artboard).
             SemanticNode::new(cx.surface(EXPLORE, parts::FLOOR_MENU), Role::Button)
                 .with_label(t(cx.lang, Key::A11yMoreActions))
                 .with_bounds(r.dots)

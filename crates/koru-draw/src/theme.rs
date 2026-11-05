@@ -148,7 +148,7 @@ pub struct Palette {
     pub chip_bg: Color,
     /// The window's ground — the title bar, the lane, the rail and the
     /// edge lanes the cards sit on (E57). `chip_bg` with a fifth of its
-    /// grey taken out (the CTO's note, after ChatGPT's sidebar), so the
+    /// grey taken out (the review's note, after ChatGPT's sidebar), so the
     /// cards lift off it without the ground reading as a panel.
     pub ground: Color,
     /// The tint behind a code block and an inline-code span — one colour so the
@@ -2508,14 +2508,14 @@ pub mod role {
         TextStyle::new(text_metrics::UI_BODY, FontWeight::SemiBold)
     }
     /// The explore pane's title — the app's name over its nav, level with
-    /// the rail's Home square: `UI_TITLE` 18/24, Medium (the CTO's notes,
+    /// the rail's Home square: `UI_TITLE` 18/24, Medium (the review's notes,
     /// E72, E74 and E77, after ChatGPT's sidebar title). Drawn in the rows'
     /// ink, `text_dim`, so the name and its rows read as one column.
     pub const fn pane_title() -> TextStyle {
         TextStyle::new(text_metrics::UI_TITLE, MEDIUM)
     }
     /// A popover page's heading — *WORKSPACES · n*, *SWITCH TO · n*:
-    /// `UI_HEADING` 16/22, Medium (the CTO's notes, E73 and E74; it was
+    /// `UI_HEADING` 16/22, Medium (the review's notes, E73 and E74; it was
     /// `hint`, 11 px).
     pub const fn popover_heading() -> TextStyle {
         TextStyle::new(text_metrics::UI_HEADING, MEDIUM)
@@ -2961,9 +2961,9 @@ pub const SIDEBAR_W: f32 = 256.0;
 pub const SIDEBAR_MIN_W: f32 = 256.0;
 pub const SIDEBAR_MAX_W: f32 = 600.0;
 /// The rail at the sidebar's left edge — the apps, and at its foot Settings,
-/// Help and the profile (the CTO's artboard 11). The pane and its widths
+/// Help and the profile (the review's artboard 11). The pane and its widths
 /// above are what sits after it; the sidebar as a whole is the two together.
-/// 48, not 56: four pixels off each side (the CTO's note); a 36 px square
+/// 48, not 56: four pixels off each side (the review's note); a 36 px square
 /// keeps six pixels of air either side.
 pub const RAIL_W: f32 = 48.0;
 pub const CONTEXT_W: f32 = 268.0;
@@ -2971,7 +2971,7 @@ pub const CONTEXT_W: f32 = 268.0;
 /// Content is what the window is for; the panels give way first.
 pub const CONTENT_MIN_W: f32 = 320.0;
 /// The ground's lanes at the window's right edge and along its foot, in the
-/// rail's colour, that the cards stop short of (the CTO's artboard: the
+/// rail's colour, that the cards stop short of (the review's artboard: the
 /// explore pane and the document are cards on the window's ground, and a
 /// card needs ground around it). The main window's `Regions::with_ground`
 /// carves them.

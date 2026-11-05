@@ -160,7 +160,7 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
             _ => text.and_then(|t| t.chars().next()),
         };
         return match digit? {
-            // Home is its letter, not a digit (the CTO's note, E69).
+            // Home is its letter, not a digit (the review's note, E69).
             'h' | 'H' => Some(Chord::ShowNavigator(NavigatorMode::Home)),
             // The rail's slots: `Alt+1` is the first view down it. `Alt+0`
             // and `Alt+9` are nobody's (`koru_keys::RAIL_SLOTS`).

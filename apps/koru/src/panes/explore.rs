@@ -161,7 +161,7 @@ pub struct Row {
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub enum NavigatorMode {
     /// **Home**: Today, with Inbox and Upcoming to come (workspace
-    /// foundation, rung 5). First in the row; `Alt+H` (the CTO's note, E69
+    /// foundation, rung 5). First in the row; `Alt+H` (the review's note, E69
     /// — Q-C had left it without one).
     Home,
     #[default]
@@ -335,7 +335,7 @@ impl NavigatorMode {
 /// **One popover, two pages.** The main page is the floor chip's: you as a
 /// card, then WORKSPACES · *n* with its ⋯ menu and the workspace rows, then
 /// the sync · settings · help toolbar. Your card slides the Profiles page in
-/// from the right, and its back row slides out again (the CTO's artboard,
+/// from the right, and its back row slides out again (the review's artboard,
 /// QUESTIONS.md E30).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverKind {
@@ -421,13 +421,13 @@ fn page_of(kind: PopoverKind) -> f32 {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PopoverRow {
     /// *WORKSPACES · n*. Its `+` and import button moved into the floor's
-    /// `…` menu (the CTO's artboard, E60); a press on it does nothing.
+    /// `…` menu (the review's artboard, E60); a press on it does nothing.
     WorkspacesHeading,
     /// An index into the open Profile's workspace list. The row switches; the
     /// gear that shows on hover opens the Manage tab on it.
     Workspace(usize),
     /// *PROFILES · n* over every Profile, the way *WORKSPACES · n* heads
-    /// the chip's page (the CTO's note, E78: your card and *SWITCH TO*
+    /// the chip's page (the review's note, E78: your card and *SWITCH TO*
     /// are gone; the Profile you are in is a row with a tick). Furniture:
     /// the keyboard skips it.
     ProfilesHeading,
@@ -463,7 +463,7 @@ impl PopoverRow {
     }
 }
 
-/// A button on the Profiles page's foot (the CTO's artboard): the status,
+/// A button on the Profiles page's foot (the review's artboard): the status,
 /// the devices and the `+`. The WORKSPACES heading's `+` and import button
 /// went to the floor's `…` menu (E60); your card's sliders went with the
 /// card (E78).
@@ -474,7 +474,7 @@ pub enum HeadButton {
     /// The linked devices, with their count: the Manage tab on the Profile.
     Devices,
     /// The sync state's words at the foot's leading end — or, with no cloud
-    /// set up, the offer to subscribe to Koru Cloud (the CTO's note).
+    /// set up, the offer to subscribe to Koru Cloud (the review's note).
     Status,
 }
 
@@ -494,7 +494,7 @@ pub enum PopoverPart {
 }
 
 /// What the sync icon says, from the Agent's account state for the open
-/// Profile (the CTO's artboard: five states).
+/// Profile (the review's artboard: five states).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum SyncStatus {
     /// No cloud for this Profile: muted.
@@ -651,7 +651,7 @@ enum ScheduleNode {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct RowParts {
     /// Zero-sized for a leaf, so clicking where a caret would be does not
-    /// expand nothing. **The icon's slot** on a Documents row (the CTO's
+    /// expand nothing. **The icon's slot** on a Documents row (the review's
     /// note, Notion's shape): the chevron replaces the icon while the
     /// pointer is on the row, so the row keeps a file row's padding. Only an
     /// Agents row with children keeps a lane of its own, left of its icon.
@@ -977,7 +977,7 @@ impl ExploreView {
 
     /// The second line under a profile's name. The open Profile says where
     /// it syncs and how many other devices hold it; another says its email,
-    /// or that it is on this computer (the CTO's artboard).
+    /// or that it is on this computer (the review's artboard).
     ///
     /// **Two facts at most**: the line has about 180 px, and *Needs
     /// attention · Koru Cloud · 2 devices* was cut mid-word on screen. The
@@ -3327,7 +3327,7 @@ impl ExploreView {
     /// [`popover_key`](Self::popover_key) already answers.
     ///
     /// A chord opens for the keyboard, so the keyboard starts somewhere: on
-    /// the workspace you are in (the CTO's note, QUESTIONS.md E28), or on the
+    /// the workspace you are in (the review's note, QUESTIONS.md E28), or on the
     /// Profile you are in.
     ///
     /// Answers whether anything changed, so a caller repaints only when it must.
@@ -3351,7 +3351,7 @@ impl ExploreView {
     /// Open `kind` where a chord or the chip puts it, or shut it if it is
     /// already the page showing: the workspaces above the chip, the Profiles
     /// beside the rail's profile square. Two pages, two doors, nothing
-    /// between them (the CTO's note: no views inside the popover).
+    /// between them (the review's note: no views inside the popover).
     fn toggle_popover(&mut self, kind: PopoverKind) {
         let anchor = match kind {
             PopoverKind::Profiles => PopoverAnchor::Rail,
@@ -3440,12 +3440,12 @@ impl ExploreView {
                 shown.sort_by_key(|&i| !list[i].pinned);
                 out.extend(shown.into_iter().map(PopoverRow::Workspace));
                 // The chip's page ends with its workspaces: sync, settings
-                // and help are the rail's now (the CTO's note).
+                // and help are the rail's now (the review's note).
                 out
             }
             // *PROFILES · n*, **every** Profile — the one you are in with
             // its tick, as the chip's page lists workspaces — and the foot
-            // (the CTO's note, E78).
+            // (the review's note, E78).
             PopoverKind::Profiles => {
                 let mut out = vec![PopoverRow::ProfilesHeading];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
@@ -3534,7 +3534,7 @@ impl ExploreView {
                 rail.x + rail.w + POPOVER_GAP
             }
             PopoverKind::Summary | PopoverKind::Profiles => chip.x,
-            // Under its button and off to the right (the CTO's note), the
+            // Under its button and off to the right (the review's note), the
             // way the floor's menu and the Profiles page open beside what
             // raised them.
             PopoverKind::LibraryActions => self.actions_button(area).x.max(POPOVER_EDGE),
@@ -3833,7 +3833,7 @@ impl ExploreView {
 
     /// Whether choosing `row`'s `part` keeps the popover open. A Profile row
     /// switches and the list stays, with the tick moved; a head's import
-    /// button opens a menu *beside* the page (the CTO's note, QUESTIONS.md
+    /// button opens a menu *beside* the page (the review's note, QUESTIONS.md
     /// E29) and a press on a head's words does nothing, so both leave it; a
     /// head's `+` opens a creator, which is the end of the interaction;
     /// everything else is a destination.
@@ -3885,7 +3885,7 @@ impl ExploreView {
                     Outcome::SwitchWorkspace(id)
                 }
             }
-            // **A Profile row switches to it** (the CTO's artboard): the
+            // **A Profile row switches to it** (the review's artboard): the
             // window lands on the workspace that Profile last had open, and
             // the list stays up with its tick moved. Its gear opens the
             // Manage tab on it instead.
@@ -3906,7 +3906,7 @@ impl ExploreView {
             PopoverRow::WorkspacesHeading | PopoverRow::ProfilesHeading => Outcome::Consumed,
             PopoverRow::ProfilesFooter => match part {
                 PopoverPart::Button(HeadButton::New) => Outcome::NewProfile,
-                // With no cloud set up the words are the offer (the CTO's
+                // With no cloud set up the words are the offer (the review's
                 // note: the option to subscribe, re-enabled); otherwise
                 // they lead to Settings, where the sync state is explained.
                 PopoverPart::Button(HeadButton::Status) => {
@@ -3916,7 +3916,7 @@ impl ExploreView {
                         Outcome::OpenSettings
                     }
                 }
-                // The Manage tab on *Linked devices* (the CTO's note), not
+                // The Manage tab on *Linked devices* (the review's note), not
                 // on the Profile.
                 PopoverPart::Button(HeadButton::Devices) => Outcome::ManageDevices,
                 _ => Outcome::Consumed,
@@ -4101,7 +4101,7 @@ impl ExploreView {
     }
 
     /// The floor's `…` was pressed: the workspace's menu, beside the button
-    /// to its right (the CTO's note), level with its top; at the window's
+    /// to its right (the review's note), level with its top; at the window's
     /// foot the menu lifts itself to stay on screen.
     pub fn floor_menu(&self, area: Rect) -> Outcome {
         let r = floor::solve(area);
@@ -4146,7 +4146,7 @@ impl ExploreView {
     /// in `role::pane_title` — 22 px, level with the rail's Home square
     /// (E72). The band held the mode icons once; with those on the rail it
     /// had only the `…` left, and a row that names nothing above a list is
-    /// a row the eye has to work out (the CTO's note). Zero-sized when the
+    /// a row the eye has to work out (the review's note). Zero-sized when the
     /// band is.
     pub fn heading_title_rect(&self, area: Rect) -> Rect {
         let band = self.heading_band(area);
@@ -4154,14 +4154,14 @@ impl ExploreView {
             return band;
         }
         // Where the rows' glyphs start, not the band's pad: the title and
-        // the icons under it share a left edge (the CTO's note, E76).
+        // the icons under it share a left edge (the review's note, E76).
         let x = leading_x(area.x);
         let right = self.actions_button(area).x - theme::NAV_PAD;
         Rect::new(x, band.y, (right - x).max(0.0), band.h)
     }
 
     /// The heading's trailing button: the library's compact `…` in a mode
-    /// with actions, *New chat* in the Chats view (the CTO's note). It
+    /// with actions, *New chat* in the Chats view (the review's note). It
     /// yields instead of overlapping the title while a narrow pane is
     /// animating.
     fn actions_button(&self, area: Rect) -> Rect {
@@ -4181,7 +4181,7 @@ impl ExploreView {
     }
 
     /// The apps' squares, top to bottom, in the person's order — the rail
-    /// (the CTO's artboard 11; [`rail_modes`](Self::rail_modes)). Kept under
+    /// (the review's artboard 11; [`rail_modes`](Self::rail_modes)). Kept under
     /// its old name because the chords, the tooltip and the accessibility tab
     /// list all read it; it takes the **rail's** rect now, not the pane's.
     pub fn navigator_mode_rects(&self, rail: Rect) -> Vec<(NavigatorMode, Rect)> {
@@ -4255,7 +4255,7 @@ impl ExploreView {
     /// (Q-E7 P7), the per-row session icons are the products' own marks (P6).
     fn navigator_mode_icon(mode: NavigatorMode) -> char {
         match mode {
-            // Two sheets, a folder, an offset check (the CTO's notes, E69):
+            // Two sheets, a folder, an offset check (the review's notes, E69):
             // marks that read as places rather than as one page each.
             NavigatorMode::Documents => icons::FILES,
             NavigatorMode::Files => icons::FOLDER,
@@ -4275,7 +4275,7 @@ impl ExploreView {
     /// The rail: a shade darker than the pane, the apps as squares with the
     /// active one on a card, *Manage apps* dimmed under them, and at the
     /// foot Settings, Help and the profile square — the Profile's tile with
-    /// its sync dot (the CTO's artboard 11).
+    /// its sync dot (the review's artboard 11).
     pub fn draw_apps_rail(
         &self,
         scene: &mut Scene,
@@ -4374,7 +4374,7 @@ impl ExploreView {
                     &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             }
-            // The app you are in wears the Fill weight (the CTO's note):
+            // The app you are in wears the Fill weight (the review's note):
             // the fill is the signal, on top of the card.
             draw_rail_glyph(
                 scene,
@@ -4437,7 +4437,7 @@ impl ExploreView {
             apps_rail::PROFILE_TILE,
         );
         // The Profile's own tile — its colour and emoji, or its initial —
-        // the way the Profiles page draws it (the CTO's note).
+        // the way the Profiles page draws it (the review's note).
         let profile = self.profile();
         koru_draw::tile::Tile {
             icon: profile.and_then(|p| p.icon.as_deref()),
@@ -4445,7 +4445,7 @@ impl ExploreView {
             name: profile.map_or("", |p| p.name.as_str()),
         }
         .draw(scene, root, engine, tile);
-        // No sync dot at the tile's corner (the CTO's note): there is no
+        // No sync dot at the tile's corner (the review's note): there is no
         // status to show yet, and a red dot with nothing behind it is a
         // false alarm. The floor chip's second line still names the sync
         // state in words when there is one.
@@ -4496,7 +4496,7 @@ impl ExploreView {
     /// Whether `row` pays for a caret lane left of its icon: only an Agents
     /// row with children (Koru Terminal's tree). Every other tree row keeps a
     /// file row's padding and shows its chevron in the icon's slot on hover
-    /// (the CTO's note).
+    /// (the review's note).
     fn reserves_caret_lane(&self, row: &Row) -> bool {
         self.mode == NavigatorMode::Agents && row.has_children
     }
@@ -4539,7 +4539,7 @@ impl ExploreView {
             ROW_DOTS,
         );
         // The `+` sits immediately left of the `…`, on a Documents row only
-        // (the CTO's note): a document can hold a document; a file, a
+        // (the review's note): a document can hold a document; a file, a
         // canvas or a session cannot. Zero-sized elsewhere, for the reason
         // the note lane is.
         let plus = if self.mode == NavigatorMode::Documents && row.kind == Kind::Document {
@@ -4585,7 +4585,7 @@ impl ExploreView {
     /// row at `x = 0` would answer for a click meant for the view beside it.
     /// Which rows are pinned to the floor, top to bottom.
     ///
-    /// **None, since the Trash row left** (the CTO's note, E63): the Trash is
+    /// **None, since the Trash row left** (the review's note, E63): the Trash is
     /// the floor menu's row now, with its count, and a second door at the
     /// nav's foot was one more thing on every glance. The stack stays —
     /// the band the library gets, the hit test, the hover, the drawing all
@@ -4855,7 +4855,7 @@ impl ExploreView {
         }
 
         if self.actions_at(area, x, y) {
-            // The Chats heading's button is *New chat* (the CTO's note), not
+            // The Chats heading's button is *New chat* (the review's note), not
             // a menu: the row that was at the list's head moved up here.
             if self.mode == NavigatorMode::Chats {
                 return Outcome::NewAiChat;
@@ -5316,7 +5316,7 @@ impl ExploreView {
     pub fn context_menu(&mut self, area: Rect, x: f32, y: f32) -> Outcome {
         // The floor chip is the open workspace's tile: a right-click on it
         // asks for that workspace's menu, the one its row's right-click
-        // opens (the CTO's note, E42). Before any mode's own surface, for
+        // opens (the review's note, E42). Before any mode's own surface, for
         // the reason the floor comes first in `mouse_down`.
         if floor::hit(area, x, y) == Some(floor::Hit::Chip) {
             return match self.current {
@@ -5535,7 +5535,7 @@ impl ExploreView {
             (Kind::File, FileState::Remote) => Outcome::DownloadFile(row.node),
             (Kind::File, FileState::Present) => Outcome::OpenFile(row.node),
             // A page or a canvas: nothing beyond the first click. A tab of
-            // its own is Alt+click's (the CTO's note, after a day of the
+            // its own is Alt+click's (the review's note, after a day of the
             // double-click doing it).
             _ => Outcome::Consumed,
         }
@@ -6781,7 +6781,7 @@ impl ExploreView {
         );
         // Hairline down the inside edge, separating the column from the view
         // — from under the lane, which is the header's ground and has no
-        // seam in it (the CTO's artboard); the card's corner meets it there.
+        // seam in it (the review's artboard); the card's corner meets it there.
         let lane_h = theme::CAPTION_H.min(area.h);
         scene::fill(
             scene,
@@ -6846,7 +6846,7 @@ impl ExploreView {
             if title.w > 0.0 {
                 let style = theme::role::pane_title();
                 let fitted = engine.elided(self.mode.label(), style, title.w);
-                // The rows' ink and weight (the CTO's note, E77): the
+                // The rows' ink and weight (the review's note, E77): the
                 // name is the column's, not a heading over it.
                 draw_middle(scene, root, engine, &fitted, title, style, p.text_dim);
             }
@@ -6906,7 +6906,7 @@ impl ExploreView {
     /// popover it opens is on screen (DESIGN.md: a chip whose popover is
     /// open keeps a persistent tinted background). It says where first — the
     /// workspace's tile and name — and under that who, with the sync state
-    /// after a dot when there is one (the CTO's artboard).
+    /// after a dot when there is one (the review's artboard).
     fn draw_floor(
         &self,
         scene: &mut Scene,
@@ -6929,10 +6929,10 @@ impl ExploreView {
         // surfaces that own their mode's rows (Chats, Tasks, Home…) draw to
         // the pane's bottom and are not cut at `rows_bottom` the way the
         // library's rows are, so the chip was sitting on top of them (the
-        // CTO's note). The floor is drawn last; this is what makes it a floor.
+        // review's note). The floor is drawn last; this is what makes it a floor.
         // One column short of the band's right edge: that column is the
         // pane's own hairline, drawn before the modes, and the first build
-        // of this fill painted it out beside the chip (the CTO's note).
+        // of this fill painted it out beside the chip (the review's note).
         scene::fill(
             scene,
             root,
@@ -6962,7 +6962,7 @@ impl ExploreView {
             .and_then(|id| self.workspaces.iter().find(|w| w.id == id));
         if r.avatar.w > 0.0 {
             // The workspace's tile, not the person's picture: the chip says
-            // where you are first (the CTO's call, QUESTIONS.md E26).
+            // where you are first (the review's call, QUESTIONS.md E26).
             koru_draw::tile::Tile {
                 icon: entry.and_then(|w| w.icon.as_deref()),
                 color: entry.and_then(|w| w.color.as_deref()),
@@ -6971,7 +6971,7 @@ impl ExploreView {
             .draw(scene, root, engine, r.avatar);
         }
         if r.text.w > 0.0 {
-            // The workspace's name alone (the CTO's artboard 11): who you are
+            // The workspace's name alone (the review's artboard 11): who you are
             // is the rail's profile square now, and the sync state its dot.
             let workspace = entry.map_or("Workspace", |w| w.name.as_str());
             draw_middle(
@@ -6986,7 +6986,7 @@ impl ExploreView {
         }
         if r.chevron.w > 0.0 {
             // The chevron turns over as the switcher rises and back as it
-            // goes (the CTO's note): a half turn about its own centre, off
+            // goes (the review's note): a half turn about its own centre, off
             // the popover's eased `progress`, so the two move as one.
             let turn = self
                 .popover
@@ -7015,10 +7015,10 @@ impl ExploreView {
             );
         }
         if r.dots.w > 0.0 {
-            // The workspace's menu, right of the chip (the CTO's artboard):
+            // The workspace's menu, right of the chip (the review's artboard):
             // the heading's `…`, one row down.
             // The shared icon button: its own hover chip, `KoruIconButton`
-            // in the inspector (the CTO's note, E76).
+            // in the inspector (the review's note, E76).
             let hot = self.floor_hover == Some(floor::Hit::Dots);
             actions::draw_dots(scene, root, engine, r.dots, hot);
         }
@@ -7446,7 +7446,7 @@ impl ExploreView {
         }
         // The chevron: always in its own lane where a row has one (Agents);
         // otherwise **in the icon's slot while the pointer is on the row**,
-        // where it replaces the icon (the CTO's note, Notion's shape).
+        // where it replaces the icon (the review's note, Notion's shape).
         let caret_in_slot = row.has_children && !self.reserves_caret_lane(row);
         if row.has_children && (hovered || !caret_in_slot) {
             let caret = parts.caret;
@@ -7744,7 +7744,7 @@ impl ExploreView {
         // rather than one offset rect — a slab with a hard edge reads as a
         // second panel behind the first rather than as depth. The record is
         // held open to the end so the pages' rows nest under the panel in
-        // the inspector instead of lying beside it (the CTO's note, E73).
+        // the inspector instead of lying beside it (the review's note, E73).
         let _panelled = scene::floating_panel_scope(
             scene,
             root,
@@ -7824,7 +7824,7 @@ impl ExploreView {
         let p = theme::p();
         for (i, (row, r)) in self.page_rects(kind, panel).into_iter().enumerate() {
             let hot = hover == Some(i);
-            // **Every row is a `Row` part** in the inspector (the CTO's
+            // **Every row is a `Row` part** in the inspector (the review's
             // note, E79), so the air between rows is read off named rects.
             let _row = koru_draw::inspect::scope(
                 "Row",
@@ -8105,7 +8105,7 @@ fn next_selectable(rows: &[PopoverRow], from: Option<usize>, forward: bool) -> O
 
 /// Room above the first row, for the column's own heading: **the rail's
 /// square's height**, placed the rail's pad under the lane, so the app's
-/// name sits level with the Home square beside it (the CTO's note, E72,
+/// name sits level with the Home square beside it (the review's note, E72,
 /// after ChatGPT's sidebar, where the mark and the title share a row).
 const HEADER_H: f32 = apps_rail::SQUARE;
 /// Above the heading band: the rail's own pad, for the same reason.
@@ -8144,13 +8144,13 @@ const SWITCHER_MAX_H: f32 = 500.0;
 /// Where a depth-0 row's glyph is drawn: the icon lane plus the glyph's
 /// centring in its slot. The heading's title and Home's RECENT heading
 /// start here too, so a column's words and marks share one left edge (the
-/// CTO's note, E76).
+/// review's note, E76).
 fn leading_x(x: f32) -> f32 {
     icon_lane(x, 0, false) + (PAGE_ICON_SLOT - theme::CAPTION_ICON) * 0.5
 }
 
 fn icon_lane(x: f32, depth: u16, caret: bool) -> f32 {
-    // `caret` is true only for an Agents row with children now (the CTO's
+    // `caret` is true only for an Agents row with children now (the review's
     // note): a Documents row shows its chevron in the icon's slot on hover.
     x + theme::NAV_PAD
         + depth as f32 * theme::NAV_INDENT
@@ -8254,7 +8254,7 @@ const SUBSCRIBE_GAP: f32 = 8.0;
 /// hangs from.
 const POPOVER_W: f32 = theme::PANEL_W;
 /// The library's actions menu: a menu's width, hung under its `…` with its
-/// right edge at the button's (the CTO's note: it grew with the pane and
+/// right edge at the button's (the review's note: it grew with the pane and
 /// read as a sheet rather than a menu).
 const ACTIONS_POPOVER_W: f32 = 200.0;
 const POPOVER_PAD: f32 = theme::PANEL_PAD;

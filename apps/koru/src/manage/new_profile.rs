@@ -39,7 +39,7 @@ impl ManageView {
         } else {
             LEAD_LOCAL
         };
-        // The X at the title line's right end (the CTO's note), the place
+        // The X at the title line's right end (the review's note), the place
         // Linked devices keeps its own head button.
         let head = self.lay_head(column, 0.0, button::H + CLOSE_GAP, TITLE, lead);
         let line = theme::role::title().metrics.line_height;
@@ -61,7 +61,7 @@ impl ManageView {
         }
     }
 
-    /// The page's X (the CTO's note): the form is put away, and the tab
+    /// The page's X (the review's note): the form is put away, and the tab
     /// lands on the first Profile in the nav. What was typed goes with the
     /// form, as closing a creator anywhere does.
     pub(super) fn close_creation(&mut self) -> bool {

@@ -458,7 +458,7 @@ fn variable_widths_pack_left_to_right() {
     assert!((rects[2].body.w - 200.0).abs() < 0.01);
 }
 
-/// **An icon-only pin centres its icon** (the CTO's note): no label and no
+/// **An icon-only pin centres its icon** (the review's note): no label and no
 /// close box, so nothing is left of or right of it to make room for. A titled
 /// tab's icon starts at the label's padding as before.
 #[test]

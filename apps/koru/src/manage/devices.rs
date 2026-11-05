@@ -416,7 +416,7 @@ impl ManageView {
                     w,
                     ActionButton::H,
                 ),
-                // *Unlink…* alone (the CTO's note): the row names the device,
+                // *Unlink…* alone (the review's note): the row names the device,
                 // and the button is measured for this word — the name made it
                 // overflow and elide. The screen reader still hears the name
                 // (`control_name`).

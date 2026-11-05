@@ -677,7 +677,7 @@ pub trait View {
     }
 
     /// What the view's active tab is called, for the window's title — the
-    /// workspace's name, then this (the CTO's note). `None` from a view with
+    /// workspace's name, then this (the review's note). `None` from a view with
     /// no tabs, whose window is titled by the workspace alone.
     fn active_tab_title(&self) -> Option<String> {
         None
@@ -2321,7 +2321,7 @@ pub enum PaneRequest {
     /// same in the sidebar until you reopen.
     CreateDocument(String),
     /// Create a document **inside** `parent` — as its last child — and open
-    /// it: a sidebar row's `+` (the CTO's note). The same round trip as
+    /// it: a sidebar row's `+` (the review's note). The same round trip as
     /// [`CreateDocument`](Self::CreateDocument), placed under the row.
     CreateDocumentIn {
         parent: koru_core::DocumentId,

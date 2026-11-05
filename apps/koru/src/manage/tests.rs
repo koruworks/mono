@@ -393,7 +393,7 @@ fn the_create_form_is_hosted_beside_the_nav_and_finishing_lands_on_the_profile()
 }
 
 /// **The page's X puts the form away and lands on the first Profile** (the
-/// CTO's note). It sits at the title line's right end, outside the form,
+/// review's note). It sits at the title line's right end, outside the form,
 /// where Linked devices keeps its own head button.
 #[test]
 fn the_new_profile_pages_x_closes_the_form_onto_the_first_profile() {

@@ -1563,7 +1563,7 @@ impl SettingsSurface {
     /// The search box's text area: the box, less the magnifier's slot.
     fn search_text_rect(&self) -> Rect {
         let r = self.search_rect();
-        // No chord inside the box (the CTO's note): the rail's Settings
+        // No chord inside the box (the review's note): the rail's Settings
         // tooltip carries it.
         Rect::new(r.x + 26.0, r.y, (r.w - 30.0).max(0.0), r.h)
     }

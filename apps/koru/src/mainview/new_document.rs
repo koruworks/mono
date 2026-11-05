@@ -47,7 +47,7 @@ pub(super) enum Purpose {
     /// The taskbar's ask: create and open a document under this title.
     Document,
     /// A sidebar row's `+`: create and open a document **inside** this one,
-    /// as its last child (the CTO's note).
+    /// as its last child (the review's note).
     ChildDocument(NodeId),
     /// The Agents tree's `+`: create a project (client-minted id, scoped to
     /// the window's workspace — both the container's business).

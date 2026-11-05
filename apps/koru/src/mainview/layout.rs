@@ -108,7 +108,7 @@ impl MainView {
             ai_w.max(self.context.layout_width()),
         )
         // The ground's lanes at the right edge and the foot, in the rail's
-        // colour (the CTO's artboard and his note): the cards stop short of
+        // colour (the review's artboard and note): the cards stop short of
         // the window.
         .with_ground(koru_draw::theme::EDGE_LANE_W);
     }
@@ -351,7 +351,7 @@ impl MainView {
         }
     }
 
-    /// The sidebar column is the rail and the pane (the CTO's artboard 11):
+    /// The sidebar column is the rail and the pane (the review's artboard 11):
     /// the rail `RAIL_W` wide at the left under the lane, the pane after it.
     /// `regions.sidebar` and the lane stay the whole column; the explore
     /// view is handed the pane, and the rail its own rect.

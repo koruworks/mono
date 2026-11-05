@@ -144,7 +144,7 @@ pub enum ShortcutId {
     /// Global search in this window.
     Search,
     ToggleExplore,
-    /// Home, by its letter, `Alt+H` (the CTO's note, E69) — the one view
+    /// Home, by its letter, `Alt+H` (the review's note, E69) — the one view
     /// with a chord of its own. Hidden for now (`koru_features::HOME_SHOWN`),
     /// so it resolves to nothing and is taught nowhere.
     ShowHome,

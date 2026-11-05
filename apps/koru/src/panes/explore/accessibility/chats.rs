@@ -5,7 +5,7 @@
 //!
 //! One list node, one node per chat, named by its title, who answered and
 //! when (and *private* when it is); *New chat* is the heading's button, in
-//! the pane's own tree (the CTO's note). Each
+//! the pane's own tree (the review's note). Each
 //! chat row offers **Open** (its click) and carries a **Delete chat** button as
 //! its child — the contract's two row actions (`docs/features/koruui/CONTRIBUTING.md`) —
 //! and the row's own two buttons (koru-ai D86): **More**, which opens the

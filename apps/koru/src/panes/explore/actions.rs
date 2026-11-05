@@ -18,7 +18,7 @@ use super::NavigatorMode;
 /// The `…` buttons' geometry — the heading's, the floor's and a row's: the
 /// caption's glyph size, the chip the slot itself (no tab insets, which
 /// `Metrics::STANDARD` carries for the title bar's buttons). One constant
-/// so the three dots read as one control wherever they are (the CTO's
+/// so the three dots read as one control wherever they are (the review's
 /// note, E76).
 pub(super) const DOTS: Metrics = Metrics {
     icon_size: theme::CAPTION_ICON,

@@ -347,7 +347,7 @@ impl AcpRoute {
             return ProviderVersion::from_str(version);
         }
         // Not a pinned print: read the number the CLI printed and admit it
-        // when it is at or above the qualified pin (the CTO's note). A
+        // when it is at or above the qualified pin (the review's note). A
         // digest-identified route has no number to read.
         let token = self.dialect.printed_version(printed).ok_or_else(rejected)?;
         let version = ProviderVersion::from_str(token)?;

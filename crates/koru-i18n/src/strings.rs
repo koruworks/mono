@@ -2715,7 +2715,7 @@ pub enum Key {
     HomeLoading,
     HomeMoreTasks,
     /// The who/where popover's sync icon, its toolbar and the Profiles page
-    /// (workspace foundation, the CTO's artboard).
+    /// (workspace foundation, the review's artboard).
     SyncNotSetUp,
     SyncUpToDate,
     SyncSyncing,
@@ -2734,14 +2734,14 @@ pub enum Key {
     /// The switcher's Workspaces page heading, uppercased with its count
     /// beside it like the Profiles page's (ELEMENTS-PLAN S1).
     Workspaces,
-    /// The help popover's rows and its card's button (the CTO's artboard).
+    /// The help popover's rows and its card's button (the review's artboard).
     SendFeedback,
     /// The help popover's row that opens Koru's repository. *GitHub* is a
     /// brand name and stays as it is in every language.
     StarOnGitHub,
     Download,
     /// The Chats view's *Delete chat* over a selection: the menu row, and
-    /// the confirmation's sentence (the CTO's note).
+    /// the confirmation's sentence (the review's note).
     ChatsDeleteMany,
     ChatsDeleteManyBody,
     /// Under a chat's rename field in the Chats list, when Enter is pressed

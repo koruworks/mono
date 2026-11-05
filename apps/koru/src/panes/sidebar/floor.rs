@@ -11,7 +11,7 @@
 //! The chip is one control that opens one popover — the two-page who/where
 //! switcher the pane already has — anchored **above** it. Right of it, a
 //! `…` opens the workspace's menu: New workspace, Import…, Invite people
-//! and Trash (the CTO's artboard, QUESTIONS.md E60); the `+` and the import
+//! and Trash (the review's artboard, QUESTIONS.md E60); the `+` and the import
 //! button the popover's WORKSPACES heading carried moved into it. The `?`
 //! that sat beside the chip is the rail's (E30). The floor hides with the
 //! pane (frame 9): who/where stays one chord away, and the floor needs no

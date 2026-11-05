@@ -95,7 +95,7 @@ impl HomeNav {
     pub fn rows(&self, area: Rect, top: f32) -> Vec<(HomeRow, Rect)> {
         // The library's row band — the pane's width, the chip inset by
         // `row_chip` — so Home's glyphs sit on the library's icon lane and
-        // under the heading's title (the CTO's note, E76).
+        // under the heading's title (the review's note, E76).
         let x = area.x;
         let w = area.w.max(0.0);
         let mut out = Vec::with_capacity(5 + self.recents.len());
