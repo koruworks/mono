@@ -45,8 +45,7 @@ pub trait TabElement {
 
     /// Whether this tab may be pinned at all.
     ///
-    /// Koru refuses a draft, a release-notes page and anything not over a
-    /// document; the strip only needs the answer.
+    /// The desktop app pins every tab; the strip only needs the answer.
     fn pinnable(&self) -> bool {
         false
     }

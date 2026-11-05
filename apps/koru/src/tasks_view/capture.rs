@@ -382,7 +382,7 @@ impl Capture {
     ) {
         let p = theme::p();
         let _ = table;
-        koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
+        koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
         let chips = self.chips(today, lists);
         let widths: Vec<f32> = chips
             .iter()
@@ -460,9 +460,9 @@ pub(super) fn paint_empty(
     if hovered {
         table.paint_row_fill(scene, root, r, RowState::Hovered);
     }
-    // A dashed-looking ghost: the same circle, drawn in the placeholder tone
+    // A dashed-looking ghost: the same box, drawn in the placeholder tone
     // so it reads as an outline of a control rather than as one.
-    koru_draw::checkbox::outline(scene, root, parts.control, p.placeholder);
+    koru_draw::checkbox::outline(scene, root, parts.checkbox, p.placeholder);
     let layout = engine.simple_layout(PLACEHOLDER, theme::role::row());
     scene::draw_layout_first_line(
         scene,

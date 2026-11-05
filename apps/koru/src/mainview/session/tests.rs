@@ -629,8 +629,8 @@ fn a_pinned_chat_tab_comes_back_pinned() {
     let mut settings = Settings::default();
     v.capture(&mut settings);
     assert_eq!(
-        settings.pinned_tabs.first().map(|pin| pin.target),
-        Some(koru_workspace_host::PinnedTarget::Chat(chat.as_uuid()))
+        settings.pinned_tabs.first().map(|pin| pin.target.clone()),
+        Some(TabRef::Chat(chat.as_uuid()))
     );
     let back = reopened(&mut workspace, &settings);
     let pinned: Vec<String> = back
@@ -640,6 +640,75 @@ fn a_pinned_chat_tab_comes_back_pinned() {
         .map(tab_kind)
         .collect();
     assert_eq!(pinned, [format!("chat {:?}", Some(chat))]);
+}
+
+/// **Any tab may be pinned, and a task list comes back pinned on its list.**
+/// It could not be pinned at all while the pin rule was *a document or a
+/// chat*; the saved pin is now the token the tab is saved as unpinned.
+#[test]
+fn a_pinned_task_list_comes_back_pinned_on_its_list() {
+    use crate::mainview::tab::{Tab, TabView};
+    use crate::panes::explore::rail::RailTarget;
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    let list = koru_core::ids::ListId::new();
+    v.tabs_mut().push(Tab::tasks(RailTarget::List(list)));
+    let at = v.tabs().len() - 1;
+    assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings.pinned_tabs.first().map(|pin| pin.target.clone()),
+        Some(TabRef::Tasks(koru_workspace_host::TasksTabRef::List(list)))
+    );
+    let back = reopened(&mut workspace, &settings);
+    let pinned: Vec<_> = back
+        .tabs()
+        .iter()
+        .filter(|t| t.is_pinned())
+        .map(|t| match &t.view {
+            TabView::Tasks(tasks) => Some(tasks.target()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pinned, [Some(RailTarget::List(list))]);
+}
+
+/// **A pinned tab with no saved form stays pinned for the session only**,
+/// and the showing pin is counted over the pins that were written — so the
+/// one showing is still the one showing after a restart.
+#[test]
+fn a_pin_with_no_saved_form_is_skipped_and_the_showing_pin_still_shows() {
+    use crate::mainview::tab::Tab;
+    let (mut v, mut workspace) = on_document(); // [Welcome, Notes]
+    for tab in [Tab::settings(), Tab::trash()] {
+        v.tabs_mut().push(tab);
+        let at = v.tabs().len() - 1;
+        assert!(v.tabs_mut().pin(at, uuid::Uuid::new_v4(), true), "pinned");
+    }
+    assert_eq!(
+        v.tabs().pinned_showing(),
+        Some(1),
+        "the Trash pin is showing"
+    );
+    let mut settings = Settings::default();
+    v.capture(&mut settings);
+    assert_eq!(
+        settings
+            .pinned_tabs
+            .iter()
+            .map(|pin| pin.target.clone())
+            .collect::<Vec<_>>(),
+        [TabRef::Trash],
+        "Settings is not written"
+    );
+    assert_eq!(
+        settings.pinned_tab,
+        Some(0),
+        "counted over the written pins"
+    );
+    let back = reopened(&mut workspace, &settings);
+    assert_eq!(back.tabs().pinned_showing(), Some(0));
+    assert!(back.tabs().active_tab().is_pinned(), "and it is in front");
 }
 
 /// **A chat nothing answers for does not stop the restore.** A saved chat

@@ -152,11 +152,6 @@ impl TabView {
         }
     }
 
-    /// Whether this tab can be pinned even though it names no document.
-    pub fn is_pinnable(&self) -> bool {
-        matches!(self, Self::AiChat(_))
-    }
-
     /// Whether this tab can leave the window for one of its own — a document
     /// can, torn off the strip or from the tab menu.
     ///

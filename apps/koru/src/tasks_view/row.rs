@@ -82,8 +82,16 @@ pub(super) fn parts(r: Rect) -> RowParts {
         DOTS_W,
     );
     let text_x = control.x + CONTROL_W + CONTROL_GAP;
+    let side = theme::CHECKBOX_SIZE;
+    let checkbox = Rect::new(
+        control.x + (CONTROL_W - side) * 0.5,
+        control.y + (CONTROL_W - side) * 0.5,
+        side,
+        side,
+    );
     RowParts {
         control,
+        checkbox,
         dots,
         text: Rect::new(text_x, r.y, (dots.x - CHIP_GAP - text_x).max(0.0), r.h),
     }
@@ -122,15 +130,16 @@ pub(super) fn paint(
     // ---- the complete control. **The canonical command for every kind** —
     // this is the same tick a paragraph, an image and a document all get,
     // because SPEC §4 makes all five task-capable.
-    // **The same box a document row draws** — `koru_draw::checkbox`, at this
-    // page's own size. It was a circle with a `CHECK` glyph in it, which made
-    // one task ticked in two places look like two different things; the glyph
-    // also meant a row could not say *done* at all before the icon font
-    // resolved.
+    // **The same box a document row draws** — `koru_draw::checkbox`, at the
+    // document's own size inside this page's larger target. It was a circle
+    // with a `CHECK` glyph in it, which made one task ticked in two places
+    // look like two different things; the glyph also meant a row could not
+    // say *done* at all before the icon font resolved. It was then drawn at
+    // the full 18 px target, which read as too large beside the row's text.
     if face.completed {
-        koru_draw::checkbox::ticked(scene, root, parts.control);
+        koru_draw::checkbox::ticked(scene, root, parts.checkbox);
     } else {
-        koru_draw::checkbox::outline(scene, root, parts.control, p.checkbox);
+        koru_draw::checkbox::outline(scene, root, parts.checkbox, p.checkbox);
     }
 
     // ---- the chips, into the rectangles a press is resolved against.

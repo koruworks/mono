@@ -44,7 +44,8 @@ use super::states::{self, Empty};
 pub(super) const PAD: f32 = 40.0;
 /// Between the title and the row area.
 pub(super) const HEADER_GAP: f32 = 22.0;
-/// The complete control's square, at the head of every row.
+/// The complete control's square, at the head of every row: the press
+/// target. The box drawn in it is smaller (`RowParts::checkbox`).
 pub(super) const CONTROL_W: f32 = 18.0;
 /// Between the control and the text column.
 pub(super) const CONTROL_GAP: f32 = 10.0;
@@ -2558,7 +2559,14 @@ impl RowChip {
 /// The rectangles one row is made of.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) struct RowParts {
+    /// The complete control's **target** — what a press is resolved against
+    /// and what accessibility reports — a [`CONTROL_W`] square.
     pub control: Rect,
+    /// The box **drawn** inside it, at the document's own size
+    /// ([`theme::CHECKBOX_SIZE`]) and centred, so a task ticked here and in
+    /// its document is one box at one size, and the target stays the size a
+    /// pointer can hit.
+    pub checkbox: Rect,
     pub dots: Rect,
     /// Everything between the control and the chips: the kind icon, the title
     /// and — in Today — the context line under it.
