@@ -1118,7 +1118,10 @@ impl MainView {
         new_hot: bool,
     ) {
         let p = theme::p();
-        if rects.leading.w > 0.0 {
+        // Only the mark is ours to draw: a Mac's lights in the same slot are
+        // AppKit's (`koru_window::traffic_lights`).
+        let mark = matches!(self.leading().mark, koru_shell_chrome::lane::Mark::Mark);
+        if mark && rects.leading.w > 0.0 {
             const MARK: f32 = 16.0;
             koru_ui::logo::KoruLogo::new(MARK).tint(p.text).draw(
                 scene,

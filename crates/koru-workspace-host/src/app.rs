@@ -6813,8 +6813,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // ways, and one attribute fixes all of them: no traffic lights, square
         // corners where every other app is rounded, no resize border (winit
         // does not implement `drag_resize_window` there — see `resize`), and no
-        // native drag. AppKit owns a ~28 px strip above our caption, which is
-        // exactly the bar a Mac user expects to find them in.
+        // native drag.
+        //
+        // **But the titlebar is transparent, with a full-size content view**,
+        // so the scene runs to the top edge and there is no 28 px strip of
+        // AppKit's above the caption. The lights sit in the lane instead, in
+        // the slot the Koru mark takes on Windows and Linux, and
+        // `traffic_lights::place` centres them there — after creation, and
+        // again after each event that follows an AppKit titlebar layout.
         //
         // The title is hidden rather than shown: the tab strip below already
         // says what is open, and a second copy centred above it is noise. The
@@ -6833,12 +6839,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         #[cfg(target_os = "macos")]
         {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs
-                .with_titlebar_transparent(false)
-                .with_title_hidden(true);
-            if global_search {
-                attrs = attrs.with_titlebar_buttons_hidden(true);
-            }
+            attrs = attrs.with_title_hidden(true);
+            attrs = if global_search {
+                attrs
+                    .with_titlebar_transparent(false)
+                    .with_titlebar_buttons_hidden(true)
+            } else {
+                attrs
+                    .with_titlebar_transparent(true)
+                    .with_fullsize_content_view(true)
+            };
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -6944,6 +6954,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // follows maximised only so a snap keeps its drop shadow.
         let flush = hairline::edges(&window);
         frame::apply(&window, theme::p().panel_border, window.is_maximized());
+        koru_window::traffic_lights::place(&window, f64::from(theme::CAPTION_H));
         let size = window.inner_size();
 
         let span = timing::Span::start("gpu surface");
@@ -16462,6 +16473,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
 
             WindowEvent::Focused(focused) => {
                 self.host.window_focus_changed(focused);
+                // A change of key window is another titlebar layout.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
                 let was_shown = AppearanceShown::now();
                 crate::search_debug!(
                     "[Koru][search-open][pid={}] focus event: pane={id:?} focused={focused} in_tray={} global_search={}",
@@ -16569,6 +16584,12 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     }
                 }
                 self.sync_viewport(id);
+                // AppKit lays its titlebar out again on every resize and on
+                // entering or leaving full screen, putting the lights back
+                // where it wants them; seat them in the lane again.
+                if let Some(pane) = self.panes.get(&id) {
+                    koru_window::traffic_lights::place(&pane.window, f64::from(theme::CAPTION_H));
+                }
                 // Maximising and restoring arrive as resizes and nothing else,
                 // so this is where the caption's restore button and the corner
                 // style find out. The drawn hairline follows flush edges, which

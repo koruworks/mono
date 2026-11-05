@@ -100,6 +100,7 @@ pub mod system_theme;
 // doc for why Windows keeps its two readers.
 #[cfg(target_os = "macos")]
 pub mod system_version;
+pub mod traffic_lights;
 
 pub mod window_geometry;
 

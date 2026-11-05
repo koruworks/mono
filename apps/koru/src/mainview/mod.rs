@@ -16229,11 +16229,17 @@ impl MainView {
     /// Which lane controls this window offers, and where they are right now:
     /// in the lane while the pane is open, folded into the caption's left end
     /// while it is shut (`docs/features/workspace-foundation/TECHNICAL.final.md`
-    /// §5.1). The mark leads on every platform until the Mac catch-up swaps
-    /// it for the lights' reserve; New opens the Add… menu (QUESTIONS.md E21).
+    /// §5.1). The mark leads on Windows and Linux; on a Mac the slot is the
+    /// room the traffic lights take, which AppKit draws and
+    /// `koru_window::traffic_lights` seats there. New opens the Add… menu
+    /// (QUESTIONS.md E21).
     pub(crate) fn leading(&self) -> koru_shell_chrome::lane::Leading {
         koru_shell_chrome::lane::Leading {
-            mark: koru_shell_chrome::lane::Mark::Mark,
+            mark: if cfg!(target_os = "macos") {
+                koru_shell_chrome::lane::Mark::Lights(koru_window::traffic_lights::LANE_W)
+            } else {
+                koru_shell_chrome::lane::Mark::Mark
+            },
             search: true,
             // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.
