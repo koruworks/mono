@@ -43,7 +43,7 @@ use koru_draw::{icons, scene};
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::{FOOTER_PAD, SECTION_H, draw_row_card, icon_lane, row_chip};
+use super::{FOOTER_PAD, SECTION_H, draw_chosen_row, icon_lane, row_chip};
 use koru_shell_chrome::tabs::draw_icon;
 
 /// SPEC §7's bucket, from the domain.
@@ -947,7 +947,7 @@ impl TasksRail {
                 },
             );
             if active {
-                draw_row_card(scene, root, r, p);
+                draw_chosen_row(scene, root, r, p);
             } else if self.hover == Some(row) && !matches!(row, RailRow::ListsHeading) {
                 scene::fill(scene, root, p.hover_tint, &row_chip(r));
             }
@@ -962,7 +962,7 @@ impl TasksRail {
             }
             // The library's ink rule, so one column does not tell the same
             // story in two greys: a row's icon is always `text_dim`, and its
-            // label is full-strength only while the row wears the card — a
+            // label is full-strength only while the row wears the chosen grey — a
             // chosen row drawn dim would read as half-disabled, the opposite
             // of what choosing it meant.
             let fg = if active { p.text } else { p.text_dim };

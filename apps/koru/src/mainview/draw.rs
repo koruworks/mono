@@ -925,13 +925,27 @@ impl MainView {
                 draw_card_corner(scene, root, x, bottom, r, (false, true), None, p);
             }
         }
-        // The document's top-left where it meets the pane; with the pane
-        // gone that corner is the lane's, drawn above. The pane, not the
-        // ground, is what lies outside this one (see `draw_card_corner`).
+        // The document's top-left and bottom-left where they meet the pane;
+        // with the pane gone those corners are the lane's, drawn above. The
+        // pane, not the ground, is what lies outside them (see
+        // `draw_card_corner`), and the bottom one rounds into the foot's
+        // hairline the way the top one rounds into the header's.
         let cap = self.drawn_caption();
         if pane.is_some() && cap.x > 0.0 {
             let beside = Some(crate::panes::explore::pane_fill());
             draw_card_corner(scene, root, cap.x - 1.0, top, r, (false, false), beside, p);
+            if foot.h > 0.0 {
+                draw_card_corner(
+                    scene,
+                    root,
+                    cap.x - 1.0,
+                    bottom,
+                    r,
+                    (false, true),
+                    beside,
+                    p,
+                );
+            }
         }
         if edge.w > 0.0 {
             draw_card_corner(scene, root, edge.x + 1.0, top, r, (true, false), None, p);
@@ -1607,10 +1621,10 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
 /// `ground` and the border the hairline's.
 ///
 /// `beside` is the fill of the card the corner sits against, for a corner
-/// that is not on the ground: the document's top-left, where it meets the
-/// pane. Outside that arc is the pane, so the square is masked in the
-/// pane's fill, and the hairline along the corner's straight edge — the
-/// header's, which is the pane's top border as well as the document's —
+/// that is not on the ground: the document's top-left and bottom-left, where
+/// they meet the pane. Outside those arcs is the pane, so the square is masked
+/// in the pane's fill, and the hairline along the corner's straight edge — the
+/// header's or the foot's, the pane's border as well as the document's —
 /// runs on across it. Masked in the ground like an outer corner, it cut a
 /// notch of the header's colour into the pane's top-right corner, open on
 /// the pane's side with nothing bordering it, and broke the header's

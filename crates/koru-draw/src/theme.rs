@@ -144,17 +144,34 @@ pub struct Palette {
 
     /// Status bar band along the bottom edge.
     pub status_bg: Color,
+    /// The side panes' own fill: the explore column and the context pane.
+    /// White in the light theme, a sheet on the lighter `ground`, so what is
+    /// chosen or hovered in it is a grey of its own ink (`row_chosen`,
+    /// `hover_tint`) rather than a card.
+    pub pane_bg: Color,
     /// Backing for the level-name chip on a group row.
     pub chip_bg: Color,
     /// The window's ground — the title bar, the lane, the rail and the
-    /// edge lanes the cards sit on (E57). `chip_bg` with a fifth of its
-    /// grey taken out (the review's note, after ChatGPT's sidebar), so the
-    /// cards lift off it without the ground reading as a panel.
+    /// edge lanes the cards sit on (E57). The default base colour: a user's
+    /// chosen one replaces it (`base_fill`), and every hover and active grey
+    /// on it is a translucent ink, so they follow either. Barely off white,
+    /// so the white panes and pages lift off it on their hairlines alone.
     pub ground: Color,
     /// The tint behind a code block and an inline-code span — one colour so the
     /// two read as the same feature. Chrome only; not a name a document stores.
     pub code_bg: Color,
     pub hover_tint: Color,
+    /// The fill a **chosen** sidebar row wears: the open document, a picked
+    /// row, the Tasks rail's queue. The text colour at a low alpha, like
+    /// `hover_tint` but about half again as strong, so the chosen row stays a
+    /// step darker than the one under the pointer on any rail colour.
+    pub row_chosen: Color,
+    /// The fill the **active tab** wears: the strip's own colour, darkened
+    /// by a twentieth in the light themes (black at 5% multiplies whatever is
+    /// under it by 0.95), so the tab is a shade of the strip rather than a grey
+    /// of its own. Lighter than `hover_tint` on the strip, so a hovered tab
+    /// reads darker than the active one.
+    pub tab_chosen: Color,
     /// The selection bubble's surface, and the two colours that go on it.
     ///
     /// **The one inverted surface in the app**, and the reason it needed
@@ -335,7 +352,10 @@ const LIGHT_TABLE: Palette = Palette {
     bg: rgb(0xFF, 0xFF, 0xFF),
     canvas: rgb(0xED, 0xEE, 0xF0),
     text: rgb(0x19, 0x19, 0x19),
-    text_dim: rgb(0x8A, 0x8A, 0x8A),
+    // 4.9:1 on a #F6F6F6 pane, past WCAG AA's 4.5:1 for 13 px text. The
+    // #8A8A8A it replaces was 3.2:1, and vello's greyscale coverage (no gamma,
+    // no contrast boost, stems at fractional x) made that pale grey read as blur.
+    text_dim: rgb(0x6B, 0x6B, 0x6B),
     placeholder: rgb(0xAB, 0xAB, 0xAB),
     selection: rgb(0xCF, 0xDD, 0xEE),
     // A separate field that happens to match `text`. It will not follow it —
@@ -357,8 +377,9 @@ const LIGHT_TABLE: Palette = Palette {
     focus_ring: rgb(0xC7, 0xC7, 0xC7),
 
     status_bg: rgb(0xF6, 0xF6, 0xF6),
+    pane_bg: rgb(0xFF, 0xFF, 0xFF),
     chip_bg: rgb(0xEA, 0xEA, 0xEA),
-    ground: rgb(0xEE, 0xEE, 0xEE),
+    ground: rgb(0xF7, 0xF7, 0xF7),
     code_bg: rgb(0xF1, 0xF1, 0xF3),
     highlights: [
         ("yellow", Color::from_rgba8(0xFF, 0xE0, 0x66, 0x8C)),
@@ -381,6 +402,10 @@ const LIGHT_TABLE: Palette = Palette {
         ("stone", rgb(0x6E, 0x66, 0x60)),
     ],
     hover_tint: Color::from_rgba8(0x19, 0x19, 0x19, 0x14),
+    // #D9D9D9 on a #F6F6F6 column, where hover is #E5E5E5.
+    row_chosen: Color::from_rgba8(0x19, 0x19, 0x19, 0x21),
+    // #E2E2E2 on the #EEEEEE strip, where a hovered tab is about #DDDDDD.
+    tab_chosen: Color::from_rgba8(0x00, 0x00, 0x00, 0x0D),
     bubble_bg: rgb(0x23, 0x23, 0x23),
     bubble_fg: rgb(0xF5, 0xF5, 0xF5),
     bubble_dim: rgb(0xA3, 0xA3, 0xA3),
@@ -520,6 +545,7 @@ pub static DARK: Palette = Palette {
     focus_ring: rgb(0x55, 0x55, 0x55),
 
     status_bg: rgb(0x1A, 0x1A, 0x1A),
+    pane_bg: rgb(0x1A, 0x1A, 0x1A),
     chip_bg: rgb(0x33, 0x33, 0x33),
     ground: rgb(0x2E, 0x2E, 0x2E),
     code_bg: rgb(0x23, 0x23, 0x23),
@@ -547,6 +573,9 @@ pub static DARK: Palette = Palette {
         ("stone", rgb(0x9E, 0x94, 0x8C)),
     ],
     hover_tint: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x16),
+    row_chosen: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x24),
+    // Lightened, not darkened: there is little below a dark strip to use.
+    tab_chosen: Color::from_rgba8(0xF5, 0xF5, 0xF5, 0x1F),
     // Lighter than the dark `bg` (#191919), not darker: the bubble has to lift
     // off the page in this theme, and there is nothing below #191919 to use.
     bubble_bg: rgb(0x33, 0x33, 0x33),

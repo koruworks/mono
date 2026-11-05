@@ -37,7 +37,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -46,20 +46,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=en names=long state=rest
 panel 54.000 513.000 258.000 142.000
@@ -100,7 +100,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 182.825 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -109,20 +109,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=de names=normal state=rest
 panel 54.000 513.000 258.000 142.000
@@ -163,7 +163,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -172,20 +172,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=de names=long state=rest
 panel 54.000 513.000 258.000 142.000
@@ -226,7 +226,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 182.825 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -235,20 +235,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=ar names=normal state=rest
 panel 54.000 513.000 258.000 142.000
@@ -289,7 +289,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -298,20 +298,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=ar names=long state=rest
 panel 54.000 513.000 258.000 142.000
@@ -352,7 +352,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 182.825 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 182.825 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -361,20 +361,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.138 171.304 18.000 line_height=18 baseline=588.8672 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.273 171.304 15.729 font_size=13 font_weight=600 baseline=588.8672 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=dark lang=en names=normal state=rest
 panel 54.000 513.000 258.000 142.000
@@ -793,7 +793,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -802,20 +802,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=light lang=en names=long state=rest
 panel 54.000 513.000 584.000 142.000
@@ -856,7 +856,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 365.098 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -865,20 +865,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=light lang=de names=normal state=rest
 panel 54.000 513.000 584.000 142.000
@@ -919,7 +919,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -928,20 +928,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=light lang=de names=long state=rest
 panel 54.000 513.000 584.000 142.000
@@ -982,7 +982,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 365.098 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -991,20 +991,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=light lang=ar names=normal state=rest
 panel 54.000 513.000 584.000 142.000
@@ -1045,7 +1045,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1054,20 +1054,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=light lang=ar names=long state=rest
 panel 54.000 513.000 584.000 142.000
@@ -1108,7 +1108,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.023 552.493 8.039 10.400 line_height=10.4 baseline=561.47656 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.023 551.402 8.039 12.584 font_size=10.4 font_weight=600 baseline=561.47656 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.818 365.098 18.000 line_height=18 baseline=561.5469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.953 365.098 15.729 font_size=13 font_weight=500 baseline=561.5469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 584.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1117,20 +1117,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 574.083 320.188 18.000 line_height=18 baseline=587.8125 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 575.219 320.188 15.729 font_size=13 font_weight=600 baseline=587.8125 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 612.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 612.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 584.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 584.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=600 theme=dark lang=en names=normal state=rest
 panel 54.000 513.000 584.000 142.000
@@ -1549,7 +1549,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1558,23 +1558,23 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 58.000 597.000 250.000 26.000 color=#191919@0.078
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 602.500 15.000 15.000 line_height=15 baseline=617.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 602.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 602.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=en names=normal state=hover-gear
 panel 54.000 513.000 258.000 142.000
@@ -1615,7 +1615,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1624,14 +1624,14 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 58.000 597.000 250.000 26.000 color=#191919@0.078
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 2 fill primitive 282.000 599.000 24.000 22.000 color=#191919@0.078
 paint 2 text_line part 286.500 602.500 15.000 15.000 line_height=15 baseline=617.5 ink_bounds=Not_exposed
 paint 3 icon primitive 286.500 602.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#191919@1.000
@@ -1641,7 +1641,7 @@ paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=en names=normal state=keyboard
 panel 54.000 513.000 258.000 142.000
@@ -1682,7 +1682,7 @@ paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 68.766 552.798 6.297 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.766 551.706 6.297 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.669 52.952 18.000 line_height=18 baseline=561.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.805 52.952 15.729 font_size=13 font_weight=500 baseline=561.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 58.000 571.000 250.000 26.000 color=#191919@0.078
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
@@ -1692,20 +1692,20 @@ paint 3 text_run primitive 68.180 577.706 7.663 12.584 font_size=10.4 font_weigh
 paint 2 label_line part 90.000 575.076 71.284 18.000 line_height=18 baseline=588.8047 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 576.211 71.284 15.729 font_size=13 font_weight=600 baseline=588.8047 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 576.500 15.000 15.000 line_height=15 baseline=591.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 576.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=FADERS icon_codepoint=U+E228 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 68.359 604.798 6.784 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 68.359 603.706 6.784 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.748 72.021 18.000 line_height=18 baseline=613.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.883 72.021 15.729 font_size=13 font_weight=500 baseline=613.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 626.912 38.035 18.000 line_height=18 baseline=640.6406 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 628.047 38.035 15.729 font_size=13 font_weight=500 baseline=640.6406 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 
 == workspaces width=256 theme=light lang=en names=forty state=rest
 panel 54.000 155.000 258.000 500.000
@@ -1927,7 +1927,7 @@ paint 2 stroke primitive 62.000 190.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 66.883 194.798 10.608 10.400 line_height=10.4 baseline=203.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 193.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=203.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 189.732 90.670 18.000 line_height=18 baseline=203.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 190.867 90.670 15.729 font_size=13 font_weight=500 baseline=203.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 190.867 90.670 15.729 font_size=13 font_weight=500 baseline=203.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 213.000 258.000 26.000 row=Workspace(1) height=26
 paint 2 fill primitive 62.000 216.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 216.000 20.000 20.000 color=#E0E0E0@1.000 width=1
@@ -1936,118 +1936,118 @@ paint 3 text_run primitive 66.883 219.706 10.608 12.584 font_size=10.4 font_weig
 paint 2 label_line part 90.000 215.732 88.740 18.000 line_height=18 baseline=229.46094 ink_bounds=Not_exposed
 paint 3 text_run primitive 90.000 216.867 88.740 15.729 font_size=13 font_weight=600 baseline=229.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#191919@1.000 rendered_family=Inter
 paint 2 text_line part 286.500 218.500 15.000 15.000 line_height=15 baseline=233.5 ink_bounds=Not_exposed
-paint 3 icon primitive 286.500 218.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#8A8A8A@1.000
+paint 3 icon primitive 286.500 218.500 15.000 15.000 icon_pack=Tabler icon_source=Tabler icon_name=CHECK icon_codepoint=U+E182 icon_variant=regular icon_size=15 foreground=#6B6B6B@1.000
 paint 1 Row part 54.000 239.000 258.000 26.000 row=Workspace(2) height=26
 paint 2 fill primitive 62.000 242.000 20.000 20.000 color=#2F6FB5@1.000
 paint 2 text_line part 66.883 246.798 10.608 10.400 line_height=10.4 baseline=255.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 245.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=255.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 241.732 90.289 18.000 line_height=18 baseline=255.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 242.867 90.289 15.729 font_size=13 font_weight=500 baseline=255.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 242.867 90.289 15.729 font_size=13 font_weight=500 baseline=255.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 265.000 258.000 26.000 row=Workspace(3) height=26
 paint 2 fill primitive 62.000 268.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 268.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part ~ ~ ~ ~ line_height=~ baseline=~ ink_bounds=~
 paint 3 text_run primitive ~ ~ ~ ~ font_size=9.2 font_weight=~ baseline=~ ascent_/_descent=~ foreground=#191919@1.000 rendered_family=~
 paint 2 label_line part 90.000 267.826 184.203 18.000 line_height=18 baseline=281.5547 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 268.961 184.203 15.729 font_size=13 font_weight=500 baseline=281.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 268.961 184.203 15.729 font_size=13 font_weight=500 baseline=281.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 291.000 258.000 26.000 row=Workspace(4) height=26
 paint 2 fill primitive 62.000 294.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 294.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 298.798 10.608 10.400 line_height=10.4 baseline=307.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 297.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=307.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 293.732 90.810 18.000 line_height=18 baseline=307.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 294.867 90.810 15.729 font_size=13 font_weight=500 baseline=307.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 294.867 90.810 15.729 font_size=13 font_weight=500 baseline=307.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 317.000 258.000 26.000 row=Workspace(5) height=26
 paint 2 fill primitive 62.000 320.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 320.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 324.798 10.608 10.400 line_height=10.4 baseline=333.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 323.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=333.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 319.732 90.118 18.000 line_height=18 baseline=333.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 320.867 90.118 15.729 font_size=13 font_weight=500 baseline=333.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 320.867 90.118 15.729 font_size=13 font_weight=500 baseline=333.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 343.000 258.000 26.000 row=Workspace(6) height=26
 paint 2 fill primitive 62.000 346.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 346.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 350.798 10.608 10.400 line_height=10.4 baseline=359.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 349.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=359.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 345.732 90.467 18.000 line_height=18 baseline=359.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 346.867 90.467 15.729 font_size=13 font_weight=500 baseline=359.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 346.867 90.467 15.729 font_size=13 font_weight=500 baseline=359.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 369.000 258.000 26.000 row=Workspace(7) height=26
 paint 2 fill primitive 62.000 372.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 372.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 376.798 10.608 10.400 line_height=10.4 baseline=385.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 375.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=385.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 371.732 89.451 18.000 line_height=18 baseline=385.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 372.867 89.451 15.729 font_size=13 font_weight=500 baseline=385.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 372.867 89.451 15.729 font_size=13 font_weight=500 baseline=385.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 395.000 258.000 26.000 row=Workspace(8) height=26
 paint 2 fill primitive 62.000 398.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 398.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 402.798 10.608 10.400 line_height=10.4 baseline=411.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 401.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=411.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 397.732 90.460 18.000 line_height=18 baseline=411.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 398.867 90.460 15.729 font_size=13 font_weight=500 baseline=411.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 398.867 90.460 15.729 font_size=13 font_weight=500 baseline=411.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 421.000 258.000 26.000 row=Workspace(9) height=26
 paint 2 fill primitive 62.000 424.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 424.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 428.798 10.608 10.400 line_height=10.4 baseline=437.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 427.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=437.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 423.748 90.467 18.000 line_height=18 baseline=437.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 424.883 90.467 15.729 font_size=13 font_weight=500 baseline=437.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 424.883 90.467 15.729 font_size=13 font_weight=500 baseline=437.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 447.000 258.000 26.000 row=Workspace(10) height=26
 paint 2 fill primitive 62.000 450.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 450.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 454.798 10.608 10.400 line_height=10.4 baseline=463.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 453.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=463.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 449.826 181.448 18.000 line_height=18 baseline=463.5547 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 450.961 181.448 15.729 font_size=13 font_weight=500 baseline=463.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 450.961 181.448 15.729 font_size=13 font_weight=500 baseline=463.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 473.000 258.000 26.000 row=Workspace(11) height=26
 paint 2 fill primitive 62.000 476.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 476.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 480.798 10.608 10.400 line_height=10.4 baseline=489.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 479.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=489.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 475.669 84.678 18.000 line_height=18 baseline=489.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 476.805 84.678 15.729 font_size=13 font_weight=500 baseline=489.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 476.805 84.678 15.729 font_size=13 font_weight=500 baseline=489.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 499.000 258.000 26.000 row=Workspace(12) height=26
 paint 2 fill primitive 62.000 502.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 502.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 506.798 10.608 10.400 line_height=10.4 baseline=515.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 505.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=515.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 501.732 87.293 18.000 line_height=18 baseline=515.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 502.867 87.293 15.729 font_size=13 font_weight=500 baseline=515.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 502.867 87.293 15.729 font_size=13 font_weight=500 baseline=515.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 525.000 258.000 26.000 row=Workspace(13) height=26
 paint 2 fill primitive 62.000 528.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 528.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 532.798 10.608 10.400 line_height=10.4 baseline=541.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 531.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=541.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 527.732 87.433 18.000 line_height=18 baseline=541.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 528.867 87.433 15.729 font_size=13 font_weight=500 baseline=541.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 528.867 87.433 15.729 font_size=13 font_weight=500 baseline=541.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 551.000 258.000 26.000 row=Workspace(14) height=26
 paint 2 fill primitive 62.000 554.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 554.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 558.798 10.608 10.400 line_height=10.4 baseline=567.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 557.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=567.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 553.669 87.813 18.000 line_height=18 baseline=567.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 554.805 87.813 15.729 font_size=13 font_weight=500 baseline=567.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 554.805 87.813 15.729 font_size=13 font_weight=500 baseline=567.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 577.000 258.000 26.000 row=Workspace(15) height=26
 paint 2 fill primitive 62.000 580.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 580.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 584.798 10.608 10.400 line_height=10.4 baseline=593.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 583.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=593.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 579.669 87.122 18.000 line_height=18 baseline=593.39844 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 580.805 87.122 15.729 font_size=13 font_weight=500 baseline=593.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 580.805 87.122 15.729 font_size=13 font_weight=500 baseline=593.39844 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 603.000 258.000 26.000 row=Workspace(16) height=26
 paint 2 fill primitive 62.000 606.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 606.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 610.798 10.608 10.400 line_height=10.4 baseline=619.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 609.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=619.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 605.732 87.471 18.000 line_height=18 baseline=619.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 606.867 87.471 15.729 font_size=13 font_weight=500 baseline=619.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 606.867 87.471 15.729 font_size=13 font_weight=500 baseline=619.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 629.000 258.000 26.000 row=Workspace(17) height=26
 paint 2 fill primitive 62.000 632.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 632.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 636.798 10.608 10.400 line_height=10.4 baseline=645.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 635.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=645.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 631.826 183.758 18.000 line_height=18 baseline=645.5547 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 632.961 183.758 15.729 font_size=13 font_weight=500 baseline=645.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 632.961 183.758 15.729 font_size=13 font_weight=500 baseline=645.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 fill primitive 308.000 187.000 2.000 205.235 color=#9E9E9E@1.000
 
 == workspaces width=256 theme=dark lang=en names=forty state=rest
@@ -2613,126 +2613,126 @@ paint 2 stroke primitive 62.000 184.000 20.000 20.000 color=#E0E0E0@1.000 width=
 paint 2 text_line part 66.883 188.798 10.608 10.400 line_height=10.4 baseline=197.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 187.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=197.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 183.732 89.908 18.000 line_height=18 baseline=197.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 184.867 89.908 15.729 font_size=13 font_weight=500 baseline=197.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 184.867 89.908 15.729 font_size=13 font_weight=500 baseline=197.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 207.000 258.000 26.000 row=Workspace(23) height=26
 paint 2 fill primitive 62.000 210.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 210.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 214.798 10.608 10.400 line_height=10.4 baseline=223.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 213.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=223.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 209.732 90.048 18.000 line_height=18 baseline=223.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 210.867 90.048 15.729 font_size=13 font_weight=500 baseline=223.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 210.867 90.048 15.729 font_size=13 font_weight=500 baseline=223.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 233.000 258.000 26.000 row=Workspace(24) height=26
 paint 2 fill primitive 62.000 236.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 236.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 240.798 10.608 10.400 line_height=10.4 baseline=249.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 239.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=249.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 235.826 184.000 18.000 line_height=18 baseline=249.55469 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 236.961 184.000 15.729 font_size=13 font_weight=500 baseline=249.55469 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 236.961 184.000 15.729 font_size=13 font_weight=500 baseline=249.55469 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 259.000 258.000 26.000 row=Workspace(25) height=26
 paint 2 fill primitive 62.000 262.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 262.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 266.798 10.608 10.400 line_height=10.4 baseline=275.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 265.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=275.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 261.732 89.737 18.000 line_height=18 baseline=275.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 262.867 89.737 15.729 font_size=13 font_weight=500 baseline=275.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 262.867 89.737 15.729 font_size=13 font_weight=500 baseline=275.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 285.000 258.000 26.000 row=Workspace(26) height=26
 paint 2 fill primitive 62.000 288.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 288.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 292.798 10.608 10.400 line_height=10.4 baseline=301.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 291.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=301.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 287.732 90.086 18.000 line_height=18 baseline=301.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 288.867 90.086 15.729 font_size=13 font_weight=500 baseline=301.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 288.867 90.086 15.729 font_size=13 font_weight=500 baseline=301.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 311.000 258.000 26.000 row=Workspace(27) height=26
 paint 2 fill primitive 62.000 314.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 314.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 318.798 10.608 10.400 line_height=10.4 baseline=327.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 317.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=327.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 313.732 89.324 18.000 line_height=18 baseline=327.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 314.867 89.324 15.729 font_size=13 font_weight=500 baseline=327.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 314.867 89.324 15.729 font_size=13 font_weight=500 baseline=327.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 337.000 258.000 26.000 row=Workspace(28) height=26
 paint 2 fill primitive 62.000 340.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 340.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 344.798 10.608 10.400 line_height=10.4 baseline=353.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 343.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=353.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 339.732 90.080 18.000 line_height=18 baseline=353.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 340.867 90.080 15.729 font_size=13 font_weight=500 baseline=353.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 340.867 90.080 15.729 font_size=13 font_weight=500 baseline=353.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 363.000 258.000 26.000 row=Workspace(29) height=26
 paint 2 fill primitive 62.000 366.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 366.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 370.798 10.608 10.400 line_height=10.4 baseline=379.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 369.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=379.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 365.748 90.086 18.000 line_height=18 baseline=379.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 366.883 90.086 15.729 font_size=13 font_weight=500 baseline=379.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 366.883 90.086 15.729 font_size=13 font_weight=500 baseline=379.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 389.000 258.000 26.000 row=Workspace(30) height=26
 paint 2 fill primitive 62.000 392.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 392.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 396.798 10.608 10.400 line_height=10.4 baseline=405.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 395.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=405.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 391.732 90.429 18.000 line_height=18 baseline=405.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 392.867 90.429 15.729 font_size=13 font_weight=500 baseline=405.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 392.867 90.429 15.729 font_size=13 font_weight=500 baseline=405.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 415.000 258.000 26.000 row=Workspace(31) height=26
 paint 2 fill primitive 62.000 418.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 418.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 422.798 10.608 10.400 line_height=10.4 baseline=431.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 421.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=431.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 417.826 184.482 18.000 line_height=18 baseline=431.5547 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 418.961 184.482 15.729 font_size=13 font_weight=500 baseline=431.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 418.961 184.482 15.729 font_size=13 font_weight=500 baseline=431.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 441.000 258.000 26.000 row=Workspace(32) height=26
 paint 2 fill primitive 62.000 444.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 444.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 448.798 10.608 10.400 line_height=10.4 baseline=457.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 447.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=457.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 443.732 90.048 18.000 line_height=18 baseline=457.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 444.867 90.048 15.729 font_size=13 font_weight=500 baseline=457.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 444.867 90.048 15.729 font_size=13 font_weight=500 baseline=457.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 467.000 258.000 26.000 row=Workspace(33) height=26
 paint 2 fill primitive 62.000 470.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 470.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 474.798 10.608 10.400 line_height=10.4 baseline=483.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 473.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=483.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 469.732 90.188 18.000 line_height=18 baseline=483.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 470.867 90.188 15.729 font_size=13 font_weight=500 baseline=483.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 470.867 90.188 15.729 font_size=13 font_weight=500 baseline=483.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 493.000 258.000 26.000 row=Workspace(34) height=26
 paint 2 fill primitive 62.000 496.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 496.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 500.798 10.608 10.400 line_height=10.4 baseline=509.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 499.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=509.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 495.732 90.568 18.000 line_height=18 baseline=509.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 496.867 90.568 15.729 font_size=13 font_weight=500 baseline=509.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 496.867 90.568 15.729 font_size=13 font_weight=500 baseline=509.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 519.000 258.000 26.000 row=Workspace(35) height=26
 paint 2 fill primitive 62.000 522.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 522.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 526.798 10.608 10.400 line_height=10.4 baseline=535.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 525.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=535.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 521.732 89.876 18.000 line_height=18 baseline=535.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 522.867 89.876 15.729 font_size=13 font_weight=500 baseline=535.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 522.867 89.876 15.729 font_size=13 font_weight=500 baseline=535.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 545.000 258.000 26.000 row=Workspace(36) height=26
 paint 2 fill primitive 62.000 548.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 548.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 552.798 10.608 10.400 line_height=10.4 baseline=561.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 551.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=561.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 547.732 90.226 18.000 line_height=18 baseline=561.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 548.867 90.226 15.729 font_size=13 font_weight=500 baseline=561.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 548.867 90.226 15.729 font_size=13 font_weight=500 baseline=561.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 571.000 258.000 26.000 row=Workspace(37) height=26
 paint 2 fill primitive 62.000 574.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 574.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 578.798 10.608 10.400 line_height=10.4 baseline=587.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 577.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=587.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 573.732 89.464 18.000 line_height=18 baseline=587.46094 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 574.867 89.464 15.729 font_size=13 font_weight=500 baseline=587.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 574.867 89.464 15.729 font_size=13 font_weight=500 baseline=587.46094 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 597.000 258.000 26.000 row=Workspace(38) height=26
 paint 2 fill primitive 62.000 600.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 600.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 604.798 10.608 10.400 line_height=10.4 baseline=613.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 603.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=613.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 599.826 183.993 18.000 line_height=18 baseline=613.5547 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 600.961 183.993 15.729 font_size=13 font_weight=500 baseline=613.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 600.961 183.993 15.729 font_size=13 font_weight=500 baseline=613.5547 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 Row part 54.000 623.000 258.000 26.000 row=Workspace(39) height=26
 paint 2 fill primitive 62.000 626.000 20.000 20.000 color=#FFFFFF@1.000
 paint 2 stroke primitive 62.000 626.000 20.000 20.000 color=#E0E0E0@1.000 width=1
 paint 2 text_line part 66.883 630.798 10.608 10.400 line_height=10.4 baseline=639.78125 ink_bounds=Not_exposed
 paint 3 text_run primitive 66.883 629.706 10.608 12.584 font_size=10.4 font_weight=600 baseline=639.78125 ascent_/_descent=10.075_/_2.5085936 foreground=#191919@1.000 rendered_family=Inter
 paint 2 label_line part 90.000 625.748 90.226 18.000 line_height=18 baseline=639.47656 ink_bounds=Not_exposed
-paint 3 text_run primitive 90.000 626.883 90.226 15.729 font_size=13 font_weight=500 baseline=639.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#8A8A8A@1.000 rendered_family=Inter
+paint 3 text_run primitive 90.000 626.883 90.226 15.729 font_size=13 font_weight=500 baseline=639.47656 ascent_/_descent=12.59375_/_3.1357422 foreground=#6B6B6B@1.000 rendered_family=Inter
 paint 1 fill primitive 308.000 443.765 2.000 205.235 color=#9E9E9E@1.000
 
 == workspaces width=256 theme=dark lang=en names=forty state=scrolled-to-end

@@ -741,7 +741,7 @@ impl ContextView {
         scene::fill(
             scene,
             root,
-            p.status_bg,
+            p.pane_bg,
             &scene::rect(area.x, area.y, area.w, area.h),
         );
         scene::fill(

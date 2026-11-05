@@ -557,18 +557,17 @@ fn draw_tab(
     let hot = hovered == Some(t.index) || tab.dragging;
     let chip = scene::rrect(pill.x, pill.y, pill.w, pill.h, 6.0);
     if selected {
-        // **The active tab wears the explore column's active card** — the same
-        // `panel_bg` fill and `panel_border` outline `explore::draw_row_card`
-        // gives the open document, at the same radius. The two say the same
-        // thing in two places, so they are drawn the same way: the row in the
-        // library and the tab in the strip are one document, and a reader
-        // should not have to learn that twice.
+        // **The active tab is a shade of the strip** — `tab_chosen`, the
+        // strip's colour darkened by a twentieth — the way the explore column's
+        // open row wears `row_chosen`: a grey fill, no card. Lighter than the
+        // row's grey because the strip it sits on is already darker than the
+        // column.
         //
-        // This *replaces* "one grey for the whole strip": the active tab shared
-        // `hover_tint` with every hovered control, which made the thing you are
-        // looking at indistinguishable from the thing under your pointer.
-        scene::fill(scene, root, p.panel_bg, &chip);
-        scene::stroke(scene, root, p.panel_border, theme::BORDER_W, &chip);
+        // Not `hover_tint`: when the active tab shared the hover grey with
+        // every hovered control, the thing you are looking at was
+        // indistinguishable from the thing under your pointer. `tab_chosen`
+        // is a step lighter than it instead.
+        scene::fill(scene, root, p.tab_chosen, &chip);
     } else if hot {
         // A merely hovered tab keeps the caption's one hover grey, shared with
         // the `+` and the pane toggle.

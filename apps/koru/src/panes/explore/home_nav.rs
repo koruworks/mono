@@ -22,7 +22,7 @@ use vello::Scene;
 use vello::kurbo::Affine;
 
 use super::accessibility::Context;
-use super::{draw_row_card, icon_lane, leading_x, row_chip};
+use super::{draw_chosen_row, icon_lane, leading_x, row_chip};
 use crate::panes::Outcome;
 
 /// How many recents the nav lists. Frame 1 draws three; the page's Continue
@@ -194,7 +194,7 @@ impl HomeNav {
             }
             let active = row == HomeRow::Today;
             if active {
-                draw_row_card(scene, root, r, p);
+                draw_chosen_row(scene, root, r, p);
             } else if self.hover == Some(row) {
                 scene::fill(scene, root, p.hover_tint, &row_chip(r));
             }

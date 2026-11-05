@@ -4348,22 +4348,12 @@ impl ExploreView {
             let (i, mode, square) = (*i, mode, square);
             let active = *mode == self.mode;
             if active {
+                // The app you are in: a shade of the ground, as the active
+                // tab is — both sit on it — rather than a white card.
                 scene::fill(
                     scene,
                     root,
-                    p.panel_border,
-                    &scene::rrect(
-                        square.x - 0.5,
-                        square.y - 0.5,
-                        square.w + 1.0,
-                        square.h + 1.0,
-                        8.5,
-                    ),
-                );
-                scene::fill(
-                    scene,
-                    root,
-                    p.panel_bg,
+                    p.tab_chosen,
                     &scene::rrect(square.x, square.y, square.w, square.h, 8.0),
                 );
             } else if self.rail_hover == Some(apps_rail::Hit::App(*mode)) {
@@ -4375,7 +4365,7 @@ impl ExploreView {
                 );
             }
             // The app you are in wears the Fill weight (the review's note):
-            // the fill is the signal, on top of the card.
+            // the fill is the signal, on top of the grey.
             draw_rail_glyph(
                 scene,
                 root,
@@ -7235,7 +7225,7 @@ impl ExploreView {
                 // The heading is furniture: no hover fill, no card — its `+`
                 // is the only live part, drawn by `draw_row_body`.
                 RowTreatment::Heading | RowTreatment::Idle => {}
-                RowTreatment::Card => draw_row_card(scene, root, r, p),
+                RowTreatment::Card => draw_chosen_row(scene, root, r, p),
                 RowTreatment::Hover => scene::fill(scene, root, p.hover_tint, &chip),
             }
             // **An outline, not a fill.** Where the keyboard is and what is
@@ -7349,9 +7339,9 @@ impl ExploreView {
                 scene::fill(scene, root, p.accent.multiply_alpha(0.14), &chip);
                 scene::stroke(scene, root, p.accent, theme::BORDER_W, &chip);
             } else if self.footer_active == Some(row) {
-                // The same card the open document wears, because it means the
+                // The same grey the open document wears, because it means the
                 // same thing: this is what you are looking at.
-                draw_row_card(scene, root, r, p);
+                draw_chosen_row(scene, root, r, p);
             } else if self.footer_hover == Some(row) {
                 // The library rows' own fill, inset the same 4px, so a pinned
                 // row highlights exactly like the ones above it.
@@ -7679,11 +7669,10 @@ impl ExploreView {
             }
             let ry = block_top + (j - first_start) as f32 * theme::NAV_ROW_H;
             let r = Rect::new(area.x, ry, area.w, theme::NAV_ROW_H);
-            // Lifted, so it wears the same card the open row does: the sheet
-            // colour, outlined. That is what "off the column" looks like here,
-            // and a carried row is off the column by definition. Context tells
-            // the two apart — this one is following the pointer.
-            draw_row_card(scene, root, r, p);
+            // Lifted, so it wears a card: the sheet colour, outlined. That is
+            // what "off the column" looks like here, and a carried row is off
+            // the column by definition.
+            draw_lifted_row(scene, root, r, p);
             self.draw_row_body(scene, root, engine, &row, r, p, true, false);
         }
     }
@@ -7920,7 +7909,7 @@ impl ExploreView {
 /// window reads it too: the document's top-left corner, where it meets the
 /// pane, is masked in it (`MainView::draw_cards`).
 pub(crate) fn pane_fill() -> peniko::Color {
-    theme::p().status_bg
+    theme::p().pane_bg
 }
 
 /// The trailing lane of a popover row: the tick, the gear, a caret.
@@ -8214,9 +8203,9 @@ pub(crate) enum RowTreatment {
     DropTarget,
     /// The Agents *Projects* heading. Furniture: nothing behind it at all.
     Heading,
-    /// The sheet colour, outlined — lifted off the column. **The open row and
-    /// every picked row**, because the column is saying the same thing about
-    /// all of them: this is one of the rows you are working with.
+    /// The chosen grey, `row_chosen`. **The open row and every picked row**,
+    /// because the column is saying the same thing about all of them: this is
+    /// one of the rows you are working with.
     Card,
     /// The pointer is passing over. A tint, which is all a pointer has earned.
     Hover,
@@ -8224,12 +8213,25 @@ pub(crate) enum RowTreatment {
     Idle,
 }
 
-/// The card a **chosen** row wears: the sheet colour, outlined.
+/// The grey a **chosen** row wears: `row_chosen`, a step darker than
+/// `hover_tint`, so what you are looking at never reads as what is under the
+/// pointer.
 ///
-/// Shared by the open document, every row of a multi-selection, the block a
-/// drag carries, and the active pinned row — because they mean the same thing:
-/// this is a row you are working with, lifted off the column.
-fn draw_row_card(scene: &mut Scene, root: Affine, r: Rect, p: &theme::Palette) {
+/// Shared by the open document, every row of a multi-selection, the active
+/// pinned row, the Tasks rail's queue or list and Home's Today, because they
+/// mean the same thing: this is the row you are working with. It was the
+/// sheet colour, outlined; a grey fill is how the sidebars it sits beside mark
+/// the same thing, and a translucent ink darkens whatever rail colour the
+/// column has been given.
+fn draw_chosen_row(scene: &mut Scene, root: Affine, r: Rect, p: &theme::Palette) {
+    scene::fill(scene, root, p.row_chosen, &row_chip(r));
+}
+
+/// The card the block a drag carries wears: the sheet colour, outlined.
+///
+/// Opaque, unlike [`draw_chosen_row`]'s grey: it follows the pointer over
+/// other rows, and a translucent fill would let their words show through it.
+fn draw_lifted_row(scene: &mut Scene, root: Affine, r: Rect, p: &theme::Palette) {
     let chip = row_chip(r);
     scene::fill(scene, root, p.panel_bg, &chip);
     scene::stroke(scene, root, p.panel_border, theme::BORDER_W, &chip);
