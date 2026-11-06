@@ -238,7 +238,12 @@ impl ProfilesController {
             if let Some(pending) = self.pending_hosted_delete.as_mut() {
                 pending.stage = HostedDeleteStage::CleanupFailed;
             }
-            self.notice = Some("hosted_cleanup_failed".into());
+            // No notice: the CleanupFailed stage draws its own block — what
+            // happened, *Finish removing from this device*, *Try again later*
+            // (`profile_page`). This set the notice to the bare code
+            // `hosted_cleanup_failed`, which the page draws verbatim, so the
+            // person read an identifier under the explanation.
+            self.notice = None;
             return true;
         }
         self.notice = Some(match code {
