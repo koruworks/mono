@@ -260,6 +260,19 @@ impl MainView {
             }
             return false;
         }
+        self.open_launch_tab(profile, project);
+        true
+    }
+
+    /// **Open a session tab that launches `profile`**, and answer the tab's
+    /// id. Every launch surface comes through here once it has decided the
+    /// profile may start — the `+` menu's built-in rows above, and *Agent
+    /// providers*' *Install*, whose profile is the vendor's install command.
+    pub(super) fn open_launch_tab(
+        &mut self,
+        profile: koru_session_profiles::LaunchProfile,
+        project: Option<ProjectId>,
+    ) -> u64 {
         let label = profile.fallback_display_name().to_owned();
         let backend = self.ensure_session_backend();
         let sender = backend.map(|backend| backend.sender.clone());
@@ -292,7 +305,9 @@ impl MainView {
                 view
             }
         };
-        self.tabs_mut().push(Tab::session(view, &label));
+        let tab = Tab::session(view, &label);
+        let id = tab.id;
+        self.tabs_mut().push(tab);
         self.mark_tab_widths_stale();
         // Size before the settle that launches: the grid a session is created
         // at is measured from the surface's bounds, and a launch measured at
@@ -301,7 +316,7 @@ impl MainView {
         // Settle now rather than on the next wake, so the launch leaves in
         // the same gesture that opened the tab.
         let _ = self.settle_session_tabs();
-        true
+        id
     }
 
     /// Build a tab bound to an **existing** session — never a launch. Shared
@@ -1127,6 +1142,10 @@ impl MainView {
             BackendEvent::Connected(sessions)
             | BackendEvent::Sessions(sessions)
             | BackendEvent::Recovered { sessions } => {
+                // Before the reconcile below closes the tab of a session
+                // that ended: an *Install* tab is read while it still names
+                // its session.
+                self.watch_agent_installs(&sessions);
                 let attached = self.session_attached;
                 let lane_attached: Vec<u64> = self
                     .session_lanes

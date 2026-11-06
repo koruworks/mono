@@ -758,6 +758,33 @@ impl<'a> Builder<'a> {
         self.row(label, hint, Spec::Toggle(on, press));
     }
 
+    /// A switch with a secondary button before it — an agent's *Install*
+    /// beside the switch that shows it. The two controls are the existing
+    /// [`Spec::Pair`], the same composition as a caret's width and height, so
+    /// no control is new: the button is the one [`row_button`](Self::row_button)
+    /// draws, the switch the one [`row_toggle`](Self::row_toggle) does.
+    pub(crate) fn row_button_toggle(
+        &mut self,
+        label: &str,
+        hint: Option<&str>,
+        (button, action): (&str, Action),
+        on: bool,
+        press: Action,
+    ) {
+        self.row(
+            label,
+            hint,
+            Spec::Pair(
+                Box::new(Spec::Button(
+                    action,
+                    button.to_owned(),
+                    koru_ui::ActionStyle::Secondary,
+                )),
+                Box::new(Spec::Toggle(on, press)),
+            ),
+        );
+    }
+
     pub(crate) fn row_swatches(
         &mut self,
         label: &str,

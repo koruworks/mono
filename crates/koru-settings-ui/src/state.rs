@@ -223,6 +223,10 @@ pub struct AgentProviderRow {
     /// Its install or setup page, opened by *Setup guide ↗*.
     pub guide: Option<&'static str>,
     pub on: bool,
+    /// Whether the row offers *Install*: the host knows the vendor's install
+    /// command for what `status` says is missing, and runs it in a terminal
+    /// tab when pressed ([`Request::InstallAgent`](crate::Request::InstallAgent)).
+    pub install: bool,
 }
 
 /// **Where a new chat starts**, as the host's settings hold it: the

@@ -4799,6 +4799,7 @@ dependencies = [
  "koru-canvas-ui",
  "koru-channel",
  "koru-chats-ui",
+ "koru-cli-updates",
  "koru-clipboard",
  "koru-core",
  "koru-delegate-api",

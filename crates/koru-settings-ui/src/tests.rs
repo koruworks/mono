@@ -364,11 +364,19 @@ pub(crate) fn press_on(surface: &mut SettingsSurface, page: PageId, word: &str) 
 /// The switch on the row named `row` on the showing page: its hit, and
 /// whether it is on.
 pub(crate) fn switch(surface: &SettingsSurface, row: &str) -> Option<(usize, bool)> {
-    surface.laid.blocks.iter().find_map(|block| match block {
-        Block::Card(card) => card.rows.iter().find_map(|r| match &r.widget {
-            Widget::Toggle { on, hit, .. } if r.label == row => Some((*hit, *on)),
+    fn toggle(widget: &Widget) -> Option<(usize, bool)> {
+        match widget {
+            Widget::Toggle { on, hit, .. } => Some((*hit, *on)),
+            // A switch with a button before it — an agent's *Install*.
+            Widget::Pair(a, b) => toggle(a).or_else(|| toggle(b)),
             _ => None,
-        }),
+        }
+    }
+    surface.laid.blocks.iter().find_map(|block| match block {
+        Block::Card(card) => card
+            .rows
+            .iter()
+            .find_map(|r| (r.label == row).then(|| toggle(&r.widget)).flatten()),
         _ => None,
     })
 }

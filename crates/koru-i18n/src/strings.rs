@@ -2619,6 +2619,11 @@ pub enum Key {
     SettingsAgentCheckFailed,
     SettingsAgentStatusDetail,
     SettingsAgentSetupGuide,
+    SettingsAgentInstall,
+    SettingsAgentInstallTab,
+    SettingsAgentInstallNeedsNode,
+    SettingsAgentInstallAdapterNeedsNode,
+    SettingsAgentInstallClose,
     MenuManageAgents,
     AiPickerManageAgents,
     AiPickerFavorites,
@@ -2873,7 +2878,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2003] = [
+    pub const ALL: [Key; 2008] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4709,6 +4714,11 @@ impl Key {
         Key::SettingsAgentCheckFailed,
         Key::SettingsAgentStatusDetail,
         Key::SettingsAgentSetupGuide,
+        Key::SettingsAgentInstall,
+        Key::SettingsAgentInstallTab,
+        Key::SettingsAgentInstallNeedsNode,
+        Key::SettingsAgentInstallAdapterNeedsNode,
+        Key::SettingsAgentInstallClose,
         Key::MenuManageAgents,
         Key::AiPickerManageAgents,
         Key::AiPickerFavorites,
@@ -15328,6 +15338,12 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsAgentCheckFailed, en: "Koru couldn't check it.", es: "Koru no pudo comprobarlo.", pt_br: "O Koru não conseguiu verificá-lo.", de: "Koru konnte es nicht prüfen.", fr: "Koru n'a pas pu le vérifier.", ar: "تعذّر على Koru التحقق منه.", zh_hans: "Koru 无法检查它。", ja: "Koru が確認できませんでした。" },
     Row { key: Key::SettingsAgentStatusDetail, en: "{} — {}", es: "{} — {}", pt_br: "{} — {}", de: "{} — {}", fr: "{} — {}", ar: "{} — {}", zh_hans: "{} — {}", ja: "{} — {}" },
     Row { key: Key::SettingsAgentSetupGuide, en: "Setup guide ↗", es: "Guía de instalación ↗", pt_br: "Guia de instalação ↗", de: "Einrichtungsanleitung ↗", fr: "Guide d'installation ↗", ar: "دليل الإعداد ↗", zh_hans: "设置指南 ↗", ja: "セットアップガイド ↗" },
+    // Agent providers: *Install*, and the lines its terminal tab prints.
+    Row { key: Key::SettingsAgentInstall, en: "Install", es: "Instalar", pt_br: "Instalar", de: "Installieren", fr: "Installer", ar: "تثبيت", zh_hans: "安装", ja: "インストール" },
+    Row { key: Key::SettingsAgentInstallTab, en: "Install {}", es: "Instalar {}", pt_br: "Instalar {}", de: "{} installieren", fr: "Installer {}", ar: "تثبيت {}", zh_hans: "安装 {}", ja: "{} をインストール" },
+    Row { key: Key::SettingsAgentInstallNeedsNode, en: "Installing {} needs Node.js and npm, and npm isn't on this computer. Install Node.js from https://nodejs.org, then press Install again.", es: "Para instalar {} se necesitan Node.js y npm, y npm no está en este equipo. Instala Node.js desde https://nodejs.org y vuelve a pulsar Instalar.", pt_br: "Para instalar o {} é preciso ter Node.js e npm, e o npm não está neste computador. Instale o Node.js em https://nodejs.org e clique em Instalar de novo.", de: "Für die Installation von {} werden Node.js und npm benötigt, und npm ist auf diesem Computer nicht vorhanden. Installiere Node.js von https://nodejs.org und klicke dann erneut auf Installieren.", fr: "L'installation de {} nécessite Node.js et npm, et npm n'est pas présent sur cet ordinateur. Installez Node.js depuis https://nodejs.org, puis appuyez de nouveau sur Installer.", ar: "يتطلب تثبيت {} وجود Node.js وnpm، وnpm غير موجود على هذا الكمبيوتر. ثبّت Node.js من https://nodejs.org، ثم اضغط تثبيت مرة أخرى.", zh_hans: "安装 {} 需要 Node.js 和 npm，但这台电脑上没有 npm。请从 https://nodejs.org 安装 Node.js，然后再次点击“安装”。", ja: "{} のインストールには Node.js と npm が必要ですが、このコンピューターには npm がありません。https://nodejs.org から Node.js をインストールしてから、もう一度「インストール」を押してください。" },
+    Row { key: Key::SettingsAgentInstallAdapterNeedsNode, en: "Chats with {} in Koru need Node.js and npm, and npm isn't on this computer. Install Node.js from https://nodejs.org, then press Install again.", es: "Los chats con {} en Koru necesitan Node.js y npm, y npm no está en este equipo. Instala Node.js desde https://nodejs.org y vuelve a pulsar Instalar.", pt_br: "Os chats com o {} no Koru precisam de Node.js e npm, e o npm não está neste computador. Instale o Node.js em https://nodejs.org e clique em Instalar de novo.", de: "Chats mit {} in Koru benötigen Node.js und npm, und npm ist auf diesem Computer nicht vorhanden. Installiere Node.js von https://nodejs.org und klicke dann erneut auf Installieren.", fr: "Les discussions avec {} dans Koru nécessitent Node.js et npm, et npm n'est pas présent sur cet ordinateur. Installez Node.js depuis https://nodejs.org, puis appuyez de nouveau sur Installer.", ar: "تتطلب المحادثات مع {} في Koru وجود Node.js وnpm، وnpm غير موجود على هذا الكمبيوتر. ثبّت Node.js من https://nodejs.org، ثم اضغط تثبيت مرة أخرى.", zh_hans: "在 Koru 中与 {} 聊天需要 Node.js 和 npm，但这台电脑上没有 npm。请从 https://nodejs.org 安装 Node.js，然后再次点击“安装”。", ja: "Koru で {} とチャットするには Node.js と npm が必要ですが、このコンピューターには npm がありません。https://nodejs.org から Node.js をインストールしてから、もう一度「インストール」を押してください。" },
+    Row { key: Key::SettingsAgentInstallClose, en: "Press Enter to close this tab. Koru then checks {} again.", es: "Pulsa Intro para cerrar esta pestaña. Después, Koru volverá a comprobar {}.", pt_br: "Pressione Enter para fechar esta aba. Depois, o Koru verifica o {} de novo.", de: "Drücke die Eingabetaste, um diesen Tab zu schließen. Koru prüft {} dann erneut.", fr: "Appuyez sur Entrée pour fermer cet onglet. Koru vérifiera ensuite {} à nouveau.", ar: "اضغط Enter لإغلاق علامة التبويب هذه. سيتحقق Koru بعدها من {} مرة أخرى.", zh_hans: "按 Enter 关闭此标签页。随后 Koru 会重新检查 {}。", ja: "Enter キーを押すとこのタブが閉じ、Koru が {} をもう一度確認します。" },
     Row { key: Key::MenuManageAgents, en: "Manage…", es: "Administrar…", pt_br: "Gerenciar…", de: "Verwalten…", fr: "Gérer…", ar: "إدارة…", zh_hans: "管理…", ja: "管理…" },
     Row { key: Key::AiPickerManageAgents, en: "Manage agent providers", es: "Administrar proveedores de agentes", pt_br: "Gerenciar provedores de agentes", de: "Agent-Anbieter verwalten", fr: "Gérer les fournisseurs d'agents", ar: "إدارة موفري الوكلاء", zh_hans: "管理智能体提供方", ja: "エージェントの提供元を管理" },
     Row { key: Key::AiPickerFavorites, en: "Favorites", es: "Favoritos", pt_br: "Favoritos", de: "Favoriten", fr: "Favoris", ar: "المفضلة", zh_hans: "收藏", ja: "お気に入り" },

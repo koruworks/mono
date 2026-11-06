@@ -163,7 +163,11 @@ impl AcpDialect {
     pub(super) fn versions(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Generic => &[],
-            Self::Claude => &[("0.76.0", "0.76.0")],
+            // Shared with *Agent providers*' *Install*, which installs it.
+            Self::Claude => &[(
+                profiles::CLAUDE_ADAPTER_VERSION,
+                profiles::CLAUDE_ADAPTER_VERSION,
+            )],
             Self::OpenCode => &[("1.18.27", "1.18.27")],
             // 2.3.3 and 2.4.0: the normally installed CLI on 2026-10-27 and 2026-10-28 (UPDATEAGENTS),
             // admitted on the same factory handshake as 2.0.0.

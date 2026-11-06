@@ -17,6 +17,9 @@ fn rows() -> Vec<AgentProviderRow> {
         status,
         guide: Some("https://example.com/guide"),
         on,
+        // The host offers *Install* for what is missing and installable;
+        // here, Grok's missing CLI.
+        install: key == "grok",
     };
     vec![
         row("claude", "Claude", AgentProviderStatus::Ready, true),
@@ -174,6 +177,85 @@ fn refresh_and_the_setup_guide_ask_the_host() {
         surface.take_requests(),
         [Request::OpenAgentGuide("https://example.com/guide")]
     );
+}
+
+/// ***Install* sits before the switch on a row the host offers it on**,
+/// and only there; a press asks the host, and the switch beside it still
+/// works.
+#[test]
+fn install_sits_before_the_switch_and_asks_the_host() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = on_page(rows());
+    let install = t(Lang::En, Key::SettingsAgentInstall);
+    let offering: Vec<&str> = surface
+        .laid
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Card(card) => Some(card.rows.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter(|row| matches!(row.widget, Widget::Pair(..)))
+        .map(|row| row.label.as_str())
+        .collect();
+    assert_eq!(offering, ["Grok"], "only Grok's row offers it");
+    let row = surface
+        .laid
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Card(card) => Some(card.rows.iter()),
+            _ => None,
+        })
+        .flatten()
+        .find(|row| row.label == "Grok")
+        .expect("Grok's row");
+    let Widget::Pair(button, toggle) = &row.widget else {
+        panic!("a button and a switch")
+    };
+    let (
+        Widget::Button {
+            rect: at, label, ..
+        },
+        Widget::Toggle { rect: switch, .. },
+    ) = (&**button, &**toggle)
+    else {
+        panic!("the button first, the switch last")
+    };
+    assert_eq!(label, install);
+    assert!(at.x + at.w <= switch.x, "the button is before the switch");
+    let right = |rect: &Rect| rect.x + rect.w;
+    let claude_switch = surface
+        .laid
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Card(card) => Some(card.rows.iter()),
+            _ => None,
+        })
+        .flatten()
+        .find_map(|row| match &row.widget {
+            Widget::Toggle { rect, .. } if row.label == "Claude" => Some(*rect),
+            _ => None,
+        })
+        .expect("Claude's switch");
+    assert_eq!(
+        right(switch),
+        right(&claude_switch),
+        "every switch keeps the card's right edge"
+    );
+
+    assert!(press(&mut surface, install));
+    assert_eq!(
+        surface.take_requests(),
+        [Request::InstallAgent("grok".into())]
+    );
+    assert_eq!(switch_of(&surface, "Grok"), Some(true));
+}
+
+fn switch_of(surface: &SettingsSurface, row: &str) -> Option<bool> {
+    switch(surface, row).map(|(_, on)| on)
 }
 
 /// **The sidebar puts the page under a Coding heading**, below the others,
@@ -537,7 +619,14 @@ fn the_page_reads_in_every_language() {
             _ => None,
         })
         .flatten()
-        .filter(|row| matches!(row.widget, Widget::Toggle { .. }))
+        .filter(|row| {
+            matches!(row.widget, Widget::Toggle { .. })
+                || matches!(&row.widget, Widget::Pair(_, b) if matches!(**b, Widget::Toggle { .. }))
+        })
         .count();
     assert_eq!(toggles, 5);
+    // *Install* is said in every language too.
+    for lang in Lang::ALL {
+        assert!(!t(lang, Key::SettingsAgentInstall).is_empty());
+    }
 }

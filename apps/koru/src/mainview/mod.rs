@@ -61,6 +61,7 @@ mod harness;
 /// that call into it.
 pub(crate) mod accessibility;
 mod agent_cli_updates;
+mod agent_install;
 mod agent_mcp;
 mod agent_providers;
 mod canvas;
@@ -1377,6 +1378,10 @@ pub struct MainView {
     /// presence probe's cached answer, refreshed each time the menu opens.
     /// See `mainview/profile_probe.rs`.
     profile_probe: profile_probe::ProfileProbe,
+    /// The *Install* tabs *Agent providers* opened that have not ended yet;
+    /// when one ends the agents are checked again. See
+    /// `mainview/agent_install.rs`.
+    agent_installs: Vec<agent_install::AgentInstall>,
     provider_readiness: Option<Vec<koru_session_protocol::ProviderReadiness>>,
     /// **The one delegation surface** (ROADMAP P1.14). Four gestures reach it
     /// and `MainView::begin_delegation` is the only thing that opens it.
@@ -2020,6 +2025,7 @@ impl MainView {
             terminate_after_attach: None,
             wants_session_popout: None,
             profile_probe: profile_probe::ProfileProbe::new(),
+            agent_installs: Vec::new(),
             provider_readiness: None,
             delegation: None,
             recording_modal: None,
@@ -3140,9 +3146,10 @@ impl MainView {
     }
 
     /// The `+` menu's *Agents* flyout on its own, at the pointer — what
-    /// Welcome's *Run an agent in a terminal* opens. The same rows, dimmed off
-    /// the same probe, and a pick opens the same session tab as it does from
-    /// `+`. Nothing opens when this build shows no agents.
+    /// Welcome's *Run an agent in a terminal* opens. The same rows, off the
+    /// same probe — the installed agents, then *Manage…* — and a pick opens
+    /// the same session tab as it does from `+`. Nothing opens when this
+    /// build shows no agents.
     fn open_agents_menu(&mut self) -> bool {
         self.profile_probe.refresh(self.agent.wake_proxy());
         self.snapshot_plus_menu();
@@ -4149,10 +4156,11 @@ impl MainView {
         match &menu.subject {
             MenuSubject::NewTab => match action {
                 // A profile row reflects the off-thread presence probe: a
-                // program — shell or agent, one uniform rule — whose
-                // executable is not on this machine is dimmed with its
-                // *Not installed* note rather than hidden
-                // (`profile_probe::enabled_rows`).
+                // shell whose executable is not on this machine is dimmed
+                // with its *Not installed* note. A missing agent is left out
+                // of the *Agents* flyout altogether
+                // (`context_menu::agent_missing`); the dim is what a row
+                // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
@@ -4260,9 +4268,9 @@ impl MainView {
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
                 | MenuAction::OpenRunningSession(_) => true,
-                // The same presence probe the `+` menu's rows read: a program
-                // whose executable is not on this machine is dimmed with its
-                // *Not installed* note, never hidden.
+                // The same presence probe and the same rule as the `+`
+                // menu's rows: a missing shell dims, a missing agent is not
+                // listed.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::Rename => project.is_some(),
                 // Koru Terminal's refusal, in this window's local answer: a
@@ -7361,6 +7369,25 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+    }
+
+    /// **The probe answered while an agent menu stands.** Hand the menus the
+    /// new answer and rebuild an open *Agents* flyout — under `+` or the
+    /// Agents tree — so the agents it leaves out leave now, rather than at
+    /// the next open. The flyout's rows are fixed per opening, so this is a
+    /// new opening, the way [`refresh_open_plus_chats`] rebuilds *Chats*.
+    /// A menu that *is* the agent list (Welcome's *Run an agent*) keeps its
+    /// rows; a row there whose program turned out missing dims with its note.
+    fn refresh_open_agent_flyout(&mut self) -> bool {
+        context_menu::set_profile_presence(self.profile_probe.snapshot());
+        if !matches!(
+            self.menu.as_ref().map(|m| &m.subject),
+            Some(MenuSubject::NewTab | MenuSubject::AgentTree { .. })
+        ) {
+            return false;
+        }
+        self.rebuild_open_flyout(MenuAction::NewAgent)
     }
 
     /// Chats the `+` flyout can name. The right-hand pane is the usual source;
@@ -7401,19 +7428,27 @@ impl MainView {
     }
 
     fn rebuild_plus_chats_flyout(&mut self) {
+        self.rebuild_open_flyout(MenuAction::Chats);
+    }
+
+    /// Reopen the flyout hanging off the open menu's `parent` row, if that
+    /// flyout is the one showing, so it lists what is true now. Answers
+    /// whether it did.
+    fn rebuild_open_flyout(&mut self, parent: MenuAction) -> bool {
         let Some(i) = self
             .menu
             .as_ref()
-            .and_then(|m| m.items().iter().position(|a| *a == MenuAction::Chats))
+            .and_then(|m| m.items().iter().position(|a| *a == parent))
         else {
-            return;
+            return false;
         };
         if !self.submenu.as_ref().is_some_and(|(at, _)| *at == i) {
-            return;
+            return false;
         }
         self.nested = None;
         self.submenu = None;
         let _ = self.open_submenu(i);
+        true
     }
 
     fn open_new_tab_menu(&mut self) -> bool {
@@ -9296,6 +9331,9 @@ impl MainView {
             }
             Request::OpenAgentGuide(url) => {
                 self.ask_pane(PaneRequest::OpenUri(url));
+            }
+            Request::InstallAgent(key) => {
+                self.install_agent(&key);
             }
             Request::SetAgentPermission { other, permission } => {
                 self.set_agent_permission(other, permission);
@@ -14243,6 +14281,11 @@ impl View for MainView {
         // profile rows may dim (or undim) without the pointer moving.
         let probe_changed = self.profile_probe.take_dirty();
         let agent_rows_changed = probe_changed && self.sync_agent_providers();
+        // An open *Agents* flyout drops the agents the answer says are not
+        // here (`refresh_open_agent_flyout`); the repaint is `probe_changed`'s.
+        if probe_changed {
+            self.refresh_open_agent_flyout();
+        }
         // **Only while Add… is standing.** This snapshot exists to notice the
         // chat list arriving under an open flyout, and `recent_chats` clones
         // its titles — a tick with no menu up must not pay for an answer

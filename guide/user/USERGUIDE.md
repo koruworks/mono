@@ -3478,6 +3478,41 @@ and *Run `devin auth login` to sign in.* when it is signed out. The status reads
 them again, and the rows update when the answers arrive. The card's first line
 counts them (*9 of 9 enabled*).
 
+**Install an agent from its row.** When an agent is **Not installed** — or,
+for Claude, when only `claude-agent-acp`, the program its chats run through,
+is missing — and Koru knows the vendor's own install command, the row has an
+**Install** button before its switch. Pressing it opens a terminal tab named
+*Install Claude* (or the agent's name) that runs the command, so you see its
+output and can answer anything it asks:
+
+- **Claude**: Anthropic's installer — `curl -fsSL https://claude.ai/install.sh | bash`
+  on a Mac or Linux, `irm https://claude.ai/install.ps1 | iex` in PowerShell on
+  Windows — and then `npm install -g @agentclientprotocol/claude-agent-acp@0.76.0`,
+  the chat program at the version Koru's Claude chats accept. When Claude
+  itself is already installed, only the second command runs.
+- **Codex, GitHub Copilot, Kimi, OpenCode and Qwen Code**: `npm install -g`
+  with the agent's npm package (`@openai/codex`, `@github/copilot`,
+  `@moonshot-ai/kimi-code`, `opencode-ai`, `@qwen-code/qwen-code`).
+- **Grok, Antigravity, Muse and Devin** have no **Install**; their **Setup
+  guide ↗** says how.
+
+An npm command needs Node.js: where `npm` is not found, the tab says so and
+points to nodejs.org instead of failing. When the commands finish, the tab
+asks you to press Enter; it closes, and Koru checks the agents again, so the
+row reads **Ready** without restarting Koru. Closing the tab early leaves the
+installer running, and Koru checks again when it ends. Pressing **Install**
+again while its tab is open brings that tab forward.
+
+Koru looks for an agent's program on your `PATH` — on Windows the `PATH` as it
+is now, so a program installed while Koru is running is found without
+restarting Koru — and where the agent's installer puts it: for Claude Code,
+`~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), npm's global folder
+(`%APPDATA%\npm` on Windows; Homebrew's or `/usr/local/bin` on a Mac), and
+WinGet's links. `claude-agent-acp` is looked for in npm's global folder. The
+chat model picker uses the same words: an agent whose chat program is missing
+reads **Needs attention** there too, not **Not installed**, and the picker
+checks a missing agent again when you next open it.
+
 **The order of the rows is the order agents are listed in everywhere** — the
 chat model picker's agent column, the terminal's **Agents ›** menu, the
 Default agent chips and the delegate dialog. It starts with Claude, then
@@ -3491,7 +3526,8 @@ terminal's **Agents ›** menu, from the delegate dialog's agents and from a
 canvas agent node's menu of agents. Nothing is
 uninstalled or signed out, and a chat or a terminal session already on that
 agent stays and keeps working — its own picker still shows it. Turning one
-**on** does not install or sign in its CLI; the setup guide is for that.
+**on** does not install or sign in its CLI; **Install** and the setup guide
+are for that.
 Two other doors lead to this page: the **+** at the foot of the chat model
 picker's agent column, and **Manage…**, the last row of the terminal's
 **Agents ›** menu, under a rule.
@@ -3610,8 +3646,11 @@ documents. Press **+** at the end of the tab strip (or **Ctrl+Shift+A**) and
 pick **Shell** or **Agents**. **Active** lists running sessions of that kind
 you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
-opens as its own tab and starts running; an agent you have not installed is
-shown greyed out with *Not installed*.
+opens as its own tab and starts running. **Agents** lists only the agents
+that are turned on and installed on this computer, then **Manage…**, which
+opens **Settings → Coding → Agent providers** to turn the others on or
+install them; with none installed it is **Manage…** alone. A shell that is
+not installed is shown greyed out with *Not installed*.
 
 The left navigator's fourth mode — the robot icon, beside Documents, Files
 and Tasks — is **Agents**: every running session, grouped by project. Click one to open or

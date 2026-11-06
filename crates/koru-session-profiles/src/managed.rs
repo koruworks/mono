@@ -59,6 +59,16 @@ pub const CLAUDE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegi
     desktop_app: None,
 };
 
+/// The npm package that installs `claude-agent-acp`, the program Claude's
+/// managed route (a chat) runs.
+pub const CLAUDE_ADAPTER_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// **The one `claude-agent-acp` release Claude's managed route accepts** —
+/// what its handshake checks (`koru-session-runtime`'s ACP routes) and what
+/// *Agent providers*' *Install* installs, so the two cannot name different
+/// releases.
+pub const CLAUDE_ADAPTER_VERSION: &str = "0.76.0";
+
 pub const OPENCODE_REGISTRATION: ManagedProviderRegistration = ManagedProviderRegistration {
     kind: "opencode",
     executable: "opencode",
