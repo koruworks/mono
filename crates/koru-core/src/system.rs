@@ -75,6 +75,7 @@ use crate::attributes::{
     AttributeDefinition, AttributeScope, Cardinality, ValueType, system_definition,
 };
 use crate::ids::{DocumentId, ListId, PageKey, TagId};
+use crate::pages::deletion::{DecisionId, DeletionRecord, EventId, Keep, Replica};
 use crate::schema::{Result, StoreError};
 use crate::tags;
 use crate::tasks::Bucket;
@@ -158,6 +159,17 @@ const F_FROZEN_KIND: &str = "kind";
 const F_FROZEN_VALUE: &str = "value";
 const FROZEN_TEXT: &str = "text";
 const FROZEN_BUCKET: &str = "bucket";
+/// On a page record: the deletion protocol of each generation
+/// ([`crate::pages::deletion`]), keyed by generation then by the protocol's
+/// own keys. The persisted shape of a [`DeletionRecord`]; grow-only sets and
+/// a monotone join, so writing the one new key converges.
+const K_PAGE_DELETIONS: &str = "page_deletions";
+const K_PAGE_RECOVERS: &str = "page_recovers";
+const K_PAGE_KEEPS: &str = "page_keeps";
+const K_PAGE_UNCOVERED: &str = "page_uncovered";
+const F_COVERS: &str = "covers";
+const F_DELETED_MS: &str = "deleted_ms";
+const F_KEEP_REPLICA: &str = "replica";
 
 /// One tag, as the table knows it.
 #[derive(Clone, PartialEq, Debug)]
@@ -1072,6 +1084,191 @@ impl SystemDoc {
         Ok(true)
     }
 
+    // ----------------------------------------------------- deletion events
+
+    /// The deletion protocol of one page-document generation, read whole
+    /// (page-document plan §6.2). The persisted keys are grow-only and the
+    /// uncovered values are monotone joins, so this reconstructs the same
+    /// [`DeletionRecord`] on every replica whatever order they arrived in.
+    pub fn deletion_record(&self, page: PageKey, generation: u64) -> DeletionRecord {
+        let mut record = DeletionRecord::new();
+        let Some(page_record) = self.page_record(page) else {
+            return record;
+        };
+        let gen_key = generation.to_string();
+        // deletions.<gen>.<event> -> { covers, deleted_ms }
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_DELETIONS)
+            && let Some(events) = record_map(&by_gen, &gen_key)
+        {
+            for event_key in events.keys() {
+                let Some(event) = parse_event(&event_key) else {
+                    continue;
+                };
+                let Some(fields) = record_map(&events, &event_key) else {
+                    continue;
+                };
+                let covers = read_vv(&fields, F_COVERS).unwrap_or_default();
+                let deleted_ms = fields
+                    .get(F_DELETED_MS)
+                    .and_then(crate::schema::as_i64)
+                    .unwrap_or(0);
+                record.delete(event, covers, deleted_ms);
+            }
+        }
+        // recovers.<gen>.<replica|event> -> true
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_RECOVERS)
+            && let Some(recovers) = record_map(&by_gen, &gen_key)
+        {
+            for key in recovers.keys() {
+                if let Some((replica, event)) = parse_replica_event(&key) {
+                    record.recover(replica, [event]);
+                }
+            }
+        }
+        // keeps.<gen>.<event>.<decision> -> { replica, covers }
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_KEEPS)
+            && let Some(events) = record_map(&by_gen, &gen_key)
+        {
+            for event_key in events.keys() {
+                let Some(event) = parse_event(&event_key) else {
+                    continue;
+                };
+                let Some(decisions) = record_map(&events, &event_key) else {
+                    continue;
+                };
+                for decision_key in decisions.keys() {
+                    let Some(decision) = parse_decision(&decision_key) else {
+                        continue;
+                    };
+                    let Some(fields) = record_map(&decisions, &decision_key) else {
+                        continue;
+                    };
+                    let replica = fields
+                        .get(F_KEEP_REPLICA)
+                        .and_then(crate::schema::as_string)
+                        .and_then(|s| u64::from_str_radix(&s, 16).ok())
+                        .unwrap_or(0);
+                    let covers = read_vv(&fields, F_COVERS).unwrap_or_default();
+                    record.keep(event, decision, Keep { replica, covers });
+                }
+            }
+        }
+        // uncovered.<gen>.<replica|event> -> covers
+        if let Some(by_gen) = record_map(&page_record, K_PAGE_UNCOVERED)
+            && let Some(uncovered) = record_map(&by_gen, &gen_key)
+        {
+            for key in uncovered.keys() {
+                if let Some((replica, event)) = parse_replica_event(&key)
+                    && let Some(covers) = read_vv(&uncovered, &key)
+                {
+                    record.report_uncovered(replica, event, &covers);
+                }
+            }
+        }
+        record
+    }
+
+    /// Write one deletion event (§6.4 step 1): a fresh id, its coverage and
+    /// when it happened. Grow-only — a repeat is a no-op.
+    pub fn write_deletion(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: EventId,
+        covers: &loro::VersionVector,
+        deleted_ms: i64,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let events = record
+            .ensure_mergeable_map(K_PAGE_DELETIONS)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        let fields = events.ensure_mergeable_map(&event.to_string())?;
+        if fields.get(F_COVERS).is_none() {
+            fields.insert(F_COVERS, LoroValue::Binary(covers.encode().into()))?;
+            fields.insert(F_DELETED_MS, deleted_ms)?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Record a *Recover* by `replica` of every event it has observed (§6.3):
+    /// one key each, so an event it never saw stays in force.
+    pub fn write_recover(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: Replica,
+        observed: impl IntoIterator<Item = EventId>,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let recovers = record
+            .ensure_mergeable_map(K_PAGE_RECOVERS)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        for event in observed {
+            recovers.insert(&replica_event_key(replica, event), true)?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Record one *Keep deleted* decision under its own id (§6.3): grow-only,
+    /// written once.
+    pub fn write_keep(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        event: EventId,
+        decision: DecisionId,
+        keep: &Keep,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let decisions = record
+            .ensure_mergeable_map(K_PAGE_KEEPS)?
+            .ensure_mergeable_map(&generation.to_string())?
+            .ensure_mergeable_map(&event.to_string())?;
+        let fields = decisions.ensure_mergeable_map(&decision.to_string())?;
+        if fields.get(F_COVERS).is_none() {
+            fields.insert(F_KEEP_REPLICA, format!("{:016x}", keep.replica))?;
+            fields.insert(F_COVERS, LoroValue::Binary(keep.covers.encode().into()))?;
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Join `version` into `replica`'s record of writing outside `event`'s
+    /// coverage (§6.2, *evidence only grows*). The stored value is replaced
+    /// by the join, which is monotone, so a smaller or concurrent report
+    /// never shrinks it.
+    pub fn report_uncovered(
+        &mut self,
+        page: PageKey,
+        generation: u64,
+        replica: Replica,
+        event: EventId,
+        version: &loro::VersionVector,
+    ) -> Result<bool> {
+        let Some(record) = self.page_record_for_write(page)? else {
+            return Ok(false);
+        };
+        let uncovered = record
+            .ensure_mergeable_map(K_PAGE_UNCOVERED)?
+            .ensure_mergeable_map(&generation.to_string())?;
+        let key = replica_event_key(replica, event);
+        let joined = match read_vv(&uncovered, &key) {
+            Some(previous) => crate::pages::join(&previous, version),
+            None => version.clone(),
+        };
+        uncovered.insert(&key, LoroValue::Binary(joined.encode().into()))?;
+        self.doc.commit();
+        Ok(true)
+    }
+
     /// Every list record, **tombstones included**, in rail order — what the
     /// map from a page document back to its page needs, since a deleted
     /// list keeps its document.
@@ -1238,6 +1435,22 @@ fn write_frozen(record: &LoroMap, generation: u64, frozen: &FrozenTitle) -> Resu
     Ok(())
 }
 
+fn parse_event(key: &str) -> Option<EventId> {
+    uuid::Uuid::parse_str(key).ok().map(EventId::from_uuid)
+}
+
+fn parse_decision(key: &str) -> Option<DecisionId> {
+    uuid::Uuid::parse_str(key).ok().map(DecisionId::from_uuid)
+}
+
+fn parse_replica_event(key: &str) -> Option<(Replica, EventId)> {
+    let (replica, event) = key.split_once('|')?;
+    Some((
+        u64::from_str_radix(replica, 16).ok()?,
+        parse_event(event)?,
+    ))
+}
+
 fn read_frozen(value: &LoroValue) -> Option<FrozenTitle> {
     let LoroValue::Map(map) = value else {
         return None;
@@ -1252,6 +1465,23 @@ fn read_frozen(value: &LoroValue) -> Option<FrozenTitle> {
         FROZEN_BUCKET => Some(FrozenTitle::Bucket(value)),
         _ => None,
     }
+}
+
+/// A raw binary value under `key`, if present.
+fn as_binary(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)?.as_value()? {
+        LoroValue::Binary(b) => Some(b.to_vec()),
+        _ => None,
+    }
+}
+
+fn read_vv(map: &LoroMap, key: &str) -> Option<loro::VersionVector> {
+    loro::VersionVector::decode(&as_binary(map, key)?).ok()
+}
+
+/// The join key a replica writes a per-event record under.
+fn replica_event_key(replica: Replica, event: EventId) -> String {
+    format!("{replica:016x}|{event}")
 }
 
 fn read_tag(id: TagId, record: &LoroMap) -> TagEntry {

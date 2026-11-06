@@ -729,11 +729,24 @@ fn a_lists_note_follows_the_list_until_renamed_directly_and_again_after() {
     sys.add_page_generation(page, 0).unwrap();
     assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike".into()));
 
-    assert!(sys.set_page_override(page, 0, Some("Old research")).unwrap());
-    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Old research".into()));
+    assert!(
+        sys.set_page_override(page, 0, Some("Old research"))
+            .unwrap()
+    );
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Old research".into())
+    );
     assert!(sys.rename_list(list, "Bike Build").unwrap());
-    assert_eq!(sys.page_override(page, 0), None, "the list rename took it back");
-    assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike Build".into()));
+    assert_eq!(
+        sys.page_override(page, 0),
+        None,
+        "the list rename took it back"
+    );
+    assert_eq!(
+        sys.page_title(page, 0),
+        PageTitle::Text("Bike Build".into())
+    );
 
     sys.delete_list(list, 2).unwrap();
     assert_eq!(
@@ -788,19 +801,35 @@ fn a_replaced_bucket_note_freezes_the_bucket_and_a_literal_title_stays_literal()
     let mut sys = SystemDoc::create().unwrap();
     let today = PageKey::Bucket(crate::tasks::Bucket::Today);
     sys.add_page_generation(today, 0).unwrap();
-    assert_eq!(sys.page_title(today, 0), PageTitle::Bucket(crate::tasks::Bucket::Today));
+    assert_eq!(
+        sys.page_title(today, 0),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
     sys.add_page_generation(today, 1).unwrap();
-    assert_eq!(sys.page_frozen(today, 0), Some(FrozenTitle::Bucket("today".into())));
-    assert_eq!(sys.page_title(today, 0), PageTitle::Bucket(crate::tasks::Bucket::Today));
+    assert_eq!(
+        sys.page_frozen(today, 0),
+        Some(FrozenTitle::Bucket("today".into()))
+    );
+    assert_eq!(
+        sys.page_title(today, 0),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
 
-    sys.set_page_override(today, 1, Some("bucket:today")).unwrap();
+    sys.set_page_override(today, 1, Some("bucket:today"))
+        .unwrap();
     sys.add_page_generation(today, 2).unwrap();
     assert_eq!(
         sys.page_frozen(today, 1),
         Some(FrozenTitle::Text("bucket:today".into()))
     );
-    assert_eq!(sys.page_title(today, 1), PageTitle::Text("bucket:today".into()));
-    assert_eq!(sys.page_title(today, 2), PageTitle::Bucket(crate::tasks::Bucket::Today));
+    assert_eq!(
+        sys.page_title(today, 1),
+        PageTitle::Text("bucket:today".into())
+    );
+    assert_eq!(
+        sys.page_title(today, 2),
+        PageTitle::Bucket(crate::tasks::Bucket::Today)
+    );
 }
 
 /// §6.6: a direct rename of a superseded generation is its frozen name too,
@@ -817,7 +846,8 @@ fn frozen_names_are_whole_values() {
     // A replaces Today (freezing the bucket); B, not seeing that, renames
     // generation 0 directly and then replaces it too (freezing text).
     a.add_page_generation(today, 1).unwrap();
-    b.set_page_override(today, 0, Some("Monday's plan")).unwrap();
+    b.set_page_override(today, 0, Some("Monday's plan"))
+        .unwrap();
     b.add_page_generation(today, 1).unwrap();
     sync(&mut a, &mut b);
     let frozen = a.page_frozen(today, 0).expect("frozen");
@@ -832,6 +862,99 @@ fn frozen_names_are_whole_values() {
 
     // Renaming a superseded generation afterwards is a frozen name as well.
     a.set_page_override(today, 0, Some("Archived")).unwrap();
-    assert_eq!(a.page_frozen(today, 0), Some(FrozenTitle::Text("Archived".into())));
+    assert_eq!(
+        a.page_frozen(today, 0),
+        Some(FrozenTitle::Text("Archived".into()))
+    );
     assert_eq!(a.page_title(today, 0), PageTitle::Text("Archived".into()));
+}
+
+// ------------------------------------------------------ deletion events
+
+/// The four deletion tables round-trip through the system document and
+/// resolve the same as the pure model: a deletion with writing outside it
+/// is a conflict, a Keep closes it, a Recover ends it.
+#[test]
+fn the_deletion_protocol_round_trips_through_the_page_record() {
+    use crate::pages::deletion::{DecisionId, EventId, Keep, Resolution};
+
+    fn vv(entries: &[(u64, i32)]) -> loro::VersionVector {
+        let mut out = loro::VersionVector::new();
+        for &(peer, counter) in entries {
+            out.insert(peer, counter);
+        }
+        out
+    }
+
+    let mut sys = SystemDoc::create().unwrap();
+    let list = sys.create_list("Bike", None, 1).unwrap();
+    let page = PageKey::List(list);
+    sys.add_page_generation(page, 0).unwrap();
+
+    // Nothing deleted: live.
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Live);
+
+    // A deletion covering (A5,B3), and writing on B at (B6) outside it.
+    let event = EventId::new();
+    sys.write_deletion(page, 0, event, &vv(&[(1, 5), (2, 3)]), 1_000)
+        .unwrap();
+    sys.report_uncovered(page, 0, 2, event, &vv(&[(2, 6)]))
+        .unwrap();
+    let record = sys.deletion_record(page, 0);
+    assert_eq!(record.resolve(), Resolution::Conflict(vec![event]));
+
+    // A monotone join: an older report does not shrink it.
+    sys.report_uncovered(page, 0, 2, event, &vv(&[(2, 4)]))
+        .unwrap();
+    assert_eq!(
+        sys.deletion_record(page, 0).uncovered(2, event).cloned(),
+        Some(vv(&[(2, 6)])),
+        "evidence only grows"
+    );
+
+    // Keep covering (B6) closes it.
+    sys.write_keep(
+        page,
+        0,
+        event,
+        DecisionId::new(),
+        &Keep {
+            replica: 2,
+            covers: vv(&[(2, 6)]),
+        },
+    )
+    .unwrap();
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Deleted);
+
+    // A Recover ends it.
+    sys.write_recover(page, 0, 2, [event]).unwrap();
+    assert_eq!(sys.deletion_record(page, 0).resolve(), Resolution::Live);
+    assert!(sys.deletion_record(page, 0).is_recovered(event));
+
+    // Converges across replicas whatever order the keys arrived in.
+    let mut a = SystemDoc::create().unwrap();
+    let la = a.create_list("X", None, 1).unwrap();
+    let pa = PageKey::List(la);
+    a.add_page_generation(pa, 0).unwrap();
+    let e = EventId::new();
+    a.write_deletion(pa, 0, e, &vv(&[(1, 2)]), 9).unwrap();
+    let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
+    a.report_uncovered(pa, 0, 1, e, &vv(&[(1, 9)])).unwrap();
+    b.write_keep(
+        pa,
+        0,
+        e,
+        DecisionId::new(),
+        &Keep {
+            replica: 1,
+            covers: vv(&[(1, 9)]),
+        },
+    )
+    .unwrap();
+    sync(&mut a, &mut b);
+    assert_eq!(
+        a.deletion_record(pa, 0).resolve(),
+        b.deletion_record(pa, 0).resolve()
+    );
+    assert_eq!(a.deletion_record(pa, 0).resolve(), Resolution::Deleted);
 }
