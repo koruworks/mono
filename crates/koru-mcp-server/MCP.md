@@ -1417,6 +1417,35 @@ four across five.
 Conflicts fail explicitly. The client reads again and replans; the bridge never
 guesses which concurrent content to overwrite.
 
+### A refused call writes nothing; a partial one says what landed
+
+**Every check runs before the first write**: readability, `base_revision`,
+`expected`, and the whole batch on a fork. A call refused by any of them has
+written nothing, not even the workspace and document ids a document that lacks
+them is given — those ride in the document's next real write.
+
+A mutation then makes its writes, its **effects**, in a fixed order, and stops
+at the first that does not land:
+
+| Tool | Effects, in order |
+| --- | --- |
+| `edit_document` | `system` (the tags the batch creates, when it creates any), `document` |
+| `create_document` | `document`, `manifest` (its entry in the workspace's list) |
+| `extract_to_document`, new destination | `destination_seed`, `manifest`, `destination`, `source` |
+| `extract_to_document`, existing destination | `destination`, `source` |
+
+When the first effect is refused, the answer is the refusal's own error and
+nothing was saved. When a later one is, the answer is `partially_saved`: its
+`message` says what to do next, and `details` carry `operation_id` and
+`effects: [{ effect, document_id, state }]`, every planned effect with its
+`state` (`saved`, `not_saved`), plus the tool's recovery fields — for
+`extract_to_document`, `created_document_id`, `target_document_id`,
+`source_document_id`, `source_unchanged: true` and `recovery_required: true`.
+A rollback is never claimed. `save_status_unknown`, with the same `details` and
+an `unknown` state, means a write was sent and never confirmed: read the
+documents listed before retrying. The hosted server's answers are the same
+([hosted-tools-v1](../../contracts/hosted-tools-v1.md)).
+
 The read-before-write rule applies to changing an existing document. Bulk
 creation has no prior revision to read: its strict, ordered seed batch and
 idempotency key provide the corresponding safety boundary.
@@ -1430,9 +1459,10 @@ Loro tree moves cannot cross Loro documents. A cross-document "move" is:
 3. delete or replace the source in its own document.
 
 Destination-first ordering prevents data loss. If the destination becomes
-durable and the source step fails, return a structured error containing the new
-document id and state that the source is unchanged. Duplication is recoverable;
-lost content is not. High-level tools such as `extract_to_document` own this
+durable and the source step fails, the answer is `partially_saved`, with the
+new document's id and `source_unchanged: true`
+([above](#a-refused-call-writes-nothing-a-partial-one-says-what-landed)).
+Duplication is recoverable; lost content is not. High-level tools such as `extract_to_document` own this
 coordination rather than asking an LLM to assemble several low-level calls.
 
 `extract_to_document` covers every form of the move: several subtrees at once
@@ -1639,3 +1669,11 @@ Store is the persistent service; the stdio bridge is not a separately managed
 daemon. A future Koru Cloud host will supply remote transport, tenant,
 authenticated principal, and scopes through the existing backend context. Tool
 schemas and document semantics remain the same.
+
+A hosted call through an app connection differs in three places
+([hosted-tools-v1](../../contracts/hosted-tools-v1.md)): its answers carry no
+`history` (history is a device's), `create_document` always answers its
+`idempotency_key`, and every change it makes carries an `actor/1` commit
+message naming the connection
+([connector-attribution-v1](../../contracts/connector-attribution-v1.md)). Local
+changes carry no message.

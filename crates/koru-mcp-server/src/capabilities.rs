@@ -78,6 +78,20 @@ impl HostCapabilities {
         Self::Tools(RUNG1_READ_TOOLS)
     }
 
+    /// Whether this host is a device — the desktop bridge, Koru AI — rather
+    /// than a hosted replica. Every local host serves
+    /// [`All`](HostCapabilities::All); a host that serves a subset is hosted.
+    ///
+    /// **What a device keeps that a replica does not** (TECHNICAL §5.5): the
+    /// `mcp_before`/`mcp_after` history captures, because history is
+    /// device-local and a replica is in memory, so hosted answers carry no
+    /// `history` field; and the task log's delivery (`tasks.deliver`), which a
+    /// replica has nowhere durable to keep. Neither is an effect. A hosted
+    /// `create_document` also always answers its `idempotency_key`.
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
     pub fn allows(&self, tool: &str) -> bool {
         match self {
             Self::All => true,

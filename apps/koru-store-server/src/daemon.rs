@@ -405,6 +405,9 @@ enum WorkerCommand {
         workspace: koru_store_core::ids::WorkspaceId,
         title: String,
         kind: String,
+        /// The app connection's `actor/1` message for the manifest commit, or
+        /// `None` for every caller on a device.
+        attribution: Option<String>,
         at: Timestamp,
         reply: std::sync::mpsc::SyncSender<
             std::result::Result<koru_store_core::ids::DocumentId, Error>,
@@ -427,6 +430,8 @@ enum WorkerCommand {
         idempotency_key: String,
         request_hash: String,
         initial_update: Vec<u8>,
+        /// As `CreateDocument`'s: the manifest entry's label.
+        attribution: Option<String>,
         at: Timestamp,
         reply: std::sync::mpsc::SyncSender<
             std::result::Result<koru_store_core::service::SeededCreation, Error>,
@@ -632,11 +637,16 @@ impl StoreWorkerClient {
             idempotency_key,
             request_hash,
             initial_update,
+            None,
             at,
         )
         .map(|result| result.map(|creation| creation.document))
     }
 
+    /// [`seed_document`](Self::seed_document), answering the whole creation,
+    /// with the manifest entry's commit labelled `attribution` when one is
+    /// given: an app connection's `actor/1` message
+    /// (`contracts/connector-attribution-v1.md`).
     #[allow(clippy::too_many_arguments)]
     pub fn seed_document_full(
         &self,
@@ -649,6 +659,7 @@ impl StoreWorkerClient {
         idempotency_key: String,
         request_hash: String,
         initial_update: Vec<u8>,
+        attribution: Option<String>,
         at: Timestamp,
     ) -> std::result::Result<
         std::result::Result<koru_store_core::service::SeededCreation, Error>,
@@ -666,6 +677,7 @@ impl StoreWorkerClient {
                 idempotency_key,
                 request_hash,
                 initial_update,
+                attribution,
                 at,
                 reply,
             })
@@ -723,12 +735,30 @@ impl StoreWorkerClient {
         std::result::Result<koru_store_core::ids::DocumentId, Error>,
         WorkerError,
     > {
+        self.create_document_attributed(workspace, title, kind, None, at)
+    }
+
+    /// [`create_document`](Self::create_document), with the manifest commit
+    /// labelled `attribution` when one is given: an app connection's
+    /// `actor/1` message (`contracts/connector-attribution-v1.md`).
+    pub fn create_document_attributed(
+        &self,
+        workspace: koru_store_core::ids::WorkspaceId,
+        title: String,
+        kind: String,
+        attribution: Option<String>,
+        at: Timestamp,
+    ) -> std::result::Result<
+        std::result::Result<koru_store_core::ids::DocumentId, Error>,
+        WorkerError,
+    > {
         let (reply, response) = std::sync::mpsc::sync_channel(1);
         self.requests
             .try_send(WorkerCommand::CreateDocument {
                 workspace,
                 title,
                 kind,
+                attribution,
                 at,
                 reply,
             })

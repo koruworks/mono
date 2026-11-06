@@ -1996,13 +1996,34 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         index: Option<usize>,
         at: Timestamp,
     ) -> Result<(DocumentId, Vec<u8>)> {
+        self.create_document_attributed(workspace, title, kind, parent, index, None, at)
+    }
+
+    /// [`create_document`](Self::create_document), with the manifest commit
+    /// labelled `attribution` when one is given: the `actor/1` message of the
+    /// app connection whose call this is
+    /// (`contracts/connector-attribution-v1.md`). `None` is exactly
+    /// `create_document`: no Koru path writes a commit message of its own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_document_attributed(
+        &mut self,
+        workspace: WorkspaceId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<(DocumentId, Vec<u8>)> {
         self.ensure_open(workspace)?;
         let id = DocumentId::new();
         let open = self.open.get_mut(&workspace).expect("just opened");
 
         let before = open.manifest.version();
+        let attributed = attribution.map(|message| open.manifest.attribute_commits(message));
         open.manifest
             .add_document_at(id, title, kind, parent, index)?;
+        drop(attributed);
         let delta = open.manifest.export_updates_since(&before)?;
 
         open.repo.create_document(id, DocumentKind::Document, at)?;
@@ -2601,6 +2622,44 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         initial_update: Vec<u8>,
         at: Timestamp,
     ) -> Result<SeededCreation> {
+        self.create_seeded_document_attributed(
+            workspace,
+            title,
+            kind,
+            parent,
+            index,
+            scope,
+            idempotency_key,
+            request_hash,
+            candidate,
+            initial_update,
+            None,
+            at,
+        )
+    }
+
+    /// [`create_seeded_document`](Self::create_seeded_document), with the
+    /// manifest entry's commit labelled `attribution` when one is given — the
+    /// `actor/1` message of the app connection whose call this is
+    /// (`contracts/connector-attribution-v1.md`). The content is the caller's
+    /// own bytes, so its commits already say who made them; this is the one
+    /// commit the Store makes here. `None` is exactly `create_seeded_document`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_seeded_document_attributed(
+        &mut self,
+        workspace: WorkspaceId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        scope: &str,
+        idempotency_key: &str,
+        request_hash: &str,
+        candidate: Option<DocumentId>,
+        initial_update: Vec<u8>,
+        attribution: Option<&str>,
+        at: Timestamp,
+    ) -> Result<SeededCreation> {
         if idempotency_key.is_empty() || idempotency_key.len() > 128 {
             return Err(Error::new(
                 Code::InvalidRequest,
@@ -2706,8 +2765,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 let rollback = open.manifest.export_snapshot()?;
                 let peer = open.manifest.peer_id();
                 let before = open.manifest.version();
+                let attributed =
+                    attribution.map(|message| open.manifest.attribute_commits(message));
                 open.manifest
                     .add_document_at(document, title, kind, parent, index)?;
+                drop(attributed);
                 let delta = open.manifest.export_updates_since(&before)?;
                 let manifest_id = open.manifest_id;
                 if let Err(error) = commit_one(

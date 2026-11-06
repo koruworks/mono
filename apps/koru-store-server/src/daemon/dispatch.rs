@@ -96,13 +96,20 @@ pub(crate) async fn serve(
                 workspace,
                 title,
                 kind,
+                attribution,
                 at,
                 reply,
             } => {
                 let result = match state.store.lock() {
-                    Ok(mut store) => store
-                        .create_document(workspace, &title, &kind, None, None, at)
-                        .map(|(document, delta)| (document, delta)),
+                    Ok(mut store) => store.create_document_attributed(
+                        workspace,
+                        &title,
+                        &kind,
+                        None,
+                        None,
+                        attribution.as_deref(),
+                        at,
+                    ),
                     Err(_) => Err(Error::new(Code::Internal, "Store worker state is poisoned")),
                 };
                 let result = result.map(|(document, delta)| {
@@ -149,11 +156,12 @@ pub(crate) async fn serve(
                 idempotency_key,
                 request_hash,
                 initial_update,
+                attribution,
                 at,
                 reply,
             } => {
                 let result = match state.store.lock() {
-                    Ok(mut store) => store.create_seeded_document(
+                    Ok(mut store) => store.create_seeded_document_attributed(
                         workspace,
                         &title,
                         &kind,
@@ -164,6 +172,7 @@ pub(crate) async fn serve(
                         &request_hash,
                         None,
                         initial_update,
+                        attribution.as_deref(),
                         at,
                     ),
                     Err(_) => Err(Error::new(Code::Internal, "Store worker state is poisoned")),

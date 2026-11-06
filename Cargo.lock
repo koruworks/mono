@@ -5244,6 +5244,7 @@ dependencies = [
  "koru-store-core",
  "koru-store-server",
  "koru-store-wire",
+ "loro",
  "serde",
  "serde_json",
  "tempfile",

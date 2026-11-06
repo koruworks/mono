@@ -74,12 +74,24 @@ impl EmbeddedStore for Port {
         workspace: WorkspaceId,
         title: String,
         kind: String,
+        attribution: Option<&str>,
     ) -> Result<DocumentId, ToolError> {
         self.store(|store| {
             store
-                .create_document(workspace, &title, &kind, None, None, Timestamp::now())
+                .create_document_attributed(
+                    workspace,
+                    &title,
+                    &kind,
+                    None,
+                    None,
+                    attribution,
+                    Timestamp::now(),
+                )
                 .map(|(document, _)| document)
         })
+    }
+    fn manifest_id(&self, workspace: WorkspaceId) -> Result<DocumentId, ToolError> {
+        self.store(|store| store.manifest_id(workspace))
     }
     fn ensure_file_note(
         &self,
@@ -94,7 +106,7 @@ impl EmbeddedStore for Port {
         request: EmbeddedSeedDocument,
     ) -> Result<EmbeddedSeededDocument, ToolError> {
         self.store(|store| {
-            store.create_seeded_document(
+            store.create_seeded_document_attributed(
                 request.workspace,
                 &request.title,
                 &request.kind,
@@ -105,6 +117,7 @@ impl EmbeddedStore for Port {
                 &request.request_hash,
                 None,
                 request.initial_update,
+                request.attribution.as_deref(),
                 Timestamp::now(),
             )
         })

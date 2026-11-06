@@ -177,11 +177,19 @@ impl EmbeddedStore for WorkerEmbeddedStore {
         workspace: WorkspaceId,
         title: String,
         kind: String,
+        attribution: Option<&str>,
     ) -> Result<DocumentId, ToolError> {
-        flatten(
-            self.client
-                .create_document(workspace, title, kind, Timestamp::now()),
-        )
+        flatten(self.client.create_document_attributed(
+            workspace,
+            title,
+            kind,
+            attribution.map(str::to_owned),
+            Timestamp::now(),
+        ))
+    }
+
+    fn manifest_id(&self, workspace: WorkspaceId) -> Result<DocumentId, ToolError> {
+        self.read(move |store| store.manifest_id(workspace))
     }
 
     fn ensure_file_note(
@@ -209,6 +217,7 @@ impl EmbeddedStore for WorkerEmbeddedStore {
             request.idempotency_key,
             request.request_hash,
             request.initial_update,
+            request.attribution,
             Timestamp::now(),
         ))
         .map(|seeded| EmbeddedSeededDocument {
@@ -374,6 +383,11 @@ fn tool_failure(error: ToolError) -> AiError {
     tracing::warn!(code = %error.code, "AI workspace tool failed");
     AiError::new(class, error.message, false)
 }
+
+/// The mutation path's own evidence (Cloud MCP Plan 2.1): local history with
+/// deferred stamps, effects at the port, and the attribution sweep.
+#[cfg(test)]
+mod mutation_tests;
 
 #[cfg(test)]
 mod tests {
