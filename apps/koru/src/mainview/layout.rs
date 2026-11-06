@@ -579,10 +579,14 @@ impl MainView {
         let home = tab.home_workspace();
         // **A canvas lives in the Canvases section**, and a page in Documents:
         // revealing either in the other would select a row that is not there.
+        // Documents is shown from *every* other view, not only Canvases — a
+        // document revealed from the Tasks rail used to land its selection
+        // in the hidden list and leave the rail on screen (acceptance round
+        // 2).
         let canvas = matches!(tab.view, TabView::Canvas(_));
         if canvas {
             self.explore.show_canvases();
-        } else if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Canvases {
+        } else if self.explore.navigator_mode() != crate::panes::explore::NavigatorMode::Documents {
             self.explore.show_documents();
         }
         // Manifest ids are the same UUID as the document id; Explore selects by

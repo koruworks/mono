@@ -10227,6 +10227,30 @@ fn revealing_a_tasks_tab_opens_the_rail_on_its_queue() {
     );
 }
 
+/// **`Ctrl+Shift+E` on a document tab shows the Documents view**, whatever
+/// view the column was on. From the Tasks rail it used to select the row in
+/// the hidden list and leave the rail on screen (acceptance round 2).
+#[test]
+fn revealing_a_document_tab_from_the_tasks_rail_shows_the_documents_view() {
+    use crate::panes::explore::NavigatorMode;
+    let (mut v, w) = on_tasks();
+    assert!(v.explore.showing_tasks(), "the column is on the rail");
+    // The document tab in front is a listed document, as every real one is.
+    v.tabs_mut().active_mut().document = Some(koru_core::DocumentId::new());
+    assert!(matches!(v.tabs().active_tab().view, TabView::Leaf(_)));
+
+    assert!(v.focus_or_toggle_sidebar(&w.ws), "the shortcut is answered");
+    assert_eq!(
+        v.explore.navigator_mode(),
+        NavigatorMode::Documents,
+        "the document's own view, not the rail it was behind"
+    );
+    assert!(
+        v.pending_explore_reveal.is_some(),
+        "and the row is to be revealed"
+    );
+}
+
 /// **Every task the Tasks page queues leaves through `ManagerView`.**
 ///
 /// This is the test that was missing, and its absence is acceptance findings 1,
