@@ -1437,6 +1437,56 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(())
     }
 
+    /// Undo [`Self::provision_replica_document`] for a document that never
+    /// received anything: the container a Cloud fetch provisioned for a unit
+    /// Cloud turned out not to hold.
+    ///
+    /// **Only an empty, unlisted document goes**, and the answer says whether
+    /// this one did. A document the manifest names, one with a single update
+    /// or checkpoint, or one whose open replica holds any operation is left
+    /// exactly as it was, so this can never remove content. It exists so a
+    /// lookup leaves the Store as it found it: a hosted creation looks its
+    /// candidate id up in Cloud before seeding it (TECHNICAL §5.6), and an
+    /// empty row left behind would refuse that seed as a duplicate id.
+    pub fn discard_empty_replica_document(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<bool> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        if open.is_manifest(document)
+            || open
+                .manifest
+                .entries()
+                .iter()
+                .any(|entry| entry.id == document)
+        {
+            return Ok(false);
+        }
+        let Some(state) = open.repo.document(document)? else {
+            return Ok(false);
+        };
+        let empty_live = open
+            .documents
+            .get(&document)
+            .is_none_or(|live| live.version().is_empty());
+        if state.kind != DocumentKind::Document
+            || !empty_live
+            || open.repo.update_count(document)? != 0
+            || !open.repo.checkpoints(document)?.is_empty()
+        {
+            return Ok(false);
+        }
+        open.documents.remove(&document);
+        open.windows.remove(&document);
+        open.repo.drop_document(document)?;
+        if self.catalog.locate(document)? == Some(workspace) {
+            self.catalog.forget_location(document)?;
+        }
+        Ok(true)
+    }
+
     /// Rename a workspace.
     ///
     /// **Both names are written**, and they are two different facts that happen

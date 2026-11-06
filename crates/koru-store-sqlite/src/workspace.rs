@@ -301,6 +301,12 @@ impl SqliteWorkspace {
         Self::from_connection(db::open_in_memory()?)
     }
 
+    /// The named database in this process's memory: the same `workspace.db`
+    /// every time the name is opened, for as long as one connection holds it.
+    pub fn in_named_memory(name: &koru_sqlite::MemoryName) -> Result<Self> {
+        Self::from_connection(db::open_named_memory(name)?)
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self> {
         let before = db::user_version(&connection)?;
         let after = db::migrate(

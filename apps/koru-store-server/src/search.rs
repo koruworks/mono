@@ -39,8 +39,8 @@ pub struct Prepared {
     reader: SearchIndex,
     queue: Queue,
     /// Carried through the two halves so [`spawn`] can open the tag source
-    /// without `daemon.rs` handing it the root a second time.
-    root: std::path::PathBuf,
+    /// without `daemon.rs` handing it the location a second time.
+    derived: crate::derived::Derived,
 }
 
 /// Open `search.db` and build the consumer the projector needs.
@@ -48,8 +48,8 @@ pub struct Prepared {
 /// **Not fatal.** An index that will not open is a store whose search is stale,
 /// not a store that has lost anything — and refusing to serve documents because
 /// a cache is broken would be refusing for the wrong reason.
-pub fn prepare(root: &std::path::Path) -> Option<(Box<dyn Consumer>, Prepared)> {
-    let (writer, reader) = match koru_search::open(root) {
+pub fn prepare(derived: &crate::derived::Derived) -> Option<(Box<dyn Consumer>, Prepared)> {
+    let (writer, reader) = match derived.search_pair() {
         Ok(pair) => pair,
         Err(why) => {
             tracing::error!("the search index did not open: {why}");
@@ -57,7 +57,7 @@ pub fn prepare(root: &std::path::Path) -> Option<(Box<dyn Consumer>, Prepared)> 
         }
     };
     tracing::info!("store startup: search index opened");
-    let projections = match koru_projection::Projections::open(root) {
+    let projections = match derived.projections() {
         Ok(projections) => projections,
         Err(why) => {
             tracing::error!("the search index has no read model to consume: {why}");
@@ -74,7 +74,7 @@ pub fn prepare(root: &std::path::Path) -> Option<(Box<dyn Consumer>, Prepared)> 
             indexer,
             reader,
             queue,
-            root: root.to_path_buf(),
+            derived: derived.clone(),
         },
     ))
 }
@@ -207,22 +207,26 @@ fn failed(why: koru_search::SearchError) -> Error {
 /// Also hands the query surface to the API, which is why this runs before
 /// anything is served: a request arriving first would be answered 503 by a
 /// store that does in fact have an index.
+///
+/// `stop` ends the thread at its next tick, as [`crate::projection::spawn`]'s
+/// does; a device never sets it.
 pub fn spawn(
     prepared: Prepared,
     state: Arc<AppState>,
     sweeps: Sweeps,
+    stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<std::thread::JoinHandle<()>> {
     let Prepared {
         mut indexer,
         reader,
         queue,
-        root,
+        derived,
     } = prepared;
     // **Here rather than in `prepare`**, because reading a tag table takes the
     // store's lock and `prepare` runs before there is an `AppState` to take it
     // from. Absent, the index carries on writing the ids it always wrote — a
     // word nobody can type, never a lost document.
-    if let Some(tags) = crate::tagnames::tag_source(&root, &state) {
+    if let Some(tags) = crate::tagnames::tag_source(&derived, &state) {
         indexer = indexer.with_tag_names(tags);
     }
     // **One `Search`, shared.** It owns the mutex over its own connection, so
@@ -243,7 +247,7 @@ pub fn spawn(
             if let Err(why) = indexer.index().warm_fuzzy_vocabulary() {
                 tracing::error!("the fuzzy vocabulary could not be warmed: {why}");
             }
-            loop {
+            while !stop.load(std::sync::atomic::Ordering::Acquire) {
                 let now = koru_store_core::model::Timestamp::now().millis();
                 let busy = indexer.tick(now);
                 if let Ok(mut slot) = published.lock() {

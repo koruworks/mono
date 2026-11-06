@@ -55,11 +55,11 @@ pub struct AttributePort {
 /// connection, per the `read_ports` note: WAL lets it answer without the
 /// worker's mutex or the Store's authoritative lock.
 pub fn attribute_port(
-    root: &std::path::Path,
+    derived: &crate::derived::Derived,
     sweeps: Sweeps,
     state: &Arc<AppState>,
 ) -> Option<Arc<AttributePort>> {
-    match Projections::open(root) {
+    match derived.projections() {
         Ok(projections) => Some(Arc::new(AttributePort {
             projections: Mutex::new(projections),
             sweeps,

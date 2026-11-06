@@ -139,6 +139,15 @@ impl SearchIndex {
         Ok((writer, reader))
     }
 
+    /// [`Self::pair`] in this process's memory: the writer and a reader of one
+    /// named database, with no file written for it.
+    pub fn pair_in_memory(name: &koru_sqlite::MemoryName) -> SearchResult<(Self, Self)> {
+        let vocabulary = SharedVocabulary::warming();
+        let writer = Self::over(koru_sqlite::open_memory(name)?, vocabulary.clone())?;
+        let reader = Self::over(koru_sqlite::open_memory(name)?, vocabulary)?;
+        Ok((writer, reader))
+    }
+
     /// In memory, for tests.
     pub fn in_memory() -> SearchResult<Self> {
         Self::over(Connection::open_in_memory()?, SharedVocabulary::ready())

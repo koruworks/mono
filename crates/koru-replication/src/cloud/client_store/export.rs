@@ -67,6 +67,11 @@ impl ExportRequest {
         })
     }
 
+    /// The unit this request would export.
+    pub fn unit(&self) -> Unit {
+        self.unit
+    }
+
     /// Keep the metadata/authority resource which supplied this request alive
     /// inside accepted Store work, even when its external waiter is canceled.
     /// This resource grants no authority; execution still rechecks authorization.

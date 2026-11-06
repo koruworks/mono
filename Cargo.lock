@@ -6555,6 +6555,7 @@ version = "0.0.3"
 dependencies = [
  "chrono",
  "koru-core",
+ "koru-sqlite",
  "koru-store-core",
  "koru-store-wire",
  "koru-time-zone",
@@ -6709,6 +6710,7 @@ name = "koru-search"
 version = "0.0.3"
 dependencies = [
  "koru-projection",
+ "koru-sqlite",
  "koru-store-core",
  "koru-store-wire",
  "koru-tagname",
@@ -7202,6 +7204,7 @@ dependencies = [
  "koru-projection",
  "koru-replication",
  "koru-search",
+ "koru-sqlite",
  "koru-store-api",
  "koru-store-client",
  "koru-store-core",
@@ -7218,6 +7221,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tower",

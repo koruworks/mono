@@ -10,6 +10,7 @@ mod attributes;
 mod cli;
 mod console;
 mod daemon;
+mod derived;
 mod events_feed;
 pub mod host;
 pub mod log;
@@ -26,8 +27,9 @@ mod tray;
 pub use daemon::blob_sync;
 pub use daemon::cloud_driver;
 pub use daemon::cloud_sync;
+pub use daemon::memory;
 pub use daemon::{
-    INTERNAL_READY_ENV, StandaloneReady, StoreReply, StoreRootClaim, StoreWorker,
+    INTERNAL_READY_ENV, StandaloneReady, StoreJobs, StoreReply, StoreRootClaim, StoreWorker,
     StoreWorkerClient, StoreWorkerInfo, WorkerConfig, WorkerError, WorkerExit, WorkerHandle,
     WorkerStatus,
 };

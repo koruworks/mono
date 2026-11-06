@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Which tools a host serves at all.
+//!
+//! The shared catalog is every tool this crate implements. A host that is not
+//! the desktop — the hosted MCP server at `mcp.koru.do` — serves only the
+//! tools its rung has built: files, versions, chats and `update_task` are not
+//! in rung 1, and a hosted connection must never reach them by naming them.
+//!
+//! **One set, for the catalog and for admission.** [`HostCapabilities`] rides
+//! in the [`RequestContext`](crate::RequestContext), and the executor checks
+//! it **first** — before scope policy, before workspace authority, before any
+//! backend work — so a tool outside it is refused as `tool_not_available`
+//! whatever the caller's scopes. [`HostCapabilities::catalog`] publishes the
+//! same set, so a host cannot list a tool it would refuse, or refuse one it
+//! listed.
+//!
+//! **Toolsets are something else, and compose on top.** A bridge's
+//! `--toolsets` ([`crate::Toolsets`]) narrows what one stdio bridge *lists*, to
+//! save an agent's context; every toolset's tool is still a tool that host
+//! serves, and calling one that is off answers `toolset_disabled` with the
+//! flag that turns it on. Capabilities say what a host *can* do. The local
+//! bridge is [`HostCapabilities::All`], so its toolsets work exactly as
+//! before; a hosted catalog is not toolset-shaped — rung 1 is part of `docs`
+//! and part of `tasks` — which is why it is a set of tools and not a set of
+//! toolsets.
+
+use serde_json::json;
+
+use crate::{ToolError, WorkspaceTool, workspace_tool_catalog};
+
+/// The tools a host serves. Local hosts — the desktop bridge and Koru AI —
+/// serve [`All`](HostCapabilities::All).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HostCapabilities {
+    /// Every tool in the shared catalog.
+    #[default]
+    All,
+    /// Only these, by name.
+    Tools(&'static [&'static str]),
+}
+
+/// Rung 1 of Cloud MCP (TECHNICAL §1): read and edit documents and tasks.
+/// Tasks change through `edit_document`, so `update_task` is not here. The two
+/// claim tools join this list when they exist (Cloud MCP Plan 3.4).
+pub const RUNG1_TOOLS: &[&str] = &[
+    "get_documentation",
+    "list_workspaces",
+    "list_documents",
+    "search_documents",
+    "read_document",
+    "create_document",
+    "edit_document",
+    "extract_to_document",
+    "list_tasks",
+];
+
+/// Rung 1's reads alone: what a hosted host serves until its mutation
+/// outcomes are built (Cloud MCP M1), and what a read-only connection is ever
+/// shown.
+pub const RUNG1_READ_TOOLS: &[&str] = &[
+    "get_documentation",
+    "list_workspaces",
+    "list_documents",
+    "search_documents",
+    "read_document",
+    "list_tasks",
+];
+
+impl HostCapabilities {
+    /// The hosted rung-1 catalog.
+    pub const fn rung1() -> Self {
+        Self::Tools(RUNG1_TOOLS)
+    }
+
+    /// The hosted rung-1 reads.
+    pub const fn rung1_reads() -> Self {
+        Self::Tools(RUNG1_READ_TOOLS)
+    }
+
+    pub fn allows(&self, tool: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Tools(tools) => tools.contains(&tool),
+        }
+    }
+
+    /// The published catalog: the shared catalog's tools this host serves, in
+    /// the shared catalog's order and with its schemas unchanged.
+    pub fn catalog(&self) -> Vec<WorkspaceTool> {
+        workspace_tool_catalog()
+            .into_iter()
+            .filter(|tool| self.allows(&tool.name))
+            .collect()
+    }
+
+    /// The refusal for a tool this host does not serve, before anything else
+    /// is asked of the call.
+    pub(crate) fn refusal(&self, tool: &str) -> Option<ToolError> {
+        (!self.allows(tool)).then(|| {
+            ToolError {
+                code: "tool_not_available".into(),
+                message: format!("{tool} is not available on this Koru host"),
+                details: None,
+            }
+            .with_details(json!({ "tool": tool }))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -17,6 +17,7 @@ mod cloud_restart;
 mod manifest_origin;
 mod objects;
 mod profile_projection;
+mod replica_discard;
 mod transport_modes;
 
 /// Every file in the one object store, by name. The assertion that a

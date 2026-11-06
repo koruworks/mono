@@ -53,6 +53,17 @@ pub fn open_in_memory() -> Result<Connection> {
     Ok(connection)
 }
 
+/// A named database in this process's memory, shared by every connection that
+/// opens the same name and gone with the last of them. Same pragmas as every
+/// other open; no file is ever written for it, journal and temporary storage
+/// included ([`koru_sqlite::open_memory`]).
+pub fn open_named_memory(name: &koru_sqlite::MemoryName) -> Result<Connection> {
+    let connection = koru_sqlite::open_memory(name)
+        .map_err(|e| Error::new(Code::StorageFailed, format!("open: {e}")))?;
+    koru_sqlite::configure("store", &connection).map_err(store_error)?;
+    Ok(connection)
+}
+
 /// A **named** in-memory database, for tests that have to reopen the bytes a
 /// previous `Store` wrote.
 ///

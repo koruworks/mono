@@ -50,7 +50,9 @@ use koru_store_wire::tasks::{
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 use koru_workspace::store::{StoreSession, Synced};
 
+mod capabilities;
 mod chat_tools;
+pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
 
@@ -506,6 +508,9 @@ pub struct RequestContext {
     pub scopes: Vec<String>,
     pub workspace_access: WorkspaceAccess,
     pub chat_tools: ChatToolAccess,
+    /// Which tools this host serves at all, checked before anything else.
+    /// Local hosts serve [`HostCapabilities::All`].
+    pub capabilities: HostCapabilities,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -554,6 +559,7 @@ impl RequestContext {
             scopes: vec!["read_documents".into(), "edit_documents".into()],
             workspace_access: WorkspaceAccess::All,
             chat_tools: ChatToolAccess::Bridge,
+            capabilities: HostCapabilities::All,
         }
     }
 
@@ -573,7 +579,14 @@ impl RequestContext {
                 .collect(),
             workspace_access: WorkspaceAccess::selected(workspaces),
             chat_tools: ChatToolAccess::Denied,
+            capabilities: HostCapabilities::All,
         }
+    }
+
+    /// The same context, serving only `capabilities`' tools.
+    pub fn with_capabilities(mut self, capabilities: HostCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 
     fn has_scope(&self, required: Scope) -> bool {
@@ -603,6 +616,11 @@ pub trait EmbeddedStore: Send + Sync {
         &self,
         request: SearchRequest,
     ) -> Result<koru_store_wire::search::SearchResponse, ToolError>;
+    /// The tasks query, answered from the host's read model by the one task
+    /// interpretation the Store has — the page `POST /v1/tasks/query` answers.
+    /// A host whose read model has not swept a workspace says so in
+    /// `updating_workspaces`, never with an empty list that reads as done.
+    fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError>;
     fn snapshot(
         &self,
         workspace: StoreWorkspaceId,
@@ -825,6 +843,11 @@ impl WorkspaceToolExecutor {
         tool: &str,
         mut arguments: Value,
     ) -> Result<Value, ToolError> {
+        // **Capabilities first**: a tool this host does not serve is refused
+        // before its scope, its workspace or the backend is consulted.
+        if let Some(refusal) = context.capabilities.refusal(tool) {
+            return Err(refusal);
+        }
         let policy = tool_policy(tool).ok_or_else(|| ToolError::invalid("unknown tool"))?;
         if policy.domain == ToolDomain::Chat && context.chat_tools == ChatToolAccess::Denied {
             return Err(ToolError::permission_denied(
@@ -1341,20 +1364,14 @@ impl LocalBackend {
 
     /// What is outstanding, from the store's read model.
     ///
-    /// **The embedded host has no answer to this and says so.** `EmbeddedStore`
-    /// is a port over a bounded in-process Store *worker*, and the tasks query
-    /// lives beside the daemon's HTTP surface rather than in that worker — so
-    /// widening the port would mean teaching a second host to build a page it
-    /// has no statement for. It refuses in the shape `ai()` already refuses in,
-    /// because a capability a host does not have is better named than
-    /// simulated with an empty list that reads as *you have nothing to do*.
+    /// **One query, two transports.** The bridge asks the Store's HTTP route;
+    /// an embedded host asks its port, which answers from the same task port
+    /// the route reads (`koru_store_api::routes::tasks::answer`) — so Koru AI
+    /// and a hosted replica list exactly the page the desktop does, rather
+    /// than a second interpretation of a task.
     fn query_tasks(&self, query: &TaskQuery) -> Result<TaskQueryResponse, ToolError> {
-        if self.embedded.is_some() {
-            return Err(ToolError {
-                code: "tasks_unavailable".into(),
-                message: "This embedded Koru host does not provide the tasks query.".into(),
-                details: None,
-            });
+        if let Some(store) = &self.embedded {
+            return store.query_tasks(query.clone());
         }
         self.store(|client| client.store().query_tasks(query))
     }
@@ -11642,6 +11659,8 @@ mod tests {
         /// Each `create_document` idempotency key: the request hash, the
         /// document it made, and that document's first update.
         seeds: Mutex<HashMap<String, (String, StoreDocumentId, Vec<u8>)>>,
+        /// Every tasks query the port was asked.
+        task_queries: Mutex<Vec<TaskQuery>>,
     }
 
     impl MemoryStore {
@@ -11654,6 +11673,7 @@ mod tests {
                 search_hits: Mutex::new(Vec::new()),
                 markers: Mutex::new(Vec::new()),
                 seeds: Mutex::new(HashMap::new()),
+                task_queries: Mutex::new(Vec::new()),
             })
         }
 
@@ -11816,6 +11836,25 @@ mod tests {
                 },
                 facets: None,
                 recent_queries: None,
+            })
+        }
+
+        /// An empty, projected page: what a swept workspace with nothing
+        /// outstanding answers.
+        fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError> {
+            let limit = query.limit;
+            self.task_queries.lock().unwrap().push(query);
+            Ok(TaskQueryResponse {
+                rows: Vec::new(),
+                definitions: Vec::new(),
+                tags: Vec::new(),
+                groups: Vec::new(),
+                projected: true,
+                updating_workspaces: Vec::new(),
+                limit,
+                next_after: None,
+                restarted: false,
+                covered: None,
             })
         }
 
@@ -12054,6 +12093,29 @@ mod tests {
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
         }
+    }
+
+    /// **An embedded host answers `list_tasks`** through its port — Koru AI
+    /// and a hosted replica used to be refused `tasks_unavailable` here — with
+    /// the executor's workspace grant written into the query, as for search.
+    #[test]
+    fn an_embedded_host_answers_list_tasks_through_its_port() {
+        let store = MemoryStore::new();
+        let executor = WorkspaceToolExecutor::new(Arc::new(store.backend()));
+        let context = RequestContext::selected(
+            "local",
+            "koru-ai",
+            [Scope::ReadDocuments],
+            [store.workspace],
+        );
+        let page = executor
+            .invoke(&context, "list_tasks", json!({}))
+            .expect("the port answers rather than refusing");
+        assert_eq!(page["tasks"], json!([]));
+        assert_eq!(page["restarted"], json!(false));
+        let asked = store.task_queries.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].workspaces, vec![store.workspace]);
     }
 
     /// `list_files`, `search_files` and `get_file` all build their answer

@@ -17,6 +17,7 @@ use koru_store_core::model::{Blob, BlobHash, DocumentEntry, Scope, Workspace};
 use koru_store_core::ports::HistoryReason;
 use koru_store_server::{StoreWorkerClient, WorkerError};
 use koru_store_wire::search::{SearchRequest, SearchResponse};
+use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse};
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 
 /// Executes provider-requested tools through the same catalog, authorization,
@@ -159,6 +160,12 @@ impl EmbeddedStore for WorkerEmbeddedStore {
 
     fn search(&self, request: SearchRequest) -> Result<SearchResponse, ToolError> {
         flatten(self.client.search(request))
+    }
+
+    /// The Store worker's task port, through its typed queue: the page
+    /// `POST /v1/tasks/query` answers, so Koru AI lists what the desktop does.
+    fn query_tasks(&self, query: TaskQuery) -> Result<TaskQueryResponse, ToolError> {
+        flatten(self.client.query_tasks(query))
     }
 
     fn snapshot(&self, workspace: WorkspaceId, document: DocumentId) -> Result<Vec<u8>, ToolError> {
@@ -522,6 +529,38 @@ mod tests {
         drop(adapter);
         drop(client);
         assert_eq!(worker.join(), koru_store_server::WorkerExit::Clean);
+    }
+
+    /// **Koru AI's `list_tasks` is answered**, where the embedded host used
+    /// to refuse it `tasks_unavailable`: the port asks the Store's own task
+    /// port through the worker's queue. Over a Store kept in memory, so the
+    /// test touches no disk.
+    #[test]
+    fn list_tasks_is_answered_from_the_task_port() {
+        let memory = koru_store_server::memory::MemoryStore::open("internal-debug").unwrap();
+        let client = memory.client();
+        let (profile, workspace) = client
+            .with_store(|store| {
+                let at = Timestamp::from_millis(1);
+                let profile =
+                    store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
+                let workspace = store.create_workspace(profile.id, "Workspace", at)?;
+                Ok::<_, koru_store_core::Error>((profile.id, workspace.id))
+            })
+            .unwrap()
+            .unwrap();
+        let adapter = StoreToolAdapter::new(client);
+        let page = adapter
+            .invoke(
+                &execution_context(vec![workspace], Some(profile)),
+                &call("list_tasks", json!({})),
+                &Cancellation::default(),
+            )
+            .expect("the tasks query is answered, not refused");
+        assert!(page.content["tasks"].is_array(), "{}", page.content);
+        assert!(page.content["updating_workspaces"].is_array());
+        drop(adapter);
+        memory.close();
     }
 
     #[test]

@@ -168,7 +168,7 @@ fn a_run_is_neither_forked_nor_captured_while_a_page_beside_it_is() {
         "test".into(),
         0,
     ));
-    let source = StoreSource::new(state.clone());
+    let source = StoreSource::new(state.clone(), true);
     let mut projector = Projector::new(source, Projections::open(root).unwrap());
 
     // The projector ticks every quarter second against steps every second
