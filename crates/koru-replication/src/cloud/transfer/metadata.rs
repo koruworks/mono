@@ -211,6 +211,7 @@ pub fn decode(scope: Scope, frame: PeerFrame, capacity: usize) -> Result<Vec<Met
                 "sync_policy_changed" => Error::PolicyChanged,
                 "sync_update_too_large" => Error::TooLarge,
                 "sync_unavailable" => Error::Unavailable,
+                "sync_unit_exists" => Error::UnitExists,
                 _ => Error::Authority(Refusal::from_code(&code)),
             });
         }

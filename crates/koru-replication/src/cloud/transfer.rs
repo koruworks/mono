@@ -40,6 +40,12 @@ pub enum Error {
     PolicyChanged,
     TooLarge,
     Unavailable,
+    /// `sync_unit_exists` (cloud-sync-admission, the app connection
+    /// amendment; DS-D44): an app connection uploaded a creation, a blob
+    /// rooted at the empty document, for a unit Cloud already holds. The
+    /// worker refuses it before `reserve`, so the unit's head did not move.
+    /// Only a connection's session ever produces or receives it.
+    UnitExists,
     Authority(Refusal),
 }
 impl Error {
@@ -51,6 +57,7 @@ impl Error {
             Self::PolicyChanged => "sync_policy_changed",
             Self::TooLarge => "sync_update_too_large",
             Self::Unavailable => "sync_unavailable",
+            Self::UnitExists => "sync_unit_exists",
             Self::Authority(e) => e.code(),
         }
     }

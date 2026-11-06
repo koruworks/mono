@@ -321,3 +321,99 @@ async fn an_edit_after_the_acknowledged_export_is_not_claimed_as_synced() {
         }
     ));
 }
+
+#[tokio::test]
+async fn a_creation_the_worker_refuses_ends_the_pass_with_its_own_code() {
+    use koru_replication::protocol::PeerFrame;
+    // The worker refuses an app connection's creation of a unit Cloud already
+    // holds with `sync_unit_exists` (Cloud MCP C23), after the whole upload
+    // and before it writes anything. The decoder maps the code to itself, so
+    // the host can report the effect as not saved; before the amendment it
+    // decoded as the unknown-refusal fallback, `handshake_malformed`.
+    let (client, mut reader, mut writer, mut stream, scope, budget) =
+        super::super::tests::pair_with_workspace(true).await;
+    let mut sync = Reconciler::new(
+        client,
+        |_| Ok(async { Ok(Answer::Ready(VersionVector::default())) }),
+        |_| Ok(async { Ok(Answer::Ready(None)) }),
+    );
+    let workspace_id =
+        koru_device::cloud::CloudId::from_bytes(scope.eligibility_workspace.as_uuid().into_bytes());
+    let unit = Unit::Document {
+        workspace_id,
+        document_id: koru_device::cloud::CloudId::from_bytes(
+            koru_store_core::DocumentId::new().as_uuid().into_bytes(),
+        ),
+    };
+    let doc = loro::LoroDoc::new();
+    doc.get_text("body").insert(0, "a second seed").unwrap();
+    doc.commit();
+    let seed = doc.export(loro::ExportMode::Snapshot).unwrap();
+    // The pass at its upload, as `advance` leaves it after a join that
+    // answered the empty version.
+    sync.pass = Some(Pass {
+        unit,
+        step: Step::Upload,
+        remote: Some(Arc::new(Remote {
+            version: VersionVector::default(),
+            _messages: Messages {
+                values: vec![],
+                _charge: budget.reserve(1).unwrap(),
+            },
+        })),
+        upload_deferred: false,
+        download_deferred: false,
+        verify_again: false,
+        uploaded_version: Some(doc.oplog_vv()),
+        upload_acked: false,
+    });
+    sync.client.upload(unit, seed.clone(), ()).unwrap();
+    let worker = async {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let complete = loop {
+            let received = records::read(&mut reader, deadline, &budget).await.unwrap();
+            match received.into_parts().1 {
+                Record::Control(control) => {
+                    stream.receive_control(control, 0, 0, |_| Ok(())).unwrap();
+                }
+                Record::Peer(frame) => {
+                    stream.receive_peer(frame, 0, |_| Ok(())).unwrap();
+                }
+            }
+            if stream.status().incoming_complete {
+                break stream.handoff(0, |_| Ok(()), |v| v).unwrap();
+            }
+        };
+        assert_eq!(complete.bytes, seed);
+        records::write(
+            &mut writer,
+            &Record::Peer(PeerFrame::Error {
+                code: "sync_unit_exists".into(),
+            }),
+            deadline,
+            &budget,
+        )
+        .await
+        .unwrap();
+    };
+    let connection = async {
+        loop {
+            if let Err(error) = sync.next().await {
+                break error;
+            }
+        }
+    };
+    let (refused, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(connection, worker)
+    })
+    .await
+    .unwrap();
+    assert_eq!(refused, Error::UnitExists);
+    assert_eq!(refused.code(), "sync_unit_exists");
+    // The pass is gone and the session ended with that code: nothing of
+    // this upload is retained, and no later unit starts on it.
+    assert_eq!(sync.status().phase, Phase::Idle);
+    assert_eq!(sync.start(unit).err(), Some(Error::UnitExists));
+    drop(sync);
+    assert_eq!(budget.used(), 0);
+}

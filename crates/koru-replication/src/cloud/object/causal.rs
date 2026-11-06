@@ -6,7 +6,7 @@ use koru_store_core::profile_units::{IdentityManifest, PersonalManifest, Private
 use loro::{EncodedBlobMode, ExportMode, Frontiers, LoroDoc, VersionVector};
 use std::collections::HashSet;
 mod stage;
-pub use stage::{StagedObject, stage_initial_checkpoint};
+pub use stage::{StagedObject, stage_initial_checkpoint, starts_from_empty};
 
 /// A caller-supplied fact to correlate, never inferred from empty payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -19,9 +19,10 @@ mod tests;
 /// `transfer::state::cancel` latches its reason, so `check` refuses every
 /// later unit for the rest of the session. That latch is the amplifier PLAN19
 /// removes: one unit a local Store job would not serve ended the pass for
-/// every other unit beside it. A sixth carrier code could not carry the
-/// distinction either, because `cloud-sync-admission` §3 freezes the five
-/// `PeerFrame::Error` codes a refusal may use.
+/// every other unit beside it. A new carrier code could not carry the
+/// distinction either, because `cloud-sync-admission` §3 freezes the
+/// `PeerFrame::Error` codes a refusal may use: the five carrier codes, and
+/// the two its app connection amendment adds for connections' uploads only.
 pub enum Answer<T> {
     Ready(T),
     /// The Store would not serve this unit, and the session is still sound.
