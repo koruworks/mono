@@ -14367,3 +14367,90 @@ fn opening_a_document_from_tasks_keeps_the_tasks_view() {
         crate::panes::explore::NavigatorMode::Tasks
     );
 }
+
+/// Acceptance round 2: pressing one list after another on the rail opened an
+/// untitled document tab per press. Two causes, both held here: the Tasks tab
+/// was selected *before* it was re-pointed, so selecting it asked the shell
+/// to activate the old list's note; and the window remembered only its
+/// latest ask, so the earlier answer failed the "a Tasks tab asked for this"
+/// guard and landed as a document tab — untitled, the note not being listed
+/// yet. A note a Tasks tab asked for is never a tab, however many asks are
+/// out, and re-pointing asks for nothing stale.
+#[test]
+fn repointing_the_tasks_tab_never_lands_the_old_note_as_a_tab() {
+    use crate::panes::explore::rail::RailTarget;
+    use koru_core::ids::{PageKey, page_document_id};
+    use koru_core::schema::WorkspaceDoc;
+    use koru_workspace::pages::{PagePhase, PageState};
+    use koru_workspace_host::PaneRequest;
+    fn drain(v: &mut MainView) -> Vec<PaneRequest> {
+        let mut out = Vec::new();
+        while let Some(request) = View::take_pane_request(v) {
+            out.push(request);
+        }
+        out
+    }
+    fn activates(asked: &[PaneRequest], document: koru_core::DocumentId) -> bool {
+        asked.iter().any(
+            |r| matches!(r, PaneRequest::ActivateDocument { document: d, .. } if *d == document),
+        )
+    }
+    let (mut v, _w) = on_tasks();
+    let workspace = koru_core::WorkspaceId::new();
+    let (a, b) = (koru_core::ids::ListId::new(), koru_core::ids::ListId::new());
+    let doc_a = page_document_id(workspace, PageKey::List(a), 0);
+    let doc_b = page_document_id(workspace, PageKey::List(b), 0);
+    let state = |page, document| PageState {
+        page,
+        document,
+        generation: 0,
+        phase: PagePhase::Empty,
+        conflict: false,
+    };
+
+    assert!(v.open_tasks_tab(RailTarget::List(a), false));
+    let _ = drain(&mut v);
+    let tabs = v.tabs().len();
+    // The shell names A's note; the tab in front asks to activate it.
+    assert!(View::set_page_state(
+        &mut v,
+        &state(PageKey::List(a), doc_a)
+    ));
+    assert!(
+        activates(&drain(&mut v), doc_a),
+        "the Tasks tab activates its note"
+    );
+
+    // Away to the document tab, then the rail is pressed on B — before the
+    // shell has answered for A.
+    assert!(v.select(0));
+    let _ = drain(&mut v);
+    assert!(v.open_tasks_tab(RailTarget::List(b), false));
+    let asked = drain(&mut v);
+    assert!(
+        !activates(&asked, doc_a),
+        "re-pointing asks for nothing stale: {asked:?}"
+    );
+    assert!(View::set_page_state(
+        &mut v,
+        &state(PageKey::List(b), doc_b)
+    ));
+    assert!(activates(&drain(&mut v), doc_b));
+
+    // The shell answers A first — the earlier ask — then B.
+    let ws_a = WorkspaceDoc::page_genesis(workspace, doc_a).unwrap();
+    View::show_active_document(&mut v, &ws_a, Some(doc_a));
+    assert_eq!(v.tabs().len(), tabs, "the old note is nobody's tab");
+    let ws_b = WorkspaceDoc::page_genesis(workspace, doc_b).unwrap();
+    View::show_active_document(&mut v, &ws_b, Some(doc_b));
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "and the new one is the Tasks tab's own"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Tasks(_)));
+
+    // Any other way of activating a note still opens it in a tab of its own.
+    View::show_active_document(&mut v, &ws_a, Some(doc_a));
+    assert_eq!(v.tabs().len(), tabs + 1, "Explore, a pill, Back: a tab");
+}

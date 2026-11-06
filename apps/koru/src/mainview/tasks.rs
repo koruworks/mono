@@ -110,13 +110,20 @@ impl MainView {
         });
         match existing.flatten() {
             Some(i) => {
-                self.select(i);
+                // **Re-pointed before it is selected.** Selecting a tab
+                // activates the document it edits, and a Tasks tab still on
+                // its old page edits the old page's note — a stale activation
+                // the window would have no tab for, so it landed as an
+                // untitled document tab (acceptance round 2). Re-pointed
+                // first, the tab edits nothing until the shell names the new
+                // page's note, and that activation is the one that lands.
+                //
                 // **One tab, its content swaps.** A bucket press on a tab
                 // showing the Reminders page trades the view back to Tasks;
                 // the Reminders row on a tasks page trades it the other way.
                 // Same variant keeps the view — and its scroll, its chooser,
                 // its page state — exactly as re-pointing a queue always did.
-                let tab = self.tabs_mut().active_mut();
+                let tab = self.tabs_mut().get_mut(i).expect("found above");
                 let swapped = match (target, &mut tab.view) {
                     (RailTarget::Reminders, TabView::Reminders(_)) => false,
                     (RailTarget::Reminders, view) => {
@@ -139,6 +146,7 @@ impl MainView {
                     // size — leaving the new one laying out at 0×0 forever.
                     tab.invalidate_size();
                 }
+                self.select(i);
             }
             None => {
                 // **Inactive when it is a second tab.** Ctrl+click's whole

@@ -1018,11 +1018,14 @@ pub struct MainView {
     /// asking `document_root()` which row is current answers `None` every time.
     /// That is what left no row in Explore drawing as the one you are on.
     active_document: Option<koru_core::DocumentId>,
-    /// A page document a Tasks tab asked the shell to activate — its own
-    /// note, which it shows itself. When that activation lands, no document
-    /// tab is opened for it; any other way of activating the same document
-    /// (Explore, a pill, Back) opens the note in a tab of its own.
-    tasks_activation: Option<koru_core::DocumentId>,
+    /// The page documents Tasks tabs asked the shell to activate and the
+    /// shell has not yet announced — their own notes, which they show
+    /// themselves. When one of these lands, no document tab is opened for
+    /// it; any other way of activating the same document (Explore, a pill,
+    /// Back) opens the note in a tab of its own. **A list, not the latest
+    /// ask**: a second ask before the first is answered (two rail presses,
+    /// a re-pointed tab) must not turn the first answer into a tab.
+    tasks_activation: Vec<koru_core::DocumentId>,
     /// Which page each open document is the note of, as the shell answered —
     /// `None` for an ordinary document. What gives a list's note its default
     /// list in a tab of its own, not only in the band (plan D5, *body and own
@@ -1929,7 +1932,7 @@ impl MainView {
             save_status: accessibility::persistence::Persistence::default(),
             reminder_news: accessibility::reminders::ReminderNews::default(),
             active_document: None,
-            tasks_activation: None,
+            tasks_activation: Vec::new(),
             page_of: std::collections::HashMap::new(),
             hide_page_title_rows: false,
             pending_document_rename: None,
@@ -3134,8 +3137,20 @@ impl MainView {
         }
     }
 
-    /// A project row's Rename…, seeded with the registry's current name so the
-    /// field is an edit rather than a retype.
+    /// A Tasks tab is asking the shell to activate its note: remembered
+    /// until the shell announces it, so the announcement opens no tab.
+    /// Bounded — a shell that never answers (the open failed) must not
+    /// leave the list growing — and never two of one document.
+    fn note_tasks_activation(&mut self, doc: koru_core::DocumentId) {
+        if !self.tasks_activation.contains(&doc) {
+            self.tasks_activation.push(doc);
+        }
+        const OUTSTANDING: usize = 8;
+        if self.tasks_activation.len() > OUTSTANDING {
+            self.tasks_activation.remove(0);
+        }
+    }
+
     /// Whether `document` is a note above a Tasks page, as far as the shell
     /// has told this window.
     fn is_page_document(&self, document: koru_core::DocumentId) -> bool {
@@ -3840,7 +3855,7 @@ impl MainView {
             && self.active_document != Some(doc)
         {
             if matches!(self.tabs().active_tab().view, TabView::Tasks(_)) {
-                self.tasks_activation = Some(doc);
+                self.note_tasks_activation(doc);
             }
             // Snapshot the tab being shown *before* catch_up can see the
             // stranger document. History's pending slot is a different waiter.
@@ -12743,14 +12758,17 @@ impl View for MainView {
         // A Tasks tab activated its own note: it is showing it already, and
         // a document tab over it would be a second view of the page. Any
         // other activation of the same document lands as every document does.
-        if active.is_some() && self.tasks_activation == active {
-            self.tasks_activation = None;
-            if let TabView::Tasks(t) = &self.tabs().active_tab().view
-                && t.page_document() == active
-            {
-                self.finish_explore_gesture(ws);
-                return true;
-            }
+        //
+        // **An ask the tab has since moved past lands nowhere either.** A
+        // re-pointed or quickly re-pressed Tasks tab can have two asks out;
+        // the first answer is still the tab's own and not a document anybody
+        // asked to see in a tab. The ask it made since is on its way.
+        if let Some(active) = active
+            && let Some(i) = self.tasks_activation.iter().position(|d| *d == active)
+        {
+            self.tasks_activation.remove(i);
+            self.finish_explore_gesture(ws);
+            return true;
         }
         // Shell announcement, not a user gesture — history was recorded when
         // the person asked to leave where they were (explore click, pill, Back).
@@ -13796,7 +13814,7 @@ impl View for MainView {
             && self.active_document != Some(doc)
         {
             let home = front.home_workspace();
-            self.tasks_activation = Some(doc);
+            self.note_tasks_activation(doc);
             self.ask_pane(koru_workspace_host::PaneRequest::ActivateDocument {
                 document: doc,
                 workspace: home,
