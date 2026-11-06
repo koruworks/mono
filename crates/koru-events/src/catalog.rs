@@ -1952,6 +1952,152 @@ payload!(TerminalTabOpened, "terminal.tab.opened", |self| {
         .attr("kind", AttrValue::Token(self.kind.token().to_string()))
 });
 
+// ---------------------------------------------------------------- Cloud MCP
+//
+// The hosted MCP server's usage (Cloud MCP TECHNICAL.final C18, §12). The
+// payloads hold closed tokens and buckets only; the distinct id — a keyed hash
+// of the app connection — rides the export batch, never an attr.
+
+/// `value` if the vocabulary holds it, otherwise `other`: what a closed set
+/// does with a name it was handed, so the name itself never leaves.
+fn closed(vocabulary: &'static [&'static str], value: &str) -> &'static str {
+    vocabulary
+        .iter()
+        .copied()
+        .find(|token| *token == value && *token != "none")
+        .unwrap_or("other")
+}
+
+/// `mcp.tool.called`: one hosted tool call's answer. Built only by
+/// [`McpToolCalled::new`], which maps the tool's and the code's names onto
+/// their closed vocabularies and buckets the numbers, so a client's string
+/// cannot reach the attrs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpToolCalled {
+    tool: &'static str,
+    refused: bool,
+    code: &'static str,
+    duration_ms_bucket: u32,
+    size_kib_bucket: u32,
+}
+
+impl McpToolCalled {
+    /// `code` is the refusal's code, `None` for an answer; `size_bytes` is
+    /// the answer's serialized size.
+    pub fn new(tool: &str, code: Option<&str>, duration_ms: u64, size_bytes: u64) -> Self {
+        Self {
+            tool: closed(registry::MCP_TOOL_TOKENS, tool),
+            refused: code.is_some(),
+            code: code.map_or("none", |code| closed(registry::MCP_TOOL_CODES, code)),
+            duration_ms_bucket: bucket(duration_ms),
+            size_kib_bucket: bucket(size_bytes / 1024),
+        }
+    }
+}
+
+payload!(McpToolCalled, "mcp.tool.called", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .attr("tool", AttrValue::Token(self.tool.to_owned()))
+        .attr(
+            "outcome",
+            AttrValue::Token(if self.refused { "refused" } else { "ok" }.to_owned()),
+        )
+        .attr("code", AttrValue::Token(self.code.to_owned()))
+        .attr(
+            "duration_ms_bucket",
+            AttrValue::Bucket(self.duration_ms_bucket),
+        )
+        .attr("size_kib_bucket", AttrValue::Bucket(self.size_kib_bucket))
+});
+
+/// A replica's stage — `mcp.replica.loaded`'s `stage`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum McpReplicaStage {
+    Manifest,
+    Full,
+}
+
+impl McpReplicaStage {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Manifest => "manifest",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// `mcp.replica.loaded`: a replica finished a load pass.
+pub struct McpReplicaLoaded {
+    pub stage: McpReplicaStage,
+    pub duration_ms_bucket: u32,
+    pub documents_bucket: u32,
+}
+
+payload!(McpReplicaLoaded, "mcp.replica.loaded", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .attr("stage", AttrValue::Token(self.stage.token().to_owned()))
+        .attr(
+            "duration_ms_bucket",
+            AttrValue::Bucket(self.duration_ms_bucket),
+        )
+        .attr("documents_bucket", AttrValue::Bucket(self.documents_bucket))
+});
+
+/// Why a replica ended — `mcp.replica.torn_down`'s `reason`, one variant
+/// per host `Teardown`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum McpTeardownReason {
+    Idle,
+    Revoked,
+    SubscriptionEnded,
+    WorkspaceLost,
+    EpochMoved,
+    Failed,
+    Shutdown,
+    UnknownOutcome,
+    RefusedAfterWrite,
+    Unresponsive,
+}
+
+impl McpTeardownReason {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Revoked => "revoked",
+            Self::SubscriptionEnded => "subscription_ended",
+            Self::WorkspaceLost => "workspace_lost",
+            Self::EpochMoved => "cloud_access_epoch_moved",
+            Self::Failed => "failed",
+            Self::Shutdown => "shutdown",
+            Self::UnknownOutcome => "unknown_outcome",
+            Self::RefusedAfterWrite => "refused_after_write",
+            Self::Unresponsive => "cloud_unresponsive",
+        }
+    }
+}
+
+/// `mcp.replica.torn_down`: a replica ended.
+pub struct McpReplicaTornDown {
+    pub reason: McpTeardownReason,
+    pub lifetime_s_bucket: u32,
+}
+
+payload!(McpReplicaTornDown, "mcp.replica.torn_down", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .attr("reason", AttrValue::Token(self.reason.token().to_owned()))
+        .attr(
+            "lifetime_s_bucket",
+            AttrValue::Bucket(self.lifetime_s_bucket),
+        )
+});
+
+/// `mcp.save.unknown`: a hosted mutation answered `save_status_unknown`.
+pub struct McpSaveUnknown;
+
+payload!(McpSaveUnknown, "mcp.save.unknown", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+});
+
 /// The one bucketing ladder, so every `Bucket` attr means the same thing:
 /// the answer is the largest rung ≤ the value. Coarse on purpose — a bucket
 /// is a cardinality bound, not a measurement.

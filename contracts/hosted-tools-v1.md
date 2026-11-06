@@ -170,11 +170,16 @@ effects not yet accepted, and the saved prefix is reported as §2 says.
 
 | Code | When | `details` |
 | --- | --- | --- |
-| `document_claimed` | a target is under another live claim, or the handle is missing or wrong; `claim_document` on a document someone else holds | `{ "holder": <holder>, "purpose", "expires_at", "retry_after_seconds" }` |
+| `document_claimed` | a target is under another live claim, or the handle is missing or wrong; `claim_document` on a document someone else holds | `{ "document_id", "holder": <holder>, "purpose", "expires_at", "retry_after_seconds" }` |
 | `claim_not_found` | `claim_document` renewing a handle the server does not hold | — |
 | `claim_expired` | renewing a handle whose claim has expired | — |
 | `claim_limit_reached` | the connection already holds 16 live claims | — |
 | `workspace_not_authorized` | the document is outside the connection's allowed workspaces | as today |
+
+`document_id` is the claimed document: the target the refused call would have
+changed, or the one `claim_document` asked for, so an extraction says whether
+its source or its destination is claimed (an additive erratum, Cloud MCP
+Q3.4-4).
 
 `document_claimed`'s message tells the assistant to wait until `expires_at`
 or retry later, and not to work around the claim.

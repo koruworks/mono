@@ -440,6 +440,12 @@ pub const AREAS: &[&str] = &[
     // manifest-registered document with a lifecycle of its own, and the
     // only crate that spells these names is `koru-delegate-events`.
     "delegate",
+    // Cloud MCP's hosted server (`koru-public-api --worker mcp`): usage of
+    // the hosted tools and its in-memory replicas. Its own area because
+    // nothing here happens on a person's machine: the emitter is a hosted
+    // service, and the distinct id its batches carry is a keyed hash of an
+    // app connection, never an installation's.
+    "mcp",
 ];
 
 /// Which speech runtime ran — `voice.dictation.completed`'s and
@@ -465,6 +471,83 @@ pub const VOICE_ENGINE_TOKENS: &[&str] = &["sherpa", "whisper", "other"];
 /// vocabulary for it exists and declaring one would be freezing a list that
 /// lives on a server.
 pub const VOICE_TIER_TOKENS: &[&str] = &["compact", "high_accuracy"];
+
+// ------------------------------------------------- the Cloud MCP vocabularies
+//
+// The hosted MCP server's events (Cloud MCP TECHNICAL.final C18, §12). The
+// tool and code names arrive as strings — a tool name is whatever a client
+// sent — so each closed set ends in `other`, and the payloads in
+// [`crate::catalog`] map anything outside it to `other` **on the host**: a
+// client's string never leaves it.
+
+/// The hosted tools: `koru-mcp-server`'s `RUNG1_TOOLS`, which the host's
+/// tests hold this list to, plus `other`.
+pub const MCP_TOOL_TOKENS: &[&str] = &[
+    "get_documentation",
+    "list_workspaces",
+    "list_documents",
+    "search_documents",
+    "read_document",
+    "create_document",
+    "edit_document",
+    "extract_to_document",
+    "list_tasks",
+    "claim_document",
+    "release_document",
+    "other",
+];
+
+/// The stable codes a hosted tool call answers with (hosted-tools-v1 and the
+/// shared executor's), `none` for an answer, and `other` for a code not
+/// listed. Never a message.
+pub const MCP_TOOL_CODES: &[&str] = &[
+    "none",
+    "invalid_request",
+    "tool_not_available",
+    "insufficient_scope",
+    "workspace_not_authorized",
+    "permission_denied",
+    "authorization_revoked",
+    "cloud_subscription_ended",
+    "authorization_unavailable",
+    "workspace_loading",
+    "cloud_unavailable",
+    "replica_busy",
+    "document_newer_than_host",
+    "document_not_found",
+    "precondition_failed",
+    "revision_conflict",
+    "stale_node",
+    "edit_not_saved",
+    "partially_saved",
+    "save_status_unknown",
+    "idempotency_conflict",
+    "idempotency_key_retired",
+    "document_claimed",
+    "claim_not_found",
+    "claim_expired",
+    "claim_limit_reached",
+    "internal_error",
+    "other",
+];
+
+/// A replica's stage: the manifest only, or every document (Cloud MCP §5.3).
+pub const MCP_REPLICA_STAGES: &[&str] = &["manifest", "full"];
+
+/// Why a replica was torn down — the host's `Teardown`, which maps every
+/// variant to its token by exhaustive `match`.
+pub const MCP_TEARDOWN_REASONS: &[&str] = &[
+    "idle",
+    "revoked",
+    "subscription_ended",
+    "workspace_lost",
+    "cloud_access_epoch_moved",
+    "failed",
+    "shutdown",
+    "unknown_outcome",
+    "refused_after_write",
+    "cloud_unresponsive",
+];
 
 /// The table. Domain lifecycle first, then app-side instrumentation.
 pub const REGISTRY: &[EventSpec] = &[
@@ -2458,6 +2541,90 @@ pub const REGISTRY: &[EventSpec] = &[
             ),
         ],
         doc: "A consequential account authentication, session, Profile/device mutation, or enrollment operation reached one terminal outcome. Reads and internal stages do not emit it. The payload contains only closed categories and a client-side duration bucket: email, provider subject, Profile name, token, state, nonce, full URL, user agent, and raw source identifier have no field.",
+    },
+    // Cloud MCP's hosted server (C18, §12). Pseudonymous per connection: the
+    // batch's distinct id is a keyed hash of the app connection
+    // (KORU_MCP_METRICS_KEY), and the rows carry closed tokens and buckets
+    // only — no content, title, name, workspace or raw id has a field.
+    EventSpec {
+        name: "mcp.tool.called",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::PseudonymousUsage,
+        attrs: &[
+            token_attr(
+                "tool",
+                MCP_TOOL_TOKENS,
+                "The hosted tool called; a name that is not a hosted tool is other.",
+            ),
+            token_attr(
+                "outcome",
+                &["ok", "refused"],
+                "Whether the call answered or was refused with a code.",
+            ),
+            token_attr(
+                "code",
+                MCP_TOOL_CODES,
+                "The refusal's stable code, none for an answer, other for a code not listed.",
+            ),
+            bucket_attr(
+                "duration_ms_bucket",
+                "From the call's arrival to its answer, in milliseconds, bucketed on the host.",
+            ),
+            bucket_attr(
+                "size_kib_bucket",
+                "The answer's serialized size in KiB (bytes / 1024, floored), bucketed on the host; 0 for a refusal.",
+            ),
+        ],
+        doc: "One hosted MCP tool call reached its answer. Says which tools are used, how often they are refused and why, and how long and how large their answers are — what tells whether a host needs a cap or more hosts. No argument, document, workspace or result has a field.",
+    },
+    EventSpec {
+        name: "mcp.replica.loaded",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::PseudonymousUsage,
+        attrs: &[
+            token_attr(
+                "stage",
+                MCP_REPLICA_STAGES,
+                "The stage the load reached: the manifest only, or every document.",
+            ),
+            bucket_attr(
+                "duration_ms_bucket",
+                "How long the pass took, in milliseconds, bucketed on the host.",
+            ),
+            bucket_attr(
+                "documents_bucket",
+                "How many documents the replica holds, bucketed on the host.",
+            ),
+        ],
+        doc: "A connection's in-memory replica of one Cloud workspace finished a load pass. Which workspace is not said: the batch's distinct id is the connection's keyed hash, and the workspace has no field.",
+    },
+    EventSpec {
+        name: "mcp.replica.torn_down",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::PseudonymousUsage,
+        attrs: &[
+            token_attr(
+                "reason",
+                MCP_TEARDOWN_REASONS,
+                "Why the replica ended: idle, the connection lapsed, the workspace left it, a fence, or the host stopping.",
+            ),
+            bucket_attr(
+                "lifetime_s_bucket",
+                "How long the replica lived, in seconds, bucketed on the host.",
+            ),
+        ],
+        doc: "A connection's in-memory replica was torn down; the next call loads a new one. Says how long replicas live and why they end.",
+    },
+    EventSpec {
+        name: "mcp.save.unknown",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::PseudonymousUsage,
+        attrs: &[],
+        doc: "A hosted mutation answered save_status_unknown: an effect was submitted to Cloud and not confirmed, and the replica was fenced. Its rate is the one the beta watches for the outcome contract.",
     },
     EventSpec {
         name: "terminal.surface.opened",
