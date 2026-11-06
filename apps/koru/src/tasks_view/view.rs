@@ -49,6 +49,9 @@ use crate::leaf::Leaf;
 /// page: a list read on a wide sheet, which pinned to the window's edges reads
 /// as a spreadsheet.
 pub(super) const PAD: f32 = 40.0;
+/// How long typing on a task's line in the note is left to settle before the
+/// rows are asked again — one re-ask per burst, never one per keystroke.
+const TASK_TOUCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 /// Between the title and the row area.
 pub(super) const HEADER_GAP: f32 = 22.0;
 /// The complete control's square, at the head of every row: the press
@@ -398,6 +401,10 @@ pub struct TasksView {
     band_h: f32,
     /// Where the pointer last was, so a wheel over the note scrolls the note.
     pointer: (f32, f32),
+    /// Typing landed on a task's line in the note: when, and the write the
+    /// rows have to show. Coalesced — one re-ask per quarter second of
+    /// typing, not one per keystroke — and flushed by `maintain`.
+    task_touch: Option<(std::time::Instant, super::query::WriteRequirement)>,
 }
 
 impl TasksView {
@@ -442,6 +449,7 @@ impl TasksView {
             notice: None,
             band_h: 0.0,
             pointer: (-1.0, -1.0),
+            task_touch: None,
         }
     }
 
@@ -3314,7 +3322,12 @@ impl View for TasksView {
                 body.blur();
                 return true;
             } else {
-                return body.key(ws, key, text, mods);
+                let took = body.key(ws, key, text, mods);
+                let on_task = took && body.caret_on_task(ws);
+                if on_task {
+                    self.note_task_touch(ws);
+                }
+                return took;
             }
         }
         // The rename field has the keyboard while it stands: Enter keeps
@@ -3555,7 +3568,12 @@ impl View for TasksView {
         if let Some(body) = &mut self.body
             && body.focused
         {
-            return body.mouse_up(ws);
+            let took = body.mouse_up(ws);
+            let on_task = took && body.caret_on_task(ws);
+            if on_task {
+                self.note_task_touch(ws);
+            }
+            return took;
         }
         if self.drag.is_some() {
             return self.drop_drag();
@@ -3853,13 +3871,56 @@ impl TasksView {
             return false;
         }
         let placeholder = self.placeholder();
-        match PageBody::open(ws, document, placeholder) {
+        let default_list = match self.target {
+            RailTarget::List(list) => Some(list),
+            _ => None,
+        };
+        match PageBody::open(ws, document, placeholder, default_list) {
             Some(body) => {
                 self.body = Some(body);
                 true
             }
             None => false,
         }
+    }
+
+    /// Typing in the note touched a task: the rows below are asked again
+    /// once the typing settles (plan §6.9, *rows right, page fast*). Prose
+    /// never comes here, so the table is not remeasured for it.
+    fn note_task_touch(&mut self, ws: &WorkspaceDoc) {
+        if let Some(requirement) = super::query::WriteRequirement::of_document(ws) {
+            self.task_touch = Some((std::time::Instant::now(), requirement));
+        }
+    }
+
+    /// When the coalesced re-ask is due, if typing touched a task.
+    pub fn task_touch_deadline(&self) -> Option<std::time::Instant> {
+        self.task_touch
+            .as_ref()
+            .map(|(at, _)| *at + TASK_TOUCH_SETTLE)
+    }
+
+    /// Ask the rows for the touched task's write, once the typing settled.
+    /// Answers whether it asked.
+    pub fn flush_task_touch(&mut self, now: std::time::Instant) -> bool {
+        let due = self
+            .task_touch
+            .as_ref()
+            .is_some_and(|(at, _)| now >= *at + TASK_TOUCH_SETTLE);
+        if !due {
+            return false;
+        }
+        let Some((_, requirement)) = self.task_touch.take() else {
+            return false;
+        };
+        self.panel.require(requirement);
+        self.mark_stale();
+        true
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_stale(&self) -> bool {
+        self.stale
     }
 
     pub(super) fn adopt_body(&mut self, ws: &WorkspaceDoc) {

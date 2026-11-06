@@ -6591,9 +6591,27 @@ pub trait Editing {
         // here that could roll one back. The two writes are independent — the
         // deletion is text on the trigger row, the command is attributes on
         // `nodes` — so nothing is lost by swapping them.
+        let default_list = self.view().default_list;
         let applied = koru_core::tasks::compose(ws, |ws| {
             ws.edit_group(|ws| {
                 op(ws)?;
+                // **A task made on a list's page joins the list** (D5), in
+                // this same undo step and only where the line carries no
+                // list of its own. The in-group attribute door, as
+                // `JoinList` uses: `set_list` checkpoints and would close
+                // this bracket.
+                if let Some(list) = default_list {
+                    for &node in nodes {
+                        let is_task = koru_core::tasks::is_task_node(ws, node).unwrap_or(false);
+                        if is_task && !carries_list(ws, node) {
+                            ws.set_attribute_on_all(
+                                &[node],
+                                koru_core::attributes::KEY_LIST,
+                                AttrValue::Text(list.to_storage()),
+                            )?;
+                        }
+                    }
+                }
                 if let Some((node, start, end)) = span
                     && end > start
                 {
@@ -18040,4 +18058,15 @@ mod tests {
         assert_eq!(child, step);
         assert_eq!(task.node_id(), parent);
     }
+}
+
+/// Whether `node` is in a list already — the one case a page's default list
+/// leaves alone.
+fn carries_list(ws: &WorkspaceDoc, node: NodeId) -> bool {
+    ws.read(node).is_ok_and(|n| {
+        n.content
+            .attrs()
+            .iter()
+            .any(|attr| attr.role == koru_core::attributes::KEY_LIST)
+    })
 }

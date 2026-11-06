@@ -6361,6 +6361,26 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 pane.window.request_redraw();
             }
         }
+        // A note opened in a tab of its own: which page it is the note of,
+        // so a task made there joins the list the way it does in the band.
+        let wanted_page_of: Vec<(WindowId, koru_core::DocumentId)> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(id, pane)| {
+                pane.view
+                    .take_wants_page_of()
+                    .into_iter()
+                    .map(move |document| (*id, document))
+            })
+            .collect();
+        for (id, document) in wanted_page_of {
+            let page = self.runtime.workspace.page_of_document(document);
+            if let Some(pane) = self.panes.get_mut(&id)
+                && pane.view.set_page_of(document, page)
+            {
+                pane.window.request_redraw();
+            }
+        }
         // The Tasks surface's ticks, removals and captures. Collected first for
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a

@@ -1180,6 +1180,12 @@ pub struct ViewState {
     ///
     /// [`Policy::Document`]: crate::policy::Policy::Document
     pub policy: crate::policy::Policy,
+    /// The list a task made in this document joins, when the document is a
+    /// list's page document (page-document plan D5): applied where a line
+    /// becomes a task, in the same undo step, only when the line carries no
+    /// list of its own. `None` for every other document — a bucket's page
+    /// document included (D6).
+    pub default_list: Option<koru_core::ids::ListId>,
     /// Set when a host draws this editor **inside its own chrome** — the AI
     /// chat's composer, a few lines tall at the bottom of a conversation.
     /// `None` for every view that owns its whole viewport.
@@ -1302,6 +1308,7 @@ impl Default for ViewState {
             copy: koru_ui::CopyAffordance::default(),
             tables_enabled: false,
             policy: crate::policy::Policy::Document,
+            default_list: None,
             embedded: None,
             deleted_caret: None,
             desired_x: None,

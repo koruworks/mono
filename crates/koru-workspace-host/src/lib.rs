@@ -1541,6 +1541,22 @@ pub trait View {
         Vec::new()
     }
 
+    /// **Documents the view wants to know the page of** — a note opened in a
+    /// tab of its own takes its list's default list only once the shell says
+    /// which list it is the note of.
+    fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId> {
+        Vec::new()
+    }
+
+    /// The answer, per document: a page, or `None` for an ordinary one.
+    fn set_page_of(
+        &mut self,
+        _document: koru_core::DocumentId,
+        _page: Option<koru_core::ids::PageKey>,
+    ) -> bool {
+        false
+    }
+
     /// **Task changes a view asked for but cannot make**, in the order it asked.
     ///
     /// [`take_wants_create_list`](Self::take_wants_create_list)'s shape, for the

@@ -4410,6 +4410,92 @@ mod note {
         assert!(view.selected_row().is_none(), "and no row was selected");
     }
 
+    /// Rung 6 (P4): a task made in a list's note joins the list, in the
+    /// same step as the command that made it.
+    #[test]
+    fn a_task_made_in_a_lists_note_joins_the_list() {
+        let (target, page, document, mut doc) = page();
+        let RailTarget::List(list) = target else {
+            unreachable!()
+        };
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        for ch in ["/", "t", "a", "s", "k"] {
+            view.key(&mut doc, &Key::Character(ch.into()), Some(ch), mods);
+        }
+        view.key(&mut doc, &Key::Named(NamedKey::Enter), None, mods);
+        let seed = genesis_seed_id(document);
+        let node = doc.read(seed).unwrap();
+        assert!(
+            koru_core::tasks::is_task(&koru_core::tasks::TaskFields::of(&node)),
+            "the line became a task"
+        );
+        let in_list = node.content.attrs().iter().any(|a| {
+            a.role == koru_core::attributes::KEY_LIST
+                && a.value == koru_core::node::AttrValue::Text(list.to_storage())
+        });
+        assert!(in_list, "and joined the list");
+        doc.undo().unwrap();
+        let node = doc.read(seed).unwrap();
+        assert!(
+            !node
+                .content
+                .attrs()
+                .iter()
+                .any(|a| a.role == koru_core::attributes::KEY_LIST),
+            "one undo takes the membership out with the task"
+        );
+    }
+
+    /// Rung 6 (P4): typing on a task's line asks the rows again once it
+    /// settles; typing prose asks nothing and remeasures nothing.
+    #[test]
+    fn typing_on_a_task_asks_the_rows_again_and_prose_does_not() {
+        let (target, page, document, mut doc) = page();
+        let mut view = TasksView::new(target);
+        view.set_viewport(900.0, 600.0);
+        view.set_page_state(&state(page, document, PagePhase::Empty));
+        view.catch_up(&doc);
+        view.layout_band();
+        let band = view.body.as_ref().unwrap().band;
+        let mods = ModifiersState::empty();
+        view.mouse_down(
+            &mut doc,
+            band.x + band.w * 0.5,
+            band.y + band.h * 0.5,
+            false,
+        );
+        view.key(&mut doc, &Key::Character("p".into()), Some("p"), mods);
+        assert_eq!(view.task_touch_deadline(), None, "prose asks nothing");
+        assert!(!view.is_stale());
+
+        let seed = genesis_seed_id(document);
+        koru_core::tasks::ensure_task(&mut doc, seed, koru_core::attributes::TaskReason::Explicit)
+            .unwrap();
+        view.key(&mut doc, &Key::Character("q".into()), Some("q"), mods);
+        let due = view
+            .task_touch_deadline()
+            .expect("a task's line was typed on");
+        assert!(
+            !view.flush_task_touch(std::time::Instant::now()),
+            "not yet settled"
+        );
+        assert!(view.flush_task_touch(due + std::time::Duration::from_millis(1)));
+        assert!(view.is_stale(), "the rows are asked again");
+        assert_eq!(view.task_touch_deadline(), None, "once");
+    }
+
     /// A note that failed to register shows its notice with *Try again*,
     /// and a press on it asks for the retry (plan Q8).
     #[test]

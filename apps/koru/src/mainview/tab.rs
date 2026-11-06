@@ -757,8 +757,10 @@ impl TabView {
             | Self::Run(_)
             | Self::Result(_)
             // Home's panel is driven by the frame, as the Tasks page's is.
-            | Self::Home(_)
-            | Self::Tasks(_) => None,
+            | Self::Home(_) => None,
+            // Only while typing in the note touched a task and the rows are
+            // owed a re-ask once it settles; `None` otherwise.
+            Self::Tasks(t) => t.task_touch_deadline(),
             // **Only while a transport-mode write it started is unanswered.**
             // This view sat in the group above until B10 gave it background
             // work, and nothing moved it: the prompt wrote its answer into a
@@ -789,8 +791,8 @@ impl TabView {
             | Self::Diff(_)
             | Self::Run(_)
             | Self::Result(_)
-            | Self::Home(_)
-            | Self::Tasks(_) => false,
+            | Self::Home(_) => false,
+            Self::Tasks(t) => t.flush_task_touch(now),
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
             Self::Manage(m) => View::maintain(m, ws, now),

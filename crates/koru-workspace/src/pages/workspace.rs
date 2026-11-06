@@ -74,6 +74,32 @@ impl Workspace {
         Some((document, generation))
     }
 
+    /// Which page `document` is the note of, if any — the registry's answer
+    /// when it is making the document exist, else derived from every live
+    /// list's and every bucket's generations. `None` for an ordinary
+    /// document.
+    pub fn page_of_document(&mut self, document: DocumentId) -> Option<PageKey> {
+        if let Some(entry) = self.pages.entries.get(&document) {
+            return Some(entry.page);
+        }
+        let workspace = self.current?;
+        let lists: Vec<PageKey> = self
+            .lists_snapshot()
+            .into_iter()
+            .map(|list| PageKey::List(list.id))
+            .collect();
+        let buckets = koru_core::tasks::Bucket::ALL
+            .into_iter()
+            .map(PageKey::Bucket);
+        for page in lists.into_iter().chain(buckets) {
+            let current = self.page_generation(page).unwrap_or(0);
+            if (0..=current).any(|g| page_document_id(workspace, page, g) == document) {
+                return Some(page);
+            }
+        }
+        None
+    }
+
     // ------------------------------------------------------- ensure, retry
 
     /// Make sure `page` has a document this process can show, and say where

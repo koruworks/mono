@@ -1023,6 +1023,11 @@ pub struct MainView {
     /// tab is opened for it; any other way of activating the same document
     /// (Explore, a pill, Back) opens the note in a tab of its own.
     tasks_activation: Option<koru_core::DocumentId>,
+    /// Which page each open document is the note of, as the shell answered —
+    /// `None` for an ordinary document. What gives a list's note its default
+    /// list in a tab of its own, not only in the band (plan D5, *body and own
+    /// tab*).
+    page_of: std::collections::HashMap<koru_core::DocumentId, Option<koru_core::ids::PageKey>>,
     /// A Store document whose rename prompt should open once the shell has
     /// loaded it, and when to stop waiting for it. Explore rows carry manifest
     /// `DocumentId`s, while the prompt needs the root node inside that
@@ -1922,6 +1927,7 @@ impl MainView {
             reminder_news: accessibility::reminders::ReminderNews::default(),
             active_document: None,
             tasks_activation: None,
+            page_of: std::collections::HashMap::new(),
             pending_document_rename: None,
             pending_document_attrs: None,
             pending_task_reveal: None,
@@ -8380,7 +8386,13 @@ impl MainView {
         let mut owed = Vec::new();
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::Leaf(leaf) = &mut tab.view {
+                let leaf = match &mut tab.view {
+                    TabView::Leaf(leaf) => Some(leaf),
+                    // The note above a Tasks page runs the same commands.
+                    TabView::Tasks(t) => t.body_leaf_mut(),
+                    _ => None,
+                };
+                if let Some(leaf) = leaf {
                     owed.extend(Editing::body_mut(leaf).take_task_activity());
                 }
             }
@@ -13705,6 +13717,49 @@ impl View for MainView {
                 workspace: home,
             });
         }
+        changed
+    }
+
+    /// Documents open in a tab of their own that the window has not yet
+    /// been told the page of.
+    fn take_wants_page_of(&mut self) -> Vec<koru_core::DocumentId> {
+        let known = &self.page_of;
+        let mut wanted: Vec<koru_core::DocumentId> = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.iter_tabs())
+            .filter(|tab| matches!(tab.view, TabView::Leaf(_)))
+            .filter_map(|tab| tab.document)
+            .filter(|id| !known.contains_key(id))
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        wanted
+    }
+
+    /// The shell's answer: a document is a list's note, a bucket's, or
+    /// nobody's. Every leaf over it learns its default list.
+    fn set_page_of(
+        &mut self,
+        document: koru_core::DocumentId,
+        page: Option<koru_core::ids::PageKey>,
+    ) -> bool {
+        self.page_of.insert(document, page);
+        let default_list = match page {
+            Some(koru_core::ids::PageKey::List(list)) => Some(list),
+            _ => None,
+        };
+        let mut changed = false;
+        self.each_tab_mut(|tab| {
+            if tab.document == Some(document)
+                && let TabView::Leaf(leaf) = &mut tab.view
+                && Editing::view(leaf).default_list != default_list
+            {
+                Editing::view_mut(leaf).default_list = default_list;
+                changed = true;
+            }
+            false
+        });
         changed
     }
 

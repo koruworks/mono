@@ -55,13 +55,21 @@ pub(super) struct PageBody {
 impl PageBody {
     /// A body over `document`, which must be the document `ws` is — the
     /// root the genesis gave it has to be there.
-    pub fn open(ws: &WorkspaceDoc, document: DocumentId, placeholder: String) -> Option<Self> {
+    pub fn open(
+        ws: &WorkspaceDoc,
+        document: DocumentId,
+        placeholder: String,
+        default_list: Option<koru_core::ids::ListId>,
+    ) -> Option<Self> {
         let root = genesis_root_id(document);
         ws.read(root).ok()?;
         let mut leaf = Leaf::document(ws, root);
         leaf.hide_title_row(ws);
         leaf.set_body_placeholder(placeholder);
         Editing::set_view_mode(&mut leaf, MODE);
+        // A task written on a list's note joins the list (D5); a bucket's
+        // note gives nothing (D6).
+        Editing::view_mut(&mut leaf).default_list = default_list;
         Some(Self {
             document,
             root,
@@ -123,6 +131,14 @@ impl PageBody {
             self.dirty = false;
         }
         self.band.h
+    }
+
+    /// Whether the caret is on a task's line — what decides whether typing
+    /// here is something the rows below have to be told about.
+    pub fn caret_on_task(&self, ws: &WorkspaceDoc) -> bool {
+        self.leaf
+            .caret_node()
+            .is_some_and(|node| koru_core::tasks::is_task_node(ws, node).unwrap_or(false))
     }
 
     /// Whether a picker or menu of the note's is open — a press anywhere on
