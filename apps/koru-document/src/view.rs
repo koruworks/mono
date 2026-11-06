@@ -625,22 +625,37 @@ impl View for BuiltInDocument {
             files.len(),
             files.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>()
         );
+        let at = self.editor.view.attachment_at.take();
         let Some((first, rest)) = files.split_first() else {
             return;
         };
-        let put =
-            |ws: &mut WorkspaceDoc, target: NodeId, file: koru_core::DocumentId, label: &str| {
-                let attr = koru_core::Attr::labelled(
-                    "attachment",
-                    koru_core::AttrValue::Ref(koru_core::Ref::in_doc(
-                        NodeId::from_uuid(file.as_uuid()),
-                        koru_core::DocRef::Document(file),
-                    )),
-                    label,
-                );
-                ws.set_text(target, "").is_ok() && ws.insert_pill(target, 0, &attr).is_ok()
-            };
-        if !put(ws, node, first.0, &first.1) {
+        let put = |ws: &mut WorkspaceDoc,
+                   target: NodeId,
+                   at: usize,
+                   file: koru_core::DocumentId,
+                   label: &str| {
+            let attr = koru_core::Attr::labelled(
+                "attachment",
+                koru_core::AttrValue::Ref(koru_core::Ref::in_doc(
+                    NodeId::from_uuid(file.as_uuid()),
+                    koru_core::DocRef::Document(file),
+                )),
+                label,
+            );
+            ws.insert_pill(target, at, &attr).is_ok()
+        };
+        // **The row keeps its words.** The typed command was taken out when
+        // it was chosen (`attachment_at` is where it stood); the pill goes
+        // there, or at the end of whatever the row says when nothing
+        // recorded a place. Wiping the row first — the old recipe — took a
+        // sentence away with its `/attach` (acceptance round 2).
+        let len = ws
+            .read(node)
+            .ok()
+            .and_then(|n| n.content.as_text().map(str::len))
+            .unwrap_or(0);
+        let at = at.map_or(len, |at| at.min(len));
+        if !put(ws, node, at, first.0, &first.1) {
             return;
         }
         let mut after = node;
@@ -651,7 +666,7 @@ impl View for BuiltInDocument {
             let Ok(row) = ws.insert_after(after, para) else {
                 break;
             };
-            if !put(ws, row, *file, label) {
+            if !put(ws, row, 0, *file, label) {
                 break;
             }
             after = row;
@@ -660,11 +675,11 @@ impl View for BuiltInDocument {
         self.editor.reflow();
     }
 
-    fn attachment_cancelled(&mut self, ws: &mut WorkspaceDoc, node: NodeId) {
+    /// Nothing to undo on the row: the typed command was taken out when it
+    /// was chosen, and what the row said besides is the person's.
+    fn attachment_cancelled(&mut self, _ws: &mut WorkspaceDoc, node: NodeId) {
         koru_workspace_host::attach_debug!("document attachment_cancelled node={node:?}");
-        let _ = ws.set_text(node, "");
-        self.editor.body.rebuild(ws);
-        self.editor.reflow();
+        self.editor.view.attachment_at = None;
     }
 
     fn take_wants_file_action(

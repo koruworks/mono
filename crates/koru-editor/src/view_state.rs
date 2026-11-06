@@ -894,6 +894,10 @@ pub struct ViewState {
     pub wants_image: Option<NodeId>,
     /// A row whose `/attach` command should become a routed file pill.
     pub wants_attachment: Option<NodeId>,
+    /// Where in that row the pill goes: the byte offset the typed command
+    /// stood at (already taken out), or the caret when a menu asked. The
+    /// rest of the row's text is kept around it.
+    pub attachment_at: Option<usize>,
     /// **`/dictate` was chosen: begin a dictation here.**
     ///
     /// A `bool` and not a `NodeId`, unlike the two above it, because the
@@ -1257,6 +1261,7 @@ impl Default for ViewState {
             wants_join_new_list: None,
             wants_image: None,
             wants_attachment: None,
+            attachment_at: None,
             wants_dictation: false,
             wants_delegate: None,
             wants_reminder: std::collections::VecDeque::new(),
