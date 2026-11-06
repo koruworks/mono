@@ -80,8 +80,8 @@ const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
 /// and the round swatch already means *this node's colour*.
 pub(super) const HEADER_SWATCH: f32 = 11.0;
 /// Between that square and the name — `heading::SWATCH_STEP` now; kept as
-/// the number the suite holds the step to.
-#[cfg(test)]
+/// the number the suite holds the step to, and what the heading's press
+/// targets (the square, the title's field) are placed by.
 pub(super) const SWATCH_GAP: f32 = 10.0;
 /// The most trailing words the capture row will try to read as a date.
 ///
